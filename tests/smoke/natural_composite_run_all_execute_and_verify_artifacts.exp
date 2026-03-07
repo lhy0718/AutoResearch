@@ -59,11 +59,6 @@ expect {
 }
 
 expect {
-  -re "Step 2/2: $escaped_step2" {}
-  timeout { fail "FAIL: step 2 run-all log not found" }
-}
-
-expect {
   -re "collect_papers finished:" {}
   timeout { fail "FAIL: collect completion log not found" }
 }

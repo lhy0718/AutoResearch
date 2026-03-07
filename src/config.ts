@@ -95,10 +95,10 @@ function buildConfigFromWizardAnswers(answers: {
 export async function runSetupWizard(paths: AppPaths): Promise<AppConfig> {
   const defaultProjectName = path.basename(paths.cwd);
   const projectName = await askLine("Project name", defaultProjectName);
-  const defaultTopic = await askLine("Default research topic", "AI agent automation");
+  const defaultTopic = await askLine("Default research topic", "Multi-agent collaboration");
   const constraintsRaw = await askLine(
     "Default constraints (comma-separated)",
-    "recent papers,last 3 years"
+    "recent papers,last 5 years"
   );
   const defaultObjectiveMetric = await askLine(
     "Default objective metric",

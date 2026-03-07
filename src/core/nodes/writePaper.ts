@@ -1,19 +1,36 @@
 import { GraphNodeHandler } from "../stateGraph/types.js";
 import { writeRunArtifact } from "./helpers.js";
 import { NodeExecutionDeps } from "./types.js";
+import { RunContextMemory } from "../memory/runContextMemory.js";
+import { ConstraintProfile } from "../runConstraints.js";
+import { resolveConstraintProfile } from "../constraintProfile.js";
 
 export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
     id: "write_paper",
     async execute({ run, graph }) {
+      const runContextMemory = new RunContextMemory(run.memoryRefs.runContextPath);
+      const constraintProfile = await resolveConstraintProfile({
+        run,
+        runContextMemory,
+        llm: deps.llm,
+        eventStream: deps.eventStream,
+        node: "write_paper"
+      });
+      const paperProfile = constraintProfile.writing;
       const tex = [
         "\\documentclass{article}",
         "\\usepackage{graphicx}",
-        "\\title{AutoResearch Draft}",
+        `\\title{${latexEscape(run.title)}}`,
         "\\begin{document}",
         "\\maketitle",
-        "\\section{Introduction}",
+        "\\section{Research Context}",
         `Topic: ${latexEscape(run.topic)}.`,
+        `Objective metric: ${latexEscape(run.objectiveMetric)}.`,
+        "\\section{Writing Constraints}",
+        ...renderConstraintLines(run.constraints, constraintProfile),
+        "\\section{Introduction}",
+        "This draft follows the configured research and writing constraints.",
         "\\section{Method}",
         "See experiment plan and implementation artifacts.",
         "\\section{Results}",
@@ -67,4 +84,50 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
 
 function latexEscape(text: string): string {
   return text.replace(/[&_#%$]/g, " ").trim();
+}
+
+function renderConstraintLines(
+  constraints: string[],
+  profile: ConstraintProfile
+): string[] {
+  const lines: string[] = [];
+
+  if (profile.writing.targetVenue) {
+    lines.push(`Target venue: ${latexEscape(profile.writing.targetVenue)}.`);
+  }
+  if (profile.writing.toneHint) {
+    lines.push(`Tone: ${latexEscape(profile.writing.toneHint)}.`);
+  }
+  if (profile.writing.lengthHint) {
+    lines.push(`Length target: ${latexEscape(profile.writing.lengthHint)}.`);
+  }
+  if (profile.experiment.designNotes.length > 0) {
+    lines.push("Design guidance:");
+    for (const note of profile.experiment.designNotes) {
+      lines.push(`- ${latexEscape(note)}`);
+    }
+  }
+  if (profile.experiment.evaluationNotes.length > 0) {
+    lines.push("Evaluation guidance:");
+    for (const note of profile.experiment.evaluationNotes) {
+      lines.push(`- ${latexEscape(note)}`);
+    }
+  }
+  if (profile.assumptions.length > 0) {
+    lines.push("Constraint assumptions:");
+    for (const note of profile.assumptions) {
+      lines.push(`- ${latexEscape(note)}`);
+    }
+  }
+
+  if (constraints.length === 0) {
+    lines.push("No additional run constraints were provided.");
+    return lines;
+  }
+
+  lines.push("Run constraints:");
+  for (const constraint of constraints) {
+    lines.push(`- ${latexEscape(constraint)}`);
+  }
+  return lines;
 }

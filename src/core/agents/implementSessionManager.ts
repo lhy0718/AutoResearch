@@ -39,6 +39,16 @@ interface StructuredImplementResponse {
   metrics_path?: string;
 }
 
+interface CachedConstraintProfile {
+  profile?: {
+    source?: string;
+    collect?: Record<string, unknown>;
+    writing?: Record<string, unknown>;
+    experiment?: Record<string, unknown>;
+    assumptions?: string[];
+  };
+}
+
 export class ImplementSessionManager {
   constructor(private readonly deps: ImplementSessionDeps) {}
 
@@ -202,6 +212,7 @@ export class ImplementSessionManager {
     const previousSummary = await runContext.get<string>("implement_experiments.last_summary");
     const previousRunCommand = await runContext.get<string>("implement_experiments.run_command");
     const previousScript = await runContext.get<string>("implement_experiments.script");
+    const cachedConstraintProfile = await runContext.get<CachedConstraintProfile>("constraints.profile");
     const repoListing = await topLevelWorkspaceListing(this.deps.workspaceRoot);
 
     return [
@@ -209,6 +220,8 @@ export class ImplementSessionManager {
       `Topic: ${run.topic}`,
       `Objective metric: ${run.objectiveMetric}`,
       `Constraints: ${run.constraints.join(", ") || "none"}`,
+      "Resolved constraint profile:",
+      JSON.stringify(cachedConstraintProfile?.profile || {}, null, 2),
       `Workspace root: ${this.deps.workspaceRoot}`,
       `Run directory: ${runDir}`,
       `Required metrics output: ${metricsPath}`,

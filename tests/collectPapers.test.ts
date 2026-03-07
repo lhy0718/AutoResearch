@@ -12,6 +12,16 @@ import { RunRecord } from "../src/types.js";
 
 const ORIGINAL_CWD = process.cwd();
 
+class JsonLLMClient extends MockLLMClient {
+  constructor(private readonly response: string) {
+    super();
+  }
+
+  override async complete(): Promise<{ text: string }> {
+    return { text: this.response };
+  }
+}
+
 afterEach(() => {
   process.chdir(ORIGINAL_CWD);
 });
@@ -517,5 +527,213 @@ describe("collectPapers bibtex", () => {
     expect(resultMetaRaw).toContain('"completed": false');
     expect(resultMetaRaw).toContain('"stored": 2');
     expect(resultMetaRaw).toContain('"fetchError": "Semantic Scholar request failed: 429"');
+  });
+
+  it("applies run constraints as default collect filters when command filters are absent", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-collect-constraints-"));
+    process.chdir(root);
+
+    const runId = "run-collect-constraints";
+    const run: RunRecord = {
+      version: 3,
+      workflowVersion: 3,
+      id: runId,
+      title: "Constrained collect",
+      topic: "AI agent automation",
+      constraints: ["last 5 years", "open access", "review papers", "minimum citations 25"],
+      objectiveMetric: "metric",
+      status: "running",
+      currentNode: "collect_papers",
+      latestSummary: undefined,
+      nodeThreads: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      graph: createDefaultGraphState(),
+      memoryRefs: {
+        runContextPath: `.autoresearch/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autoresearch/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autoresearch/runs/${runId}/memory/episodes.jsonl`
+      }
+    };
+
+    const memoryDir = path.join(root, ".autoresearch", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "collect_papers.request",
+            value: {
+              limit: 1,
+              sort: { field: "relevance", order: "desc" }
+            },
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const streamSearchPapers = vi.fn(() =>
+      batchStream([
+        {
+          paperId: "paper-1",
+          title: "New Paper 1",
+          authors: ["Alice Kim"],
+          citationCount: 25
+        }
+      ])
+    );
+
+    const node = createCollectPapersNode({
+      config: {
+        papers: {
+          max_results: 200
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {
+        streamSearchPapers,
+        getLastSearchDiagnostics: vi.fn(() => ({ attemptCount: 0, attempts: [] }))
+      } as any
+    });
+
+    const result = await node.execute({
+      run,
+      graph: run.graph
+    });
+
+    expect(result.status).toBe("success");
+    expect(streamSearchPapers).toHaveBeenCalledTimes(1);
+    expect(streamSearchPapers.mock.calls[0]?.[0]).toMatchObject({
+      query: "AI agent automation",
+      filters: {
+        openAccessPdf: true,
+        publicationDateOrYear: `${new Date().getFullYear() - 4}:`,
+        publicationTypes: ["Review"],
+        minCitationCount: 25
+      }
+    });
+
+    const requestRaw = await readFile(
+      path.join(root, ".autoresearch", "runs", runId, "collect_request.json"),
+      "utf8"
+    );
+    expect(requestRaw).toContain('"openAccessPdf": true');
+    expect(requestRaw).toContain('"publicationTypes": [');
+    expect(requestRaw).toContain('"Review"');
+    expect(requestRaw).toContain('"minCitationCount": 25');
+  });
+
+  it("uses llm-derived constraint defaults when heuristics would miss them", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-collect-constraint-profile-"));
+    process.chdir(root);
+
+    const runId = "run-collect-constraint-profile";
+    const run: RunRecord = {
+      version: 3,
+      workflowVersion: 3,
+      id: runId,
+      title: "Seven Year Retrieval",
+      topic: "AI agent automation",
+      constraints: ["Prefer open pdfs from the past seven years with at least 42 citations."],
+      objectiveMetric: "metric",
+      status: "running",
+      currentNode: "collect_papers",
+      latestSummary: undefined,
+      nodeThreads: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      graph: createDefaultGraphState(),
+      memoryRefs: {
+        runContextPath: `.autoresearch/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autoresearch/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autoresearch/runs/${runId}/memory/episodes.jsonl`
+      }
+    };
+
+    const memoryDir = path.join(root, ".autoresearch", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "collect_papers.request",
+            value: {
+              query: "Multi-Agent Collaboration",
+              limit: 10,
+              sort: { field: "relevance", order: "desc" }
+            },
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const streamSearchPapers = vi.fn(() =>
+      batchStream([
+        {
+          paperId: "paper-1",
+          title: "Constraint Profile Paper",
+          authors: ["Alice Kim"]
+        }
+      ])
+    );
+
+    const node = createCollectPapersNode({
+      config: {
+        papers: {
+          max_results: 200
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new JsonLLMClient(
+        JSON.stringify({
+          collect: {
+            lastYears: 7,
+            minCitationCount: 42,
+            openAccessPdf: true
+          },
+          writing: {},
+          experiment: {
+            designNotes: ["Prefer recent evidence over old benchmarks."],
+            implementationNotes: [],
+            evaluationNotes: []
+          },
+          assumptions: []
+        })
+      ),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {
+        streamSearchPapers,
+        getLastSearchDiagnostics: vi.fn(() => ({ attemptCount: 0, attempts: [] }))
+      } as any
+    });
+
+    const result = await node.execute({
+      run,
+      graph: run.graph
+    });
+
+    expect(result.status).toBe("success");
+    expect(streamSearchPapers).toHaveBeenCalledTimes(1);
+    expect(streamSearchPapers.mock.calls[0]?.[0]).toMatchObject({
+      filters: {
+        openAccessPdf: true,
+        minCitationCount: 42,
+        publicationDateOrYear: "2020:"
+      }
+    });
   });
 });

@@ -35,7 +35,7 @@ function makeConfig(): AppConfig {
       per_second_limit: 1
     },
     research: {
-      default_topic: "AI agent automation",
+      default_topic: "Multi-agent collaboration",
       default_constraints: ["recent papers"],
       default_objective_metric: "reproducibility"
     },

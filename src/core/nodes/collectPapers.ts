@@ -11,6 +11,8 @@ import {
   SemanticScholarSearchRequest
 } from "../../tools/semanticScholar.js";
 import { BibtexMode } from "../commands/collectOptions.js";
+import { mergeCollectConstraintDefaults } from "../runConstraints.js";
+import { resolveConstraintProfile } from "../constraintProfile.js";
 
 interface CollectPapersNodeRequest {
   query?: string;
@@ -63,10 +65,18 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
     async execute({ run, graph, abortSignal }) {
       const runContextMemory = new RunContextMemory(run.memoryRefs.runContextPath);
       const longTermStore = new LongTermStore(run.memoryRefs.longTermPath);
+      const constraintProfile = await resolveConstraintProfile({
+        run,
+        runContextMemory,
+        llm: deps.llm,
+        eventStream: deps.eventStream,
+        node: "collect_papers"
+      });
       const requestFromContext = await runContextMemory.get<CollectPapersNodeRequest>("collect_papers.request");
       const normalizedRequest = normalizeCollectRequest({
         request: requestFromContext,
         topic: run.topic,
+        constraintProfile,
         configuredLimit: deps.config.papers.max_results
       });
       const mode: "replace" | "additional" =
@@ -290,6 +300,7 @@ export function buildBibtexEntry(paper: SemanticScholarPaper, mode: BibtexMode =
 function normalizeCollectRequest(input: {
   request?: CollectPapersNodeRequest;
   topic: string;
+  constraintProfile: { collect: CollectPapersNodeRequest["filters"] };
   configuredLimit: number;
 }): SemanticScholarSearchRequest {
   const configuredLimit = Math.max(1, input.configuredLimit);
@@ -315,7 +326,9 @@ function normalizeCollectRequest(input: {
       field: sortField,
       order: sortOrder
     },
-    filters: buildSemanticScholarFilters(request?.filters)
+    filters: buildSemanticScholarFilters(
+      mergeCollectConstraintDefaults(request?.filters, input.constraintProfile.collect)
+    )
   };
 }
 
