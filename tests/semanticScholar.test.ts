@@ -185,4 +185,46 @@ describe("SemanticScholarClient", () => {
     expect(urls.map((url) => url.searchParams.get("offset"))).toEqual(["0", "50", "100"]);
     expect(papers).toHaveLength(120);
   });
+
+  it("enforces a minimum interval between sequential requests at 1 RPS", async () => {
+    vi.useFakeTimers();
+
+    const makeRows = (count: number, start: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        paperId: `p${start + index}`,
+        title: `Paper ${start + index}`,
+        authors: []
+      }));
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ data: makeRows(100, 0) })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ data: makeRows(1, 100) })
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new SemanticScholarClient({
+      apiKey: "test-key",
+      perSecondLimit: 1,
+      maxRetries: 2
+    });
+    const promise = client.searchPapers({
+      query: "agent",
+      limit: 101,
+      sort: { field: "relevance" }
+    });
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(100);
+    const papers = await promise;
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(papers).toHaveLength(101);
+  });
 });

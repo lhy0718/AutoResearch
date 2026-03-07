@@ -1,5 +1,4 @@
 import { GraphNodeHandler } from "../stateGraph/types.js";
-import { buildDefaultPlan, executeReWOO, WorkerTool } from "../agents/runtime/rewoo.js";
 import { appendJsonl, writeRunArtifact } from "./helpers.js";
 import { NodeExecutionDeps } from "./types.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
@@ -60,24 +59,6 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         topic: run.topic,
         configuredLimit: deps.config.papers.max_results,
         overrideLimit
-      });
-      const tools: WorkerTool[] = [
-        {
-          name: "summarize",
-          run: async (input: string) => `Collection objective: ${input.slice(0, 200)}`
-        },
-        {
-          name: "finalize",
-          run: async (input: string) => `done: ${input.slice(0, 200)}`
-        }
-      ];
-
-      const rewoo = await executeReWOO({
-        runId: run.id,
-        node: "collect_papers",
-        plan: buildDefaultPlan(`Collect papers for query: ${normalizedRequest.query}`),
-        tools,
-        eventStream: deps.eventStream
       });
 
       let papers: Awaited<ReturnType<typeof deps.semanticScholar.searchPapers>> = [];
@@ -162,15 +143,15 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           status: "failure",
           error: failureMessage,
           summary: failureMessage,
-          toolCallsUsed: rewoo.toolCallsUsed + 1
+          toolCallsUsed: 1
         };
       }
 
       return {
         status: "success",
-        summary: `Semantic Scholar fetched ${corpus.length} papers for "${normalizedRequest.query}". ${rewoo.summary || ""}`.trim(),
+        summary: `Semantic Scholar fetched ${corpus.length} papers for "${normalizedRequest.query}".`,
         needsApproval: true,
-        toolCallsUsed: rewoo.toolCallsUsed + 1
+        toolCallsUsed: 1
       };
     }
   };

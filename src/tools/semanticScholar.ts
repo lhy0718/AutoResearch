@@ -74,6 +74,8 @@ export class SemanticScholarClient {
   private readonly apiKey?: string;
   private readonly perSecondLimit: number;
   private readonly maxRetries: number;
+  private nextRequestAtMs = 0;
+  private throttleQueue: Promise<void> = Promise.resolve();
 
   constructor(opts: SemanticScholarClientOptions) {
     this.apiKey = opts.apiKey;
@@ -312,6 +314,7 @@ export class SemanticScholarClient {
     for (let attempt = 1; attempt <= this.maxRetries; attempt += 1) {
       throwIfAborted(abortSignal);
       try {
+        await this.waitForRateLimitSlot(abortSignal);
         const response = await fetch(endpoint, {
           headers: {
             ...(this.apiKey ? { "x-api-key": this.apiKey } : {})
@@ -339,6 +342,20 @@ export class SemanticScholarClient {
     }
 
     throw lastError instanceof Error ? lastError : new Error("Semantic Scholar request failed");
+  }
+
+  private async waitForRateLimitSlot(abortSignal?: AbortSignal): Promise<void> {
+    const ticket = this.throttleQueue.then(async () => {
+      throwIfAborted(abortSignal);
+      const waitMs = Math.max(0, this.nextRequestAtMs - Date.now());
+      if (waitMs > 0) {
+        await delay(waitMs, undefined, { signal: abortSignal });
+      }
+      this.nextRequestAtMs = Date.now() + resolveMinimumRequestIntervalMs(this.perSecondLimit);
+    });
+
+    this.throttleQueue = ticket.catch(() => undefined);
+    await ticket;
   }
 }
 
@@ -396,7 +413,7 @@ function parseRetryAfterMs(value: string | null): number | undefined {
 }
 
 function resolveRetryDelayMs(error: unknown, attempt: number, perSecondLimit: number): number {
-  const baseDelay = Math.max(Math.ceil(1000 / Math.max(1, perSecondLimit)), 1000);
+  const baseDelay = resolveMinimumRequestIntervalMs(perSecondLimit);
   const backoff = Math.min(baseDelay * 2 ** (attempt - 1), 30_000);
   if (error instanceof SemanticScholarHttpError) {
     return Math.max(error.retryAfterMs ?? 0, backoff);
@@ -451,7 +468,7 @@ function resolveInterRequestDelayMs(
   perSecondLimit: number,
   hasApiKey: boolean
 ): number {
-  let delayMs = Math.ceil(1000 / Math.max(1, perSecondLimit));
+  let delayMs = resolveMinimumRequestIntervalMs(perSecondLimit);
   if (targetLimit >= 200) {
     delayMs = Math.max(delayMs, 1500);
   }
@@ -462,6 +479,14 @@ function resolveInterRequestDelayMs(
     delayMs = Math.max(delayMs, 2000);
   }
   return delayMs;
+}
+
+function resolveMinimumRequestIntervalMs(perSecondLimit: number): number {
+  const baseIntervalMs = Math.ceil(1000 / Math.max(1, perSecondLimit));
+  if (perSecondLimit <= 1) {
+    return Math.max(baseIntervalMs, 1100);
+  }
+  return baseIntervalMs;
 }
 
 function normalizePaper(item: Record<string, unknown>): SemanticScholarPaper | undefined {
