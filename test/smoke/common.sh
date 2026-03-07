@@ -2,6 +2,7 @@
 
 SMOKE_ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SMOKE_WORK_DIR="${SMOKE_ROOT_DIR}/test"
+SMOKE_DEFAULT_RUN_ID="9727e56e-19bc-46bb-bf5c-88d3be06af0d"
 readonly SMOKE_SCENARIO_ORDER=(
   pending
   execute
@@ -28,7 +29,146 @@ smoke_require_expect() {
   fi
 }
 
+smoke_prepare_workspace() {
+  rm -rf "$SMOKE_WORK_DIR/.autoresearch"
+  mkdir -p "$SMOKE_WORK_DIR/.autoresearch/runs" "$SMOKE_WORK_DIR/.autoresearch/logs"
+
+  cat > "$SMOKE_WORK_DIR/.autoresearch/config.yaml" <<'YAML'
+version: 1
+project_name: test
+providers:
+  llm_mode: codex_chatgpt_only
+  codex:
+    model: gpt-5.4
+    reasoning_effort: xhigh
+    auth_required: true
+    fast_mode: false
+papers:
+  semantic_scholar_api_key: ""
+  max_results: 200
+  per_second_limit: 1
+research:
+  default_topic: AI agent automation
+  default_constraints:
+    - recent papers
+    - last 5 years
+  default_objective_metric: state-of-the-art reproducibility
+workflow:
+  mode: agent_approval
+  wizard_enabled: true
+experiments:
+  runner: local_python
+  timeout_sec: 3600
+  allow_network: false
+paper:
+  template: acl
+  build_pdf: true
+  latex_engine: auto_install
+paths:
+  runs_dir: .autoresearch/runs
+  logs_dir: .autoresearch/logs
+YAML
+
+  node - "$SMOKE_WORK_DIR" "$SMOKE_DEFAULT_RUN_ID" <<'NODE'
+const fs = require("fs");
+const path = require("path");
+
+const [workDir, runId] = process.argv.slice(2);
+const now = new Date().toISOString();
+const runRoot = path.join(workDir, ".autoresearch", "runs", runId);
+const graphNodeIds = [
+  "collect_papers",
+  "analyze_papers",
+  "generate_hypotheses",
+  "design_experiments",
+  "implement_experiments",
+  "run_experiments",
+  "analyze_results",
+  "write_paper"
+];
+
+const nodeStates = Object.fromEntries(
+  graphNodeIds.map((id) => [id, { status: "pending", updatedAt: now }])
+);
+
+const runsFile = {
+  version: 3,
+  runs: [
+    {
+      version: 3,
+      workflowVersion: 3,
+      id: runId,
+      title: "AI agent automation",
+      topic: "AI agent automation",
+      constraints: ["recent papers", "last 5 years"],
+      objectiveMetric: "state-of-the-art reproducibility",
+      status: "pending",
+      currentNode: "collect_papers",
+      latestSummary: undefined,
+      nodeThreads: {},
+      createdAt: now,
+      updatedAt: now,
+      graph: {
+        currentNode: "collect_papers",
+        nodeStates,
+        retryCounters: {},
+        rollbackCounters: {},
+        budget: {
+          toolCallsUsed: 0,
+          wallClockMsUsed: 0,
+          policy: {
+            maxToolCalls: 150,
+            maxWallClockMinutes: 240,
+            maxUsd: 15
+          },
+          usdUsed: 0
+        },
+        checkpointSeq: 0,
+        retryPolicy: {
+          maxAttemptsPerNode: 3,
+          maxAutoRollbacksPerNode: 2
+        }
+      },
+      memoryRefs: {
+        runContextPath: `.autoresearch/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autoresearch/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autoresearch/runs/${runId}/memory/episodes.jsonl`
+      }
+    }
+  ]
+};
+
+fs.mkdirSync(path.join(workDir, ".autoresearch", "runs"), { recursive: true });
+fs.writeFileSync(
+  path.join(workDir, ".autoresearch", "runs", "runs.json"),
+  JSON.stringify(runsFile, null, 2) + "\n",
+  "utf8"
+);
+
+for (const dir of [
+  runRoot,
+  path.join(runRoot, "checkpoints"),
+  path.join(runRoot, "memory"),
+  path.join(runRoot, "patches"),
+  path.join(runRoot, "exec_logs"),
+  path.join(runRoot, "figures"),
+  path.join(runRoot, "paper")
+]) {
+  fs.mkdirSync(dir, { recursive: true });
+}
+
+fs.writeFileSync(
+  path.join(runRoot, "memory", "run_context.json"),
+  JSON.stringify({ version: 1, items: [] }, null, 2) + "\n",
+  "utf8"
+);
+fs.writeFileSync(path.join(runRoot, "memory", "long_term.jsonl"), "", "utf8");
+fs.writeFileSync(path.join(runRoot, "memory", "episodes.jsonl"), "", "utf8");
+NODE
+}
+
 smoke_run_id() {
+  smoke_prepare_workspace
   node -e '
     const fs = require("fs");
     const path = require("path");
