@@ -1,4 +1,5 @@
 import path from "node:path";
+import { promises as fs } from "node:fs";
 
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { GraphNodeHandler } from "../stateGraph/types.js";
@@ -6,6 +7,10 @@ import { appendJsonl, writeRunArtifact } from "./helpers.js";
 import { resolveRunCommand } from "./runCommandResolver.js";
 import { NodeExecutionDeps } from "./types.js";
 import { fileExists } from "../../utils/fs.js";
+import {
+  evaluateObjectiveMetric,
+  resolveObjectiveMetricProfile
+} from "../objectiveMetric.js";
 
 export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
@@ -129,6 +134,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         };
       }
 
+      let objectiveEvaluationSummary = "";
       await appendJsonl(run, "exec_logs/observations.jsonl", [
         {
           command: resolved.command,
@@ -142,11 +148,35 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         }
       ]);
 
+      let parsedMetrics: Record<string, unknown> = {};
+      try {
+        const rawMetrics = await fs.readFile(resolved.metricsPath, "utf8");
+        parsedMetrics = JSON.parse(rawMetrics) as Record<string, unknown>;
+      } catch {
+        parsedMetrics = {};
+      }
+
+      const objectiveProfile = await resolveObjectiveMetricProfile({
+        run,
+        runContextMemory: runContext,
+        llm: deps.llm,
+        eventStream: deps.eventStream,
+        node: "run_experiments"
+      });
+      const objectiveEvaluation = evaluateObjectiveMetric(
+        parsedMetrics,
+        objectiveProfile,
+        run.objectiveMetric
+      );
+      objectiveEvaluationSummary = objectiveEvaluation.summary;
+      await writeRunArtifact(run, "objective_evaluation.json", JSON.stringify(objectiveEvaluation, null, 2));
+
       await runContext.put("run_experiments.command", resolved.command);
       await runContext.put("run_experiments.cwd", resolved.cwd);
       await runContext.put("run_experiments.last_log_file", logFile);
       await runContext.put("run_experiments.exit_code", obs.exit_code ?? 0);
       await runContext.put("run_experiments.last_error", undefined);
+      await runContext.put("objective_metric.last_evaluation", objectiveEvaluation);
 
       deps.eventStream.emit({
         type: "OBS_RECEIVED",
@@ -157,10 +187,19 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           text: `Execution completed. Metrics written to ${resolved.metricsPath}`
         }
       });
+      deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId: run.id,
+        node: "run_experiments",
+        agentRole: "runner",
+        payload: {
+          text: objectiveEvaluation.summary
+        }
+      });
 
       return {
         status: "success",
-        summary: `Experiment run completed via ${resolved.command}`,
+        summary: `Experiment run completed via ${resolved.command}. ${objectiveEvaluationSummary}`,
         needsApproval: true,
         toolCallsUsed: resolved.testCommand ? 2 : 1
       };

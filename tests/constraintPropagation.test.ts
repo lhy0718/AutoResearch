@@ -179,7 +179,7 @@ describe("constraint propagation", () => {
 
     expect(designResult.status).toBe("success");
     expect(writeResult.status).toBe("success");
-    expect(llm.calls).toBe(1);
+    expect(llm.calls).toBe(2);
 
     const plan = await readFile(path.join(runDir, "experiment_plan.yaml"), "utf8");
     expect(plan).toContain("last_years: 7");
