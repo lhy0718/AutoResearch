@@ -25,7 +25,7 @@ async function main(): Promise<void> {
   }
 
   if (action.kind === "version") {
-    process.stdout.write("autoresearch 0.1.0\n");
+    process.stdout.write("autoresearch 1.0.0\n");
     return;
   }
 

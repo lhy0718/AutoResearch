@@ -28,6 +28,11 @@ export interface CompositeNaturalPlan {
   commands: string[];
 }
 
+export interface CollectContextFallback {
+  title?: string;
+  topic?: string;
+}
+
 export const SUPPORTED_NATURAL_INPUTS: SupportedNaturalInput[] = [
   {
     id: "supported_inputs",
@@ -247,7 +252,8 @@ export function resolveDeterministicPendingCommand(
 
   const collectRequest = extractCollectRequestFromNatural(text);
   if (collectRequest) {
-    const command = buildCollectSlashCommand(collectRequest, targetRun?.id);
+    const contextualized = applyCollectRequestContext(collectRequest, text, targetRun);
+    const command = buildCollectSlashCommand(contextualized, targetRun?.id);
     return buildPending(
       language,
       command,
@@ -303,8 +309,9 @@ export function extractCollectRequestFromNatural(text: string): CollectCommandRe
   const minCitationCount = extractMinCitations(raw);
   const openAccessPdf =
     /open[- ]access|오픈\s*액세스|오픈액세스/u.test(lower) ||
+    /pdf\s*(?:링크|link|url)?\s*(?:가|이)?\s*있는(?:\s*것(?:들)?)?(?:으로|만)?/u.test(raw) ||
     /pdf\s*(?:있는|있는\s*것|있는\s*것들)\s*만/u.test(raw) ||
-    /with\s+pdf|pdf\s+available|only\s+papers?\s+with\s+pdf/i.test(lower);
+    /with\s+(?:a\s+)?pdf(?:\s+link)?|pdf\s+available|only\s+papers?\s+with\s+pdf/i.test(lower);
   const publicationTypes = extractPublicationTypes(raw);
   const fieldsOfStudy = extractFieldFilters(raw);
   const venues = extractVenues(raw);
@@ -386,6 +393,32 @@ export function buildCollectSlashCommand(request: CollectCommandRequest, runId?:
   return parts.join(" ");
 }
 
+export function applyCollectRequestContext(
+  request: CollectCommandRequest,
+  text: string,
+  context?: CollectContextFallback
+): CollectCommandRequest {
+  if (!context) {
+    return request;
+  }
+
+  const next: CollectCommandRequest = {
+    ...request,
+    filters: {
+      ...request.filters
+    },
+    warnings: [...request.warnings]
+  };
+
+  if (shouldUseRunTitleQuery(text, request.query) && context.title) {
+    next.query = context.title;
+  } else if (shouldUseRunTopicQuery(text, request.query) && context.topic) {
+    next.query = context.topic;
+  }
+
+  return next;
+}
+
 function resolveNodeCommand(
   text: string,
   runId?: string
@@ -443,7 +476,12 @@ function resolveNodeCommand(
 
 function extractSort(text: string): CollectCommandRequest["sort"] {
   const lower = text.toLowerCase();
-  if (/인용|citation/u.test(lower)) {
+  if (
+    /(?:top|highest|most)\s+citations?|sort(?:ed)?\s+by\s+citations?|citation(?: count)?\s*(?:desc|ascending|descending|order|sort)|인용(?:수)?\s*(?:높|많|순|기준)/u.test(
+      lower
+    ) ||
+    /(?:높|많)은\s*인용/u.test(lower)
+  ) {
     return { field: "citationCount", order: /오름차순|asc|ascending/u.test(lower) ? "asc" : "desc" };
   }
   if (/최신|recent|latest|newest|publication date/u.test(lower)) {
@@ -461,9 +499,11 @@ function extractQuotedQuery(text: string): string | undefined {
 
 function extractTopicQuery(text: string): string | undefined {
   const patterns = [
+    /(.+?)\s*(?:와|과)?\s*관련(?:된|한)?\s*(?:최근\s*\d+\s*년(?:동안)?(?:의)?\s*)?(?:논문|paper|papers)/iu,
+    /(.+?)\s*(?:와|과)?\s*관련(?:된|한)?\s*(?:논문|paper|papers)/iu,
     /주제(?:는|가|로)?\s*(.+?)\s*(?:논문|paper|papers)/iu,
-    /(.+?)\s+\d+\s*(?:개|편)\s*(?:수집|collect|gather|fetch|search)/iu,
-    /(.+?)\s*(?:관련\s*)?(?:논문|paper|papers).*(?:수집|collect|gather|fetch|search)/iu,
+    /(.+?)\s+\d+\s*(?:개|편)\s*(?:수집|collect|gather|fetch|search|모아|찾아|가져와)/iu,
+    /(.+?)\s*(?:관련\s*)?(?:논문|paper|papers).*(?:수집|collect|gather|fetch|search|모아|찾아|가져와)/iu,
     /(?:about|on|for)\s+(.+?)\s+(?:papers?|collection|collect)/iu
   ];
   for (const pattern of patterns) {
@@ -488,6 +528,8 @@ function extractAdditionalCount(text: string): number | undefined {
 function extractLimitCount(text: string): number | undefined {
   const match =
     text.match(/(\d+)\s*(?:개|편)\s*(?:수집|collect|gather|fetch|search)/u) ||
+    text.match(/(\d+)\s*(?:개|편)(?!\s*(?:더|추가))/u) ||
+    text.match(/(\d+)\s+(?:papers?|items?)(?!\s*(?:more|additional))/iu) ||
     text.match(/(?:collect|gather|fetch|search)\s+(\d+)\s+(?:papers?|items?)/iu);
   return toPositiveInt(match?.[1]);
 }
@@ -642,9 +684,12 @@ function normalizeTopicQueryCandidate(value: string): string {
   let out = value.replace(/\s+/g, " ").trim();
   const leadingPatterns = [
     /^(?:수집\s*단계|collect_papers)\s*(?:로|으로)?\s*(?:이동(?:해서)?|돌아가(?:서)?|되돌아가(?:서)?|jump(?:\s+to)?|go\s+to|move\s+to)\s*/iu,
-    /^(?:논문|papers?)\s*/iu,
-    /^최근\s*\d+\s*년(?:동안)?\s*/u,
-    /^last\s+\d+\s+years?\s*/iu,
+    /^(?:지금\s*)?(?:현재\s*)?논문(?:을|를|들|들을)?\s*(?:모두|전부|전체)?\s*(?:삭제|제거|지워|없애)(?:하고|한 뒤|후에)\s*/u,
+    /^(?:clear|delete|remove)\s+(?:all\s+)?papers?\s*(?:and|then)\s*/iu,
+    /^(?:논문(?:을|를|들|들을)?|papers?)\s*/iu,
+    /^(?:지금|현재)\s*/u,
+    /^최근\s*\d+\s*년(?:동안)?(?:의)?\s*/u,
+    /^last\s+\d+\s+years?(?:\s+of)?\s*/iu,
     /^(?:관련도|relevance|최신순|latest|recent|newest|publication date|인용(?:수)?|citation(?: count)?)\s*(?:순(?:으로)?|order)?\s*/iu,
     /^(?:오픈\s*액세스|오픈액세스|open[- ]access)\s*/iu,
     /^(?:review|리뷰|dataset|데이터셋|meta[\s-]?analysis|메타분석)\s*/iu
@@ -660,7 +705,41 @@ function normalizeTopicQueryCandidate(value: string): string {
       }
     }
   }
-  return out.replace(/^(?:and|for|on|about)\s+/iu, "").trim();
+  return out
+    .replace(/^(?:and|for|on|about)\s+/iu, "")
+    .replace(/\s*(?:논문(?:들|을|를)?|papers?)$/iu, "")
+    .replace(/\s*최근\s*\d+\s*년(?:동안)?(?:의)?$/u, "")
+    .replace(/\s*last\s+\d+\s+years?(?:\s+of)?$/iu, "")
+    .replace(/\s*(?:와|과)$/u, "")
+    .replace(/\s*(?:관련(?:된|한)?)$/u, "")
+    .trim();
+}
+
+function shouldUseRunTitleQuery(text: string, query?: string): boolean {
+  if (!/(?:run\s+title|\btitle\b|제목)/iu.test(text)) {
+    return false;
+  }
+  const normalized = normalizeFallbackQuery(query);
+  return !normalized || normalized === "title" || normalized === "run title" || normalized === "제목";
+}
+
+function shouldUseRunTopicQuery(text: string, query?: string): boolean {
+  if (!/(?:run\s+topic|\btopic\b|주제)/iu.test(text)) {
+    return false;
+  }
+  const normalized = normalizeFallbackQuery(query);
+  return !normalized || normalized === "topic" || normalized === "run topic" || normalized === "주제";
+}
+
+function normalizeFallbackQuery(value: string | undefined): string {
+  return (
+    value
+      ?.replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase()
+      .replace(/^(?:current|현재)\s+/u, "")
+      .trim() ?? ""
+  );
 }
 
 function escapeRegex(value: string): string {

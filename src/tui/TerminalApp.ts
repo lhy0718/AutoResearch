@@ -21,6 +21,7 @@ import { parseSlashCommand } from "../core/commands/parseSlash.js";
 import { buildNaturalAssistantResponse, matchesNaturalAssistantIntent } from "../core/commands/naturalAssistant.js";
 import { buildNaturalAssistantResponseWithLlm } from "../core/commands/naturalLlmAssistant.js";
 import {
+  applyCollectRequestContext,
   buildCollectSlashCommand,
   extractCollectRequestFromNatural,
   formatSupportedNaturalInputLines,
@@ -765,8 +766,15 @@ export class TerminalApp {
       return true;
     }
 
+    const activeRun = this.getActiveIndexedRun();
     const compositePlan = buildCompositeNaturalCommandPlan(text, {
-      runId: this.getActiveIndexedRun()?.id
+      runId: activeRun?.id,
+      run: activeRun
+        ? {
+            title: activeRun.title,
+            topic: activeRun.topic
+          }
+        : undefined
     });
     if (compositePlan) {
       for (const line of compositePlan.lines) {
@@ -2488,6 +2496,10 @@ function samePendingPlan(left: string[], right: string[]): boolean {
 export function buildCompositeNaturalCommandPlan(
   text: string,
   context: {
+    run?: {
+      title: string;
+      topic: string;
+    };
     runId?: string;
   }
 ): CompositeNaturalCommandPlan | undefined {
@@ -2531,9 +2543,10 @@ export function buildCompositeNaturalCommandPlan(
 
   const collectRequest = extractCollectRequestFromNatural(text);
   if (collectRequest) {
+    const contextualized = applyCollectRequestContext(collectRequest, text, context.run);
     candidates.push({
       start: lastMatchIndex(text, [/collect/iu, /gather/iu, /fetch/iu, /search/iu, /수집/u, /모아/u, /찾아/u, /가져와/u]),
-      command: buildCollectSlashCommand(collectRequest, runId)
+      command: buildCollectSlashCommand(contextualized, runId)
     });
   }
 

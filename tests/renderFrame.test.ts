@@ -50,7 +50,7 @@ const suggestions: SuggestionItem[] = [
 describe("buildFrame", () => {
   it("applies distinct colors for help sections, warnings, successes, and errors", () => {
     const frame = buildFrame({
-      appVersion: "0.1.0",
+      appVersion: "1.0.0",
       busy: false,
       thinking: false,
       thinkingFrame: 0,
@@ -76,7 +76,7 @@ describe("buildFrame", () => {
 
   it("highlights direct answers and numbered titles in white", () => {
     const frame = buildFrame({
-      appVersion: "0.1.0",
+      appVersion: "1.0.0",
       busy: false,
       thinking: false,
       thinkingFrame: 0,
@@ -98,7 +98,7 @@ describe("buildFrame", () => {
 
   it("renders compact header with version", () => {
     const frame = buildFrame({
-      appVersion: "0.1.0",
+      appVersion: "1.0.0",
       busy: false,
       thinking: false,
       thinkingFrame: 0,
@@ -111,12 +111,12 @@ describe("buildFrame", () => {
       colorEnabled: false
     });
 
-    expect(stripAnsi(frame.lines[0])).toBe("AutoResearch v0.1.0");
+    expect(stripAnsi(frame.lines[0])).toBe("AutoResearch v1.0.0");
   });
 
   it("does not render Busy label", () => {
     const frame = buildFrame({
-      appVersion: "0.1.0",
+      appVersion: "1.0.0",
       busy: true,
       thinking: false,
       thinkingFrame: 0,
@@ -134,7 +134,7 @@ describe("buildFrame", () => {
 
   it("places suggestions below the input line", () => {
     const frame = buildFrame({
-      appVersion: "0.1.0",
+      appVersion: "1.0.0",
       busy: false,
       thinking: false,
       thinkingFrame: 0,
@@ -158,7 +158,7 @@ describe("buildFrame", () => {
 
   it("prefixes regular log lines with INFO/WARN/OK/ERR tags", () => {
     const frame = buildFrame({
-      appVersion: "0.1.0",
+      appVersion: "1.0.0",
       busy: false,
       thinking: false,
       thinkingFrame: 0,
@@ -180,7 +180,7 @@ describe("buildFrame", () => {
 
   it("keeps automatic replan logs out of error styling", () => {
     const frame = buildFrame({
-      appVersion: "0.1.0",
+      appVersion: "1.0.0",
       busy: false,
       thinking: false,
       thinkingFrame: 0,
@@ -207,7 +207,7 @@ describe("buildFrame", () => {
 
   it("computes cursor column at the end of '> input'", () => {
     const frame = buildFrame({
-      appVersion: "0.1.0",
+      appVersion: "1.0.0",
       busy: false,
       thinking: false,
       thinkingFrame: 0,
@@ -225,7 +225,7 @@ describe("buildFrame", () => {
 
   it("computes cursor column with wide characters", () => {
     const frame = buildFrame({
-      appVersion: "0.1.0",
+      appVersion: "1.0.0",
       busy: false,
       thinking: false,
       thinkingFrame: 0,
@@ -243,7 +243,7 @@ describe("buildFrame", () => {
 
   it("highlights selected suggestion with blue background", () => {
     const frame = buildFrame({
-      appVersion: "0.1.0",
+      appVersion: "1.0.0",
       busy: false,
       thinking: false,
       thinkingFrame: 0,
@@ -263,7 +263,7 @@ describe("buildFrame", () => {
 
   it("renders selection menu rows when active", () => {
     const frame = buildFrame({
-      appVersion: "0.1.0",
+      appVersion: "1.0.0",
       busy: true,
       thinking: false,
       thinkingFrame: 0,
@@ -299,7 +299,7 @@ describe("buildFrame", () => {
 
   it("highlights selected selection menu row", () => {
     const frame = buildFrame({
-      appVersion: "0.1.0",
+      appVersion: "1.0.0",
       busy: true,
       thinking: false,
       thinkingFrame: 0,
@@ -328,7 +328,7 @@ describe("buildFrame", () => {
 
   it("renders moving monochrome gradient on Thinking text", () => {
     const a = buildFrame({
-      appVersion: "0.1.0",
+      appVersion: "1.0.0",
       busy: true,
       thinking: true,
       thinkingFrame: 1,
@@ -341,7 +341,7 @@ describe("buildFrame", () => {
       colorEnabled: true
     });
     const b = buildFrame({
-      appVersion: "0.1.0",
+      appVersion: "1.0.0",
       busy: true,
       thinking: true,
       thinkingFrame: 8,

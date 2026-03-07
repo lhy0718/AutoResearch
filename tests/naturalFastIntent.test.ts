@@ -79,4 +79,22 @@ describe("natural fast intent detection", () => {
       '/agent collect "agent planning" --sort relevance --limit 20 --run run-123'
     ]);
   });
+
+  it("uses the active run title when a composite collect prompt references title", () => {
+    const plan = buildCompositeNaturalCommandPlan(
+      "논문을 모두 삭제하고 title과 관련한 논문들을 최근 5년 30개, pdf 링크 있는 것으로 모아줘",
+      {
+        runId: "run-123",
+        run: {
+          title: "Multi-Agent Collaboration",
+          topic: "AI agent automation"
+        }
+      }
+    );
+
+    expect(plan?.commands).toEqual([
+      "/agent clear collect_papers run-123",
+      '/agent collect "Multi-Agent Collaboration" --last-years 5 --sort relevance --limit 30 --open-access --run run-123'
+    ]);
+  });
 });
