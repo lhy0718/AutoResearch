@@ -351,7 +351,7 @@ describe("analyzePapers node", () => {
     await runContext.put("analyze_papers.request", {
       topN: 2,
       selectionMode: "top_n",
-      selectionPolicy: "hybrid_title_citation_recency_v1"
+      selectionPolicy: "hybrid_title_citation_recency_pdf_v2"
     });
 
     const node = createAnalyzePapersNode({
@@ -405,7 +405,7 @@ describe("analyzePapers node", () => {
     await runContext.put("analyze_papers.request", {
       topN: 2,
       selectionMode: "top_n",
-      selectionPolicy: "hybrid_title_citation_recency_v1"
+      selectionPolicy: "hybrid_title_citation_recency_pdf_v2"
     });
 
     const firstNode = createAnalyzePapersNode({
@@ -433,7 +433,7 @@ describe("analyzePapers node", () => {
     await runContext.put("analyze_papers.request", {
       topN: 1,
       selectionMode: "top_n",
-      selectionPolicy: "hybrid_title_citation_recency_v1"
+      selectionPolicy: "hybrid_title_citation_recency_pdf_v2"
     });
     const secondNode = createAnalyzePapersNode({
       config: {

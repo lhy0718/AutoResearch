@@ -104,6 +104,8 @@ describe("TerminalApp pending natural plan execution", () => {
     app.runIndex = [run];
     app.activeRunId = run.id;
     app.resolveTargetRun = vi.fn().mockResolvedValue(run);
+    const startThinking = vi.spyOn(app, "startThinking" as never);
+    const stopThinking = vi.spyOn(app, "stopThinking" as never);
     app.codex = {
       runForText: async () =>
         JSON.stringify({
@@ -115,6 +117,9 @@ describe("TerminalApp pending natural plan execution", () => {
     const handled = await app.handleFastNaturalIntent("30편 분석 진행해줘", new AbortController().signal);
 
     expect(handled).toBe(true);
+    expect(startThinking).toHaveBeenCalled();
+    expect(stopThinking).toHaveBeenCalled();
+    expect(app.logs).toContain(`Resolved slash command: /agent run analyze_papers ${run.id} --top-n 30`);
     expect(app.logs).toContain("Execution intent detected. Pending command: 상위 30개 논문 분석");
     expect(app.pendingNaturalCommand?.commands).toEqual([`/agent run analyze_papers ${run.id} --top-n 30`]);
     expect(app.pendingNaturalCommand?.displayCommands).toEqual(["상위 30개 논문 분석"]);

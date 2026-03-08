@@ -63,7 +63,8 @@ describe("collectPapers bibtex", () => {
     expect(entry).toContain("journal = {NeurIPS},");
     expect(entry).toContain("doi = {10.1000/xyz-123},");
     expect(entry).toContain("url = {https://example.org/paper},");
-    expect(entry).toContain("note = {arXiv:2501.01234},");
+    expect(entry).toContain("eprint = {2501.01234},");
+    expect(entry).toContain("archivePrefix = {arXiv},");
   });
 
   it("builds bibtex file for multiple papers", () => {
@@ -323,7 +324,9 @@ describe("collectPapers bibtex", () => {
     });
 
     expect(result.status).toBe("success");
-    expect(result.summary).toBe('Semantic Scholar stored 1 papers for "Multi-Agent Collaboration".');
+    expect(result.summary).toBe(
+      'Semantic Scholar stored 1 papers for "Multi-Agent Collaboration". PDF recovered 0; BibTeX enriched 0.'
+    );
     expect(result.summary).not.toContain("Collection objective");
     expect(eventStream.history().some((event) => event.type === "TOOL_CALLED")).toBe(false);
     expect(
@@ -439,7 +442,7 @@ describe("collectPapers bibtex", () => {
 
     expect(result.status).toBe("success");
     expect(result.summary).toBe(
-      'Semantic Scholar stored 3 total papers for "Multi-Agent Collaboration" (2 newly added).'
+      'Semantic Scholar stored 3 total papers for "Multi-Agent Collaboration" (2 newly added). PDF recovered 0; BibTeX enriched 0.'
     );
     const corpus = await readFile(path.join(runDir, "corpus.jsonl"), "utf8");
     expect(corpus).toContain('"paper_id":"paper-1"');

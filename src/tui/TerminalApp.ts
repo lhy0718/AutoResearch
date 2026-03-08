@@ -50,6 +50,12 @@ import { buildAnimatedStatusText, buildFrame, buildThinkingText, RenderFrameOutp
 import { supportsColor } from "./theme.js";
 import { OpenAiResponsesTextClient } from "../integrations/openai/responsesTextClient.js";
 import {
+  CollectProgressState,
+  formatCollectActivityLabel,
+  shouldClearCollectProgress,
+  updateCollectProgressFromLog
+} from "./activityStatus.js";
+import {
   deleteBackward,
   deleteToLineStart,
   deletePreviousWord,
@@ -165,6 +171,7 @@ export class TerminalApp {
   private steeringBufferDuringThinking: string[] = [];
   private activeBusyAbortController?: AbortController;
   private activeBusyLabel?: string;
+  private collectProgress?: CollectProgressState;
   private readonly corpusInsightsCache = new Map<string, CorpusInsightsCacheEntry>();
   private stopped = false;
   private resolver?: () => void;
@@ -796,6 +803,8 @@ export class TerminalApp {
 
     const activeRun = this.getActiveIndexedRun();
     if (looksLikeStructuredActionRequest(text)) {
+      this.startThinking();
+      this.render();
       try {
         const structuredPlan = await extractStructuredActionPlan({
           input: text,
@@ -826,6 +835,8 @@ export class TerminalApp {
         }
         const message = error instanceof Error ? error.message : String(error);
         this.pushLog(`Structured action extraction failed: ${message}`);
+      } finally {
+        this.stopThinking();
       }
     }
 
@@ -1523,7 +1534,7 @@ export class TerminalApp {
         await runContext.put("analyze_papers.request", {
           topN: parsed.topN ?? null,
           selectionMode: parsed.topN ? "top_n" : "all",
-          selectionPolicy: "hybrid_title_citation_recency_v1"
+          selectionPolicy: "hybrid_title_citation_recency_pdf_v2"
         });
       }
 
@@ -2255,6 +2266,9 @@ export class TerminalApp {
     const displayCommands = this.resolvePendingDisplayCommands(pendingState);
 
     if (totalSteps === 1) {
+      if (displayCommands[0] && displayCommands[0] !== pendingState.command) {
+        this.pushLog(`Resolved slash command: ${pendingState.command}`);
+      }
       this.pushLog(`Execution intent detected. Pending command: ${displayCommands[0]}`);
       this.pushLog("Type 'y' to run now, or 'n' to cancel.");
       return;
@@ -2317,6 +2331,7 @@ export class TerminalApp {
       return;
     }
     this.activeRunId = runId;
+    this.collectProgress = undefined;
     await this.loadHistoryForRun(runId);
   }
 
@@ -2382,6 +2397,10 @@ export class TerminalApp {
   }
 
   private pushLog(line: string): void {
+    this.collectProgress = updateCollectProgressFromLog(this.collectProgress, line);
+    if (shouldClearCollectProgress(line)) {
+      this.collectProgress = undefined;
+    }
     this.logs.push(line);
     if (this.logs.length > 200) {
       this.logs = this.logs.slice(-200);
@@ -2453,6 +2472,9 @@ export class TerminalApp {
 
     const explicit = this.activeBusyLabel?.trim();
     if (explicit && explicit !== "operation") {
+      if (explicit.startsWith("Collecting")) {
+        return formatCollectActivityLabel(this.collectProgress);
+      }
       return explicit;
     }
 
@@ -2463,6 +2485,9 @@ export class TerminalApp {
     const nodeStatus = run.graph.nodeStates[run.currentNode]?.status;
     if (nodeStatus !== "running") {
       return undefined;
+    }
+    if (run.currentNode === "collect_papers") {
+      return formatCollectActivityLabel(this.collectProgress);
     }
     return describeNodeActivity(run.currentNode);
   }
@@ -3255,7 +3280,7 @@ function isLineMoveRightShortcut(str: string, key: readline.Key): boolean {
 function nodeArtifactTargets(node: GraphNodeId): string[] {
   switch (node) {
     case "collect_papers":
-      return ["corpus.jsonl", "bibtex.bib", "collect_request.json", "collect_result.json"];
+      return ["corpus.jsonl", "bibtex.bib", "collect_request.json", "collect_result.json", "collect_enrichment.jsonl"];
     case "analyze_papers":
       return ["paper_summaries.jsonl", "evidence_store.jsonl", "analysis_manifest.json", "analysis_cache"];
     case "generate_hypotheses":

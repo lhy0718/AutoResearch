@@ -6,13 +6,14 @@ import { AnalysisCorpusRow } from "./paperText.js";
 export interface AnalysisSelectionRequest {
   topN: number | null;
   selectionMode: "all" | "top_n";
-  selectionPolicy: "hybrid_title_citation_recency_v1";
+  selectionPolicy: "hybrid_title_citation_recency_pdf_v2";
 }
 
 export interface DeterministicScoreBreakdown {
   title_similarity_score: number;
   citation_score: number;
   recency_score: number;
+  pdf_availability_score: number;
 }
 
 export interface RankedPaperCandidate {
@@ -91,7 +92,7 @@ export function normalizeAnalysisSelectionRequest(topN?: number | null): Analysi
   return {
     topN: normalizedTopN,
     selectionMode: normalizedTopN ? "top_n" : "all",
-    selectionPolicy: "hybrid_title_citation_recency_v1"
+    selectionPolicy: "hybrid_title_citation_recency_pdf_v2"
   };
 }
 
@@ -104,7 +105,7 @@ export async function selectPapersForAnalysis(args: {
   onProgress?: (message: string) => void;
 }): Promise<PaperSelectionResult> {
   args.onProgress?.(
-    `Deterministic pre-rank started for ${args.corpusRows.length} paper(s) using title/topic similarity, citation count, and recency.`
+    `Deterministic pre-rank started for ${args.corpusRows.length} paper(s) using title/topic similarity, citation count, recency, and PDF availability.`
   );
   const ranked = rankPapersDeterministically(args.runTitle || args.runTopic, args.corpusRows);
   const totalCandidates = ranked.length;
@@ -221,8 +222,14 @@ function rankPapersDeterministically(referenceTitle: string, corpusRows: Analysi
           ? Math.log1p(paper.citation_count ?? 0) / maxLogCitation
           : 0;
       const recencyScore = computeRecencyScore(paper.year, currentYear);
+      const pdfAvailabilityScore = paper.pdf_url ? 1 : 0;
       const deterministicScore = Number(
-        (titleSimilarityScore * 0.55 + citationScore * 0.3 + recencyScore * 0.15).toFixed(6)
+        (
+          titleSimilarityScore * 0.45 +
+          citationScore * 0.25 +
+          recencyScore * 0.1 +
+          pdfAvailabilityScore * 0.2
+        ).toFixed(6)
       );
       return {
         paper,
@@ -232,7 +239,8 @@ function rankPapersDeterministically(referenceTitle: string, corpusRows: Analysi
         scoreBreakdown: {
           title_similarity_score: Number(titleSimilarityScore.toFixed(6)),
           citation_score: Number(citationScore.toFixed(6)),
-          recency_score: Number(recencyScore.toFixed(6))
+          recency_score: Number(recencyScore.toFixed(6)),
+          pdf_availability_score: Number(pdfAvailabilityScore.toFixed(6))
         }
       };
     })
@@ -472,6 +480,7 @@ function compareDeterministicCandidates(left: RankedPaperCandidate, right: Ranke
   return (
     right.deterministicScore - left.deterministicScore ||
     right.scoreBreakdown.title_similarity_score - left.scoreBreakdown.title_similarity_score ||
+    right.scoreBreakdown.pdf_availability_score - left.scoreBreakdown.pdf_availability_score ||
     (right.paper.citation_count ?? 0) - (left.paper.citation_count ?? 0) ||
     (right.paper.year ?? 0) - (left.paper.year ?? 0) ||
     left.paper.paper_id.localeCompare(right.paper.paper_id)
@@ -485,6 +494,7 @@ function compareHybridCandidates(left: RankedPaperCandidate, right: RankedPaperC
     leftRerank - rightRerank ||
     right.deterministicScore - left.deterministicScore ||
     right.scoreBreakdown.title_similarity_score - left.scoreBreakdown.title_similarity_score ||
+    right.scoreBreakdown.pdf_availability_score - left.scoreBreakdown.pdf_availability_score ||
     (right.paper.citation_count ?? 0) - (left.paper.citation_count ?? 0) ||
     (right.paper.year ?? 0) - (left.paper.year ?? 0) ||
     left.paper.paper_id.localeCompare(right.paper.paper_id)

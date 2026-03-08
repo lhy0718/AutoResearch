@@ -161,6 +161,30 @@ describe("buildFrame", () => {
     expect(plain[promptIndex - 2]).toBe("Collecting...");
   });
 
+  it("renders collecting progress with ETA above the input", () => {
+    const graph = createDefaultGraphState();
+    graph.currentNode = "collect_papers";
+    graph.nodeStates.collect_papers.status = "running";
+
+    const frame = buildFrame({
+      appVersion: "1.0.0",
+      busy: true,
+      activityLabel: "Collecting... 199/300 (ETA ~2m 40s)",
+      thinking: false,
+      thinkingFrame: 0,
+      run: makeRun({ graph, currentNode: "collect_papers" }),
+      logs: [],
+      input: "",
+      inputCursor: 0,
+      suggestions: [],
+      selectedSuggestion: 0,
+      colorEnabled: false
+    });
+
+    const plain = frame.lines.map((line) => stripAnsi(line));
+    expect(plain).toContain("Collecting... 199/300 (ETA ~2m 40s)");
+  });
+
   it("places suggestions below the input line", () => {
     const frame = buildFrame({
       appVersion: "1.0.0",

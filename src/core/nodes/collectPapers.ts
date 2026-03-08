@@ -1,5 +1,5 @@
 import { GraphNodeHandler } from "../stateGraph/types.js";
-import { appendJsonl, runArtifactsDir, safeRead, writeRunArtifact } from "./helpers.js";
+import { appendJsonl, safeRead, writeRunArtifact } from "./helpers.js";
 import { NodeExecutionDeps } from "./types.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { LongTermStore } from "../memory/longTermStore.js";
@@ -13,6 +13,10 @@ import {
 import { BibtexMode } from "../commands/collectOptions.js";
 import { mergeCollectConstraintDefaults } from "../runConstraints.js";
 import { resolveConstraintProfile } from "../constraintProfile.js";
+export { buildBibtexEntry, buildBibtexFile } from "../collection/bibtex.js";
+import { buildBibtexFile, normalizeS2Bibtex } from "../collection/bibtex.js";
+import { enrichCollectedPaper, mergeStoredCorpusRows } from "../collection/enrichment.js";
+import { CollectEnrichmentLogEntry, StoredCorpusRow } from "../collection/types.js";
 
 interface CollectPapersNodeRequest {
   query?: string;
@@ -56,6 +60,10 @@ interface CollectResultMeta {
   };
   filters: SemanticScholarSearchFilters;
   bibtexMode: BibtexMode;
+  pdfRecovered: number;
+  bibtexEnriched: number;
+  fallbackAttempts: number;
+  fallbackSources: string[];
   timestamp: string;
 }
 
@@ -84,14 +92,17 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           ? "additional"
           : "replace";
       const existingCorpus = mode === "additional" ? await readExistingCorpus(run) : [];
-      const baseBibtex = mode === "additional" ? await safeRead(`${runArtifactsDir(run)}/bibtex.bib`) : "";
       const storedRows = new Map<string, StoredCorpusRow>(
         existingCorpus.map((row) => [row.paper_id, row])
       );
       const fetchedPapers: SemanticScholarPaper[] = [];
-      const newPapers: SemanticScholarPaper[] = [];
+      const newPaperIds = new Set<string>();
       const baseCount = storedRows.size;
       let storedCount = storedRows.size;
+      let pdfRecovered = 0;
+      let bibtexEnriched = 0;
+      const fallbackSources = new Set<string>();
+      const enrichmentLogs = new Map<string, CollectEnrichmentLogEntry>();
       let diagnostics: SemanticScholarSearchDiagnostics =
         deps.semanticScholar.getLastSearchDiagnostics?.() ?? emptyCollectDiagnostics();
 
@@ -99,16 +110,46 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       try {
         for await (const batch of deps.semanticScholar.streamSearchPapers(normalizedRequest, abortSignal)) {
           fetchedPapers.push(...batch);
-          const batchRows = batch.map((paper) => normalizeCorpusRow(paper));
           let changed = false;
-          for (let index = 0; index < batch.length; index += 1) {
-            const paper = batch[index];
-            const row = batchRows[index];
-            if (!storedRows.has(paper.paperId)) {
-              storedRows.set(paper.paperId, row);
-              newPapers.push(paper);
+          for (const paper of batch) {
+            const currentRow = storedRows.get(paper.paperId);
+            const baseRow = mergeStoredCorpusRows(currentRow, normalizeCorpusRow(paper));
+            const enriched = await enrichCollectedPaper({
+              paper,
+              row: baseRow,
+              bibtexMode: normalizeBibtexMode(requestFromContext?.bibtexMode),
+              requireOpenAccessPdf: normalizedRequest.filters?.openAccessPdf === true,
+              abortSignal,
+              onProgress: (message) =>
+                deps.eventStream.emit({
+                  type: "OBS_RECEIVED",
+                  runId: run.id,
+                  node: "collect_papers",
+                  payload: {
+                    text: `[${paper.paperId}] ${message}`
+                  }
+                })
+            });
+            if (enriched.pdfRecovered) {
+              pdfRecovered += 1;
+            }
+            if (enriched.bibtexEnriched) {
+              bibtexEnriched += 1;
+            }
+            for (const source of enriched.fallbackSources) {
+              fallbackSources.add(source);
+            }
+            enrichmentLogs.set(paper.paperId, enriched.log);
+            const mergedRow = mergeStoredCorpusRows(currentRow, enriched.row);
+            const prevSerialized = currentRow ? JSON.stringify(currentRow) : undefined;
+            const nextSerialized = JSON.stringify(mergedRow);
+            if (!currentRow) {
+              newPaperIds.add(paper.paperId);
+              changed = true;
+            } else if (prevSerialized !== nextSerialized) {
               changed = true;
             }
+            storedRows.set(paper.paperId, mergedRow);
           }
 
           if (changed) {
@@ -122,16 +163,19 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                 request: normalizedRequest,
                 fetched: fetchedPapers.length,
                 stored: storedCount,
-                added: newPapers.length,
+                added: newPaperIds.size,
                 baseCount,
                 mode,
                 diagnostics,
                 filters: normalizedRequest.filters || {},
                 bibtexMode: normalizeBibtexMode(requestFromContext?.bibtexMode),
-                completed: false
+                completed: false,
+                pdfRecovered,
+                bibtexEnriched,
+                fallbackAttempts: countFallbackAttempts(enrichmentLogs),
+                fallbackSources: Array.from(fallbackSources)
               }),
-              existingBibtex: baseBibtex,
-              newPapers,
+              enrichmentLogs: Array.from(enrichmentLogs.values()),
               bibtexMode: normalizeBibtexMode(requestFromContext?.bibtexMode)
             });
             deps.eventStream.emit({
@@ -139,7 +183,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
               runId: run.id,
               node: "collect_papers",
               payload: {
-                text: `Collected ${storedCount} paper(s) so far (${newPapers.length} new) for "${normalizedRequest.query}".`
+                text: `Collected ${storedCount} paper(s) so far (${newPaperIds.size} new) for "${normalizedRequest.query}".`
               }
             });
           }
@@ -158,14 +202,18 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         request: normalizedRequest,
         fetched: fetchedPapers.length,
         stored: storedCount,
-        added: newPapers.length,
+        added: newPaperIds.size,
         baseCount,
         mode,
         diagnostics,
         filters: normalizedRequest.filters || {},
         bibtexMode,
         completed: !fetchError,
-        fetchError
+        fetchError,
+        pdfRecovered,
+        bibtexEnriched,
+        fallbackAttempts: countFallbackAttempts(enrichmentLogs),
+        fallbackSources: Array.from(fallbackSources)
       });
 
       await persistCollectSnapshot({
@@ -174,8 +222,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         mode,
         request: normalizedRequest,
         resultMeta,
-        existingBibtex: baseBibtex,
-        newPapers,
+        enrichmentLogs: Array.from(enrichmentLogs.values()),
         bibtexMode
       });
 
@@ -233,68 +280,13 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         status: "success",
         summary:
           mode === "additional"
-            ? `Semantic Scholar stored ${storedCount} total papers for "${normalizedRequest.query}" (${newPapers.length} newly added).`
-            : `Semantic Scholar stored ${storedCount} papers for "${normalizedRequest.query}".`,
+            ? `Semantic Scholar stored ${storedCount} total papers for "${normalizedRequest.query}" (${newPaperIds.size} newly added). PDF recovered ${pdfRecovered}; BibTeX enriched ${bibtexEnriched}.`
+            : `Semantic Scholar stored ${storedCount} papers for "${normalizedRequest.query}". PDF recovered ${pdfRecovered}; BibTeX enriched ${bibtexEnriched}.`,
         needsApproval: true,
         toolCallsUsed: 1
       };
     }
   };
-}
-
-export function buildBibtexFile(papers: SemanticScholarPaper[], mode: BibtexMode = "generated"): string {
-  const entries = papers
-    .map((paper) => buildBibtexEntry(paper, mode))
-    .filter(Boolean);
-  return entries.join("\n\n");
-}
-
-export function buildBibtexEntry(paper: SemanticScholarPaper, mode: BibtexMode = "generated"): string {
-  if (mode !== "generated") {
-    const s2Bibtex = normalizeS2Bibtex(paper.citationStylesBibtex);
-    if (s2Bibtex) {
-      return s2Bibtex;
-    }
-    if (mode === "s2") {
-      return "";
-    }
-  }
-
-  const key = buildBibtexKey(paper);
-  const lines: string[] = [`@article{${key},`];
-
-  const authors = paper.authors
-    .map((author) => sanitizeBibValue(author))
-    .filter(Boolean)
-    .join(" and ");
-  if (authors) {
-    lines.push(`  author = {${authors}},`);
-  }
-
-  lines.push(`  title = {${sanitizeBibValue(paper.title)}},`);
-
-  if (typeof paper.year === "number" && Number.isFinite(paper.year)) {
-    lines.push(`  year = {${Math.floor(paper.year)}},`);
-  }
-
-  if (paper.venue) {
-    lines.push(`  journal = {${sanitizeBibValue(paper.venue)}},`);
-  }
-
-  if (paper.doi) {
-    lines.push(`  doi = {${sanitizeBibValue(paper.doi)}},`);
-  }
-
-  if (paper.url) {
-    lines.push(`  url = {${sanitizeBibValue(paper.url)}},`);
-  }
-
-  if (paper.arxivId) {
-    lines.push(`  note = {arXiv:${sanitizeBibValue(paper.arxivId)}},`);
-  }
-
-  lines.push("}");
-  return lines.join("\n");
 }
 
 function normalizeCollectRequest(input: {
@@ -400,52 +392,6 @@ function usesConservativeChunking(request: SemanticScholarSearchRequest): boolea
   );
 }
 
-function buildBibtexKey(paper: SemanticScholarPaper): string {
-  const base = paper.doi || paper.paperId || "paper";
-  const key = base
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-  if (key) {
-    return key;
-  }
-  return "paper";
-}
-
-function sanitizeBibValue(text: string): string {
-  return text
-    .replace(/[{}]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function normalizeS2Bibtex(raw: string | undefined): string | undefined {
-  if (typeof raw !== "string") {
-    return undefined;
-  }
-  const trimmed = raw.trim();
-  if (!trimmed.startsWith("@")) {
-    return undefined;
-  }
-  return trimmed;
-}
-
-interface StoredCorpusRow {
-  paper_id: string;
-  title: string;
-  abstract: string;
-  year?: number;
-  venue?: string;
-  url?: string;
-  pdf_url?: string;
-  authors: string[];
-  citation_count?: number;
-  influential_citation_count?: number;
-  publication_date?: string;
-  publication_types?: string[];
-  fields_of_study?: string[];
-}
-
 function normalizeCorpusRow(paper: SemanticScholarPaper): StoredCorpusRow {
   return {
     paper_id: paper.paperId,
@@ -454,13 +400,18 @@ function normalizeCorpusRow(paper: SemanticScholarPaper): StoredCorpusRow {
     year: paper.year,
     venue: paper.venue,
     url: paper.url,
+    landing_url: isSemanticScholarUrl(paper.url) ? undefined : paper.url,
     pdf_url: paper.openAccessPdfUrl,
+    pdf_url_source: paper.openAccessPdfUrl ? "semantic_scholar" : undefined,
     authors: paper.authors,
     citation_count: paper.citationCount,
     influential_citation_count: paper.influentialCitationCount,
     publication_date: paper.publicationDate,
     publication_types: paper.publicationTypes,
-    fields_of_study: paper.fieldsOfStudy
+    fields_of_study: paper.fieldsOfStudy,
+    doi: paper.doi,
+    arxiv_id: paper.arxivId,
+    semantic_scholar_bibtex: normalizeS2Bibtex(paper.citationStylesBibtex)
   };
 }
 
@@ -492,6 +443,10 @@ function buildCollectResultMeta(input: {
   bibtexMode: BibtexMode;
   completed: boolean;
   fetchError?: string;
+  pdfRecovered: number;
+  bibtexEnriched: number;
+  fallbackAttempts: number;
+  fallbackSources: string[];
 }): CollectResultMeta {
   return {
     query: input.request.query,
@@ -514,6 +469,10 @@ function buildCollectResultMeta(input: {
     },
     filters: input.filters,
     bibtexMode: input.bibtexMode,
+    pdfRecovered: input.pdfRecovered,
+    bibtexEnriched: input.bibtexEnriched,
+    fallbackAttempts: input.fallbackAttempts,
+    fallbackSources: input.fallbackSources,
     timestamp: new Date().toISOString()
   };
 }
@@ -524,12 +483,12 @@ async function persistCollectSnapshot(input: {
   mode: "replace" | "additional";
   request: SemanticScholarSearchRequest;
   resultMeta: CollectResultMeta;
-  existingBibtex: string;
-  newPapers: SemanticScholarPaper[];
+  enrichmentLogs: CollectEnrichmentLogEntry[];
   bibtexMode: BibtexMode;
 }): Promise<void> {
   await writeRunArtifact(input.run as any, "collect_request.json", JSON.stringify(input.request, null, 2));
   await writeRunArtifact(input.run as any, "collect_result.json", JSON.stringify(input.resultMeta, null, 2));
+  await appendJsonl(input.run as any, "collect_enrichment.jsonl", input.enrichmentLogs);
   const shouldWriteArtifacts =
     input.resultMeta.completed || input.mode === "additional" || input.rows.length > 0;
   if (!shouldWriteArtifacts) {
@@ -537,9 +496,7 @@ async function persistCollectSnapshot(input: {
   }
 
   await appendJsonl(input.run as any, "corpus.jsonl", input.rows);
-  const existingBibtex = input.mode === "additional" ? input.existingBibtex.trim() : "";
-  const newBibtex = buildBibtexFile(input.newPapers, input.bibtexMode).trim();
-  const bibtex = [existingBibtex, newBibtex].filter(Boolean).join("\n\n");
+  const bibtex = buildBibtexFile(input.rows, input.bibtexMode).trim();
   await writeRunArtifact(input.run as any, "bibtex.bib", bibtex ? `${bibtex}\n` : "");
 }
 
@@ -567,4 +524,23 @@ function formatAttemptSummary(diagnostics: SemanticScholarSearchDiagnostics): st
       return `req${index + 1} attempt${attempt.attempt}=${status} ${outcome}${retry}`;
     })
     .join(", ");
+}
+
+function countFallbackAttempts(entries: Map<string, CollectEnrichmentLogEntry>): number {
+  let count = 0;
+  for (const entry of entries.values()) {
+    count += entry.attempts.length;
+  }
+  return count;
+}
+
+function isSemanticScholarUrl(url: string | undefined): boolean {
+  if (!url) {
+    return false;
+  }
+  try {
+    return new URL(url).hostname.toLowerCase().endsWith("semanticscholar.org");
+  } catch {
+    return false;
+  }
 }
