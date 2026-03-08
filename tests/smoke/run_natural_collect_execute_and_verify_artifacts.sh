@@ -9,10 +9,9 @@ RUN_DIR="$(smoke_run_dir "$RUN_ID")"
 
 smoke_reset_collect_artifacts "$RUN_DIR"
 
-smoke_set_fake_codex_single_command \
+smoke_set_fake_codex_structured_actions \
   "$RUN_ID" \
-  "최근 5년 필터와 관련도 정렬로 100편 수집을 제안합니다." \
-  "/agent collect --last-years 5 --sort relevance --limit 100 --run $RUN_ID"
+  '[{"type":"collect","limit":100,"sort":{"field":"relevance","order":"desc"},"filters":{"last_years":5}}]'
 smoke_set_fake_semantic_scholar_fixture "smoke" "Smoke Paper"
 
 smoke_run_expect "natural_collect_execute_and_verify_artifacts.exp" "$RUN_ID"

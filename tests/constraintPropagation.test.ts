@@ -15,14 +15,17 @@ const ORIGINAL_CWD = process.cwd();
 
 class CountingJsonLLMClient extends MockLLMClient {
   calls = 0;
+  private index = 0;
 
-  constructor(private readonly response: string) {
+  constructor(private readonly responses: string[]) {
     super();
   }
 
   override async complete(): Promise<{ text: string }> {
     this.calls += 1;
-    return { text: this.response };
+    const response = this.responses[Math.min(this.index, this.responses.length - 1)] ?? "";
+    this.index += 1;
+    return { text: response };
   }
 }
 
@@ -141,7 +144,7 @@ describe("constraint propagation", () => {
     await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
     await writeFile(path.join(runDir, "hypotheses.jsonl"), `${JSON.stringify({ text: "Hypothesis A" })}\n`, "utf8");
 
-    const llm = new CountingJsonLLMClient(
+    const llm = new CountingJsonLLMClient([
       JSON.stringify({
         collect: {
           lastYears: 7,
@@ -158,8 +161,34 @@ describe("constraint propagation", () => {
           evaluationNotes: ["Measure recovery after tool or browser failures."]
         },
         assumptions: ["Use the run topic as the collect query unless the user overrides it."]
+      }),
+      JSON.stringify({
+        summary: "Generated experiment designs.",
+        candidates: [
+          {
+            id: "plan_1",
+            title: "Robustness-first benchmark",
+            hypothesis_ids: ["h_1"],
+            plan_summary: "Test robustness-oriented recovery strategies against a baseline.",
+            datasets: ["Computer Science"],
+            metrics: ["state-of-the-art reproducibility"],
+            baselines: ["current_best_baseline"],
+            implementation_notes: ["Keep browser task instrumentation explicit."],
+            evaluation_steps: ["Measure recovery after tool or browser failures."],
+            risks: ["Evaluation scope may need narrowing."],
+            budget_notes: ["Stay within the configured local execution budget."]
+          }
+        ],
+        selected_id: "plan_1"
+      }),
+      JSON.stringify({
+        primaryMetric: "state-of-the-art reproducibility",
+        preferredMetricKeys: ["state-of-the-art reproducibility"],
+        analysisFocus: ["Robustness and recovery"],
+        paperEmphasis: ["Reproducibility improvements"],
+        assumptions: ["Compare against the strongest available baseline."]
       })
-    );
+    ]);
 
     const deps = {
       config: {} as any,
@@ -179,7 +208,7 @@ describe("constraint propagation", () => {
 
     expect(designResult.status).toBe("success");
     expect(writeResult.status).toBe("success");
-    expect(llm.calls).toBe(2);
+    expect(llm.calls).toBe(3);
 
     const plan = await readFile(path.join(runDir, "experiment_plan.yaml"), "utf8");
     expect(plan).toContain("last_years: 7");

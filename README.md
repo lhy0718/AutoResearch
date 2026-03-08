@@ -1,25 +1,76 @@
-# AutoResearch
+<div align="center">
+  <h1>AutoResearch</h1>
+  <p><strong>Slash-first TUI for AI-agent-driven research automation.</strong></p>
+  <p>
+    Collect papers, analyze evidence, generate hypotheses, design experiments,
+    run implementations, and keep the whole workflow checkpointed.
+  </p>
+  <p>
+    <a href="./README.md"><strong>English</strong></a>
+    ·
+    <a href="./README.ko.md"><strong>한국어</strong></a>
+  </p>
+  <p>
+    <a href="https://github.com/lhy0718/AutoResearch/actions/workflows/smoke.yml">
+      <img alt="Smoke workflow" src="https://img.shields.io/github/actions/workflow/status/lhy0718/AutoResearch/smoke.yml?branch=main&style=flat-square&label=smoke" />
+    </a>
+    <img alt="Node 18+" src="https://img.shields.io/badge/node-%3E%3D18-339933?style=flat-square&logo=node.js&logoColor=white" />
+    <img alt="TypeScript" src="https://img.shields.io/badge/typescript-5.x-3178C6?style=flat-square&logo=typescript&logoColor=white" />
+    <img alt="OpenAI supported" src="https://img.shields.io/badge/OpenAI-supported-412991?style=flat-square&logo=openai&logoColor=white" />
+    <img alt="Semantic Scholar required" src="https://img.shields.io/badge/Semantic%20Scholar-required-1857B6?style=flat-square" />
+  </p>
+  <p>
+    <a href="https://github.com/lhy0718/AutoResearch/stargazers">
+      <img alt="GitHub stars" src="https://img.shields.io/github/stars/lhy0718/AutoResearch?style=flat-square" />
+    </a>
+    <a href="https://github.com/lhy0718/AutoResearch/commits/main">
+      <img alt="Last commit" src="https://img.shields.io/github/last-commit/lhy0718/AutoResearch?style=flat-square" />
+    </a>
+  </p>
+</div>
 
-Language: **English** | [한국어](./README.ko.md)
+## Why AutoResearch?
 
-Slash-first TUI for AI-agent-driven research automation.
+- Turn the research loop into a fixed 8-node state graph from `collect_papers` to `write_paper`.
+- Run the main workflow with either `codex` or `OpenAI API`, then switch PDF analysis independently.
+- Keep work local and inspectable with checkpoints, budgets, retries, jumps, and run-scoped memory.
+
+## Highlights
+
+| Capability | What it gives you |
+| --- | --- |
+| Slash-first TUI | Operate the system from `/new`, `/agent ...`, `/model`, `/settings`, and `/doctor` |
+| Deterministic natural-language routing | Common intents map to local handlers or slash commands before LLM fallback |
+| Hybrid provider model | Use Codex login for the primary flow or move to OpenAI API models when you want explicit API-backed execution |
+| PDF analysis modes | Analyze PDFs via local extraction + Codex, or send them directly to the Responses API |
+| Research runtime patterns | ReAct, ReWOO, ToT, and Reflexion are used where they make sense |
+| Local ACI execution | `implement_experiments` and `run_experiments` execute through file, command, and test actions |
 
 ## Quick Start
+
+> [!IMPORTANT]
+> `SEMANTIC_SCHOLAR_API_KEY` is required. `OPENAI_API_KEY` is only needed when the main provider or PDF analysis mode is `api`.
+
+1. Install and build
 
 ```bash
 npm install
 npm run build
 npm link
-autoresearch
 ```
 
-Required: set your Semantic Scholar API key in `.env` (or enter it during first-run setup).
-Optional: if you choose `OpenAI API` as the primary provider or `Responses API PDF analysis`, also set `OPENAI_API_KEY`.
+2. Add environment variables
 
 ```bash
 cp .env.example .env
 echo 'SEMANTIC_SCHOLAR_API_KEY=your_key_here' >> .env
 echo 'OPENAI_API_KEY=your_openai_key_here' >> .env
+```
+
+3. Launch the TUI
+
+```bash
+autoresearch
 ```
 
 Development mode:
@@ -28,118 +79,72 @@ Development mode:
 npm run dev
 ```
 
-Without `npm link`, you can still run `node dist/cli/main.js`.
+Without `npm link`, you can still run:
+
+```bash
+node dist/cli/main.js
+```
+
+> [!NOTE]
+> `autoresearch` is the only external CLI entrypoint. `autoresearch init` is intentionally not supported.
 
 ## First Run
 
 1. Run `autoresearch` in an empty project.
-2. If `.autoresearch/config.yaml` is missing, setup wizard starts automatically.
-3. Wizard creates scaffold/config and opens the dashboard.
-4. Setup wizard requires a Semantic Scholar API key and writes it to `.env`.
-5. Setup wizard lets you choose the primary LLM provider:
+2. If `.autoresearch/config.yaml` does not exist, the setup wizard starts automatically.
+3. The wizard creates scaffold/config, stores your Semantic Scholar key, and opens the dashboard.
+4. Choose the primary LLM provider:
    - `codex`: use Codex ChatGPT login for the main workflow
    - `api`: use OpenAI API models for the main workflow (`OPENAI_API_KEY` required)
-6. Setup wizard also lets you choose PDF analysis mode:
-   - `codex`: download/extract PDF text locally, then analyze with Codex
-   - `api`: send the PDF directly to the Responses API (requires `OPENAI_API_KEY`)
-7. If you choose `api` as the primary provider, setup wizard and `/settings` also let you choose the OpenAI API model.
-   - Current catalog: `gpt-5.4`, `gpt-5`, `gpt-5-mini`, `gpt-4.1`, `gpt-4o`, `gpt-4o-mini`
-8. If you choose `api` for PDF analysis, setup wizard and `/settings` also let you choose the Responses API PDF model.
-   - Current catalog: `gpt-5.4`, `gpt-5`, `gpt-5-mini`, `gpt-4.1`, `gpt-4o`, `gpt-4o-mini`
-9. `/model` follows the active primary provider:
+5. Choose the PDF analysis mode:
+   - `codex`: download and extract PDF text locally, then analyze with Codex
+   - `api`: send the PDF directly to the Responses API (`OPENAI_API_KEY` required)
+6. If the provider or PDF mode is `api`, setup wizard and `/settings` let you choose a model.
+   - Current built-in catalog: `gpt-5.4`, `gpt-5`, `gpt-5-mini`, `gpt-4.1`, `gpt-4o`, `gpt-4o-mini`
+7. `/model` follows the active primary provider:
    - Codex provider: Codex model selector
    - OpenAI API provider: OpenAI API model selector
-10. At runtime, AutoResearch reads `SEMANTIC_SCHOLAR_API_KEY` and `OPENAI_API_KEY` from `process.env` or `.env`.
+8. At runtime, AutoResearch reads `SEMANTIC_SCHOLAR_API_KEY` and `OPENAI_API_KEY` from `process.env` or `.env`.
 
-## CLI Policy
+## Workflow At A Glance
 
-- External command: `autoresearch` only.
-- `autoresearch init` is not supported.
-- Operational flows run inside TUI via slash commands.
+```mermaid
+flowchart LR
+    A["collect_papers"] --> B["analyze_papers"]
+    B --> C["generate_hypotheses"]
+    C --> D["design_experiments"]
+    D --> E["implement_experiments"]
+    E --> F["run_experiments"]
+    F --> G["analyze_results"]
+    G --> H["write_paper"]
+    B -. "retry / jump" .-> A
+    D -. "checkpoint" .-> D
+    F -. "checkpoint" .-> F
+```
 
-## State Graph Workflow (v3)
+Default flow is linear `1 -> 8`, but runtime controls let you retry, jump, resume from checkpoints, and apply approval gates between steps.
 
-Fixed graph nodes:
-
-1. `collect_papers`
-2. `analyze_papers`
-3. `generate_hypotheses`
-4. `design_experiments`
-5. `implement_experiments`
-6. `run_experiments`
-7. `analyze_results`
-8. `write_paper`
-
-Default edge: linear `1 -> 8`.
-
-## Runtime Policies
-
-- Checkpoints: `.autoresearch/runs/<run_id>/checkpoints/`
-- Phases: `before | after | fail | jump | retry`
-- Retry policy: `maxAttemptsPerNode=3`
-- Auto rollback policy: `maxAutoRollbacksPerNode=2`
-- Jump modes:
-  - `safe`: only current/previous node
-  - `force`: forward jump allowed, skipped nodes recorded
-- Budget policy:
-  - `maxToolCalls=150`
-  - `maxWallClockMinutes=240`
-  - `maxUsd=15` (soft-check if provider cost unavailable)
-
-## Agent Runtime Patterns
-
-- ReAct loop: `PLAN_CREATED -> TOOL_CALLED -> OBS_RECEIVED`
-- ReWOO split (planner/worker): used for high-cost nodes
-- ToT (Tree-of-Thoughts): used in hypothesis/design nodes
-- Reflexion: failure episodes are stored and reused on retries
-
-## Memory Layers
-
-- Run context memory: per-run short-term state
-- Long-term store: JSONL summary/index history
-- Episode memory: Reflexion failure lessons
-
-## ACI (Agent-Computer Interface)
-
-Standard actions:
-
-- `read_file`
-- `write_file`
-- `apply_patch`
-- `run_command`
-- `run_tests`
-- `tail_logs`
-
-`implement_experiments` and `run_experiments` are executed via ACI.
-
-## Slash Commands
+## Most-Used Commands
 
 | Command | Description |
-|---|---|
-| `/help` | Show command list |
-| `/new` | Create run |
-| `/doctor` | Environment checks |
-| `/runs [query]` | List/search runs |
-| `/run <run>` | Select run |
-| `/resume <run>` | Resume run |
-| `/agent list` | List graph nodes |
-| `/agent run <node> [run]` | Execute from node |
+| --- | --- |
+| `/new` | Create a run |
+| `/runs [query]` | List or search runs |
+| `/run <run>` | Select a run |
+| `/resume <run>` | Resume a run |
+| `/agent collect [query] [options]` | Collect papers with filters, sort, and bibliographic options |
+| `/agent run <node> [run]` | Execute from a graph node |
 | `/agent status [run]` | Show node statuses |
-| `/agent collect [query] [options]` | Collect papers with filters/sort/options |
-| `/agent recollect <n> [run]` | Backward-compatible alias for additional collection |
-| `/agent focus <node>` | Move focus to node (safe jump) |
 | `/agent graph [run]` | Show graph state |
-| `/agent resume [run] [checkpoint]` | Resume from latest/specific checkpoint |
-| `/agent retry [node] [run]` | Retry node |
-| `/agent jump <node> [run] [--force]` | Jump node |
+| `/agent resume [run] [checkpoint]` | Resume from the latest or a specific checkpoint |
+| `/agent retry [node] [run]` | Retry a node |
+| `/agent jump <node> [run] [--force]` | Jump between nodes |
 | `/agent budget [run]` | Show budget usage |
-| `/model` | Open arrow-key selector for model and reasoning effort |
-| `/approve` | Approve current node |
-| `/retry` | Retry current node |
+| `/model` | Open model and reasoning selector |
 | `/settings` | Edit defaults |
-| `/quit` | Exit |
+| `/doctor` | Run environment checks |
 
-Collect options:
+Common collection options:
 
 - `--run <run_id>`
 - `--limit <n>`
@@ -163,25 +168,65 @@ Examples:
 - `/agent collect "agent planning" --sort citationCount --order desc --min-citations 100`
 - `/agent collect --additional 200 --run <run_id>`
 
-Step-by-step approval for multi-step plans:
+## Natural-Language Control
 
-- Natural-language multi-step plans pause after each step.
-- `y`: run only the next step
-- `a`: run all remaining steps without pausing again
-- `n`: cancel the remaining plan
-- Automatic replan can arm a revised follow-up command after a failed step.
+AutoResearch does not try to support every sentence with hard-coded rules. Instead, it defines deterministic intent families and routes those locally before falling back to the workspace-grounded LLM.
 
-## Natural-Language Inputs
-
-AutoResearch does not try to enumerate every possible sentence. Instead, it defines
-supported deterministic intent families and routes those directly to slash commands
-or local status handlers before falling back to the workspace-grounded LLM.
-
-Ask this inside the TUI to see the live list:
+Ask this inside the TUI to see the live supported list:
 
 - `what natural inputs are supported?`
 
-Supported intent families:
+Typical examples:
+
+- `create a new run`
+- `collect 100 papers from the last 5 years by relevance`
+- `show current status`
+- `jump back to collect_papers`
+- `how many papers were collected?`
+
+Multi-step natural-language plans pause between steps:
+
+- `y`: run only the next step
+- `a`: run all remaining steps without pausing again
+- `n`: cancel the remaining plan
+
+Implementation references:
+
+- Deterministic routing: [src/core/commands/naturalDeterministic.ts](./src/core/commands/naturalDeterministic.ts)
+- Local status / next-step assistant: [src/core/commands/naturalAssistant.ts](./src/core/commands/naturalAssistant.ts)
+
+<details>
+<summary>Full slash command list</summary>
+
+| Command | Description |
+| --- | --- |
+| `/help` | Show command list |
+| `/new` | Create run |
+| `/doctor` | Environment checks |
+| `/runs [query]` | List or search runs |
+| `/run <run>` | Select run |
+| `/resume <run>` | Resume run |
+| `/agent list` | List graph nodes |
+| `/agent run <node> [run]` | Execute from node |
+| `/agent status [run]` | Show node statuses |
+| `/agent collect [query] [options]` | Collect papers with filters, sort, and options |
+| `/agent recollect <n> [run]` | Backward-compatible alias for additional collection |
+| `/agent focus <node>` | Move focus to node with a safe jump |
+| `/agent graph [run]` | Show graph state |
+| `/agent resume [run] [checkpoint]` | Resume from latest or specific checkpoint |
+| `/agent retry [node] [run]` | Retry node |
+| `/agent jump <node> [run] [--force]` | Jump node |
+| `/agent budget [run]` | Show budget usage |
+| `/model` | Open arrow-key selector for model and reasoning effort |
+| `/approve` | Approve current node |
+| `/retry` | Retry current node |
+| `/settings` | Edit defaults |
+| `/quit` | Exit |
+
+</details>
+
+<details>
+<summary>Supported natural-language intent families</summary>
 
 1. Help / settings / model / doctor / quit
    - Examples: `show help`, `open model selector`, `run environment checks`
@@ -206,18 +251,65 @@ Supported intent families:
    - Examples: `what is the top-cited paper?`
    - Examples: `show 3 paper titles`
 
-Notes:
+</details>
 
-- Supported deterministic intents are implemented in
-  [src/core/commands/naturalDeterministic.ts](/Users/home/AutoResearchV2/src/core/commands/naturalDeterministic.ts).
-- Status / next-step local responses are implemented in
-  [src/core/commands/naturalAssistant.ts](/Users/home/AutoResearchV2/src/core/commands/naturalAssistant.ts).
-- Other questions still fall back to the workspace-grounded LLM assistant.
-- Composite natural-language execution plans run in step-by-step approval mode.
-- When a composite plan is pending, `a` runs every remaining step in one confirmation.
-- LLM-generated plans can also be revised automatically after a failed step.
+<details>
+<summary>Runtime defaults, storage, and execution details</summary>
 
-## Command Palette
+### State Graph
+
+Fixed graph nodes:
+
+1. `collect_papers`
+2. `analyze_papers`
+3. `generate_hypotheses`
+4. `design_experiments`
+5. `implement_experiments`
+6. `run_experiments`
+7. `analyze_results`
+8. `write_paper`
+
+### Runtime Policies
+
+- Checkpoints: `.autoresearch/runs/<run_id>/checkpoints/`
+- Checkpoint phases: `before | after | fail | jump | retry`
+- Retry policy: `maxAttemptsPerNode=3`
+- Auto rollback policy: `maxAutoRollbacksPerNode=2`
+- Jump modes:
+  - `safe`: only current or previous node
+  - `force`: forward jumps allowed and skipped nodes are recorded
+- Budget policy:
+  - `maxToolCalls=150`
+  - `maxWallClockMinutes=240`
+  - `maxUsd=15` (soft-check if provider cost is unavailable)
+
+### Agent Runtime Patterns
+
+- ReAct loop: `PLAN_CREATED -> TOOL_CALLED -> OBS_RECEIVED`
+- ReWOO split (planner/worker): used for high-cost nodes
+- ToT (Tree-of-Thoughts): used in hypothesis and design nodes
+- Reflexion: failure episodes are stored and reused on retries
+
+### Memory Layers
+
+- Run context memory: per-run short-term state
+- Long-term store: JSONL summary and index history
+- Episode memory: Reflexion failure lessons
+
+### ACI (Agent-Computer Interface)
+
+Standard actions:
+
+- `read_file`
+- `write_file`
+- `apply_patch`
+- `run_command`
+- `run_tests`
+- `tail_logs`
+
+`implement_experiments` and `run_experiments` are executed via ACI.
+
+### Command Palette
 
 - Type `/`: open command list
 - `Tab`: autocomplete
@@ -225,7 +317,7 @@ Notes:
 - `Enter`: execute
 - Run suggestions include `run_id + title + current_node + status + relative time`
 
-## Run Metadata (v3)
+### Run Metadata
 
 `runs.json` stores:
 
@@ -238,13 +330,15 @@ Notes:
 
 Legacy runs are auto-migrated to v3 on load.
 
-## Generated Paths
+### Generated Paths
 
 - `.autoresearch/config.yaml`
 - `.autoresearch/runs/runs.json`
 - `.autoresearch/runs/<run_id>/checkpoints/*`
 - `.autoresearch/runs/<run_id>/memory/*`
 - `.autoresearch/runs/<run_id>/paper/*`
+
+</details>
 
 ## Development
 
@@ -257,20 +351,18 @@ npm run test:smoke:natural-collect-execute
 npm run test:smoke:ci
 ```
 
-Smoke note:
+Smoke test notes:
+
 - Smoke harness files live under `tests/smoke/`.
 - The manual example workspace stays under `/test`.
-- Smoke uses an isolated workspace under `/test/smoke-workspace` so it does not overwrite the root `/test` example state.
-- `test:smoke:natural-collect` runs in `/test/smoke-workspace` and verifies PTY flow for
-  natural-language collect request -> pending `/agent collect ...` command.
-- `test:smoke:natural-collect-execute` runs in `/test/smoke-workspace` and verifies
-  natural-language collect request -> `y` execute -> collect artifacts created.
+- Smoke uses an isolated workspace under `/test/smoke-workspace` so it does not overwrite root `/test` example state.
+- `test:smoke:natural-collect` verifies natural-language collect request -> pending `/agent collect ...` command.
+- `test:smoke:natural-collect-execute` verifies natural-language collect request -> `y` execute -> collect artifacts created.
 - `test:smoke:all` runs the full local smoke bundle in `/test/smoke-workspace`.
-- It uses `AUTORESEARCH_FAKE_CODEX_RESPONSE` to avoid live Codex calls.
+- Smoke uses `AUTORESEARCH_FAKE_CODEX_RESPONSE` to avoid live Codex calls.
 - Execute smoke also uses `AUTORESEARCH_FAKE_SEMANTIC_SCHOLAR_RESPONSE`.
 - `test:smoke:ci` runs CI-mode smoke selection.
   - Default mode: `pending`
   - Additional modes: `execute`, `composite`, `composite-all`, `llm-composite`, `llm-composite-all`, `llm-replan`
-  - Set `AUTORESEARCH_SMOKE_MODE=<mode>` or `AUTORESEARCH_SMOKE_MODE=all`
-    to switch scenarios in CI.
-- Smoke output is quiet by default. Set `AUTORESEARCH_SMOKE_VERBOSE=1` to show full PTY logs.
+  - Set `AUTORESEARCH_SMOKE_MODE=<mode>` or `AUTORESEARCH_SMOKE_MODE=all` to switch CI scenarios.
+- Smoke output is quiet by default. Set `AUTORESEARCH_SMOKE_VERBOSE=1` to print full PTY logs.

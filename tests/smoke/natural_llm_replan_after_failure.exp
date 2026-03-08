@@ -12,7 +12,7 @@ if {$argc < 2} {
 
 set workdir [lindex $argv 0]
 set run_id [lindex $argv 1]
-set query "Please rebuild the research library from scratch."
+set query "The paper set is messed up."
 set bad_step1 "/agent clear collect_papers $run_id"
 set bad_step2 "/agent collect --limit nope --run $run_id"
 set fixed_cmd "/agent collect --limit 20 --run $run_id"

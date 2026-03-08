@@ -12,8 +12,8 @@ if {$argc < 2} {
 set workdir [lindex $argv 0]
 set run_id [lindex $argv 1]
 set query "지금 논문을 모두 삭제하고 최근 5년의 논문을 관련도순으로 pdf 있는 것들만 가져와줘"
-set expected_step1 "/agent clear collect_papers $run_id"
-set expected_step2 "/agent collect --last-years 5 --sort relevance --open-access --run $run_id"
+set expected_step1 "collect_papers 산출물 정리"
+set expected_step2 "논문 수집 \\(lastYears=5, openAccess=true\\)"
 
 spawn_autoresearch $workdir
 
@@ -28,21 +28,18 @@ expect {
   timeout { fail "FAIL: natural query log not found" }
 }
 
-set escaped_step1 [escape_regex $expected_step1]
-set escaped_step2 [escape_regex $expected_step2]
-
 expect {
   -re "Execution plan detected\\. Pending 2-step plan:" {}
   timeout { fail "FAIL: execution plan banner not found" }
 }
 
 expect {
-  -re $escaped_step1 {}
+  -re $expected_step1 {}
   timeout { fail "FAIL: first pending step not found" }
 }
 
 expect {
-  -re $escaped_step2 {}
+  -re $expected_step2 {}
   timeout { fail "FAIL: second pending step not found" }
 }
 

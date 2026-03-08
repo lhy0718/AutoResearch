@@ -232,6 +232,20 @@ smoke_set_fake_codex_single_command() {
   unset AUTORESEARCH_FAKE_CODEX_RESPONSE_SEQUENCE || true
 }
 
+smoke_set_fake_codex_structured_actions() {
+  local run_id="$1"
+  local actions_json="$2"
+  export AUTORESEARCH_FAKE_CODEX_RESPONSE
+  AUTORESEARCH_FAKE_CODEX_RESPONSE="$(node -e '
+    const [runId, actionsJson] = process.argv.slice(1);
+    process.stdout.write(JSON.stringify({
+      target_run_id: runId,
+      actions: JSON.parse(actionsJson)
+    }));
+  ' "$run_id" "$actions_json")"
+  unset AUTORESEARCH_FAKE_CODEX_RESPONSE_SEQUENCE || true
+}
+
 smoke_set_fake_codex_multi_step_plan() {
   local run_id="$1"
   local reply_line="$2"
@@ -252,20 +266,26 @@ smoke_set_fake_codex_multi_step_plan() {
 smoke_set_fake_codex_two_turn_replan() {
   local run_id="$1"
   local initial_reply="$2"
-  local first_command="$3"
+  local first_step_or_actions="$3"
   local second_command="$4"
   local retry_reply="$5"
   local retry_command="$6"
   export AUTORESEARCH_FAKE_CODEX_RESPONSE_SEQUENCE
   AUTORESEARCH_FAKE_CODEX_RESPONSE_SEQUENCE="$(node -e '
-    const [runId, initialReply, firstCommand, secondCommand, retryReply, retryCommand] = process.argv.slice(1);
+    const [runId, initialReply, firstStepOrActions, secondCommand, retryReply, retryCommand] = process.argv.slice(1);
+    const firstPayload = firstStepOrActions.trim().startsWith("[")
+      ? {
+          target_run_id: runId,
+          actions: JSON.parse(firstStepOrActions)
+        }
+      : {
+          reply_lines: [initialReply],
+          target_run_id: runId,
+          recommended_commands: [firstStepOrActions, secondCommand],
+          should_offer_execute: true
+        };
     process.stdout.write(JSON.stringify([
-      {
-        reply_lines: [initialReply],
-        target_run_id: runId,
-        recommended_commands: [firstCommand, secondCommand],
-        should_offer_execute: true
-      },
+      firstPayload,
       {
         reply_lines: [retryReply],
         target_run_id: runId,
@@ -273,7 +293,7 @@ smoke_set_fake_codex_two_turn_replan() {
         should_offer_execute: true
       }
     ]));
-  ' "$run_id" "$initial_reply" "$first_command" "$second_command" "$retry_reply" "$retry_command")"
+  ' "$run_id" "$initial_reply" "$first_step_or_actions" "$second_command" "$retry_reply" "$retry_command")"
   unset AUTORESEARCH_FAKE_CODEX_RESPONSE || true
 }
 

@@ -12,7 +12,7 @@ if {$argc < 2} {
 set workdir [lindex $argv 0]
 set run_id [lindex $argv 1]
 set query "최근 5년 관련도 순으로 100개 수집해줘"
-set expected_cmd "/agent collect --last-years 5 --sort relevance --limit 100 --run $run_id"
+set expected_label "논문 수집 \\(limit=100, lastYears=5\\)"
 
 spawn_autoresearch $workdir
 
@@ -28,15 +28,14 @@ expect {
   timeout { fail "FAIL: natural query log not found" }
 }
 
-set escaped_cmd [escape_regex $expected_cmd]
 expect {
-  -re "Execution intent detected\\. Pending command: $escaped_cmd" {}
+  -re "Execution intent detected\\. Pending command: $expected_label" {}
   timeout { fail "FAIL: pending collect command not found" }
 }
 
 send -- "n\r"
 expect {
-  -re "Canceled pending command: $escaped_cmd" {}
+  -re "Canceled pending command: $expected_label" {}
   timeout { fail "FAIL: pending command cancel log not found" }
 }
 
