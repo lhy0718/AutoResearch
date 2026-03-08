@@ -108,7 +108,7 @@ describe("analyzePapers node", () => {
     const runId = "run-analyze-success";
     const run = makeRun(runId);
     await writeCorpus(runId, [
-      { paper_id: "p1", title: "Paper 1", abstract: "Abstract 1", authors: ["Alice"] },
+      { paper_id: "p1", title: "Paper 1", abstract: "Abstract 1 references Table 1 and Figure 2.", authors: ["Alice"] },
       { paper_id: "p2", title: "Paper 2", abstract: "Abstract 2", authors: ["Bob"] }
     ]);
 
@@ -137,11 +137,16 @@ describe("analyzePapers node", () => {
     const summariesRaw = await readFile(path.join(".autoresearch", "runs", runId, "paper_summaries.jsonl"), "utf8");
     const evidenceRaw = await readFile(path.join(".autoresearch", "runs", runId, "evidence_store.jsonl"), "utf8");
     const manifestRaw = await readFile(path.join(".autoresearch", "runs", runId, "analysis_manifest.json"), "utf8");
+    const manifest = JSON.parse(manifestRaw);
 
     expect(summariesRaw).toContain('"source_type":"abstract"');
     expect(summariesRaw).toContain('"summary":"summary 1"');
     expect(evidenceRaw).toContain('"claim":"claim 1"');
     expect(manifestRaw).toContain('"status": "completed"');
+    expect(manifest.papers.p1.table_reference_count).toBe(1);
+    expect(manifest.papers.p1.figure_reference_count).toBe(1);
+    expect(manifest.papers.p1.has_table_references).toBe(true);
+    expect(manifest.papers.p1.has_figure_references).toBe(true);
     const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
     expect(loggedTexts.some((text) => text.includes('Resolving analysis source 1/2 for "Paper 1".'))).toBe(true);
     expect(loggedTexts.some((text) => text.includes('[p1] Starting LLM analysis attempt 1/2.'))).toBe(true);

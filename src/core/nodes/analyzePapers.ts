@@ -60,6 +60,10 @@ interface AnalysisManifestEntry {
   text_cache_path?: string;
   fallback_reason?: string;
   last_error?: string;
+  has_table_references?: boolean;
+  table_reference_count?: number;
+  has_figure_references?: boolean;
+  figure_reference_count?: number;
   deterministic_score?: number;
   selection_score?: number;
   score_breakdown?: DeterministicScoreBreakdown;
@@ -271,6 +275,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           emitLog(
             `Persisted analysis outputs for "${row.title}" (1 summary row, ${analysis.evidenceRows.length} evidence row(s)).`
           );
+          const structureSignals = analyzeStructureSignals(source.text);
 
           const manifestEntry = manifest.papers[row.paper_id];
           manifest.papers[row.paper_id] = {
@@ -289,6 +294,10 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             text_cache_path: source.textCachePath,
             fallback_reason: source.fallbackReason,
             last_error: undefined,
+            has_table_references: structureSignals.tableReferenceCount > 0,
+            table_reference_count: structureSignals.tableReferenceCount,
+            has_figure_references: structureSignals.figureReferenceCount > 0,
+            figure_reference_count: structureSignals.figureReferenceCount,
             updatedAt: new Date().toISOString(),
             completedAt: new Date().toISOString()
           };
@@ -316,6 +325,10 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             text_cache_path: source.textCachePath,
             fallback_reason: source.fallbackReason,
             last_error: message,
+            has_table_references: false,
+            table_reference_count: 0,
+            has_figure_references: false,
+            figure_reference_count: 0,
             updatedAt: new Date().toISOString()
           };
           manifest.updatedAt = new Date().toISOString();
@@ -441,6 +454,10 @@ function createFreshManifest(selection: PaperSelectionResult): AnalysisManifest 
           selection_score: candidate.selectionScore,
           score_breakdown: candidate.scoreBreakdown,
           rerank_position: candidate.rerankPosition,
+          has_table_references: false,
+          table_reference_count: 0,
+          has_figure_references: false,
+          figure_reference_count: 0,
           updatedAt: now
         } satisfies AnalysisManifestEntry
       ])
@@ -480,6 +497,10 @@ async function bootstrapManifestFromExistingOutputs(
       evidence_count: evidenceCountByPaper.get(summary.paper_id) ?? 0,
       analysis_attempts: 1,
       analysis_mode: "codex_text_extract",
+      has_table_references: false,
+      table_reference_count: 0,
+      has_figure_references: false,
+      figure_reference_count: 0,
       updatedAt: new Date().toISOString(),
       completedAt: new Date().toISOString()
     };
@@ -518,4 +539,19 @@ async function readEvidenceRows(filePath: string): Promise<PaperEvidenceRow[]> {
       }
     })
     .filter((row): row is PaperEvidenceRow => Boolean(row?.paper_id));
+}
+
+function analyzeStructureSignals(text: string): {
+  tableReferenceCount: number;
+  figureReferenceCount: number;
+} {
+  const normalized = text.replace(/\s+/g, " ");
+  const tableMatches =
+    normalized.match(/\btable(?:s)?\.?\s*(?:\d+|[ivxlcdm]+)\b/giu) ?? [];
+  const figureMatches =
+    normalized.match(/\b(?:fig(?:ure)?(?:s)?\.?)\s*(?:\d+|[ivxlcdm]+)\b/giu) ?? [];
+  return {
+    tableReferenceCount: tableMatches.length,
+    figureReferenceCount: figureMatches.length
+  };
 }

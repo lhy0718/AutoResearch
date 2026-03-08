@@ -23,6 +23,41 @@ interface CrossrefMessage {
   link?: Array<Record<string, unknown>>;
 }
 
+interface OpenAlexLocation {
+  landing_page_url?: string | null;
+  pdf_url?: string | null;
+}
+
+interface OpenAlexWork {
+  open_access?: {
+    is_oa?: boolean;
+    oa_url?: string | null;
+  };
+  primary_location?: OpenAlexLocation | null;
+  best_oa_location?: OpenAlexLocation | null;
+  locations?: OpenAlexLocation[] | null;
+}
+
+interface OpenReviewSearchResponse {
+  notes?: Array<Record<string, unknown>>;
+}
+
+interface DblpHitInfo {
+  title?: string;
+  venue?: string;
+  year?: string | number;
+  ee?: string | string[];
+  doi?: string;
+}
+
+interface DblpSearchResponse {
+  result?: {
+    hits?: {
+      hit?: Array<{ info?: DblpHitInfo }> | { info?: DblpHitInfo };
+    };
+  };
+}
+
 interface CandidatePdf {
   source: string;
   url: string;
@@ -76,50 +111,40 @@ export async function enrichCollectedPaper(args: EnrichCollectedPaperArgs): Prom
 
   const landingCandidates = await collectLandingCandidates(args, row, attempts, errors);
   for (const landing of landingCandidates) {
-    const host = safeHost(landing);
-    if (host === "aclanthology.org") {
-      const acl = await resolveAclAnthology(args, landing, attempts, errors);
-      fallbackSources.add("acl_anthology");
-      if (!row.pdf_url && acl.pdfUrl) {
-        row.pdf_url = acl.pdfUrl;
-        row.pdf_url_source = "acl_anthology";
-        row.landing_url = acl.landingUrl;
+    const processed = await processLandingCandidate(args, row, landing, attempts, errors, bibtexCandidates);
+    for (const source of processed.fallbackSources) {
+      fallbackSources.add(source);
+    }
+    if (processed.pdfRecovered) {
+      pdfRecovered = true;
+    }
+    if (processed.bibtexEnriched) {
+      bibtexEnriched = true;
+    }
+    if (row.pdf_url && row.bibtex) {
+      break;
+    }
+  }
+
+  if (!row.pdf_url && shouldTryVenueTitleDiscovery(row)) {
+    const discovery = await collectVenueTitleCandidates(args, row, attempts, errors);
+    if (discovery.doi && !row.doi) {
+      row.doi = discovery.doi;
+    }
+    for (const landing of discovery.urls) {
+      const processed = await processLandingCandidate(args, row, landing, attempts, errors, bibtexCandidates);
+      fallbackSources.add("title_discovery");
+      for (const source of processed.fallbackSources) {
+        fallbackSources.add(source);
+      }
+      if (processed.pdfRecovered) {
         pdfRecovered = true;
       }
-      if (acl.bibtex && args.bibtexMode === "hybrid") {
-        bibtexCandidates.push(acl.bibtex);
+      if (processed.bibtexEnriched) {
         bibtexEnriched = true;
       }
       if (row.pdf_url && row.bibtex) {
         break;
-      }
-    }
-    if (host === "openreview.net") {
-      const openReview = await resolveOpenReview(args, landing, attempts, errors);
-      fallbackSources.add("openreview");
-      if (!row.pdf_url && openReview.pdfUrl) {
-        row.pdf_url = openReview.pdfUrl;
-        row.pdf_url_source = "openreview";
-        row.landing_url = openReview.landingUrl;
-        pdfRecovered = true;
-      }
-      if (openReview.bibtex && args.bibtexMode === "hybrid") {
-        bibtexCandidates.push(openReview.bibtex);
-        bibtexEnriched = true;
-      }
-    }
-    if (host === "proceedings.mlr.press") {
-      const pmlr = await resolvePmlr(args, landing, attempts, errors);
-      fallbackSources.add("pmlr");
-      if (!row.pdf_url && pmlr.pdfUrl) {
-        row.pdf_url = pmlr.pdfUrl;
-        row.pdf_url_source = "pmlr";
-        row.landing_url = pmlr.landingUrl;
-        pdfRecovered = true;
-      }
-      if (pmlr.bibtex && args.bibtexMode === "hybrid") {
-        bibtexCandidates.push(pmlr.bibtex);
-        bibtexEnriched = true;
       }
     }
   }
@@ -139,6 +164,20 @@ export async function enrichCollectedPaper(args: EnrichCollectedPaperArgs): Prom
     }
     if (crossref.landingUrl) {
       row.landing_url ||= crossref.landingUrl;
+    }
+  }
+
+  if (row.doi && !row.pdf_url) {
+    const openAlex = await resolveOpenAlex(args, row, attempts, errors);
+    fallbackSources.add("openalex");
+    if (!row.pdf_url && openAlex.pdfUrl) {
+      row.pdf_url = openAlex.pdfUrl;
+      row.pdf_url_source = "openalex";
+      row.landing_url ||= openAlex.landingUrl;
+      pdfRecovered = true;
+    }
+    if (openAlex.landingUrl) {
+      row.landing_url ||= openAlex.landingUrl;
     }
   }
 
@@ -194,6 +233,90 @@ export async function enrichCollectedPaper(args: EnrichCollectedPaperArgs): Prom
   return {
     row,
     log,
+    pdfRecovered,
+    bibtexEnriched,
+    fallbackSources: Array.from(fallbackSources)
+  };
+}
+
+async function processLandingCandidate(
+  args: EnrichCollectedPaperArgs,
+  row: StoredCorpusRow,
+  landingUrl: string,
+  attempts: CollectEnrichmentAttempt[],
+  errors: string[],
+  bibtexCandidates: BibtexCandidate[]
+): Promise<{ pdfRecovered: boolean; bibtexEnriched: boolean; fallbackSources: string[] }> {
+  const host = safeHost(landingUrl);
+  const fallbackSources = new Set<string>();
+  let pdfRecovered = false;
+  let bibtexEnriched = false;
+
+  if (/\.pdf($|[?#])/i.test(landingUrl)) {
+    const isIfaamas = Boolean(host && host.endsWith("ifaamas.org"));
+    const stage = isIfaamas ? "ifaamas_pdf" : "landing_pdf_direct";
+    const verified = await verifyPdfCandidate(landingUrl, stage, attempts, errors, args.abortSignal);
+    if (!row.pdf_url && verified) {
+      row.pdf_url = verified;
+      row.pdf_url_source = isIfaamas ? "ifaamas" : "landing_page";
+      row.landing_url ||= landingUrl;
+      pdfRecovered = true;
+      if (isIfaamas) {
+        fallbackSources.add("ifaamas");
+      }
+    }
+  }
+
+  if (host === "aclanthology.org") {
+    const acl = await resolveAclAnthology(args, landingUrl, attempts, errors);
+    fallbackSources.add("acl_anthology");
+    if (!row.pdf_url && acl.pdfUrl) {
+      row.pdf_url = acl.pdfUrl;
+      row.pdf_url_source = "acl_anthology";
+      row.landing_url = acl.landingUrl;
+      pdfRecovered = true;
+    }
+    if (acl.bibtex && args.bibtexMode === "hybrid") {
+      bibtexCandidates.push(acl.bibtex);
+      bibtexEnriched = true;
+    }
+  }
+
+  if (host === "openreview.net") {
+    const openReview = await resolveOpenReview(args, landingUrl, attempts, errors);
+    fallbackSources.add("openreview");
+    if (!row.pdf_url && openReview.pdfUrl) {
+      row.pdf_url = openReview.pdfUrl;
+      row.pdf_url_source = "openreview";
+      row.landing_url = openReview.landingUrl;
+      pdfRecovered = true;
+    }
+    if (openReview.bibtex && args.bibtexMode === "hybrid") {
+      bibtexCandidates.push(openReview.bibtex);
+      bibtexEnriched = true;
+    }
+  }
+
+  if (host === "proceedings.mlr.press") {
+    const pmlr = await resolvePmlr(args, landingUrl, attempts, errors);
+    fallbackSources.add("pmlr");
+    if (!row.pdf_url && pmlr.pdfUrl) {
+      row.pdf_url = pmlr.pdfUrl;
+      row.pdf_url_source = "pmlr";
+      row.landing_url = pmlr.landingUrl;
+      pdfRecovered = true;
+    }
+    if (pmlr.bibtex && args.bibtexMode === "hybrid") {
+      bibtexCandidates.push(pmlr.bibtex);
+      bibtexEnriched = true;
+    }
+  }
+
+  if (host && host.endsWith("ifaamas.org")) {
+    fallbackSources.add("ifaamas");
+  }
+
+  return {
     pdfRecovered,
     bibtexEnriched,
     fallbackSources: Array.from(fallbackSources)
@@ -335,11 +458,34 @@ async function resolvePmlr(
   attempts: CollectEnrichmentAttempt[],
   errors: string[]
 ): Promise<{ pdfUrl?: string; landingUrl: string; bibtex?: BibtexCandidate }> {
-  const canonical = derivePmlrCanonicalUrl(landingUrl);
-  if (!canonical) {
+  const pageUrl = derivePmlrPageUrl(landingUrl);
+  if (!pageUrl) {
     return { landingUrl };
   }
-  const pdfUrl = await verifyPdfCandidate(`${canonical}.pdf`, "pmlr_pdf", attempts, errors, args.abortSignal);
+  const stemUrl = derivePmlrStemUrl(pageUrl);
+  let pdfUrl = stemUrl
+    ? await verifyPdfCandidate(`${stemUrl}.pdf`, "pmlr_pdf", attempts, errors, args.abortSignal)
+    : undefined;
+  let resolvedLandingUrl = pageUrl;
+  if (!pdfUrl) {
+    const html = await fetchTextCandidate(pageUrl, "pmlr_html", attempts, errors, args.abortSignal);
+    if (html) {
+      const $ = load(html);
+      const pagePdfCandidates = extractPdfCandidatesFromHtml($, pageUrl);
+      for (const candidate of pagePdfCandidates) {
+        pdfUrl = await verifyPdfCandidate(candidate, "pmlr_page_pdf", attempts, errors, args.abortSignal);
+        if (pdfUrl) {
+          break;
+        }
+      }
+      const metaLanding =
+        firstMetaContent($, "meta[name='citation_abstract_html_url']") ||
+        firstMetaContent($, "meta[property='og:url']");
+      if (metaLanding) {
+        resolvedLandingUrl = new URL(metaLanding, pageUrl).toString();
+      }
+    }
+  }
   const bibtexEntry = buildGeneratedBibtexEntry({
     paperId: args.paper.paperId,
     title: args.paper.title,
@@ -347,11 +493,11 @@ async function resolvePmlr(
     year: args.paper.year,
     venue: args.paper.venue || "PMLR",
     doi: args.paper.doi,
-    url: canonical
+    url: resolvedLandingUrl
   });
   return {
     pdfUrl,
-    landingUrl: canonical,
+    landingUrl: resolvedLandingUrl,
     bibtex: {
       source: "pmlr_generated",
       entry: bibtexEntry,
@@ -443,6 +589,62 @@ async function resolveCrossref(
   return { pdfUrl, landingUrl, bibtex };
 }
 
+async function resolveOpenAlex(
+  args: EnrichCollectedPaperArgs,
+  row: StoredCorpusRow,
+  attempts: CollectEnrichmentAttempt[],
+  errors: string[]
+): Promise<{ pdfUrl?: string; landingUrl?: string }> {
+  if (!row.doi) {
+    return {};
+  }
+
+  const raw = await fetchJsonCandidate(
+    `https://api.openalex.org/works/https://doi.org/${row.doi}`,
+    "openalex_work",
+    attempts,
+    errors,
+    args.abortSignal
+  );
+  const work = extractOpenAlexWork(raw);
+  if (!work) {
+    return {};
+  }
+
+  const landingCandidates = [
+    work.best_oa_location?.landing_page_url,
+    work.primary_location?.landing_page_url,
+    ...(work.locations || []).map((location) => location?.landing_page_url)
+  ]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => value.trim());
+
+  const pdfCandidates = [
+    work.best_oa_location?.pdf_url,
+    work.primary_location?.pdf_url,
+    work.open_access?.oa_url,
+    ...(work.locations || []).map((location) => location?.pdf_url)
+  ]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => value.trim())
+    .filter((value, index, array) => array.indexOf(value) === index)
+    .filter((value) => !looksLikeNonDirectDoiUrl(value));
+
+  for (const candidate of pdfCandidates) {
+    const verified = await verifyPdfCandidate(candidate, "openalex_pdf", attempts, errors, args.abortSignal);
+    if (verified) {
+      return {
+        pdfUrl: verified,
+        landingUrl: firstNonSemanticScholarUrl(landingCandidates[0]) || row.landing_url
+      };
+    }
+  }
+
+  return {
+    landingUrl: firstNonSemanticScholarUrl(landingCandidates[0]) || row.landing_url
+  };
+}
+
 async function resolveGenericLanding(
   args: EnrichCollectedPaperArgs,
   row: StoredCorpusRow,
@@ -456,27 +658,7 @@ async function resolveGenericLanding(
   }
 
   const $ = load(html);
-  const metaPdf =
-    firstMetaContent($, "meta[name='citation_pdf_url']") ||
-    firstMetaContent($, "meta[property='citation_pdf_url']") ||
-    firstMetaContent($, "meta[name='dc.identifier.pdf']");
-  const pdfCandidates = new Set<string>();
-  if (metaPdf) {
-    pdfCandidates.add(new URL(metaPdf, landingUrl).toString());
-  }
-  $("link[rel='alternate']").each((_, element) => {
-    const type = ($(element).attr("type") || "").toLowerCase();
-    const href = $(element).attr("href");
-    if (href && type.includes("pdf")) {
-      pdfCandidates.add(new URL(href, landingUrl).toString());
-    }
-  });
-  $("a[href]").each((_, element) => {
-    const href = $(element).attr("href");
-    if (href && /\.pdf($|[?#])/i.test(href)) {
-      pdfCandidates.add(new URL(href, landingUrl).toString());
-    }
-  });
+  const pdfCandidates = extractPdfCandidatesFromHtml($, landingUrl);
 
   let pdfUrl: string | undefined;
   for (const candidate of pdfCandidates) {
@@ -518,6 +700,31 @@ async function resolveGenericLanding(
   };
 }
 
+function extractPdfCandidatesFromHtml($: ReturnType<typeof load>, baseUrl: string): string[] {
+  const pdfCandidates = new Set<string>();
+  const metaPdf =
+    firstMetaContent($, "meta[name='citation_pdf_url']") ||
+    firstMetaContent($, "meta[property='citation_pdf_url']") ||
+    firstMetaContent($, "meta[name='dc.identifier.pdf']");
+  if (metaPdf) {
+    pdfCandidates.add(new URL(metaPdf, baseUrl).toString());
+  }
+  $("link[rel='alternate']").each((_, element) => {
+    const type = ($(element).attr("type") || "").toLowerCase();
+    const href = $(element).attr("href");
+    if (href && type.includes("pdf")) {
+      pdfCandidates.add(new URL(href, baseUrl).toString());
+    }
+  });
+  $("a[href]").each((_, element) => {
+    const href = $(element).attr("href");
+    if (href && /\.pdf($|[?#])/i.test(href)) {
+      pdfCandidates.add(new URL(href, baseUrl).toString());
+    }
+  });
+  return Array.from(pdfCandidates);
+}
+
 async function collectLandingCandidates(
   args: EnrichCollectedPaperArgs,
   row: StoredCorpusRow,
@@ -545,9 +752,284 @@ async function collectLandingCandidates(
   return Array.from(candidates);
 }
 
+async function collectVenueTitleCandidates(
+  args: EnrichCollectedPaperArgs,
+  row: StoredCorpusRow,
+  attempts: CollectEnrichmentAttempt[],
+  errors: string[]
+): Promise<{ urls: string[]; doi?: string }> {
+  const urls = new Set<string>();
+  let discoveredDoi: string | undefined;
+
+  if (looksLikeOpenReviewVenue(row.venue)) {
+    const openReviewUrl = await searchOpenReviewByTitle(row.title, attempts, errors, args.abortSignal);
+    if (openReviewUrl) {
+      urls.add(openReviewUrl);
+    }
+  }
+
+  if (looksLikePmlrVenue(row.venue)) {
+    const pmlrUrl = await searchPmlrByTitleAndVenue(row, attempts, errors, args.abortSignal);
+    if (pmlrUrl) {
+      urls.add(pmlrUrl);
+    }
+  }
+
+  if (looksLikeAamasVenue(row.venue)) {
+    const ifaamasPdfUrl = synthesizeIfaamasPdfUrl(row);
+    if (ifaamasPdfUrl) {
+      urls.add(ifaamasPdfUrl);
+    }
+  }
+
+  if (urls.size > 0) {
+    return { urls: Array.from(urls), doi: discoveredDoi };
+  }
+
+  const dblp = await searchDblpByTitle(row.title, row.venue, attempts, errors, args.abortSignal);
+  for (const url of dblp.urls) {
+    urls.add(url);
+  }
+  discoveredDoi = dblp.doi;
+
+  return { urls: Array.from(urls), doi: discoveredDoi };
+}
+
+async function searchPmlrByTitleAndVenue(
+  row: StoredCorpusRow,
+  attempts: CollectEnrichmentAttempt[],
+  errors: string[],
+  abortSignal?: AbortSignal
+): Promise<string | undefined> {
+  const indexHtml = await fetchTextCandidate(
+    "https://proceedings.mlr.press/",
+    "pmlr_volume_index",
+    attempts,
+    errors,
+    abortSignal
+  );
+  if (!indexHtml) {
+    return undefined;
+  }
+
+  const $index = load(indexHtml);
+  const venueTerms = buildVenueSearchTerms(row.venue);
+  const yearToken = typeof row.year === "number" ? String(row.year) : undefined;
+  const volumeCandidates = $index("li")
+    .map((_, element) => {
+      const text = $index(element).text().replace(/\s+/g, " ").trim();
+      const href = $index(element).find("a[href]").first().attr("href");
+      if (!href || !/^v\d+\/?$/.test(href)) {
+        return null;
+      }
+      const lowerText = text.toLowerCase();
+      const venueScore = venueTerms.reduce((best, term) => Math.max(best, lexicalSimilarity(term, lowerText)), 0);
+      const yearScore = yearToken && lowerText.includes(yearToken) ? 0.2 : 0;
+      return {
+        url: new URL(href, "https://proceedings.mlr.press/").toString(),
+        score: venueScore + yearScore
+      };
+    })
+    .get()
+    .filter((candidate): candidate is { url: string; score: number } => Boolean(candidate && candidate.score >= 0.45))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3);
+
+  for (const volume of volumeCandidates) {
+    const volumeHtml = await fetchTextCandidate(volume.url, "pmlr_volume_page", attempts, errors, abortSignal);
+    if (!volumeHtml) {
+      continue;
+    }
+    const $volume = load(volumeHtml);
+    const paperMatches = $volume(".paper")
+      .map((_, element) => {
+        const paper = $volume(element);
+        const title = paper.find(".title").first().text().replace(/\s+/g, " ").trim();
+        const absHref = paper.find("a[href]").filter((__, anchor) => {
+          const text = $volume(anchor).text().trim().toLowerCase();
+          return text === "abs";
+        }).first().attr("href");
+        if (!title || !absHref) {
+          return null;
+        }
+        return {
+          title,
+          absUrl: new URL(absHref, volume.url).toString(),
+          score: lexicalSimilarity(row.title, title)
+        };
+      })
+      .get()
+      .filter((candidate): candidate is { title: string; absUrl: string; score: number } => Boolean(candidate && candidate.score >= 0.72))
+      .sort((a, b) => b.score - a.score);
+    if (paperMatches[0]?.absUrl) {
+      return paperMatches[0].absUrl;
+    }
+  }
+
+  return undefined;
+}
+
+async function searchOpenReviewByTitle(
+  title: string,
+  attempts: CollectEnrichmentAttempt[],
+  errors: string[],
+  abortSignal?: AbortSignal
+): Promise<string | undefined> {
+  const queries = buildTitleSearchQueries(title);
+  for (const query of queries) {
+    const raw = await fetchJsonCandidate(
+      `https://api2.openreview.net/notes/search?query=${encodeURIComponent(query)}`,
+      "openreview_title_search",
+      attempts,
+      errors,
+      abortSignal
+    );
+    const notes = extractOpenReviewNotes(raw);
+    if (notes.length === 0) {
+      continue;
+    }
+    const ranked = notes
+      .map((note) => {
+        const content = note.content && typeof note.content === "object" ? note.content : {};
+        const candidateTitle = extractOpenReviewString((content as Record<string, unknown>).title);
+        const forum = typeof note.forum === "string" && note.forum ? note.forum : typeof note.id === "string" ? note.id : undefined;
+        return {
+          forum,
+          title: candidateTitle,
+          score: lexicalSimilarity(title, candidateTitle)
+        };
+      })
+      .filter((note) => note.forum && note.score >= 0.72)
+      .sort((a, b) => b.score - a.score);
+    if (ranked[0]?.forum) {
+      return `https://openreview.net/forum?id=${encodeURIComponent(ranked[0].forum)}`;
+    }
+  }
+  return undefined;
+}
+
+async function searchDblpByTitle(
+  title: string,
+  venue: string | undefined,
+  attempts: CollectEnrichmentAttempt[],
+  errors: string[],
+  abortSignal?: AbortSignal
+): Promise<{ urls: string[]; doi?: string }> {
+  const queries = buildTitleSearchQueries(title);
+  for (const query of queries) {
+    const raw = await fetchJsonCandidateWithRetry(
+      `https://dblp.org/search/publ/api?q=${encodeURIComponent(query)}&format=json`,
+      "dblp_title_search",
+      attempts,
+      errors,
+      abortSignal,
+      4
+    );
+    const hits = extractDblpHits(raw);
+    if (hits.length === 0) {
+      continue;
+    }
+    const ranked = hits
+      .map((info) => {
+        const score = lexicalSimilarity(title, info.title || "");
+        const venueScore = lexicalSimilarity(venue || "", info.venue || "");
+        return {
+          info,
+          score,
+          venueScore
+        };
+      })
+      .filter((candidate) => candidate.score >= 0.68 || (candidate.score >= 0.55 && candidate.venueScore >= 0.45))
+      .sort((a, b) => {
+        if (b.score !== a.score) {
+          return b.score - a.score;
+        }
+        return b.venueScore - a.venueScore;
+      });
+    if (ranked.length === 0) {
+      continue;
+    }
+    const urls = new Set<string>();
+    let doi: string | undefined;
+    for (const candidate of ranked.slice(0, 5)) {
+      const eeValues = Array.isArray(candidate.info.ee) ? candidate.info.ee : candidate.info.ee ? [candidate.info.ee] : [];
+      for (const value of eeValues) {
+        if (!value) {
+          continue;
+        }
+        const host = safeHost(value);
+        if (
+          host === "aclanthology.org" ||
+          host === "openreview.net" ||
+          host === "proceedings.mlr.press" ||
+          host === "ifaamas.org"
+        ) {
+          urls.add(value);
+        }
+      }
+      if (!doi && candidate.info.doi) {
+        doi = candidate.info.doi;
+      }
+    }
+    if (urls.size > 0 || doi) {
+      return { urls: Array.from(urls), doi };
+    }
+  }
+  return { urls: [] };
+}
+
+async function fetchJsonCandidateWithRetry(
+  url: string,
+  stage: string,
+  attempts: CollectEnrichmentAttempt[],
+  errors: string[],
+  abortSignal: AbortSignal | undefined,
+  maxAttempts: number
+): Promise<unknown> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const beforeAttempts = attempts.length;
+    const raw = await fetchJsonCandidate(url, stage, attempts, errors, abortSignal);
+    if (raw !== undefined) {
+      return raw;
+    }
+    const latest = attempts[attempts.length - 1];
+    const serverError =
+      latest &&
+      attempts.length > beforeAttempts &&
+      latest.stage === stage &&
+      latest.ok === false &&
+      typeof latest.detail === "string" &&
+      /^5\d\d$/.test(latest.detail);
+    if (!serverError || attempt === maxAttempts) {
+      break;
+    }
+    await sleep(150 * attempt);
+  }
+  return undefined;
+}
+
 function shouldTryGenericBibtex(row: StoredCorpusRow): boolean {
   const existing = row.bibtex || row.semantic_scholar_bibtex;
   return scoreBibtexRichness(existing ?? "") < 8;
+}
+
+function shouldTryVenueTitleDiscovery(row: StoredCorpusRow): boolean {
+  if (row.pdf_url || !row.title) {
+    return false;
+  }
+  const landingHost = row.landing_url ? safeHost(row.landing_url) : undefined;
+  const sourceHost = row.url ? safeHost(row.url) : undefined;
+  return (
+    (!landingHost || landingHost.endsWith("semanticscholar.org")) &&
+    (
+      (sourceHost ? sourceHost.endsWith("semanticscholar.org") : false) ||
+      (landingHost ? landingHost.endsWith("semanticscholar.org") : false) ||
+      looksLikeOpenReviewVenue(row.venue) ||
+      looksLikeAclVenue(row.venue) ||
+      looksLikePmlrVenue(row.venue) ||
+      looksLikeAamasVenue(row.venue)
+    )
+  );
 }
 
 async function verifyPdfCandidate(
@@ -725,12 +1207,27 @@ function deriveAclCanonicalUrl(landingUrl: string, doi?: string): string | undef
   return undefined;
 }
 
-function derivePmlrCanonicalUrl(landingUrl: string): string | undefined {
+function derivePmlrPageUrl(landingUrl: string): string | undefined {
   const normalized = firstNonSemanticScholarUrl(landingUrl);
   if (!normalized || safeHost(normalized) !== "proceedings.mlr.press") {
     return undefined;
   }
-  return normalized.replace(/\/+$/, "").replace(/\.pdf$/i, "").replace(/\.html$/i, "");
+  const withoutTrailingSlash = normalized.replace(/\/+$/, "");
+  if (/\.html$/i.test(withoutTrailingSlash)) {
+    return withoutTrailingSlash;
+  }
+  if (/\.pdf$/i.test(withoutTrailingSlash)) {
+    return withoutTrailingSlash.replace(/\.pdf$/i, ".html");
+  }
+  return `${withoutTrailingSlash}.html`;
+}
+
+function derivePmlrStemUrl(pageUrl: string): string | undefined {
+  const normalized = firstNonSemanticScholarUrl(pageUrl);
+  if (!normalized || safeHost(normalized) !== "proceedings.mlr.press") {
+    return undefined;
+  }
+  return normalized.replace(/\/+$/, "").replace(/\.html$/i, "").replace(/\.pdf$/i, "");
 }
 
 function extractOpenReviewId(url: string): string | undefined {
@@ -747,6 +1244,195 @@ function extractOpenReviewId(url: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function extractOpenReviewNotes(raw: unknown): Array<Record<string, unknown>> {
+  if (!raw || typeof raw !== "object") {
+    return [];
+  }
+  const notes = (raw as OpenReviewSearchResponse).notes;
+  return Array.isArray(notes) ? notes.filter((note) => note && typeof note === "object") : [];
+}
+
+function extractOpenReviewString(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value && typeof value === "object" && typeof (value as { value?: unknown }).value === "string") {
+    return (value as { value: string }).value;
+  }
+  return "";
+}
+
+function extractDblpHits(raw: unknown): DblpHitInfo[] {
+  if (!raw || typeof raw !== "object") {
+    return [];
+  }
+  const hit = (raw as DblpSearchResponse).result?.hits?.hit;
+  if (Array.isArray(hit)) {
+    return hit
+      .map((entry) => entry?.info)
+      .filter((info): info is DblpHitInfo => Boolean(info && typeof info === "object"));
+  }
+  if (hit && typeof hit === "object" && "info" in hit && hit.info && typeof hit.info === "object") {
+    return [hit.info as DblpHitInfo];
+  }
+  return [];
+}
+
+function extractOpenAlexWork(raw: unknown): OpenAlexWork | undefined {
+  if (!raw || typeof raw !== "object") {
+    return undefined;
+  }
+  return raw as OpenAlexWork;
+}
+
+function buildTitleSearchQueries(title: string): string[] {
+  const normalized = normalizeSearchText(title);
+  const tokens = normalized.split(" ").filter(Boolean);
+  const queries: string[] = [];
+  if (normalized) {
+    queries.push(normalized);
+  }
+  if (tokens.length > 6) {
+    queries.push(tokens.slice(0, 6).join(" "));
+  }
+  if (tokens.length > 8) {
+    queries.push(tokens.slice(0, 8).join(" "));
+  }
+  return Array.from(new Set(queries));
+}
+
+function buildVenueSearchTerms(venue: string | undefined): string[] {
+  const normalized = normalizeSearchText(venue || "");
+  const terms = new Set<string>();
+  if (normalized) {
+    terms.add(normalized);
+  }
+  if (normalized.includes("international conference on machine learning")) {
+    terms.add("icml");
+    terms.add("proceedings of icml");
+  }
+  if (normalized.includes("learning theory")) {
+    terms.add("colt");
+    terms.add("conference on learning theory");
+  }
+  if (normalized.includes("adaptive agents and multi agent systems") || normalized.includes("autonomous agents and multi agent systems")) {
+    terms.add("aamas");
+    terms.add("international joint conference on autonomous agents and multiagent systems");
+  }
+  return Array.from(terms);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function lexicalSimilarity(left: string, right: string): number {
+  const a = normalizeSearchText(left);
+  const b = normalizeSearchText(right);
+  if (!a || !b) {
+    return 0;
+  }
+  if (a === b) {
+    return 1;
+  }
+  const aTokens = new Set(a.split(" ").filter(Boolean));
+  const bTokens = new Set(b.split(" ").filter(Boolean));
+  const overlap = [...aTokens].filter((token) => bTokens.has(token)).length;
+  const union = new Set([...aTokens, ...bTokens]).size || 1;
+  const tokenScore = overlap / union;
+  const aBigrams = buildBigrams(a);
+  const bBigrams = buildBigrams(b);
+  const bigramOverlap = [...aBigrams].filter((token) => bBigrams.has(token)).length;
+  const bigramDenominator = aBigrams.size + bBigrams.size || 1;
+  const bigramScore = (2 * bigramOverlap) / bigramDenominator;
+  return (tokenScore + bigramScore) / 2;
+}
+
+function normalizeSearchText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildBigrams(value: string): Set<string> {
+  const compact = value.replace(/\s+/g, " ").trim();
+  const output = new Set<string>();
+  for (let index = 0; index < compact.length - 1; index += 1) {
+    output.add(compact.slice(index, index + 2));
+  }
+  return output;
+}
+
+function looksLikeOpenReviewVenue(venue: string | undefined): boolean {
+  const normalized = normalizeSearchText(venue || "");
+  return (
+    normalized.includes("openreview") ||
+    normalized.includes("learning representations") ||
+    normalized.includes("conference on learning representations") ||
+    normalized.includes("colm")
+  );
+}
+
+function looksLikeAclVenue(venue: string | undefined): boolean {
+  const normalized = normalizeSearchText(venue || "");
+  return (
+    normalized.includes("acl") ||
+    normalized.includes("emnlp") ||
+    normalized.includes("naacl") ||
+    normalized.includes("coling") ||
+    normalized.includes("computational linguistics")
+  );
+}
+
+function looksLikePmlrVenue(venue: string | undefined): boolean {
+  const normalized = normalizeSearchText(venue || "");
+  return (
+    normalized.includes("proceedings of machine learning research") ||
+    normalized.includes("international conference on machine learning") ||
+    normalized.includes("learning theory")
+  );
+}
+
+function looksLikeAamasVenue(venue: string | undefined): boolean {
+  const normalized = normalizeSearchText(venue || "");
+  return (
+    normalized.includes("aamas") ||
+    normalized.includes("adaptive agents and multi agent systems") ||
+    normalized.includes("autonomous agents and multi agent systems")
+  );
+}
+
+function synthesizeIfaamasPdfUrl(row: StoredCorpusRow): string | undefined {
+  if (!looksLikeAamasVenue(row.venue) || typeof row.year !== "number") {
+    return undefined;
+  }
+  const firstPage = extractFirstPageFromStoredRow(row);
+  if (!firstPage) {
+    return undefined;
+  }
+  return `https://www.ifaamas.org/Proceedings/aamas${row.year}/pdfs/p${firstPage}.pdf`;
+}
+
+function extractFirstPageFromStoredRow(row: StoredCorpusRow): string | undefined {
+  const candidates = [row.bibtex, row.semantic_scholar_bibtex];
+  for (const value of candidates) {
+    if (!value) {
+      continue;
+    }
+    const match =
+      value.match(/\bpages\s*=\s*[{\"]?(\d+)(?:\s*[-–]+\s*\d+)?/i) ||
+      value.match(/\bpages\s*=\s*[{\"]?(\d+)/i);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+  return undefined;
 }
 
 function firstMetaContent($: ReturnType<typeof load>, selector: string): string | undefined {
@@ -785,6 +1471,11 @@ function safeHost(url: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function looksLikeNonDirectDoiUrl(url: string): boolean {
+  const host = safeHost(url);
+  return Boolean(host && host === "doi.org");
 }
 
 function firstNonSemanticScholarUrl(url: string | undefined): string | undefined {
