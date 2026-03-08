@@ -55,6 +55,66 @@ function makeRun(id = "run-1"): any {
 }
 
 describe("TerminalApp pending natural plan execution", () => {
+  it("uses selection menus for provider and PDF mode in settings", async () => {
+    const saveConfig = vi.fn().mockResolvedValue(undefined);
+    const app = new TerminalApp({
+      config: {
+        papers: { max_results: 100 },
+        providers: {
+          llm_mode: "codex_chatgpt_only",
+          codex: { model: "gpt-5.3-codex", reasoning_effort: "xhigh", fast_mode: false },
+          openai: { model: "gpt-5.4", reasoning_effort: "medium" }
+        },
+        analysis: {
+          pdf_mode: "codex_text_extract",
+          responses_model: "gpt-5.4"
+        },
+        research: {
+          default_topic: "Multi-agent collaboration",
+          default_constraints: ["recent papers", "last 5 years"],
+          default_objective_metric: "state-of-the-art reproducibility"
+        }
+      } as any,
+      runStore: {} as any,
+      titleGenerator: {} as any,
+      codex: {} as any,
+      eventStream: { subscribe: () => () => {} } as any,
+      orchestrator: {} as any,
+      semanticScholarApiKeyConfigured: false,
+      onQuit: () => {},
+      saveConfig
+    }) as any;
+
+    app.render = () => {};
+    app.updateSuggestions = () => {};
+    app.drainQueuedInputs = async () => {};
+    app.askWithinTui = vi
+      .fn()
+      .mockResolvedValueOnce("Pilot topic")
+      .mockResolvedValueOnce("recent papers,last 5 years")
+      .mockResolvedValueOnce("reproducibility");
+    app.openSelectionMenu = vi
+      .fn()
+      .mockResolvedValueOnce("codex_chatgpt_only")
+      .mockResolvedValueOnce("codex_text_extract");
+
+    await app.handleSettings();
+
+    expect(app.openSelectionMenu).toHaveBeenNthCalledWith(
+      1,
+      "Select primary LLM provider",
+      expect.any(Array),
+      "codex_chatgpt_only"
+    );
+    expect(app.openSelectionMenu).toHaveBeenNthCalledWith(
+      2,
+      "Select PDF analysis mode",
+      expect.any(Array),
+      "codex_text_extract"
+    );
+    expect(saveConfig).toHaveBeenCalledTimes(1);
+  });
+
   it("answers collected-paper count questions directly instead of arming a collect command", async () => {
     const app = makeApp();
     const run = makeRun("run-count");

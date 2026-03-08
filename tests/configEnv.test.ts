@@ -82,6 +82,23 @@ async function createWorkspace(): Promise<{ cwd: string; paths: ReturnType<typeo
   return { cwd, paths };
 }
 
+async function captureStdout<T>(fn: () => Promise<T>): Promise<{ result: T; output: string }> {
+  const chunks: string[] = [];
+  const originalWrite = process.stdout.write.bind(process.stdout);
+
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    chunks.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+    return true;
+  }) as typeof process.stdout.write;
+
+  try {
+    const result = await fn();
+    return { result, output: chunks.join("") };
+  } finally {
+    process.stdout.write = originalWrite;
+  }
+}
+
 afterEach(() => {
   if (ORIGINAL_SEMANTIC_SCHOLAR_API_KEY === undefined) {
     delete process.env.SEMANTIC_SCHOLAR_API_KEY;
@@ -156,6 +173,35 @@ describe("config .env overrides", () => {
     expect(config.project_name).toBe("project");
     await expect(resolveSemanticScholarApiKey(cwd)).resolves.toBe("required-key");
     await expect(fs.readFile(paths.configFile, "utf8")).resolves.toContain("project_name: project");
+  });
+
+  it("prints codex/api trade-off guidance during first-run setup", async () => {
+    delete process.env.OPENAI_API_KEY;
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autoresearch-setup-tradeoffs-"));
+    const paths = resolveAppPaths(cwd);
+    const answers = [
+      "project",
+      "Multi-agent collaboration",
+      "recent papers,last 5 years",
+      "reproducibility",
+      "codex",
+      "codex",
+      "semantic-key"
+    ];
+
+    const { output } = await captureStdout(() =>
+      runSetupWizard(paths, async (_question, defaultValue = "") => {
+        const answer = answers.shift();
+        return answer !== undefined ? answer : defaultValue;
+      })
+    );
+
+    expect(output).toContain("Primary LLM provider trade-off:");
+    expect(output).toContain("codex: uses Sign in with ChatGPT");
+    expect(output).toContain("api: uses OpenAI API models");
+    expect(output).toContain("PDF analysis trade-off:");
+    expect(output).toContain("codex: downloads PDFs locally");
+    expect(output).toContain("api: sends PDFs to the OpenAI Responses API");
   });
 
   it("uses OPENAI_API_KEY from .env when Responses PDF mode is enabled", async () => {

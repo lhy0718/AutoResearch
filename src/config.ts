@@ -18,7 +18,7 @@ import {
   normalizeOpenAiResponsesReasoningEffort
 } from "./integrations/openai/modelCatalog.js";
 import { ensureDir, fileExists, writeJsonFile } from "./utils/fs.js";
-import { askLine, askRequiredLine, PromptReader } from "./utils/prompt.js";
+import { askChoice, askLine, askRequiredLine, PromptReader } from "./utils/prompt.js";
 
 export interface AppPaths {
   cwd: string;
@@ -134,11 +134,13 @@ export async function runSetupWizard(
     "Default objective metric",
     "state-of-the-art reproducibility"
   );
+  writePrimaryLlmTradeoffGuidance();
   const llmMode = await askPrimaryLlmMode(promptReader);
   const openAiModel =
     llmMode === "openai_api"
       ? await askOpenAiResponsesModel(promptReader)
       : DEFAULT_OPENAI_RESPONSES_MODEL;
+  writePdfAnalysisTradeoffGuidance();
   const pdfAnalysisMode = await askPdfAnalysisMode(promptReader);
   const responsesPdfModel =
     pdfAnalysisMode === "responses_api_pdf"
@@ -356,9 +358,51 @@ function normalizePrimaryLlmMode(value: unknown): "codex_chatgpt_only" | "openai
   return value === "openai_api" ? value : "codex_chatgpt_only";
 }
 
+function writePrimaryLlmTradeoffGuidance(): void {
+  output.write(
+    [
+      "Primary LLM provider trade-off:",
+      "- codex: uses Sign in with ChatGPT, no OpenAI API key needed, best fit for interactive coding and implement_experiments.",
+      "- api: uses OpenAI API models, requires OPENAI_API_KEY, easier to control model choice and structured API behavior, but API usage is billed separately.",
+      ""
+    ].join("\n")
+  );
+}
+
+function writePdfAnalysisTradeoffGuidance(): void {
+  output.write(
+    [
+      "PDF analysis trade-off:",
+      "- codex: downloads PDFs locally and extracts text with local tools; cheaper to operate inside the current Codex flow, but extraction quality depends on local tooling.",
+      "- api: sends PDFs to the OpenAI Responses API; usually better document understanding, but slower and requires OPENAI_API_KEY.",
+      ""
+    ].join("\n")
+  );
+}
+
 async function askPrimaryLlmMode(
   promptReader: PromptReader = askLine
 ): Promise<"codex_chatgpt_only" | "openai_api"> {
+  if (promptReader === askLine) {
+    const answer = await askChoice(
+      "Primary LLM provider",
+      [
+        {
+          label: "codex",
+          value: "codex_chatgpt_only",
+          description: "(ChatGPT sign-in, best for interactive coding)"
+        },
+        {
+          label: "api",
+          value: "openai_api",
+          description: "(OPENAI_API_KEY required, direct API control)"
+        }
+      ],
+      "codex_chatgpt_only"
+    );
+    return answer === "openai_api" ? "openai_api" : "codex_chatgpt_only";
+  }
+
   while (true) {
     const answer = (await promptReader("Primary LLM provider (codex/api)", "codex")).trim().toLowerCase();
     if (!answer || answer === "codex" || answer === "chatgpt" || answer === "codex_chatgpt_only") {
@@ -374,6 +418,26 @@ async function askPrimaryLlmMode(
 async function askPdfAnalysisMode(
   promptReader: PromptReader = askLine
 ): Promise<"codex_text_extract" | "responses_api_pdf"> {
+  if (promptReader === askLine) {
+    const answer = await askChoice(
+      "PDF analysis mode",
+      [
+        {
+          label: "codex",
+          value: "codex_text_extract",
+          description: "(local PDF download + text extraction)"
+        },
+        {
+          label: "api",
+          value: "responses_api_pdf",
+          description: "(Responses API PDF input, richer but slower)"
+        }
+      ],
+      "codex_text_extract"
+    );
+    return answer === "responses_api_pdf" ? "responses_api_pdf" : "codex_text_extract";
+  }
+
   while (true) {
     const answer = (await promptReader("PDF analysis mode (codex/api)", "codex")).trim().toLowerCase();
     if (!answer || answer === "codex") {
