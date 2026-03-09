@@ -9,6 +9,56 @@ export type PromptChoice = {
   description?: string;
 };
 
+function supportsPromptColor(): boolean {
+  if (process.env.NO_COLOR) {
+    return false;
+  }
+  if (process.env.TERM === "dumb") {
+    return false;
+  }
+  return Boolean(output.isTTY);
+}
+
+function colorize(text: string, code: number, enabled = supportsPromptColor()): string {
+  if (!enabled) {
+    return text;
+  }
+  return `\x1b[${code}m${text}\x1b[0m`;
+}
+
+function stripAnsi(text: string): string {
+  return text.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+function getTerminalWidth(): number {
+  return Math.max(output.columns || 80, 20);
+}
+
+function getRenderedRowCount(lines: string[]): number {
+  const width = getTerminalWidth();
+  return lines.reduce((total, line) => {
+    const visibleLength = Array.from(stripAnsi(line)).length;
+    return total + Math.max(1, Math.ceil(visibleLength / width));
+  }, 0);
+}
+
+export function formatPromptChoiceLine(
+  choice: PromptChoice,
+  selected: boolean,
+  colorEnabled = supportsPromptColor()
+): string {
+  const pointer = selected ? ">" : " ";
+  if (selected) {
+    const selectedText = choice.description ? `${pointer} ${choice.label} ${choice.description}` : `${pointer} ${choice.label}`;
+    return colorize(selectedText, 94, colorEnabled);
+  }
+  const label = `${pointer} ${choice.label}`;
+  if (!choice.description) {
+    return label;
+  }
+  return `${label} ${colorize(choice.description, 90, colorEnabled)}`;
+}
+
 export async function askLine(question: string, defaultValue = ""): Promise<string> {
   const rl = readlinePromises.createInterface({ input, output });
   try {
@@ -44,18 +94,47 @@ export async function askChoice(question: string, choices: PromptChoice[], defau
   let settled = false;
 
   return await new Promise<string>((resolve, reject) => {
+    const wasPaused = input.isPaused();
+    let renderedRows = 0;
+
+    const clearCurrentLine = () => {
+      output.write("\x1b[2K\r");
+    };
+
+    const clearChoiceBlock = (rows: number) => {
+      if (rows <= 0) {
+        return;
+      }
+      for (let index = 0; index < rows; index += 1) {
+        clearCurrentLine();
+        if (index < rows - 1) {
+          output.write("\x1b[1B\r");
+        }
+      }
+      if (rows > 1) {
+        output.write(`\x1b[${rows - 1}A\r`);
+      }
+    };
+
     const redraw = () => {
       const lines = [
         `${question}:`,
-        ...choices.map((choice, index) => {
-          const pointer = index === selectedIndex ? ">" : " ";
-          const suffix = choice.description ? ` ${choice.description}` : "";
-          return `${pointer} ${choice.label}${suffix}`;
-        })
+        ...choices.map((choice, index) => formatPromptChoiceLine(choice, index === selectedIndex))
       ];
-      output.write("\x1b[2K\r");
-      output.write(lines.join("\n"));
-      output.write(`\x1b[${lines.length - 1}A\r`);
+      clearChoiceBlock(renderedRows);
+      renderedRows = getRenderedRowCount(lines);
+      for (let index = 0; index < lines.length; index += 1) {
+        clearCurrentLine();
+        output.write(lines[index]);
+        if (index < lines.length - 1) {
+          output.write("\n");
+        }
+      }
+      if (renderedRows > 1) {
+        output.write(`\x1b[${renderedRows - 1}A\r`);
+      } else {
+        output.write("\r");
+      }
     };
 
     const cleanup = () => {
@@ -63,8 +142,11 @@ export async function askChoice(question: string, choices: PromptChoice[], defau
       if (input.isTTY && typeof input.setRawMode === "function") {
         input.setRawMode(false);
       }
-      output.write(`\x1b[${choices.length}B\r`);
-      output.write("\x1b[2K\r");
+      if (wasPaused) {
+        input.pause();
+      }
+      clearChoiceBlock(renderedRows);
+      renderedRows = 0;
     };
 
     const finish = (value: string) => {
@@ -107,6 +189,7 @@ export async function askChoice(question: string, choices: PromptChoice[], defau
     };
 
     readline.emitKeypressEvents(input);
+    input.resume();
     input.setRawMode(true);
     input.on("keypress", onKeypress);
     redraw();

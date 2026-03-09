@@ -71,6 +71,7 @@ export async function analyzePaperWithLlm(args: {
   paper: AnalysisCorpusRow;
   source: ResolvedPaperSource;
   maxAttempts?: number;
+  abortSignal?: AbortSignal;
   onProgress?: (message: string) => void;
 }): Promise<PaperAnalysisResult> {
   const maxAttempts = Math.max(1, args.maxAttempts ?? 2);
@@ -81,6 +82,7 @@ export async function analyzePaperWithLlm(args: {
       args.onProgress?.(`Starting LLM analysis attempt ${attempt}/${maxAttempts}.`);
       const completion = await args.llm.complete(buildPaperAnalysisPrompt(args.paper, args.source), {
         systemPrompt: ANALYSIS_SYSTEM_PROMPT,
+        abortSignal: args.abortSignal,
         onProgress: (event) => {
           emitLlmProgress(args.onProgress, event);
         }
@@ -94,6 +96,9 @@ export async function analyzePaperWithLlm(args: {
         rawJson: parsed
       };
     } catch (error) {
+      if (isAbortError(error)) {
+        throw error;
+      }
       lastError = error instanceof Error ? error : new Error(String(error));
       args.onProgress?.(`Analysis attempt ${attempt}/${maxAttempts} failed: ${lastError.message}`);
     }
@@ -140,6 +145,9 @@ export async function analyzePaperWithResponsesPdf(args: {
         rawJson: parsed
       };
     } catch (error) {
+      if (isAbortError(error)) {
+        throw error;
+      }
       lastError = error instanceof Error ? error : new Error(String(error));
       args.onProgress?.(`PDF analysis attempt ${attempt}/${maxAttempts} failed: ${lastError.message}`);
     }
@@ -151,11 +159,15 @@ export async function analyzePaperWithResponsesPdf(args: {
 export function shouldFallbackResponsesPdfToLocalText(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return [
+    /error while downloading/i,
     /timeout while downloading/i,
     /failed to download/i,
     /unable to download/i,
     /unable to fetch/i,
     /could not fetch/i,
+    /upstream status code:\s*40[34]/i,
+    /invalid_request_error/i,
+    /param"\s*:\s*"url"/i,
     /file_url/i,
     /remote file/i
   ].some((pattern) => pattern.test(message));
@@ -179,6 +191,14 @@ function emitLlmProgress(
   if (text) {
     onProgress(text);
   }
+}
+
+function isAbortError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = error.message.toLowerCase();
+  return message.includes("aborted") || message.includes("abort");
 }
 
 export function buildPaperAnalysisPrompt(paper: AnalysisCorpusRow, source: ResolvedPaperSource): string {

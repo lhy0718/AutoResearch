@@ -7,15 +7,20 @@ import { AppConfig, RunsFile } from "./types.js";
 import { normalizeReasoningEffortForModel } from "./integrations/codex/modelCatalog.js";
 import {
   DEFAULT_RESPONSES_PDF_MODEL,
+  RESPONSES_PDF_MODEL_OPTIONS,
   buildResponsesPdfModelChoices,
   normalizeResponsesPdfModel
 } from "./integrations/openai/pdfModelCatalog.js";
 import {
   DEFAULT_OPENAI_RESPONSES_MODEL,
   DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT,
+  OPENAI_RESPONSES_MODEL_OPTIONS,
   buildOpenAiResponsesModelChoices,
+  buildOpenAiResponsesReasoningChoices,
+  getOpenAiResponsesReasoningOptions,
   normalizeOpenAiResponsesModel,
-  normalizeOpenAiResponsesReasoningEffort
+  normalizeOpenAiResponsesReasoningEffort,
+  supportsOpenAiResponsesReasoning
 } from "./integrations/openai/modelCatalog.js";
 import { ensureDir, fileExists, writeJsonFile } from "./utils/fs.js";
 import { askChoice, askLine, askRequiredLine, PromptReader } from "./utils/prompt.js";
@@ -63,7 +68,11 @@ function buildConfigFromWizardAnswers(answers: {
   defaultConstraints: string[];
   defaultObjectiveMetric: string;
   llmMode: "codex_chatgpt_only" | "openai_api";
+  codexCommandReasoningEffort: AppConfig["providers"]["codex"]["reasoning_effort"];
+  codexTaskReasoningEffort: AppConfig["providers"]["codex"]["reasoning_effort"];
   openAiModel: string;
+  openAiCommandReasoningEffort: AppConfig["providers"]["openai"]["reasoning_effort"];
+  openAiReasoningEffort: AppConfig["providers"]["openai"]["reasoning_effort"];
   pdfAnalysisMode: "codex_text_extract" | "responses_api_pdf";
   responsesPdfModel: string;
 }): AppConfig {
@@ -74,14 +83,15 @@ function buildConfigFromWizardAnswers(answers: {
       llm_mode: answers.llmMode,
       codex: {
         model: "gpt-5.3-codex",
-        reasoning_effort: "xhigh",
+        reasoning_effort: answers.codexTaskReasoningEffort,
+        command_reasoning_effort: answers.codexCommandReasoningEffort,
         fast_mode: false,
         auth_required: true
       },
       openai: {
         model: answers.openAiModel,
-        reasoning_effort: DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT as
-          AppConfig["providers"]["openai"]["reasoning_effort"],
+        reasoning_effort: answers.openAiReasoningEffort,
+        command_reasoning_effort: answers.openAiCommandReasoningEffort,
         api_key_required: true
       }
     },
@@ -134,26 +144,58 @@ export async function runSetupWizard(
     "Default objective metric",
     "state-of-the-art reproducibility"
   );
-  writePrimaryLlmTradeoffGuidance();
   const llmMode = await askPrimaryLlmMode(promptReader);
+  const codexCommandReasoningEffort = await askCodexReasoningEffort(
+    "Command/query reasoning effort",
+    "low",
+    "low",
+    promptReader
+  );
+  const codexTaskReasoningEffort = await askCodexReasoningEffort(
+    "Analysis/implementation reasoning effort",
+    "xhigh",
+    "xhigh",
+    promptReader
+  );
   const openAiModel =
     llmMode === "openai_api"
       ? await askOpenAiResponsesModel(promptReader)
       : DEFAULT_OPENAI_RESPONSES_MODEL;
-  writePdfAnalysisTradeoffGuidance();
+  const openAiCommandReasoningEffort =
+    llmMode === "openai_api"
+      ? await askOpenAiResponsesReasoningEffort(
+          "Command/query reasoning effort",
+          openAiModel,
+          "low",
+          "low",
+          promptReader
+        )
+      : ("low" as AppConfig["providers"]["openai"]["reasoning_effort"]);
+  const openAiReasoningEffort =
+    llmMode === "openai_api"
+      ? await askOpenAiResponsesReasoningEffort(
+          "Analysis/implementation reasoning effort",
+          openAiModel,
+          "xhigh",
+          "xhigh",
+          promptReader
+        )
+      : (DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT as AppConfig["providers"]["openai"]["reasoning_effort"]);
   const pdfAnalysisMode = await askPdfAnalysisMode(promptReader);
   const responsesPdfModel =
     pdfAnalysisMode === "responses_api_pdf"
       ? await askResponsesPdfModel(promptReader)
       : DEFAULT_RESPONSES_PDF_MODEL;
   const existingApiKey = await resolveSemanticScholarApiKey(paths.cwd);
-  const semanticScholarApiKey =
-    existingApiKey ||
-    (await askRequiredLine("Semantic Scholar API key", promptReader));
+  const semanticScholarApiKey = await askApiKey(
+    "Semantic Scholar API key",
+    existingApiKey,
+    promptReader
+  );
   const existingOpenAiApiKey = await resolveOpenAiApiKey(paths.cwd);
   const openAiApiKey =
     llmMode === "openai_api" || pdfAnalysisMode === "responses_api_pdf"
-      ? existingOpenAiApiKey || (await askRequiredLine("OpenAI API key", promptReader))
+      ? await askApiKey("OpenAI API key", existingOpenAiApiKey, promptReader)
       : undefined;
 
   const defaultConstraints = constraintsRaw
@@ -167,7 +209,11 @@ export async function runSetupWizard(
     defaultConstraints,
     defaultObjectiveMetric,
     llmMode,
+    codexCommandReasoningEffort,
+    codexTaskReasoningEffort,
     openAiModel,
+    openAiCommandReasoningEffort,
+    openAiReasoningEffort,
     pdfAnalysisMode,
     responsesPdfModel
   });
@@ -178,6 +224,18 @@ export async function runSetupWizard(
     await upsertEnvVar(path.join(paths.cwd, ".env"), "OPENAI_API_KEY", openAiApiKey.trim());
   }
   return config;
+}
+
+async function askApiKey(
+  question: string,
+  existingValue: string | undefined,
+  promptReader: PromptReader
+): Promise<string> {
+  if (existingValue?.trim()) {
+    const answer = (await promptReader(`${question} (press Enter to keep existing)`)).trim();
+    return answer || existingValue.trim();
+  }
+  return askRequiredLine(question, promptReader);
 }
 
 export async function ensureScaffold(paths: AppPaths): Promise<void> {
@@ -202,6 +260,7 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
     config.providers.openai = {
       model: DEFAULT_OPENAI_RESPONSES_MODEL,
       reasoning_effort: DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT as AppConfig["providers"]["openai"]["reasoning_effort"],
+      command_reasoning_effort: "low",
       api_key_required: true
     };
   }
@@ -226,6 +285,9 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
   if (!codex.reasoning_effort) {
     codex.reasoning_effort = "xhigh";
   }
+  if (!codex.command_reasoning_effort) {
+    codex.command_reasoning_effort = "low";
+  }
   if (typeof codex.fast_mode !== "boolean") {
     codex.fast_mode = false;
   }
@@ -233,10 +295,15 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
     codex.fast_mode = false;
   }
   codex.reasoning_effort = normalizeReasoningEffortForModel(codex.model, codex.reasoning_effort);
+  codex.command_reasoning_effort = normalizeReasoningEffortForModel(codex.model, codex.command_reasoning_effort);
   openai.model = normalizeOpenAiResponsesModel(openai.model);
   openai.reasoning_effort = normalizeOpenAiResponsesReasoningEffort(
     openai.model,
     openai.reasoning_effort
+  ) as AppConfig["providers"]["openai"]["reasoning_effort"];
+  openai.command_reasoning_effort = normalizeOpenAiResponsesReasoningEffort(
+    openai.model,
+    openai.command_reasoning_effort || "low"
   ) as AppConfig["providers"]["openai"]["reasoning_effort"];
   openai.api_key_required = true;
   config.papers = {
@@ -358,28 +425,6 @@ function normalizePrimaryLlmMode(value: unknown): "codex_chatgpt_only" | "openai
   return value === "openai_api" ? value : "codex_chatgpt_only";
 }
 
-function writePrimaryLlmTradeoffGuidance(): void {
-  output.write(
-    [
-      "Primary LLM provider trade-off:",
-      "- codex: uses Sign in with ChatGPT, no OpenAI API key needed, best fit for interactive coding and implement_experiments.",
-      "- api: uses OpenAI API models, requires OPENAI_API_KEY, easier to control model choice and structured API behavior, but API usage is billed separately.",
-      ""
-    ].join("\n")
-  );
-}
-
-function writePdfAnalysisTradeoffGuidance(): void {
-  output.write(
-    [
-      "PDF analysis trade-off:",
-      "- codex: downloads PDFs locally and extracts text with local tools; cheaper to operate inside the current Codex flow, but extraction quality depends on local tooling.",
-      "- api: sends PDFs to the OpenAI Responses API; usually better document understanding, but slower and requires OPENAI_API_KEY.",
-      ""
-    ].join("\n")
-  );
-}
-
 async function askPrimaryLlmMode(
   promptReader: PromptReader = askLine
 ): Promise<"codex_chatgpt_only" | "openai_api"> {
@@ -390,12 +435,12 @@ async function askPrimaryLlmMode(
         {
           label: "codex",
           value: "codex_chatgpt_only",
-          description: "(ChatGPT sign-in, best for interactive coding)"
+          description: "(ChatGPT sign-in)"
         },
         {
           label: "api",
           value: "openai_api",
-          description: "(OPENAI_API_KEY required, direct API control)"
+          description: "(OPENAI_API_KEY required)"
         }
       ],
       "codex_chatgpt_only"
@@ -425,12 +470,12 @@ async function askPdfAnalysisMode(
         {
           label: "codex",
           value: "codex_text_extract",
-          description: "(local PDF download + text extraction)"
+          description: "(local text extraction)"
         },
         {
           label: "api",
           value: "responses_api_pdf",
-          description: "(Responses API PDF input, richer but slower)"
+          description: "(Responses API PDF)"
         }
       ],
       "codex_text_extract"
@@ -453,6 +498,29 @@ async function askPdfAnalysisMode(
 async function askOpenAiResponsesModel(
   promptReader: PromptReader = askLine
 ): Promise<string> {
+  if (promptReader === askLine) {
+    return askChoice(
+      "OpenAI API model",
+      OPENAI_RESPONSES_MODEL_OPTIONS.map((option) => ({
+        label: option.label,
+        value: option.value,
+        description:
+          option.value === "gpt-5.4"
+            ? "(highest quality)"
+            : option.value === "gpt-5"
+              ? "(balanced)"
+              : option.value === "gpt-5-mini"
+                ? "(fastest GPT-5)"
+                : option.value === "gpt-4.1"
+                  ? "(structured extraction)"
+                  : option.value === "gpt-4o"
+                    ? "(multimodal)"
+                    : "(fast, low-cost)"
+      })),
+      DEFAULT_OPENAI_RESPONSES_MODEL
+    );
+  }
+
   const choices = buildOpenAiResponsesModelChoices();
   const display = choices.join(", ");
   while (true) {
@@ -467,9 +535,127 @@ async function askOpenAiResponsesModel(
   }
 }
 
+async function askOpenAiResponsesReasoningEffort(
+  label: string,
+  model: string,
+  defaultValue: AppConfig["providers"]["openai"]["reasoning_effort"],
+  recommendedValue: AppConfig["providers"]["openai"]["reasoning_effort"],
+  promptReader: PromptReader = askLine
+): Promise<AppConfig["providers"]["openai"]["reasoning_effort"]> {
+  if (!supportsOpenAiResponsesReasoning(model)) {
+    return DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT as AppConfig["providers"]["openai"]["reasoning_effort"];
+  }
+
+  if (promptReader === askLine) {
+    return askChoice(
+      label,
+      getOpenAiResponsesReasoningOptions(model).map((option) => ({
+        label: option.label,
+        value: option.value,
+        description: buildReasoningDescription(option.value, recommendedValue)
+      })),
+      defaultValue
+    ) as Promise<AppConfig["providers"]["openai"]["reasoning_effort"]>;
+  }
+
+  const choices = buildOpenAiResponsesReasoningChoices(model);
+  const display = choices.join(", ");
+  while (true) {
+    const answer = (
+      await promptReader(
+        label,
+        defaultValue
+      )
+    )
+      .trim()
+      .toLowerCase();
+    if (!answer) {
+      return defaultValue as AppConfig["providers"]["openai"]["reasoning_effort"];
+    }
+    if (choices.includes(answer)) {
+      return answer as AppConfig["providers"]["openai"]["reasoning_effort"];
+    }
+    output.write(`OpenAI API reasoning effort must be one of: ${display}.\n`);
+  }
+}
+
+async function askCodexReasoningEffort(
+  label: string,
+  defaultValue: AppConfig["providers"]["codex"]["reasoning_effort"],
+  recommendedValue: AppConfig["providers"]["codex"]["reasoning_effort"],
+  promptReader: PromptReader = askLine
+): Promise<AppConfig["providers"]["codex"]["reasoning_effort"]> {
+  const choices = ["minimal", "low", "medium", "high", "xhigh"] as const;
+  if (promptReader === askLine) {
+    return askChoice(
+      label,
+      choices.map((value) => ({
+        label: value,
+        value,
+        description: buildReasoningDescription(value, recommendedValue)
+      })),
+      defaultValue
+    ) as Promise<AppConfig["providers"]["codex"]["reasoning_effort"]>;
+  }
+  const display = choices.join(", ");
+  while (true) {
+    const answer = (await promptReader(label, defaultValue)).trim().toLowerCase();
+    if (!answer) {
+      return defaultValue;
+    }
+    if (choices.includes(answer as (typeof choices)[number])) {
+      return answer as AppConfig["providers"]["codex"]["reasoning_effort"];
+    }
+    output.write(`Codex reasoning effort must be one of: ${display}.\n`);
+  }
+}
+
+function buildReasoningDescription(
+  value: string,
+  recommendedValue: string
+): string {
+  const base =
+    value === "minimal"
+      ? "(fastest)"
+      : value === "low"
+        ? "(fast)"
+        : value === "medium"
+          ? "(balanced)"
+          : value === "high"
+            ? "(deeper reasoning)"
+            : "(maximum reasoning)";
+  if (value === recommendedValue) {
+    return `${base} [recommended]`;
+  }
+  return base;
+}
+
 async function askResponsesPdfModel(
   promptReader: PromptReader = askLine
 ): Promise<string> {
+  if (promptReader === askLine) {
+    return askChoice(
+      "Responses API PDF model",
+      RESPONSES_PDF_MODEL_OPTIONS.map((option) => ({
+        label: option.label,
+        value: option.value,
+        description:
+          option.value === "gpt-5.4"
+            ? "(best quality)"
+            : option.value === "gpt-5"
+              ? "(balanced)"
+              : option.value === "gpt-5-mini"
+                ? "(fastest GPT-5)"
+                : option.value === "gpt-4.1"
+                  ? "(document OCR)"
+                  : option.value === "gpt-4o"
+                    ? "(strong multimodal)"
+                    : "(fast, low-cost)"
+      })),
+      DEFAULT_RESPONSES_PDF_MODEL
+    );
+  }
+
   const choices = buildResponsesPdfModelChoices();
   const display = choices.join(", ");
   while (true) {

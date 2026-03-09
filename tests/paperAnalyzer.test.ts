@@ -131,4 +131,29 @@ describe("paperAnalyzer", () => {
     expect(result.summaryRow.source_type).toBe("full_text");
     expect(result.evidenceRows[0].claim).toBe("PDF claim");
   });
+
+  it("propagates abort during text LLM analysis", async () => {
+    const controller = new AbortController();
+    const llm = {
+      complete: (_prompt: string, opts?: { abortSignal?: AbortSignal }) =>
+        new Promise<{ text: string }>((_resolve, reject) => {
+          opts?.abortSignal?.addEventListener(
+            "abort",
+            () => reject(new Error("Operation aborted by user")),
+            { once: true }
+          );
+        })
+    };
+
+    const promise = analyzePaperWithLlm({
+      llm: llm as any,
+      paper,
+      source,
+      abortSignal: controller.signal
+    });
+
+    controller.abort();
+
+    await expect(promise).rejects.toThrow("Operation aborted by user");
+  });
 });

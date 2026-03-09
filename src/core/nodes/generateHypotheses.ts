@@ -10,6 +10,14 @@ import {
   HypothesisEvidenceSeed
 } from "../analysis/researchPlanning.js";
 
+export interface GenerateHypothesesRequest {
+  topK: number;
+  branchCount: number;
+}
+
+const DEFAULT_TOP_K = 2;
+const DEFAULT_BRANCH_COUNT = 6;
+
 export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
     id: "generate_hypotheses",
@@ -17,6 +25,10 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
       const runContextMemory = new RunContextMemory(run.memoryRefs.runContextPath);
       const evidencePath = path.join(".autoresearch", "runs", run.id, "evidence_store.jsonl");
       const evidenceRows = parseEvidenceSeeds(await safeRead(evidencePath));
+      const request = normalizeGenerateHypothesesRequest(
+        await runContextMemory.get<{ topK?: unknown; branchCount?: unknown }>("generate_hypotheses.request")
+      );
+      await runContextMemory.put("generate_hypotheses.request", request);
 
       const emitLog = (text: string) => {
         deps.eventStream.emit({
@@ -27,15 +39,17 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
         });
       };
 
-      emitLog(`Generating hypotheses from ${evidenceRows.length} evidence item(s).`);
+      emitLog(
+        `Generating hypotheses from ${evidenceRows.length} evidence item(s) with branchCount=${request.branchCount} and topK=${request.topK}.`
+      );
       const planning = await generateHypothesesFromEvidence({
         llm: deps.llm,
         runTitle: run.title,
         runTopic: run.topic,
         objectiveMetric: run.objectiveMetric,
         evidenceSeeds: evidenceRows,
-        branchCount: 6,
-        topK: 2,
+        branchCount: request.branchCount,
+        topK: request.topK,
         onProgress: emitLog
       });
 
@@ -86,6 +100,21 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
       };
     }
   };
+}
+
+export function normalizeGenerateHypothesesRequest(
+  raw?: { topK?: unknown; branchCount?: unknown } | null
+): GenerateHypothesesRequest {
+  const topK = normalizePositiveInt(raw?.topK, DEFAULT_TOP_K);
+  const branchCount = Math.max(normalizePositiveInt(raw?.branchCount, DEFAULT_BRANCH_COUNT), topK);
+  return {
+    topK,
+    branchCount
+  };
+}
+
+function normalizePositiveInt(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
 }
 
 function parseEvidenceSeeds(raw: string): HypothesisEvidenceSeed[] {

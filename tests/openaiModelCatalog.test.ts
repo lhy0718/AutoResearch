@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_OPENAI_RESPONSES_MODEL,
+  DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT,
   OPENAI_RESPONSES_MODEL_OPTIONS,
   buildOpenAiResponsesModelChoices,
+  buildOpenAiResponsesReasoningChoices,
   getOpenAiResponsesModelDescription,
+  getOpenAiResponsesReasoningOptions,
   normalizeOpenAiResponsesModel,
   normalizeOpenAiResponsesReasoningEffort,
   supportsOpenAiResponsesReasoning
@@ -31,5 +34,22 @@ describe("openaiModelCatalog", () => {
     expect(normalizeOpenAiResponsesReasoningEffort("gpt-4o", "xhigh")).toBe("medium");
     expect(supportsOpenAiResponsesReasoning("gpt-5")).toBe(true);
     expect(supportsOpenAiResponsesReasoning("gpt-4o")).toBe(false);
+  });
+
+  it("exposes reasoning choices only for supported models", () => {
+    expect(buildOpenAiResponsesReasoningChoices("gpt-5.4")).toEqual([
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ]);
+    expect(buildOpenAiResponsesReasoningChoices("gpt-4o")).toEqual([
+      DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT
+    ]);
+    expect(getOpenAiResponsesReasoningOptions("gpt-5-mini")).toHaveLength(5);
+    expect(getOpenAiResponsesReasoningOptions("gpt-4.1")).toEqual([
+      expect.objectContaining({ value: DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT })
+    ]);
   });
 });

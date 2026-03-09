@@ -324,6 +324,12 @@ describe("collectPapers bibtex", () => {
     });
 
     expect(result.status).toBe("success");
+    expect(
+      eventStream
+        .history()
+        .filter((event) => event.type === "OBS_RECEIVED")
+        .some((event) => String(event.payload?.text ?? "").includes("Requesting Semantic Scholar batch 1/1."))
+    ).toBe(true);
     expect(result.summary).toBe(
       'Semantic Scholar stored 1 papers for "Multi-Agent Collaboration". PDF recovered 0; BibTeX enriched 0.'
     );
@@ -761,5 +767,196 @@ describe("collectPapers bibtex", () => {
         publicationDateOrYear: "2020:"
       }
     });
+  });
+
+  it("drops generic publicationTypes like paper before calling Semantic Scholar", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-collect-generic-paper-"));
+    process.chdir(root);
+
+    const runId = "run-collect-generic-paper";
+    const run: RunRecord = {
+      version: 3,
+      workflowVersion: 3,
+      id: runId,
+      title: "Recent Multi-Agent Collaboration Papers",
+      topic: "Multi-agent collaboration",
+      constraints: ["recent papers", "last 5 years"],
+      objectiveMetric: "metric",
+      status: "running",
+      currentNode: "collect_papers",
+      latestSummary: undefined,
+      nodeThreads: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      graph: createDefaultGraphState(),
+      memoryRefs: {
+        runContextPath: `.autoresearch/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autoresearch/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autoresearch/runs/${runId}/memory/episodes.jsonl`
+      }
+    };
+
+    const memoryDir = path.join(root, ".autoresearch", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(path.join(memoryDir, "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+
+    const streamSearchPapers = vi.fn(async function* (request: any) {
+      expect(request.filters?.publicationTypes).toBeUndefined();
+      yield [];
+    });
+
+    const node = createCollectPapersNode({
+      config: {
+        papers: {
+          max_results: 200
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new JsonLLMClient(
+        JSON.stringify({
+          collect: {
+            lastYears: 5,
+            publicationTypes: ["paper"]
+          },
+          writing: {},
+          experiment: {
+            designNotes: [],
+            implementationNotes: [],
+            evaluationNotes: []
+          },
+          assumptions: []
+        })
+      ),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {
+        streamSearchPapers,
+        getLastSearchDiagnostics: vi.fn(() => ({
+          attemptCount: 1,
+          lastStatus: 200,
+          attempts: [{ attempt: 1, ok: true, status: 200, endpoint: "search" }]
+        }))
+      } as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(streamSearchPapers).toHaveBeenCalledOnce();
+  });
+
+  it("defers enrichment until after fast Semantic Scholar fetch completes and emits enrichment progress", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-collect-deferred-enrichment-"));
+    process.chdir(root);
+
+    const runId = "run-collect-deferred-enrichment";
+    const run: RunRecord = {
+      version: 3,
+      workflowVersion: 3,
+      id: runId,
+      title: "Multi-Agent Collaboration",
+      topic: "Multi-agent collaboration",
+      constraints: [],
+      objectiveMetric: "metric",
+      status: "running",
+      currentNode: "collect_papers",
+      latestSummary: undefined,
+      nodeThreads: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      graph: createDefaultGraphState(),
+      memoryRefs: {
+        runContextPath: `.autoresearch/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autoresearch/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autoresearch/runs/${runId}/memory/episodes.jsonl`
+      }
+    };
+
+    const memoryDir = path.join(root, ".autoresearch", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "collect_papers.request",
+            value: {
+              query: "Multi-Agent Collaboration",
+              limit: 2,
+              sort: { field: "relevance", order: "desc" }
+            },
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const eventStream = new InMemoryEventStream();
+    const node = createCollectPapersNode({
+      config: {
+        papers: {
+          max_results: 200
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream,
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {
+        streamSearchPapers: vi.fn(() =>
+          batchStream([
+            {
+              paperId: "paper-1",
+              title: "Paper 1",
+              authors: ["Alice Kim"]
+            },
+            {
+              paperId: "paper-2",
+              title: "Paper 2",
+              authors: ["Bob Lee"]
+            }
+          ])
+        ),
+        getLastSearchDiagnostics: vi.fn(() => ({
+          attemptCount: 1,
+          lastStatus: 200,
+          attempts: [{ attempt: 1, ok: true, status: 200, endpoint: "search" }]
+        }))
+      } as any
+    });
+
+    const result = await node.execute({
+      run,
+      graph: run.graph
+    });
+
+    expect(result.status).toBe("success");
+    const observedTexts = eventStream
+      .history()
+      .filter((event) => event.type === "OBS_RECEIVED")
+      .map((event) => String(event.payload?.text ?? ""));
+
+    const requestIndex = observedTexts.findIndex((text) =>
+      text.includes("Requesting Semantic Scholar batch 1/1.")
+    );
+    const collectedIndex = observedTexts.findIndex((text) =>
+      text.includes('Collected 2 paper(s) so far (2 new) for "Multi-Agent Collaboration".')
+    );
+    const deferredIndex = observedTexts.findIndex((text) =>
+      text.includes("Starting deferred enrichment for 2 paper(s) with concurrency 2.")
+    );
+    const progressIndex = observedTexts.findIndex((text) =>
+      text.includes("Collect enrichment progress: processed 1/2, stored 2/2.")
+    );
+
+    expect(requestIndex).toBeGreaterThanOrEqual(0);
+    expect(collectedIndex).toBeGreaterThan(requestIndex);
+    expect(collectedIndex).toBeGreaterThanOrEqual(0);
+    expect(deferredIndex).toBeGreaterThan(collectedIndex);
+    expect(progressIndex).toBeGreaterThan(deferredIndex);
   });
 });

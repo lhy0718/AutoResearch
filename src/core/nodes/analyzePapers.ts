@@ -109,7 +109,8 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         runTopic: run.topic,
         corpusRows,
         request,
-        onProgress: (text) => emitLog(text)
+        onProgress: (text) => emitLog(text),
+        abortSignal
       });
 
       deps.eventStream.emit({
@@ -174,10 +175,14 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       }
 
       const pendingRows = selectedRows.filter((row) => manifest!.papers[row.paper_id]?.status !== "completed");
+      const analysisConcurrency = getAnalysisConcurrency(analysisMode);
+      if (pendingRows.length > 0) {
+        emitLog(`Analyzing ${pendingRows.length} paper(s) with concurrency ${analysisConcurrency}.`);
+      }
       let failedCount = 0;
+      const persistQueue = createAsyncQueue();
 
-      for (let index = 0; index < pendingRows.length; index += 1) {
-        const row = pendingRows[index];
+      await runWithConcurrency(pendingRows, analysisConcurrency, async (row, index) => {
         emitLog(`Analyzing paper ${index + 1}/${pendingRows.length}: "${row.title}".`);
         emitLog(`Resolving analysis source ${index + 1}/${pendingRows.length} for "${row.title}".`);
 
@@ -257,6 +262,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                 paper: row,
                 source,
                 maxAttempts: 2,
+                abortSignal,
                 onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
               });
             }
@@ -266,84 +272,94 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
               paper: row,
               source,
               maxAttempts: 2,
+              abortSignal,
               onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
             });
           }
 
-          await appendJsonlItems(run, "paper_summaries.jsonl", [analysis.summaryRow]);
-          await appendJsonlItems(run, "evidence_store.jsonl", analysis.evidenceRows);
-          emitLog(
-            `Persisted analysis outputs for "${row.title}" (1 summary row, ${analysis.evidenceRows.length} evidence row(s)).`
-          );
-          const structureSignals = analyzeStructureSignals(source.text);
+          await persistQueue.run(async () => {
+            await appendJsonlItems(run, "paper_summaries.jsonl", [analysis.summaryRow]);
+            await appendJsonlItems(run, "evidence_store.jsonl", analysis.evidenceRows);
+            emitLog(
+              `Persisted analysis outputs for "${row.title}" (1 summary row, ${analysis.evidenceRows.length} evidence row(s)).`
+            );
+            const structureSignals = analyzeStructureSignals(source.text);
 
-          const manifestEntry = manifest.papers[row.paper_id];
-          manifest.papers[row.paper_id] = {
-            ...manifestEntry,
-            paper_id: row.paper_id,
-            title: row.title,
-            status: "completed",
-            selected: true,
-            source_type: source.sourceType,
-            summary_count: 1,
-            evidence_count: analysis.evidenceRows.length,
-            analysis_attempts: analysis.attempts,
-            analysis_mode: analysisModeUsed,
-            pdf_url: source.pdfUrl,
-            pdf_cache_path: source.pdfCachePath,
-            text_cache_path: source.textCachePath,
-            fallback_reason: source.fallbackReason,
-            last_error: undefined,
-            has_table_references: structureSignals.tableReferenceCount > 0,
-            table_reference_count: structureSignals.tableReferenceCount,
-            has_figure_references: structureSignals.figureReferenceCount > 0,
-            figure_reference_count: structureSignals.figureReferenceCount,
-            updatedAt: new Date().toISOString(),
-            completedAt: new Date().toISOString()
-          };
-          manifest.updatedAt = new Date().toISOString();
-          await writeJsonFile(manifestPath, manifest);
+            const manifestEntry = manifest.papers[row.paper_id];
+            manifest.papers[row.paper_id] = {
+              ...manifestEntry,
+              paper_id: row.paper_id,
+              title: row.title,
+              status: "completed",
+              selected: true,
+              source_type: source.sourceType,
+              summary_count: 1,
+              evidence_count: analysis.evidenceRows.length,
+              analysis_attempts: analysis.attempts,
+              analysis_mode: analysisModeUsed,
+              pdf_url: source.pdfUrl,
+              pdf_cache_path: source.pdfCachePath,
+              text_cache_path: source.textCachePath,
+              fallback_reason: source.fallbackReason,
+              last_error: undefined,
+              has_table_references: structureSignals.tableReferenceCount > 0,
+              table_reference_count: structureSignals.tableReferenceCount,
+              has_figure_references: structureSignals.figureReferenceCount > 0,
+              figure_reference_count: structureSignals.figureReferenceCount,
+              updatedAt: new Date().toISOString(),
+              completedAt: new Date().toISOString()
+            };
+            manifest.updatedAt = new Date().toISOString();
+            await writeJsonFile(manifestPath, manifest);
+          });
 
           emitLog(`Analyzed "${row.title}" (${analysis.evidenceRows.length} evidence item(s), source=${source.sourceType}).`);
         } catch (error) {
+          if (isAbortError(error)) {
+            throw error;
+          }
           failedCount += 1;
           const message = error instanceof Error ? error.message : String(error);
-          const manifestEntry = manifest.papers[row.paper_id];
-          manifest.papers[row.paper_id] = {
-            ...manifestEntry,
-            paper_id: row.paper_id,
-            title: row.title,
-            status: "failed",
-            selected: true,
-            source_type: source.sourceType,
-            summary_count: 0,
-            evidence_count: 0,
-            analysis_attempts: 2,
-            analysis_mode: analysisModeUsed,
-            pdf_url: source.pdfUrl,
-            pdf_cache_path: source.pdfCachePath,
-            text_cache_path: source.textCachePath,
-            fallback_reason: source.fallbackReason,
-            last_error: message,
-            has_table_references: false,
-            table_reference_count: 0,
-            has_figure_references: false,
-            figure_reference_count: 0,
-            updatedAt: new Date().toISOString()
-          };
-          manifest.updatedAt = new Date().toISOString();
-          await writeJsonFile(manifestPath, manifest);
-          deps.eventStream.emit({
-            type: "TEST_FAILED",
-            runId: run.id,
-            node: "analyze_papers",
-            payload: {
-              text: `Analysis failed for "${row.title}": ${message}`,
-              error: message
-            }
+          await persistQueue.run(async () => {
+            const manifestEntry = manifest.papers[row.paper_id];
+            manifest.papers[row.paper_id] = {
+              ...manifestEntry,
+              paper_id: row.paper_id,
+              title: row.title,
+              status: "failed",
+              selected: true,
+              source_type: source.sourceType,
+              summary_count: 0,
+              evidence_count: 0,
+              analysis_attempts: 2,
+              analysis_mode: analysisModeUsed,
+              pdf_url: source.pdfUrl,
+              pdf_cache_path: source.pdfCachePath,
+              text_cache_path: source.textCachePath,
+              fallback_reason: source.fallbackReason,
+              last_error: message,
+              has_table_references: false,
+              table_reference_count: 0,
+              has_figure_references: false,
+              figure_reference_count: 0,
+              updatedAt: new Date().toISOString()
+            };
+            manifest.updatedAt = new Date().toISOString();
+            await writeJsonFile(manifestPath, manifest);
+            deps.eventStream.emit({
+              type: "TEST_FAILED",
+              runId: run.id,
+              node: "analyze_papers",
+              payload: {
+                text: `Analysis failed for "${row.title}": ${message}`,
+                error: message
+              }
+            });
           });
         }
-      }
+      });
+
+      await persistQueue.onIdle();
 
       const summaryRows = await readSummaryRows(summaryPath);
       const evidenceRows = await readEvidenceRows(evidencePath);
@@ -384,6 +400,57 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       };
     }
   };
+}
+
+function getAnalysisConcurrency(analysisMode: "codex_text_extract" | "responses_api_pdf"): number {
+  return analysisMode === "responses_api_pdf" ? 2 : 3;
+}
+
+function createAsyncQueue() {
+  let tail = Promise.resolve();
+  return {
+    async run<T>(operation: () => Promise<T>): Promise<T> {
+      const result = tail.then(operation, operation);
+      tail = result.then(
+        () => undefined,
+        () => undefined
+      );
+      return result;
+    },
+    async onIdle(): Promise<void> {
+      await tail;
+    }
+  };
+}
+
+async function runWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<void>
+): Promise<void> {
+  const normalizedConcurrency = Math.max(1, Math.min(concurrency, items.length || 1));
+  let nextIndex = 0;
+
+  const runners = Array.from({ length: normalizedConcurrency }, async () => {
+    while (true) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= items.length) {
+        return;
+      }
+      await worker(items[index], index);
+    }
+  });
+
+  await Promise.all(runners);
+}
+
+function isAbortError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = error.message.toLowerCase();
+  return message.includes("aborted") || message.includes("abort");
 }
 
 async function loadAnalysisSelectionRequest(runContextMemory: RunContextMemory): Promise<AnalysisSelectionRequest> {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { extractStructuredActionPlan, looksLikeStructuredActionRequest } from "../src/core/commands/naturalActionIntent.js";
@@ -40,47 +40,44 @@ describe("naturalActionIntent", () => {
 
   it("extracts a structured collect command", async () => {
     const run = makeRun({ id: "run-collect" });
+    const runForText = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        target_run_id: run.id,
+        actions: [
+          {
+            type: "collect",
+            limit: 300,
+            sort: { field: "relevance", order: "desc" },
+            filters: { open_access: true }
+          }
+        ]
+      })
+    );
     const result = await extractStructuredActionPlan({
       input: "논문 수집을 300건 진행해줘. pdf 가능한걸로",
       runs: [run],
       activeRunId: run.id,
-      llm: {
-        runForText: async () =>
-          JSON.stringify({
-            target_run_id: run.id,
-            actions: [
-              {
-                type: "collect",
-                limit: 300,
-                sort: { field: "relevance", order: "desc" },
-                filters: { open_access: true }
-              }
-            ]
-          })
-      }
+      llm: { runForText }
     });
 
     expect(result?.commands).toEqual([`/agent collect --sort relevance --limit 300 --open-access --run ${run.id}`]);
     expect(result?.displayActions).toEqual(["논문 수집 (limit=300, openAccess=true)"]);
+    expect(runForText).not.toHaveBeenCalled();
   });
 
   it("extracts top-n analyze requests into /agent run analyze_papers --top-n", async () => {
     const run = makeRun({ id: "run-analyze" });
+    const runForText = vi.fn();
     const result = await extractStructuredActionPlan({
       input: "상위 30편만 분석 진행해줘",
       runs: [run],
       activeRunId: run.id,
-      llm: {
-        runForText: async () =>
-          JSON.stringify({
-            target_run_id: run.id,
-            actions: [{ type: "analyze_papers", top_n: 30 }]
-          })
-      }
+      llm: { runForText }
     });
 
     expect(result?.commands).toEqual([`/agent run analyze_papers ${run.id} --top-n 30`]);
     expect(result?.displayActions).toEqual(["상위 30개 논문 분석"]);
+    expect(runForText).not.toHaveBeenCalled();
   });
 
   it("extracts multi-step clear + collect plans", async () => {

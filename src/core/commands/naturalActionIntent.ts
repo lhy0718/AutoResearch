@@ -1,5 +1,9 @@
 import { GraphNodeId, RunRecord } from "../../types.js";
-import { buildCollectSlashCommand } from "./naturalDeterministic.js";
+import {
+  buildCollectSlashCommand,
+  extractCollectRequestFromNatural,
+  resolveNodeAlias
+} from "./naturalDeterministic.js";
 import { CollectCommandRequest } from "./collectOptions.js";
 
 export interface NaturalActionTextClient {
@@ -8,6 +12,7 @@ export interface NaturalActionTextClient {
     sandboxMode?: string;
     approvalPolicy?: string;
     systemPrompt?: string;
+    reasoningEffort?: string;
     abortSignal?: AbortSignal;
   }): Promise<string>;
 }
@@ -62,7 +67,7 @@ interface StructuredAction {
   title?: string;
 }
 
-const ACTION_EXTRACTION_TIMEOUT_MS = 30000;
+const ACTION_EXTRACTION_TIMEOUT_MS = 12000;
 
 const ACTION_HINT_PATTERNS = [
   /(?:collect|gather|fetch|search|lookup|find|research|investigate|analy[sz]e|clear|remove|delete|jump|go\s+to|move\s+to|rename|change)/iu,
@@ -104,6 +109,11 @@ export function looksLikeStructuredActionRequest(text: string): boolean {
 export async function extractStructuredActionPlan(
   ctx: StructuredNaturalActionContext
 ): Promise<StructuredNaturalActionPlan | undefined> {
+  const fastPlan = extractFastStructuredActionPlan(ctx.input, ctx.runs, ctx.activeRunId);
+  if (fastPlan) {
+    return fastPlan;
+  }
+
   const activeRun = resolveActiveRun(ctx.runs, ctx.activeRunId);
   const prompt = buildStructuredActionPrompt(ctx.input, ctx.runs, activeRun?.id);
   ctx.onProgress?.("Extracting structured action intent...");
@@ -142,6 +152,174 @@ export async function extractStructuredActionPlan(
     displayActions: validated.map((action) => summarizeAction(action, detectLanguage(ctx.input))),
     targetRunId: targetRun?.id
   };
+}
+
+function extractFastStructuredActionPlan(
+  input: string,
+  runs: RunRecord[],
+  activeRunId?: string
+): StructuredNaturalActionPlan | undefined {
+  const targetRun = resolveActiveRun(runs, activeRunId);
+  const clearThenFollowUp = extractFastClearThenFollowupActions(input, targetRun);
+  const actions: StructuredAction[] =
+    clearThenFollowUp ??
+    (() => {
+      const analyzeAction = extractFastAnalyzeAction(input);
+      if (analyzeAction) {
+        return [analyzeAction];
+      }
+      const collectRequest = extractCollectRequestFromNatural(input);
+      if (collectRequest) {
+        const collectAction = convertCollectRequestToStructuredAction(collectRequest, targetRun);
+        return collectAction ? [collectAction] : [];
+      }
+      const clearAction = extractFastClearAction(input);
+      if (clearAction) {
+        return [clearAction];
+      }
+      const jumpAction = extractFastJumpAction(input);
+      return jumpAction ? [jumpAction] : [];
+    })();
+
+  if (actions.length === 0) {
+    return undefined;
+  }
+  const commands = actions
+    .map((action) => buildCommandForStructuredAction(action, targetRun?.id))
+    .filter(Boolean) as string[];
+  if (commands.length === 0) {
+    return undefined;
+  }
+  return {
+    lines: buildSummaryLines(actions, detectLanguage(input)),
+    commands,
+    displayActions: actions.map((action) => summarizeAction(action, detectLanguage(input))),
+    targetRunId: targetRun?.id
+  };
+}
+
+function extractFastClearThenFollowupActions(
+  raw: string,
+  targetRun?: RunRecord
+): StructuredAction[] | undefined {
+  const clearAction = extractFastClearAction(raw);
+  if (!clearAction) {
+    return undefined;
+  }
+  const remainder = extractFollowupAfterClear(raw);
+  if (!remainder) {
+    return undefined;
+  }
+  const analyzeAction = extractFastAnalyzeAction(remainder);
+  if (analyzeAction) {
+    return [clearAction, analyzeAction];
+  }
+  const collectRequest = extractCollectRequestFromNatural(remainder);
+  if (collectRequest) {
+    const collectAction = convertCollectRequestToStructuredAction(collectRequest, targetRun);
+    if (collectAction) {
+      return [clearAction, collectAction];
+    }
+  }
+  const jumpAction = extractFastJumpAction(remainder);
+  if (jumpAction) {
+    return [clearAction, jumpAction];
+  }
+  return undefined;
+}
+
+function extractFollowupAfterClear(raw: string): string | undefined {
+  const normalized = raw.trim();
+  const match = normalized.match(
+    /(?:지우고|삭제하고|제거하고|없애고|clear(?:\s+out)?|remove(?:\s+all)?|delete(?:\s+all)?)([\s\S]+)/iu
+  );
+  const remainder = match?.[1]?.trim();
+  if (!remainder || remainder === normalized) {
+    return undefined;
+  }
+  return remainder.replace(/^(?:다시|then|and\s+then)\s+/iu, "").trim() || undefined;
+}
+
+function convertCollectRequestToStructuredAction(
+  request: CollectCommandRequest,
+  targetRun?: RunRecord
+): StructuredAction | undefined {
+  return {
+    type: "collect",
+    query: normalizeCollectQueryReference(request.query, targetRun),
+    limit: request.limit,
+    additional: request.additional,
+    filters: {
+      last_years: request.filters.lastYears,
+      year: request.filters.year,
+      date_range: request.filters.dateRange,
+      fields: request.filters.fieldsOfStudy,
+      venues: request.filters.venues,
+      publication_types: request.filters.publicationTypes,
+      min_citations: request.filters.minCitationCount,
+      open_access: request.filters.openAccessPdf
+    },
+    sort: {
+      field: request.sort.field,
+      order: request.sort.order
+    },
+    bibtex_mode: request.bibtexMode,
+    dry_run: request.dryRun
+  };
+}
+
+function normalizeCollectQueryReference(query: string | undefined, targetRun?: RunRecord): string | undefined {
+  const trimmed = query?.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  if (/^(?:title|run title|현재 title|현재 제목|제목)$/iu.test(trimmed)) {
+    return targetRun?.title ?? trimmed;
+  }
+  if (/^(?:topic|run topic|현재 topic|현재 주제|주제)$/iu.test(trimmed)) {
+    return targetRun?.topic ?? trimmed;
+  }
+  return trimmed;
+}
+
+function extractFastAnalyzeAction(raw: string): StructuredAction | undefined {
+  const normalized = raw.trim();
+  const lower = normalized.toLowerCase();
+  const hasAnalyzeVerb = /분석|analy[sz]e/u.test(normalized);
+  if (!hasAnalyzeVerb) {
+    return undefined;
+  }
+  const topMatch =
+    normalized.match(/상위\s*(\d+)\s*(?:개|편|건)?/u) ||
+    lower.match(/\btop\s+(\d+)\b/u) ||
+    normalized.match(/(\d+)\s*(?:개|편|건|papers?)\s*(?:만)?[^.\n]{0,40}분석/u) ||
+    normalized.match(/분석[^.\n]{0,40}(\d+)\s*(?:개|편|건|papers?)/u);
+  const topN = toPositiveInt(topMatch?.[1]);
+  return topN ? { type: "analyze_papers", top_n: topN } : undefined;
+}
+
+function extractFastClearAction(raw: string): StructuredAction | undefined {
+  const normalized = raw.trim();
+  const hasPaperWord = /논문|paper|papers/u.test(normalized);
+  const hasClearVerb =
+    /삭제|제거|지워|지우|없애|clear|remove|delete/u.test(normalized) &&
+    /모두|전부|전체|all/u.test(normalized);
+  if (!hasPaperWord || !hasClearVerb) {
+    return undefined;
+  }
+  return { type: "clear", node: "collect_papers" };
+}
+
+function extractFastJumpAction(raw: string): StructuredAction | undefined {
+  const node = resolveNodeAlias(raw);
+  if (!node) {
+    return undefined;
+  }
+  const hasMoveVerb = /이동|점프|돌아가|되돌아가|go\s+to|move\s+to|jump/u.test(raw);
+  if (!hasMoveVerb) {
+    return undefined;
+  }
+  return { type: "jump", node, force: false };
 }
 
 function buildStructuredActionPrompt(input: string, runs: RunRecord[], activeRunId?: string): string {
@@ -537,6 +715,7 @@ async function runForTextWithTimeout(
     sandboxMode?: string;
     approvalPolicy?: string;
     systemPrompt?: string;
+    reasoningEffort?: string;
     abortSignal?: AbortSignal;
   },
   timeoutMs: number

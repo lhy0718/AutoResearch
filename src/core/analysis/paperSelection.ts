@@ -103,6 +103,7 @@ export async function selectPapersForAnalysis(args: {
   corpusRows: AnalysisCorpusRow[];
   request: AnalysisSelectionRequest;
   onProgress?: (message: string) => void;
+  abortSignal?: AbortSignal;
 }): Promise<PaperSelectionResult> {
   args.onProgress?.(
     `Deterministic pre-rank started for ${args.corpusRows.length} paper(s) using title/topic similarity, citation count, recency, and PDF availability.`
@@ -131,7 +132,7 @@ export async function selectPapersForAnalysis(args: {
     };
   }
 
-  const candidatePoolSize = Math.min(totalCandidates, Math.max(args.request.topN * 5, 50));
+  const candidatePoolSize = Math.min(totalCandidates, Math.min(Math.max(args.request.topN * 3, 30), 90));
   const candidatePool = ranked.slice(0, candidatePoolSize);
   args.onProgress?.(
     `Preparing LLM rerank for ${candidatePool.length} candidate(s) to choose top ${args.request.topN}.`
@@ -148,7 +149,8 @@ export async function selectPapersForAnalysis(args: {
     args.runTopic,
     args.request.topN,
     candidatePool,
-    args.onProgress
+    args.onProgress,
+    args.abortSignal
   );
   const rerankedIds = rerank.orderedPaperIds;
   const rerankOrder = new Map<string, number>(rerankedIds.map((paperId, index) => [paperId, index]));
@@ -253,12 +255,14 @@ async function rerankCandidates(
   runTopic: string,
   topN: number,
   candidates: RankedPaperCandidate[],
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  abortSignal?: AbortSignal
 ): Promise<{ orderedPaperIds: string[]; applied: boolean; fallbackReason?: string }> {
   try {
     onProgress?.(`Submitting rerank request for ${candidates.length} candidate(s).`);
     const response = await llm.complete(buildRerankPrompt(referenceTitle, runTopic, topN, candidates), {
       systemPrompt: RERANK_SYSTEM_PROMPT,
+      abortSignal,
       onProgress: (event) => {
         const text = event.text.trim();
         if (!text) {
@@ -290,6 +294,9 @@ async function rerankCandidates(
       applied: true
     };
   } catch (error) {
+    if (isAbortError(error)) {
+      throw error;
+    }
     onProgress?.(`Rerank request failed: ${error instanceof Error ? error.message : String(error)}`);
     return {
       orderedPaperIds: candidates.map((candidate) => candidate.paper.paper_id),
@@ -297,6 +304,14 @@ async function rerankCandidates(
       fallbackReason: error instanceof Error ? error.message : String(error)
     };
   }
+}
+
+function isAbortError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = error.message.toLowerCase();
+  return message.includes("aborted") || message.includes("abort");
 }
 
 function buildRerankPrompt(

@@ -161,7 +161,7 @@ export function normalizeConstraintProfile(input: Partial<ConstraintProfile> | u
       lastYears: normalizePositiveInteger(collect.lastYears),
       fieldsOfStudy: normalizeStringArray(collect.fieldsOfStudy),
       venues: normalizeStringArray(collect.venues),
-      publicationTypes: normalizeStringArray(collect.publicationTypes),
+      publicationTypes: normalizePublicationTypes(collect.publicationTypes),
       minCitationCount: normalizePositiveInteger(collect.minCitationCount),
       openAccessPdf: normalizeBoolean(collect.openAccessPdf)
     },
@@ -259,6 +259,13 @@ function normalizeStringArray(value: unknown): string[] {
   return value
     .map((item) => cleanString(item))
     .filter((item): item is string => Boolean(item));
+}
+
+function normalizePublicationTypes(value: unknown): string[] {
+  return normalizeStringArray(value).filter((item) => {
+    const normalized = item.trim().toLowerCase();
+    return !["paper", "papers", "article", "articles"].includes(normalized);
+  });
 }
 
 function normalizePositiveInteger(value: unknown): number | undefined {

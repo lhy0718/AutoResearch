@@ -153,6 +153,33 @@ function agentCommandSuggestions(parsed: ParsedInput, runs: SlashContextRun[]): 
       }
     }
 
+    if (sub === "run" && (parsed.args[1] || "").toLowerCase() === "generate_hypotheses") {
+      if (parsed.argPartial === "--top-k" || parsed.argPartial.startsWith("--top")) {
+        return generateHypothesesOptionSuggestions(parsed);
+      }
+      if (parsed.argPartial === "--branch-count" || parsed.argPartial.startsWith("--branch")) {
+        return generateHypothesesOptionSuggestions(parsed);
+      }
+      const prev = parsed.args[parsed.argIndex - 1];
+      if (prev === "--top-k") {
+        return enumSuggestions("/agent run generate_hypotheses", "--top-k", parsed.argPartial, ["1", "2", "3", "5"]);
+      }
+      if (prev === "--branch-count") {
+        return enumSuggestions(
+          "/agent run generate_hypotheses",
+          "--branch-count",
+          parsed.argPartial,
+          ["4", "6", "8", "10"]
+        );
+      }
+      if (parsed.argIndex >= 2 && (parsed.argPartial === "" || parsed.argPartial.startsWith("--"))) {
+        return generateHypothesesOptionSuggestions(parsed);
+      }
+      if (parsed.argIndex >= 2) {
+        return runSuggestions(`agent run generate_hypotheses`, parsed.argPartial, runs);
+      }
+    }
+
     if (sub === "run" || sub === "jump") {
       if (parsed.argIndex === 2) {
         return runSuggestions(`agent ${sub} ${parsed.args[1]}`, parsed.argPartial, runs);
@@ -276,6 +303,31 @@ function collectSuggestions(parsed: ParsedInput, runs: SlashContextRun[]): Sugge
   }
 
   return collectOptionSuggestions("");
+}
+
+function generateHypothesesOptionSuggestions(parsed: ParsedInput): SuggestionItem[] {
+  const base = "/agent run generate_hypotheses";
+  const options = [
+    { flag: "--top-k", description: "Choose how many hypotheses to keep" },
+    { flag: "--branch-count", description: "Choose how many candidates to generate" }
+  ];
+  return options
+    .map((option) => {
+      const score = fuzzyScore(parsed.argPartial || "", option.flag);
+      if (score === null) {
+        return null;
+      }
+      return {
+        key: `generate-hypothesis-option:${option.flag}`,
+        label: `${base} ${option.flag} <n>`,
+        description: option.description,
+        applyValue: `${base} ${option.flag} `,
+        score
+      };
+    })
+    .filter((item): item is SuggestionItem & { score: number } => Boolean(item))
+    .sort((a, b) => b.score - a.score)
+    .map(({ score: _score, ...item }) => item);
 }
 
 function analyzeTopNOptionSuggestions(parsed: ParsedInput): SuggestionItem[] {

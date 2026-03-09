@@ -103,7 +103,7 @@ describe("paperSelection", () => {
     expect(selection.selectedPaperIds).toContain("p1");
   });
 
-  it("uses min(total, max(5N, 50)) for the rerank candidate pool", async () => {
+  it("uses min(total, min(max(3N, 30), 90)) for the rerank candidate pool", async () => {
     const corpusRows = Array.from({ length: 80 }, (_, index) => ({
       paper_id: `p${index + 1}`,
       title: `Paper ${index + 1}`,
@@ -125,7 +125,7 @@ describe("paperSelection", () => {
       corpusRows
     });
 
-    expect(selection.candidatePoolSize).toBe(50);
+    expect(selection.candidatePoolSize).toBe(30);
     expect(selection.selectedPaperIds).toHaveLength(8);
   });
 
@@ -168,6 +168,37 @@ describe("paperSelection", () => {
     expect(selection.rerankApplied).toBe(false);
     expect(selection.rerankFallbackReason).toBeDefined();
     expect(selection.selectedPaperIds).toEqual(["p1", "p2"]);
+  });
+
+  it("propagates abort instead of falling back when rerank is canceled", async () => {
+    const controller = new AbortController();
+    const llm = {
+      complete: (_prompt: string, opts?: { abortSignal?: AbortSignal }) =>
+        new Promise<{ text: string }>((_resolve, reject) => {
+          opts?.abortSignal?.addEventListener(
+            "abort",
+            () => reject(new Error("Operation aborted by user")),
+            { once: true }
+          );
+        })
+    };
+
+    const promise = selectPapersForAnalysis({
+      llm: llm as any,
+      runTitle: "Multi-agent collaboration",
+      runTopic: "Multi-agent collaboration",
+      request: normalizeAnalysisSelectionRequest(2),
+      corpusRows: [
+        { paper_id: "p1", title: "Multi-agent collaboration", abstract: "A", authors: [], citation_count: 10, year: 2025 },
+        { paper_id: "p2", title: "Other paper", abstract: "B", authors: [], citation_count: 9, year: 2025 },
+        { paper_id: "p3", title: "Legacy retrieval", abstract: "C", authors: [], citation_count: 8, year: 2024 }
+      ],
+      abortSignal: controller.signal
+    });
+
+    controller.abort();
+
+    await expect(promise).rejects.toThrow("Operation aborted by user");
   });
 
   it("builds a stable fingerprint from request, title/topic, and selected ids", () => {

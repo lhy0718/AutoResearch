@@ -37,6 +37,7 @@ function makeConfig(): AppConfig {
       openai: {
         model: "gpt-5.4",
         reasoning_effort: "medium",
+        command_reasoning_effort: "low",
         api_key_required: true
       }
     },
@@ -80,23 +81,6 @@ async function createWorkspace(): Promise<{ cwd: string; paths: ReturnType<typeo
   await ensureScaffold(paths);
   await saveConfig(paths, makeConfig());
   return { cwd, paths };
-}
-
-async function captureStdout<T>(fn: () => Promise<T>): Promise<{ result: T; output: string }> {
-  const chunks: string[] = [];
-  const originalWrite = process.stdout.write.bind(process.stdout);
-
-  process.stdout.write = ((chunk: string | Uint8Array) => {
-    chunks.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
-    return true;
-  }) as typeof process.stdout.write;
-
-  try {
-    const result = await fn();
-    return { result, output: chunks.join("") };
-  } finally {
-    process.stdout.write = originalWrite;
-  }
 }
 
 afterEach(() => {
@@ -159,8 +143,9 @@ describe("config .env overrides", () => {
       "recent papers,last 5 years",
       "reproducibility",
       "codex",
+      "low",
+      "xhigh",
       "codex",
-      "",
       "   ",
       "required-key"
     ];
@@ -173,35 +158,6 @@ describe("config .env overrides", () => {
     expect(config.project_name).toBe("project");
     await expect(resolveSemanticScholarApiKey(cwd)).resolves.toBe("required-key");
     await expect(fs.readFile(paths.configFile, "utf8")).resolves.toContain("project_name: project");
-  });
-
-  it("prints codex/api trade-off guidance during first-run setup", async () => {
-    delete process.env.OPENAI_API_KEY;
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autoresearch-setup-tradeoffs-"));
-    const paths = resolveAppPaths(cwd);
-    const answers = [
-      "project",
-      "Multi-agent collaboration",
-      "recent papers,last 5 years",
-      "reproducibility",
-      "codex",
-      "codex",
-      "semantic-key"
-    ];
-
-    const { output } = await captureStdout(() =>
-      runSetupWizard(paths, async (_question, defaultValue = "") => {
-        const answer = answers.shift();
-        return answer !== undefined ? answer : defaultValue;
-      })
-    );
-
-    expect(output).toContain("Primary LLM provider trade-off:");
-    expect(output).toContain("codex: uses Sign in with ChatGPT");
-    expect(output).toContain("api: uses OpenAI API models");
-    expect(output).toContain("PDF analysis trade-off:");
-    expect(output).toContain("codex: downloads PDFs locally");
-    expect(output).toContain("api: sends PDFs to the OpenAI Responses API");
   });
 
   it("uses OPENAI_API_KEY from .env when Responses PDF mode is enabled", async () => {
@@ -223,6 +179,8 @@ describe("config .env overrides", () => {
       "recent papers,last 5 years",
       "reproducibility",
       "codex",
+      "low",
+      "xhigh",
       "api",
       "gpt-4o",
       "semantic-key",
@@ -240,6 +198,49 @@ describe("config .env overrides", () => {
     await expect(fs.readFile(path.join(cwd, ".env"), "utf8")).resolves.toContain('OPENAI_API_KEY="openai-key"');
   });
 
+  it("still asks for API keys during setup even when existing .env keys are present", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autoresearch-setup-existing-keys-"));
+    const paths = resolveAppPaths(cwd);
+    await fs.writeFile(
+      path.join(cwd, ".env"),
+      'SEMANTIC_SCHOLAR_API_KEY="existing-semantic"\nOPENAI_API_KEY="existing-openai"\n',
+      "utf8"
+    );
+
+    const asked: string[] = [];
+    const answers = [
+      "project",
+      "Multi-agent collaboration",
+      "recent papers,last 5 years",
+      "reproducibility",
+      "api",
+      "low",
+      "xhigh",
+      "gpt-5-mini",
+      "low",
+      "high",
+      "api",
+      "gpt-4o",
+      "",
+      ""
+    ];
+
+    const config = await runSetupWizard(paths, async (question, defaultValue = "") => {
+      asked.push(question);
+      const answer = answers.shift();
+      return answer !== undefined ? answer : defaultValue;
+    });
+
+    expect(config.providers.llm_mode).toBe("openai_api");
+    expect(config.providers.openai.command_reasoning_effort).toBe("low");
+    expect(config.providers.openai.reasoning_effort).toBe("high");
+    expect(config.analysis.pdf_mode).toBe("responses_api_pdf");
+    expect(asked).toContain("Semantic Scholar API key (press Enter to keep existing)");
+    expect(asked).toContain("OpenAI API key (press Enter to keep existing)");
+    await expect(resolveSemanticScholarApiKey(cwd)).resolves.toBe("existing-semantic");
+    await expect(resolveOpenAiApiKey(cwd)).resolves.toBe("existing-openai");
+  });
+
   it("writes OPENAI_API_KEY and OpenAI provider config during setup when API provider is selected", async () => {
     delete process.env.OPENAI_API_KEY;
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autoresearch-setup-openai-provider-"));
@@ -250,7 +251,11 @@ describe("config .env overrides", () => {
       "recent papers,last 5 years",
       "reproducibility",
       "api",
+      "low",
+      "xhigh",
       "gpt-5-mini",
+      "low",
+      "xhigh",
       "codex",
       "semantic-key",
       "openai-key"
@@ -263,6 +268,8 @@ describe("config .env overrides", () => {
 
     expect(config.providers.llm_mode).toBe("openai_api");
     expect(config.providers.openai.model).toBe("gpt-5-mini");
+    expect(config.providers.openai.command_reasoning_effort).toBe("low");
+    expect(config.providers.openai.reasoning_effort).toBe("xhigh");
     await expect(resolveOpenAiApiKey(cwd)).resolves.toBe("openai-key");
   });
 

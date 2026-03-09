@@ -4,11 +4,45 @@ export interface OpenAiResponsesModelOption {
   description: string;
 }
 
+export interface OpenAiResponsesReasoningOption {
+  value: "minimal" | "low" | "medium" | "high" | "xhigh";
+  label: string;
+  description: string;
+}
+
 // Official docs basis:
 // - GPT-5 and GPT-4.1 / GPT-4o family are documented on developers.openai.com model pages.
 // - Responses API supports reasoning controls for supported GPT-5 models.
 export const DEFAULT_OPENAI_RESPONSES_MODEL = "gpt-5.4";
 export const DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT = "medium";
+
+export const OPENAI_RESPONSES_REASONING_OPTIONS: OpenAiResponsesReasoningOption[] = [
+  {
+    value: "minimal",
+    label: "minimal",
+    description: "Lowest reasoning budget for the fastest GPT-5 API turns."
+  },
+  {
+    value: "low",
+    label: "low",
+    description: "Fast, lower-cost reasoning for simple structured tasks."
+  },
+  {
+    value: "medium",
+    label: "medium",
+    description: "Balanced default for general workflow tasks."
+  },
+  {
+    value: "high",
+    label: "high",
+    description: "Deeper reasoning when extraction quality matters more than latency."
+  },
+  {
+    value: "xhigh",
+    label: "xhigh",
+    description: "Maximum reasoning effort for the hardest GPT-5 API turns."
+  }
+];
 
 export const OPENAI_RESPONSES_MODEL_OPTIONS: OpenAiResponsesModelOption[] = [
   {
@@ -49,6 +83,22 @@ const OPENAI_RESPONSES_MODEL_SET = new Set(
 
 export function buildOpenAiResponsesModelChoices(): string[] {
   return OPENAI_RESPONSES_MODEL_OPTIONS.map((option) => option.value);
+}
+
+export function buildOpenAiResponsesReasoningChoices(model: string): string[] {
+  return supportsOpenAiResponsesReasoning(model)
+    ? OPENAI_RESPONSES_REASONING_OPTIONS.map((option) => option.value)
+    : [DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT];
+}
+
+export function getOpenAiResponsesReasoningOptions(
+  model: string
+): OpenAiResponsesReasoningOption[] {
+  return supportsOpenAiResponsesReasoning(model)
+    ? OPENAI_RESPONSES_REASONING_OPTIONS
+    : OPENAI_RESPONSES_REASONING_OPTIONS.filter(
+        (option) => option.value === DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT
+      );
 }
 
 export function getOpenAiResponsesModelDescription(model: string): string {

@@ -22,7 +22,10 @@ import {
 } from "../integrations/openai/pdfModelCatalog.js";
 import {
   OPENAI_RESPONSES_MODEL_OPTIONS,
-  normalizeOpenAiResponsesModel
+  getOpenAiResponsesReasoningOptions,
+  normalizeOpenAiResponsesModel,
+  normalizeOpenAiResponsesReasoningEffort,
+  supportsOpenAiResponsesReasoning
 } from "../integrations/openai/modelCatalog.js";
 import { buildSuggestions } from "./commandPalette/suggest.js";
 import { parseSlashCommand } from "../core/commands/parseSlash.js";
@@ -50,9 +53,15 @@ import { buildAnimatedStatusText, buildFrame, buildThinkingText, RenderFrameOutp
 import { supportsColor } from "./theme.js";
 import { OpenAiResponsesTextClient } from "../integrations/openai/responsesTextClient.js";
 import {
+  AnalyzeProgressState,
   CollectProgressState,
+  formatAnalyzeProgressLogLine,
   formatCollectActivityLabel,
+  isAnalyzeProgressLog,
+  isCollectProgressLog,
+  shouldClearAnalyzeProgress,
   shouldClearCollectProgress,
+  updateAnalyzeProgressFromLog,
   updateCollectProgressFromLog
 } from "./activityStatus.js";
 import {
@@ -172,6 +181,7 @@ export class TerminalApp {
   private activeBusyAbortController?: AbortController;
   private activeBusyLabel?: string;
   private collectProgress?: CollectProgressState;
+  private analyzeProgress?: AnalyzeProgressState;
   private readonly corpusInsightsCache = new Map<string, CorpusInsightsCacheEntry>();
   private stopped = false;
   private resolver?: () => void;
@@ -241,6 +251,10 @@ export class TerminalApp {
     }
 
     if (key.ctrl && key.name === "c") {
+      if (this.busy) {
+        this.cancelCurrentBusyOperation();
+        return;
+      }
       await this.shutdown();
       return;
     }
@@ -788,6 +802,21 @@ export class TerminalApp {
     }
 
     const language = detectQueryLanguage(text);
+    const titleChange = extractTitleChangeIntent(text);
+    if (titleChange) {
+      const run = await this.resolveTargetRun(undefined);
+      if (!run) {
+        return true;
+      }
+      const command = buildTitleCommand(titleChange.title, run.id);
+      this.pushLog(
+        language === "ko"
+          ? `run title을 "${titleChange.title}"로 변경합니다.`
+          : `I can rename the run title to "${titleChange.title}".`
+      );
+      this.armPendingNaturalCommands(text, [command]);
+      return true;
+    }
 
     if (isSupportedNaturalInputsQuery(text)) {
       for (const line of formatSupportedNaturalInputLines(language)) {
@@ -810,7 +839,7 @@ export class TerminalApp {
           input: text,
           runs: this.runIndex,
           activeRunId: this.activeRunId,
-          llm: this.getNaturalAssistantClient(),
+          llm: this.getCommandIntentClient(),
           abortSignal,
           onProgress: (line) => {
             this.pushLog(oneLine(line));
@@ -838,22 +867,6 @@ export class TerminalApp {
       } finally {
         this.stopThinking();
       }
-    }
-
-    const titleChange = extractTitleChangeIntent(text);
-    if (titleChange) {
-      const run = await this.resolveTargetRun(undefined);
-      if (!run) {
-        return true;
-      }
-      const command = buildTitleCommand(titleChange.title, run.id);
-      this.pushLog(
-        language === "ko"
-          ? `run title을 "${titleChange.title}"로 변경합니다.`
-          : `I can rename the run title to "${titleChange.title}".`
-      );
-      this.armPendingNaturalCommands(text, [command]);
-      return true;
     }
 
     const run = await this.resolveTargetRun(undefined);
@@ -1292,6 +1305,11 @@ export class TerminalApp {
     return this.isAbortError(error);
   }
 
+  private wasAgentRunCanceled(run: RunRecord, node: GraphNodeId): boolean {
+    const state = run.graph.nodeStates[node];
+    return run.status === "paused" && state.status === "pending" && state.note === "Canceled by user";
+  }
+
   private applySteeringInput(instruction: string): void {
     if (!this.activeNaturalRequest) {
       return;
@@ -1361,7 +1379,9 @@ export class TerminalApp {
     this.pushLog("Workflow:");
     this.pushLog("/approve | /retry");
     this.pushLog("/agent list | /agent status [run] | /agent graph [run] | /agent budget [run]");
-    this.pushLog("/agent run <node> [run] [--top-n <n>] | /agent retry [node] [run] | /agent jump <node> [run] [--force]");
+    this.pushLog(
+      "/agent run <node> [run] [--top-n <n> | --top-k <n> --branch-count <n>] | /agent retry [node] [run] | /agent jump <node> [run] [--force]"
+    );
     this.pushLog("/agent focus <node> | /agent resume [run] [checkpoint]");
     this.pushLog("");
     this.pushLog("Collection:");
@@ -1503,7 +1523,7 @@ export class TerminalApp {
     if (sub === "run") {
       const nodeRaw = args[1] as AgentId | undefined;
       if (!nodeRaw) {
-        this.pushLog("Usage: /agent run <node> [run] [--top-n <n>]");
+        this.pushLog("Usage: /agent run <node> [run] [--top-n <n> | --top-k <n> --branch-count <n>]");
         return { ok: false, reason: "missing node for /agent run" };
       }
       if (!AGENT_ORDER.includes(nodeRaw)) {
@@ -1519,9 +1539,19 @@ export class TerminalApp {
           return { ok: false, reason: parsed.error };
         }
         runQuery = parsed.runQuery;
+      } else if (nodeRaw === "generate_hypotheses") {
+        const parsed = parseGenerateHypothesesRunArgs(args.slice(2));
+        if (parsed.error) {
+          this.pushLog(parsed.error);
+          return { ok: false, reason: parsed.error };
+        }
+        runQuery = parsed.runQuery;
       } else if (args.slice(2).includes("--top-n")) {
         this.pushLog("--top-n is only supported for /agent run analyze_papers");
         return { ok: false, reason: "unsupported --top-n option" };
+      } else if (args.slice(2).includes("--top-k") || args.slice(2).includes("--branch-count")) {
+        this.pushLog("--top-k and --branch-count are only supported for /agent run generate_hypotheses");
+        return { ok: false, reason: "unsupported generate_hypotheses options" };
       }
       const run = await this.resolveTargetRun(runQuery);
       if (!run) {
@@ -1536,11 +1566,21 @@ export class TerminalApp {
           selectionMode: parsed.topN ? "top_n" : "all",
           selectionPolicy: "hybrid_title_citation_recency_pdf_v2"
         });
+      } else if (nodeRaw === "generate_hypotheses") {
+        const parsed = parseGenerateHypothesesRunArgs(args.slice(2));
+        const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+        await runContext.put("generate_hypotheses.request", {
+          topK: parsed.topK ?? 2,
+          branchCount: parsed.branchCount ?? 6
+        });
       }
 
       await this.setActiveRunId(run.id);
       const response = await this.orchestrator.runAgentWithOptions(run.id, nodeRaw, { abortSignal });
       await this.refreshRunIndex();
+      if (this.wasAgentRunCanceled(response.run, nodeRaw)) {
+        throw new Error("Operation aborted by user");
+      }
 
       if (response.result.status === "failure") {
         this.pushLog(`Node ${nodeRaw} failed: ${response.result.error || "unknown error"}`);
@@ -1835,6 +1875,9 @@ export class TerminalApp {
       abortSignal
     });
     await this.refreshRunIndex();
+    if (this.wasAgentRunCanceled(response.run, "collect_papers")) {
+      throw new Error("Operation aborted by user");
+    }
     if (response.result.status === "failure") {
       this.pushLog(`collect_papers failed: ${response.result.error || "unknown error"}`);
       return { ok: false, reason: response.result.error || "collect_papers failed" };
@@ -1901,6 +1944,9 @@ export class TerminalApp {
       await upsertEnvVar(path.join(process.cwd(), ".env"), "OPENAI_API_KEY", openAiApiKey.trim());
     }
     let openAiModel = this.config.providers.openai.model;
+    let openAiReasoningEffort = this.config.providers.openai.reasoning_effort;
+    let openAiCommandReasoningEffort =
+      this.config.providers.openai.command_reasoning_effort || "low";
     if (llmMode === "openai_api") {
       const selectedOpenAiModel = await this.openSelectionMenu(
         "Select OpenAI API model",
@@ -1912,9 +1958,29 @@ export class TerminalApp {
         return;
       }
       openAiModel = selectedOpenAiModel;
+      const selectedCommandReasoningEffort = await this.selectOpenAiReasoningEffortOrDefault(
+        openAiModel,
+        this.config.providers.openai.command_reasoning_effort || "low",
+        "command"
+      );
+      if (!selectedCommandReasoningEffort) {
+        this.pushLog("Settings update canceled.");
+        return;
+      }
+      openAiCommandReasoningEffort = selectedCommandReasoningEffort;
+      const selectedReasoningEffort = await this.selectOpenAiReasoningEffortOrDefault(
+        openAiModel,
+        this.config.providers.openai.reasoning_effort,
+        "task"
+      );
+      if (!selectedReasoningEffort) {
+        this.pushLog("Settings update canceled.");
+        return;
+      }
+      openAiReasoningEffort = selectedReasoningEffort;
       this.openAiTextClient?.updateDefaults({
         model: openAiModel,
-        reasoningEffort: this.config.providers.openai.reasoning_effort
+        reasoningEffort: openAiReasoningEffort
       });
     }
     const pdfMode = await this.openSelectionMenu(
@@ -1958,6 +2024,8 @@ export class TerminalApp {
     this.config.research.default_objective_metric = metric;
     this.config.providers.llm_mode = llmMode as AppConfig["providers"]["llm_mode"];
     this.config.providers.openai.model = openAiModel;
+    this.config.providers.openai.reasoning_effort = openAiReasoningEffort;
+    this.config.providers.openai.command_reasoning_effort = openAiCommandReasoningEffort;
     this.config.analysis.pdf_mode = pdfMode as AppConfig["analysis"]["pdf_mode"];
     this.config.analysis.responses_model = responsesPdfModel;
 
@@ -2001,12 +2069,19 @@ export class TerminalApp {
 
     const resolvedModel = resolveCodexModelSelection(selectedModel);
     const model = resolvedModel.model;
-    const reasoningChoices = getReasoningEffortChoicesForModel(model);
-    const currentEffort = normalizeReasoningEffortForModel(model, this.config.providers.codex.reasoning_effort);
-    const effort = await this.openSelectionMenu(
-      "Select reasoning effort",
-      reasoningChoices,
-      currentEffort
+    const commandEffort = await this.selectCodexReasoningEffort(
+      model,
+      this.config.providers.codex.command_reasoning_effort || "low",
+      "command"
+    );
+    if (!commandEffort) {
+      this.pushLog("Model selection canceled.");
+      return;
+    }
+    const effort = await this.selectCodexReasoningEffort(
+      model,
+      this.config.providers.codex.reasoning_effort,
+      "task"
     );
     if (!effort) {
       this.pushLog("Model selection canceled.");
@@ -2015,6 +2090,7 @@ export class TerminalApp {
 
     this.config.providers.codex.model = model;
     this.config.providers.codex.reasoning_effort = effort as CodexReasoningEffort;
+    this.config.providers.codex.command_reasoning_effort = commandEffort as CodexReasoningEffort;
     this.config.providers.codex.fast_mode = model === "gpt-5.4" ? resolvedModel.fastMode : false;
     this.codex.updateDefaults({
       model,
@@ -2023,7 +2099,7 @@ export class TerminalApp {
     });
     await this.saveConfigFn(this.config);
     this.pushLog(
-      `Codex model updated: ${this.formatCurrentModelLabel()} (reasoning: ${effort}).`
+      `Codex model updated: ${this.formatCurrentModelLabel()} (command reasoning: ${commandEffort}, task reasoning: ${effort}).`
     );
     this.pushCurrentModelDefaults();
   }
@@ -2049,24 +2125,58 @@ export class TerminalApp {
       return;
     }
 
+    const selectedCommandReasoningEffort = await this.selectOpenAiReasoningEffortOrDefault(
+      selectedModel,
+      this.config.providers.openai.command_reasoning_effort || "low",
+      "command"
+    );
+    if (!selectedCommandReasoningEffort) {
+      this.pushLog("Model selection canceled.");
+      return;
+    }
+    const selectedReasoningEffort = await this.selectOpenAiReasoningEffortOrDefault(
+      selectedModel,
+      this.config.providers.openai.reasoning_effort,
+      "task"
+    );
+    if (!selectedReasoningEffort) {
+      this.pushLog("Model selection canceled.");
+      return;
+    }
+
     this.config.providers.openai.model = selectedModel;
+    this.config.providers.openai.reasoning_effort = selectedReasoningEffort;
+    this.config.providers.openai.command_reasoning_effort = selectedCommandReasoningEffort;
     this.openAiTextClient?.updateDefaults({
       model: selectedModel,
-      reasoningEffort: this.config.providers.openai.reasoning_effort
+      reasoningEffort: selectedReasoningEffort
     });
     await this.saveConfigFn(this.config);
-    this.pushLog(`OpenAI API model updated: ${selectedModel}.`);
+    if (supportsOpenAiResponsesReasoning(selectedModel)) {
+      this.pushLog(
+        `OpenAI API model updated: ${selectedModel} (command reasoning: ${selectedCommandReasoningEffort}, task reasoning: ${selectedReasoningEffort}).`
+      );
+    } else {
+      this.pushLog(`OpenAI API model updated: ${selectedModel}.`);
+    }
     this.pushCurrentModelDefaults();
   }
 
   private pushCurrentModelDefaults(): void {
     if (this.config.providers.llm_mode === "openai_api") {
-      this.pushLog(`OpenAI API defaults: model=${this.config.providers.openai.model}`);
+      if (supportsOpenAiResponsesReasoning(this.config.providers.openai.model)) {
+        this.pushLog(
+          `OpenAI API defaults: model=${this.config.providers.openai.model}, command=${this.config.providers.openai.command_reasoning_effort || "low"}, task=${this.config.providers.openai.reasoning_effort}`
+        );
+      } else {
+        this.pushLog(`OpenAI API defaults: model=${this.config.providers.openai.model}`);
+      }
       return;
     }
     const model = this.formatCurrentModelLabel();
     const effort = this.config.providers.codex.reasoning_effort;
-    this.pushLog(`Codex defaults: model=${model}, reasoning=${effort}`);
+    const commandEffort = this.config.providers.codex.command_reasoning_effort || "low";
+    this.pushLog(`Codex defaults: model=${model}, command=${commandEffort}, task=${effort}`);
   }
 
   private formatCurrentModelLabel(): string {
@@ -2137,6 +2247,76 @@ export class TerminalApp {
     }));
   }
 
+  private buildOpenAiReasoningEffortOptions(
+    model: string,
+    recommended: "command" | "task"
+  ): SelectionMenuOption[] {
+    return getOpenAiResponsesReasoningOptions(model).map((option) => ({
+      value: option.value,
+      label: option.label,
+      description: this.describeReasoningEffort(option.description, option.value, recommended)
+    }));
+  }
+
+  private async selectOpenAiReasoningEffortOrDefault(
+    model: string,
+    currentEffort: AppConfig["providers"]["openai"]["reasoning_effort"],
+    recommended: "command" | "task"
+  ): Promise<AppConfig["providers"]["openai"]["reasoning_effort"] | undefined> {
+    const normalizedEffort = normalizeOpenAiResponsesReasoningEffort(
+      model,
+      currentEffort
+    ) as AppConfig["providers"]["openai"]["reasoning_effort"];
+    if (!supportsOpenAiResponsesReasoning(model)) {
+      return normalizedEffort;
+    }
+    const selected = await this.openSelectionMenu(
+      recommended === "command"
+        ? "Select command/query reasoning effort"
+        : "Select analysis/implementation reasoning effort",
+      this.buildOpenAiReasoningEffortOptions(model, recommended),
+      normalizedEffort
+    );
+    return selected as AppConfig["providers"]["openai"]["reasoning_effort"] | undefined;
+  }
+
+  private async selectCodexReasoningEffort(
+    model: string,
+    currentEffort: CodexReasoningEffort,
+    recommended: "command" | "task"
+  ): Promise<CodexReasoningEffort | undefined> {
+    const normalizedEffort = normalizeReasoningEffortForModel(model, currentEffort);
+    const selected = await this.openSelectionMenu(
+      recommended === "command"
+        ? "Select command/query reasoning effort"
+        : "Select analysis/implementation reasoning effort",
+      getReasoningEffortChoicesForModel(model).map((value) => ({
+        value,
+        label: value,
+        description: this.describeReasoningEffort("", value, recommended)
+      })),
+      normalizedEffort
+    );
+    return selected as CodexReasoningEffort | undefined;
+  }
+
+  private describeReasoningEffort(
+    baseDescription: string,
+    value: string,
+    recommended: "command" | "task"
+  ): string {
+    const recommendation =
+      recommended === "command"
+        ? value === "low"
+          ? "recommended for commands"
+          : ""
+        : value === "xhigh"
+          ? "recommended for analysis/implementation"
+          : "";
+    const parts = [baseDescription, recommendation].map((part) => part.trim()).filter(Boolean);
+    return parts.join(" | ");
+  }
+
   private describePdfAnalysisMode(mode: AppConfig["analysis"]["pdf_mode"]): string {
     return mode === "responses_api_pdf" ? "Responses API PDF input" : "Codex text extraction";
   }
@@ -2152,6 +2332,7 @@ export class TerminalApp {
       approvalPolicy?: string;
       threadId?: string;
       systemPrompt?: string;
+      reasoningEffort?: string;
       abortSignal?: AbortSignal;
     }) => Promise<string>;
     runTurnStream?: CodexCliClient["runTurnStream"];
@@ -2165,12 +2346,53 @@ export class TerminalApp {
           prompt: opts.prompt,
           sandboxMode: (opts.sandboxMode || "read-only") as "read-only" | "workspace-write" | "danger-full-access",
           approvalPolicy: (opts.approvalPolicy || "never") as "never" | "on-request" | "on-failure" | "untrusted",
-          systemPrompt: opts.systemPrompt
+          systemPrompt: opts.systemPrompt,
+          reasoningEffort: opts.reasoningEffort as never
         }),
       runTurnStream:
         typeof this.codex.runTurnStream === "function"
           ? this.codex.runTurnStream.bind(this.codex)
           : undefined
+    };
+  }
+
+  private getCommandIntentClient(): {
+    runForText: (opts: {
+      prompt: string;
+      sandboxMode?: string;
+      approvalPolicy?: string;
+      threadId?: string;
+      systemPrompt?: string;
+      reasoningEffort?: string;
+      abortSignal?: AbortSignal;
+    }) => Promise<string>;
+  } {
+    if (this.config.providers.llm_mode === "openai_api" && this.openAiTextClient) {
+      const reasoningEffort =
+        this.config.providers.openai.command_reasoning_effort ||
+        this.config.providers.openai.reasoning_effort;
+      return {
+        runForText: async (opts) =>
+          this.openAiTextClient!.runForText({
+            prompt: opts.prompt,
+            systemPrompt: opts.systemPrompt,
+            abortSignal: opts.abortSignal,
+            reasoningEffort
+          })
+      };
+    }
+    const reasoningEffort =
+      this.config.providers.codex.command_reasoning_effort ||
+      this.config.providers.codex.reasoning_effort;
+    return {
+      runForText: async (opts) =>
+        this.codex.runForText({
+          prompt: opts.prompt,
+          sandboxMode: (opts.sandboxMode || "read-only") as "read-only" | "workspace-write" | "danger-full-access",
+          approvalPolicy: (opts.approvalPolicy || "never") as "never" | "on-request" | "on-failure" | "untrusted",
+          systemPrompt: opts.systemPrompt,
+          reasoningEffort: reasoningEffort as never
+        })
     };
   }
   private async openSelectionMenu(
@@ -2398,8 +2620,15 @@ export class TerminalApp {
 
   private pushLog(line: string): void {
     this.collectProgress = updateCollectProgressFromLog(this.collectProgress, line);
+    this.analyzeProgress = updateAnalyzeProgressFromLog(this.analyzeProgress, line);
     if (shouldClearCollectProgress(line)) {
       this.collectProgress = undefined;
+    }
+    if (shouldClearAnalyzeProgress(line)) {
+      this.analyzeProgress = undefined;
+    }
+    if (isCollectProgressLog(line) || isAnalyzeProgressLog(line)) {
+      return;
     }
     this.logs.push(line);
     if (this.logs.length > 200) {
@@ -2431,7 +2660,7 @@ export class TerminalApp {
       thinkingFrame: this.thinkingFrame,
       terminalWidth: this.resolveTerminalWidth(),
       run,
-      logs: this.logs,
+      logs: this.getRenderableLogs(run),
       input: this.input,
       inputCursor: this.cursorIndex,
       suggestions: this.suggestions,
@@ -2490,6 +2719,31 @@ export class TerminalApp {
       return formatCollectActivityLabel(this.collectProgress);
     }
     return describeNodeActivity(run.currentNode);
+  }
+
+  private getRenderableLogs(run?: RunRecord): string[] {
+    const progressLine = this.getTransientProgressLog(run);
+    if (!progressLine) {
+      return this.logs;
+    }
+    return [...this.logs, progressLine];
+  }
+
+  private getTransientProgressLog(run?: RunRecord): string | undefined {
+    if (!this.busy) {
+      return undefined;
+    }
+
+    const explicit = this.activeBusyLabel?.trim() ?? "";
+    if (explicit.startsWith("Collecting") || run?.currentNode === "collect_papers") {
+      return formatCollectActivityLabel(this.collectProgress);
+    }
+
+    if (explicit.startsWith("Analyzing") || run?.currentNode === "analyze_papers") {
+      return formatAnalyzeProgressLogLine(this.analyzeProgress);
+    }
+
+    return undefined;
   }
 
   private renderThinkingLineOnly(): void {
@@ -3119,6 +3373,58 @@ function parseAnalyzeRunArgs(args: string[]): { runQuery?: string; topN?: number
   };
 }
 
+function parseGenerateHypothesesRunArgs(args: string[]): {
+  runQuery?: string;
+  topK?: number;
+  branchCount?: number;
+  error?: string;
+} {
+  const runParts: string[] = [];
+  let topK: number | undefined;
+  let branchCount: number | undefined;
+
+  for (let idx = 0; idx < args.length; idx += 1) {
+    const token = args[idx];
+    if (token === "--top-k") {
+      const value = args[idx + 1];
+      if (!value) {
+        return { error: "Usage: /agent run generate_hypotheses [run] [--top-k <n>] [--branch-count <n>]" };
+      }
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        return { error: "Usage: /agent run generate_hypotheses [run] [--top-k <n>] [--branch-count <n>]" };
+      }
+      topK = Math.floor(parsed);
+      idx += 1;
+      continue;
+    }
+    if (token === "--branch-count") {
+      const value = args[idx + 1];
+      if (!value) {
+        return { error: "Usage: /agent run generate_hypotheses [run] [--top-k <n>] [--branch-count <n>]" };
+      }
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed <= 1) {
+        return { error: "Usage: /agent run generate_hypotheses [run] [--top-k <n>] [--branch-count <n>]" };
+      }
+      branchCount = Math.floor(parsed);
+      idx += 1;
+      continue;
+    }
+    runParts.push(token);
+  }
+
+  if (typeof topK === "number" && typeof branchCount === "number" && branchCount < topK) {
+    return { error: "--branch-count must be greater than or equal to --top-k" };
+  }
+
+  return {
+    runQuery: runParts.join(" ").trim() || undefined,
+    topK,
+    branchCount
+  };
+}
+
 function shouldUseConservativeCollectPacing(
   request: CollectCommandRequest,
   targetTotal: number,
@@ -3325,7 +3631,13 @@ function nodeContextKeys(node: GraphNodeId): string[] {
         "analyze_papers.selection_fingerprint"
       ];
     case "generate_hypotheses":
-      return ["generate_hypotheses.top_k"];
+      return [
+        "generate_hypotheses.request",
+        "generate_hypotheses.top_k",
+        "generate_hypotheses.branch_count",
+        "generate_hypotheses.source",
+        "generate_hypotheses.summary"
+      ];
     case "design_experiments":
       return ["design_experiments.primary"];
     case "implement_experiments":

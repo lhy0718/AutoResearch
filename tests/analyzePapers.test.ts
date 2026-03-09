@@ -319,6 +319,65 @@ describe("analyzePapers node", () => {
     expect(loggedTexts.some((text) => text.includes("Falling back to abstract for \"Paper 1\" after Responses API fallback"))).toBe(true);
   });
 
+  it("falls back to local text/abstract analysis when Responses API returns upstream 403 while downloading a remote PDF", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-analyze-pdf-403-fallback-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-pdf-403-fallback";
+    const run = makeRun(runId);
+    await writeCorpus(runId, [
+      {
+        paper_id: "p1",
+        title: "Paper 1",
+        abstract: "Abstract 1",
+        authors: ["Alice"],
+        pdf_url: "https://www.proceedings.com/content/079/079017-4397open.pdf"
+      }
+    ]);
+
+    globalThis.fetch = (async () => new Response("forbidden", { status: 403 })) as typeof fetch;
+
+    const eventStream = new InMemoryEventStream();
+    const responseClient = {
+      hasApiKey: async () => true,
+      analyzePdf: async () => {
+        throw new Error(
+          'Responses API request failed: 400 { "error": { "message": "Error while downloading https://www.proceedings.com/content/079/079017-4397open.pdf. Upstream status code: 403.", "type": "invalid_request_error", "param": "url" } }'
+        );
+      }
+    } as unknown as ResponsesPdfAnalysisClient;
+
+    const node = createAnalyzePapersNode({
+      config: {
+        analysis: {
+          pdf_mode: "responses_api_pdf",
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream,
+      llm: new SequenceJsonLLM([jsonOutput("fallback summary", "fallback claim")]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: responseClient
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const summariesRaw = await readFile(path.join(".autoresearch", "runs", runId, "paper_summaries.jsonl"), "utf8");
+    expect(summariesRaw).toContain('"summary":"fallback summary"');
+    expect(summariesRaw).toContain('"source_type":"abstract"');
+
+    const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
+    expect(loggedTexts.some((text) => text.includes("Responses API could not download the remote PDF"))).toBe(true);
+    expect(loggedTexts.some((text) => text.includes("Upstream status code: 403"))).toBe(true);
+    expect(loggedTexts.some((text) => text.includes("Falling back to abstract for \"Paper 1\" after Responses API fallback"))).toBe(true);
+    expect(loggedTexts.some((text) => text.includes('Analysis failed for "Paper 1"'))).toBe(false);
+  });
+
   it("analyzes only the selected top-N papers when a request is provided", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autoresearch-analyze-topn-"));
     tempDirs.push(root);

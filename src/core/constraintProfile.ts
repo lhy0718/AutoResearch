@@ -121,6 +121,7 @@ function buildConstraintPrompt(run: RunRecord): string {
     "",
     "Normalization rules:",
     "- Keep collect defaults generic. Explicit slash options will override these defaults later.",
+    "- Do not set publicationTypes for generic phrases like 'papers', 'recent papers', or 'articles'. Only set specific types such as Review when explicitly requested.",
     "- Use targetVenue only for actual venue or paper-style constraints.",
     "- Use toneHint and lengthHint only when clearly stated.",
     "- Put practical downstream implications into experiment.designNotes / implementationNotes / evaluationNotes.",

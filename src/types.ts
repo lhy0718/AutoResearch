@@ -121,12 +121,14 @@ export interface AppConfig {
     codex: {
       model: string;
       reasoning_effort: "minimal" | "low" | "medium" | "high" | "xhigh";
+      command_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
       fast_mode: boolean;
       auth_required: true;
     };
     openai: {
       model: string;
       reasoning_effort: "minimal" | "low" | "medium" | "high" | "xhigh";
+      command_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
       api_key_required: true;
     };
   };
