@@ -112,6 +112,7 @@ export async function analyzePaperWithResponsesPdf(args: {
   paper: AnalysisCorpusRow;
   pdfUrl: string;
   model: string;
+  reasoningEffort?: string;
   maxAttempts?: number;
   abortSignal?: AbortSignal;
   onProgress?: (message: string) => void;
@@ -133,6 +134,7 @@ export async function analyzePaperWithResponsesPdf(args: {
         pdfUrl: args.pdfUrl,
         prompt: buildPaperAnalysisFilePrompt(args.paper),
         systemPrompt: ANALYSIS_SYSTEM_PROMPT,
+        reasoningEffort: args.reasoningEffort,
         abortSignal: args.abortSignal,
         onProgress: (message) => args.onProgress?.(message)
       });

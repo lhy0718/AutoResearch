@@ -29,8 +29,17 @@ export interface LLMClient {
   ): Promise<LLMCompletion>;
 }
 
+interface CodexClientDefaults {
+  model?: string;
+  reasoningEffort?: string;
+  fastMode?: boolean;
+}
+
 export class CodexLLMClient implements LLMClient {
-  constructor(private readonly codex: CodexCliClient) {}
+  constructor(
+    private readonly codex: CodexCliClient,
+    private readonly defaults: CodexClientDefaults = {}
+  ) {}
 
   async complete(
     prompt: string,
@@ -48,6 +57,9 @@ export class CodexLLMClient implements LLMClient {
       systemPrompt: opts?.systemPrompt,
       sandboxMode: "read-only",
       approvalPolicy: "never",
+      model: this.defaults.model,
+      reasoningEffort: this.defaults.reasoningEffort as never,
+      fastMode: this.defaults.fastMode,
       abortSignal: opts?.abortSignal,
       onEvent: (event) => {
         progress?.onEvent(event);
@@ -65,7 +77,10 @@ export class CodexLLMClient implements LLMClient {
 }
 
 export class OpenAiResponsesLLMClient implements LLMClient {
-  constructor(private readonly openai: OpenAiResponsesTextClient) {}
+  constructor(
+    private readonly openai: OpenAiResponsesTextClient,
+    private readonly defaults: { model?: string; reasoningEffort?: string } = {}
+  ) {}
 
   async complete(
     prompt: string,
@@ -80,6 +95,8 @@ export class OpenAiResponsesLLMClient implements LLMClient {
     const text = await this.openai.runForText({
       prompt,
       systemPrompt: opts?.systemPrompt,
+      model: this.defaults.model,
+      reasoningEffort: this.defaults.reasoningEffort,
       abortSignal: opts?.abortSignal
     });
     opts?.onProgress?.({ type: "status", text: "Received Responses API output." });

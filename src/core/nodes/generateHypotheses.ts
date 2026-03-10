@@ -1,7 +1,7 @@
 import path from "node:path";
 
 import { GraphNodeHandler } from "../stateGraph/types.js";
-import { appendJsonl, safeRead } from "./helpers.js";
+import { appendJsonl, safeRead, writeRunArtifact } from "./helpers.js";
 import { NodeExecutionDeps } from "./types.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import {
@@ -65,14 +65,43 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
         feasibility: candidate.feasibility,
         testability: candidate.testability,
         cost: candidate.cost,
-        expected_gain: candidate.expected_gain
+        expected_gain: candidate.expected_gain,
+        generator_kind: candidate.generator_kind,
+        axis_ids: candidate.axis_ids,
+        groundedness: candidate.groundedness,
+        causal_clarity: candidate.causal_clarity,
+        falsifiability: candidate.falsifiability,
+        experimentability: candidate.experimentability,
+        reproducibility_specificity: candidate.reproducibility_specificity,
+        reproducibility_signals: candidate.reproducibility_signals,
+        measurement_hint: candidate.measurement_hint,
+        critique_summary: candidate.critique_summary
       }));
 
       await appendJsonl(run, "hypotheses.jsonl", hypotheses);
+      if (planning.artifacts.evidence_axes.length > 0) {
+        await writeRunArtifact(
+          run,
+          "hypothesis_generation/evidence_axes.json",
+          JSON.stringify(planning.artifacts.evidence_axes, null, 2)
+        );
+      }
+      if (planning.artifacts.drafts.length > 0) {
+        await appendJsonl(run, "hypothesis_generation/drafts.jsonl", planning.artifacts.drafts);
+      }
+      if (planning.artifacts.reviews.length > 0) {
+        await appendJsonl(run, "hypothesis_generation/reviews.jsonl", planning.artifacts.reviews);
+      }
+      await writeRunArtifact(
+        run,
+        "hypothesis_generation/selection.json",
+        JSON.stringify(planning.artifacts.selection, null, 2)
+      );
       await runContextMemory.put("generate_hypotheses.top_k", hypotheses.length);
       await runContextMemory.put("generate_hypotheses.branch_count", planning.candidates.length);
       await runContextMemory.put("generate_hypotheses.source", planning.source);
       await runContextMemory.put("generate_hypotheses.summary", planning.summary);
+      await runContextMemory.put("generate_hypotheses.pipeline", planning.artifacts.pipeline);
 
       deps.eventStream.emit({
         type: "PLAN_CREATED",
@@ -96,7 +125,7 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
           ? `${planning.summary} Falling back after: ${planning.fallbackReason}`
           : planning.summary,
         needsApproval: true,
-        toolCallsUsed: 1
+        toolCallsUsed: Math.max(1, planning.toolCallsUsed)
       };
     }
   };
@@ -134,5 +163,16 @@ function parseEvidenceSeeds(raw: string): HypothesisEvidenceSeed[] {
 }
 
 function scoreCandidate(candidate: HypothesisCandidate): number {
-  return candidate.novelty + candidate.feasibility + candidate.testability + candidate.expected_gain - candidate.cost;
+  return (
+    candidate.novelty +
+    candidate.feasibility +
+    candidate.testability +
+    candidate.expected_gain +
+    (candidate.groundedness ?? 0) +
+    (candidate.causal_clarity ?? 0) +
+    (candidate.falsifiability ?? 0) +
+    (candidate.experimentability ?? 0) -
+    candidate.cost +
+    (candidate.reproducibility_specificity ?? 0)
+  );
 }

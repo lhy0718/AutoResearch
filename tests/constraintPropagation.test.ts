@@ -128,6 +128,68 @@ describe("constraint propagation", () => {
     expect(tex).toContain("- last 5 years");
   });
 
+  it("drops weak reproducibility hypotheses before experiment design", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-design-filter-"));
+    process.chdir(root);
+
+    const runId = "run-design-filter";
+    const run = makeRun(root, runId);
+    const runDir = path.join(root, ".autoresearch", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "hypotheses.jsonl"),
+      [
+        JSON.stringify({
+          hypothesis_id: "h_1",
+          text: "Typed message schemas will reduce run-to-run variance relative to free-form chat.",
+          groundedness: 5,
+          causal_clarity: 5,
+          falsifiability: 5,
+          experimentability: 5,
+          reproducibility_specificity: 5,
+          reproducibility_signals: ["run_to_run_variance", "failure_mode_stability"],
+          measurement_hint: "Measure pass@1 variance and stable failure categories across repeated runs."
+        }),
+        JSON.stringify({
+          hypothesis_id: "h_2",
+          text: "More agent discussion will improve results.",
+          groundedness: 2,
+          causal_clarity: 2,
+          falsifiability: 1,
+          experimentability: 2,
+          reproducibility_specificity: 1,
+          reproducibility_signals: []
+        })
+      ].join("\n") + "\n",
+      "utf8"
+    );
+
+    const node = createDesignExperimentsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const plan = await readFile(path.join(runDir, "experiment_plan.yaml"), "utf8");
+    expect(plan).toContain('  retained_count: 1');
+    expect(plan).toContain('  dropped_count: 1');
+    expect(plan).toContain('    text: "More agent discussion will improve results."');
+    expect(plan).toContain('    reason: "low groundedness; weak falsifiability; weak experimentability; reproducibility outcome is underspecified; no reproducibility signal; no reproducibility measurement hint; overall design quality below threshold"');
+    expect(plan).toContain('  - "Typed message schemas will reduce run-to-run variance relative to free-form chat."');
+    expect(plan).not.toContain('  - "More agent discussion will improve results."');
+    expect(plan).toContain('    - "run_to_run_variance"');
+    expect(plan).toContain('    - "reproducibility"');
+    expect(plan).toContain('    - "free_form_chat_baseline"');
+  });
+
   it("reuses one llm-derived constraint profile across design and write nodes", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autoresearch-constraint-profile-cache-"));
     process.chdir(root);

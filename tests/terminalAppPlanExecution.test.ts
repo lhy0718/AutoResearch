@@ -99,6 +99,11 @@ describe("TerminalApp pending natural plan execution", () => {
       .fn()
       .mockResolvedValueOnce("codex_chatgpt_only")
       .mockResolvedValueOnce("codex_text_extract");
+    app.selectCodexSlot = vi
+      .fn()
+      .mockResolvedValueOnce({ selection: "gpt-5.3-codex", effort: "low" })
+      .mockResolvedValueOnce({ selection: "gpt-5.3-codex", effort: "xhigh" })
+      .mockResolvedValueOnce({ selection: "gpt-5.3-codex", effort: "xhigh" });
 
     await app.handleSettings();
 
@@ -114,6 +119,7 @@ describe("TerminalApp pending natural plan execution", () => {
       expect.any(Array),
       "codex_text_extract"
     );
+    expect(app.selectCodexSlot).toHaveBeenCalledTimes(3);
     expect(saveConfig).toHaveBeenCalledTimes(1);
   });
 
@@ -153,29 +159,19 @@ describe("TerminalApp pending natural plan execution", () => {
     app.render = () => {};
     app.updateSuggestions = () => {};
     app.drainQueuedInputs = async () => {};
-    app.openSelectionMenu = vi
-      .fn()
-      .mockResolvedValueOnce("gpt-5-mini")
-      .mockResolvedValueOnce("low")
-      .mockResolvedValueOnce("high");
+    app.openSelectionMenu = vi.fn().mockResolvedValueOnce("gpt-5-mini").mockResolvedValueOnce("high");
 
-    await app.handleOpenAiApiModelSelection();
+    await app.handleOpenAiApiModelSelection("task");
 
     expect(app.openSelectionMenu).toHaveBeenNthCalledWith(
       1,
-      "Select OpenAI API model",
+      "Select analysis/hypothesis model",
       expect.any(Array),
       "gpt-5.4"
     );
     expect(app.openSelectionMenu).toHaveBeenNthCalledWith(
       2,
-      "Select command/query reasoning effort",
-      expect.any(Array),
-      "low"
-    );
-    expect(app.openSelectionMenu).toHaveBeenNthCalledWith(
-      3,
-      "Select analysis/implementation reasoning effort",
+      "Select analysis/hypothesis reasoning effort",
       expect.any(Array),
       "medium"
     );
@@ -185,6 +181,108 @@ describe("TerminalApp pending natural plan execution", () => {
     });
     expect(app.config.providers.openai.command_reasoning_effort).toBe("low");
     expect(app.config.providers.openai.reasoning_effort).toBe("high");
+    delete process.env.OPENAI_API_KEY;
+  });
+
+  it("shows current slot summary and recommendations before /model selection", async () => {
+    const app = makeApp();
+    app.openSelectionMenu = vi.fn().mockResolvedValueOnce(undefined);
+
+    await app.handleModel([]);
+
+    expect(app.logs).toContain("Current model slots:");
+    expect(
+      app.logs.some((line: string) =>
+        line.includes("- general chat:") && line.includes("Recommended: gpt-5.4 (fast) + low")
+      )
+    ).toBe(true);
+    expect(
+      app.logs.some((line: string) =>
+        line.includes("- analysis/hypothesis:") && line.includes("Recommended: gpt-5.4 + xhigh")
+      )
+    ).toBe(true);
+    expect(
+      app.logs.some((line: string) =>
+        line.includes("- PDF analysis:") && line.includes("Recommended: gpt-5.4 + xhigh")
+      )
+    ).toBe(true);
+    expect(app.openSelectionMenu).toHaveBeenCalledWith(
+      "Select model slot",
+      expect.arrayContaining([
+        expect.objectContaining({
+          value: "chat",
+          description: expect.stringContaining("Recommended: gpt-5.4 (fast) + low")
+        }),
+        expect.objectContaining({
+          value: "task",
+          description: expect.stringContaining("Recommended: gpt-5.4 + xhigh")
+        }),
+        expect.objectContaining({
+          value: "pdf",
+          description: expect.stringContaining("Recommended: gpt-5.4 + xhigh")
+        })
+      ]),
+      "task"
+    );
+  });
+
+  it("marks recommended presets in OpenAI API model menus", async () => {
+    process.env.OPENAI_API_KEY = "test-openai-key";
+    const saveConfig = vi.fn().mockResolvedValue(undefined);
+    const openAiTextClient = { updateDefaults: vi.fn() };
+    const app = new TerminalApp({
+      config: {
+        papers: { max_results: 100 },
+        providers: {
+          llm_mode: "openai_api",
+          codex: { model: "gpt-5.3-codex", reasoning_effort: "xhigh", fast_mode: false },
+          openai: {
+            model: "gpt-5.4",
+            reasoning_effort: "xhigh",
+            chat_model: "gpt-5-mini",
+            chat_reasoning_effort: "low",
+            command_reasoning_effort: "low"
+          }
+        },
+        analysis: {
+          pdf_mode: "codex_text_extract",
+          responses_model: "gpt-5.4"
+        },
+        research: {
+          default_topic: "Multi-agent collaboration",
+          default_constraints: ["recent papers", "last 5 years"],
+          default_objective_metric: "state-of-the-art reproducibility"
+        }
+      } as any,
+      runStore: {} as any,
+      titleGenerator: {} as any,
+      codex: {} as any,
+      openAiTextClient: openAiTextClient as any,
+      eventStream: { subscribe: () => () => {} } as any,
+      orchestrator: {} as any,
+      semanticScholarApiKeyConfigured: false,
+      onQuit: () => {},
+      saveConfig
+    }) as any;
+
+    app.render = () => {};
+    app.updateSuggestions = () => {};
+    app.drainQueuedInputs = async () => {};
+    app.openSelectionMenu = vi.fn().mockResolvedValueOnce(undefined);
+
+    await app.handleOpenAiApiModelSelection("chat");
+
+    expect(app.openSelectionMenu).toHaveBeenNthCalledWith(
+      1,
+      "Select general chat model",
+      expect.arrayContaining([
+        expect.objectContaining({
+          value: "gpt-5-mini",
+          description: expect.stringContaining("Recommended preset.")
+        })
+      ]),
+      "gpt-5-mini"
+    );
     delete process.env.OPENAI_API_KEY;
   });
 
@@ -258,6 +356,67 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(app.pendingNaturalCommand?.displayCommands).toEqual(["상위 30개 논문 분석"]);
   });
 
+  it("arms a pending generate_hypotheses command from a natural hypothesis request", async () => {
+    const app = makeApp();
+    const run = makeRun("run-hypotheses");
+    app.runIndex = [run];
+    app.activeRunId = run.id;
+    app.resolveTargetRun = vi.fn().mockResolvedValue(run);
+
+    const handled = await app.handleFastNaturalIntent("가설을 10개 뽑아줘", new AbortController().signal);
+
+    expect(handled).toBe(true);
+    expect(app.logs).toContain("가설 10개 생성을 준비합니다.");
+    expect(app.logs).toContain(
+      `Resolved slash command: /agent run generate_hypotheses ${run.id} --top-k 10 --branch-count 10`
+    );
+    expect(app.pendingNaturalCommand?.commands).toEqual([
+      `/agent run generate_hypotheses ${run.id} --top-k 10 --branch-count 10`
+    ]);
+    expect(app.pendingNaturalCommand?.displayCommands).toEqual(["가설 생성 (topK=10, branchCount=10)"]);
+  });
+
+  it("does not surface structured-action timeout errors in the log", async () => {
+    const app = makeApp();
+    const run = makeRun("run-timeout");
+    app.runIndex = [run];
+    app.activeRunId = run.id;
+    app.resolveTargetRun = vi.fn().mockResolvedValue(run);
+    app.readCorpusInsights = vi.fn().mockResolvedValue({
+      totalPapers: 0,
+      missingPdfCount: 0,
+      titles: [],
+      topCitation: undefined
+    });
+    app.codex = {
+      runForText: vi.fn().mockRejectedValue(new Error("Action intent timeout after 12s"))
+    };
+
+    const handled = await app.handleFastNaturalIntent("지금 나온 가설들을 확인해줘", new AbortController().signal);
+
+    expect(handled).toBe(true);
+    expect(app.logs.some((line: string) => line.includes("Structured action extraction failed"))).toBe(false);
+  });
+
+  it("answers saved hypothesis list questions from hypotheses.jsonl without mentioning conflicting summaries", async () => {
+    const app = makeApp();
+    const run = makeRun("run-hypothesis-list");
+    app.runIndex = [run];
+    app.activeRunId = run.id;
+    app.resolveTargetRun = vi.fn().mockResolvedValue(run);
+    app.readHypothesisInsights = vi.fn().mockResolvedValue({
+      totalHypotheses: 3,
+      texts: ["Hypothesis A", "Hypothesis B", "Hypothesis C"]
+    });
+
+    const handled = await app.handleFastNaturalIntent("지금 나온 가설들을 확인해줘", new AbortController().signal);
+
+    expect(handled).toBe(true);
+    expect(app.logs).toContain("현재 저장된 가설 3개 중 3개를 보여드립니다.");
+    expect(app.logs).toContain("1. Hypothesis A");
+    expect(app.logs.some((line: string) => line.includes("6개라고"))).toBe(false);
+  });
+
   it("stores top-k and branch-count request for /agent run generate_hypotheses", async () => {
     const app = makeApp();
     const run = makeRun("run-generate-options");
@@ -310,6 +469,62 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(app.cancelCurrentBusyOperation).not.toHaveBeenCalled();
   });
 
+  it("fills the first contextual action on tab when the input is empty", async () => {
+    const app = makeApp();
+
+    await app.handleKeypress("", { name: "tab" });
+
+    expect(app.input).toBe("/new");
+  });
+
+  it("updates contextual guidance language from the last user input", () => {
+    const app = makeApp();
+
+    app.updateGuidanceLanguage("현재 상태 보여줘");
+    const guidance = app.getContextualGuidance();
+
+    expect(guidance?.title).toBe("시작 가이드");
+    expect(guidance?.items.some((item: { label: string }) => item.label === "지원되는 자연어 입력을 보여줘")).toBe(true);
+  });
+
+  it("fills the executable command on tab even when pending guidance shows a display label", async () => {
+    const app = makeApp();
+    app.pendingNaturalCommand = {
+      command: "/agent run analyze_papers run-1 --top-n 30",
+      commands: ["/agent run analyze_papers run-1 --top-n 30"],
+      displayCommands: ["상위 30개 논문 분석"],
+      sourceInput: "30편 분석 진행해줘",
+      createdAt: new Date().toISOString(),
+      stepIndex: 0,
+      totalSteps: 1
+    };
+
+    await app.handleKeypress("", { name: "tab" });
+
+    expect(app.input).toBe("/agent run analyze_papers run-1 --top-n 30");
+  });
+
+  it("cancels an active selection menu on ctrl+c without shutting down", async () => {
+    const app = makeApp();
+    const resolve = vi.fn();
+    app.activeSelectionMenu = {
+      title: "Select model slot",
+      options: [{ value: "chat", label: "general_chat" }],
+      selectedIndex: 0,
+      resolve
+    };
+    app.busy = true;
+    app.cancelCurrentBusyOperation = vi.fn();
+    app.shutdown = vi.fn();
+
+    await app.handleKeypress("", { ctrl: true, name: "c" });
+
+    expect(resolve).toHaveBeenCalledWith(undefined);
+    expect(app.activeSelectionMenu).toBeUndefined();
+    expect(app.cancelCurrentBusyOperation).not.toHaveBeenCalled();
+    expect(app.shutdown).not.toHaveBeenCalled();
+  });
+
   it("treats a canceled node run as an aborted operation", async () => {
     const app = makeApp();
     const run = makeRun("run-1");
@@ -331,6 +546,28 @@ describe("TerminalApp pending natural plan execution", () => {
     await expect(app.handleAgent(["run", "analyze_papers"], new AbortController().signal)).rejects.toThrow(
       "Operation aborted by user"
     );
+  });
+
+  it("does not trim successful node summaries at the old 220-character limit", async () => {
+    const app = makeApp();
+    const run = makeRun("run-long-summary");
+    const tailMarker = "TAIL_MARKER_VISIBLE";
+    const longSummary = `${"structured communication ".repeat(10)}${tailMarker}`;
+    app.resolveTargetRun = vi.fn().mockResolvedValue(run);
+    app.setActiveRunId = vi.fn();
+    app.refreshRunIndex = vi.fn();
+    app.orchestrator = {
+      runAgentWithOptions: vi.fn().mockResolvedValue({
+        run,
+        result: { status: "success", summary: longSummary }
+      })
+    };
+
+    const result = await app.handleAgent(["run", "analyze_papers"], new AbortController().signal);
+    const completionLog = app.logs.find((line: string) => line.startsWith("Node analyze_papers finished:"));
+
+    expect(result.ok).toBe(true);
+    expect(completionLog).toContain(tailMarker);
   });
 
   it("executes one pending plan step at a time and re-arms the remaining steps", async () => {

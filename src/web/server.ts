@@ -1,0 +1,563 @@
+import http, { IncomingMessage, ServerResponse } from "node:http";
+import path from "node:path";
+import { promises as fs } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+import {
+  ensureScaffold,
+  hasOpenAiApiKey,
+  resolveAppPaths,
+  runNonInteractiveSetup
+} from "../config.js";
+import { runDoctor } from "../core/doctor.js";
+import { bootstrapAutoresearchRuntime, AutoresearchRuntime } from "../runtime/createRuntime.js";
+import { GraphNodeId, PendingPlan, RunRecord, WebSessionState } from "../types.js";
+import { InteractionSession } from "../interaction/InteractionSession.js";
+import { listRunArtifacts, readRunArtifact } from "./artifacts.js";
+import { BootstrapResponse, ConfigSummary, DoctorResponse, SessionInputResponse } from "./contracts.js";
+
+const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const WEB_DIST_DIR = path.join(PACKAGE_ROOT, "web", "dist");
+
+interface WebServerOptions {
+  cwd?: string;
+  host?: string;
+  port?: number;
+}
+
+interface SetupRequestBody {
+  projectName?: string;
+  defaultTopic?: string;
+  defaultConstraints?: string[];
+  defaultObjectiveMetric?: string;
+  llmMode?: "codex_chatgpt_only" | "openai_api";
+  pdfAnalysisMode?: "codex_text_extract" | "responses_api_pdf";
+  semanticScholarApiKey?: string;
+  openAiApiKey?: string;
+}
+
+interface JsonBody {
+  [key: string]: unknown;
+}
+
+export async function runAutoresearchWebServer(opts?: WebServerOptions): Promise<void> {
+  const controller = new AutoresearchWebController(opts);
+  await controller.start();
+}
+
+class AutoresearchWebController {
+  private readonly cwd: string;
+  private readonly host: string;
+  private readonly port: number;
+  private readonly paths;
+  private runtime?: AutoresearchRuntime;
+  private session?: InteractionSession;
+  private sessionUnsubscribe?: () => void;
+  private eventUnsubscribe?: () => void;
+  private readonly sseClients = new Set<ServerResponse>();
+
+  constructor(opts?: WebServerOptions) {
+    this.cwd = opts?.cwd || process.cwd();
+    this.host = opts?.host || "127.0.0.1";
+    this.port = opts?.port || 4317;
+    this.paths = resolveAppPaths(this.cwd);
+  }
+
+  async start(): Promise<void> {
+    const bootstrap = await bootstrapAutoresearchRuntime({
+      cwd: this.cwd,
+      allowInteractiveSetup: false
+    });
+    if (bootstrap.runtime) {
+      await this.attachRuntime(bootstrap.runtime);
+    }
+
+    const server = http.createServer((req, res) => {
+      void this.handleRequest(req, res);
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(this.port, this.host, () => {
+        server.off("error", reject);
+        resolve();
+      });
+    });
+
+    process.stdout.write(`AutoResearch web UI: http://${this.host}:${this.port}\n`);
+    await new Promise<void>(() => undefined);
+  }
+
+  private async attachRuntime(runtime: AutoresearchRuntime): Promise<void> {
+    this.runtime = runtime;
+    this.session?.dispose();
+    this.sessionUnsubscribe?.();
+    this.eventUnsubscribe?.();
+
+    const session = new InteractionSession({
+      workspaceRoot: this.cwd,
+      config: runtime.config,
+      runStore: runtime.runStore,
+      titleGenerator: runtime.titleGenerator,
+      codex: runtime.codex,
+      openAiTextClient: runtime.openAiTextClient,
+      eventStream: runtime.eventStream,
+      orchestrator: runtime.orchestrator,
+      semanticScholarApiKeyConfigured: runtime.semanticScholarApiKeyConfigured
+    });
+    await session.start();
+    this.session = session;
+    this.sessionUnsubscribe = session.subscribe(() => {
+      this.broadcast("session_state", session.snapshot());
+    });
+    this.eventUnsubscribe = runtime.eventStream.subscribe((event) => {
+      this.broadcast("runtime_event", event);
+    });
+    this.broadcast("bootstrap", await this.buildBootstrapResponse());
+  }
+
+  private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    try {
+      const method = req.method || "GET";
+      const url = new URL(req.url || "/", `http://${req.headers.host || `${this.host}:${this.port}`}`);
+      const pathname = url.pathname;
+
+      if (pathname === "/api/bootstrap" && method === "GET") {
+        return jsonResponse(res, 200, await this.buildBootstrapResponse());
+      }
+
+      if (pathname === "/api/setup" && method === "POST") {
+        const body = (await readJsonBody(req)) as SetupRequestBody;
+        if (!body.semanticScholarApiKey?.trim()) {
+          return jsonResponse(res, 400, { error: "semanticScholarApiKey is required." });
+        }
+        if (
+          (body.llmMode === "openai_api" || body.pdfAnalysisMode === "responses_api_pdf") &&
+          !body.openAiApiKey?.trim()
+        ) {
+          return jsonResponse(res, 400, { error: "openAiApiKey is required for the selected provider/mode." });
+        }
+        const config = await runNonInteractiveSetup(this.paths, {
+          projectName: body.projectName,
+          defaultTopic: body.defaultTopic,
+          defaultConstraints: body.defaultConstraints,
+          defaultObjectiveMetric: body.defaultObjectiveMetric,
+          llmMode: body.llmMode,
+          pdfAnalysisMode: body.pdfAnalysisMode,
+          semanticScholarApiKey: body.semanticScholarApiKey.trim(),
+          openAiApiKey: body.openAiApiKey?.trim()
+        });
+        await ensureScaffold(this.paths);
+        const runtime = (
+          await bootstrapAutoresearchRuntime({
+            cwd: this.cwd,
+            allowInteractiveSetup: false
+          })
+        ).runtime;
+        if (!runtime) {
+          throw new Error("Runtime did not initialize after setup.");
+        }
+        await this.attachRuntime(runtime);
+        return jsonResponse(res, 200, {
+          configSummary: summarizeConfig(config),
+          bootstrap: await this.buildBootstrapResponse()
+        });
+      }
+
+      if (pathname === "/api/doctor" && method === "GET") {
+        if (!this.runtime) {
+          return jsonResponse(res, 200, { configured: false, checks: [] } satisfies DoctorResponse);
+        }
+        const checks = await runDoctor(this.runtime.codex, {
+          llmMode: this.runtime.config.providers.llm_mode,
+          pdfAnalysisMode: this.runtime.config.analysis.pdf_mode,
+          openAiApiKeyConfigured: await hasOpenAiApiKey(this.cwd)
+        });
+        return jsonResponse(res, 200, { configured: true, checks } satisfies DoctorResponse);
+      }
+
+      if (pathname === "/api/runs" && method === "GET") {
+        const runtime = this.requireRuntime(res);
+        if (!runtime) {
+          return;
+        }
+        return jsonResponse(res, 200, { runs: await runtime.runStore.listRuns() });
+      }
+
+      if (pathname === "/api/runs" && method === "POST") {
+        const runtime = this.requireRuntime(res);
+        const session = this.requireSession(res);
+        if (!runtime || !session) {
+          return;
+        }
+        const body = (await readJsonBody(req)) as JsonBody;
+        const topic = asTrimmedString(body.topic) || runtime.config.research.default_topic;
+        const objectiveMetric =
+          asTrimmedString(body.objectiveMetric) || runtime.config.research.default_objective_metric;
+        const constraints = Array.isArray(body.constraints)
+          ? body.constraints.map((item) => String(item).trim()).filter(Boolean)
+          : runtime.config.research.default_constraints;
+        const run = await session.createRun({
+          topic,
+          constraints,
+          objectiveMetric
+        });
+        return jsonResponse(res, 200, {
+          run,
+          session: session.snapshot(),
+          runs: session.runs()
+        });
+      }
+
+      const runMatch = pathname.match(/^\/api\/runs\/([^/]+)$/u);
+      if (runMatch && method === "GET") {
+        const runtime = this.requireRuntime(res);
+        if (!runtime) {
+          return;
+        }
+        const runId = decodeURIComponent(runMatch[1] || "");
+        const run = await runtime.runStore.getRun(runId);
+        if (!run) {
+          return jsonResponse(res, 404, { error: "Run not found." });
+        }
+        return jsonResponse(res, 200, { run });
+      }
+
+      const checkpointsMatch = pathname.match(/^\/api\/runs\/([^/]+)\/checkpoints$/u);
+      if (checkpointsMatch && method === "GET") {
+        const runtime = this.requireRuntime(res);
+        if (!runtime) {
+          return;
+        }
+        const runId = decodeURIComponent(checkpointsMatch[1] || "");
+        const checkpoints = await runtime.checkpointStore.list(runId);
+        return jsonResponse(res, 200, {
+          checkpoints: checkpoints.map((item) => ({
+            seq: item.seq,
+            node: item.node,
+            phase: item.phase,
+            createdAt: item.createdAt,
+            reason: item.reason
+          }))
+        });
+      }
+
+      const artifactsMatch = pathname.match(/^\/api\/runs\/([^/]+)\/artifacts$/u);
+      if (artifactsMatch && method === "GET") {
+        const runtime = this.requireRuntime(res);
+        if (!runtime) {
+          return;
+        }
+        const runId = decodeURIComponent(artifactsMatch[1] || "");
+        return jsonResponse(res, 200, {
+          artifacts: await listRunArtifacts(this.paths, runId)
+        });
+      }
+
+      const artifactMatch = pathname.match(/^\/api\/runs\/([^/]+)\/artifact$/u);
+      if (artifactMatch && method === "GET") {
+        const runtime = this.requireRuntime(res);
+        if (!runtime) {
+          return;
+        }
+        const runId = decodeURIComponent(artifactMatch[1] || "");
+        const relativePath = url.searchParams.get("path") || "";
+        try {
+          const artifact = await readRunArtifact(this.paths, runId, relativePath);
+          res.statusCode = 200;
+          res.setHeader("Content-Type", artifact.contentType);
+          res.setHeader("Cache-Control", "no-store");
+          res.end(artifact.data);
+        } catch (error) {
+          return jsonResponse(res, 400, { error: error instanceof Error ? error.message : String(error) });
+        }
+        return;
+      }
+
+      const actionMatch = pathname.match(/^\/api\/runs\/([^/]+)\/actions\/([^/]+)$/u);
+      if (actionMatch && method === "POST") {
+        const session = this.requireSession(res);
+        if (!session) {
+          return;
+        }
+        const runId = decodeURIComponent(actionMatch[1] || "");
+        const action = decodeURIComponent(actionMatch[2] || "");
+        const body = (await readJsonBody(req)) as JsonBody;
+        await session.selectRun(runId);
+        if (action === "run-node") {
+          const node = asTrimmedString(body.node);
+          if (!node) {
+            return jsonResponse(res, 400, { error: "node is required." });
+          }
+          const extraArgs: string[] = [];
+          if (typeof body.topN === "number") {
+            extraArgs.push("--top-n", String(body.topN));
+          }
+          if (typeof body.topK === "number") {
+            extraArgs.push("--top-k", String(body.topK));
+          }
+          if (typeof body.branchCount === "number") {
+            extraArgs.push("--branch-count", String(body.branchCount));
+          }
+          const command = ["/agent", "run", node, runId, ...extraArgs].join(" ");
+          const result = await session.submitInput(command);
+          return jsonResponse(res, 200, buildSessionInputResponse(result, session.getActiveRunId()));
+        }
+        if (action === "approve") {
+          const result = await session.submitInput("/approve");
+          return jsonResponse(res, 200, buildSessionInputResponse(result, session.getActiveRunId()));
+        }
+        if (action === "retry") {
+          const node = asTrimmedString(body.node);
+          const command = node ? `/agent retry ${node} ${runId}` : `/retry`;
+          const result = await session.submitInput(command);
+          return jsonResponse(res, 200, buildSessionInputResponse(result, session.getActiveRunId()));
+        }
+        if (action === "jump") {
+          const node = asTrimmedString(body.node);
+          if (!node) {
+            return jsonResponse(res, 400, { error: "node is required." });
+          }
+          const force = body.force === true ? " --force" : "";
+          const result = await session.submitInput(`/agent jump ${node} ${runId}${force}`);
+          return jsonResponse(res, 200, buildSessionInputResponse(result, session.getActiveRunId()));
+        }
+        return jsonResponse(res, 404, { error: "Unknown action." });
+      }
+
+      if (pathname === "/api/session/input" && method === "POST") {
+        const session = this.requireSession(res);
+        if (!session) {
+          return;
+        }
+        const body = (await readJsonBody(req)) as JsonBody;
+        const text = asTrimmedString(body.text);
+        if (!text) {
+          return jsonResponse(res, 400, { error: "text is required." });
+        }
+        const result = await session.submitInput(text);
+        return jsonResponse(res, 200, buildSessionInputResponse(result, session.getActiveRunId()));
+      }
+
+      if (pathname === "/api/session/pending" && method === "POST") {
+        const session = this.requireSession(res);
+        if (!session) {
+          return;
+        }
+        const body = (await readJsonBody(req)) as JsonBody;
+        const action = asTrimmedString(body.action) as "next" | "all" | "cancel" | undefined;
+        if (!action || !["next", "all", "cancel"].includes(action)) {
+          return jsonResponse(res, 400, { error: "action must be next, all, or cancel." });
+        }
+        const result = await session.respondToPending(action);
+        return jsonResponse(res, 200, buildSessionInputResponse(result, session.getActiveRunId()));
+      }
+
+      if (pathname === "/api/session/cancel" && method === "POST") {
+        const session = this.requireSession(res);
+        if (!session) {
+          return;
+        }
+        const result = await session.cancelActive();
+        return jsonResponse(res, 200, buildSessionInputResponse(result, session.getActiveRunId()));
+      }
+
+      if (pathname === "/api/events/stream" && method === "GET") {
+        return this.handleSse(res);
+      }
+
+      return this.serveStatic(pathname, res);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      jsonResponse(res, 500, { error: message });
+    }
+  }
+
+  private async buildBootstrapResponse(): Promise<BootstrapResponse> {
+    return {
+      configured: Boolean(this.runtime && this.session),
+      setupDefaults: {
+        projectName: path.basename(this.cwd),
+        defaultTopic: this.runtime?.config.research.default_topic || "Multi-agent collaboration",
+        defaultConstraints: this.runtime?.config.research.default_constraints || ["recent papers", "last 5 years"],
+        defaultObjectiveMetric:
+          this.runtime?.config.research.default_objective_metric || "state-of-the-art reproducibility"
+      },
+      session: this.session?.snapshot() || emptySessionState(),
+      runs: this.runtime ? await this.runtime.runStore.listRuns() : [],
+      activeRunId: this.session?.getActiveRunId(),
+      configSummary: this.runtime ? summarizeConfig(this.runtime.config) : undefined
+    };
+  }
+
+  private requireRuntime(res: ServerResponse): AutoresearchRuntime | undefined {
+    if (!this.runtime) {
+      jsonResponse(res, 409, { error: "AutoResearch is not configured yet." });
+      return undefined;
+    }
+    return this.runtime;
+  }
+
+  private requireSession(res: ServerResponse): InteractionSession | undefined {
+    if (!this.session) {
+      jsonResponse(res, 409, { error: "AutoResearch is not configured yet." });
+      return undefined;
+    }
+    return this.session;
+  }
+
+  private handleSse(res: ServerResponse): void {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-store",
+      Connection: "keep-alive"
+    });
+    this.sseClients.add(res);
+    writeSseEvent(res, "connected", { ok: true });
+    if (this.session) {
+      writeSseEvent(res, "session_state", this.session.snapshot());
+    }
+    res.on("close", () => {
+      this.sseClients.delete(res);
+    });
+  }
+
+  private broadcast(event: string, data: unknown): void {
+    for (const client of this.sseClients) {
+      writeSseEvent(client, event, data);
+    }
+  }
+
+  private async serveStatic(pathname: string, res: ServerResponse): Promise<void> {
+    const requested = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
+    const candidate = path.resolve(WEB_DIST_DIR, requested);
+    const distRoot = path.resolve(WEB_DIST_DIR);
+    if (!candidate.startsWith(distRoot)) {
+      res.statusCode = 403;
+      res.end("Forbidden");
+      return;
+    }
+
+    try {
+      const stat = await fs.stat(candidate);
+      if (stat.isFile()) {
+        res.statusCode = 200;
+        res.setHeader("Content-Type", contentTypeForStatic(candidate));
+        res.end(await fs.readFile(candidate));
+        return;
+      }
+    } catch {
+      // fall through
+    }
+
+    try {
+      const indexPath = path.join(WEB_DIST_DIR, "index.html");
+      res.statusCode = 200;
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.end(await fs.readFile(indexPath));
+    } catch {
+      res.statusCode = 503;
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.end(
+        `Installed AutoResearch web assets are missing. If you're using a repository checkout, build them once from the package root (${PACKAGE_ROOT}) with \`npm --prefix web run build\`.`
+      );
+    }
+  }
+}
+
+function buildSessionInputResponse(
+  session: WebSessionState,
+  activeRunId?: string
+): SessionInputResponse {
+  return {
+    session,
+    activeRunId,
+    pendingPlan: session.pendingPlan as PendingPlan | undefined
+  };
+}
+
+function summarizeConfig(config: AutoresearchRuntime["config"]): ConfigSummary {
+  return {
+    projectName: config.project_name,
+    llmMode: config.providers.llm_mode,
+    pdfMode: config.analysis.pdf_mode,
+    taskModel:
+      config.providers.llm_mode === "openai_api"
+        ? config.providers.openai.model
+        : config.providers.codex.model,
+    chatModel:
+      config.providers.llm_mode === "openai_api"
+        ? config.providers.openai.chat_model || config.providers.openai.model
+        : config.providers.codex.chat_model || config.providers.codex.model,
+    pdfModel:
+      config.analysis.pdf_mode === "responses_api_pdf"
+        ? config.analysis.responses_model
+        : config.providers.llm_mode === "openai_api"
+          ? config.providers.openai.pdf_model || config.providers.openai.model
+          : config.providers.codex.pdf_model || config.providers.codex.model
+  };
+}
+
+function emptySessionState(): WebSessionState {
+  return {
+    activeRunId: undefined,
+    busy: false,
+    busyLabel: undefined,
+    pendingPlan: undefined,
+    logs: [],
+    canCancel: false
+  };
+}
+
+async function readJsonBody(req: IncomingMessage): Promise<JsonBody> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  if (chunks.length === 0) {
+    return {};
+  }
+  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as JsonBody;
+}
+
+function jsonResponse(res: ServerResponse, status: number, payload: unknown): void {
+  if (res.headersSent) {
+    return;
+  }
+  res.statusCode = status;
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.end(`${JSON.stringify(payload)}\n`);
+}
+
+function writeSseEvent(res: ServerResponse, event: string, data: unknown): void {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(data)}\n\n`);
+}
+
+function asTrimmedString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function contentTypeForStatic(filePath: string): string {
+  const lower = filePath.toLowerCase();
+  if (lower.endsWith(".html")) {
+    return "text/html; charset=utf-8";
+  }
+  if (lower.endsWith(".css")) {
+    return "text/css; charset=utf-8";
+  }
+  if (lower.endsWith(".js")) {
+    return "text/javascript; charset=utf-8";
+  }
+  if (lower.endsWith(".json")) {
+    return "application/json; charset=utf-8";
+  }
+  if (lower.endsWith(".svg")) {
+    return "image/svg+xml";
+  }
+  if (lower.endsWith(".png")) {
+    return "image/png";
+  }
+  return "application/octet-stream";
+}

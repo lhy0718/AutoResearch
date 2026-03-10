@@ -1,4 +1,5 @@
 import { RunRecord, SuggestionItem } from "../types.js";
+import { ContextualGuidance, GuidanceItem } from "./contextualGuidance.js";
 import { PaintStyle, paint, reset, stripAnsi } from "./theme.js";
 import { getDisplayWidth } from "./displayWidth.js";
 
@@ -16,6 +17,7 @@ export interface RenderFrameInput {
   suggestions: SuggestionItem[];
   selectedSuggestion: number;
   colorEnabled: boolean;
+  guidance?: ContextualGuidance;
   selectionMenu?: {
     title: string;
     options: SelectionMenuOption[];
@@ -87,6 +89,17 @@ export function buildFrame(input: RenderFrameInput): RenderFrameOutput {
       rawLines.push(renderSuggestionRow({
         suggestion,
         selected: idx === input.selectedSuggestion,
+        colorEnabled: input.colorEnabled
+      }));
+    });
+  }
+
+  if (input.guidance && input.guidance.items.length > 0) {
+    rawLines.push("");
+    rawLines.push(paint(input.guidance.title, { fg: 97, bold: true }, input.colorEnabled));
+    input.guidance.items.forEach((item) => {
+      rawLines.push(renderGuidanceRow({
+        item,
         colorEnabled: input.colorEnabled
       }));
     });
@@ -211,6 +224,17 @@ function renderSuggestionRow(args: SuggestionRowArgs): string {
   const command = paint(args.suggestion.label, { fg: 97 }, args.colorEnabled);
   const description = paint(args.suggestion.description, { fg: 90 }, args.colorEnabled);
   return `${command}  ${description}`;
+}
+
+interface GuidanceRowArgs {
+  item: GuidanceItem;
+  colorEnabled: boolean;
+}
+
+function renderGuidanceRow(args: GuidanceRowArgs): string {
+  const label = paint(args.item.label, { fg: 97 }, args.colorEnabled);
+  const description = paint(args.item.description, { fg: 90 }, args.colorEnabled);
+  return `  ${label}  ${description}`;
 }
 
 interface SelectionRowArgs {

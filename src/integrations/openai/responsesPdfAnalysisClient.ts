@@ -1,3 +1,8 @@
+import {
+  normalizeOpenAiResponsesReasoningEffort,
+  supportsOpenAiResponsesReasoning
+} from "./modelCatalog.js";
+
 export interface ResponsesPdfAnalysisResult {
   text: string;
   responseId?: string;
@@ -33,6 +38,7 @@ export class ResponsesPdfAnalysisClient {
     pdfUrl: string;
     prompt: string;
     systemPrompt?: string;
+    reasoningEffort?: string;
     abortSignal?: AbortSignal;
     onProgress?: (message: string) => void;
   }): Promise<ResponsesPdfAnalysisResult> {
@@ -43,6 +49,31 @@ export class ResponsesPdfAnalysisClient {
 
     args.onProgress?.(`Submitting PDF analysis request to Responses API (${args.model}).`);
 
+    const body: Record<string, unknown> = {
+      model: args.model,
+      instructions: args.systemPrompt,
+      input: [
+        {
+          role: "user",
+          content: [
+            { type: "input_text", text: args.prompt },
+            { type: "input_file", file_url: args.pdfUrl }
+          ]
+        }
+      ],
+      text: {
+        format: {
+          type: "text"
+        }
+      }
+    };
+
+    if (supportsOpenAiResponsesReasoning(args.model)) {
+      body.reasoning = {
+        effort: normalizeOpenAiResponsesReasoningEffort(args.model, args.reasoningEffort)
+      };
+    }
+
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
@@ -50,24 +81,7 @@ export class ResponsesPdfAnalysisClient {
         "Content-Type": "application/json"
       },
       signal: args.abortSignal,
-      body: JSON.stringify({
-        model: args.model,
-        instructions: args.systemPrompt,
-        input: [
-          {
-            role: "user",
-            content: [
-              { type: "input_text", text: args.prompt },
-              { type: "input_file", file_url: args.pdfUrl }
-            ]
-          }
-        ],
-        text: {
-          format: {
-            type: "text"
-          }
-        }
-      })
+      body: JSON.stringify(body)
     });
 
     if (!response.ok) {

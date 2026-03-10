@@ -241,6 +241,15 @@ describe("buildNaturalAssistantResponseWithLlm", () => {
         "utf8"
       );
       writeFileSync(
+        path.join(runRoot, "hypotheses.jsonl"),
+        [
+          JSON.stringify({ hypothesis_id: "h_1", text: "Hypothesis 1" }),
+          JSON.stringify({ hypothesis_id: "h_2", text: "Hypothesis 2" }),
+          JSON.stringify({ hypothesis_id: "h_3", text: "Hypothesis 3" })
+        ].join("\n") + "\n",
+        "utf8"
+      );
+      writeFileSync(
         path.join(runRoot, "memory", "run_context.json"),
         JSON.stringify(
           {
@@ -249,6 +258,21 @@ describe("buildNaturalAssistantResponseWithLlm", () => {
               {
                 key: "collect_papers.count",
                 value: 2,
+                updatedAt: new Date().toISOString()
+              },
+              {
+                key: "generate_hypotheses.top_k",
+                value: 3,
+                updatedAt: new Date().toISOString()
+              },
+              {
+                key: "generate_hypotheses.branch_count",
+                value: 6,
+                updatedAt: new Date().toISOString()
+              },
+              {
+                key: "generate_hypotheses.summary",
+                value: "Generated 6 hypothesis candidate(s).",
                 updatedAt: new Date().toISOString()
               }
             ]
@@ -282,6 +306,9 @@ describe("buildNaturalAssistantResponseWithLlm", () => {
 
       expect(capturedPrompt).toContain("Workspace root:");
       expect(capturedPrompt).toContain("\"collectPapersCount\":2");
+      expect(capturedPrompt).toContain("\"hypothesisStoredCount\":3");
+      expect(capturedPrompt).toContain("\"hypothesisCandidateCount\":6");
+      expect(capturedPrompt).toContain("hypothesisStoredCount is the canonical saved count");
       expect(capturedPrompt).toContain("Paper A: Agent Planning");
       expect(response.lines[0]).toContain("Paper A");
     } finally {

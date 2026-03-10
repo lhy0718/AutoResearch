@@ -209,6 +209,34 @@ describe("buildFrame", () => {
     expect(suggestionRows.every((row) => !row.includes(" - "))).toBe(true);
   });
 
+  it("renders contextual guidance below the input when provided", () => {
+    const frame = buildFrame({
+      appVersion: "1.0.0",
+      busy: false,
+      thinking: false,
+      thinkingFrame: 0,
+      run: makeRun(),
+      logs: ["ready"],
+      input: "",
+      inputCursor: 0,
+      suggestions: [],
+      selectedSuggestion: 0,
+      colorEnabled: false,
+      guidance: {
+        title: "Next actions",
+        items: [
+          { label: "/new", description: "Create a new run" },
+          { label: "what should I do next?", description: "Ask for the recommended next step" }
+        ]
+      }
+    });
+
+    const plain = frame.lines.map((line) => stripAnsi(line));
+    expect(plain).toContain("Next actions");
+    expect(plain).toContain("  /new  Create a new run");
+    expect(plain).toContain("  what should I do next?  Ask for the recommended next step");
+  });
+
   it("prefixes regular log lines with INFO/WARN/OK/ERR tags", () => {
     const frame = buildFrame({
       appVersion: "1.0.0",

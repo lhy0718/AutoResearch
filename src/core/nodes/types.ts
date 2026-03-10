@@ -13,6 +13,7 @@ export interface NodeExecutionDeps {
   runStore: RunStore;
   eventStream: EventStream;
   llm: LLMClient;
+  pdfTextLlm: LLMClient;
   codex: CodexCliClient;
   aci: AgentComputerInterface;
   semanticScholar: SemanticScholarClient;

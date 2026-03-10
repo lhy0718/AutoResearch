@@ -35,6 +35,7 @@ describe("naturalActionIntent", () => {
   it("detects action-like natural inputs", () => {
     expect(looksLikeStructuredActionRequest("논문 수집을 300건 진행해줘")).toBe(true);
     expect(looksLikeStructuredActionRequest("상위 30편만 분석해줘")).toBe(true);
+    expect(looksLikeStructuredActionRequest("가설을 10개 뽑아줘")).toBe(true);
     expect(looksLikeStructuredActionRequest("수집된 논문은 몇 편이야?")).toBe(false);
   });
 
@@ -77,6 +78,23 @@ describe("naturalActionIntent", () => {
 
     expect(result?.commands).toEqual([`/agent run analyze_papers ${run.id} --top-n 30`]);
     expect(result?.displayActions).toEqual(["상위 30개 논문 분석"]);
+    expect(runForText).not.toHaveBeenCalled();
+  });
+
+  it("extracts hypothesis-generation requests into /agent run generate_hypotheses", async () => {
+    const run = makeRun({ id: "run-hypotheses" });
+    const runForText = vi.fn();
+    const result = await extractStructuredActionPlan({
+      input: "가설을 10개 뽑아줘",
+      runs: [run],
+      activeRunId: run.id,
+      llm: { runForText }
+    });
+
+    expect(result?.commands).toEqual([
+      `/agent run generate_hypotheses ${run.id} --top-k 10 --branch-count 10`
+    ]);
+    expect(result?.displayActions).toEqual(["가설 생성 (topK=10, branchCount=10)"]);
     expect(runForText).not.toHaveBeenCalled();
   });
 

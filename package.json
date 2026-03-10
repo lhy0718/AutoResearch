@@ -7,16 +7,19 @@
     "autoresearch": "dist/cli/main.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && npm --prefix web run build",
     "dev": "tsx src/cli/main.ts",
-    "test": "vitest run",
+    "dev:web": "npm --prefix web run build && tsx src/cli/main.ts web",
+    "test": "vitest run && npm --prefix web run test",
+    "test:web": "npm --prefix web run test",
     "test:watch": "vitest",
     "test:smoke:natural-collect": "bash tests/smoke/run_natural_collect_pending_command.sh",
     "test:smoke:natural-collect-execute": "bash tests/smoke/run_natural_collect_execute_and_verify_artifacts.sh",
     "test:smoke:all": "AUTORESEARCH_SMOKE_MODE=all bash tests/smoke/run_ci_smoke.sh",
     "test:smoke:natural-composite-all": "bash tests/smoke/run_natural_composite_run_all_execute_and_verify_artifacts.sh",
     "test:smoke:natural-llm-composite-all": "bash tests/smoke/run_natural_llm_composite_run_all_execute_and_verify_artifacts.sh",
-    "test:smoke:ci": "CI=true bash tests/smoke/run_ci_smoke.sh"
+    "test:smoke:ci": "CI=true bash tests/smoke/run_ci_smoke.sh",
+    "postinstall": "npm --prefix web install"
   },
   "engines": {
     "node": ">=18"

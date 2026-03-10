@@ -46,6 +46,10 @@ interface RunFacts {
   topCitationCount?: number;
   evidenceCount?: number;
   hypothesisCount?: number;
+  hypothesisStoredCount?: number;
+  hypothesisRequestedTopK?: number;
+  hypothesisCandidateCount?: number;
+  hypothesisSummary?: string;
   metrics?: Record<string, unknown>;
   collectPapersError?: string;
 }
@@ -170,6 +174,9 @@ function buildPrompt(
     "You have read-only access to workspace files and should inspect relevant files when needed.",
     "Answer exactly what the user asked. Do not include unrelated workflow/status unless explicitly requested.",
     "Use selected_run_facts as trusted context for run artifacts and counts.",
+    "For hypothesis questions, selected_run_facts.hypothesisStoredCount is the canonical saved count from hypotheses.jsonl when available.",
+    "selected_run_facts.hypothesisCandidateCount is only the number of generated candidates/branches before selection, not the saved hypothesis count.",
+    "Do not infer a mismatch between summary text and saved files unless the user explicitly asks about candidate generation or inconsistency.",
     "If the answer is uncertain, state uncertainty clearly instead of inventing data.",
     "If user asks to execute, suggest exactly one safe slash command and set should_offer_execute=true.",
     "If the user asks for a multi-step action, you may return recommended_commands as an ordered array of safe slash commands.",
@@ -420,7 +427,9 @@ async function buildRunFacts(run: RunRecord, workspaceRoot: string): Promise<Run
 
   const collectFromMemory = toOptionalNumber(contextMap.get("collect_papers.count"));
   const evidenceFromMemory = toOptionalNumber(contextMap.get("analyze_papers.evidence_count"));
-  const hypothesisFromMemory = toOptionalNumber(contextMap.get("generate_hypotheses.top_k"));
+  const hypothesisRequestedTopK = toOptionalNumber(contextMap.get("generate_hypotheses.top_k"));
+  const hypothesisCandidateCount = toOptionalNumber(contextMap.get("generate_hypotheses.branch_count"));
+  const hypothesisSummary = toOptionalString(contextMap.get("generate_hypotheses.summary"));
 
   const corpusFacts = await readCorpusFacts(path.join(runRoot, "corpus.jsonl"), 20);
   const collectFromFile = corpusFacts.count;
@@ -428,6 +437,7 @@ async function buildRunFacts(run: RunRecord, workspaceRoot: string): Promise<Run
   const evidenceFromFile = await countJsonlLines(path.join(runRoot, "evidence_store.jsonl"));
   const hypothesisFromFile = await countJsonlLines(path.join(runRoot, "hypotheses.jsonl"));
   const metrics = await readMetrics(path.join(runRoot, "metrics.json"));
+  const hypothesisStoredCount = hypothesisFromFile ?? hypothesisRequestedTopK;
 
   const completedCount = GRAPH_NODE_ORDER.filter((node) => {
     const status = run.graph.nodeStates[node].status;
@@ -447,7 +457,11 @@ async function buildRunFacts(run: RunRecord, workspaceRoot: string): Promise<Run
     topCitationTitle: corpusFacts.topCitationTitle,
     topCitationCount: corpusFacts.topCitationCount,
     evidenceCount: evidenceFromMemory ?? evidenceFromFile,
-    hypothesisCount: hypothesisFromMemory ?? hypothesisFromFile,
+    hypothesisCount: hypothesisStoredCount,
+    hypothesisStoredCount,
+    hypothesisRequestedTopK,
+    hypothesisCandidateCount,
+    hypothesisSummary,
     metrics,
     collectPapersError: toOptionalString(contextMap.get("collect_papers.last_error"))
   };

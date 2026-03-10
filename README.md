@@ -40,6 +40,7 @@
 | Capability | What it gives you |
 | --- | --- |
 | Slash-first TUI | Operate the system from `/new`, `/agent ...`, `/model`, `/settings`, and `/doctor` |
+| Local Web Ops UI | Run `autoresearch web` for onboarding, dashboard controls, artifacts, checkpoints, and live session state in the browser |
 | Deterministic natural-language routing | Common intents map to local handlers or slash commands before LLM fallback |
 | Hybrid provider model | Use Codex login for the primary flow or move to OpenAI API models when you want explicit API-backed execution |
 | PDF analysis modes | Analyze PDFs via local extraction + Codex, or send them directly to the Responses API |
@@ -73,26 +74,51 @@ echo 'OPENAI_API_KEY=your_openai_key_here' >> .env
 autoresearch
 ```
 
+4. Launch the web UI
+
+```bash
+autoresearch web
+```
+
+The web server listens on `http://127.0.0.1:4317` by default.
+Run this from the research project directory you want AutoResearch to use as its workspace.
+
+If you are using a repository checkout and the CLI says the installed web assets are missing, build the web bundle once from the AutoResearch package root:
+
+```bash
+cd /path/to/AutoResearch
+npm --prefix web run build
+autoresearch web
+```
+
+Use a custom bind address or port when needed:
+
+```bash
+autoresearch web --host 0.0.0.0 --port 8080
+```
+
 Development mode:
 
 ```bash
 npm run dev
+npm run dev:web
 ```
 
 Without `npm link`, you can still run:
 
 ```bash
 node dist/cli/main.js
+node dist/cli/main.js web
 ```
 
 > [!NOTE]
-> `autoresearch` is the only external CLI entrypoint. `autoresearch init` is intentionally not supported.
+> External entrypoints are `autoresearch` and `autoresearch web`. `autoresearch init` is intentionally not supported.
 
 ## First Run
 
-1. Run `autoresearch` in an empty project.
-2. If `.autoresearch/config.yaml` does not exist, the setup wizard starts automatically.
-3. The wizard creates scaffold/config, stores your Semantic Scholar key, and opens the dashboard.
+1. Run `autoresearch` or `autoresearch web` in an empty project.
+2. If `.autoresearch/config.yaml` does not exist, the TUI opens the setup wizard and the web app shows the onboarding form.
+3. Both flows create the same scaffold/config, store your Semantic Scholar key, and open the main dashboard.
 4. Choose the primary LLM provider:
    - `codex`: use Codex ChatGPT login for the main workflow
    - `api`: use OpenAI API models for the main workflow (`OPENAI_API_KEY` required)
@@ -105,6 +131,25 @@ node dist/cli/main.js
    - Codex provider: Codex model selector
    - OpenAI API provider: OpenAI API model selector
 8. At runtime, AutoResearch reads `SEMANTIC_SCHOLAR_API_KEY` and `OPENAI_API_KEY` from `process.env` or `.env`.
+
+## Web Ops UI
+
+`autoresearch web` starts a local single-user browser UI on top of the same runtime used by the TUI.
+
+- Onboarding uses the same non-interactive setup helper, so web setup writes the same `.autoresearch/config.yaml` and `.env` values as the TUI wizard.
+- The dashboard includes run search and selection, the 8-node workflow view, node actions, live logs, checkpoints, artifacts, metadata, and `/doctor` summaries.
+- The bottom composer accepts both slash commands and supported natural-language requests.
+- Multi-step natural-language plans use browser buttons instead of `y/a/n`: `Run next`, `Run all`, and `Cancel`.
+- Artifact browsing is restricted to `.autoresearch/runs/<run_id>` and previews common text files, images, and PDFs inline.
+
+Typical web flow:
+
+1. Start the server with `autoresearch web`.
+   Run this from the project directory you want to manage.
+   If you see a missing web assets message while using a repository checkout, build once from the AutoResearch package root with `npm --prefix web run build`, then restart the server.
+2. Open `http://127.0.0.1:4317`.
+3. Complete onboarding if the workspace is not configured yet.
+4. Create or select a run, then use the workflow cards or composer to drive execution.
 
 ## Workflow At A Glance
 
@@ -316,6 +361,9 @@ Standard actions:
 - `Up/Down`: navigate candidates
 - `Enter`: execute
 - Run suggestions include `run_id + title + current_node + status + relative time`
+- When the input is empty, the TUI shows context-aware next actions with exact commands and natural-language examples
+- The next-actions panel now expands into a broader state-aware action catalog: run, status, graph, budget, count, jump, and natural-language queries
+- Empty-input guidance follows the user's recent language or OS locale, and `Tab` fills the first suggested action
 
 ### Run Metadata
 

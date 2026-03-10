@@ -4,7 +4,14 @@ import { stdout as output } from "node:process";
 import YAML from "yaml";
 
 import { AppConfig, RunsFile } from "./types.js";
-import { normalizeReasoningEffortForModel } from "./integrations/codex/modelCatalog.js";
+import {
+  buildCodexModelSelectionChoices,
+  getCodexModelSelectionDescription,
+  getCurrentCodexModelSelectionValue,
+  getReasoningEffortChoicesForModel,
+  normalizeReasoningEffortForModel,
+  resolveCodexModelSelection
+} from "./integrations/codex/modelCatalog.js";
 import {
   DEFAULT_RESPONSES_PDF_MODEL,
   RESPONSES_PDF_MODEL_OPTIONS,
@@ -32,6 +39,31 @@ export interface AppPaths {
   runsDir: string;
   runsFile: string;
   logsDir: string;
+}
+
+export interface NonInteractiveSetupInput {
+  projectName?: string;
+  defaultTopic?: string;
+  defaultConstraints?: string[];
+  defaultObjectiveMetric?: string;
+  llmMode?: "codex_chatgpt_only" | "openai_api";
+  pdfAnalysisMode?: "codex_text_extract" | "responses_api_pdf";
+  semanticScholarApiKey: string;
+  openAiApiKey?: string;
+  codexChatModelChoice?: string;
+  codexChatReasoningEffort?: AppConfig["providers"]["codex"]["reasoning_effort"];
+  codexTaskModelChoice?: string;
+  codexTaskReasoningEffort?: AppConfig["providers"]["codex"]["reasoning_effort"];
+  codexPdfModelChoice?: string;
+  codexPdfReasoningEffort?: AppConfig["providers"]["codex"]["reasoning_effort"];
+  openAiChatModel?: string;
+  openAiChatReasoningEffort?: AppConfig["providers"]["openai"]["reasoning_effort"];
+  openAiTaskModel?: string;
+  openAiReasoningEffort?: AppConfig["providers"]["openai"]["reasoning_effort"];
+  openAiPdfModel?: string;
+  openAiPdfReasoningEffort?: AppConfig["providers"]["openai"]["reasoning_effort"];
+  responsesPdfModel?: string;
+  responsesPdfReasoningEffort?: AppConfig["analysis"]["responses_reasoning_effort"];
 }
 
 export function resolveAppPaths(cwd = process.cwd()): AppPaths {
@@ -68,36 +100,57 @@ function buildConfigFromWizardAnswers(answers: {
   defaultConstraints: string[];
   defaultObjectiveMetric: string;
   llmMode: "codex_chatgpt_only" | "openai_api";
-  codexCommandReasoningEffort: AppConfig["providers"]["codex"]["reasoning_effort"];
+  codexChatModelChoice: string;
+  codexChatReasoningEffort: AppConfig["providers"]["codex"]["reasoning_effort"];
+  codexTaskModelChoice: string;
   codexTaskReasoningEffort: AppConfig["providers"]["codex"]["reasoning_effort"];
-  openAiModel: string;
-  openAiCommandReasoningEffort: AppConfig["providers"]["openai"]["reasoning_effort"];
+  codexPdfModelChoice: string;
+  codexPdfReasoningEffort: AppConfig["providers"]["codex"]["reasoning_effort"];
+  openAiChatModel: string;
+  openAiChatReasoningEffort: AppConfig["providers"]["openai"]["reasoning_effort"];
+  openAiTaskModel: string;
   openAiReasoningEffort: AppConfig["providers"]["openai"]["reasoning_effort"];
+  openAiPdfModel: string;
+  openAiPdfReasoningEffort: AppConfig["providers"]["openai"]["reasoning_effort"];
   pdfAnalysisMode: "codex_text_extract" | "responses_api_pdf";
   responsesPdfModel: string;
+  responsesPdfReasoningEffort: AppConfig["analysis"]["responses_reasoning_effort"];
 }): AppConfig {
+  const codexChatSelection = resolveCodexModelSelection(answers.codexChatModelChoice);
+  const codexTaskSelection = resolveCodexModelSelection(answers.codexTaskModelChoice);
   return {
     version: 1,
     project_name: answers.projectName,
     providers: {
       llm_mode: answers.llmMode,
       codex: {
-        model: "gpt-5.3-codex",
+        model: codexTaskSelection.model,
+        chat_model: codexChatSelection.model,
+        pdf_model: resolveCodexModelSelection(answers.codexPdfModelChoice).model,
         reasoning_effort: answers.codexTaskReasoningEffort,
-        command_reasoning_effort: answers.codexCommandReasoningEffort,
-        fast_mode: false,
+        chat_reasoning_effort: answers.codexChatReasoningEffort,
+        pdf_reasoning_effort: answers.codexPdfReasoningEffort,
+        command_reasoning_effort: answers.codexChatReasoningEffort,
+        fast_mode: codexTaskSelection.fastMode,
+        chat_fast_mode: codexChatSelection.fastMode,
+        pdf_fast_mode: resolveCodexModelSelection(answers.codexPdfModelChoice).fastMode,
         auth_required: true
       },
       openai: {
-        model: answers.openAiModel,
+        model: answers.openAiTaskModel,
+        chat_model: answers.openAiChatModel,
+        pdf_model: answers.openAiPdfModel,
         reasoning_effort: answers.openAiReasoningEffort,
-        command_reasoning_effort: answers.openAiCommandReasoningEffort,
+        chat_reasoning_effort: answers.openAiChatReasoningEffort,
+        pdf_reasoning_effort: answers.openAiPdfReasoningEffort,
+        command_reasoning_effort: answers.openAiChatReasoningEffort,
         api_key_required: true
       }
     },
     analysis: {
       pdf_mode: answers.pdfAnalysisMode,
-      responses_model: answers.responsesPdfModel
+      responses_model: answers.responsesPdfModel,
+      responses_reasoning_effort: answers.responsesPdfReasoningEffort
     },
     papers: {
       max_results: 200,
@@ -145,47 +198,111 @@ export async function runSetupWizard(
     "state-of-the-art reproducibility"
   );
   const llmMode = await askPrimaryLlmMode(promptReader);
-  const codexCommandReasoningEffort = await askCodexReasoningEffort(
-    "Command/query reasoning effort",
+  const codexChatModelChoice =
+    llmMode === "codex_chatgpt_only"
+      ? await askCodexModel("General chat model", "gpt-5.3-codex", promptReader)
+      : "gpt-5.3-codex";
+  const codexChatReasoningEffort = await askCodexReasoningEffort(
+    "General chat reasoning effort",
+    resolveCodexModelSelection(codexChatModelChoice).model,
     "low",
     "low",
     promptReader
   );
+  const codexTaskModelChoice =
+    llmMode === "codex_chatgpt_only"
+      ? await askCodexModel("Analysis/hypothesis model", "gpt-5.3-codex", promptReader)
+      : "gpt-5.3-codex";
   const codexTaskReasoningEffort = await askCodexReasoningEffort(
-    "Analysis/implementation reasoning effort",
+    "Analysis/hypothesis reasoning effort",
+    resolveCodexModelSelection(codexTaskModelChoice).model,
     "xhigh",
     "xhigh",
     promptReader
   );
-  const openAiModel =
+  const openAiChatModel =
     llmMode === "openai_api"
-      ? await askOpenAiResponsesModel(promptReader)
+      ? await askOpenAiResponsesModel(
+          "OpenAI API general chat model",
+          DEFAULT_OPENAI_RESPONSES_MODEL,
+          promptReader
+        )
       : DEFAULT_OPENAI_RESPONSES_MODEL;
-  const openAiCommandReasoningEffort =
+  const openAiChatReasoningEffort =
     llmMode === "openai_api"
       ? await askOpenAiResponsesReasoningEffort(
-          "Command/query reasoning effort",
-          openAiModel,
+          "General chat reasoning effort",
+          openAiChatModel,
           "low",
           "low",
           promptReader
         )
       : ("low" as AppConfig["providers"]["openai"]["reasoning_effort"]);
+  const openAiTaskModel =
+    llmMode === "openai_api"
+      ? await askOpenAiResponsesModel(
+          "OpenAI API analysis/hypothesis model",
+          DEFAULT_OPENAI_RESPONSES_MODEL,
+          promptReader
+        )
+      : DEFAULT_OPENAI_RESPONSES_MODEL;
   const openAiReasoningEffort =
     llmMode === "openai_api"
       ? await askOpenAiResponsesReasoningEffort(
-          "Analysis/implementation reasoning effort",
-          openAiModel,
+          "Analysis/hypothesis reasoning effort",
+          openAiTaskModel,
           "xhigh",
           "xhigh",
           promptReader
         )
       : (DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT as AppConfig["providers"]["openai"]["reasoning_effort"]);
   const pdfAnalysisMode = await askPdfAnalysisMode(promptReader);
+  const codexPdfModelChoice =
+    llmMode === "codex_chatgpt_only" && pdfAnalysisMode === "codex_text_extract"
+      ? await askCodexModel("PDF analysis model", codexTaskModelChoice, promptReader)
+      : codexTaskModelChoice;
+  const codexPdfReasoningEffort =
+    llmMode === "codex_chatgpt_only" && pdfAnalysisMode === "codex_text_extract"
+      ? await askCodexReasoningEffort(
+          "PDF analysis reasoning effort",
+          resolveCodexModelSelection(codexPdfModelChoice).model,
+          codexTaskReasoningEffort,
+          "xhigh",
+          promptReader
+        )
+      : codexTaskReasoningEffort;
+  const openAiPdfModel =
+    llmMode === "openai_api" && pdfAnalysisMode === "codex_text_extract"
+      ? await askOpenAiResponsesModel(
+          "OpenAI API PDF text-analysis model",
+          openAiTaskModel,
+          promptReader
+        )
+      : openAiTaskModel;
+  const openAiPdfReasoningEffort =
+    llmMode === "openai_api" && pdfAnalysisMode === "codex_text_extract"
+      ? await askOpenAiResponsesReasoningEffort(
+          "PDF analysis reasoning effort",
+          openAiPdfModel,
+          openAiReasoningEffort,
+          "xhigh",
+          promptReader
+        )
+      : openAiReasoningEffort;
   const responsesPdfModel =
     pdfAnalysisMode === "responses_api_pdf"
       ? await askResponsesPdfModel(promptReader)
       : DEFAULT_RESPONSES_PDF_MODEL;
+  const responsesPdfReasoningEffort =
+    pdfAnalysisMode === "responses_api_pdf"
+      ? await askOpenAiResponsesReasoningEffort(
+          "PDF analysis reasoning effort",
+          responsesPdfModel,
+          "xhigh",
+          "xhigh",
+          promptReader
+        )
+      : ("xhigh" as AppConfig["analysis"]["responses_reasoning_effort"]);
   const existingApiKey = await resolveSemanticScholarApiKey(paths.cwd);
   const semanticScholarApiKey = await askApiKey(
     "Semantic Scholar API key",
@@ -209,19 +326,77 @@ export async function runSetupWizard(
     defaultConstraints,
     defaultObjectiveMetric,
     llmMode,
-    codexCommandReasoningEffort,
+    codexChatModelChoice,
+    codexChatReasoningEffort,
+    codexTaskModelChoice,
     codexTaskReasoningEffort,
-    openAiModel,
-    openAiCommandReasoningEffort,
+    codexPdfModelChoice,
+    codexPdfReasoningEffort,
+    openAiChatModel,
+    openAiChatReasoningEffort,
+    openAiTaskModel,
     openAiReasoningEffort,
+    openAiPdfModel,
+    openAiPdfReasoningEffort,
     pdfAnalysisMode,
-    responsesPdfModel
+    responsesPdfModel,
+    responsesPdfReasoningEffort
   });
 
   await saveConfig(paths, config);
   await upsertEnvVar(path.join(paths.cwd, ".env"), "SEMANTIC_SCHOLAR_API_KEY", semanticScholarApiKey.trim());
   if (openAiApiKey?.trim()) {
     await upsertEnvVar(path.join(paths.cwd, ".env"), "OPENAI_API_KEY", openAiApiKey.trim());
+  }
+  return config;
+}
+
+export async function runNonInteractiveSetup(
+  paths: AppPaths,
+  input: NonInteractiveSetupInput
+): Promise<AppConfig> {
+  const llmMode = input.llmMode || "codex_chatgpt_only";
+  const pdfAnalysisMode = input.pdfAnalysisMode || "codex_text_extract";
+  const defaultConstraints = (input.defaultConstraints || ["recent papers", "last 5 years"])
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  const config = buildConfigFromWizardAnswers({
+    projectName: (input.projectName || path.basename(paths.cwd)).trim() || path.basename(paths.cwd),
+    defaultTopic: (input.defaultTopic || "Multi-agent collaboration").trim(),
+    defaultConstraints,
+    defaultObjectiveMetric: (input.defaultObjectiveMetric || "state-of-the-art reproducibility").trim(),
+    llmMode,
+    codexChatModelChoice: input.codexChatModelChoice || "gpt-5.3-codex",
+    codexChatReasoningEffort: input.codexChatReasoningEffort || "low",
+    codexTaskModelChoice: input.codexTaskModelChoice || "gpt-5.3-codex",
+    codexTaskReasoningEffort: input.codexTaskReasoningEffort || "xhigh",
+    codexPdfModelChoice: input.codexPdfModelChoice || input.codexTaskModelChoice || "gpt-5.3-codex",
+    codexPdfReasoningEffort: input.codexPdfReasoningEffort || input.codexTaskReasoningEffort || "xhigh",
+    openAiChatModel: input.openAiChatModel || DEFAULT_OPENAI_RESPONSES_MODEL,
+    openAiChatReasoningEffort: input.openAiChatReasoningEffort || "low",
+    openAiTaskModel: input.openAiTaskModel || DEFAULT_OPENAI_RESPONSES_MODEL,
+    openAiReasoningEffort:
+      input.openAiReasoningEffort ||
+      (DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT as AppConfig["providers"]["openai"]["reasoning_effort"]),
+    openAiPdfModel: input.openAiPdfModel || input.openAiTaskModel || DEFAULT_OPENAI_RESPONSES_MODEL,
+    openAiPdfReasoningEffort:
+      input.openAiPdfReasoningEffort ||
+      input.openAiReasoningEffort ||
+      (DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT as AppConfig["providers"]["openai"]["reasoning_effort"]),
+    pdfAnalysisMode,
+    responsesPdfModel: input.responsesPdfModel || DEFAULT_RESPONSES_PDF_MODEL,
+    responsesPdfReasoningEffort: input.responsesPdfReasoningEffort || "xhigh"
+  });
+
+  await saveConfig(paths, config);
+  await upsertEnvVar(
+    path.join(paths.cwd, ".env"),
+    "SEMANTIC_SCHOLAR_API_KEY",
+    input.semanticScholarApiKey.trim()
+  );
+  if (input.openAiApiKey?.trim()) {
+    await upsertEnvVar(path.join(paths.cwd, ".env"), "OPENAI_API_KEY", input.openAiApiKey.trim());
   }
   return config;
 }
@@ -259,7 +434,11 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
   if (!config.providers.openai) {
     config.providers.openai = {
       model: DEFAULT_OPENAI_RESPONSES_MODEL,
+      chat_model: DEFAULT_OPENAI_RESPONSES_MODEL,
+      pdf_model: DEFAULT_OPENAI_RESPONSES_MODEL,
       reasoning_effort: DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT as AppConfig["providers"]["openai"]["reasoning_effort"],
+      chat_reasoning_effort: "low",
+      pdf_reasoning_effort: DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT as AppConfig["providers"]["openai"]["reasoning_effort"],
       command_reasoning_effort: "low",
       api_key_required: true
     };
@@ -270,7 +449,8 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
   if (!config.analysis) {
     config.analysis = {
       pdf_mode: "codex_text_extract",
-      responses_model: DEFAULT_RESPONSES_PDF_MODEL
+      responses_model: DEFAULT_RESPONSES_PDF_MODEL,
+      responses_reasoning_effort: "xhigh"
     };
   }
 
@@ -282,29 +462,64 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
   if (!codex.model) {
     codex.model = "gpt-5.3-codex";
   }
+  codex.chat_model = codex.chat_model?.trim() || codex.model;
+  codex.pdf_model = codex.pdf_model?.trim() || codex.model;
   if (!codex.reasoning_effort) {
     codex.reasoning_effort = "xhigh";
   }
+  codex.chat_reasoning_effort =
+    normalizeReasoningEffortForModel(
+      codex.chat_model,
+      codex.chat_reasoning_effort || codex.command_reasoning_effort || "low"
+    );
+  codex.pdf_reasoning_effort =
+    normalizeReasoningEffortForModel(codex.pdf_model, codex.pdf_reasoning_effort || codex.reasoning_effort);
   if (!codex.command_reasoning_effort) {
     codex.command_reasoning_effort = "low";
   }
   if (typeof codex.fast_mode !== "boolean") {
     codex.fast_mode = false;
   }
+  if (typeof codex.chat_fast_mode !== "boolean") {
+    codex.chat_fast_mode = false;
+  }
+  if (typeof codex.pdf_fast_mode !== "boolean") {
+    codex.pdf_fast_mode = false;
+  }
   if (codex.model !== "gpt-5.4") {
     codex.fast_mode = false;
   }
+  if (codex.chat_model !== "gpt-5.4") {
+    codex.chat_fast_mode = false;
+  }
+  if (codex.pdf_model !== "gpt-5.4") {
+    codex.pdf_fast_mode = false;
+  }
   codex.reasoning_effort = normalizeReasoningEffortForModel(codex.model, codex.reasoning_effort);
   codex.command_reasoning_effort = normalizeReasoningEffortForModel(codex.model, codex.command_reasoning_effort);
+  codex.chat_reasoning_effort = normalizeReasoningEffortForModel(codex.chat_model, codex.chat_reasoning_effort);
+  codex.pdf_reasoning_effort = normalizeReasoningEffortForModel(codex.pdf_model, codex.pdf_reasoning_effort);
+  codex.command_reasoning_effort = codex.chat_reasoning_effort;
   openai.model = normalizeOpenAiResponsesModel(openai.model);
+  openai.chat_model = normalizeOpenAiResponsesModel(openai.chat_model || openai.model);
+  openai.pdf_model = normalizeOpenAiResponsesModel(openai.pdf_model || openai.model);
   openai.reasoning_effort = normalizeOpenAiResponsesReasoningEffort(
     openai.model,
     openai.reasoning_effort
   ) as AppConfig["providers"]["openai"]["reasoning_effort"];
-  openai.command_reasoning_effort = normalizeOpenAiResponsesReasoningEffort(
-    openai.model,
-    openai.command_reasoning_effort || "low"
+  openai.chat_reasoning_effort = normalizeOpenAiResponsesReasoningEffort(
+    openai.chat_model,
+    openai.chat_reasoning_effort || openai.command_reasoning_effort || "low"
   ) as AppConfig["providers"]["openai"]["reasoning_effort"];
+  openai.pdf_reasoning_effort = normalizeOpenAiResponsesReasoningEffort(
+    openai.pdf_model,
+    openai.pdf_reasoning_effort || openai.reasoning_effort
+  ) as AppConfig["providers"]["openai"]["reasoning_effort"];
+  openai.command_reasoning_effort = normalizeOpenAiResponsesReasoningEffort(
+    openai.chat_model,
+    openai.command_reasoning_effort || openai.chat_reasoning_effort || "low"
+  ) as AppConfig["providers"]["openai"]["reasoning_effort"];
+  openai.command_reasoning_effort = openai.chat_reasoning_effort;
   openai.api_key_required = true;
   config.papers = {
     max_results: Math.max(1, papers.max_results || 200),
@@ -312,7 +527,11 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
   };
   config.analysis = {
     pdf_mode: normalizePdfAnalysisMode(analysis.pdf_mode),
-    responses_model: normalizeResponsesPdfModel(analysis.responses_model)
+    responses_model: normalizeResponsesPdfModel(analysis.responses_model),
+    responses_reasoning_effort: normalizeOpenAiResponsesReasoningEffort(
+      analysis.responses_model,
+      analysis.responses_reasoning_effort || "xhigh"
+    ) as AppConfig["analysis"]["responses_reasoning_effort"]
   };
   return config;
 }
@@ -496,11 +715,13 @@ async function askPdfAnalysisMode(
 }
 
 async function askOpenAiResponsesModel(
+  label: string,
+  defaultValue: string,
   promptReader: PromptReader = askLine
 ): Promise<string> {
   if (promptReader === askLine) {
     return askChoice(
-      "OpenAI API model",
+      label,
       OPENAI_RESPONSES_MODEL_OPTIONS.map((option) => ({
         label: option.label,
         value: option.value,
@@ -517,21 +738,54 @@ async function askOpenAiResponsesModel(
                     ? "(multimodal)"
                     : "(fast, low-cost)"
       })),
-      DEFAULT_OPENAI_RESPONSES_MODEL
+      defaultValue
     );
   }
 
   const choices = buildOpenAiResponsesModelChoices();
   const display = choices.join(", ");
   while (true) {
-    const answer = (await promptReader("OpenAI API model", DEFAULT_OPENAI_RESPONSES_MODEL)).trim();
+    const answer = (await promptReader(label, defaultValue)).trim();
     if (!answer) {
-      return DEFAULT_OPENAI_RESPONSES_MODEL;
+      return defaultValue;
     }
     if (choices.includes(answer)) {
       return answer;
     }
     output.write(`OpenAI API model must be one of: ${display}.\n`);
+  }
+}
+
+async function askCodexModel(
+  label: string,
+  defaultValue: string,
+  promptReader: PromptReader = askLine
+): Promise<string> {
+  if (promptReader === askLine) {
+    return askChoice(
+      label,
+      buildCodexModelSelectionChoices(defaultValue).map((choice) => ({
+        label: choice,
+        value: choice,
+        description: getCodexModelSelectionDescription(choice)
+          ? `(${getCodexModelSelectionDescription(choice)})`
+          : undefined
+      })),
+      getCurrentCodexModelSelectionValue(resolveCodexModelSelection(defaultValue).model, false)
+    );
+  }
+
+  const choices = buildCodexModelSelectionChoices(defaultValue);
+  const display = choices.join(", ");
+  while (true) {
+    const answer = (await promptReader(label, defaultValue)).trim();
+    if (!answer) {
+      return defaultValue;
+    }
+    if (choices.includes(answer)) {
+      return answer;
+    }
+    output.write(`Codex model must be one of: ${display}.\n`);
   }
 }
 
@@ -581,11 +835,13 @@ async function askOpenAiResponsesReasoningEffort(
 
 async function askCodexReasoningEffort(
   label: string,
+  model: string,
   defaultValue: AppConfig["providers"]["codex"]["reasoning_effort"],
   recommendedValue: AppConfig["providers"]["codex"]["reasoning_effort"],
   promptReader: PromptReader = askLine
 ): Promise<AppConfig["providers"]["codex"]["reasoning_effort"]> {
-  const choices = ["minimal", "low", "medium", "high", "xhigh"] as const;
+  const choices = [...getReasoningEffortChoicesForModel(model)] as const;
+  const normalizedDefault = normalizeReasoningEffortForModel(model, defaultValue);
   if (promptReader === askLine) {
     return askChoice(
       label,
@@ -594,14 +850,14 @@ async function askCodexReasoningEffort(
         value,
         description: buildReasoningDescription(value, recommendedValue)
       })),
-      defaultValue
+      normalizedDefault
     ) as Promise<AppConfig["providers"]["codex"]["reasoning_effort"]>;
   }
   const display = choices.join(", ");
   while (true) {
-    const answer = (await promptReader(label, defaultValue)).trim().toLowerCase();
+    const answer = (await promptReader(label, normalizedDefault)).trim().toLowerCase();
     if (!answer) {
-      return defaultValue;
+      return normalizedDefault;
     }
     if (choices.includes(answer as (typeof choices)[number])) {
       return answer as AppConfig["providers"]["codex"]["reasoning_effort"];

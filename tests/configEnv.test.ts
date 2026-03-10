@@ -12,6 +12,7 @@ import {
   resolveAppPaths,
   resolveOpenAiApiKey,
   resolveSemanticScholarApiKey,
+  runNonInteractiveSetup,
   runSetupWizard,
   saveConfig,
   upsertEnvVar
@@ -22,6 +23,28 @@ import { AppConfig } from "../src/types.js";
 const ORIGINAL_SEMANTIC_SCHOLAR_API_KEY = process.env.SEMANTIC_SCHOLAR_API_KEY;
 const ORIGINAL_OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
+function makePromptReaderFromAnswers(answers: string[]) {
+  return async (_question: string, defaultValue = "") => {
+    const answer = answers.shift();
+    if (answer === undefined) {
+      throw new Error(`Test prompt answers exhausted at question: ${_question}`);
+    }
+    return answer !== undefined ? answer : defaultValue;
+  };
+}
+
+function makePromptReaderFromQuestionMap(
+  questionMap: Record<string, string>
+) {
+  return async (question: string, defaultValue = "") => {
+    const match = Object.entries(questionMap).find(([prefix]) => question.startsWith(prefix));
+    if (match) {
+      return match[1];
+    }
+    return defaultValue;
+  };
+}
+
 function makeConfig(): AppConfig {
   return {
     version: 1,
@@ -30,20 +53,32 @@ function makeConfig(): AppConfig {
       llm_mode: "codex_chatgpt_only",
       codex: {
         model: "gpt-5.3-codex",
+        chat_model: "gpt-5.3-codex",
+        pdf_model: "gpt-5.3-codex",
         reasoning_effort: "xhigh",
+        chat_reasoning_effort: "low",
+        pdf_reasoning_effort: "xhigh",
+        command_reasoning_effort: "low",
         fast_mode: false,
+        chat_fast_mode: false,
+        pdf_fast_mode: false,
         auth_required: true
       },
       openai: {
         model: "gpt-5.4",
+        chat_model: "gpt-5.4",
+        pdf_model: "gpt-5.4",
         reasoning_effort: "medium",
+        chat_reasoning_effort: "low",
+        pdf_reasoning_effort: "medium",
         command_reasoning_effort: "low",
         api_key_required: true
       }
     },
     analysis: {
       pdf_mode: "codex_text_extract",
-      responses_model: "gpt-5.4"
+      responses_model: "gpt-5.4",
+      responses_reasoning_effort: "xhigh"
     },
     papers: {
       max_results: 200,
@@ -143,17 +178,18 @@ describe("config .env overrides", () => {
       "recent papers,last 5 years",
       "reproducibility",
       "codex",
+      "gpt-5.3-codex",
       "low",
+      "gpt-5.3-codex",
       "xhigh",
       "codex",
+      "gpt-5.3-codex",
+      "xhigh",
       "   ",
       "required-key"
     ];
 
-    const config = await runSetupWizard(paths, async (_question, defaultValue = "") => {
-      const answer = answers.shift();
-      return answer !== undefined ? answer : defaultValue;
-    });
+    const config = await runSetupWizard(paths, makePromptReaderFromAnswers(answers));
 
     expect(config.project_name).toBe("project");
     await expect(resolveSemanticScholarApiKey(cwd)).resolves.toBe("required-key");
@@ -173,29 +209,51 @@ describe("config .env overrides", () => {
     delete process.env.OPENAI_API_KEY;
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autoresearch-setup-openai-key-"));
     const paths = resolveAppPaths(cwd);
-    const answers = [
-      "project",
-      "Multi-agent collaboration",
-      "recent papers,last 5 years",
-      "reproducibility",
-      "codex",
-      "low",
-      "xhigh",
-      "api",
-      "gpt-4o",
-      "semantic-key",
-      "openai-key"
-    ];
-
-    const config = await runSetupWizard(paths, async (_question, defaultValue = "") => {
-      const answer = answers.shift();
-      return answer !== undefined ? answer : defaultValue;
-    });
+    const config = await runSetupWizard(
+      paths,
+      makePromptReaderFromQuestionMap({
+        "Project name": "project",
+        "Default research topic": "Multi-agent collaboration",
+        "Default constraints (comma-separated)": "recent papers,last 5 years",
+        "Default objective metric": "reproducibility",
+        "Primary LLM provider (codex/api)": "codex",
+        "General chat model": "gpt-5.3-codex",
+        "General chat reasoning effort": "low",
+        "Analysis/hypothesis model": "gpt-5.3-codex",
+        "Analysis/hypothesis reasoning effort": "xhigh",
+        "PDF analysis mode (codex/api)": "api",
+        "Responses API PDF model": "gpt-4o",
+        "Semantic Scholar API key": "semantic-key",
+        "OpenAI API key": "openai-key"
+      })
+    );
 
     expect(config.analysis.pdf_mode).toBe("responses_api_pdf");
     expect(config.analysis.responses_model).toBe("gpt-4o");
     await expect(resolveOpenAiApiKey(cwd)).resolves.toBe("openai-key");
     await expect(fs.readFile(path.join(cwd, ".env"), "utf8")).resolves.toContain('OPENAI_API_KEY="openai-key"');
+  });
+
+  it("supports non-interactive setup for the web onboarding flow", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autoresearch-web-setup-"));
+    const paths = resolveAppPaths(cwd);
+
+    const config = await runNonInteractiveSetup(paths, {
+      projectName: "web-project",
+      defaultTopic: "Agent planning",
+      defaultConstraints: ["recent papers", "benchmarks"],
+      defaultObjectiveMetric: "sample efficiency",
+      llmMode: "openai_api",
+      pdfAnalysisMode: "responses_api_pdf",
+      semanticScholarApiKey: "semantic-key",
+      openAiApiKey: "openai-key"
+    });
+
+    expect(config.project_name).toBe("web-project");
+    expect(config.providers.llm_mode).toBe("openai_api");
+    expect(config.analysis.pdf_mode).toBe("responses_api_pdf");
+    await expect(resolveSemanticScholarApiKey(cwd)).resolves.toBe("semantic-key");
+    await expect(resolveOpenAiApiKey(cwd)).resolves.toBe("openai-key");
   });
 
   it("still asks for API keys during setup even when existing .env keys are present", async () => {
@@ -208,27 +266,23 @@ describe("config .env overrides", () => {
     );
 
     const asked: string[] = [];
-    const answers = [
-      "project",
-      "Multi-agent collaboration",
-      "recent papers,last 5 years",
-      "reproducibility",
-      "api",
-      "low",
-      "xhigh",
-      "gpt-5-mini",
-      "low",
-      "high",
-      "api",
-      "gpt-4o",
-      "",
-      ""
-    ];
-
     const config = await runSetupWizard(paths, async (question, defaultValue = "") => {
       asked.push(question);
-      const answer = answers.shift();
-      return answer !== undefined ? answer : defaultValue;
+      return makePromptReaderFromQuestionMap({
+        "Project name": "project",
+        "Default research topic": "Multi-agent collaboration",
+        "Default constraints (comma-separated)": "recent papers,last 5 years",
+        "Default objective metric": "reproducibility",
+        "Primary LLM provider (codex/api)": "api",
+        "OpenAI API general chat model": "gpt-5.4",
+        "General chat reasoning effort": "low",
+        "OpenAI API analysis/hypothesis model": "gpt-5-mini",
+        "Analysis/hypothesis reasoning effort": "high",
+        "PDF analysis mode (codex/api)": "api",
+        "Responses API PDF model": "gpt-4o",
+        "Semantic Scholar API key": "",
+        "OpenAI API key": ""
+      })(question, defaultValue);
     });
 
     expect(config.providers.llm_mode).toBe("openai_api");
@@ -245,26 +299,25 @@ describe("config .env overrides", () => {
     delete process.env.OPENAI_API_KEY;
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autoresearch-setup-openai-provider-"));
     const paths = resolveAppPaths(cwd);
-    const answers = [
-      "project",
-      "Multi-agent collaboration",
-      "recent papers,last 5 years",
-      "reproducibility",
-      "api",
-      "low",
-      "xhigh",
-      "gpt-5-mini",
-      "low",
-      "xhigh",
-      "codex",
-      "semantic-key",
-      "openai-key"
-    ];
-
-    const config = await runSetupWizard(paths, async (_question, defaultValue = "") => {
-      const answer = answers.shift();
-      return answer !== undefined ? answer : defaultValue;
-    });
+    const config = await runSetupWizard(
+      paths,
+      makePromptReaderFromQuestionMap({
+        "Project name": "project",
+        "Default research topic": "Multi-agent collaboration",
+        "Default constraints (comma-separated)": "recent papers,last 5 years",
+        "Default objective metric": "reproducibility",
+        "Primary LLM provider (codex/api)": "api",
+        "OpenAI API general chat model": "gpt-5-mini",
+        "General chat reasoning effort": "low",
+        "OpenAI API analysis/hypothesis model": "gpt-5-mini",
+        "Analysis/hypothesis reasoning effort": "xhigh",
+        "PDF analysis mode (codex/api)": "codex",
+        "OpenAI API PDF text-analysis model": "gpt-5-mini",
+        "PDF analysis reasoning effort": "xhigh",
+        "Semantic Scholar API key": "semantic-key",
+        "OpenAI API key": "openai-key"
+      })
+    );
 
     expect(config.providers.llm_mode).toBe("openai_api");
     expect(config.providers.openai.model).toBe("gpt-5-mini");

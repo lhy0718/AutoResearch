@@ -233,6 +233,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                 paper: row,
                 pdfUrl,
                 model: deps.config.analysis.responses_model,
+                reasoningEffort: deps.config.analysis.responses_reasoning_effort,
                 maxAttempts: 2,
                 abortSignal,
                 onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
@@ -258,7 +259,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                   : `Falling back to abstract for "${row.title}" after Responses API fallback (${source.fallbackReason || "no full text"}).`
               );
               analysis = await analyzePaperWithLlm({
-                llm: deps.llm,
+                llm: source.sourceType === "full_text" ? deps.pdfTextLlm : deps.llm,
                 paper: row,
                 source,
                 maxAttempts: 2,
@@ -268,7 +269,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             }
           } else {
             analysis = await analyzePaperWithLlm({
-              llm: deps.llm,
+              llm: source.sourceType === "full_text" ? deps.pdfTextLlm : deps.llm,
               paper: row,
               source,
               maxAttempts: 2,

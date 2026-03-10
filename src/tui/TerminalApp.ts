@@ -10,6 +10,7 @@ import { CodexCliClient, CodexReasoningEffort } from "../integrations/codex/code
 import { AutoResearchEvent, EventStream } from "../core/events.js";
 import {
   buildCodexModelSelectionChoices,
+  GPT_5_4_FAST_MODEL_LABEL,
   getCodexModelSelectionDescription,
   getCurrentCodexModelSelectionValue,
   getReasoningEffortChoicesForModel,
@@ -39,6 +40,7 @@ import {
 } from "../core/commands/naturalDeterministic.js";
 import {
   extractStructuredActionPlan,
+  isStructuredActionTimeoutError,
   looksLikeStructuredActionRequest
 } from "../core/commands/naturalActionIntent.js";
 import { runDoctor } from "../core/doctor.js";
@@ -52,6 +54,7 @@ import { getAppVersion } from "./version.js";
 import { buildAnimatedStatusText, buildFrame, buildThinkingText, RenderFrameOutput, SelectionMenuOption } from "./renderFrame.js";
 import { supportsColor } from "./theme.js";
 import { OpenAiResponsesTextClient } from "../integrations/openai/responsesTextClient.js";
+import { buildContextualGuidance, detectGuidanceLanguageFromText, GuidanceLanguage } from "./contextualGuidance.js";
 import {
   AnalyzeProgressState,
   CollectProgressState,
@@ -133,6 +136,11 @@ interface CorpusInsights {
   titles: string[];
 }
 
+interface HypothesisInsights {
+  totalHypotheses: number;
+  texts: string[];
+}
+
 interface CorpusInsightsCacheEntry {
   mtimeMs: number;
   size: number;
@@ -188,6 +196,7 @@ export class TerminalApp {
   private unsubscribeEvents?: () => void;
   private lastRenderedFrame?: RenderFrameOutput;
   private pendingNaturalCommand?: PendingNaturalCommandState;
+  private guidanceLanguage: GuidanceLanguage = detectInitialGuidanceLanguage();
 
   private readonly keypressHandler = (str: string, key: readline.Key) => {
     void this.handleKeypress(str, key);
@@ -250,16 +259,11 @@ export class TerminalApp {
       return;
     }
 
-    if (key.ctrl && key.name === "c") {
-      if (this.busy) {
-        this.cancelCurrentBusyOperation();
+    if (this.activeSelectionMenu) {
+      if (key.ctrl && key.name === "c") {
+        this.cancelSelectionMenu();
         return;
       }
-      await this.shutdown();
-      return;
-    }
-
-    if (this.activeSelectionMenu) {
       if (key.name === "up") {
         this.moveSelectionMenu(-1);
         return;
@@ -276,6 +280,15 @@ export class TerminalApp {
         this.cancelSelectionMenu();
         return;
       }
+      return;
+    }
+
+    if (key.ctrl && key.name === "c") {
+      if (this.busy) {
+        this.cancelCurrentBusyOperation();
+        return;
+      }
+      await this.shutdown();
       return;
     }
 
@@ -438,12 +451,23 @@ export class TerminalApp {
   }
 
   private autocompleteSelectedSuggestion(): void {
-    if (this.suggestions.length === 0) {
+    if (this.suggestions.length > 0) {
+      this.exitHistoryBrowsing();
+      const suggestion = this.suggestions[this.selectedSuggestion];
+      this.input = suggestion.applyValue;
+      this.cursorIndex = Array.from(this.input).length;
+      this.updateSuggestions();
       return;
     }
+
+    const guidance = this.getContextualGuidance();
+    const firstItem = guidance?.items[0];
+    if (!firstItem) {
+      return;
+    }
+
     this.exitHistoryBrowsing();
-    const suggestion = this.suggestions[this.selectedSuggestion];
-    this.input = suggestion.applyValue;
+    this.input = firstItem.applyValue ?? firstItem.label;
     this.cursorIndex = Array.from(this.input).length;
     this.updateSuggestions();
   }
@@ -500,6 +524,8 @@ export class TerminalApp {
     if (!text) {
       return;
     }
+
+    this.updateGuidanceLanguage(text);
 
     if (!(this.pendingNaturalCommand && !isSlashPrefixed(text) && isConfirmationInput(text))) {
       await this.recordHistory(text);
@@ -830,47 +856,42 @@ export class TerminalApp {
       return true;
     }
 
-    const activeRun = this.getActiveIndexedRun();
-    if (looksLikeStructuredActionRequest(text)) {
-      this.startThinking();
-      this.render();
-      try {
-        const structuredPlan = await extractStructuredActionPlan({
-          input: text,
-          runs: this.runIndex,
-          activeRunId: this.activeRunId,
-          llm: this.getCommandIntentClient(),
-          abortSignal,
-          onProgress: (line) => {
-            this.pushLog(oneLine(line));
-            this.render();
-          }
-        });
-        if (structuredPlan) {
-          if (structuredPlan.targetRunId) {
-            await this.setActiveRunId(structuredPlan.targetRunId);
-          }
-          for (const line of structuredPlan.lines) {
-            this.pushLog(line);
-          }
-          this.armPendingNaturalCommands(text, structuredPlan.commands, {
-            displayCommands: structuredPlan.displayActions
-          });
-          return true;
-        }
-      } catch (error) {
-        if (this.isAbortError(error)) {
-          throw error;
-        }
-        const message = error instanceof Error ? error.message : String(error);
-        this.pushLog(`Structured action extraction failed: ${message}`);
-      } finally {
-        this.stopThinking();
-      }
-    }
-
     const run = await this.resolveTargetRun(undefined);
     if (run) {
+      const hypothesisInsights = await this.readHypothesisInsights(run.id);
+
+      if (isHypothesisCountIntent(text)) {
+        this.pushLog(
+          language === "ko"
+            ? `현재 저장된 가설은 ${hypothesisInsights.totalHypotheses}개입니다.`
+            : `There are ${hypothesisInsights.totalHypotheses} saved hypotheses in the current run.`
+        );
+        return true;
+      }
+
+      if (isHypothesisListIntent(text)) {
+        if (hypothesisInsights.totalHypotheses === 0) {
+          this.pushLog(
+            language === "ko"
+              ? "현재 run에 저장된 가설이 없습니다."
+              : "No saved hypotheses were found in the current run."
+          );
+          return true;
+        }
+
+        const limit = extractRequestedHypothesisCount(text);
+        const texts = hypothesisInsights.texts.slice(0, limit);
+        this.pushLog(
+          language === "ko"
+            ? `현재 저장된 가설 ${hypothesisInsights.totalHypotheses}개 중 ${texts.length}개를 보여드립니다.`
+            : `Showing ${texts.length} of ${hypothesisInsights.totalHypotheses} saved hypotheses.`
+        );
+        texts.forEach((item, idx) => {
+          this.pushLog(`${idx + 1}. ${item}`);
+        });
+        return true;
+      }
+
       const insights = await this.readCorpusInsights(run.id);
 
       if (isMissingPdfCountIntent(text)) {
@@ -945,6 +966,46 @@ export class TerminalApp {
           this.pushLog(`${idx + 1}. ${title}`);
         });
         return true;
+      }
+    }
+
+    if (looksLikeStructuredActionRequest(text)) {
+      this.startThinking();
+      this.render();
+      try {
+        const structuredPlan = await extractStructuredActionPlan({
+          input: text,
+          runs: this.runIndex,
+          activeRunId: this.activeRunId,
+          llm: this.getCommandIntentClient(),
+          abortSignal,
+          onProgress: (line) => {
+            this.pushLog(oneLine(line));
+            this.render();
+          }
+        });
+        if (structuredPlan) {
+          if (structuredPlan.targetRunId) {
+            await this.setActiveRunId(structuredPlan.targetRunId);
+          }
+          for (const line of structuredPlan.lines) {
+            this.pushLog(line);
+          }
+          this.armPendingNaturalCommands(text, structuredPlan.commands, {
+            displayCommands: structuredPlan.displayActions
+          });
+          return true;
+        }
+      } catch (error) {
+        if (this.isAbortError(error)) {
+          throw error;
+        }
+        if (!isStructuredActionTimeoutError(error)) {
+          const message = error instanceof Error ? error.message : String(error);
+          this.pushLog(`Structured action extraction failed: ${message}`);
+        }
+      } finally {
+        this.stopThinking();
       }
     }
 
@@ -1587,7 +1648,7 @@ export class TerminalApp {
         return { ok: false, reason: response.result.error || `${nodeRaw} failed` };
       }
 
-      this.pushLog(`Node ${nodeRaw} finished: ${oneLine(response.result.summary)}`);
+      this.pushLog(`Node ${nodeRaw} finished: ${oneLine(response.result.summary, 480)}`);
       return { ok: true };
     }
 
@@ -1883,7 +1944,7 @@ export class TerminalApp {
       return { ok: false, reason: response.result.error || "collect_papers failed" };
     }
 
-    this.pushLog(`collect_papers finished: ${oneLine(response.result.summary)}`);
+    this.pushLog(`collect_papers finished: ${oneLine(response.result.summary, 480)}`);
     return { ok: true };
   }
 
@@ -1943,46 +2004,6 @@ export class TerminalApp {
       }
       await upsertEnvVar(path.join(process.cwd(), ".env"), "OPENAI_API_KEY", openAiApiKey.trim());
     }
-    let openAiModel = this.config.providers.openai.model;
-    let openAiReasoningEffort = this.config.providers.openai.reasoning_effort;
-    let openAiCommandReasoningEffort =
-      this.config.providers.openai.command_reasoning_effort || "low";
-    if (llmMode === "openai_api") {
-      const selectedOpenAiModel = await this.openSelectionMenu(
-        "Select OpenAI API model",
-        this.buildOpenAiModelOptions(),
-        normalizeOpenAiResponsesModel(this.config.providers.openai.model)
-      );
-      if (!selectedOpenAiModel) {
-        this.pushLog("Settings update canceled.");
-        return;
-      }
-      openAiModel = selectedOpenAiModel;
-      const selectedCommandReasoningEffort = await this.selectOpenAiReasoningEffortOrDefault(
-        openAiModel,
-        this.config.providers.openai.command_reasoning_effort || "low",
-        "command"
-      );
-      if (!selectedCommandReasoningEffort) {
-        this.pushLog("Settings update canceled.");
-        return;
-      }
-      openAiCommandReasoningEffort = selectedCommandReasoningEffort;
-      const selectedReasoningEffort = await this.selectOpenAiReasoningEffortOrDefault(
-        openAiModel,
-        this.config.providers.openai.reasoning_effort,
-        "task"
-      );
-      if (!selectedReasoningEffort) {
-        this.pushLog("Settings update canceled.");
-        return;
-      }
-      openAiReasoningEffort = selectedReasoningEffort;
-      this.openAiTextClient?.updateDefaults({
-        model: openAiModel,
-        reasoningEffort: openAiReasoningEffort
-      });
-    }
     const pdfMode = await this.openSelectionMenu(
       "Select PDF analysis mode",
       this.buildPdfAnalysisModeOptions(),
@@ -2002,18 +2023,99 @@ export class TerminalApp {
       await upsertEnvVar(path.join(process.cwd(), ".env"), "OPENAI_API_KEY", openAiApiKey.trim());
     }
 
-    let responsesPdfModel = this.config.analysis.responses_model;
-    if (pdfMode === "responses_api_pdf") {
-      const selectedResponsesModel = await this.openSelectionMenu(
-        "Select Responses API PDF model",
-        this.buildResponsesPdfModelOptions(),
-        normalizeResponsesPdfModel(this.config.analysis.responses_model)
+    if (llmMode === "codex_chatgpt_only") {
+      const chatSlot = await this.selectCodexSlot(
+        "general chat",
+        this.getCurrentCodexSlotSelection("chat"),
+        this.config.providers.codex.chat_reasoning_effort || "low",
+        "command"
       );
-      if (!selectedResponsesModel) {
+      if (!chatSlot) {
         this.pushLog("Settings update canceled.");
         return;
       }
-      responsesPdfModel = selectedResponsesModel;
+      this.applyCodexSlotSelection("chat", chatSlot.selection, chatSlot.effort);
+
+      const taskSlot = await this.selectCodexSlot(
+        "analysis/hypothesis",
+        this.getCurrentCodexSlotSelection("task"),
+        this.config.providers.codex.reasoning_effort,
+        "task"
+      );
+      if (!taskSlot) {
+        this.pushLog("Settings update canceled.");
+        return;
+      }
+      this.applyCodexSlotSelection("task", taskSlot.selection, taskSlot.effort);
+    } else {
+      const chatSlot = await this.selectOpenAiSlot(
+        "general chat",
+        this.config.providers.openai.chat_model || this.config.providers.openai.model,
+        this.config.providers.openai.chat_reasoning_effort || "low",
+        "command"
+      );
+      if (!chatSlot) {
+        this.pushLog("Settings update canceled.");
+        return;
+      }
+      this.applyOpenAiSlotSelection("chat", chatSlot.model, chatSlot.effort);
+
+      const taskSlot = await this.selectOpenAiSlot(
+        "analysis/hypothesis",
+        this.config.providers.openai.model,
+        this.config.providers.openai.reasoning_effort,
+        "task"
+      );
+      if (!taskSlot) {
+        this.pushLog("Settings update canceled.");
+        return;
+      }
+      this.applyOpenAiSlotSelection("task", taskSlot.model, taskSlot.effort);
+      this.openAiTextClient?.updateDefaults({
+        model: this.config.providers.openai.model,
+        reasoningEffort: this.config.providers.openai.reasoning_effort
+      });
+    }
+
+    let responsesPdfModel = this.config.analysis.responses_model;
+    let responsesPdfReasoningEffort: AppConfig["analysis"]["responses_reasoning_effort"] =
+      (this.config.analysis.responses_reasoning_effort || "xhigh") as AppConfig["analysis"]["responses_reasoning_effort"];
+    if (pdfMode === "responses_api_pdf") {
+      const selectedResponsesSlot = await this.selectResponsesPdfSlot(
+        normalizeResponsesPdfModel(this.config.analysis.responses_model),
+        this.config.analysis.responses_reasoning_effort || "xhigh"
+      );
+      if (!selectedResponsesSlot) {
+        this.pushLog("Settings update canceled.");
+        return;
+      }
+      responsesPdfModel = selectedResponsesSlot.model;
+      responsesPdfReasoningEffort =
+        selectedResponsesSlot.effort as AppConfig["analysis"]["responses_reasoning_effort"];
+    } else if (llmMode === "codex_chatgpt_only") {
+      const pdfSlot = await this.selectCodexSlot(
+        "PDF analysis",
+        this.getCurrentCodexSlotSelection("pdf"),
+        this.config.providers.codex.pdf_reasoning_effort || this.config.providers.codex.reasoning_effort,
+        "pdf"
+      );
+      if (!pdfSlot) {
+        this.pushLog("Settings update canceled.");
+        return;
+      }
+      this.applyCodexSlotSelection("pdf", pdfSlot.selection, pdfSlot.effort);
+    } else {
+      const pdfSlot = await this.selectOpenAiSlot(
+        "PDF text analysis",
+        this.config.providers.openai.pdf_model || this.config.providers.openai.model,
+        this.config.providers.openai.pdf_reasoning_effort || this.config.providers.openai.reasoning_effort,
+        "pdf"
+      );
+      if (!pdfSlot) {
+        this.pushLog("Settings update canceled.");
+        return;
+      }
+      this.applyOpenAiSlotSelection("pdf", pdfSlot.model, pdfSlot.effort);
     }
 
     this.config.research.default_topic = topic;
@@ -2023,11 +2125,10 @@ export class TerminalApp {
       .filter(Boolean);
     this.config.research.default_objective_metric = metric;
     this.config.providers.llm_mode = llmMode as AppConfig["providers"]["llm_mode"];
-    this.config.providers.openai.model = openAiModel;
-    this.config.providers.openai.reasoning_effort = openAiReasoningEffort;
-    this.config.providers.openai.command_reasoning_effort = openAiCommandReasoningEffort;
     this.config.analysis.pdf_mode = pdfMode as AppConfig["analysis"]["pdf_mode"];
     this.config.analysis.responses_model = responsesPdfModel;
+    this.config.analysis.responses_reasoning_effort =
+      responsesPdfReasoningEffort as AppConfig["analysis"]["responses_reasoning_effort"];
 
     await this.saveConfigFn(this.config);
     const analysisSummary =
@@ -2045,66 +2146,49 @@ export class TerminalApp {
       return;
     }
 
-    if (this.config.providers.llm_mode === "openai_api") {
-      await this.handleOpenAiApiModelSelection();
-      return;
-    }
-    await this.handleCodexModelSelection();
-  }
-
-  private async handleCodexModelSelection(): Promise<void> {
-    this.pushCurrentModelDefaults();
-    const selectedModel = await this.openSelectionMenu(
-      "Select model",
-      this.buildModelSelectionOptions(),
-      getCurrentCodexModelSelectionValue(
-        this.config.providers.codex.model,
-        this.config.providers.codex.fast_mode
-      )
-    );
-    if (!selectedModel) {
-      this.pushLog("Model selection canceled.");
-      return;
-    }
-
-    const resolvedModel = resolveCodexModelSelection(selectedModel);
-    const model = resolvedModel.model;
-    const commandEffort = await this.selectCodexReasoningEffort(
-      model,
-      this.config.providers.codex.command_reasoning_effort || "low",
-      "command"
-    );
-    if (!commandEffort) {
-      this.pushLog("Model selection canceled.");
-      return;
-    }
-    const effort = await this.selectCodexReasoningEffort(
-      model,
-      this.config.providers.codex.reasoning_effort,
+    this.pushModelSlotSummary();
+    const slot = await this.openSelectionMenu(
+      "Select model slot",
+      this.buildModelSlotOptions(),
       "task"
     );
-    if (!effort) {
+    if (!slot) {
       this.pushLog("Model selection canceled.");
       return;
     }
 
-    this.config.providers.codex.model = model;
-    this.config.providers.codex.reasoning_effort = effort as CodexReasoningEffort;
-    this.config.providers.codex.command_reasoning_effort = commandEffort as CodexReasoningEffort;
-    this.config.providers.codex.fast_mode = model === "gpt-5.4" ? resolvedModel.fastMode : false;
+    if (this.config.providers.llm_mode === "openai_api") {
+      await this.handleOpenAiApiModelSelection(slot as "chat" | "task" | "pdf");
+      return;
+    }
+    await this.handleCodexModelSelection(slot as "chat" | "task" | "pdf");
+  }
+
+  private async handleCodexModelSelection(slot: "chat" | "task" | "pdf"): Promise<void> {
+    this.pushCurrentModelDefaults();
+    const selected = await this.selectCodexSlot(
+      slot === "chat" ? "general chat" : slot === "pdf" ? "PDF analysis" : "analysis/hypothesis",
+      this.getCurrentCodexSlotSelection(slot),
+      this.getCurrentCodexSlotReasoning(slot),
+      slot === "chat" ? "command" : slot === "pdf" ? "pdf" : "task"
+    );
+    if (!selected) {
+      this.pushLog("Model selection canceled.");
+      return;
+    }
+
+    this.applyCodexSlotSelection(slot, selected.selection, selected.effort);
     this.codex.updateDefaults({
-      model,
-      reasoningEffort: effort as CodexReasoningEffort,
+      model: this.config.providers.codex.model,
+      reasoningEffort: this.config.providers.codex.reasoning_effort,
       fastMode: this.config.providers.codex.fast_mode
     });
     await this.saveConfigFn(this.config);
-    this.pushLog(
-      `Codex model updated: ${this.formatCurrentModelLabel()} (command reasoning: ${commandEffort}, task reasoning: ${effort}).`
-    );
+    this.pushLog(`Codex ${this.describeModelSlot(slot)} model updated.`);
     this.pushCurrentModelDefaults();
   }
 
-  private async handleOpenAiApiModelSelection(): Promise<void> {
+  private async handleOpenAiApiModelSelection(slot: "chat" | "task" | "pdf"): Promise<void> {
     this.pushCurrentModelDefaults();
     if (!(await resolveOpenAiApiKey(process.cwd()))) {
       const openAiApiKey = await this.askWithinTui("OpenAI API key", "");
@@ -2115,75 +2199,47 @@ export class TerminalApp {
       await upsertEnvVar(path.join(process.cwd(), ".env"), "OPENAI_API_KEY", openAiApiKey.trim());
     }
 
-    const selectedModel = await this.openSelectionMenu(
-      "Select OpenAI API model",
-      this.buildOpenAiModelOptions(),
-      normalizeOpenAiResponsesModel(this.config.providers.openai.model)
+    if (slot === "pdf" && this.config.analysis.pdf_mode === "responses_api_pdf") {
+      const selectedResponsesSlot = await this.selectResponsesPdfSlot(
+        normalizeResponsesPdfModel(this.config.analysis.responses_model),
+        this.config.analysis.responses_reasoning_effort || "xhigh"
+      );
+      if (!selectedResponsesSlot) {
+        this.pushLog("Model selection canceled.");
+        return;
+      }
+      this.config.analysis.responses_model = selectedResponsesSlot.model;
+      this.config.analysis.responses_reasoning_effort =
+        selectedResponsesSlot.effort as AppConfig["analysis"]["responses_reasoning_effort"];
+      await this.saveConfigFn(this.config);
+      this.pushLog("Responses API PDF model updated.");
+      this.pushCurrentModelDefaults();
+      return;
+    }
+
+    const selected = await this.selectOpenAiSlot(
+      slot === "chat" ? "general chat" : slot === "pdf" ? "PDF text analysis" : "analysis/hypothesis",
+      this.getCurrentOpenAiSlotModel(slot),
+      this.getCurrentOpenAiSlotReasoning(slot),
+      slot === "chat" ? "command" : slot === "pdf" ? "pdf" : "task"
     );
-    if (!selectedModel) {
+    if (!selected) {
       this.pushLog("Model selection canceled.");
       return;
     }
 
-    const selectedCommandReasoningEffort = await this.selectOpenAiReasoningEffortOrDefault(
-      selectedModel,
-      this.config.providers.openai.command_reasoning_effort || "low",
-      "command"
-    );
-    if (!selectedCommandReasoningEffort) {
-      this.pushLog("Model selection canceled.");
-      return;
-    }
-    const selectedReasoningEffort = await this.selectOpenAiReasoningEffortOrDefault(
-      selectedModel,
-      this.config.providers.openai.reasoning_effort,
-      "task"
-    );
-    if (!selectedReasoningEffort) {
-      this.pushLog("Model selection canceled.");
-      return;
-    }
-
-    this.config.providers.openai.model = selectedModel;
-    this.config.providers.openai.reasoning_effort = selectedReasoningEffort;
-    this.config.providers.openai.command_reasoning_effort = selectedCommandReasoningEffort;
+    this.applyOpenAiSlotSelection(slot, selected.model, selected.effort);
     this.openAiTextClient?.updateDefaults({
-      model: selectedModel,
-      reasoningEffort: selectedReasoningEffort
+      model: this.config.providers.openai.model,
+      reasoningEffort: this.config.providers.openai.reasoning_effort
     });
     await this.saveConfigFn(this.config);
-    if (supportsOpenAiResponsesReasoning(selectedModel)) {
-      this.pushLog(
-        `OpenAI API model updated: ${selectedModel} (command reasoning: ${selectedCommandReasoningEffort}, task reasoning: ${selectedReasoningEffort}).`
-      );
-    } else {
-      this.pushLog(`OpenAI API model updated: ${selectedModel}.`);
-    }
+    this.pushLog(`OpenAI API ${this.describeModelSlot(slot)} model updated.`);
     this.pushCurrentModelDefaults();
   }
 
   private pushCurrentModelDefaults(): void {
-    if (this.config.providers.llm_mode === "openai_api") {
-      if (supportsOpenAiResponsesReasoning(this.config.providers.openai.model)) {
-        this.pushLog(
-          `OpenAI API defaults: model=${this.config.providers.openai.model}, command=${this.config.providers.openai.command_reasoning_effort || "low"}, task=${this.config.providers.openai.reasoning_effort}`
-        );
-      } else {
-        this.pushLog(`OpenAI API defaults: model=${this.config.providers.openai.model}`);
-      }
-      return;
-    }
-    const model = this.formatCurrentModelLabel();
-    const effort = this.config.providers.codex.reasoning_effort;
-    const commandEffort = this.config.providers.codex.command_reasoning_effort || "low";
-    this.pushLog(`Codex defaults: model=${model}, command=${commandEffort}, task=${effort}`);
-  }
-
-  private formatCurrentModelLabel(): string {
-    return getCurrentCodexModelSelectionValue(
-      this.config.providers.codex.model,
-      this.config.providers.codex.fast_mode
-    );
+    this.pushModelSlotSummary();
   }
 
   private buildModelSelectionChoices(): string[] {
@@ -2193,11 +2249,15 @@ export class TerminalApp {
     );
   }
 
-  private buildModelSelectionOptions(): SelectionMenuOption[] {
+  private buildModelSelectionOptions(slot: "chat" | "task" | "pdf"): SelectionMenuOption[] {
+    const recommended = this.getRecommendedCodexSelection(slot);
     return this.buildModelSelectionChoices().map((value) => ({
       value,
       label: value,
-      description: getCodexModelSelectionDescription(value)
+      description: this.annotateRecommendedDescription(
+        getCodexModelSelectionDescription(value),
+        value === recommended
+      )
     }));
   }
 
@@ -2217,10 +2277,14 @@ export class TerminalApp {
   }
 
   private buildResponsesPdfModelOptions(): SelectionMenuOption[] {
+    const recommended = this.getRecommendedResponsesPdfModel();
     return RESPONSES_PDF_MODEL_OPTIONS.map((option) => ({
       value: option.value,
       label: option.label,
-      description: option.description
+      description: this.annotateRecommendedDescription(
+        option.description,
+        option.value === recommended
+      )
     }));
   }
 
@@ -2239,17 +2303,21 @@ export class TerminalApp {
     ];
   }
 
-  private buildOpenAiModelOptions(): SelectionMenuOption[] {
+  private buildOpenAiModelOptions(slot: "chat" | "task" | "pdf"): SelectionMenuOption[] {
+    const recommended = this.getRecommendedOpenAiModel(slot);
     return OPENAI_RESPONSES_MODEL_OPTIONS.map((option) => ({
       value: option.value,
       label: option.label,
-      description: option.description
+      description: this.annotateRecommendedDescription(
+        option.description,
+        option.value === recommended
+      )
     }));
   }
 
   private buildOpenAiReasoningEffortOptions(
     model: string,
-    recommended: "command" | "task"
+    recommended: "command" | "task" | "pdf"
   ): SelectionMenuOption[] {
     return getOpenAiResponsesReasoningOptions(model).map((option) => ({
       value: option.value,
@@ -2261,7 +2329,7 @@ export class TerminalApp {
   private async selectOpenAiReasoningEffortOrDefault(
     model: string,
     currentEffort: AppConfig["providers"]["openai"]["reasoning_effort"],
-    recommended: "command" | "task"
+    recommended: "command" | "task" | "pdf"
   ): Promise<AppConfig["providers"]["openai"]["reasoning_effort"] | undefined> {
     const normalizedEffort = normalizeOpenAiResponsesReasoningEffort(
       model,
@@ -2273,7 +2341,9 @@ export class TerminalApp {
     const selected = await this.openSelectionMenu(
       recommended === "command"
         ? "Select command/query reasoning effort"
-        : "Select analysis/implementation reasoning effort",
+        : recommended === "task"
+          ? "Select analysis/hypothesis reasoning effort"
+          : "Select PDF analysis reasoning effort",
       this.buildOpenAiReasoningEffortOptions(model, recommended),
       normalizedEffort
     );
@@ -2283,13 +2353,15 @@ export class TerminalApp {
   private async selectCodexReasoningEffort(
     model: string,
     currentEffort: CodexReasoningEffort,
-    recommended: "command" | "task"
+    recommended: "command" | "task" | "pdf"
   ): Promise<CodexReasoningEffort | undefined> {
     const normalizedEffort = normalizeReasoningEffortForModel(model, currentEffort);
     const selected = await this.openSelectionMenu(
       recommended === "command"
         ? "Select command/query reasoning effort"
-        : "Select analysis/implementation reasoning effort",
+        : recommended === "task"
+          ? "Select analysis/hypothesis reasoning effort"
+          : "Select PDF analysis reasoning effort",
       getReasoningEffortChoicesForModel(model).map((value) => ({
         value,
         label: value,
@@ -2303,16 +2375,20 @@ export class TerminalApp {
   private describeReasoningEffort(
     baseDescription: string,
     value: string,
-    recommended: "command" | "task"
+    recommended: "command" | "task" | "pdf"
   ): string {
     const recommendation =
       recommended === "command"
         ? value === "low"
           ? "recommended for commands"
           : ""
-        : value === "xhigh"
-          ? "recommended for analysis/implementation"
-          : "";
+        : recommended === "task"
+          ? value === "xhigh"
+            ? "recommended for analysis/hypothesis"
+            : ""
+          : value === "xhigh"
+            ? "recommended for PDF analysis"
+            : "";
     const parts = [baseDescription, recommendation].map((part) => part.trim()).filter(Boolean);
     return parts.join(" | ");
   }
@@ -2338,21 +2414,76 @@ export class TerminalApp {
     runTurnStream?: CodexCliClient["runTurnStream"];
   } {
     if (this.config.providers.llm_mode === "openai_api" && this.openAiTextClient) {
-      return this.openAiTextClient;
+      return {
+        runForText: async (opts) =>
+          this.openAiTextClient!.runForText({
+            prompt: opts.prompt,
+            systemPrompt: opts.systemPrompt,
+            abortSignal: opts.abortSignal,
+            model: this.config.providers.openai.chat_model || this.config.providers.openai.model,
+            reasoningEffort:
+              this.config.providers.openai.chat_reasoning_effort ||
+              this.config.providers.openai.command_reasoning_effort
+          })
+      };
     }
+    const codexRunForText =
+      typeof this.codex.runForText === "function"
+        ? this.codex.runForText.bind(this.codex)
+        : undefined;
+    const codexRunTurnStream =
+      typeof this.codex.runTurnStream === "function"
+        ? this.codex.runTurnStream.bind(this.codex)
+        : undefined;
     return {
       runForText: async (opts) =>
-        this.codex.runForText({
-          prompt: opts.prompt,
-          sandboxMode: (opts.sandboxMode || "read-only") as "read-only" | "workspace-write" | "danger-full-access",
-          approvalPolicy: (opts.approvalPolicy || "never") as "never" | "on-request" | "on-failure" | "untrusted",
-          systemPrompt: opts.systemPrompt,
-          reasoningEffort: opts.reasoningEffort as never
-        }),
-      runTurnStream:
-        typeof this.codex.runTurnStream === "function"
-          ? this.codex.runTurnStream.bind(this.codex)
-          : undefined
+        codexRunTurnStream
+          ? (
+              await codexRunTurnStream({
+                prompt: opts.prompt,
+                sandboxMode: (opts.sandboxMode || "read-only") as
+                  | "read-only"
+                  | "workspace-write"
+                  | "danger-full-access",
+                approvalPolicy: (opts.approvalPolicy || "never") as "never" | "on-request" | "on-failure" | "untrusted",
+                systemPrompt: opts.systemPrompt,
+                reasoningEffort:
+                  ((opts.reasoningEffort as string | undefined) ||
+                    this.config.providers.codex.chat_reasoning_effort ||
+                    this.config.providers.codex.command_reasoning_effort) as never,
+                model: this.config.providers.codex.chat_model || this.config.providers.codex.model,
+                fastMode: this.config.providers.codex.chat_fast_mode,
+                abortSignal: opts.abortSignal
+              })
+            ).finalText
+          : codexRunForText!(
+              {
+                prompt: opts.prompt,
+                sandboxMode: opts.sandboxMode,
+                approvalPolicy: opts.approvalPolicy,
+                threadId: opts.threadId,
+                systemPrompt: opts.systemPrompt,
+                reasoningEffort:
+                  opts.reasoningEffort ||
+                  this.config.providers.codex.chat_reasoning_effort ||
+                  this.config.providers.codex.command_reasoning_effort
+              } as Parameters<NonNullable<typeof codexRunForText>>[0]
+            ),
+      runTurnStream: codexRunTurnStream
+        ? (options) =>
+            codexRunTurnStream({
+              ...options,
+              model: options.model || this.config.providers.codex.chat_model || this.config.providers.codex.model,
+              reasoningEffort:
+                (options.reasoningEffort ||
+                  this.config.providers.codex.chat_reasoning_effort ||
+                  this.config.providers.codex.command_reasoning_effort) as never,
+              fastMode:
+                typeof options.fastMode === "boolean"
+                  ? options.fastMode
+                  : this.config.providers.codex.chat_fast_mode
+            })
+        : undefined
     };
   }
 
@@ -2369,6 +2500,7 @@ export class TerminalApp {
   } {
     if (this.config.providers.llm_mode === "openai_api" && this.openAiTextClient) {
       const reasoningEffort =
+        this.config.providers.openai.chat_reasoning_effort ||
         this.config.providers.openai.command_reasoning_effort ||
         this.config.providers.openai.reasoning_effort;
       return {
@@ -2377,24 +2509,324 @@ export class TerminalApp {
             prompt: opts.prompt,
             systemPrompt: opts.systemPrompt,
             abortSignal: opts.abortSignal,
+            model: this.config.providers.openai.chat_model || this.config.providers.openai.model,
             reasoningEffort
           })
       };
     }
     const reasoningEffort =
+      this.config.providers.codex.chat_reasoning_effort ||
       this.config.providers.codex.command_reasoning_effort ||
       this.config.providers.codex.reasoning_effort;
+    const codexRunForText =
+      typeof this.codex.runForText === "function"
+        ? this.codex.runForText.bind(this.codex)
+        : undefined;
+    const codexRunTurnStream =
+      typeof this.codex.runTurnStream === "function"
+        ? this.codex.runTurnStream.bind(this.codex)
+        : undefined;
     return {
       runForText: async (opts) =>
-        this.codex.runForText({
-          prompt: opts.prompt,
-          sandboxMode: (opts.sandboxMode || "read-only") as "read-only" | "workspace-write" | "danger-full-access",
-          approvalPolicy: (opts.approvalPolicy || "never") as "never" | "on-request" | "on-failure" | "untrusted",
-          systemPrompt: opts.systemPrompt,
-          reasoningEffort: reasoningEffort as never
-        })
+        codexRunTurnStream
+          ? (
+              await codexRunTurnStream({
+                prompt: opts.prompt,
+                sandboxMode: (opts.sandboxMode || "read-only") as
+                  | "read-only"
+                  | "workspace-write"
+                  | "danger-full-access",
+                approvalPolicy: (opts.approvalPolicy || "never") as "never" | "on-request" | "on-failure" | "untrusted",
+                systemPrompt: opts.systemPrompt,
+                reasoningEffort: reasoningEffort as never,
+                model: this.config.providers.codex.chat_model || this.config.providers.codex.model,
+                fastMode: this.config.providers.codex.chat_fast_mode,
+                abortSignal: opts.abortSignal
+              })
+            ).finalText
+          : codexRunForText!(
+              {
+                prompt: opts.prompt,
+                sandboxMode: opts.sandboxMode,
+                approvalPolicy: opts.approvalPolicy,
+                threadId: opts.threadId,
+                systemPrompt: opts.systemPrompt,
+                reasoningEffort
+              } as Parameters<NonNullable<typeof codexRunForText>>[0]
+            )
     };
   }
+
+  private buildModelSlotOptions(): SelectionMenuOption[] {
+    return [
+      {
+        value: "chat",
+        label: "general_chat",
+        description: `Current: ${this.getCurrentSlotPreset("chat")} | Recommended: ${this.getRecommendedSlotPreset("chat")}`
+      },
+      {
+        value: "task",
+        label: "analysis_hypothesis",
+        description: `Current: ${this.getCurrentSlotPreset("task")} | Recommended: ${this.getRecommendedSlotPreset("task")}`
+      },
+      {
+        value: "pdf",
+        label: "pdf_analysis",
+        description: `Current: ${this.getCurrentSlotPreset("pdf")} | Recommended: ${this.getRecommendedSlotPreset("pdf")}`
+      }
+    ];
+  }
+
+  private describeModelSlot(slot: "chat" | "task" | "pdf"): string {
+    switch (slot) {
+      case "chat":
+        return "general chat";
+      case "pdf":
+        return "PDF analysis";
+      default:
+        return "analysis/hypothesis";
+    }
+  }
+
+  private getCurrentCodexSlotSelection(slot: "chat" | "task" | "pdf"): string {
+    if (slot === "chat") {
+      return getCurrentCodexModelSelectionValue(
+        this.config.providers.codex.chat_model || this.config.providers.codex.model,
+        this.config.providers.codex.chat_fast_mode
+      );
+    }
+    if (slot === "pdf") {
+      return getCurrentCodexModelSelectionValue(
+        this.config.providers.codex.pdf_model || this.config.providers.codex.model,
+        this.config.providers.codex.pdf_fast_mode
+      );
+    }
+    return getCurrentCodexModelSelectionValue(
+      this.config.providers.codex.model,
+      this.config.providers.codex.fast_mode
+    );
+  }
+
+  private getCurrentCodexSlotReasoning(slot: "chat" | "task" | "pdf"): CodexReasoningEffort {
+    if (slot === "chat") {
+      return (this.config.providers.codex.chat_reasoning_effort ||
+        this.config.providers.codex.command_reasoning_effort ||
+        "low") as CodexReasoningEffort;
+    }
+    if (slot === "pdf") {
+      return (this.config.providers.codex.pdf_reasoning_effort ||
+        this.config.providers.codex.reasoning_effort) as CodexReasoningEffort;
+    }
+    return this.config.providers.codex.reasoning_effort;
+  }
+
+  private async selectCodexSlot(
+    label: string,
+    currentSelection: string,
+    currentEffort: CodexReasoningEffort,
+    recommended: "command" | "task" | "pdf"
+  ): Promise<{ selection: string; effort: CodexReasoningEffort } | undefined> {
+    const selectedSelection = await this.openSelectionMenu(
+      `Select ${label} model`,
+      this.buildModelSelectionOptions(
+        recommended === "command" ? "chat" : recommended === "pdf" ? "pdf" : "task"
+      ),
+      currentSelection
+    );
+    if (!selectedSelection) {
+      return undefined;
+    }
+    const effort = await this.selectCodexReasoningEffort(
+      resolveCodexModelSelection(selectedSelection).model,
+      currentEffort,
+      recommended
+    );
+    if (!effort) {
+      return undefined;
+    }
+    return { selection: selectedSelection, effort };
+  }
+
+  private applyCodexSlotSelection(
+    slot: "chat" | "task" | "pdf",
+    selection: string,
+    effort: CodexReasoningEffort
+  ): void {
+    const resolved = resolveCodexModelSelection(selection);
+    if (slot === "chat") {
+      this.config.providers.codex.chat_model = resolved.model;
+      this.config.providers.codex.chat_reasoning_effort = effort;
+      this.config.providers.codex.command_reasoning_effort = effort;
+      this.config.providers.codex.chat_fast_mode = resolved.model === "gpt-5.4" ? resolved.fastMode : false;
+      return;
+    }
+    if (slot === "pdf") {
+      this.config.providers.codex.pdf_model = resolved.model;
+      this.config.providers.codex.pdf_reasoning_effort = effort;
+      this.config.providers.codex.pdf_fast_mode = resolved.model === "gpt-5.4" ? resolved.fastMode : false;
+      return;
+    }
+    this.config.providers.codex.model = resolved.model;
+    this.config.providers.codex.reasoning_effort = effort;
+    this.config.providers.codex.fast_mode = resolved.model === "gpt-5.4" ? resolved.fastMode : false;
+  }
+
+  private getCurrentOpenAiSlotModel(slot: "chat" | "task" | "pdf"): string {
+    if (slot === "chat") {
+      return normalizeOpenAiResponsesModel(
+        this.config.providers.openai.chat_model || this.config.providers.openai.model
+      );
+    }
+    if (slot === "pdf") {
+      return normalizeOpenAiResponsesModel(
+        this.config.providers.openai.pdf_model || this.config.providers.openai.model
+      );
+    }
+    return normalizeOpenAiResponsesModel(this.config.providers.openai.model);
+  }
+
+  private getCurrentOpenAiSlotReasoning(
+    slot: "chat" | "task" | "pdf"
+  ): AppConfig["providers"]["openai"]["reasoning_effort"] {
+    if (slot === "chat") {
+      return (this.config.providers.openai.chat_reasoning_effort ||
+        this.config.providers.openai.command_reasoning_effort ||
+        "low") as AppConfig["providers"]["openai"]["reasoning_effort"];
+    }
+    if (slot === "pdf") {
+      return (this.config.providers.openai.pdf_reasoning_effort ||
+        this.config.providers.openai.reasoning_effort) as AppConfig["providers"]["openai"]["reasoning_effort"];
+    }
+    return this.config.providers.openai.reasoning_effort;
+  }
+
+  private async selectOpenAiSlot(
+    label: string,
+    currentModel: string,
+    currentEffort: AppConfig["providers"]["openai"]["reasoning_effort"],
+    recommended: "command" | "task" | "pdf"
+  ): Promise<{ model: string; effort: AppConfig["providers"]["openai"]["reasoning_effort"] } | undefined> {
+    const selectedModel = await this.openSelectionMenu(
+      `Select ${label} model`,
+      this.buildOpenAiModelOptions(
+        recommended === "command" ? "chat" : recommended === "pdf" ? "pdf" : "task"
+      ),
+      normalizeOpenAiResponsesModel(currentModel)
+    );
+    if (!selectedModel) {
+      return undefined;
+    }
+    const effort = await this.selectOpenAiReasoningEffortOrDefault(
+      selectedModel,
+      currentEffort,
+      recommended
+    );
+    if (!effort) {
+      return undefined;
+    }
+    return { model: selectedModel, effort };
+  }
+
+  private applyOpenAiSlotSelection(
+    slot: "chat" | "task" | "pdf",
+    model: string,
+    effort: AppConfig["providers"]["openai"]["reasoning_effort"]
+  ): void {
+    if (slot === "chat") {
+      this.config.providers.openai.chat_model = model;
+      this.config.providers.openai.chat_reasoning_effort = effort;
+      this.config.providers.openai.command_reasoning_effort = effort;
+      return;
+    }
+    if (slot === "pdf") {
+      this.config.providers.openai.pdf_model = model;
+      this.config.providers.openai.pdf_reasoning_effort = effort;
+      return;
+    }
+    this.config.providers.openai.model = model;
+    this.config.providers.openai.reasoning_effort = effort;
+  }
+
+  private async selectResponsesPdfSlot(
+    currentModel: string,
+    currentEffort: AppConfig["analysis"]["responses_reasoning_effort"]
+  ): Promise<{ model: string; effort: AppConfig["analysis"]["responses_reasoning_effort"] } | undefined> {
+    const model = await this.openSelectionMenu(
+      "Select Responses API PDF model",
+      this.buildResponsesPdfModelOptions(),
+      normalizeResponsesPdfModel(currentModel)
+    );
+    if (!model) {
+      return undefined;
+    }
+    const effort = await this.selectOpenAiReasoningEffortOrDefault(model, currentEffort || "xhigh", "pdf");
+    if (!effort) {
+      return undefined;
+    }
+    return {
+      model,
+      effort: effort as AppConfig["analysis"]["responses_reasoning_effort"]
+    };
+  }
+
+  private pushModelSlotSummary(): void {
+    this.pushLog("Current model slots:");
+    this.pushLog(`- ${this.describeModelSlot("chat")}: ${this.getCurrentSlotPreset("chat")} | Recommended: ${this.getRecommendedSlotPreset("chat")}`);
+    this.pushLog(`- ${this.describeModelSlot("task")}: ${this.getCurrentSlotPreset("task")} | Recommended: ${this.getRecommendedSlotPreset("task")}`);
+    this.pushLog(`- ${this.describeModelSlot("pdf")}: ${this.getCurrentSlotPreset("pdf")} | Recommended: ${this.getRecommendedSlotPreset("pdf")}`);
+  }
+
+  private getCurrentSlotPreset(slot: "chat" | "task" | "pdf"): string {
+    if (this.config.providers.llm_mode === "openai_api") {
+      if (slot === "pdf" && this.config.analysis.pdf_mode === "responses_api_pdf") {
+        return `${this.config.analysis.responses_model} + ${this.config.analysis.responses_reasoning_effort || "xhigh"}`;
+      }
+      return `${this.getCurrentOpenAiSlotModel(slot)} + ${this.getCurrentOpenAiSlotReasoning(slot)}`;
+    }
+    return `${this.getCurrentCodexSlotSelection(slot)} + ${this.getCurrentCodexSlotReasoning(slot)}`;
+  }
+
+  private getRecommendedSlotPreset(slot: "chat" | "task" | "pdf"): string {
+    if (this.config.providers.llm_mode === "openai_api") {
+      if (slot === "pdf" && this.config.analysis.pdf_mode === "responses_api_pdf") {
+        return `${this.getRecommendedResponsesPdfModel()} + xhigh`;
+      }
+      return `${this.getRecommendedOpenAiModel(slot)} + ${slot === "chat" ? "low" : "xhigh"}`;
+    }
+    return `${this.getRecommendedCodexSelection(slot)} + ${slot === "chat" ? "low" : "xhigh"}`;
+  }
+
+  private getRecommendedCodexSelection(slot: "chat" | "task" | "pdf"): string {
+    if (slot === "chat") {
+      return GPT_5_4_FAST_MODEL_LABEL;
+    }
+    return "gpt-5.4";
+  }
+
+  private getRecommendedOpenAiModel(slot: "chat" | "task" | "pdf"): string {
+    if (slot === "chat") {
+      return "gpt-5-mini";
+    }
+    return "gpt-5.4";
+  }
+
+  private getRecommendedResponsesPdfModel(): string {
+    return "gpt-5.4";
+  }
+
+  private annotateRecommendedDescription(
+    baseDescription: string | undefined,
+    isRecommended: boolean
+  ): string | undefined {
+    if (!isRecommended) {
+      return baseDescription;
+    }
+    if (!baseDescription) {
+      return "Recommended preset.";
+    }
+    return `${baseDescription} | Recommended preset.`;
+  }
+
   private async openSelectionMenu(
     label: string,
     options: readonly string[] | readonly SelectionMenuOption[],
@@ -2652,6 +3084,10 @@ export class TerminalApp {
 
   private render(): void {
     const run = this.activeRunId ? this.runIndex.find((x) => x.id === this.activeRunId) : undefined;
+    const guidance =
+      this.input.trim().length === 0 && this.suggestions.length === 0 && !this.activeSelectionMenu
+        ? this.getContextualGuidance(run)
+        : undefined;
     const frame = buildFrame({
       appVersion: this.appVersion,
       busy: this.busy,
@@ -2666,6 +3102,7 @@ export class TerminalApp {
       suggestions: this.suggestions,
       selectedSuggestion: this.selectedSuggestion,
       colorEnabled: this.colorEnabled,
+      guidance,
       selectionMenu: this.activeSelectionMenu
         ? {
             title: this.activeSelectionMenu.title,
@@ -2684,6 +3121,29 @@ export class TerminalApp {
       process.stdout.write(`\x1b[${up}A`);
     }
     process.stdout.write(`\x1b[${frame.inputColumn}G`);
+  }
+
+  private getContextualGuidance(run = this.activeRunId ? this.runIndex.find((x) => x.id === this.activeRunId) : undefined) {
+    return buildContextualGuidance({
+      run,
+      language: this.guidanceLanguage,
+      pendingPlan: this.pendingNaturalCommand
+        ? {
+            command: this.pendingNaturalCommand.command,
+            commands: this.pendingNaturalCommand.commands,
+            displayCommands: this.pendingNaturalCommand.displayCommands,
+            stepIndex: this.pendingNaturalCommand.stepIndex,
+            totalSteps: this.pendingNaturalCommand.totalSteps
+          }
+        : undefined
+    });
+  }
+
+  private updateGuidanceLanguage(text: string): void {
+    const detected = detectGuidanceLanguageFromText(text);
+    if (detected) {
+      this.guidanceLanguage = detected;
+    }
   }
 
   private resolveTerminalWidth(): number {
@@ -2782,6 +3242,41 @@ export class TerminalApp {
   private async readPaperTitles(runId: string, maxItems: number): Promise<string[]> {
     const insights = await this.readCorpusInsights(runId);
     return insights.titles.slice(0, maxItems);
+  }
+
+  private async readHypothesisInsights(runId: string): Promise<HypothesisInsights> {
+    const filePath = path.join(process.cwd(), ".autoresearch", "runs", runId, "hypotheses.jsonl");
+    try {
+      const raw = await fs.readFile(filePath, "utf8");
+      const lines = raw
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+      const insights: HypothesisInsights = {
+        totalHypotheses: lines.length,
+        texts: []
+      };
+
+      for (const line of lines) {
+        try {
+          const row = JSON.parse(line) as Record<string, unknown>;
+          const text = toOptionalString(row.text) || toOptionalString(row.hypothesis) || toOptionalString(row.hypothesis_id);
+          if (text) {
+            insights.texts.push(text);
+          }
+        } catch {
+          // Ignore malformed rows and keep the line-count-based total.
+        }
+      }
+
+      return insights;
+    } catch {
+      return {
+        totalHypotheses: 0,
+        texts: []
+      };
+    }
   }
 
   private async readCorpusInsights(runId: string): Promise<CorpusInsights> {
@@ -3071,8 +3566,12 @@ export async function launchTerminalApp(deps: TerminalAppDeps): Promise<void> {
   await app.start();
 }
 
-function oneLine(text: string): string {
-  return text.replace(/\s+/g, " ").trim().slice(0, 220);
+function oneLine(text: string, maxLength = 220): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 }
 
 function isSlashPrefixed(text: string): boolean {
@@ -3215,6 +3714,54 @@ function isPaperTitleIntent(text: string): boolean {
   return hasPaper && asksTitleOrList;
 }
 
+function isHypothesisCountIntent(text: string): boolean {
+  const raw = text.trim();
+  if (!raw) {
+    return false;
+  }
+  const lower = raw.toLowerCase();
+  const hasHypothesis = /가설|hypothesis|hypotheses/u.test(raw);
+  const asksCount = /몇|개수|갯수|몇개|몇 개|how many|count|number/u.test(lower);
+  const asksExecution = /생성|만들|뽑|추가|다시|재생성|generate|create|make|extract|derive|run|execute|실행/u.test(lower);
+  return hasHypothesis && asksCount && !asksExecution;
+}
+
+function isHypothesisListIntent(text: string): boolean {
+  const raw = text.trim();
+  if (!raw) {
+    return false;
+  }
+  const lower = raw.toLowerCase();
+  const hasHypothesis = /가설|hypothesis|hypotheses/u.test(raw);
+  const asksList =
+    /확인|보여|목록|리스트|정리|알려|내용|what are|show|list|display|review|check/u.test(lower);
+  const asksExecution = /생성|만들|뽑|추가|다시|재생성|generate|create|make|extract|derive|run|execute|실행/u.test(lower);
+  return hasHypothesis && asksList && !asksExecution;
+}
+
+function extractRequestedHypothesisCount(text: string): number {
+  const lower = text.toLowerCase();
+  if (/하나|한 개|한개|one\b/u.test(lower)) {
+    return 1;
+  }
+  if (/두 개|두개|둘|two\b/u.test(lower)) {
+    return 2;
+  }
+  if (/세 개|세개|셋|three\b/u.test(lower)) {
+    return 3;
+  }
+
+  const match = lower.match(/(\d+)\s*(개|건|hypotheses?|hypothesis)?/u);
+  if (match?.[1]) {
+    const value = Number(match[1]);
+    if (Number.isFinite(value) && value > 0) {
+      return Math.min(20, Math.floor(value));
+    }
+  }
+
+  return 5;
+}
+
 function extractRequestedTitleCount(text: string): number {
   const lower = text.toLowerCase();
   if (/하나|한 개|한개|one\b/u.test(lower)) {
@@ -3317,6 +3864,14 @@ function parseTitleCommandArgs(args: string[]): { title: string; runQuery?: stri
 
 function sanitizeTitle(raw: string): string {
   return raw.replace(/\s+/g, " ").trim().replace(/^["'“”‘’]+|["'“”‘’]+$/gu, "").slice(0, 120);
+}
+
+function toOptionalString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed || undefined;
 }
 
 function normalizeTitleIntentCandidate(raw: string): string {
@@ -3636,6 +4191,7 @@ function nodeContextKeys(node: GraphNodeId): string[] {
         "generate_hypotheses.top_k",
         "generate_hypotheses.branch_count",
         "generate_hypotheses.source",
+        "generate_hypotheses.pipeline",
         "generate_hypotheses.summary"
       ];
     case "design_experiments":
@@ -3775,4 +4331,14 @@ async function readAnalyzeSelectionCount(manifestPath: string): Promise<{ select
   } catch {
     return undefined;
   }
+}
+
+function detectInitialGuidanceLanguage(): GuidanceLanguage {
+  const locale =
+    process.env.LC_ALL ||
+    process.env.LC_MESSAGES ||
+    process.env.LANG ||
+    process.env.LANGUAGE ||
+    "";
+  return /\bko(?:_|-|\.)?/i.test(locale) ? "ko" : "en";
 }

@@ -120,14 +120,24 @@ export interface AppConfig {
     llm_mode: "codex_chatgpt_only" | "openai_api";
     codex: {
       model: string;
+      chat_model?: string;
+      pdf_model?: string;
       reasoning_effort: "minimal" | "low" | "medium" | "high" | "xhigh";
+      chat_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
+      pdf_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
       command_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
       fast_mode: boolean;
+      chat_fast_mode?: boolean;
+      pdf_fast_mode?: boolean;
       auth_required: true;
     };
     openai: {
       model: string;
+      chat_model?: string;
+      pdf_model?: string;
       reasoning_effort: "minimal" | "low" | "medium" | "high" | "xhigh";
+      chat_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
+      pdf_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
       command_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
       api_key_required: true;
     };
@@ -135,6 +145,7 @@ export interface AppConfig {
   analysis: {
     pdf_mode: "codex_text_extract" | "responses_api_pdf";
     responses_model: string;
+    responses_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
   };
   papers: {
     max_results: number;
@@ -184,4 +195,28 @@ export interface SlashContextRun {
   currentNode: GraphNodeId;
   status: RunStatus;
   updatedAt: string;
+}
+
+export interface PendingPlan {
+  sourceInput: string;
+  displayCommands: string[];
+  stepIndex: number;
+  totalSteps: number;
+}
+
+export interface WebSessionState {
+  activeRunId?: string;
+  busy: boolean;
+  busyLabel?: string;
+  pendingPlan?: PendingPlan;
+  logs: string[];
+  canCancel: boolean;
+}
+
+export interface ArtifactEntry {
+  path: string;
+  kind: "directory" | "text" | "json" | "image" | "pdf" | "download";
+  size: number;
+  modifiedAt: string;
+  previewable: boolean;
 }

@@ -33,7 +33,13 @@ export interface StructuredNaturalActionPlan {
   targetRunId?: string;
 }
 
-type StructuredActionType = "collect" | "analyze_papers" | "clear" | "jump" | "title";
+type StructuredActionType =
+  | "collect"
+  | "analyze_papers"
+  | "generate_hypotheses"
+  | "clear"
+  | "jump"
+  | "title";
 
 interface StructuredActionOutput {
   target_run_id?: unknown;
@@ -62,6 +68,8 @@ interface StructuredAction {
   bibtex_mode?: "generated" | "s2" | "hybrid";
   dry_run?: boolean;
   top_n?: number;
+  top_k?: number;
+  branch_count?: number;
   node?: GraphNodeId;
   force?: boolean;
   title?: string;
@@ -71,7 +79,8 @@ const ACTION_EXTRACTION_TIMEOUT_MS = 12000;
 
 const ACTION_HINT_PATTERNS = [
   /(?:collect|gather|fetch|search|lookup|find|research|investigate|analy[sz]e|clear|remove|delete|jump|go\s+to|move\s+to|rename|change)/iu,
-  /(?:수집|분석|삭제|제거|지워|없애|이동|돌아가|되돌아가|점프|바꿔|변경|수정)/u,
+  /(?:hypotheses?|hypothesis|가설)/iu,
+  /(?:수집|분석|가설|삭제|제거|지워|없애|이동|돌아가|되돌아가|점프|바꿔|변경|수정)/u,
   /(?:논문|paper|papers).{0,30}(?:\d+\s*(?:개|편|건|papers?))/iu
 ] as const;
 
@@ -154,6 +163,11 @@ export async function extractStructuredActionPlan(
   };
 }
 
+export function isStructuredActionTimeoutError(error: unknown): boolean {
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  return message.includes("action intent timeout") || (message.includes("timeout") && message.includes("action intent"));
+}
+
 function extractFastStructuredActionPlan(
   input: string,
   runs: RunRecord[],
@@ -167,6 +181,10 @@ function extractFastStructuredActionPlan(
       const analyzeAction = extractFastAnalyzeAction(input);
       if (analyzeAction) {
         return [analyzeAction];
+      }
+      const hypothesesAction = extractFastGenerateHypothesesAction(input);
+      if (hypothesesAction) {
+        return [hypothesesAction];
       }
       const collectRequest = extractCollectRequestFromNatural(input);
       if (collectRequest) {
@@ -213,6 +231,10 @@ function extractFastClearThenFollowupActions(
   const analyzeAction = extractFastAnalyzeAction(remainder);
   if (analyzeAction) {
     return [clearAction, analyzeAction];
+  }
+  const hypothesesAction = extractFastGenerateHypothesesAction(remainder);
+  if (hypothesesAction) {
+    return [clearAction, hypothesesAction];
   }
   const collectRequest = extractCollectRequestFromNatural(remainder);
   if (collectRequest) {
@@ -298,6 +320,31 @@ function extractFastAnalyzeAction(raw: string): StructuredAction | undefined {
   return topN ? { type: "analyze_papers", top_n: topN } : undefined;
 }
 
+function extractFastGenerateHypothesesAction(raw: string): StructuredAction | undefined {
+  const normalized = raw.trim();
+  const lower = normalized.toLowerCase();
+  const hasHypothesisCue =
+    /가설/u.test(normalized) || /\bhypotheses?\b/i.test(lower) || /\bhypothesis\b/i.test(lower);
+  const hasGenerationCue =
+    /뽑|생성|만들|추출|generate|produce|draft|derive|brainstorm/u.test(normalized);
+  if (!hasHypothesisCue || !hasGenerationCue) {
+    return undefined;
+  }
+
+  const countMatch =
+    normalized.match(/가설(?:을|를)?\s*(\d+)\s*(?:개|건|편)?/u) ||
+    normalized.match(/가설[^.\n]{0,20}?(\d+)\s*(?:개|건|편)?/u) ||
+    normalized.match(/(\d+)\s*(?:개|건|편)?[^.\n]{0,20}가설/u) ||
+    lower.match(/\b(?:top\s+)?(\d+)\s+hypotheses?\b/u) ||
+    lower.match(/\bhypotheses?\b[^.\n]{0,20}\b(\d+)\b/u);
+
+  const topK = toPositiveInt(countMatch?.[1]);
+  const branchCount = typeof topK === "number" ? Math.max(topK, 6) : undefined;
+  return topK
+    ? { type: "generate_hypotheses", top_k: topK, branch_count: branchCount }
+    : { type: "generate_hypotheses" };
+}
+
 function extractFastClearAction(raw: string): StructuredAction | undefined {
   const normalized = raw.trim();
   const hasPaperWord = /논문|paper|papers/u.test(normalized);
@@ -335,7 +382,7 @@ function buildStructuredActionPrompt(input: string, runs: RunRecord[], activeRun
     "You translate AutoResearch natural-language execution requests into STRICT JSON.",
     "Return JSON only. No markdown, no prose.",
     "If the input is not asking to execute an action, return {\"actions\":[]}.",
-    "Supported action types only: collect, analyze_papers, clear, jump, title.",
+    "Supported action types only: collect, analyze_papers, generate_hypotheses, clear, jump, title.",
     "Actions may be returned as an ordered array for multi-step requests.",
     "Do not answer read-only questions with actions.",
     "Use exact node ids only for clear/jump:",
@@ -343,6 +390,8 @@ function buildStructuredActionPrompt(input: string, runs: RunRecord[], activeRun
     "For collect actions, infer query, limit/additional, filters, and sort when explicitly requested.",
     "For open-access/PDF-available requests, set filters.open_access=true.",
     "For 'top N papers analyze' requests, use type='analyze_papers' and top_n=N.",
+    "For requests to generate or extract hypotheses, use type='generate_hypotheses'.",
+    "If the user asks for N hypotheses, set top_k=N and branch_count=max(N,6) unless a larger candidate count is explicitly requested.",
     "If the user explicitly references the current run title or topic, use that exact run title/topic string as the collect query.",
     "Do not invent a query unless it is directly specified or clearly implied by the title/topic wording.",
     "When the user mentions title rename, return a title action with the requested title string.",
@@ -357,7 +406,7 @@ function buildStructuredActionPrompt(input: string, runs: RunRecord[], activeRun
     '  "target_run_id": "run-id-or-empty",',
     '  "actions": [',
     "    {",
-    '      "type": "collect|analyze_papers|clear|jump|title",',
+    '      "type": "collect|analyze_papers|generate_hypotheses|clear|jump|title",',
     '      "query": "optional string",',
     '      "limit": 100,',
     '      "additional": 50,',
@@ -375,6 +424,8 @@ function buildStructuredActionPrompt(input: string, runs: RunRecord[], activeRun
     '      "bibtex_mode": "generated|s2|hybrid",',
     '      "dry_run": false,',
     '      "top_n": 30,',
+    '      "top_k": 10,',
+    '      "branch_count": 10,',
     '      "node": "collect_papers",',
     '      "force": false,',
     '      "title": "New run title"',
@@ -415,6 +466,24 @@ function validateStructuredActions(actions: StructuredAction[], targetRun?: RunR
       case "analyze_papers": {
         const topN = toPositiveInt(action.top_n);
         out.push(topN ? { type: "analyze_papers", top_n: topN } : { type: "analyze_papers" });
+        break;
+      }
+      case "generate_hypotheses": {
+        const topK = toPositiveInt(action.top_k);
+        const branchCountRaw = toPositiveInt(action.branch_count);
+        const branchCount =
+          typeof topK === "number"
+            ? Math.max(branchCountRaw ?? 0, topK, 6)
+            : branchCountRaw;
+        out.push(
+          typeof topK === "number"
+            ? {
+                type: "generate_hypotheses",
+                top_k: topK,
+                branch_count: branchCount
+              }
+            : { type: "generate_hypotheses" }
+        );
         break;
       }
       case "clear": {
@@ -528,6 +597,11 @@ function buildCommandForStructuredAction(action: StructuredAction, runId?: strin
     }
     case "analyze_papers":
       return `/agent run analyze_papers${runId ? ` ${runId}` : ""}${action.top_n ? ` --top-n ${action.top_n}` : ""}`;
+    case "generate_hypotheses": {
+      const topK = toPositiveInt(action.top_k);
+      const branchCount = toPositiveInt(action.branch_count);
+      return `/agent run generate_hypotheses${runId ? ` ${runId}` : ""}${topK ? ` --top-k ${topK}` : ""}${branchCount ? ` --branch-count ${branchCount}` : ""}`;
+    }
     case "clear":
       return action.node ? `/agent clear ${action.node}${runId ? ` ${runId}` : ""}` : undefined;
     case "jump":
@@ -565,6 +639,17 @@ function buildSummaryLines(actions: StructuredAction[], language: "ko" | "en"): 
             : language === "ko"
               ? "논문 분석 요청을 인식했습니다."
               : "Recognized a paper analysis request.",
+          `- ${summarizeAction(action, language)}`
+        ];
+      case "generate_hypotheses":
+        return [
+          action.top_k
+            ? language === "ko"
+              ? `가설 ${action.top_k}개 생성을 준비합니다.`
+              : `Preparing to generate ${action.top_k} hypotheses.`
+            : language === "ko"
+              ? "가설 생성 요청을 인식했습니다."
+              : "Recognized a hypothesis-generation request.",
           `- ${summarizeAction(action, language)}`
         ];
       case "clear":
@@ -626,6 +711,18 @@ function summarizeAction(action: StructuredAction, language: "ko" | "en"): strin
         : language === "ko"
           ? "논문 분석"
           : "Analyze papers";
+    case "generate_hypotheses": {
+      const fragments: string[] = [];
+      if (action.top_k) {
+        fragments.push(`topK=${action.top_k}`);
+      }
+      if (action.branch_count) {
+        fragments.push(`branchCount=${action.branch_count}`);
+      }
+      return language === "ko"
+        ? `가설 생성 (${fragments.join(", ") || "기본값"})`
+        : `Generate hypotheses (${fragments.join(", ") || "defaults"})`;
+    }
     case "clear":
       return language === "ko" ? `${action.node} 산출물 정리` : `Clear ${action.node} artifacts`;
     case "jump":
