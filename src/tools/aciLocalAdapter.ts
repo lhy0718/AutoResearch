@@ -190,6 +190,9 @@ export class LocalAciAdapter implements AgentComputerInterface {
       ],
       cwd
     );
+    if (isMissingCommand(obs, "rg")) {
+      return fallbackSearchCode(query, cwd, limit, globs);
+    }
     return limitLines(obs, limit);
   }
 
@@ -223,6 +226,9 @@ export class LocalAciAdapter implements AgentComputerInterface {
       ],
       cwd
     );
+    if (isMissingCommand(obs, "rg")) {
+      return fallbackFindSymbol(symbol, cwd, limit, globs);
+    }
     return limitLines(obs, limit);
   }
 
@@ -240,6 +246,9 @@ export class LocalAciAdapter implements AgentComputerInterface {
       ],
       cwd
     );
+    if (isMissingCommand(obs, "rg")) {
+      return fallbackListFiles(cwd, limit, globs);
+    }
     return limitLines(obs, limit);
   }
 }
@@ -308,6 +317,10 @@ function buildGlobArgs(globs: string[]): string[] {
   return globs.flatMap((glob) => ["--glob", glob]);
 }
 
+function isMissingCommand(obs: AciObservation, command: string): boolean {
+  return obs.status === "error" && typeof obs.stderr === "string" && obs.stderr.includes(`spawn ${command} ENOENT`);
+}
+
 function buildSymbolPattern(symbol: string): string {
   const escaped = escapeRegex(symbol.trim());
   return [
@@ -334,6 +347,227 @@ function limitLines(obs: AciObservation, limit: number): AciObservation {
     ...obs,
     stdout: lines.join("\n")
   };
+}
+
+async function fallbackSearchCode(
+  query: string,
+  cwd?: string,
+  limit = 20,
+  globs = defaultCodeGlobs()
+): Promise<AciObservation> {
+  const started = Date.now();
+  try {
+    const workspaceRoot = cwd || process.cwd();
+    const files = await collectFallbackFiles(workspaceRoot, globs);
+    const matches: string[] = [];
+    const artifacts = new Set<string>();
+    const matcher = buildFixedStringMatcher(query);
+
+    for (const relativePath of files) {
+      const filePath = path.join(workspaceRoot, relativePath);
+      const text = await safeReadText(filePath);
+      if (text === undefined) {
+        continue;
+      }
+      let matchesInFile = 0;
+      for (const [index, line] of text.split(/\r?\n/u).entries()) {
+        if (!matcher(line)) {
+          continue;
+        }
+        matches.push(`${relativePath}:${index + 1}:${line.slice(0, 220)}`);
+        artifacts.add(filePath);
+        matchesInFile += 1;
+        if (matches.length >= limit || matchesInFile >= 3) {
+          break;
+        }
+      }
+      if (matches.length >= limit) {
+        break;
+      }
+    }
+
+    return {
+      status: "ok",
+      stdout: matches.join("\n"),
+      artifacts: [...artifacts],
+      duration_ms: Date.now() - started
+    };
+  } catch (error) {
+    return {
+      status: "error",
+      stderr: error instanceof Error ? error.message : String(error),
+      duration_ms: Date.now() - started
+    };
+  }
+}
+
+async function fallbackFindSymbol(
+  symbol: string,
+  cwd?: string,
+  limit = 20,
+  globs = defaultCodeGlobs()
+): Promise<AciObservation> {
+  const started = Date.now();
+  try {
+    const workspaceRoot = cwd || process.cwd();
+    const files = await collectFallbackFiles(workspaceRoot, globs);
+    const matches: string[] = [];
+    const artifacts = new Set<string>();
+    const regex = new RegExp(buildSymbolPattern(symbol), hasUppercase(symbol) ? "u" : "iu");
+
+    for (const relativePath of files) {
+      const filePath = path.join(workspaceRoot, relativePath);
+      const text = await safeReadText(filePath);
+      if (text === undefined) {
+        continue;
+      }
+      for (const [index, line] of text.split(/\r?\n/u).entries()) {
+        if (!regex.test(line)) {
+          continue;
+        }
+        matches.push(`${relativePath}:${index + 1}:${line.slice(0, 220)}`);
+        artifacts.add(filePath);
+        if (matches.length >= limit) {
+          break;
+        }
+      }
+      if (matches.length >= limit) {
+        break;
+      }
+    }
+
+    return {
+      status: "ok",
+      stdout: matches.join("\n"),
+      artifacts: [...artifacts],
+      duration_ms: Date.now() - started
+    };
+  } catch (error) {
+    return {
+      status: "error",
+      stderr: error instanceof Error ? error.message : String(error),
+      duration_ms: Date.now() - started
+    };
+  }
+}
+
+async function fallbackListFiles(
+  cwd?: string,
+  limit = 200,
+  globs = defaultCodeGlobs()
+): Promise<AciObservation> {
+  const started = Date.now();
+  try {
+    const workspaceRoot = cwd || process.cwd();
+    const files = await collectFallbackFiles(workspaceRoot, globs);
+    return {
+      status: "ok",
+      stdout: files.slice(0, Math.max(0, limit)).join("\n"),
+      duration_ms: Date.now() - started
+    };
+  } catch (error) {
+    return {
+      status: "error",
+      stderr: error instanceof Error ? error.message : String(error),
+      duration_ms: Date.now() - started
+    };
+  }
+}
+
+async function collectFallbackFiles(workspaceRoot: string, globs: string[]): Promise<string[]> {
+  const includeGlobs = globs.filter((glob) => !glob.startsWith("!"));
+  const excludeGlobs = globs
+    .filter((glob) => glob.startsWith("!"))
+    .map((glob) => glob.slice(1));
+  const files: string[] = [];
+
+  async function walk(relativeDir = ""): Promise<void> {
+    const currentDir = relativeDir ? path.join(workspaceRoot, relativeDir) : workspaceRoot;
+    let entries;
+    try {
+      entries = await fs.readdir(currentDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+
+    for (const entry of entries) {
+      const relativePath = normalizeRelativePath(relativeDir ? `${relativeDir}/${entry.name}` : entry.name);
+      if (entry.isDirectory()) {
+        if (matchesAnyGlob(relativePath, excludeGlobs)) {
+          continue;
+        }
+        await walk(relativePath);
+        continue;
+      }
+      if (!entry.isFile()) {
+        continue;
+      }
+      if (matchesAnyGlob(relativePath, excludeGlobs)) {
+        continue;
+      }
+      if (includeGlobs.length > 0 && !matchesAnyGlob(relativePath, includeGlobs)) {
+        continue;
+      }
+      files.push(relativePath);
+    }
+  }
+
+  await walk();
+  return files;
+}
+
+function matchesAnyGlob(relativePath: string, globs: string[]): boolean {
+  return globs.some((glob) => matchesGlob(relativePath, glob));
+}
+
+function matchesGlob(relativePath: string, glob: string): boolean {
+  const normalizedPath = normalizeRelativePath(relativePath);
+  const normalizedGlob = normalizeRelativePath(glob);
+
+  if (!normalizedGlob.includes("*")) {
+    return (
+      normalizedPath === normalizedGlob ||
+      normalizedPath.startsWith(`${normalizedGlob}/`) ||
+      normalizedPath.split("/").includes(normalizedGlob)
+    );
+  }
+
+  const target = normalizedGlob.includes("/") ? normalizedPath : path.posix.basename(normalizedPath);
+  return globToRegExp(normalizedGlob).test(target);
+}
+
+function globToRegExp(glob: string): RegExp {
+  const escaped = glob
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*\*/g, "__DOUBLE_STAR__")
+    .replace(/\*/g, "[^/]*")
+    .replace(/__DOUBLE_STAR__/g, ".*");
+  return new RegExp(`^${escaped}$`, "u");
+}
+
+function normalizeRelativePath(value: string): string {
+  return value.split(path.sep).join("/");
+}
+
+function buildFixedStringMatcher(query: string): (line: string) => boolean {
+  if (hasUppercase(query)) {
+    return (line) => line.includes(query);
+  }
+  const lowerQuery = query.toLowerCase();
+  return (line) => line.toLowerCase().includes(lowerQuery);
+}
+
+function hasUppercase(value: string): boolean {
+  return /[A-Z]/u.test(value);
+}
+
+async function safeReadText(filePath: string): Promise<string | undefined> {
+  try {
+    return await fs.readFile(filePath, "utf8");
+  } catch {
+    return undefined;
+  }
 }
 
 function runProcess(

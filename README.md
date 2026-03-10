@@ -225,6 +225,96 @@ stateDiagram-v2
 
 Default `agent_approval` mode pauses after every node. `implement_experiments` is the one forward step that can skip its pause through automatic handoff to `run_experiments`, and `analyze_results` is the node that can explicitly redirect the graph backward.
 
+### Phase-by-Phase Connection Graphs
+
+The four focused graphs below cover the full 8-node pipeline and show which role or session manager is actually doing the work inside each phase.
+
+#### Discovery and Reading
+
+```mermaid
+flowchart LR
+    Topic["run topic + collect constraints"] --> CP["collect_papers"]
+    CP --> CC["collector_curator"]
+    CC --> SS["Semantic Scholar search"]
+    SS --> Enrich["enrichment + BibTeX recovery"]
+    Enrich --> Corpus["corpus.jsonl + bibtex.bib"]
+
+    Corpus --> AP["analyze_papers"]
+    AP --> RE["reader_evidence_extractor"]
+    RE --> Select["paper selection + rerank"]
+    Select --> Pdf["local PDF/text analysis or Responses API PDF"]
+    Pdf --> Evidence["paper_summaries.jsonl + evidence_store.jsonl"]
+```
+
+#### Hypothesis and Experiment Design
+
+```mermaid
+flowchart LR
+    Evidence["paper_summaries.jsonl + evidence_store.jsonl"] --> GH["generate_hypotheses"]
+    GH --> HA["hypothesis_agent"]
+    HA --> Axes["evidence axes"]
+    Axes --> Drafts["candidate drafts"]
+    Drafts --> Reviews["candidate reviews"]
+    Reviews --> Select["selection / top-k"]
+    Select --> Hyp["hypotheses.jsonl"]
+
+    Hyp --> DE["design_experiments"]
+    DE --> ED["experiment_designer"]
+    ED --> Profiles["constraint profile + objective profile"]
+    Profiles --> Plans["design candidates"]
+    Plans --> PlanYaml["experiment_plan.yaml"]
+```
+
+#### Implementation, Execution, and Result Loop
+
+```mermaid
+flowchart LR
+    PlanYaml["experiment_plan.yaml"] --> IE["implement_experiments"]
+    IE --> IM["ImplementSessionManager"]
+    IM --> Impl["implementer"]
+    IM --> Localizer["ImplementationLocalizer"]
+    IM --> Codex["Codex CLI session"]
+    IM --> Memory["episode + long-term memory"]
+    Codex --> VerifyPatch["local verify report"]
+    VerifyPatch --> Handoff{"auto handoff?"}
+
+    Handoff -->|yes| RX["run_experiments"]
+    Handoff -->|no| Approve["manual approval"]
+    Approve --> RX
+
+    RX --> Runner["runner"]
+    Runner --> ACI["ACI test + command execution"]
+    ACI --> Metrics["metrics.json + verifier report"]
+    Metrics --> AR["analyze_results"]
+    AR --> Analyst["analyst_statistician"]
+    Analyst --> Synth["analysis synthesis + transition recommendation"]
+
+    Synth -->|advance| WP["write_paper"]
+    Synth -->|backtrack_to_implement| IE
+    Synth -->|backtrack_to_design| DE["design_experiments"]
+    Synth -->|backtrack_to_hypotheses| GH["generate_hypotheses"]
+```
+
+#### Writing and Review
+
+```mermaid
+flowchart LR
+    Inputs["corpus + evidence + hypotheses + experiment_plan + result_analysis"] --> WP["write_paper"]
+    WP --> PWM["PaperWriterSessionManager"]
+    PWM --> Mode["Codex session or staged LLM"]
+    Mode --> Writer["paper_writer"]
+    Mode --> Reviewer["reviewer"]
+    Writer --> Outline["outline"]
+    Outline --> Draft["draft"]
+    Draft --> Review["review"]
+    Review --> Final["finalize"]
+    Final --> Tex["paper/main.tex + references.bib + evidence_links.json"]
+    Tex --> Build{"PDF build enabled?"}
+    Build -->|yes| Latex["LaTeX compile + optional repair"]
+    Build -->|no| Done["LaTeX artifacts only"]
+    Latex --> Pdf["paper/main.pdf (optional)"]
+```
+
 | Graph node | Primary role(s) | Current implementation shape |
 | --- | --- | --- |
 | `collect_papers` | `collector_curator` | Semantic Scholar search, de-duplication, enrichment, and BibTeX generation |

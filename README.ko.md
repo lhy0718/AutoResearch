@@ -224,6 +224,96 @@ stateDiagram-v2
 
 기본 `agent_approval` 모드에서는 각 노드가 끝날 때마다 멈춥니다. 예외적으로 `implement_experiments`는 `run_experiments`로 자동 handoff할 수 있고, `analyze_results`는 결과에 따라 그래프를 뒤로 되돌리는 추천을 낼 수 있습니다.
 
+### 단계별 연결 그래프
+
+아래 4개의 그래프는 전체 8개 노드를 모두 덮으며, 각 단계 안에서 실제로 어떤 역할 에이전트나 세션 매니저가 일을 수행하는지 보여줍니다.
+
+#### 수집과 읽기
+
+```mermaid
+flowchart LR
+    Topic["run topic + 수집 제약"] --> CP["collect_papers"]
+    CP --> CC["collector_curator"]
+    CC --> SS["Semantic Scholar 검색"]
+    SS --> Enrich["enrichment + BibTeX 복구"]
+    Enrich --> Corpus["corpus.jsonl + bibtex.bib"]
+
+    Corpus --> AP["analyze_papers"]
+    AP --> RE["reader_evidence_extractor"]
+    RE --> Select["논문 선택 + rerank"]
+    Select --> Pdf["로컬 PDF/text 분석 또는 Responses API PDF"]
+    Pdf --> Evidence["paper_summaries.jsonl + evidence_store.jsonl"]
+```
+
+#### 가설과 실험 설계
+
+```mermaid
+flowchart LR
+    Evidence["paper_summaries.jsonl + evidence_store.jsonl"] --> GH["generate_hypotheses"]
+    GH --> HA["hypothesis_agent"]
+    HA --> Axes["evidence axes"]
+    Axes --> Drafts["후보 draft"]
+    Drafts --> Reviews["후보 review"]
+    Reviews --> Select["selection / top-k"]
+    Select --> Hyp["hypotheses.jsonl"]
+
+    Hyp --> DE["design_experiments"]
+    DE --> ED["experiment_designer"]
+    ED --> Profiles["constraint profile + objective profile"]
+    Profiles --> Plans["설계 후보"]
+    Plans --> PlanYaml["experiment_plan.yaml"]
+```
+
+#### 구현, 실행, 결과 루프
+
+```mermaid
+flowchart LR
+    PlanYaml["experiment_plan.yaml"] --> IE["implement_experiments"]
+    IE --> IM["ImplementSessionManager"]
+    IM --> Impl["implementer"]
+    IM --> Localizer["ImplementationLocalizer"]
+    IM --> Codex["Codex CLI session"]
+    IM --> Memory["episode + long-term memory"]
+    Codex --> VerifyPatch["로컬 verify report"]
+    VerifyPatch --> Handoff{"auto handoff?"}
+
+    Handoff -->|yes| RX["run_experiments"]
+    Handoff -->|no| Approve["수동 승인"]
+    Approve --> RX
+
+    RX --> Runner["runner"]
+    Runner --> ACI["ACI 테스트 + 명령 실행"]
+    ACI --> Metrics["metrics.json + verifier report"]
+    Metrics --> AR["analyze_results"]
+    AR --> Analyst["analyst_statistician"]
+    Analyst --> Synth["analysis synthesis + transition recommendation"]
+
+    Synth -->|advance| WP["write_paper"]
+    Synth -->|backtrack_to_implement| IE
+    Synth -->|backtrack_to_design| DE["design_experiments"]
+    Synth -->|backtrack_to_hypotheses| GH["generate_hypotheses"]
+```
+
+#### 집필과 리뷰
+
+```mermaid
+flowchart LR
+    Inputs["corpus + evidence + hypotheses + experiment_plan + result_analysis"] --> WP["write_paper"]
+    WP --> PWM["PaperWriterSessionManager"]
+    PWM --> Mode["Codex session 또는 staged LLM"]
+    Mode --> Writer["paper_writer"]
+    Mode --> Reviewer["reviewer"]
+    Writer --> Outline["outline"]
+    Outline --> Draft["draft"]
+    Draft --> Review["review"]
+    Review --> Final["finalize"]
+    Final --> Tex["paper/main.tex + references.bib + evidence_links.json"]
+    Tex --> Build{"PDF build enabled?"}
+    Build -->|yes| Latex["LaTeX compile + optional repair"]
+    Build -->|no| Done["LaTeX 산출물만 생성"]
+    Latex --> Pdf["paper/main.pdf (optional)"]
+```
+
 | 그래프 노드 | 주 역할 | 현재 구현 형태 |
 | --- | --- | --- |
 | `collect_papers` | `collector_curator` | Semantic Scholar 검색, 중복 제거, 보강, BibTeX 생성 |

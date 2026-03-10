@@ -82,4 +82,40 @@ describe("ImplementationLocalizer", () => {
     expect(result.selected_files).toContain(path.join(workspace, "src", "broken_experiment.py"));
     expect(result.candidates[0]?.path).toBe(path.join(workspace, "src", "broken_experiment.py"));
   });
+
+  it("falls back to filesystem localization when ripgrep is unavailable", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-localizer-no-rg-"));
+    tempDirs.push(workspace);
+    mkdirSync(path.join(workspace, "src"), { recursive: true });
+
+    writeFileSync(
+      path.join(workspace, "src", "accuracy_runner.py"),
+      [
+        "def run_experiment():",
+        "    return {'accuracy': 0.91}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const originalPath = process.env.PATH;
+    process.env.PATH = "";
+    try {
+      const localizer = new ImplementationLocalizer(new LocalAciAdapter());
+      const result = await localizer.localize({
+        workspaceRoot: workspace,
+        goal: "Implement a runnable experiment and produce accuracy metrics.",
+        topic: "experiment runner",
+        objectiveMetric: "accuracy",
+        constraints: [],
+        planExcerpt: "Focus on the runner implementation.",
+        hypothesesExcerpt: "The runner should return accuracy.",
+        existingChangedFiles: []
+      });
+
+      expect(result.selected_files[0]).toBe(path.join(workspace, "src", "accuracy_runner.py"));
+      expect(result.hits?.some((hit) => hit.path.endsWith("accuracy_runner.py"))).toBe(true);
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
 });
