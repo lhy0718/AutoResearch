@@ -140,7 +140,7 @@ interface RawPaperDraftClaim {
 }
 
 export const PAPER_WRITER_SYSTEM_PROMPT = [
-  "You are the AutoResearch paper writing agent.",
+  "You are the AutoLabOS paper writing agent.",
   "Write a concise, evidence-grounded research paper draft from structured workflow artifacts.",
   "Return JSON only.",
   "Do not invent evidence IDs, paper IDs, metrics, venues, or experiment outcomes.",
@@ -769,8 +769,8 @@ export function buildPaperBibtex(corpus: StoredCorpusRow[], citedPaperIds: strin
   return {
     references: [
       "@article{autoref1,",
-      "  title={AutoResearch generated reference},",
-      "  author={AutoResearch},",
+      "  title={AutoLabOS generated reference},",
+      "  author={AutoLabOS},",
       "  year={2026}",
       "}"
     ].join("\n"),

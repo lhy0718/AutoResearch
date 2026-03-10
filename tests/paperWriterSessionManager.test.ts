@@ -16,9 +16,9 @@ const ORIGINAL_CWD = process.cwd();
 
 afterEach(() => {
   process.chdir(ORIGINAL_CWD);
-  delete process.env.AUTORESEARCH_FAKE_CODEX_RESPONSE;
-  delete process.env.AUTORESEARCH_FAKE_CODEX_RESPONSE_SEQUENCE;
-  delete process.env.AUTORESEARCH_FAKE_CODEX_THREAD_ID;
+  delete process.env.AUTOLABOS_FAKE_CODEX_RESPONSE;
+  delete process.env.AUTOLABOS_FAKE_CODEX_RESPONSE_SEQUENCE;
+  delete process.env.AUTOLABOS_FAKE_CODEX_THREAD_ID;
 });
 
 function makeRun(runId: string): RunRecord {
@@ -38,25 +38,25 @@ function makeRun(runId: string): RunRecord {
     updatedAt: new Date().toISOString(),
     graph: createDefaultGraphState(),
     memoryRefs: {
-      runContextPath: `.autoresearch/runs/${runId}/memory/run_context.json`,
-      longTermPath: `.autoresearch/runs/${runId}/memory/long_term.jsonl`,
-      episodePath: `.autoresearch/runs/${runId}/memory/episodes.jsonl`
+      runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+      longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+      episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
     }
   };
 }
 
 describe("PaperWriterSessionManager", () => {
   it("stores and reuses a codex thread for staged paper writing", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-paper-session-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-session-"));
     process.chdir(root);
 
     const runId = "run-paper-session";
     const run = makeRun(runId);
-    const runDir = path.join(root, ".autoresearch", "runs", runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
     await mkdir(path.join(runDir, "memory"), { recursive: true });
     await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
 
-    process.env.AUTORESEARCH_FAKE_CODEX_RESPONSE_SEQUENCE = JSON.stringify([
+    process.env.AUTOLABOS_FAKE_CODEX_RESPONSE_SEQUENCE = JSON.stringify([
       {
         title: "Session-backed Paper Writer",
         abstract_focus: ["agent collaboration", "reproducibility"],

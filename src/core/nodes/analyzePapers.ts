@@ -477,7 +477,7 @@ async function loadAnalysisSelectionRequest(runContextMemory: RunContextMemory):
 }
 
 async function readCorpusRows(runId: string): Promise<AnalysisCorpusRow[]> {
-  const corpusPath = path.join(".autoresearch", "runs", runId, "corpus.jsonl");
+  const corpusPath = path.join(".autolabos", "runs", runId, "corpus.jsonl");
   const corpusText = await safeRead(corpusPath);
   return corpusText
     .split("\n")

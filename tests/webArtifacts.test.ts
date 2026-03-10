@@ -9,7 +9,7 @@ import { listRunArtifacts, readRunArtifact, resolveRunArtifactPath } from "../sr
 
 describe("web artifacts", () => {
   it("lists nested artifacts and blocks path traversal", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autoresearch-artifacts-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autolabos-artifacts-"));
     const paths = resolveAppPaths(cwd);
     await ensureScaffold(paths);
     const runId = "run-1";

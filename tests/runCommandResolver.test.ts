@@ -21,7 +21,7 @@ afterEach(() => {
 
 describe("resolveRunCommand", () => {
   it("prefers explicit run command stored in run context", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autoresearch-run-command-"));
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-run-command-"));
     tempDirs.push(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
@@ -37,7 +37,7 @@ describe("resolveRunCommand", () => {
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);
     await memory.put("implement_experiments.run_command", "python3 demo.py --epochs 1");
     await memory.put("implement_experiments.cwd", ".");
-    await memory.put("implement_experiments.metrics_path", `.autoresearch/runs/${run.id}/metrics.json`);
+    await memory.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
     await memory.put("implement_experiments.test_command", "python3 -m py_compile demo.py");
 
     const resolved = await resolveRunCommand(run, workspace);
@@ -48,7 +48,7 @@ describe("resolveRunCommand", () => {
   });
 
   it("falls back to run-local experiment script when no explicit command exists", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autoresearch-run-script-"));
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-run-script-"));
     tempDirs.push(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
@@ -61,7 +61,7 @@ describe("resolveRunCommand", () => {
       objectiveMetric: "loss"
     });
 
-    const runDir = path.join(workspace, ".autoresearch", "runs", run.id);
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
     mkdirSync(runDir, { recursive: true });
     const scriptPath = path.join(runDir, "experiment.py");
     writeFileSync(scriptPath, "print('hi')\n", "utf8");
@@ -73,7 +73,7 @@ describe("resolveRunCommand", () => {
   });
 
   it("prefers public experiment artifacts when available", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autoresearch-run-public-script-"));
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-run-public-script-"));
     tempDirs.push(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);

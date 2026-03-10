@@ -59,7 +59,7 @@ export interface PaperAnalysisResult {
 }
 
 export const ANALYSIS_SYSTEM_PROMPT = [
-  "You are a scientific literature analyst for AutoResearch.",
+  "You are a scientific literature analyst for AutoLabOS.",
   "Return one JSON object only.",
   "No markdown, no prose before or after the JSON.",
   "Be faithful to the provided source. Do not invent claims.",

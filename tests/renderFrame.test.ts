@@ -25,9 +25,9 @@ function makeRun(overrides: Partial<RunRecord> = {}): RunRecord {
     updatedAt: overrides.updatedAt ?? now,
     graph,
     memoryRefs: overrides.memoryRefs ?? {
-      runContextPath: ".autoresearch/runs/run-1/memory/run_context.json",
-      longTermPath: ".autoresearch/runs/run-1/memory/long_term.jsonl",
-      episodePath: ".autoresearch/runs/run-1/memory/episodes.jsonl"
+      runContextPath: ".autolabos/runs/run-1/memory/run_context.json",
+      longTermPath: ".autolabos/runs/run-1/memory/long_term.jsonl",
+      episodePath: ".autolabos/runs/run-1/memory/episodes.jsonl"
     }
   };
 }
@@ -111,7 +111,7 @@ describe("buildFrame", () => {
       colorEnabled: false
     });
 
-    expect(stripAnsi(frame.lines[0])).toBe("AutoResearch v1.0.0");
+    expect(stripAnsi(frame.lines[0])).toBe("AutoLabOS v1.0.0");
   });
 
   it("renders active run insight lines above recent logs", () => {

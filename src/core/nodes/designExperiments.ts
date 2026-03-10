@@ -111,7 +111,7 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         node: "design_experiments"
       });
 
-      const hypothesesPath = path.join(".autoresearch", "runs", run.id, "hypotheses.jsonl");
+      const hypothesesPath = path.join(".autolabos", "runs", run.id, "hypotheses.jsonl");
       const hypotheses = parseHypotheses(await safeRead(hypothesesPath));
       const filtered = filterDesignHypotheses(hypotheses, objectiveMetricProfile);
       if (filtered.dropped.length > 0) {

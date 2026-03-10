@@ -116,7 +116,7 @@ export class CodexCliClient {
   async runTurnStream(opts: RunTurnOptions): Promise<RunTurnResult> {
     const fakeResponse = resolveFakeCodexResponse();
     if (typeof fakeResponse === "string" && fakeResponse.length > 0) {
-      const discoveredThreadId = opts.threadId || process.env.AUTORESEARCH_FAKE_CODEX_THREAD_ID || "fake-thread";
+      const discoveredThreadId = opts.threadId || process.env.AUTOLABOS_FAKE_CODEX_THREAD_ID || "fake-thread";
       const event = normalizeAgentEvent(
         {
           type: "item.completed",
@@ -311,7 +311,7 @@ let fakeResponseSequenceSource = "";
 let fakeResponseSequenceIndex = 0;
 
 function resolveFakeCodexResponse(): string | undefined {
-  const fakeSequence = process.env.AUTORESEARCH_FAKE_CODEX_RESPONSE_SEQUENCE;
+  const fakeSequence = process.env.AUTOLABOS_FAKE_CODEX_RESPONSE_SEQUENCE;
   if (typeof fakeSequence === "string" && fakeSequence.trim()) {
     if (fakeResponseSequenceSource !== fakeSequence) {
       fakeResponseSequenceSource = fakeSequence;
@@ -334,7 +334,7 @@ function resolveFakeCodexResponse(): string | undefined {
     }
   }
 
-  const fakeResponse = process.env.AUTORESEARCH_FAKE_CODEX_RESPONSE;
+  const fakeResponse = process.env.AUTOLABOS_FAKE_CODEX_RESPONSE;
   if (typeof fakeResponse === "string" && fakeResponse.length > 0) {
     return fakeResponse;
   }

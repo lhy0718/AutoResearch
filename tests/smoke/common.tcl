@@ -1,4 +1,4 @@
-if {[info exists env(AUTORESEARCH_SMOKE_VERBOSE)] && $env(AUTORESEARCH_SMOKE_VERBOSE) ne ""} {
+if {[info exists env(AUTOLABOS_SMOKE_VERBOSE)] && $env(AUTOLABOS_SMOKE_VERBOSE) ne ""} {
   log_user 1
 } else {
   log_user 0
@@ -19,7 +19,7 @@ proc escape_regex {text} {
   return [string map {\\ \\\\ [ \\[ ] \\] ( \\( ) \\) . \\. + \\+ * \\* ? \\? ^ \\^ $ \\$ | \\|} $text]
 }
 
-proc spawn_autoresearch {workdir} {
+proc spawn_autolabos {workdir} {
   global spawn_id
   set repo_root [file normalize [file join [file dirname [info script]] ../..]]
   cd $workdir

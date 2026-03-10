@@ -18,7 +18,7 @@ export async function resolveRunCommand(
   run: RunRecord,
   workspaceRoot = process.cwd()
 ): Promise<ResolvedRunCommand> {
-  const runDir = path.join(workspaceRoot, ".autoresearch", "runs", run.id);
+  const runDir = path.join(workspaceRoot, ".autolabos", "runs", run.id);
   const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
   const publicDir =
     resolveMaybeRelative(await runContext.get<string>("implement_experiments.public_dir"), workspaceRoot) || undefined;

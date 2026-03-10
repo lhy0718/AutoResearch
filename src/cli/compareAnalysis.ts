@@ -2,7 +2,7 @@ import path from "node:path";
 
 import { promises as fs } from "node:fs";
 
-import { bootstrapAutoresearchRuntime } from "../runtime/createRuntime.js";
+import { bootstrapAutoLabOSRuntime } from "../runtime/createRuntime.js";
 import { resolveOpenAiApiKey } from "../config.js";
 import { ResponsesPdfAnalysisClient } from "../integrations/openai/responsesPdfAnalysisClient.js";
 import { CodexLLMClient } from "../core/llm/client.js";
@@ -92,12 +92,12 @@ export interface ComparisonArtifactPayload {
 }
 
 export async function runCompareAnalysisCli(options: CompareAnalysisCliOptions): Promise<void> {
-  const bootstrap = await bootstrapAutoresearchRuntime({
+  const bootstrap = await bootstrapAutoLabOSRuntime({
     cwd: options.cwd,
     allowInteractiveSetup: false
   });
   if (!bootstrap.runtime || !bootstrap.config) {
-    throw new Error("AutoResearch is not configured in this workspace yet.");
+    throw new Error("AutoLabOS is not configured in this workspace yet.");
   }
 
   const run = await bootstrap.runtime.runStore.getRun(options.runId);
@@ -293,8 +293,8 @@ export async function runCompareAnalysisCli(options: CompareAnalysisCliOptions):
       options.judge
         ? `Judge wins -> codex: ${aggregate.judgeWins.codex}, api: ${aggregate.judgeWins.api}, tie: ${aggregate.judgeWins.tie}`
         : "Judge skipped",
-      `Artifact: .autoresearch/runs/${run.id}/analysis_mode_comparison.json`,
-      `Report: .autoresearch/runs/${run.id}/analysis_mode_comparison.md`
+      `Artifact: .autolabos/runs/${run.id}/analysis_mode_comparison.json`,
+      `Report: .autolabos/runs/${run.id}/analysis_mode_comparison.md`
     ].join("\n") + "\n"
   );
 }
@@ -446,7 +446,7 @@ async function buildComparisonEvaluationContext(
 }
 
 async function readCorpusRows(runId: string): Promise<AnalysisCorpusRow[]> {
-  const corpusPath = path.join(".autoresearch", "runs", runId, "corpus.jsonl");
+  const corpusPath = path.join(".autolabos", "runs", runId, "corpus.jsonl");
   const corpusText = await safeRead(corpusPath);
   return corpusText
     .split("\n")
@@ -463,7 +463,7 @@ async function readCorpusRows(runId: string): Promise<AnalysisCorpusRow[]> {
 }
 
 async function readSelectedPaperIds(run: RunRecord): Promise<string[] | undefined> {
-  const manifestPath = path.join(".autoresearch", "runs", run.id, "analysis_manifest.json");
+  const manifestPath = path.join(".autolabos", "runs", run.id, "analysis_manifest.json");
   try {
     const raw = await fs.readFile(manifestPath, "utf8");
     const parsed = JSON.parse(raw) as { selectedPaperIds?: unknown };

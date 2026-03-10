@@ -68,9 +68,9 @@ export class RunStore {
       updatedAt: ts,
       graph,
       memoryRefs: {
-        runContextPath: `.autoresearch/runs/${id}/memory/run_context.json`,
-        longTermPath: `.autoresearch/runs/${id}/memory/long_term.jsonl`,
-        episodePath: `.autoresearch/runs/${id}/memory/episodes.jsonl`
+        runContextPath: `.autolabos/runs/${id}/memory/run_context.json`,
+        longTermPath: `.autolabos/runs/${id}/memory/long_term.jsonl`,
+        episodePath: `.autolabos/runs/${id}/memory/episodes.jsonl`
       }
     };
 
@@ -200,9 +200,9 @@ function normalizeRunsV3(runsFile: RunsFile): RunsFile {
       },
       nodeThreads: run.nodeThreads ?? {},
       memoryRefs: run.memoryRefs ?? {
-        runContextPath: `.autoresearch/runs/${run.id}/memory/run_context.json`,
-        longTermPath: `.autoresearch/runs/${run.id}/memory/long_term.jsonl`,
-        episodePath: `.autoresearch/runs/${run.id}/memory/episodes.jsonl`
+        runContextPath: `.autolabos/runs/${run.id}/memory/run_context.json`,
+        longTermPath: `.autolabos/runs/${run.id}/memory/long_term.jsonl`,
+        episodePath: `.autolabos/runs/${run.id}/memory/episodes.jsonl`
       }
     }))
   };

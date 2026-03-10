@@ -192,9 +192,9 @@ function migrateRunV2ToV3(run: RunRecordV2): RunRecord {
     updatedAt: run.updatedAt,
     graph,
     memoryRefs: {
-      runContextPath: `.autoresearch/runs/${run.id}/memory/run_context.json`,
-      longTermPath: `.autoresearch/runs/${run.id}/memory/long_term.jsonl`,
-      episodePath: `.autoresearch/runs/${run.id}/memory/episodes.jsonl`
+      runContextPath: `.autolabos/runs/${run.id}/memory/run_context.json`,
+      longTermPath: `.autolabos/runs/${run.id}/memory/long_term.jsonl`,
+      episodePath: `.autolabos/runs/${run.id}/memory/episodes.jsonl`
     }
   };
 }
@@ -217,9 +217,9 @@ function normalizeRunsV3(file: RunsFile): RunsFile {
         transitionHistory: run.graph?.transitionHistory ?? []
       },
       memoryRefs: run.memoryRefs ?? {
-        runContextPath: `.autoresearch/runs/${run.id}/memory/run_context.json`,
-        longTermPath: `.autoresearch/runs/${run.id}/memory/long_term.jsonl`,
-        episodePath: `.autoresearch/runs/${run.id}/memory/episodes.jsonl`
+        runContextPath: `.autolabos/runs/${run.id}/memory/run_context.json`,
+        longTermPath: `.autolabos/runs/${run.id}/memory/long_term.jsonl`,
+        episodePath: `.autolabos/runs/${run.id}/memory/episodes.jsonl`
       }
     }))
   };

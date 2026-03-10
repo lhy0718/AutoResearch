@@ -11,9 +11,9 @@ import {
 
 describe("realExecutionBundle", () => {
   it("writes a public real_execution runner bundle with the configured llm profile", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autoresearch-real-bundle-"));
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-real-bundle-"));
     try {
-      const runDir = path.join(workspace, ".autoresearch", "runs", "run-123");
+      const runDir = path.join(workspace, ".autolabos", "runs", "run-123");
       const publicDir = path.join(workspace, "outputs", "demo-run", "experiment");
       const metricsPath = path.join(runDir, "metrics.json");
 
@@ -74,7 +74,7 @@ describe("realExecutionBundle", () => {
           encoding: "utf8",
           env: {
             ...process.env,
-            AUTORESEARCH_FAKE_EXPERIMENT_RESPONSE: JSON.stringify({
+            AUTOLABOS_FAKE_EXPERIMENT_RESPONSE: JSON.stringify({
               final_answer: "Ottawa",
               code: [
                 "def alternating_sum(nums):",
@@ -114,9 +114,9 @@ describe("realExecutionBundle", () => {
   });
 
   it("supports confirmatory profile resume with cached partial results", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autoresearch-real-bundle-confirmatory-"));
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-real-bundle-confirmatory-"));
     try {
-      const runDir = path.join(workspace, ".autoresearch", "runs", "run-456");
+      const runDir = path.join(workspace, ".autolabos", "runs", "run-456");
       const publicDir = path.join(workspace, "outputs", "demo-run", "experiment");
       const metricsPath = path.join(runDir, "metrics.json");
 
@@ -155,7 +155,7 @@ describe("realExecutionBundle", () => {
       const confirmatoryMetricsPath = path.join(publicDir, "confirmatory_metrics.json");
       const env = {
         ...process.env,
-        AUTORESEARCH_FAKE_EXPERIMENT_RESPONSE: JSON.stringify({
+        AUTOLABOS_FAKE_EXPERIMENT_RESPONSE: JSON.stringify({
           final_answer: "Ottawa",
           code: [
             "def alternating_sum(nums):",

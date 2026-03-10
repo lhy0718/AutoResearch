@@ -77,7 +77,7 @@ export async function synthesizeAnalysisReport(args: SynthesizeAnalysisArgs): Pr
 
 function buildAnalysisSynthesisSystemPrompt(): string {
   return [
-    "You are the AutoResearch result analysis discussion agent.",
+    "You are the AutoLabOS result analysis discussion agent.",
     "Write conservative, evidence-grounded synthesis from a structured experiment report.",
     "Return JSON only.",
     "Use only facts explicitly present in the payload.",

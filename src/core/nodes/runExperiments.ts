@@ -17,7 +17,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
   return {
     id: "run_experiments",
     async execute({ run, abortSignal }) {
-      const runDir = path.join(process.cwd(), ".autoresearch", "runs", run.id);
+      const runDir = path.join(process.cwd(), ".autolabos", "runs", run.id);
       const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
       const pendingHandoff =
         (await runContext.get<boolean>("implement_experiments.pending_handoff_to_run_experiments")) === true;

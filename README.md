@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>AutoResearch</h1>
+  <h1>AutoLabOS</h1>
   <p><strong>AI-agent-driven research automation with a slash-first TUI and local web ops UI.</strong></p>
   <p>
     Move from paper collection and evidence analysis to experiment execution and
@@ -12,8 +12,8 @@
     <a href="./README.ko.md"><strong>한국어</strong></a>
   </p>
   <p>
-    <a href="https://github.com/lhy0718/AutoResearch/actions/workflows/smoke.yml">
-      <img alt="Smoke workflow" src="https://img.shields.io/github/actions/workflow/status/lhy0718/AutoResearch/smoke.yml?branch=main&style=flat-square&label=smoke" />
+    <a href="https://github.com/lhy0718/AutoLabOS/actions/workflows/smoke.yml">
+      <img alt="Smoke workflow" src="https://img.shields.io/github/actions/workflow/status/lhy0718/AutoLabOS/smoke.yml?branch=main&style=flat-square&label=smoke" />
     </a>
     <img alt="Node 18+" src="https://img.shields.io/badge/node-%3E%3D18-339933?style=flat-square&logo=node.js&logoColor=white" />
     <img alt="TypeScript" src="https://img.shields.io/badge/typescript-5.x-3178C6?style=flat-square&logo=typescript&logoColor=white" />
@@ -24,16 +24,16 @@
   </p>
   <p>
     <img alt="Semantic Scholar required" src="https://img.shields.io/badge/Semantic%20Scholar-required-1857B6?style=flat-square" />
-    <a href="https://github.com/lhy0718/AutoResearch/stargazers">
-      <img alt="GitHub stars" src="https://img.shields.io/github/stars/lhy0718/AutoResearch?style=flat-square" />
+    <a href="https://github.com/lhy0718/AutoLabOS/stargazers">
+      <img alt="GitHub stars" src="https://img.shields.io/github/stars/lhy0718/AutoLabOS?style=flat-square" />
     </a>
-    <a href="https://github.com/lhy0718/AutoResearch/commits/main">
-      <img alt="Last commit" src="https://img.shields.io/github/last-commit/lhy0718/AutoResearch?style=flat-square" />
+    <a href="https://github.com/lhy0718/AutoLabOS/commits/main">
+      <img alt="Last commit" src="https://img.shields.io/github/last-commit/lhy0718/AutoLabOS?style=flat-square" />
     </a>
   </p>
 </div>
 
-## Why AutoResearch?
+## Why AutoLabOS?
 
 - Turn the research loop into a fixed 8-node state graph from `collect_papers` to `write_paper`.
 - Run the main workflow with either `codex` or `OpenAI API`, then switch PDF analysis independently.
@@ -44,7 +44,7 @@
 | Capability | What it gives you |
 | --- | --- |
 | Slash-first TUI | Operate the system from `/new`, `/agent ...`, `/model`, `/settings`, and `/doctor` |
-| Local Web Ops UI | Run `autoresearch web` for onboarding, dashboard controls, artifacts, checkpoints, and live session state in the browser |
+| Local Web Ops UI | Run `autolabos web` for onboarding, dashboard controls, artifacts, checkpoints, and live session state in the browser |
 | Deterministic natural-language routing | Common intents map to local handlers or slash commands before LLM fallback |
 | Hybrid provider model | Default to Codex login for the primary flow, or move to OpenAI API models when you want explicit API-backed execution |
 | PDF analysis modes | Default to local extraction + Codex hybrid PDF analysis, or send PDFs directly to the Responses API when needed |
@@ -75,30 +75,30 @@ echo 'OPENAI_API_KEY=your_openai_key_here' >> .env
 3. Launch the TUI
 
 ```bash
-autoresearch
+autolabos
 ```
 
 4. Launch the web UI
 
 ```bash
-autoresearch web
+autolabos web
 ```
 
 The web server listens on `http://127.0.0.1:4317` by default.
-Run this from the research project directory you want AutoResearch to use as its workspace.
+Run this from the research project directory you want AutoLabOS to use as its workspace.
 
-If you are using a repository checkout and the CLI says the installed web assets are missing, build the web bundle once from the AutoResearch package root:
+If you are using a repository checkout and the CLI says the installed web assets are missing, build the web bundle once from the AutoLabOS package root:
 
 ```bash
-cd /path/to/AutoResearch
+cd /path/to/AutoLabOS
 npm --prefix web run build
-autoresearch web
+autolabos web
 ```
 
 Use a custom bind address or port when needed:
 
 ```bash
-autoresearch web --host 0.0.0.0 --port 8080
+autolabos web --host 0.0.0.0 --port 8080
 ```
 
 Development mode:
@@ -116,12 +116,12 @@ node dist/cli/main.js web
 ```
 
 > [!NOTE]
-> External entrypoints are `autoresearch` and `autoresearch web`. `autoresearch init` is intentionally not supported.
+> External entrypoints are `autolabos` and `autolabos web`. `autolabos init` is intentionally not supported.
 
 ## First Run
 
-1. Run `autoresearch` or `autoresearch web` in an empty project.
-2. If `.autoresearch/config.yaml` does not exist, the TUI opens the setup wizard and the web app shows the onboarding form.
+1. Run `autolabos` or `autolabos web` in an empty project.
+2. If `.autolabos/config.yaml` does not exist, the TUI opens the setup wizard and the web app shows the onboarding form.
 3. Both flows create the same scaffold/config, store your Semantic Scholar key, and open the main dashboard.
 4. Choose the primary LLM provider:
    - `codex`: use Codex ChatGPT login for the main workflow (default)
@@ -134,30 +134,30 @@ node dist/cli/main.js web
 7. `/model` now lets you choose the active backend first, then select the slot/model:
    - Codex CLI backend: Codex model selector
    - OpenAI API backend: OpenAI API model selector
-8. At runtime, AutoResearch reads `SEMANTIC_SCHOLAR_API_KEY` and `OPENAI_API_KEY` from `process.env` or `.env`.
+8. At runtime, AutoLabOS reads `SEMANTIC_SCHOLAR_API_KEY` and `OPENAI_API_KEY` from `process.env` or `.env`.
 
 ## Web Ops UI
 
-`autoresearch web` starts a local single-user browser UI on top of the same runtime used by the TUI.
+`autolabos web` starts a local single-user browser UI on top of the same runtime used by the TUI.
 
-- Onboarding uses the same non-interactive setup helper, so web setup writes the same `.autoresearch/config.yaml` and `.env` values as the TUI wizard.
+- Onboarding uses the same non-interactive setup helper, so web setup writes the same `.autolabos/config.yaml` and `.env` values as the TUI wizard.
 - The dashboard includes run search and selection, the 8-node workflow view, node actions, live logs, checkpoints, artifacts, metadata, and `/doctor` summaries.
 - The bottom composer accepts both slash commands and supported natural-language requests.
 - Multi-step natural-language plans use browser buttons instead of `y/a/n`: `Run next`, `Run all`, and `Cancel`.
-- Artifact browsing is restricted to `.autoresearch/runs/<run_id>` and previews common text files, images, and PDFs inline.
+- Artifact browsing is restricted to `.autolabos/runs/<run_id>` and previews common text files, images, and PDFs inline.
 
 Typical web flow:
 
-1. Start the server with `autoresearch web`.
+1. Start the server with `autolabos web`.
    Run this from the project directory you want to manage.
-   If you see a missing web assets message while using a repository checkout, build once from the AutoResearch package root with `npm --prefix web run build`, then restart the server.
+   If you see a missing web assets message while using a repository checkout, build once from the AutoLabOS package root with `npm --prefix web run build`, then restart the server.
 2. Open `http://127.0.0.1:4317`.
 3. Complete onboarding if the workspace is not configured yet.
 4. Create or select a run, then use the workflow cards or composer to drive execution.
 
 ## Node and Agent Structure
 
-AutoResearch has two layers that are easy to conflate:
+AutoLabOS has two layers that are easy to conflate:
 
 - Orchestration layer: `/agent ...` targets the 8 graph nodes. In code, `AgentId` is currently an alias of `GraphNodeId`.
 - Role layer: nodes emit or run `agentRole` identities such as `implementer`, `runner`, and `paper_writer` inside prompts, events, and session managers.
@@ -258,7 +258,7 @@ flowchart TB
     H --> H1["paper/main.tex<br/>paper/references.bib<br/>paper/evidence_links.json<br/>paper/draft.json<br/>paper/validation.json<br/>paper/main.pdf (optional)"]
 ```
 
-All run artifacts live under `.autoresearch/runs/<run_id>/`, which makes the pipeline inspectable from both the TUI and the local web UI.
+All run artifacts live under `.autolabos/runs/<run_id>/`, which makes the pipeline inspectable from both the TUI and the local web UI.
 
 ### Control Surfaces
 
@@ -270,7 +270,7 @@ flowchart TB
 
     Session --> Runtime["Shared runtime<br/>run store + checkpoint store + event stream + orchestrator"]
     Runtime --> Nodes["8-node workflow execution"]
-    Runtime --> Artifacts["Run artifacts<br/>.autoresearch/runs/<run_id>"]
+    Runtime --> Artifacts["Run artifacts<br/>.autolabos/runs/<run_id>"]
     Runtime --> State["Run state and memory<br/>context + episodes + long-term store"]
 
     Artifacts --> Web
@@ -376,7 +376,7 @@ Examples:
 
 ## Natural-Language Control
 
-AutoResearch does not try to support every sentence with hard-coded rules. Instead, it defines deterministic intent families and routes those locally before falling back to the workspace-grounded LLM.
+AutoLabOS does not try to support every sentence with hard-coded rules. Instead, it defines deterministic intent families and routes those locally before falling back to the workspace-grounded LLM.
 
 Ask this inside the TUI to see the live supported list:
 
@@ -477,7 +477,7 @@ Fixed graph nodes:
 
 ### Runtime Policies
 
-- Checkpoints: `.autoresearch/runs/<run_id>/checkpoints/`
+- Checkpoints: `.autolabos/runs/<run_id>/checkpoints/`
 - Checkpoint phases: `before | after | fail | jump | retry`
 - Retry policy: `maxAttemptsPerNode=3`
 - Auto rollback policy: `maxAutoRollbacksPerNode=2`
@@ -541,11 +541,11 @@ Legacy runs are auto-migrated to v3 on load.
 
 ### Generated Paths
 
-- `.autoresearch/config.yaml`
-- `.autoresearch/runs/runs.json`
-- `.autoresearch/runs/<run_id>/checkpoints/*`
-- `.autoresearch/runs/<run_id>/memory/*`
-- `.autoresearch/runs/<run_id>/paper/*`
+- `.autolabos/config.yaml`
+- `.autolabos/runs/runs.json`
+- `.autolabos/runs/<run_id>/checkpoints/*`
+- `.autolabos/runs/<run_id>/memory/*`
+- `.autolabos/runs/<run_id>/paper/*`
 
 </details>
 
@@ -568,10 +568,10 @@ Smoke test notes:
 - `test:smoke:natural-collect` verifies natural-language collect request -> pending `/agent collect ...` command.
 - `test:smoke:natural-collect-execute` verifies natural-language collect request -> `y` execute -> collect artifacts created.
 - `test:smoke:all` runs the full local smoke bundle in `/test/smoke-workspace`.
-- Smoke uses `AUTORESEARCH_FAKE_CODEX_RESPONSE` to avoid live Codex calls.
-- Execute smoke also uses `AUTORESEARCH_FAKE_SEMANTIC_SCHOLAR_RESPONSE`.
+- Smoke uses `AUTOLABOS_FAKE_CODEX_RESPONSE` to avoid live Codex calls.
+- Execute smoke also uses `AUTOLABOS_FAKE_SEMANTIC_SCHOLAR_RESPONSE`.
 - `test:smoke:ci` runs CI-mode smoke selection.
   - Default mode: `pending`
   - Additional modes: `execute`, `composite`, `composite-all`, `llm-composite`, `llm-composite-all`, `llm-replan`
-  - Set `AUTORESEARCH_SMOKE_MODE=<mode>` or `AUTORESEARCH_SMOKE_MODE=all` to switch CI scenarios.
-- Smoke output is quiet by default. Set `AUTORESEARCH_SMOKE_VERBOSE=1` to print full PTY logs.
+  - Set `AUTOLABOS_SMOKE_MODE=<mode>` or `AUTOLABOS_SMOKE_MODE=all` to switch CI scenarios.
+- Smoke output is quiet by default. Set `AUTOLABOS_SMOKE_VERBOSE=1` to print full PTY logs.

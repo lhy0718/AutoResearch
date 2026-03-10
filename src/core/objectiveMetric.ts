@@ -260,7 +260,7 @@ export function evaluateObjectiveMetric(
 
 function buildObjectiveMetricSystemPrompt(): string {
   return [
-    "You are the AutoResearch objective metric planning agent.",
+    "You are the AutoLabOS objective metric planning agent.",
     "Convert the run objective metric into a strict JSON profile for execution evaluation and paper writing.",
     "Return JSON only.",
     "Do not invent a metric if the objective metric is too vague; prefer null, empty arrays, or assumptions."

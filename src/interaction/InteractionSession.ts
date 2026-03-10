@@ -5,7 +5,7 @@ import { RunStore } from "../core/runs/runStore.js";
 import { TitleGenerator } from "../core/runs/titleGenerator.js";
 import { AgentOrchestrator } from "../core/agents/agentOrchestrator.js";
 import { AutonomousRunController, buildDefaultOvernightPolicy } from "../core/agents/autonomousRunController.js";
-import { EventStream, AutoResearchEvent } from "../core/events.js";
+import { EventStream, AutoLabOSEvent } from "../core/events.js";
 import { buildNaturalAssistantResponse, matchesNaturalAssistantIntent } from "../core/commands/naturalAssistant.js";
 import { buildNaturalAssistantResponseWithLlm } from "../core/commands/naturalLlmAssistant.js";
 import {
@@ -1675,7 +1675,7 @@ export class InteractionSession {
       return;
     }
 
-    const runDir = path.join(this.workspaceRoot, ".autoresearch", "runs", this.activeRunId);
+    const runDir = path.join(this.workspaceRoot, ".autolabos", "runs", this.activeRunId);
     try {
       const report = parseAnalysisReport(await safeRead(path.join(runDir, "result_analysis.json")));
       this.activeRunInsight = report ? buildAnalyzeResultsInsightCard(report) : undefined;
@@ -1716,7 +1716,7 @@ export class InteractionSession {
   }
 
   private async readCorpusInsights(runId: string): Promise<CorpusInsights> {
-    const filePath = path.join(this.workspaceRoot, ".autoresearch", "runs", runId, "corpus.jsonl");
+    const filePath = path.join(this.workspaceRoot, ".autolabos", "runs", runId, "corpus.jsonl");
     try {
       const stat = await fs.stat(filePath);
       const cache = this.corpusInsightsCache.get(runId);
@@ -1760,7 +1760,7 @@ export class InteractionSession {
   }
 
   private async clearNodeArtifacts(run: RunRecord, node: GraphNodeId): Promise<number> {
-    const runDir = path.join(this.workspaceRoot, ".autoresearch", "runs", run.id);
+    const runDir = path.join(this.workspaceRoot, ".autolabos", "runs", run.id);
     const targets = nodeArtifactTargets(node);
     let removed = 0;
     for (const relative of targets) {
@@ -1813,7 +1813,7 @@ export class InteractionSession {
   }
 
   private async countNodeArtifacts(run: RunRecord, node: GraphNodeId): Promise<string[]> {
-    const runDir = path.join(this.workspaceRoot, ".autoresearch", "runs", run.id);
+    const runDir = path.join(this.workspaceRoot, ".autolabos", "runs", run.id);
     switch (node) {
       case "collect_papers":
         return [`Count(${node}): ${await countJsonl(path.join(runDir, "corpus.jsonl"))} papers`];
@@ -1872,7 +1872,7 @@ function normalizeSteeringInput(text: string): string | undefined {
   return trimmed || undefined;
 }
 
-function formatEventLog(event: AutoResearchEvent): string | undefined {
+function formatEventLog(event: AutoLabOSEvent): string | undefined {
   switch (event.type) {
     case "TOOL_CALLED":
       return `Tool: ${oneLine(String(event.payload.command || event.payload.tool || "unknown"))}`;

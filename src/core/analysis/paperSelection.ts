@@ -75,7 +75,7 @@ const STOPWORDS = new Set([
 ]);
 
 const RERANK_SYSTEM_PROMPT = [
-  "You rerank scientific papers for AutoResearch.",
+  "You rerank scientific papers for AutoLabOS.",
   "Return one JSON object only.",
   "No markdown, no prose outside JSON.",
   "Prioritize semantic relevance to the research title/topic first, then citation impact, then recency.",

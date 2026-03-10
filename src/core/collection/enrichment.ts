@@ -6,7 +6,7 @@ import { CollectEnrichmentAttempt, CollectEnrichmentLogEntry, StoredBibtexSource
 
 const REQUEST_HEADERS = {
   Accept: "text/html,application/pdf,application/x-bibtex,application/json;q=0.9,*/*;q=0.8",
-  "User-Agent": "AutoResearch/1.0.0"
+  "User-Agent": "AutoLabOS/1.0.0"
 };
 
 interface CrossrefMessage {

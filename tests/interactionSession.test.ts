@@ -30,9 +30,9 @@ function makeRun(id: string): RunRecord {
     updatedAt: now,
     graph,
     memoryRefs: {
-      runContextPath: `.autoresearch/runs/${id}/memory/run_context.json`,
-      longTermPath: `.autoresearch/runs/${id}/memory/long_term.jsonl`,
-      episodePath: `.autoresearch/runs/${id}/memory/episodes.jsonl`
+      runContextPath: `.autolabos/runs/${id}/memory/run_context.json`,
+      longTermPath: `.autolabos/runs/${id}/memory/long_term.jsonl`,
+      episodePath: `.autolabos/runs/${id}/memory/episodes.jsonl`
     }
   };
 }
@@ -42,7 +42,7 @@ describe("InteractionSession", () => {
   let runStore: RunStore;
 
   beforeEach(async () => {
-    cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autoresearch-session-"));
+    cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autolabos-session-"));
     const paths = resolveAppPaths(cwd);
     await ensureScaffold(paths);
     runStore = new RunStore(paths);
@@ -132,7 +132,7 @@ describe("InteractionSession", () => {
       constraints: [],
       objectiveMetric: "metric"
     });
-    const runDir = path.join(cwd, ".autoresearch", "runs", run.id);
+    const runDir = path.join(cwd, ".autolabos", "runs", run.id);
     await fs.writeFile(
       path.join(runDir, "corpus.jsonl"),
       ['{"title":"Paper A"}', '{"title":"Paper B"}', '{"title":"Paper C"}'].join("\n"),
@@ -180,7 +180,7 @@ describe("InteractionSession", () => {
       constraints: [],
       objectiveMetric: "metric"
     });
-    const runDir = path.join(cwd, ".autoresearch", "runs", run.id);
+    const runDir = path.join(cwd, ".autolabos", "runs", run.id);
     await fs.mkdir(path.join(runDir, "figures"), { recursive: true });
     await fs.writeFile(path.join(runDir, "figures", "performance.svg"), "<svg></svg>", "utf8");
     await fs.writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ accuracy: 0.81 }, null, 2), "utf8");

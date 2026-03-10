@@ -1,16 +1,16 @@
 {
-  "name": "autoresearch",
+  "name": "autolabos",
   "version": "1.0.0",
   "description": "AI-agent-driven research automation with a slash-first TUI and local web ops UI.",
   "type": "module",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lhy0718/AutoResearch.git"
+    "url": "git+https://github.com/lhy0718/AutoLabOS.git"
   },
-  "homepage": "https://github.com/lhy0718/AutoResearch#readme",
+  "homepage": "https://github.com/lhy0718/AutoLabOS#readme",
   "bugs": {
-    "url": "https://github.com/lhy0718/AutoResearch/issues"
+    "url": "https://github.com/lhy0718/AutoLabOS/issues"
   },
   "keywords": [
     "research-automation",
@@ -26,7 +26,7 @@
     "nodejs"
   ],
   "bin": {
-    "autoresearch": "dist/cli/main.js"
+    "autolabos": "dist/cli/main.js"
   },
   "files": [
     "dist",
@@ -51,7 +51,7 @@
     "eval:harness": "tsx src/cli/main.ts eval-harness",
     "test:smoke:natural-collect": "bash tests/smoke/run_natural_collect_pending_command.sh",
     "test:smoke:natural-collect-execute": "bash tests/smoke/run_natural_collect_execute_and_verify_artifacts.sh",
-    "test:smoke:all": "AUTORESEARCH_SMOKE_MODE=all bash tests/smoke/run_ci_smoke.sh",
+    "test:smoke:all": "AUTOLABOS_SMOKE_MODE=all bash tests/smoke/run_ci_smoke.sh",
     "test:smoke:natural-composite-all": "bash tests/smoke/run_natural_composite_run_all_execute_and_verify_artifacts.sh",
     "test:smoke:natural-llm-composite-all": "bash tests/smoke/run_natural_llm_composite_run_all_execute_and_verify_artifacts.sh",
     "test:smoke:ci": "CI=true bash tests/smoke/run_ci_smoke.sh",

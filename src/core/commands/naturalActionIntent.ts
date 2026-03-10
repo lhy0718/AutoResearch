@@ -379,7 +379,7 @@ function buildStructuredActionPrompt(input: string, runs: RunRecord[], activeRun
   }));
 
   return [
-    "You translate AutoResearch natural-language execution requests into STRICT JSON.",
+    "You translate AutoLabOS natural-language execution requests into STRICT JSON.",
     "Return JSON only. No markdown, no prose.",
     "If the input is not asking to execute an action, return {\"actions\":[]}.",
     "Supported action types only: collect, analyze_papers, generate_hypotheses, clear, jump, title.",

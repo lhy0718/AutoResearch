@@ -350,14 +350,14 @@ export function App() {
   }
 
   if (!bootstrap) {
-    return <div className="shell"><div className="panel hero">Loading AutoResearch Web Ops...</div></div>;
+    return <div className="shell"><div className="panel hero">Loading AutoLabOS Web Ops...</div></div>;
   }
 
   if (!bootstrap.configured) {
     return (
       <div className="shell onboarding-shell">
         <div className="panel hero">
-          <p className="eyebrow">AutoResearch Web Ops</p>
+          <p className="eyebrow">AutoLabOS Web Ops</p>
           <h1>One screen for the full research loop.</h1>
           <p className="lede">
             Keep setup, runs, workflow controls, and artifacts in a browser UI that stays out of the way.
@@ -389,7 +389,7 @@ export function App() {
       <aside className="panel sidebar">
         <div className="sidebar-header">
           <div className="brand">
-            <p className="eyebrow">AutoResearch</p>
+            <p className="eyebrow">AutoLabOS</p>
             <h1>Web Ops</h1>
             <p>{bootstrap.configSummary?.projectName}</p>
           </div>

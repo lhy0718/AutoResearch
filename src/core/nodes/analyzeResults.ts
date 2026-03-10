@@ -30,7 +30,7 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
     async execute({ run }) {
       const longTermStore = new LongTermStore(run.memoryRefs.longTermPath);
       const runContextMemory = new RunContextMemory(run.memoryRefs.runContextPath);
-      const metricsPath = path.join(".autoresearch", "runs", run.id, "metrics.json");
+      const metricsPath = path.join(".autolabos", "runs", run.id, "metrics.json");
       let metrics: Record<string, unknown> = {};
       const inputWarnings: string[] = [];
       let metricsLoadError: string | undefined;
@@ -67,12 +67,12 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
       const objectiveEvaluation =
         cachedEvaluation || evaluateObjectiveMetric(metrics, objectiveProfile, run.objectiveMetric);
 
-      const experimentPlanRaw = await safeRead(path.join(".autoresearch", "runs", run.id, "experiment_plan.yaml"));
+      const experimentPlanRaw = await safeRead(path.join(".autolabos", "runs", run.id, "experiment_plan.yaml"));
       const observationsRaw = await safeRead(
-        path.join(".autoresearch", "runs", run.id, "exec_logs", "observations.jsonl")
+        path.join(".autolabos", "runs", run.id, "exec_logs", "observations.jsonl")
       );
       const runVerifierReport = await readJsonObject<RunVerifierReport>(
-        path.join(".autoresearch", "runs", run.id, "run_experiments_verify_report.json"),
+        path.join(".autolabos", "runs", run.id, "run_experiments_verify_report.json"),
         inputWarnings,
         "run_experiments_verify_report.json"
       );

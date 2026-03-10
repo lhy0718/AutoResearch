@@ -1,23 +1,23 @@
 import { askLine } from "./utils/prompt.js";
 import { AppConfig } from "./types.js";
 import { launchTerminalApp } from "./tui/TerminalApp.js";
-import { bootstrapAutoresearchRuntime } from "./runtime/createRuntime.js";
+import { bootstrapAutoLabOSRuntime } from "./runtime/createRuntime.js";
 import { RunStore } from "./core/runs/runStore.js";
 import { TitleGenerator } from "./core/runs/titleGenerator.js";
 import { configExists, resolveAppPaths } from "./config.js";
 
-export async function runAutoresearchApp(): Promise<void> {
+export async function runAutoLabOSApp(): Promise<void> {
   const paths = resolveAppPaths(process.cwd());
   const firstRunSetup = !(await configExists(paths));
   if (firstRunSetup) {
-    process.stdout.write("AutoResearch setup wizard (first run)\n\n");
+    process.stdout.write("AutoLabOS setup wizard (first run)\n\n");
   }
-  const bootstrap = await bootstrapAutoresearchRuntime({
+  const bootstrap = await bootstrapAutoLabOSRuntime({
     cwd: process.cwd(),
     allowInteractiveSetup: true
   });
   if (!bootstrap.runtime || !bootstrap.config) {
-    throw new Error("AutoResearch runtime could not be initialized.");
+    throw new Error("AutoLabOS runtime could not be initialized.");
   }
 
   if (bootstrap.firstRunSetup) {

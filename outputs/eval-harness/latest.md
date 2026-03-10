@@ -1,7 +1,7 @@
 # Eval Harness Report
 
 Generated at: 2026-03-10T13:16:41.055Z
-Workspace: /Users/home/AutoResearchV2
+Workspace: /Users/home/AutoLabOS
 Runs evaluated: 0
 
 ## Aggregate

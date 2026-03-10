@@ -114,7 +114,7 @@ export class SemanticScholarClient {
     limitOrSignal?: number | AbortSignal,
     maybeSignal?: AbortSignal
   ): Promise<SemanticScholarPaper[]> {
-    const fakeResponse = process.env.AUTORESEARCH_FAKE_SEMANTIC_SCHOLAR_RESPONSE;
+    const fakeResponse = process.env.AUTOLABOS_FAKE_SEMANTIC_SCHOLAR_RESPONSE;
     if (typeof fakeResponse === "string" && fakeResponse.trim()) {
       return parseFakeSemanticScholarResponse(fakeResponse);
     }
@@ -138,7 +138,7 @@ export class SemanticScholarClient {
     request: SemanticScholarSearchRequest,
     abortSignal?: AbortSignal
   ): AsyncGenerator<SemanticScholarPaper[], void, void> {
-    const fakeResponse = process.env.AUTORESEARCH_FAKE_SEMANTIC_SCHOLAR_RESPONSE;
+    const fakeResponse = process.env.AUTOLABOS_FAKE_SEMANTIC_SCHOLAR_RESPONSE;
     if (typeof fakeResponse === "string" && fakeResponse.trim()) {
       const papers = parseFakeSemanticScholarResponse(fakeResponse).slice(
         0,

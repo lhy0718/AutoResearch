@@ -291,7 +291,7 @@ function buildReadme(
     "- Uses the configured experiment LLM for actual model calls.",
     "- Compares `free_form_chat` against `shared_state_schema` with planner/solver/verifier handoffs.",
     "- Evaluates QA, arithmetic, and code-generation mini tasks.",
-    "- Writes metrics JSON in the format expected by AutoResearch.",
+    "- Writes metrics JSON in the format expected by AutoLabOS.",
     "",
     "## Experiment LLM",
     "",
@@ -332,7 +332,7 @@ function buildReadme(
     "",
     "## Paths",
     "",
-    `- Private AutoResearch metadata directory: \`${config.private_metadata_dir}\``,
+    `- Private AutoLabOS metadata directory: \`${config.private_metadata_dir}\``,
     `- Required metrics output: \`${config.required_metrics_path}\``,
     ""
   ].join("\n");
@@ -569,7 +569,7 @@ _FAKE_SEQUENCE_INDEX = 0
 
 def resolve_fake_response() -> str | None:
     global _FAKE_SEQUENCE_SOURCE, _FAKE_SEQUENCE_INDEX
-    fake_sequence = os.environ.get("AUTORESEARCH_FAKE_EXPERIMENT_RESPONSE_SEQUENCE", "").strip()
+    fake_sequence = os.environ.get("AUTOLABOS_FAKE_EXPERIMENT_RESPONSE_SEQUENCE", "").strip()
     if fake_sequence:
         if fake_sequence != _FAKE_SEQUENCE_SOURCE:
             _FAKE_SEQUENCE_SOURCE = fake_sequence
@@ -586,14 +586,14 @@ def resolve_fake_response() -> str | None:
                     return selected["text"]
         except json.JSONDecodeError:
             return fake_sequence
-    fake_single = os.environ.get("AUTORESEARCH_FAKE_EXPERIMENT_RESPONSE", "").strip()
+    fake_single = os.environ.get("AUTOLABOS_FAKE_EXPERIMENT_RESPONSE", "").strip()
     return fake_single or None
 
 
 def has_fake_response_mode() -> bool:
     return bool(
-        os.environ.get("AUTORESEARCH_FAKE_EXPERIMENT_RESPONSE_SEQUENCE", "").strip()
-        or os.environ.get("AUTORESEARCH_FAKE_EXPERIMENT_RESPONSE", "").strip()
+        os.environ.get("AUTOLABOS_FAKE_EXPERIMENT_RESPONSE_SEQUENCE", "").strip()
+        or os.environ.get("AUTOLABOS_FAKE_EXPERIMENT_RESPONSE", "").strip()
     )
 
 
@@ -1490,11 +1490,11 @@ def run_experiment(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the AutoResearch real-execution experiment bundle.")
+    parser = argparse.ArgumentParser(description="Run the AutoLabOS real-execution experiment bundle.")
     parser.add_argument("--metrics-out", help="Path for metrics JSON output.")
     parser.add_argument(
         "--metadata-dir",
-        help="Optional override for the private AutoResearch metadata directory used for paper comparison inputs.",
+        help="Optional override for the private AutoLabOS metadata directory used for paper comparison inputs.",
     )
     parser.add_argument(
         "--profile",

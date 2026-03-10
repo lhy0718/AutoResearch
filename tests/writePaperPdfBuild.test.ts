@@ -49,15 +49,15 @@ function makeRun(runId: string): RunRecord {
     updatedAt: new Date().toISOString(),
     graph: createDefaultGraphState(),
     memoryRefs: {
-      runContextPath: `.autoresearch/runs/${runId}/memory/run_context.json`,
-      longTermPath: `.autoresearch/runs/${runId}/memory/long_term.jsonl`,
-      episodePath: `.autoresearch/runs/${runId}/memory/episodes.jsonl`
+      runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+      longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+      episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
     }
   };
 }
 
 async function seedRun(root: string, run: RunRecord): Promise<string> {
-  const runDir = path.join(root, ".autoresearch", "runs", run.id);
+  const runDir = path.join(root, ".autolabos", "runs", run.id);
   await mkdir(path.join(runDir, "memory"), { recursive: true });
   await writeFile(
     path.join(runDir, "memory", "run_context.json"),
@@ -263,7 +263,7 @@ async function exists(filePath: string): Promise<boolean> {
 
 describe("writePaper PDF build", () => {
   it("builds a paper PDF and publishes the compiled artifact", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-paper-pdf-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-pdf-"));
     process.chdir(root);
 
     const run = makeRun("run-paper-pdf-success");
@@ -314,12 +314,12 @@ describe("writePaper PDF build", () => {
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);
     expect(await memory.get("write_paper.compile_status")).toBe("success");
     expect(await memory.get("write_paper.pdf_path")).toBe(
-      path.join(".autoresearch", "runs", run.id, "paper", "main.pdf")
+      path.join(".autolabos", "runs", run.id, "paper", "main.pdf")
     );
   });
 
   it("repairs LaTeX once after a failed compile and retries the PDF build", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-paper-pdf-repair-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-pdf-repair-"));
     process.chdir(root);
 
     const run = makeRun("run-paper-pdf-repair");
@@ -377,7 +377,7 @@ describe("writePaper PDF build", () => {
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);
     expect(await memory.get("write_paper.compile_status")).toBe("repaired_success");
     expect(await memory.get("write_paper.pdf_path")).toBe(
-      path.join(".autoresearch", "runs", run.id, "paper", "main.pdf")
+      path.join(".autolabos", "runs", run.id, "paper", "main.pdf")
     );
   });
 });

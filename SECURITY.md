@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-AutoResearch is currently maintained on the latest `1.x` release line on the
+AutoLabOS is currently maintained on the latest `1.x` release line on the
 default branch.
 
 | Version | Supported |

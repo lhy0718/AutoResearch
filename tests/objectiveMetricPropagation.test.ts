@@ -64,21 +64,21 @@ function makeRun(runId: string): RunRecord {
     updatedAt: new Date().toISOString(),
     graph: createDefaultGraphState(),
     memoryRefs: {
-      runContextPath: `.autoresearch/runs/${runId}/memory/run_context.json`,
-      longTermPath: `.autoresearch/runs/${runId}/memory/long_term.jsonl`,
-      episodePath: `.autoresearch/runs/${runId}/memory/episodes.jsonl`
+      runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+      longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+      episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
     }
   };
 }
 
 describe("objective metric propagation", () => {
   it("evaluates objective metrics during run, analysis, and paper writing", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-objective-propagation-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-objective-propagation-"));
     process.chdir(root);
 
     const runId = "run-objective-propagation";
     const run = makeRun(runId);
-    const runDir = path.join(root, ".autoresearch", "runs", runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
     const memoryDir = path.join(runDir, "memory");
     const publicDir = path.join(root, "public-bundle");
     await mkdir(memoryDir, { recursive: true });
@@ -100,7 +100,7 @@ describe("objective metric propagation", () => {
           },
           {
             key: "implement_experiments.metrics_path",
-            value: `.autoresearch/runs/${runId}/metrics.json`,
+            value: `.autolabos/runs/${runId}/metrics.json`,
             updatedAt: new Date().toISOString()
           },
           {
@@ -438,12 +438,12 @@ describe("objective metric propagation", () => {
   });
 
   it("fails structured result analysis when metrics.json is missing", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-analyze-results-missing-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-missing-"));
     process.chdir(root);
 
     const runId = "run-analyze-results-missing";
     const run = makeRun(runId);
-    const runDir = path.join(root, ".autoresearch", "runs", runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
     await mkdir(path.join(runDir, "memory"), { recursive: true });
     await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
 
@@ -470,12 +470,12 @@ describe("objective metric propagation", () => {
   });
 
   it("stores structured runner feedback when second-stage verification fails", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-run-feedback-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-feedback-"));
     process.chdir(root);
 
     const runId = "run-feedback";
     const run = makeRun(runId);
-    const runDir = path.join(root, ".autoresearch", "runs", runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
     const memoryDir = path.join(runDir, "memory");
     await mkdir(memoryDir, { recursive: true });
     await writeFile(
@@ -495,7 +495,7 @@ describe("objective metric propagation", () => {
           },
           {
             key: "implement_experiments.metrics_path",
-            value: `.autoresearch/runs/${runId}/metrics.json`,
+            value: `.autolabos/runs/${runId}/metrics.json`,
             updatedAt: new Date().toISOString()
           },
           {
@@ -557,12 +557,12 @@ describe("objective metric propagation", () => {
   });
 
   it("stores policy-blocked runner feedback when the run command violates execution policy", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-run-policy-block-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-policy-block-"));
     process.chdir(root);
 
     const runId = "run-policy-block";
     const run = makeRun(runId);
-    const runDir = path.join(root, ".autoresearch", "runs", runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
     const memoryDir = path.join(runDir, "memory");
     await mkdir(memoryDir, { recursive: true });
     await writeFile(
@@ -582,7 +582,7 @@ describe("objective metric propagation", () => {
           },
           {
             key: "implement_experiments.metrics_path",
-            value: `.autoresearch/runs/${runId}/metrics.json`,
+            value: `.autolabos/runs/${runId}/metrics.json`,
             updatedAt: new Date().toISOString()
           },
           {

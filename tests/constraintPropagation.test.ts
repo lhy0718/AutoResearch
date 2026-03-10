@@ -50,21 +50,21 @@ function makeRun(root: string, runId: string): RunRecord {
     updatedAt: new Date().toISOString(),
     graph: createDefaultGraphState(),
     memoryRefs: {
-      runContextPath: `.autoresearch/runs/${runId}/memory/run_context.json`,
-      longTermPath: `.autoresearch/runs/${runId}/memory/long_term.jsonl`,
-      episodePath: `.autoresearch/runs/${runId}/memory/episodes.jsonl`
+      runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+      longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+      episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
     }
   };
 }
 
 describe("constraint propagation", () => {
   it("writes run constraints into experiment_plan.yaml", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-design-constraints-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-design-constraints-"));
     process.chdir(root);
 
     const runId = "run-design-constraints";
     const run = makeRun(root, runId);
-    const runDir = path.join(root, ".autoresearch", "runs", runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
     await mkdir(path.join(runDir, "memory"), { recursive: true });
     await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
     await writeFile(
@@ -99,12 +99,12 @@ describe("constraint propagation", () => {
   });
 
   it("writes writing constraints into paper/main.tex", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-paper-constraints-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-constraints-"));
     process.chdir(root);
 
     const runId = "run-paper-constraints";
     const run = makeRun(root, runId);
-    const runDir = path.join(root, ".autoresearch", "runs", runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
     await mkdir(runDir, { recursive: true });
 
     const node = createWritePaperNode({
@@ -129,12 +129,12 @@ describe("constraint propagation", () => {
   });
 
   it("drops weak reproducibility hypotheses before experiment design", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-design-filter-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-design-filter-"));
     process.chdir(root);
 
     const runId = "run-design-filter";
     const run = makeRun(root, runId);
-    const runDir = path.join(root, ".autoresearch", "runs", runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
     await mkdir(path.join(runDir, "memory"), { recursive: true });
     await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
     await writeFile(
@@ -195,7 +195,7 @@ describe("constraint propagation", () => {
   });
 
   it("reuses one llm-derived constraint profile across design and write nodes", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-constraint-profile-cache-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-constraint-profile-cache-"));
     process.chdir(root);
 
     const runId = "run-constraint-profile-cache";
@@ -205,7 +205,7 @@ describe("constraint propagation", () => {
       "Write this as an EMNLP tutorial-style paper around 10-12 pages.",
       "Focus evaluation on robustness and failure recovery."
     ];
-    const runDir = path.join(root, ".autoresearch", "runs", runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
     await mkdir(path.join(runDir, "memory"), { recursive: true });
     await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
     await writeFile(path.join(runDir, "hypotheses.jsonl"), `${JSON.stringify({ text: "Hypothesis A" })}\n`, "utf8");
@@ -391,14 +391,14 @@ describe("constraint propagation", () => {
   });
 
   it("renders llm-generated sections and corpus-backed references into paper artifacts", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-paper-writer-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-writer-"));
     process.chdir(root);
 
     const runId = "run-paper-writer";
     const run = makeRun(root, runId);
     run.constraints = ["ACL style", "formal tone"];
     run.currentNode = "write_paper";
-    const runDir = path.join(root, ".autoresearch", "runs", runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
     await mkdir(path.join(runDir, "memory"), { recursive: true });
     await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
     await writeFile(
@@ -641,7 +641,7 @@ describe("constraint propagation", () => {
 
     const references = await readFile(path.join(runDir, "paper", "references.bib"), "utf8");
     expect(references).toContain("Deep Coordination Baseline");
-    expect(references).not.toContain("AutoResearch generated reference");
+    expect(references).not.toContain("AutoLabOS generated reference");
 
     const evidenceLinks = await readFile(path.join(runDir, "paper", "evidence_links.json"), "utf8");
     expect(evidenceLinks).toContain('"sections"');

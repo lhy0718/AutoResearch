@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { AutoResearchEvent, EventStream } from "./events.js";
+import { AutoLabOSEvent, EventStream } from "./events.js";
 import { LLMClient } from "./llm/client.js";
 import { RunContextMemory } from "./memory/runContextMemory.js";
 import { RunRecord } from "../types.js";
@@ -23,7 +23,7 @@ interface ResolveConstraintProfileInput {
   runContextMemory: RunContextMemory;
   llm: LLMClient;
   eventStream?: EventStream;
-  node?: AutoResearchEvent["node"];
+  node?: AutoLabOSEvent["node"];
 }
 
 export async function resolveConstraintProfile(input: ResolveConstraintProfileInput): Promise<ConstraintProfile> {
@@ -83,7 +83,7 @@ export async function resolveConstraintProfile(input: ResolveConstraintProfileIn
 
 function buildConstraintSystemPrompt(): string {
   return [
-    "You are the AutoResearch constraint planning agent.",
+    "You are the AutoLabOS constraint planning agent.",
     "Convert raw run constraints into a strict JSON constraint profile.",
     "Do not invent requirements that are not explicit or strongly implied.",
     "Prefer null or empty arrays over guesses.",

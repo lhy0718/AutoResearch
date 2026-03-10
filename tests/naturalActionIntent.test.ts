@@ -24,9 +24,9 @@ function makeRun(overrides: Partial<RunRecord> = {}): RunRecord {
     updatedAt: overrides.updatedAt ?? now,
     graph,
     memoryRefs: overrides.memoryRefs ?? {
-      runContextPath: ".autoresearch/runs/run-1/memory/run_context.json",
-      longTermPath: ".autoresearch/runs/run-1/memory/long_term.jsonl",
-      episodePath: ".autoresearch/runs/run-1/memory/episodes.jsonl"
+      runContextPath: ".autolabos/runs/run-1/memory/run_context.json",
+      longTermPath: ".autolabos/runs/run-1/memory/long_term.jsonl",
+      episodePath: ".autolabos/runs/run-1/memory/episodes.jsonl"
     }
   };
 }

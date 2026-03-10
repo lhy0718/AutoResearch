@@ -119,7 +119,7 @@ describe("collectPapers bibtex", () => {
   });
 
   it("returns failure on fetch error and preserves the requested query in diagnostics", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-collect-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-"));
     process.chdir(root);
 
     const runId = "run-collect-failure";
@@ -139,13 +139,13 @@ describe("collectPapers bibtex", () => {
       updatedAt: new Date().toISOString(),
       graph: createDefaultGraphState(),
       memoryRefs: {
-        runContextPath: `.autoresearch/runs/${runId}/memory/run_context.json`,
-        longTermPath: `.autoresearch/runs/${runId}/memory/long_term.jsonl`,
-        episodePath: `.autoresearch/runs/${runId}/memory/episodes.jsonl`
+        runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
       }
     };
 
-    const memoryDir = path.join(root, ".autoresearch", "runs", runId, "memory");
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
     await mkdir(memoryDir, { recursive: true });
     await writeFile(
       path.join(memoryDir, "run_context.json"),
@@ -217,7 +217,7 @@ describe("collectPapers bibtex", () => {
     ).toBe(true);
 
     const resultMetaRaw = await readFile(
-      path.join(root, ".autoresearch", "runs", runId, "collect_result.json"),
+      path.join(root, ".autolabos", "runs", runId, "collect_result.json"),
       "utf8"
     );
     expect(resultMetaRaw).toContain('"query": "Multi-Agent Collaboration"');
@@ -226,11 +226,11 @@ describe("collectPapers bibtex", () => {
     expect(resultMetaRaw).toContain('"lastStatus": 429');
     expect(resultMetaRaw).toContain('"retryAfterMs": 2000');
 
-    await expect(access(path.join(root, ".autoresearch", "runs", runId, "corpus.jsonl"))).rejects.toThrow();
+    await expect(access(path.join(root, ".autolabos", "runs", runId, "corpus.jsonl"))).rejects.toThrow();
   });
 
   it("collects papers without emitting internal TOOL_CALLED placeholder events", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-collect-success-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-success-"));
     process.chdir(root);
 
     const runId = "run-collect-success";
@@ -250,13 +250,13 @@ describe("collectPapers bibtex", () => {
       updatedAt: new Date().toISOString(),
       graph: createDefaultGraphState(),
       memoryRefs: {
-        runContextPath: `.autoresearch/runs/${runId}/memory/run_context.json`,
-        longTermPath: `.autoresearch/runs/${runId}/memory/long_term.jsonl`,
-        episodePath: `.autoresearch/runs/${runId}/memory/episodes.jsonl`
+        runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
       }
     };
 
-    const memoryDir = path.join(root, ".autoresearch", "runs", runId, "memory");
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
     await mkdir(memoryDir, { recursive: true });
     await writeFile(
       path.join(memoryDir, "run_context.json"),
@@ -346,7 +346,7 @@ describe("collectPapers bibtex", () => {
   });
 
   it("merges additional collection results with existing corpus and dedupes by paper_id", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-collect-merge-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-merge-"));
     process.chdir(root);
 
     const runId = "run-collect-merge";
@@ -366,13 +366,13 @@ describe("collectPapers bibtex", () => {
       updatedAt: new Date().toISOString(),
       graph: createDefaultGraphState(),
       memoryRefs: {
-        runContextPath: `.autoresearch/runs/${runId}/memory/run_context.json`,
-        longTermPath: `.autoresearch/runs/${runId}/memory/long_term.jsonl`,
-        episodePath: `.autoresearch/runs/${runId}/memory/episodes.jsonl`
+        runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
       }
     };
 
-    const runDir = path.join(root, ".autoresearch", "runs", runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
     const memoryDir = path.join(runDir, "memory");
     await mkdir(memoryDir, { recursive: true });
     await writeFile(
@@ -461,7 +461,7 @@ describe("collectPapers bibtex", () => {
   });
 
   it("persists partial collected papers before a later 429 failure", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-collect-partial-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-partial-"));
     process.chdir(root);
 
     const runId = "run-collect-partial";
@@ -481,13 +481,13 @@ describe("collectPapers bibtex", () => {
       updatedAt: new Date().toISOString(),
       graph: createDefaultGraphState(),
       memoryRefs: {
-        runContextPath: `.autoresearch/runs/${runId}/memory/run_context.json`,
-        longTermPath: `.autoresearch/runs/${runId}/memory/long_term.jsonl`,
-        episodePath: `.autoresearch/runs/${runId}/memory/episodes.jsonl`
+        runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
       }
     };
 
-    const memoryDir = path.join(root, ".autoresearch", "runs", runId, "memory");
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
     await mkdir(memoryDir, { recursive: true });
     await writeFile(
       path.join(memoryDir, "run_context.json"),
@@ -549,11 +549,11 @@ describe("collectPapers bibtex", () => {
     });
 
     expect(result.status).toBe("failure");
-    const corpus = await readFile(path.join(root, ".autoresearch", "runs", runId, "corpus.jsonl"), "utf8");
+    const corpus = await readFile(path.join(root, ".autolabos", "runs", runId, "corpus.jsonl"), "utf8");
     expect(corpus).toContain('"paper_id":"paper-1"');
     expect(corpus).toContain('"paper_id":"paper-2"');
     const resultMetaRaw = await readFile(
-      path.join(root, ".autoresearch", "runs", runId, "collect_result.json"),
+      path.join(root, ".autolabos", "runs", runId, "collect_result.json"),
       "utf8"
     );
     expect(resultMetaRaw).toContain('"completed": false');
@@ -562,7 +562,7 @@ describe("collectPapers bibtex", () => {
   });
 
   it("applies run constraints as default collect filters when command filters are absent", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-collect-constraints-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-constraints-"));
     process.chdir(root);
 
     const runId = "run-collect-constraints";
@@ -582,13 +582,13 @@ describe("collectPapers bibtex", () => {
       updatedAt: new Date().toISOString(),
       graph: createDefaultGraphState(),
       memoryRefs: {
-        runContextPath: `.autoresearch/runs/${runId}/memory/run_context.json`,
-        longTermPath: `.autoresearch/runs/${runId}/memory/long_term.jsonl`,
-        episodePath: `.autoresearch/runs/${runId}/memory/episodes.jsonl`
+        runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
       }
     };
 
-    const memoryDir = path.join(root, ".autoresearch", "runs", runId, "memory");
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
     await mkdir(memoryDir, { recursive: true });
     await writeFile(
       path.join(memoryDir, "run_context.json"),
@@ -654,7 +654,7 @@ describe("collectPapers bibtex", () => {
     });
 
     const requestRaw = await readFile(
-      path.join(root, ".autoresearch", "runs", runId, "collect_request.json"),
+      path.join(root, ".autolabos", "runs", runId, "collect_request.json"),
       "utf8"
     );
     expect(requestRaw).toContain('"openAccessPdf": true');
@@ -664,7 +664,7 @@ describe("collectPapers bibtex", () => {
   });
 
   it("uses llm-derived constraint defaults when heuristics would miss them", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-collect-constraint-profile-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-constraint-profile-"));
     process.chdir(root);
 
     const runId = "run-collect-constraint-profile";
@@ -684,13 +684,13 @@ describe("collectPapers bibtex", () => {
       updatedAt: new Date().toISOString(),
       graph: createDefaultGraphState(),
       memoryRefs: {
-        runContextPath: `.autoresearch/runs/${runId}/memory/run_context.json`,
-        longTermPath: `.autoresearch/runs/${runId}/memory/long_term.jsonl`,
-        episodePath: `.autoresearch/runs/${runId}/memory/episodes.jsonl`
+        runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
       }
     };
 
-    const memoryDir = path.join(root, ".autoresearch", "runs", runId, "memory");
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
     await mkdir(memoryDir, { recursive: true });
     await writeFile(
       path.join(memoryDir, "run_context.json"),
@@ -770,7 +770,7 @@ describe("collectPapers bibtex", () => {
   });
 
   it("drops generic publicationTypes like paper before calling Semantic Scholar", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-collect-generic-paper-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-generic-paper-"));
     process.chdir(root);
 
     const runId = "run-collect-generic-paper";
@@ -790,13 +790,13 @@ describe("collectPapers bibtex", () => {
       updatedAt: new Date().toISOString(),
       graph: createDefaultGraphState(),
       memoryRefs: {
-        runContextPath: `.autoresearch/runs/${runId}/memory/run_context.json`,
-        longTermPath: `.autoresearch/runs/${runId}/memory/long_term.jsonl`,
-        episodePath: `.autoresearch/runs/${runId}/memory/episodes.jsonl`
+        runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
       }
     };
 
-    const memoryDir = path.join(root, ".autoresearch", "runs", runId, "memory");
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
     await mkdir(memoryDir, { recursive: true });
     await writeFile(path.join(memoryDir, "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
 
@@ -847,7 +847,7 @@ describe("collectPapers bibtex", () => {
   });
 
   it("defers enrichment until after fast Semantic Scholar fetch completes and emits enrichment progress", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-collect-deferred-enrichment-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-deferred-enrichment-"));
     process.chdir(root);
 
     const runId = "run-collect-deferred-enrichment";
@@ -867,13 +867,13 @@ describe("collectPapers bibtex", () => {
       updatedAt: new Date().toISOString(),
       graph: createDefaultGraphState(),
       memoryRefs: {
-        runContextPath: `.autoresearch/runs/${runId}/memory/run_context.json`,
-        longTermPath: `.autoresearch/runs/${runId}/memory/long_term.jsonl`,
-        episodePath: `.autoresearch/runs/${runId}/memory/episodes.jsonl`
+        runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
       }
     };
 
-    const memoryDir = path.join(root, ".autoresearch", "runs", runId, "memory");
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
     await mkdir(memoryDir, { recursive: true });
     await writeFile(
       path.join(memoryDir, "run_context.json"),

@@ -83,7 +83,7 @@ export class OpenAiResponsesTextClient {
     if (typeof fakeResponse === "string" && fakeResponse.trim()) {
       return {
         text: fakeResponse,
-        responseId: process.env.AUTORESEARCH_FAKE_OPENAI_RESPONSE_ID || "fake-openai-response",
+        responseId: process.env.AUTOLABOS_FAKE_OPENAI_RESPONSE_ID || "fake-openai-response",
         model: opts.model || this.defaults.model
       };
     }
@@ -176,7 +176,7 @@ let fakeResponseSequenceSource = "";
 let fakeResponseSequenceIndex = 0;
 
 function resolveFakeOpenAiResponse(): string | undefined {
-  const fakeSequence = process.env.AUTORESEARCH_FAKE_OPENAI_RESPONSE_SEQUENCE;
+  const fakeSequence = process.env.AUTOLABOS_FAKE_OPENAI_RESPONSE_SEQUENCE;
   if (typeof fakeSequence === "string" && fakeSequence.trim()) {
     if (fakeResponseSequenceSource !== fakeSequence) {
       fakeResponseSequenceSource = fakeSequence;
@@ -198,6 +198,6 @@ function resolveFakeOpenAiResponse(): string | undefined {
     }
   }
 
-  const fakeResponse = process.env.AUTORESEARCH_FAKE_OPENAI_RESPONSE;
+  const fakeResponse = process.env.AUTOLABOS_FAKE_OPENAI_RESPONSE;
   return typeof fakeResponse === "string" && fakeResponse.trim() ? fakeResponse : undefined;
 }

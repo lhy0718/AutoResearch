@@ -5,7 +5,7 @@ import { RunRecord } from "../../types.js";
 import { ensureDir } from "../../utils/fs.js";
 
 export function runArtifactsDir(run: RunRecord): string {
-  return path.join(".autoresearch", "runs", run.id);
+  return path.join(".autolabos", "runs", run.id);
 }
 
 export async function writeRunArtifact(run: RunRecord, relativePath: string, content: string): Promise<string> {

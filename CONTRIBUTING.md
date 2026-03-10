@@ -1,4 +1,4 @@
-# Contributing to AutoResearch
+# Contributing to AutoLabOS
 
 Thanks for taking the time to contribute.
 

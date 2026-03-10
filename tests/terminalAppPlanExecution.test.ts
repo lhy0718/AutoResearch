@@ -49,9 +49,9 @@ function makeRun(id = "run-1"): any {
     updatedAt: now,
     graph,
     memoryRefs: {
-      runContextPath: `.autoresearch/runs/${id}/memory/run_context.json`,
-      longTermPath: `.autoresearch/runs/${id}/memory/long_term.jsonl`,
-      episodePath: `.autoresearch/runs/${id}/memory/episodes.jsonl`
+      runContextPath: `.autolabos/runs/${id}/memory/run_context.json`,
+      longTermPath: `.autolabos/runs/${id}/memory/long_term.jsonl`,
+      episodePath: `.autolabos/runs/${id}/memory/episodes.jsonl`
     }
   };
 }
@@ -498,7 +498,7 @@ describe("TerminalApp pending natural plan execution", () => {
   it("stores top-k and branch-count request for /agent run generate_hypotheses", async () => {
     const app = makeApp();
     const run = makeRun("run-generate-options");
-    await rm(path.join(".autoresearch", "runs", run.id), { recursive: true, force: true });
+    await rm(path.join(".autolabos", "runs", run.id), { recursive: true, force: true });
     await mkdir(path.dirname(run.memoryRefs.runContextPath), { recursive: true });
 
     app.resolveTargetRun = vi.fn().mockResolvedValue(run);

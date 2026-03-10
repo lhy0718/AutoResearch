@@ -27,9 +27,9 @@ function makeRun(overrides: Partial<RunRecord> = {}): RunRecord {
     updatedAt: overrides.updatedAt ?? now,
     graph,
     memoryRefs: overrides.memoryRefs ?? {
-      runContextPath: ".autoresearch/runs/run-1/memory/run_context.json",
-      longTermPath: ".autoresearch/runs/run-1/memory/long_term.jsonl",
-      episodePath: ".autoresearch/runs/run-1/memory/episodes.jsonl"
+      runContextPath: ".autolabos/runs/run-1/memory/run_context.json",
+      longTermPath: ".autolabos/runs/run-1/memory/long_term.jsonl",
+      episodePath: ".autolabos/runs/run-1/memory/episodes.jsonl"
     }
   };
 }
@@ -227,10 +227,10 @@ describe("buildNaturalAssistantResponseWithLlm", () => {
   });
 
   it("includes workspace and run facts in prompt", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autoresearch-natural-prompt-"));
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-natural-prompt-"));
     try {
       const run = makeRun({ id: "run-prompt", status: "paused" });
-      const runRoot = path.join(workspace, ".autoresearch", "runs", run.id);
+      const runRoot = path.join(workspace, ".autolabos", "runs", run.id);
       mkdirSync(path.join(runRoot, "memory"), { recursive: true });
       writeFileSync(
         path.join(runRoot, "corpus.jsonl"),
@@ -282,7 +282,7 @@ describe("buildNaturalAssistantResponseWithLlm", () => {
         ),
         "utf8"
       );
-      run.memoryRefs.runContextPath = `.autoresearch/runs/${run.id}/memory/run_context.json`;
+      run.memoryRefs.runContextPath = `.autolabos/runs/${run.id}/memory/run_context.json`;
 
       let capturedPrompt = "";
       const response = await buildNaturalAssistantResponseWithLlm({

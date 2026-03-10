@@ -45,9 +45,9 @@ function makeRun(runId: string): RunRecord {
     updatedAt: new Date().toISOString(),
     graph: createDefaultGraphState(),
     memoryRefs: {
-      runContextPath: `.autoresearch/runs/${runId}/memory/run_context.json`,
-      longTermPath: `.autoresearch/runs/${runId}/memory/long_term.jsonl`,
-      episodePath: `.autoresearch/runs/${runId}/memory/episodes.jsonl`
+      runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+      longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+      episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
     }
   };
 }
@@ -69,12 +69,12 @@ describe("normalizeGenerateHypothesesRequest", () => {
   });
 
   it("writes staged hypothesis artifacts for later inspection", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-hypothesis-node-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-hypothesis-node-"));
     process.chdir(root);
 
     const runId = "run-hypothesis-artifacts";
     const run = makeRun(runId);
-    const runDir = path.join(root, ".autoresearch", "runs", runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
     await mkdir(path.join(runDir, "memory"), { recursive: true });
     await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
     await writeFile(

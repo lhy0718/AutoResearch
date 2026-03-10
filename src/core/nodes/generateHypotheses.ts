@@ -27,10 +27,10 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
     id: "generate_hypotheses",
     async execute({ run }) {
       const runContextMemory = new RunContextMemory(run.memoryRefs.runContextPath);
-      const evidencePath = path.join(".autoresearch", "runs", run.id, "evidence_store.jsonl");
+      const evidencePath = path.join(".autolabos", "runs", run.id, "evidence_store.jsonl");
       const evidenceRows = parseEvidenceSeeds(await safeRead(evidencePath));
       const evidenceById = new Map(evidenceRows.map((item) => [item.evidence_id || "", item] as const));
-      const paperTitlesById = parseCorpusTitleMap(await safeRead(path.join(".autoresearch", "runs", run.id, "corpus.jsonl")));
+      const paperTitlesById = parseCorpusTitleMap(await safeRead(path.join(".autolabos", "runs", run.id, "corpus.jsonl")));
       const request = normalizeGenerateHypothesesRequest(
         await runContextMemory.get<{ topK?: unknown; branchCount?: unknown }>("generate_hypotheses.request")
       );

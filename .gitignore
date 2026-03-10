@@ -20,8 +20,8 @@ web/dist/
 *.tmp
 *.orig
 
-# AutoResearch runtime artifacts
-.autoresearch/
+# AutoLabOS runtime artifacts
+.autolabos/
 
 # Manual example / real-validation workspace
 /test/*

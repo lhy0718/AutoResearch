@@ -7,7 +7,7 @@ describe("SemanticScholarClient", () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
-    delete process.env.AUTORESEARCH_FAKE_SEMANTIC_SCHOLAR_RESPONSE;
+    delete process.env.AUTOLABOS_FAKE_SEMANTIC_SCHOLAR_RESPONSE;
   });
 
   it("uses /paper/search for relevance mode", async () => {
@@ -236,7 +236,7 @@ describe("SemanticScholarClient", () => {
   });
 
   it("uses fake Semantic Scholar data for streamSearchPapers without hitting fetch", async () => {
-    process.env.AUTORESEARCH_FAKE_SEMANTIC_SCHOLAR_RESPONSE = JSON.stringify([
+    process.env.AUTOLABOS_FAKE_SEMANTIC_SCHOLAR_RESPONSE = JSON.stringify([
       { paperId: "p1", title: "Paper 1", authors: [] },
       { paperId: "p2", title: "Paper 2", authors: [] }
     ]);

@@ -17,5 +17,5 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
   { name: "approve", usage: "/approve", description: "Approve current node" },
   { name: "retry", usage: "/retry", description: "Retry current node" },
   { name: "settings", usage: "/settings", description: "Edit configuration" },
-  { name: "quit", usage: "/quit", description: "Exit AutoResearch" }
+  { name: "quit", usage: "/quit", description: "Exit AutoLabOS" }
 ];

@@ -74,7 +74,7 @@ export async function resolvePaperTextSource(args: {
     };
   }
 
-  const cacheDir = path.join(".autoresearch", "runs", args.runId, "analysis_cache");
+  const cacheDir = path.join(".autolabos", "runs", args.runId, "analysis_cache");
   const pdfCachePath = path.join(cacheDir, "pdfs", `${sanitizeFileStem(args.paper.paper_id)}.pdf`);
   const textCachePath = path.join(cacheDir, "texts", `${sanitizeFileStem(args.paper.paper_id)}.txt`);
   const pageImageDir = path.join(cacheDir, "page_images", sanitizeFileStem(args.paper.paper_id));
@@ -292,7 +292,7 @@ async function downloadPdf(url: string, filePath: string, abortSignal?: AbortSig
   const response = await fetch(url, {
     headers: {
       Accept: "application/pdf,*/*;q=0.8",
-      "User-Agent": "AutoResearch/1.0.0"
+      "User-Agent": "AutoLabOS/1.0.0"
     },
     signal: abortSignal
   });

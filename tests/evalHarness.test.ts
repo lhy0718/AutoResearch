@@ -25,7 +25,7 @@ afterEach(() => {
 
 describe("eval harness", () => {
   it("aggregates implementation, verifier, objective, and artifact signals from saved runs", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autoresearch-eval-harness-"));
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-eval-harness-"));
     tempDirs.push(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);

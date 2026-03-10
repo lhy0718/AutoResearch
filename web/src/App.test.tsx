@@ -20,7 +20,7 @@ describe("App", () => {
             JSON.stringify({
               configured: false,
               setupDefaults: {
-                projectName: "AutoResearchV2",
+                projectName: "AutoLabOS",
                 defaultTopic: "Multi-agent collaboration",
                 defaultConstraints: ["recent papers", "last 5 years"],
                 defaultObjectiveMetric: "state-of-the-art reproducibility"
@@ -62,7 +62,7 @@ describe("App", () => {
           JSON.stringify({
             configured: true,
             setupDefaults: {
-              projectName: "AutoResearchV2",
+              projectName: "AutoLabOS",
               defaultTopic: "Multi-agent collaboration",
               defaultConstraints: ["recent papers", "last 5 years"],
               defaultObjectiveMetric: "state-of-the-art reproducibility"
@@ -428,7 +428,7 @@ describe("App", () => {
             JSON.stringify({
               configured: true,
               setupDefaults: {
-                projectName: "AutoResearchV2",
+                projectName: "AutoLabOS",
                 defaultTopic: "Multi-agent collaboration",
                 defaultConstraints: ["recent papers", "last 5 years"],
                 defaultObjectiveMetric: "state-of-the-art reproducibility"

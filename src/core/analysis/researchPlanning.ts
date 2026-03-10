@@ -151,7 +151,7 @@ export interface ExperimentDesignResult {
 }
 
 const HYPOTHESIS_SYSTEM_PROMPT = [
-  "You are the AutoResearch hypothesis agent.",
+  "You are the AutoLabOS hypothesis agent.",
   "Generate multiple research hypotheses from structured evidence.",
   "Return one JSON object only.",
   "No markdown, no prose outside JSON.",
@@ -159,7 +159,7 @@ const HYPOTHESIS_SYSTEM_PROMPT = [
 ].join(" ");
 
 const HYPOTHESIS_AXIS_SYSTEM_PROMPT = [
-  "You are the AutoResearch evidence synthesizer.",
+  "You are the AutoLabOS evidence synthesizer.",
   "Map evidence into a small set of mechanism-oriented axes for better hypothesis generation.",
   "Return one JSON object only.",
   "No markdown, no prose outside JSON.",
@@ -167,7 +167,7 @@ const HYPOTHESIS_AXIS_SYSTEM_PROMPT = [
 ].join(" ");
 
 const HYPOTHESIS_REVIEW_SYSTEM_PROMPT = [
-  "You are the AutoResearch skeptical reviewer.",
+  "You are the AutoLabOS skeptical reviewer.",
   "Critique hypothesis drafts for groundedness, causal clarity, falsifiability, experimentability, and objective-metric alignment.",
   "When the objective is reproducibility, penalize performance-only hypotheses that do not specify a repeated-run or stability-based outcome.",
   "Revise weak wording instead of praising it.",
@@ -176,7 +176,7 @@ const HYPOTHESIS_REVIEW_SYSTEM_PROMPT = [
 ].join(" ");
 
 const DESIGN_SYSTEM_PROMPT = [
-  "You are the AutoResearch experiment designer.",
+  "You are the AutoLabOS experiment designer.",
   "Convert shortlisted hypotheses into executable experiment plans.",
   "Return one JSON object only.",
   "No markdown, no prose outside JSON.",

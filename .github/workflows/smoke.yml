@@ -21,7 +21,7 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     env:
-      AUTORESEARCH_SMOKE_MODE: ${{ github.event.inputs.mode || 'pending' }}
+      AUTOLABOS_SMOKE_MODE: ${{ github.event.inputs.mode || 'pending' }}
       CI: "true"
     steps:
       - name: Checkout

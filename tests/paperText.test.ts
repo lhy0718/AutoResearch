@@ -53,12 +53,12 @@ describe("paperText", () => {
   });
 
   it("uses cached extracted text when present", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-paper-text-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-text-"));
     tempDirs.push(root);
     process.chdir(root);
 
     const textPath = path.join(
-      ".autoresearch",
+      ".autolabos",
       "runs",
       "run-1",
       "analysis_cache",
@@ -78,12 +78,12 @@ describe("paperText", () => {
   });
 
   it("reuses cached hybrid page images when they already exist", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-paper-text-images-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-text-images-"));
     tempDirs.push(root);
     process.chdir(root);
 
     const textPath = path.join(
-      ".autoresearch",
+      ".autolabos",
       "runs",
       "run-1",
       "analysis_cache",
@@ -91,7 +91,7 @@ describe("paperText", () => {
       "paper-1.txt"
     );
     const imageDir = path.join(
-      ".autoresearch",
+      ".autolabos",
       "runs",
       "run-1",
       "analysis_cache",
@@ -118,7 +118,7 @@ describe("paperText", () => {
   });
 
   it("falls back to abstract when PDF download fails", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-paper-text-fallback-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-text-fallback-"));
     tempDirs.push(root);
     process.chdir(root);
     globalThis.fetch = vi.fn(async () => new Response("nope", { status: 404 })) as typeof fetch;

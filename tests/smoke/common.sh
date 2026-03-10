@@ -30,10 +30,10 @@ smoke_require_expect() {
 }
 
 smoke_prepare_workspace() {
-  rm -rf "$SMOKE_WORK_DIR/.autoresearch"
-  mkdir -p "$SMOKE_WORK_DIR/.autoresearch/runs" "$SMOKE_WORK_DIR/.autoresearch/logs"
+  rm -rf "$SMOKE_WORK_DIR/.autolabos"
+  mkdir -p "$SMOKE_WORK_DIR/.autolabos/runs" "$SMOKE_WORK_DIR/.autolabos/logs"
 
-  cat > "$SMOKE_WORK_DIR/.autoresearch/config.yaml" <<'YAML'
+  cat > "$SMOKE_WORK_DIR/.autolabos/config.yaml" <<'YAML'
 version: 1
 project_name: test
 providers:
@@ -71,8 +71,8 @@ paper:
   build_pdf: true
   latex_engine: auto_install
 paths:
-  runs_dir: .autoresearch/runs
-  logs_dir: .autoresearch/logs
+  runs_dir: .autolabos/runs
+  logs_dir: .autolabos/logs
 YAML
 
   node - "$SMOKE_WORK_DIR" "$SMOKE_DEFAULT_RUN_ID" <<'NODE'
@@ -81,7 +81,7 @@ const path = require("path");
 
 const [workDir, runId] = process.argv.slice(2);
 const now = new Date().toISOString();
-const runRoot = path.join(workDir, ".autoresearch", "runs", runId);
+const runRoot = path.join(workDir, ".autolabos", "runs", runId);
 const graphNodeIds = [
   "collect_papers",
   "analyze_papers",
@@ -136,17 +136,17 @@ const runsFile = {
         }
       },
       memoryRefs: {
-        runContextPath: `.autoresearch/runs/${runId}/memory/run_context.json`,
-        longTermPath: `.autoresearch/runs/${runId}/memory/long_term.jsonl`,
-        episodePath: `.autoresearch/runs/${runId}/memory/episodes.jsonl`
+        runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
       }
     }
   ]
 };
 
-fs.mkdirSync(path.join(workDir, ".autoresearch", "runs"), { recursive: true });
+fs.mkdirSync(path.join(workDir, ".autolabos", "runs"), { recursive: true });
 fs.writeFileSync(
-  path.join(workDir, ".autoresearch", "runs", "runs.json"),
+  path.join(workDir, ".autolabos", "runs", "runs.json"),
   JSON.stringify(runsFile, null, 2) + "\n",
   "utf8"
 );
@@ -178,7 +178,7 @@ smoke_run_id() {
   node -e '
     const fs = require("fs");
     const path = require("path");
-    const file = path.join(process.argv[1], ".autoresearch", "runs", "runs.json");
+    const file = path.join(process.argv[1], ".autolabos", "runs", "runs.json");
     try {
       const raw = fs.readFileSync(file, "utf8");
       const parsed = JSON.parse(raw);
@@ -192,7 +192,7 @@ smoke_run_id() {
 
 smoke_run_dir() {
   local run_id="$1"
-  printf '%s/.autoresearch/runs/%s\n' "$SMOKE_WORK_DIR" "$run_id"
+  printf '%s/.autolabos/runs/%s\n' "$SMOKE_WORK_DIR" "$run_id"
 }
 
 smoke_reset_collect_artifacts() {
@@ -219,8 +219,8 @@ smoke_set_fake_codex_single_command() {
   local run_id="$1"
   local reply_line="$2"
   local command="$3"
-  export AUTORESEARCH_FAKE_CODEX_RESPONSE
-  AUTORESEARCH_FAKE_CODEX_RESPONSE="$(node -e '
+  export AUTOLABOS_FAKE_CODEX_RESPONSE
+  AUTOLABOS_FAKE_CODEX_RESPONSE="$(node -e '
     const [replyLine, runId, command] = process.argv.slice(1);
     process.stdout.write(JSON.stringify({
       reply_lines: [replyLine],
@@ -229,29 +229,29 @@ smoke_set_fake_codex_single_command() {
       should_offer_execute: true
     }));
   ' "$reply_line" "$run_id" "$command")"
-  unset AUTORESEARCH_FAKE_CODEX_RESPONSE_SEQUENCE || true
+  unset AUTOLABOS_FAKE_CODEX_RESPONSE_SEQUENCE || true
 }
 
 smoke_set_fake_codex_structured_actions() {
   local run_id="$1"
   local actions_json="$2"
-  export AUTORESEARCH_FAKE_CODEX_RESPONSE
-  AUTORESEARCH_FAKE_CODEX_RESPONSE="$(node -e '
+  export AUTOLABOS_FAKE_CODEX_RESPONSE
+  AUTOLABOS_FAKE_CODEX_RESPONSE="$(node -e '
     const [runId, actionsJson] = process.argv.slice(1);
     process.stdout.write(JSON.stringify({
       target_run_id: runId,
       actions: JSON.parse(actionsJson)
     }));
   ' "$run_id" "$actions_json")"
-  unset AUTORESEARCH_FAKE_CODEX_RESPONSE_SEQUENCE || true
+  unset AUTOLABOS_FAKE_CODEX_RESPONSE_SEQUENCE || true
 }
 
 smoke_set_fake_codex_multi_step_plan() {
   local run_id="$1"
   local reply_line="$2"
   shift 2
-  export AUTORESEARCH_FAKE_CODEX_RESPONSE
-  AUTORESEARCH_FAKE_CODEX_RESPONSE="$(node -e '
+  export AUTOLABOS_FAKE_CODEX_RESPONSE
+  AUTOLABOS_FAKE_CODEX_RESPONSE="$(node -e '
     const [replyLine, runId, ...commands] = process.argv.slice(1);
     process.stdout.write(JSON.stringify({
       reply_lines: [replyLine],
@@ -260,7 +260,7 @@ smoke_set_fake_codex_multi_step_plan() {
       should_offer_execute: true
     }));
   ' "$reply_line" "$run_id" "$@")"
-  unset AUTORESEARCH_FAKE_CODEX_RESPONSE_SEQUENCE || true
+  unset AUTOLABOS_FAKE_CODEX_RESPONSE_SEQUENCE || true
 }
 
 smoke_set_fake_codex_two_turn_replan() {
@@ -270,8 +270,8 @@ smoke_set_fake_codex_two_turn_replan() {
   local second_command="$4"
   local retry_reply="$5"
   local retry_command="$6"
-  export AUTORESEARCH_FAKE_CODEX_RESPONSE_SEQUENCE
-  AUTORESEARCH_FAKE_CODEX_RESPONSE_SEQUENCE="$(node -e '
+  export AUTOLABOS_FAKE_CODEX_RESPONSE_SEQUENCE
+  AUTOLABOS_FAKE_CODEX_RESPONSE_SEQUENCE="$(node -e '
     const [runId, initialReply, firstStepOrActions, secondCommand, retryReply, retryCommand] = process.argv.slice(1);
     const firstPayload = firstStepOrActions.trim().startsWith("[")
       ? {
@@ -294,14 +294,14 @@ smoke_set_fake_codex_two_turn_replan() {
       }
     ]));
   ' "$run_id" "$initial_reply" "$first_step_or_actions" "$second_command" "$retry_reply" "$retry_command")"
-  unset AUTORESEARCH_FAKE_CODEX_RESPONSE || true
+  unset AUTOLABOS_FAKE_CODEX_RESPONSE || true
 }
 
 smoke_set_fake_semantic_scholar_fixture() {
   local prefix="$1"
   local title_prefix="$2"
-  export AUTORESEARCH_FAKE_SEMANTIC_SCHOLAR_RESPONSE
-  AUTORESEARCH_FAKE_SEMANTIC_SCHOLAR_RESPONSE="$(node -e '
+  export AUTOLABOS_FAKE_SEMANTIC_SCHOLAR_RESPONSE
+  AUTOLABOS_FAKE_SEMANTIC_SCHOLAR_RESPONSE="$(node -e '
     const [prefix, titlePrefix] = process.argv.slice(1);
     const bibKey = `${prefix.replace(/[^a-z0-9]/gi, "")}1`;
     const papers = [

@@ -99,7 +99,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         node: "write_paper"
       });
       const objectiveEvaluation = await loadObjectiveEvaluation(runContextMemory, run.id);
-      const runRoot = path.join(".autoresearch", "runs", run.id);
+      const runRoot = path.join(".autolabos", "runs", run.id);
       const bundle = {
         runTitle: run.title,
         topic: run.topic,
@@ -221,7 +221,7 @@ async function loadObjectiveEvaluation(
     return cached;
   }
   try {
-    const raw = await safeRead(`.autoresearch/runs/${runId}/objective_evaluation.json`);
+    const raw = await safeRead(`.autolabos/runs/${runId}/objective_evaluation.json`);
     return raw ? (JSON.parse(raw) as ObjectiveMetricEvaluation) : undefined;
   } catch {
     return undefined;
@@ -248,7 +248,7 @@ async function maybeBuildPaperPdf(input: {
     };
   }
 
-  const runPaperDir = path.join(".autoresearch", "runs", input.run.id, "paper");
+  const runPaperDir = path.join(".autolabos", "runs", input.run.id, "paper");
   const compileWarnings: string[] = [];
   const attempts: PaperCompileAttempt[] = [];
   let toolCallsUsed = 0;

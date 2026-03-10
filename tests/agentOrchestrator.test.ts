@@ -102,7 +102,7 @@ async function setup(registry: GraphNodeRegistry): Promise<{
   orchestrator: AgentOrchestrator;
   checkpointStore: CheckpointStore;
 }> {
-  const cwd = mkdtempSync(path.join(os.tmpdir(), "autoresearch-orchestrator-"));
+  const cwd = mkdtempSync(path.join(os.tmpdir(), "autolabos-orchestrator-"));
   tempDirs.push(cwd);
 
   const paths = resolveAppPaths(cwd);

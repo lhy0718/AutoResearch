@@ -14,7 +14,7 @@ set run_id [lindex $argv 1]
 set query "최근 5년 관련도 순으로 100개 수집해줘"
 set expected_label "논문 수집 \\(limit=100, lastYears=5\\)"
 
-spawn_autoresearch $workdir
+spawn_autolabos $workdir
 
 expect {
   -re "Slash command palette is ready" {}

@@ -15,7 +15,7 @@ set query "Please refresh the library: wipe existing items, then repopulate it w
 set expected_step1 "/agent clear collect_papers $run_id"
 set expected_step2 "/agent collect --last-years 5 --sort relevance --open-access --run $run_id"
 
-spawn_autoresearch $workdir
+spawn_autolabos $workdir
 
 expect {
   -re "Slash command palette is ready" {}

@@ -49,7 +49,7 @@ function sanitizeTitle(raw: string, topic: string): string {
 function fallbackTitle(topic: string): string {
   const trimmed = topic.replace(/\s+/g, " ").trim();
   if (!trimmed) {
-    return "Untitled AutoResearch Run";
+    return "Untitled AutoLabOS Run";
   }
   return trimmed.slice(0, 96);
 }

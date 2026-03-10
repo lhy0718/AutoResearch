@@ -105,7 +105,7 @@ export class LocalAciAdapter implements AgentComputerInterface {
     }
 
     // Minimal local adapter behavior: persist patch file for auditability.
-    const patchPath = path.join(cwd || process.cwd(), `.autoresearch/tmp_patch_${Date.now()}.diff`);
+    const patchPath = path.join(cwd || process.cwd(), `.autolabos/tmp_patch_${Date.now()}.diff`);
     await ensureDir(path.dirname(patchPath));
     await fs.writeFile(patchPath, diff, "utf8");
     return {
@@ -298,7 +298,7 @@ function defaultCodeGlobs(): string[] {
     "!.git",
     "!node_modules",
     "!dist",
-    "!.autoresearch",
+    "!.autolabos",
     "!web/dist",
     "!coverage"
   ];

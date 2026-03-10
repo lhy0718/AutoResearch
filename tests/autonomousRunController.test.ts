@@ -56,7 +56,7 @@ async function setup(registry: GraphNodeRegistry): Promise<{
   store: RunStore;
   controller: AutonomousRunController;
 }> {
-  const cwd = mkdtempSync(path.join(os.tmpdir(), "autoresearch-autonomy-"));
+  const cwd = mkdtempSync(path.join(os.tmpdir(), "autolabos-autonomy-"));
   tempDirs.push(cwd);
 
   const paths = resolveAppPaths(cwd);

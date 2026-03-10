@@ -25,7 +25,7 @@ import {
   runNonInteractiveSetup
 } from "../config.js";
 import { runDoctor } from "../core/doctor.js";
-import { bootstrapAutoresearchRuntime, AutoresearchRuntime } from "../runtime/createRuntime.js";
+import { bootstrapAutoLabOSRuntime, AutoLabOSRuntime } from "../runtime/createRuntime.js";
 import { GraphNodeId, PendingPlan, RunRecord, WebSessionState } from "../types.js";
 import { InteractionSession } from "../interaction/InteractionSession.js";
 import { listRunArtifacts, readRunArtifact } from "./artifacts.js";
@@ -80,17 +80,17 @@ interface JsonBody {
   [key: string]: unknown;
 }
 
-export async function runAutoresearchWebServer(opts?: WebServerOptions): Promise<void> {
-  const controller = new AutoresearchWebController(opts);
+export async function runAutoLabOSWebServer(opts?: WebServerOptions): Promise<void> {
+  const controller = new AutoLabOSWebController(opts);
   await controller.start();
 }
 
-class AutoresearchWebController {
+class AutoLabOSWebController {
   private readonly cwd: string;
   private readonly host: string;
   private readonly port: number;
   private readonly paths;
-  private runtime?: AutoresearchRuntime;
+  private runtime?: AutoLabOSRuntime;
   private session?: InteractionSession;
   private sessionUnsubscribe?: () => void;
   private eventUnsubscribe?: () => void;
@@ -104,7 +104,7 @@ class AutoresearchWebController {
   }
 
   async start(): Promise<void> {
-    const bootstrap = await bootstrapAutoresearchRuntime({
+    const bootstrap = await bootstrapAutoLabOSRuntime({
       cwd: this.cwd,
       allowInteractiveSetup: false
     });
@@ -124,11 +124,11 @@ class AutoresearchWebController {
       });
     });
 
-    process.stdout.write(`AutoResearch web UI: http://${this.host}:${this.port}\n`);
+    process.stdout.write(`AutoLabOS web UI: http://${this.host}:${this.port}\n`);
     await new Promise<void>(() => undefined);
   }
 
-  private async attachRuntime(runtime: AutoresearchRuntime): Promise<void> {
+  private async attachRuntime(runtime: AutoLabOSRuntime): Promise<void> {
     this.runtime = runtime;
     this.session?.dispose();
     this.sessionUnsubscribe?.();
@@ -210,7 +210,7 @@ class AutoresearchWebController {
         });
         await ensureScaffold(this.paths);
         const runtime = (
-          await bootstrapAutoresearchRuntime({
+          await bootstrapAutoLabOSRuntime({
             cwd: this.cwd,
             allowInteractiveSetup: false
           })
@@ -462,9 +462,9 @@ class AutoresearchWebController {
     };
   }
 
-  private requireRuntime(res: ServerResponse): AutoresearchRuntime | undefined {
+  private requireRuntime(res: ServerResponse): AutoLabOSRuntime | undefined {
     if (!this.runtime) {
-      jsonResponse(res, 409, { error: "AutoResearch is not configured yet." });
+      jsonResponse(res, 409, { error: "AutoLabOS is not configured yet." });
       return undefined;
     }
     return this.runtime;
@@ -472,7 +472,7 @@ class AutoresearchWebController {
 
   private requireSession(res: ServerResponse): InteractionSession | undefined {
     if (!this.session) {
-      jsonResponse(res, 409, { error: "AutoResearch is not configured yet." });
+      jsonResponse(res, 409, { error: "AutoLabOS is not configured yet." });
       return undefined;
     }
     return this.session;
@@ -531,7 +531,7 @@ class AutoresearchWebController {
       res.statusCode = 503;
       res.setHeader("Content-Type", "text/plain; charset=utf-8");
       res.end(
-        `Installed AutoResearch web assets are missing. If you're using a repository checkout, build them once from the package root (${PACKAGE_ROOT}) with \`npm --prefix web run build\`.`
+        `Installed AutoLabOS web assets are missing. If you're using a repository checkout, build them once from the package root (${PACKAGE_ROOT}) with \`npm --prefix web run build\`.`
       );
     }
   }
@@ -548,7 +548,7 @@ function buildSessionInputResponse(
   };
 }
 
-function summarizeConfig(config: AutoresearchRuntime["config"]): ConfigSummary {
+function summarizeConfig(config: AutoLabOSRuntime["config"]): ConfigSummary {
   return {
     projectName: config.project_name,
     llmMode: config.providers.llm_mode,
@@ -593,7 +593,7 @@ function summarizeConfig(config: AutoresearchRuntime["config"]): ConfigSummary {
 }
 
 function buildConfigFormData(
-  config?: AutoresearchRuntime["config"],
+  config?: AutoLabOSRuntime["config"],
   cwd = process.cwd()
 ): WebConfigFormData {
   const codexModel = config?.providers.codex.model || DEFAULT_CODEX_MODEL;
@@ -642,7 +642,7 @@ function buildConfigFormData(
   };
 }
 
-function buildConfigOptions(config?: AutoresearchRuntime["config"]): WebConfigOptions {
+function buildConfigOptions(config?: AutoLabOSRuntime["config"]): WebConfigOptions {
   const codexModels = buildCodexModelSelectionChoices(config?.providers.codex.model);
   const codexReasoningByModel = Object.fromEntries(
     codexModels.map((modelChoice) => {

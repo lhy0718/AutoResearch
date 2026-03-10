@@ -1,24 +1,24 @@
 #!/usr/bin/env node
-import { runAutoresearchApp } from "../app.js";
+import { runAutoLabOSApp } from "../app.js";
 import { resolveCliAction } from "./args.js";
-import { runAutoresearchWebServer } from "../web/server.js";
+import { runAutoLabOSWebServer } from "../web/server.js";
 import { runCompareAnalysisCli } from "./compareAnalysis.js";
 import { runEvalHarnessCli } from "./evalHarness.js";
 
 function printHelp(): void {
   process.stdout.write([
-    "autoresearch",
+    "autolabos",
     "",
-    "Single entrypoint for the AutoResearch slash-first TUI.",
+    "Single entrypoint for the AutoLabOS slash-first TUI.",
     "All operations are available inside the app via /commands.",
     "",
     "Usage:",
-    "  autoresearch",
-    "  autoresearch web [--host 127.0.0.1] [--port 4317]",
-    "  autoresearch compare-analysis --run <run-id> [--limit 3] [--no-judge]",
-    "  autoresearch eval-harness [--run <run-id>] [--limit 10] [--output outputs/eval-harness/latest.json]",
-    "  autoresearch --help",
-    "  autoresearch --version"
+    "  autolabos",
+    "  autolabos web [--host 127.0.0.1] [--port 4317]",
+    "  autolabos compare-analysis --run <run-id> [--limit 3] [--no-judge]",
+    "  autolabos eval-harness [--run <run-id>] [--limit 10] [--output outputs/eval-harness/latest.json]",
+    "  autolabos --help",
+    "  autolabos --version"
   ].join("\n") + "\n");
 }
 
@@ -31,7 +31,7 @@ async function main(): Promise<void> {
   }
 
   if (action.kind === "version") {
-    process.stdout.write("autoresearch 1.0.0\n");
+    process.stdout.write("autolabos 1.0.0\n");
     return;
   }
 
@@ -42,7 +42,7 @@ async function main(): Promise<void> {
   }
 
   if (action.kind === "web") {
-    await runAutoresearchWebServer({
+    await runAutoLabOSWebServer({
       cwd: process.cwd(),
       host: action.host,
       port: action.port
@@ -70,7 +70,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  await runAutoresearchApp();
+  await runAutoLabOSApp();
 }
 
 main().catch((error) => {

@@ -25,7 +25,7 @@ import { AgentOrchestrator } from "../core/agents/agentOrchestrator.js";
 import { ResponsesPdfAnalysisClient } from "../integrations/openai/responsesPdfAnalysisClient.js";
 import { OpenAiResponsesTextClient } from "../integrations/openai/responsesTextClient.js";
 
-export interface AutoresearchRuntime {
+export interface AutoLabOSRuntime {
   paths: AppPaths;
   config: AppConfig;
   runStore: RunStore;
@@ -44,10 +44,10 @@ export interface RuntimeBootstrap {
   firstRunSetup: boolean;
   paths: AppPaths;
   config?: AppConfig;
-  runtime?: AutoresearchRuntime;
+  runtime?: AutoLabOSRuntime;
 }
 
-export async function bootstrapAutoresearchRuntime(opts?: {
+export async function bootstrapAutoLabOSRuntime(opts?: {
   cwd?: string;
   allowInteractiveSetup?: boolean;
 }): Promise<RuntimeBootstrap> {
@@ -70,14 +70,14 @@ export async function bootstrapAutoresearchRuntime(opts?: {
     firstRunSetup,
     paths,
     config,
-    runtime: await createAutoresearchRuntime(paths, config)
+    runtime: await createAutoLabOSRuntime(paths, config)
   };
 }
 
-export async function createAutoresearchRuntime(
+export async function createAutoLabOSRuntime(
   paths: AppPaths,
   config: AppConfig
-): Promise<AutoresearchRuntime> {
+): Promise<AutoLabOSRuntime> {
   const runStore = new RunStore(paths);
   const codex = new CodexCliClient(paths.cwd, {
     model: config.providers.codex.model || "gpt-5.3-codex",

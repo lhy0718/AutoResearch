@@ -14,7 +14,7 @@ import {
 } from "../analysis/paperWriting.js";
 import { ConstraintProfile } from "../runConstraints.js";
 import { ObjectiveMetricEvaluation, ObjectiveMetricProfile } from "../objectiveMetric.js";
-import { mapCodexEventToAutoResearchEvents } from "../../integrations/codex/codexEventMapper.js";
+import { mapCodexEventToAutoLabOSEvents } from "../../integrations/codex/codexEventMapper.js";
 import { createPaperWriterRole } from "./roles/paperWriter.js";
 import { createReviewerRole } from "./roles/reviewer.js";
 import { writeRunArtifact } from "../nodes/helpers.js";
@@ -303,7 +303,7 @@ export class PaperWriterSessionManager {
           workingDirectory: this.deps.workspaceRoot,
           abortSignal: input.abortSignal,
           onEvent: (event) => {
-            const mapped = mapCodexEventToAutoResearchEvents({
+            const mapped = mapCodexEventToAutoLabOSEvents({
               event,
               runId: input.run.id,
               node: "write_paper",
@@ -381,7 +381,7 @@ export class PaperWriterSessionManager {
         workingDirectory: this.deps.workspaceRoot,
         abortSignal: input.abortSignal,
         onEvent: (event) => {
-          const mapped = mapCodexEventToAutoResearchEvents({
+          const mapped = mapCodexEventToAutoLabOSEvents({
             event,
             runId: input.run.id,
             node: "write_paper",

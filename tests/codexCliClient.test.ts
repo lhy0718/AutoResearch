@@ -4,12 +4,12 @@ import { CodexCliClient } from "../src/integrations/codex/codexCliClient.js";
 
 describe("CodexCliClient fake response sequence", () => {
   afterEach(() => {
-    delete process.env.AUTORESEARCH_FAKE_CODEX_RESPONSE;
-    delete process.env.AUTORESEARCH_FAKE_CODEX_RESPONSE_SEQUENCE;
+    delete process.env.AUTOLABOS_FAKE_CODEX_RESPONSE;
+    delete process.env.AUTOLABOS_FAKE_CODEX_RESPONSE_SEQUENCE;
   });
 
   it("consumes fake response sequence entries in order", async () => {
-    process.env.AUTORESEARCH_FAKE_CODEX_RESPONSE_SEQUENCE = JSON.stringify([
+    process.env.AUTOLABOS_FAKE_CODEX_RESPONSE_SEQUENCE = JSON.stringify([
       { reply_lines: ["first"] },
       { reply_lines: ["second"] }
     ]);

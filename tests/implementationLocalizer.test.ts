@@ -19,7 +19,7 @@ afterEach(() => {
 
 describe("ImplementationLocalizer", () => {
   it("ranks the most relevant experiment file from search evidence", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autoresearch-localizer-"));
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-localizer-"));
     tempDirs.push(workspace);
     mkdirSync(path.join(workspace, "src"), { recursive: true });
     mkdirSync(path.join(workspace, "docs"), { recursive: true });
@@ -55,7 +55,7 @@ describe("ImplementationLocalizer", () => {
   });
 
   it("uses previous failure context to recover the likely broken file", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autoresearch-localizer-failure-"));
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-localizer-failure-"));
     tempDirs.push(workspace);
     mkdirSync(path.join(workspace, "src"), { recursive: true });
 

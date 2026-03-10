@@ -7,7 +7,7 @@ import { AGENT_ORDER, AgentId, AppConfig, GraphNodeId, RunInsightCard, RunRecord
 import { RunStore } from "../core/runs/runStore.js";
 import { TitleGenerator } from "../core/runs/titleGenerator.js";
 import { CodexCliClient, CodexReasoningEffort } from "../integrations/codex/codexCliClient.js";
-import { AutoResearchEvent, EventStream } from "../core/events.js";
+import { AutoLabOSEvent, EventStream } from "../core/events.js";
 import {
   buildCodexModelSelectionChoices,
   DEFAULT_CODEX_MODEL,
@@ -2356,7 +2356,7 @@ export class TerminalApp {
   private buildModelSelectionChoices(): string[] {
     return buildCodexModelSelectionChoices(
       this.config.providers.codex.model,
-      process.env.AUTORESEARCH_MODEL_CHOICES || ""
+      process.env.AUTOLABOS_MODEL_CHOICES || ""
     );
   }
 
@@ -3101,7 +3101,7 @@ export class TerminalApp {
       return;
     }
 
-    const runDir = path.join(process.cwd(), ".autoresearch", "runs", this.activeRunId);
+    const runDir = path.join(process.cwd(), ".autolabos", "runs", this.activeRunId);
     try {
       const report = parseAnalysisReport(await safeRead(path.join(runDir, "result_analysis.json")));
       this.activeRunInsight = report ? buildAnalyzeResultsInsightCard(report) : undefined;
@@ -3141,7 +3141,7 @@ export class TerminalApp {
   }
 
   private historyFilePath(runId: string): string {
-    return path.join(process.cwd(), ".autoresearch", "runs", runId, "tui_history.json");
+    return path.join(process.cwd(), ".autolabos", "runs", runId, "tui_history.json");
   }
 
   private async persistHistoryForActiveRun(): Promise<void> {
@@ -3368,7 +3368,7 @@ export class TerminalApp {
   }
 
   private async readHypothesisInsights(runId: string): Promise<HypothesisInsights> {
-    const filePath = path.join(process.cwd(), ".autoresearch", "runs", runId, "hypotheses.jsonl");
+    const filePath = path.join(process.cwd(), ".autolabos", "runs", runId, "hypotheses.jsonl");
     try {
       const raw = await fs.readFile(filePath, "utf8");
       const lines = raw
@@ -3403,7 +3403,7 @@ export class TerminalApp {
   }
 
   private async readCorpusInsights(runId: string): Promise<CorpusInsights> {
-    const filePath = path.join(process.cwd(), ".autoresearch", "runs", runId, "corpus.jsonl");
+    const filePath = path.join(process.cwd(), ".autolabos", "runs", runId, "corpus.jsonl");
     try {
       const stat = await fs.stat(filePath);
       const cache = this.corpusInsightsCache.get(runId);
@@ -3474,7 +3474,7 @@ export class TerminalApp {
   }
 
   private async clearNodeArtifacts(run: RunRecord, node: GraphNodeId): Promise<number> {
-    const runDir = path.join(process.cwd(), ".autoresearch", "runs", run.id);
+    const runDir = path.join(process.cwd(), ".autolabos", "runs", run.id);
     const targets = nodeArtifactTargets(node);
 
     let removed = 0;
@@ -3529,7 +3529,7 @@ export class TerminalApp {
   }
 
   private async countNodeArtifacts(run: RunRecord, node: GraphNodeId): Promise<string[]> {
-    const runDir = path.join(process.cwd(), ".autoresearch", "runs", run.id);
+    const runDir = path.join(process.cwd(), ".autolabos", "runs", run.id);
     switch (node) {
       case "collect_papers": {
         const count = await countJsonl(path.join(runDir, "corpus.jsonl"));
@@ -3721,7 +3721,7 @@ function normalizeSteeringInput(text: string): string | undefined {
   return trimmed;
 }
 
-function formatEventLog(event: AutoResearchEvent): string | undefined {
+function formatEventLog(event: AutoLabOSEvent): string | undefined {
   switch (event.type) {
     case "TOOL_CALLED":
       return `Tool: ${oneLine(String(event.payload.command || event.payload.tool || "unknown"))}`;

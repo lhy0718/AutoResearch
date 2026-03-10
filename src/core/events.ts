@@ -18,7 +18,7 @@ export type EventType =
   | "NODE_COMPLETED"
   | "NODE_FAILED";
 
-export interface AutoResearchEvent {
+export interface AutoLabOSEvent {
   id: string;
   type: EventType;
   timestamp: string;
@@ -28,20 +28,20 @@ export interface AutoResearchEvent {
   payload: Record<string, unknown>;
 }
 
-export type EventListener = (event: AutoResearchEvent) => void;
+export type EventListener = (event: AutoLabOSEvent) => void;
 
 export interface EventStream {
-  emit(event: Omit<AutoResearchEvent, "id" | "timestamp">): AutoResearchEvent;
+  emit(event: Omit<AutoLabOSEvent, "id" | "timestamp">): AutoLabOSEvent;
   subscribe(listener: EventListener): () => void;
-  history(limit?: number): AutoResearchEvent[];
+  history(limit?: number): AutoLabOSEvent[];
 }
 
 export class InMemoryEventStream implements EventStream {
   private readonly listeners = new Set<EventListener>();
-  private readonly items: AutoResearchEvent[] = [];
+  private readonly items: AutoLabOSEvent[] = [];
 
-  emit(event: Omit<AutoResearchEvent, "id" | "timestamp">): AutoResearchEvent {
-    const next: AutoResearchEvent = {
+  emit(event: Omit<AutoLabOSEvent, "id" | "timestamp">): AutoLabOSEvent {
+    const next: AutoLabOSEvent = {
       ...event,
       id: `evt_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`,
       timestamp: new Date().toISOString()
@@ -61,7 +61,7 @@ export class InMemoryEventStream implements EventStream {
     };
   }
 
-  history(limit = 200): AutoResearchEvent[] {
+  history(limit = 200): AutoLabOSEvent[] {
     if (limit <= 0) {
       return [];
     }

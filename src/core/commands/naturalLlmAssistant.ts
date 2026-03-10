@@ -168,7 +168,7 @@ function buildPrompt(
   const steeringHints = (ctx.steeringHints || []).filter((x) => x.trim()).slice(-5);
 
   return [
-    "You are a natural-language assistant for the AutoResearch TUI.",
+    "You are a natural-language assistant for the AutoLabOS TUI.",
     "You must respond with STRICT JSON only. No markdown, no extra text.",
     "reply_lines must follow the same language as the user input.",
     "You have read-only access to workspace files and should inspect relevant files when needed.",
@@ -218,7 +218,7 @@ function buildPlainTextRetryPrompt(
 ): string {
   const steeringHints = (ctx.steeringHints || []).filter((x) => x.trim()).slice(-5);
   return [
-    "You are a natural-language assistant for the AutoResearch TUI.",
+    "You are a natural-language assistant for the AutoLabOS TUI.",
     "The previous strict-JSON answer failed to parse.",
     "Answer in plain text only, no JSON and no markdown.",
     "Use the same language as the user input.",
@@ -423,7 +423,7 @@ function resolveTargetRun(runs: RunRecord[], activeRunId: string | undefined, in
 async function buildRunFacts(run: RunRecord, workspaceRoot: string): Promise<RunFacts> {
   const runContextPath = resolvePath(workspaceRoot, run.memoryRefs.runContextPath);
   const contextMap = await readRunContextMap(runContextPath);
-  const runRoot = path.join(workspaceRoot, ".autoresearch", "runs", run.id);
+  const runRoot = path.join(workspaceRoot, ".autolabos", "runs", run.id);
 
   const collectFromMemory = toOptionalNumber(contextMap.get("collect_papers.count"));
   const evidenceFromMemory = toOptionalNumber(contextMap.get("analyze_papers.evidence_count"));

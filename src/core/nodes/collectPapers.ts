@@ -429,7 +429,7 @@ function buildCollectFailureMessage(
 ): string {
   if (/\b429\b/.test(fetchError)) {
     const chunkNote = usesConservativeChunking(request)
-      ? " AutoResearch already switched this request to smaller Semantic Scholar chunks."
+      ? " AutoLabOS already switched this request to smaller Semantic Scholar chunks."
       : "";
     return `Semantic Scholar rate limited "${request.query}": ${fetchError}.${chunkNote} Wait a bit and retry, or lower --limit to 50-100 / collect in smaller batches.`;
   }
@@ -647,7 +647,7 @@ async function runWithConcurrency<T>(
 }
 
 async function readExistingCorpus(run: { id: string }): Promise<StoredCorpusRow[]> {
-  const raw = await safeRead(`.autoresearch/runs/${run.id}/corpus.jsonl`);
+  const raw = await safeRead(`.autolabos/runs/${run.id}/corpus.jsonl`);
   return raw
     .split("\n")
     .map((line) => line.trim())

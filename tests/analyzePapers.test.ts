@@ -58,15 +58,15 @@ function makeRun(runId: string): RunRecord {
     updatedAt: new Date().toISOString(),
     graph: createDefaultGraphState(),
     memoryRefs: {
-      runContextPath: `.autoresearch/runs/${runId}/memory/run_context.json`,
-      longTermPath: `.autoresearch/runs/${runId}/memory/long_term.jsonl`,
-      episodePath: `.autoresearch/runs/${runId}/memory/episodes.jsonl`
+      runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+      longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+      episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
     }
   };
 }
 
 async function writeCorpus(runId: string, rows: unknown[]): Promise<void> {
-  const dir = path.join(".autoresearch", "runs", runId);
+  const dir = path.join(".autolabos", "runs", runId);
   await mkdir(path.join(dir, "memory"), { recursive: true });
   await writeFile(
     path.join(dir, "corpus.jsonl"),
@@ -101,7 +101,7 @@ function jsonOutput(summary: string, claim: string): string {
 
 describe("analyzePapers node", () => {
   it("writes structured summaries, evidence, and manifest for analyzed papers", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-analyze-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-"));
     tempDirs.push(root);
     process.chdir(root);
 
@@ -134,9 +134,9 @@ describe("analyzePapers node", () => {
     expect(result.status).toBe("success");
     expect(result.needsApproval).toBe(true);
 
-    const summariesRaw = await readFile(path.join(".autoresearch", "runs", runId, "paper_summaries.jsonl"), "utf8");
-    const evidenceRaw = await readFile(path.join(".autoresearch", "runs", runId, "evidence_store.jsonl"), "utf8");
-    const manifestRaw = await readFile(path.join(".autoresearch", "runs", runId, "analysis_manifest.json"), "utf8");
+    const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
+    const evidenceRaw = await readFile(path.join(".autolabos", "runs", runId, "evidence_store.jsonl"), "utf8");
+    const manifestRaw = await readFile(path.join(".autolabos", "runs", runId, "analysis_manifest.json"), "utf8");
     const manifest = JSON.parse(manifestRaw);
 
     expect(summariesRaw).toContain('"source_type":"abstract"');
@@ -155,7 +155,7 @@ describe("analyzePapers node", () => {
   });
 
   it("persists partial progress and resumes only unfinished papers on rerun", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-analyze-resume-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-resume-"));
     tempDirs.push(root);
     process.chdir(root);
 
@@ -185,7 +185,7 @@ describe("analyzePapers node", () => {
     const first = await firstNode.execute({ run, graph: run.graph });
     expect(first.status).toBe("failure");
 
-    const summariesAfterFirst = await readFile(path.join(".autoresearch", "runs", runId, "paper_summaries.jsonl"), "utf8");
+    const summariesAfterFirst = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
     expect(summariesAfterFirst.trim().split("\n")).toHaveLength(1);
 
     const secondNode = createAnalyzePapersNode({
@@ -207,8 +207,8 @@ describe("analyzePapers node", () => {
     const second = await secondNode.execute({ run, graph: run.graph });
     expect(second.status).toBe("success");
 
-    const summariesAfterSecond = await readFile(path.join(".autoresearch", "runs", runId, "paper_summaries.jsonl"), "utf8");
-    const evidenceAfterSecond = await readFile(path.join(".autoresearch", "runs", runId, "evidence_store.jsonl"), "utf8");
+    const summariesAfterSecond = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
+    const evidenceAfterSecond = await readFile(path.join(".autolabos", "runs", runId, "evidence_store.jsonl"), "utf8");
 
     expect(summariesAfterSecond.trim().split("\n")).toHaveLength(2);
     expect(evidenceAfterSecond.trim().split("\n")).toHaveLength(2);
@@ -217,7 +217,7 @@ describe("analyzePapers node", () => {
   });
 
   it("uses Responses API PDF analysis when configured and a PDF URL is present", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-analyze-pdf-api-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-pdf-api-"));
     tempDirs.push(root);
     process.chdir(root);
 
@@ -257,13 +257,13 @@ describe("analyzePapers node", () => {
     const result = await node.execute({ run, graph: run.graph });
 
     expect(result.status).toBe("success");
-    const summariesRaw = await readFile(path.join(".autoresearch", "runs", runId, "paper_summaries.jsonl"), "utf8");
+    const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
     expect(summariesRaw).toContain('"source_type":"full_text"');
     expect(summariesRaw).toContain('"summary":"pdf summary"');
   });
 
   it("falls back to local text/abstract analysis when Responses API times out downloading a remote PDF", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-analyze-pdf-fallback-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-pdf-fallback-"));
     tempDirs.push(root);
     process.chdir(root);
 
@@ -310,7 +310,7 @@ describe("analyzePapers node", () => {
     const result = await node.execute({ run, graph: run.graph });
 
     expect(result.status).toBe("success");
-    const summariesRaw = await readFile(path.join(".autoresearch", "runs", runId, "paper_summaries.jsonl"), "utf8");
+    const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
     expect(summariesRaw).toContain('"summary":"fallback summary"');
     expect(summariesRaw).toContain('"source_type":"abstract"');
 
@@ -320,7 +320,7 @@ describe("analyzePapers node", () => {
   });
 
   it("falls back to local text/abstract analysis when Responses API returns upstream 403 while downloading a remote PDF", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-analyze-pdf-403-fallback-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-pdf-403-fallback-"));
     tempDirs.push(root);
     process.chdir(root);
 
@@ -367,7 +367,7 @@ describe("analyzePapers node", () => {
     const result = await node.execute({ run, graph: run.graph });
 
     expect(result.status).toBe("success");
-    const summariesRaw = await readFile(path.join(".autoresearch", "runs", runId, "paper_summaries.jsonl"), "utf8");
+    const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
     expect(summariesRaw).toContain('"summary":"fallback summary"');
     expect(summariesRaw).toContain('"source_type":"abstract"');
 
@@ -379,7 +379,7 @@ describe("analyzePapers node", () => {
   });
 
   it("analyzes only the selected top-N papers when a request is provided", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-analyze-topn-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-topn-"));
     tempDirs.push(root);
     process.chdir(root);
 
@@ -441,8 +441,8 @@ describe("analyzePapers node", () => {
     const result = await node.execute({ run, graph: run.graph });
     expect(result.status).toBe("success");
 
-    const summariesRaw = await readFile(path.join(".autoresearch", "runs", runId, "paper_summaries.jsonl"), "utf8");
-    const manifestRaw = await readFile(path.join(".autoresearch", "runs", runId, "analysis_manifest.json"), "utf8");
+    const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
+    const manifestRaw = await readFile(path.join(".autolabos", "runs", runId, "analysis_manifest.json"), "utf8");
     expect(summariesRaw.trim().split("\n")).toHaveLength(2);
     expect(summariesRaw).toContain('"paper_id":"p1"');
     expect(summariesRaw).toContain('"paper_id":"p2"');
@@ -453,7 +453,7 @@ describe("analyzePapers node", () => {
   });
 
   it("replaces prior selection outputs when top-N changes", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autoresearch-analyze-topn-replace-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-topn-replace-"));
     tempDirs.push(root);
     process.chdir(root);
 
@@ -520,8 +520,8 @@ describe("analyzePapers node", () => {
     const second = await secondNode.execute({ run, graph: run.graph });
     expect(second.status).toBe("success");
 
-    const summariesRaw = await readFile(path.join(".autoresearch", "runs", runId, "paper_summaries.jsonl"), "utf8");
-    const evidenceRaw = await readFile(path.join(".autoresearch", "runs", runId, "evidence_store.jsonl"), "utf8");
+    const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
+    const evidenceRaw = await readFile(path.join(".autolabos", "runs", runId, "evidence_store.jsonl"), "utf8");
     expect(summariesRaw.trim().split("\n")).toHaveLength(1);
     expect(evidenceRaw.trim().split("\n")).toHaveLength(1);
     expect(summariesRaw).toContain('"paper_id":"p2"');

@@ -26,9 +26,9 @@ describe("compare analysis", () => {
       updatedAt: "2026-03-10T00:00:00.000Z",
       graph: createDefaultGraphState(),
       memoryRefs: {
-        runContextPath: ".autoresearch/runs/run-compare-policy/memory/run_context.json",
-        longTermPath: ".autoresearch/runs/run-compare-policy/memory/long_term.jsonl",
-        episodePath: ".autoresearch/runs/run-compare-policy/memory/episodes.jsonl"
+        runContextPath: ".autolabos/runs/run-compare-policy/memory/run_context.json",
+        longTermPath: ".autolabos/runs/run-compare-policy/memory/long_term.jsonl",
+        episodePath: ".autolabos/runs/run-compare-policy/memory/episodes.jsonl"
       }
     };
 

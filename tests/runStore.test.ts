@@ -20,7 +20,7 @@ afterEach(() => {
 
 describe("RunStore", () => {
   it("creates v3 run with graph defaults", async () => {
-    const cwd = mkdtempSync(path.join(os.tmpdir(), "autoresearch-runstore-"));
+    const cwd = mkdtempSync(path.join(os.tmpdir(), "autolabos-runstore-"));
     tempDirs.push(cwd);
     const paths = resolveAppPaths(cwd);
     await ensureScaffold(paths);
@@ -45,7 +45,7 @@ describe("RunStore", () => {
   });
 
   it("searches runs by id and title", async () => {
-    const cwd = mkdtempSync(path.join(os.tmpdir(), "autoresearch-runsearch-"));
+    const cwd = mkdtempSync(path.join(os.tmpdir(), "autolabos-runsearch-"));
     tempDirs.push(cwd);
     const paths = resolveAppPaths(cwd);
     await ensureScaffold(paths);

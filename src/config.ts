@@ -76,7 +76,7 @@ export interface NonInteractiveSetupInput {
 }
 
 export function resolveAppPaths(cwd = process.cwd()): AppPaths {
-  const rootDir = path.join(cwd, ".autoresearch");
+  const rootDir = path.join(cwd, ".autolabos");
   const runsDir = path.join(rootDir, "runs");
   const logsDir = path.join(rootDir, "logs");
   const outputsDir = path.join(cwd, "outputs");
@@ -197,8 +197,8 @@ function buildConfigFromWizardAnswers(answers: {
       latex_engine: "auto_install"
     },
     paths: {
-      runs_dir: ".autoresearch/runs",
-      logs_dir: ".autoresearch/logs"
+      runs_dir: ".autolabos/runs",
+      logs_dir: ".autolabos/logs"
     }
   };
 }

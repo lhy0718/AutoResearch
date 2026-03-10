@@ -31,7 +31,7 @@ const SESSION_EVENT_TYPES = new Set([
   "message.completed"
 ]);
 
-export function mapCodexEventToAutoResearchEvents(args: MapArgs): MappedCodexEvent[] {
+export function mapCodexEventToAutoLabOSEvents(args: MapArgs): MappedCodexEvent[] {
   const event = unwrapCodexEvent(args.event);
   const eventType = asString(event.type) || "unknown";
   const command = extractCommand(event);

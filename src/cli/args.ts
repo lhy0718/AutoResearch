@@ -147,6 +147,6 @@ export function resolveCliAction(args: string[]): CliAction {
   return {
     kind: "error",
     message:
-      "Unsupported CLI arguments. Run `autoresearch`, `autoresearch web`, `autoresearch compare-analysis`, `autoresearch eval-harness`, or use slash commands inside the TUI."
+      "Unsupported CLI arguments. Run `autolabos`, `autolabos web`, `autolabos compare-analysis`, `autolabos eval-harness`, or use slash commands inside the TUI."
   };
 }

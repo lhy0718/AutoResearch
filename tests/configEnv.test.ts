@@ -109,14 +109,14 @@ function makeConfig(): AppConfig {
       latex_engine: "auto_install"
     },
     paths: {
-      runs_dir: ".autoresearch/runs",
-      logs_dir: ".autoresearch/logs"
+      runs_dir: ".autolabos/runs",
+      logs_dir: ".autolabos/logs"
     }
   };
 }
 
 async function createWorkspace(): Promise<{ cwd: string; paths: ReturnType<typeof resolveAppPaths> }> {
-  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autoresearch-config-env-"));
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autolabos-config-env-"));
   const paths = resolveAppPaths(cwd);
   await ensureScaffold(paths);
   await saveConfig(paths, makeConfig());
@@ -175,7 +175,7 @@ describe("config .env overrides", () => {
   });
 
   it("requires a Semantic Scholar API key during first-run setup", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autoresearch-setup-required-key-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autolabos-setup-required-key-"));
     const paths = resolveAppPaths(cwd);
     const answers = [
       "project",
@@ -212,7 +212,7 @@ describe("config .env overrides", () => {
 
   it("writes OPENAI_API_KEY during setup when Responses PDF mode is selected", async () => {
     delete process.env.OPENAI_API_KEY;
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autoresearch-setup-openai-key-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autolabos-setup-openai-key-"));
     const paths = resolveAppPaths(cwd);
     const config = await runSetupWizard(
       paths,
@@ -240,7 +240,7 @@ describe("config .env overrides", () => {
   });
 
   it("supports non-interactive setup for the web onboarding flow", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autoresearch-web-setup-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autolabos-web-setup-"));
     const paths = resolveAppPaths(cwd);
 
     const config = await runNonInteractiveSetup(paths, {
@@ -262,7 +262,7 @@ describe("config .env overrides", () => {
   });
 
   it("stores experiment model overrides during non-interactive setup", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autoresearch-web-setup-experiment-model-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autolabos-web-setup-experiment-model-"));
     const paths = resolveAppPaths(cwd);
 
     const config = await runNonInteractiveSetup(paths, {
@@ -286,7 +286,7 @@ describe("config .env overrides", () => {
   });
 
   it("still asks for API keys during setup even when existing .env keys are present", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autoresearch-setup-existing-keys-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autolabos-setup-existing-keys-"));
     const paths = resolveAppPaths(cwd);
     await fs.writeFile(
       path.join(cwd, ".env"),
@@ -326,7 +326,7 @@ describe("config .env overrides", () => {
 
   it("writes OPENAI_API_KEY and OpenAI provider config during setup when API provider is selected", async () => {
     delete process.env.OPENAI_API_KEY;
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autoresearch-setup-openai-provider-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autolabos-setup-openai-provider-"));
     const paths = resolveAppPaths(cwd);
     const config = await runSetupWizard(
       paths,
@@ -368,8 +368,8 @@ describe("config .env overrides", () => {
     expect(loaded.providers.openai.model).toBe("gpt-5.4");
   });
 
-  it("does not create .autoresearch if first-run setup aborts before completion", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autoresearch-setup-abort-"));
+  it("does not create .autolabos if first-run setup aborts before completion", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autolabos-setup-abort-"));
     const paths = resolveAppPaths(cwd);
     let callCount = 0;
 

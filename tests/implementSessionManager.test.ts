@@ -25,7 +25,7 @@ afterEach(() => {
 
 describe("ImplementSessionManager", () => {
   it("persists thread id and run command from Codex session", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autoresearch-implement-session-"));
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-session-"));
     tempDirs.push(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
@@ -38,7 +38,7 @@ describe("ImplementSessionManager", () => {
       objectiveMetric: "accuracy"
     });
 
-    const runDir = path.join(workspace, ".autoresearch", "runs", run.id);
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
     mkdirSync(runDir, { recursive: true });
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
 
@@ -114,7 +114,7 @@ describe("ImplementSessionManager", () => {
         workflow: { mode: "agent_approval", wizard_enabled: true },
         experiments: { runner: "local_python", timeout_sec: 3600, allow_network: false },
         paper: { template: "acl", build_pdf: true, latex_engine: "auto_install" },
-        paths: { runs_dir: ".autoresearch/runs", logs_dir: ".autoresearch/logs" }
+        paths: { runs_dir: ".autolabos/runs", logs_dir: ".autolabos/logs" }
       },
       codex,
       aci: new LocalAciAdapter(),
@@ -152,7 +152,7 @@ describe("ImplementSessionManager", () => {
   });
 
   it("emits coalesced intermediate Codex output", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autoresearch-implement-stream-"));
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-stream-"));
     tempDirs.push(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
@@ -165,7 +165,7 @@ describe("ImplementSessionManager", () => {
       objectiveMetric: "accuracy"
     });
 
-    const runDir = path.join(workspace, ".autoresearch", "runs", run.id);
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
     mkdirSync(runDir, { recursive: true });
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
 
@@ -253,7 +253,7 @@ describe("ImplementSessionManager", () => {
         workflow: { mode: "agent_approval", wizard_enabled: true },
         experiments: { runner: "local_python", timeout_sec: 3600, allow_network: false },
         paper: { template: "acl", build_pdf: true, latex_engine: "auto_install" },
-        paths: { runs_dir: ".autoresearch/runs", logs_dir: ".autoresearch/logs" }
+        paths: { runs_dir: ".autolabos/runs", logs_dir: ".autolabos/logs" }
       },
       codex,
       aci: new LocalAciAdapter(),
@@ -278,7 +278,7 @@ describe("ImplementSessionManager", () => {
   });
 
   it("reuses long-term implementation memory and saves a durable lesson", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autoresearch-implement-long-term-"));
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-long-term-"));
     tempDirs.push(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
@@ -290,9 +290,9 @@ describe("ImplementSessionManager", () => {
       constraints: ["recent"],
       objectiveMetric: "accuracy"
     });
-    tempDirs.push(path.resolve(".autoresearch", "runs", run.id));
+    tempDirs.push(path.resolve(".autolabos", "runs", run.id));
 
-    const runDir = path.join(workspace, ".autoresearch", "runs", run.id);
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
     mkdirSync(runDir, { recursive: true });
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - reuse prior runner\n", "utf8");
 
@@ -382,7 +382,7 @@ describe("ImplementSessionManager", () => {
         workflow: { mode: "agent_approval", wizard_enabled: true },
         experiments: { runner: "local_python", timeout_sec: 3600, allow_network: false },
         paper: { template: "acl", build_pdf: true, latex_engine: "auto_install" },
-        paths: { runs_dir: ".autoresearch/runs", logs_dir: ".autoresearch/logs" }
+        paths: { runs_dir: ".autolabos/runs", logs_dir: ".autolabos/logs" }
       },
       codex,
       aci: new LocalAciAdapter(),
@@ -416,7 +416,7 @@ describe("ImplementSessionManager", () => {
   });
 
   it("injects runner feedback into the implement prompt and search-backed localization", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autoresearch-implement-runner-feedback-"));
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-runner-feedback-"));
     tempDirs.push(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
@@ -429,7 +429,7 @@ describe("ImplementSessionManager", () => {
       objectiveMetric: "accuracy"
     });
 
-    const runDir = path.join(workspace, ".autoresearch", "runs", run.id);
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
     mkdirSync(path.join(workspace, "src"), { recursive: true });
     mkdirSync(runDir, { recursive: true });
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - fix metrics writer\n", "utf8");
@@ -523,7 +523,7 @@ describe("ImplementSessionManager", () => {
         workflow: { mode: "agent_approval", wizard_enabled: true },
         experiments: { runner: "local_python", timeout_sec: 3600, allow_network: false },
         paper: { template: "acl", build_pdf: true, latex_engine: "auto_install" },
-        paths: { runs_dir: ".autoresearch/runs", logs_dir: ".autoresearch/logs" }
+        paths: { runs_dir: ".autolabos/runs", logs_dir: ".autolabos/logs" }
       },
       codex,
       aci: new LocalAciAdapter(),
@@ -546,7 +546,7 @@ describe("ImplementSessionManager", () => {
   });
 
   it("promotes synthetic reproducibility runs to the reusable real_execution bundle", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autoresearch-implement-promote-"));
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-promote-"));
     tempDirs.push(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
@@ -559,7 +559,7 @@ describe("ImplementSessionManager", () => {
       objectiveMetric: "state-of-the-art reproducibility"
     });
 
-    const runDir = path.join(workspace, ".autoresearch", "runs", run.id);
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
     mkdirSync(runDir, { recursive: true });
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - shared-state schema\n", "utf8");
 
@@ -634,7 +634,7 @@ describe("ImplementSessionManager", () => {
         workflow: { mode: "agent_approval", wizard_enabled: true },
         experiments: { runner: "local_python", timeout_sec: 3600, allow_network: true },
         paper: { template: "acl", build_pdf: true, latex_engine: "auto_install" },
-        paths: { runs_dir: ".autoresearch/runs", logs_dir: ".autoresearch/logs" }
+        paths: { runs_dir: ".autolabos/runs", logs_dir: ".autolabos/logs" }
       },
       codex,
       aci: new LocalAciAdapter(),
@@ -664,7 +664,7 @@ describe("ImplementSessionManager", () => {
   });
 
   it("replaces incompatible real_execution commands with the managed public bundle", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autoresearch-implement-managed-real-"));
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-managed-real-"));
     tempDirs.push(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
@@ -677,7 +677,7 @@ describe("ImplementSessionManager", () => {
       objectiveMetric: "state-of-the-art reproducibility"
     });
 
-    const runDir = path.join(workspace, ".autoresearch", "runs", run.id);
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
     mkdirSync(runDir, { recursive: true });
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - shared-state schema\n", "utf8");
 
@@ -755,7 +755,7 @@ describe("ImplementSessionManager", () => {
         workflow: { mode: "agent_approval", wizard_enabled: true },
         experiments: { runner: "local_python", timeout_sec: 3600, allow_network: true },
         paper: { template: "acl", build_pdf: true, latex_engine: "auto_install" },
-        paths: { runs_dir: ".autoresearch/runs", logs_dir: ".autoresearch/logs" }
+        paths: { runs_dir: ".autolabos/runs", logs_dir: ".autolabos/logs" }
       },
       codex,
       aci: new LocalAciAdapter(),
@@ -775,7 +775,7 @@ describe("ImplementSessionManager", () => {
   });
 
   it("retries after local verification fails and records attempt artifacts", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autoresearch-implement-retry-"));
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-retry-"));
     tempDirs.push(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
@@ -788,7 +788,7 @@ describe("ImplementSessionManager", () => {
       objectiveMetric: "accuracy"
     });
 
-    const runDir = path.join(workspace, ".autoresearch", "runs", run.id);
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
     mkdirSync(runDir, { recursive: true });
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
 
@@ -893,7 +893,7 @@ describe("ImplementSessionManager", () => {
         workflow: { mode: "agent_approval", wizard_enabled: true },
         experiments: { runner: "local_python", timeout_sec: 3600, allow_network: false },
         paper: { template: "acl", build_pdf: true, latex_engine: "auto_install" },
-        paths: { runs_dir: ".autoresearch/runs", logs_dir: ".autoresearch/logs" }
+        paths: { runs_dir: ".autolabos/runs", logs_dir: ".autolabos/logs" }
       },
       codex,
       aci: new LocalAciAdapter(),
@@ -934,7 +934,7 @@ describe("ImplementSessionManager", () => {
   });
 
   it("switches to an alternate branch when another candidate file is available", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autoresearch-implement-branch-"));
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-branch-"));
     tempDirs.push(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
@@ -947,7 +947,7 @@ describe("ImplementSessionManager", () => {
       objectiveMetric: "accuracy"
     });
 
-    const runDir = path.join(workspace, ".autoresearch", "runs", run.id);
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
     mkdirSync(runDir, { recursive: true });
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - runner swap\n", "utf8");
 
@@ -1054,7 +1054,7 @@ describe("ImplementSessionManager", () => {
         workflow: { mode: "agent_approval", wizard_enabled: true },
         experiments: { runner: "local_python", timeout_sec: 3600, allow_network: false },
         paper: { template: "acl", build_pdf: true, latex_engine: "auto_install" },
-        paths: { runs_dir: ".autoresearch/runs", logs_dir: ".autoresearch/logs" }
+        paths: { runs_dir: ".autolabos/runs", logs_dir: ".autolabos/logs" }
       },
       codex,
       aci: new LocalAciAdapter(),
@@ -1072,7 +1072,7 @@ describe("ImplementSessionManager", () => {
   });
 
   it("stops when the local verification command is blocked by policy", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autoresearch-implement-policy-block-"));
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-policy-block-"));
     tempDirs.push(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
@@ -1085,7 +1085,7 @@ describe("ImplementSessionManager", () => {
       objectiveMetric: "accuracy"
     });
 
-    const runDir = path.join(workspace, ".autoresearch", "runs", run.id);
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
     mkdirSync(runDir, { recursive: true });
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
 
@@ -1161,7 +1161,7 @@ describe("ImplementSessionManager", () => {
         workflow: { mode: "agent_approval", wizard_enabled: true },
         experiments: { runner: "local_python", timeout_sec: 3600, allow_network: false },
         paper: { template: "acl", build_pdf: true, latex_engine: "auto_install" },
-        paths: { runs_dir: ".autoresearch/runs", logs_dir: ".autoresearch/logs" }
+        paths: { runs_dir: ".autolabos/runs", logs_dir: ".autolabos/logs" }
       },
       codex,
       aci: new LocalAciAdapter(),

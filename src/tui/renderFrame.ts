@@ -43,7 +43,7 @@ export function buildFrame(input: RenderFrameInput): RenderFrameOutput {
   const rawLines: string[] = [];
   let rawThinkingLineIndex: number | undefined;
 
-  rawLines.push(paint(`AutoResearch v${input.appVersion}`, { fg: 96, bold: true }, input.colorEnabled));
+  rawLines.push(paint(`AutoLabOS v${input.appVersion}`, { fg: 96, bold: true }, input.colorEnabled));
 
   if (input.run) {
     rawLines.push(renderLabelValue("Run", input.run.id, input.colorEnabled, true));

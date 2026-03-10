@@ -5,7 +5,7 @@ import { EventStream } from "../events.js";
 import { RunStore } from "../runs/runStore.js";
 import { AppConfig, RunRecord } from "../../types.js";
 import { CodexCliClient, CodexEvent } from "../../integrations/codex/codexCliClient.js";
-import { mapCodexEventToAutoResearchEvents } from "../../integrations/codex/codexEventMapper.js";
+import { mapCodexEventToAutoLabOSEvents } from "../../integrations/codex/codexEventMapper.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { EpisodeMemory, EpisodeRecord } from "../memory/episodeMemory.js";
 import { LongTermEntry, LongTermStore } from "../memory/longTermStore.js";
@@ -203,7 +203,7 @@ export class ImplementSessionManager {
     const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
     const episodeMemory = new EpisodeMemory(run.memoryRefs.episodePath);
     const longTermStore = new LongTermStore(run.memoryRefs.longTermPath);
-    const runDir = path.join(this.deps.workspaceRoot, ".autoresearch", "runs", run.id);
+    const runDir = path.join(this.deps.workspaceRoot, ".autolabos", "runs", run.id);
     const metricsPath = path.join(runDir, "metrics.json");
     const defaultPublicDir = buildPublicExperimentDir(this.deps.workspaceRoot, run);
     const experimentLlmProfile = resolveExperimentLlmProfile(this.deps.config);
@@ -333,7 +333,7 @@ export class ImplementSessionManager {
         onEvent: (event) => {
           rawEvents.push(event);
           streamProgress.onEvent(event);
-          const mapped = mapCodexEventToAutoResearchEvents({
+          const mapped = mapCodexEventToAutoLabOSEvents({
             event,
             runId: run.id,
             node: "implement_experiments",
@@ -620,16 +620,16 @@ export class ImplementSessionManager {
     experimentLlmProfile: ReturnType<typeof resolveExperimentLlmProfile>
   ): string {
     return [
-      "You are the AutoResearch implementer role.",
+      "You are the AutoLabOS implementer role.",
       "Work directly in the workspace using Codex tools.",
       "Prefer concrete, runnable changes over prose.",
       "Do not modify git history or perform destructive cleanup.",
-      `Private AutoResearch run artifact directory: ${runDir}`,
+      `Private AutoLabOS run artifact directory: ${runDir}`,
       `Preferred public experiment directory: ${publicDir}`,
       `The experiment execution must produce JSON metrics at: ${metricsPath}`,
       `Configured real-execution LLM: provider=${experimentLlmProfile.provider}, model=${experimentLlmProfile.model}, reasoning=${experimentLlmProfile.reasoningEffort}, fast_mode=${experimentLlmProfile.fastMode ? "true" : "false"}`,
       "Put reusable code, configs, READMEs, and documentation in the public experiment directory whenever possible.",
-      "Use the private run artifact directory only for AutoResearch metadata, logs, and required metric outputs.",
+      "Use the private run artifact directory only for AutoLabOS metadata, logs, and required metric outputs.",
       "Prefer real executable experiments against actual repo code, benchmarks, and model calls when the workspace supports them.",
       "Use a synthetic validation harness only as a fallback when a real execution path is impossible or clearly underspecified.",
       "Before editing, identify the smallest viable set of files to inspect or change.",
@@ -1287,7 +1287,7 @@ function inferRunCommand(scriptPath: string | undefined, workspaceRoot: string, 
     }
   }
 
-  const fallback = path.join(workspaceRoot, ".autoresearch", "runs", runId, "experiment.py");
+  const fallback = path.join(workspaceRoot, ".autolabos", "runs", runId, "experiment.py");
   return `python3 ${JSON.stringify(fallback)}`;
 }
 
@@ -1900,7 +1900,7 @@ function dedupeLocalizationHits(hits: LocalizationSearchHit[]): LocalizationSear
 }
 
 function isLikelyBranchFocusFile(filePath: string): boolean {
-  if (filePath.includes(`${path.sep}.autoresearch${path.sep}`)) {
+  if (filePath.includes(`${path.sep}.autolabos${path.sep}`)) {
     return false;
   }
   return /\.(ts|tsx|js|jsx|mjs|cjs|py|sh|json|yaml|yml)$/iu.test(filePath);
