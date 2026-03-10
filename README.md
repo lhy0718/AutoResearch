@@ -131,9 +131,9 @@ node dist/cli/main.js web
    - `api`: send the PDF directly to the Responses API (`OPENAI_API_KEY` required)
 6. If the provider or PDF mode is `api`, setup wizard and `/settings` let you choose a model.
    - Current built-in catalog: `gpt-5.4`, `gpt-5`, `gpt-5-mini`, `gpt-4.1`, `gpt-4o`, `gpt-4o-mini`
-7. `/model` follows the active primary provider:
-   - Codex provider: Codex model selector
-   - OpenAI API provider: OpenAI API model selector
+7. `/model` now lets you choose the active backend first, then select the slot/model:
+   - Codex CLI backend: Codex model selector
+   - OpenAI API backend: OpenAI API model selector
 8. At runtime, AutoResearch reads `SEMANTIC_SCHOLAR_API_KEY` and `OPENAI_API_KEY` from `process.env` or `.env`.
 
 ## Web Ops UI
@@ -155,48 +155,88 @@ Typical web flow:
 3. Complete onboarding if the workspace is not configured yet.
 4. Create or select a run, then use the workflow cards or composer to drive execution.
 
-## Workflow At A Glance
+## Node and Agent Structure
+
+AutoResearch has two layers that are easy to conflate:
+
+- Orchestration layer: `/agent ...` targets the 8 graph nodes. In code, `AgentId` is currently an alias of `GraphNodeId`.
+- Role layer: nodes emit or run `agentRole` identities such as `implementer`, `runner`, and `paper_writer` inside prompts, events, and session managers.
+
+### Node-to-Role Map
 
 ```mermaid
-flowchart LR
-    Start["Create or resume run"] --> A
+flowchart TB
+    subgraph Orchestration["Orchestration layer (`/agent` targets)"]
+        O["AgentOrchestrator"]
+        N1["collect_papers"]
+        N2["analyze_papers"]
+        N3["generate_hypotheses"]
+        N4["design_experiments"]
+        N5["implement_experiments"]
+        N6["run_experiments"]
+        N7["analyze_results"]
+        N8["write_paper"]
 
-    subgraph Phase1["1. Discovery"]
-        A["collect_papers<br/>query + filters + Semantic Scholar + PDF/BibTeX enrichment"]
+        O --> N1 --> N2 --> N3 --> N4 --> N5 --> N6 --> N7 --> N8
     end
 
-    subgraph Phase2["2. Evidence and Ideation"]
-        B["analyze_papers<br/>summaries + evidence extraction + analysis manifest"]
-        C["generate_hypotheses<br/>candidate ideas + rationale + staged artifacts"]
+    subgraph Roles["Role layer (`agentRole`)"]
+        R1["collector_curator"]
+        R2["reader_evidence_extractor"]
+        R3["hypothesis_agent"]
+        R4["experiment_designer"]
+        R5["implementer"]
+        R6["runner"]
+        R7["analyst_statistician"]
+        R8["paper_writer"]
+        R9["reviewer"]
     end
 
-    subgraph Phase3["3. Design and Execution"]
-        D["design_experiments<br/>plan + metrics + constraints + evaluation notes"]
-        E["implement_experiments<br/>files + commands + tests via local ACI"]
-        F["run_experiments<br/>execution logs + outputs + objective metrics"]
-    end
-
-    subgraph Phase4["4. Synthesis"]
-        G["analyze_results<br/>comparisons + objective evaluation + summaries"]
-        H["write_paper<br/>main.tex + references.bib + evidence_links.json"]
-    end
-
-    A --> B --> C --> D --> E --> F --> G --> H
-
-    Control["Runtime controls<br/>approval gates + budgets + retry / jump + checkpoint resume"]
-    Memory["Run memory<br/>context + episodes + node artifacts"]
-
-    Control -. "applies to every node" .-> A
-    Control -. "applies to every node" .-> D
-    Control -. "applies to every node" .-> F
-    Control -. "applies to every node" .-> H
-
-    Memory -. "updated after each node" .-> B
-    Memory -. "updated after each node" .-> D
-    Memory -. "updated after each node" .-> G
+    N1 -. primary role .-> R1
+    N2 -. primary role .-> R2
+    N3 -. primary role .-> R3
+    N4 -. primary role .-> R4
+    N5 -. primary role .-> R5
+    N6 -. primary role .-> R6
+    N7 -. primary role .-> R7
+    N8 -. drafting .-> R8
+    N8 -. review .-> R9
 ```
 
-Default flow is still linear `1 -> 8`, but each node now shows its main responsibility and artifacts, while runtime controls let you retry, jump, resume from checkpoints, and apply approval gates between steps.
+### Execution Graph
+
+```mermaid
+stateDiagram-v2
+    [*] --> collect_papers
+    collect_papers --> analyze_papers: approve
+    analyze_papers --> generate_hypotheses: approve
+    generate_hypotheses --> design_experiments: approve
+    design_experiments --> implement_experiments: approve
+    implement_experiments --> run_experiments: auto_handoff or approve
+    run_experiments --> analyze_results: approve
+    analyze_results --> write_paper: advance or approve
+    analyze_results --> implement_experiments: backtrack_to_implement
+    analyze_results --> design_experiments: backtrack_to_design
+    analyze_results --> generate_hypotheses: backtrack_to_hypotheses
+    analyze_results --> manual_review: pause_for_human
+    manual_review --> analyze_results: retry or jump
+    write_paper --> [*]: approve
+```
+
+Default `agent_approval` mode pauses after every node. `implement_experiments` is the one forward step that can skip its pause through automatic handoff to `run_experiments`, and `analyze_results` is the node that can explicitly redirect the graph backward.
+
+| Graph node | Primary role(s) | Current implementation shape |
+| --- | --- | --- |
+| `collect_papers` | `collector_curator` | Semantic Scholar search, de-duplication, enrichment, and BibTeX generation |
+| `analyze_papers` | `reader_evidence_extractor` | ranked paper selection plus local or Responses API PDF analysis |
+| `generate_hypotheses` | `hypothesis_agent` | staged evidence-axis -> draft -> review -> selection pipeline |
+| `design_experiments` | `experiment_designer` | candidate design generation and `experiment_plan.yaml` selection |
+| `implement_experiments` | `implementer` | `ImplementSessionManager`, localization, Codex patching, verification, and optional handoff |
+| `run_experiments` | `runner` | ACI preflight/tests/command execution, metrics capture, and verifier feedback |
+| `analyze_results` | `analyst_statistician` | objective evaluation, result synthesis, and transition recommendation |
+| `write_paper` | `paper_writer`, `reviewer` | `PaperWriterSessionManager`, outline/draft/review/finalize stages, optional LaTeX repair |
+
+The role catalog is broader than the concrete runtime wiring. Today the deepest multi-turn session managers are `implement_experiments` and `write_paper`, while the earlier nodes mainly use structured node handlers plus role-specific prompts and events.
 
 ### Artifact Flow
 
@@ -206,16 +246,16 @@ flowchart TB
     A1 --> B["analyze_papers"]
     B --> B1["analysis_manifest.json<br/>paper_summaries.jsonl<br/>evidence_store.jsonl"]
     B1 --> C["generate_hypotheses"]
-    C --> C1["hypotheses.jsonl<br/>hypothesis_generation/selection.json<br/>hypothesis_generation/drafts.jsonl<br/>hypothesis_generation/reviews.jsonl"]
+    C --> C1["hypotheses.jsonl<br/>hypothesis_generation/evidence_axes.json<br/>hypothesis_generation/selection.json<br/>hypothesis_generation/drafts.jsonl<br/>hypothesis_generation/reviews.jsonl"]
     C1 --> D["design_experiments"]
     D --> D1["experiment_plan.yaml"]
     D1 --> E["implement_experiments"]
     E --> F["run_experiments"]
-    F --> F1["exec_logs/run_experiments.txt<br/>exec_logs/observations.jsonl<br/>metrics.json<br/>objective_evaluation.json"]
+    F --> F1["exec_logs/run_experiments.txt<br/>exec_logs/observations.jsonl<br/>metrics.json<br/>objective_evaluation.json<br/>run_experiments_verify_report.json"]
     F1 --> G["analyze_results"]
-    G --> G1["result_analysis.json<br/>figures/performance.png"]
+    G --> G1["result_analysis.json<br/>result_analysis_synthesis.json<br/>transition_recommendation.json<br/>figures/performance.svg"]
     G1 --> H["write_paper"]
-    H --> H1["paper/main.tex<br/>paper/references.bib<br/>paper/evidence_links.json"]
+    H --> H1["paper/main.tex<br/>paper/references.bib<br/>paper/evidence_links.json<br/>paper/draft.json<br/>paper/validation.json<br/>paper/main.pdf (optional)"]
 ```
 
 All run artifacts live under `.autoresearch/runs/<run_id>/`, which makes the pipeline inspectable from both the TUI and the local web UI.
@@ -237,24 +277,48 @@ flowchart TB
     State --> TUI
 ```
 
-### Architecture
+### Concrete Agent Runtime
 
 ```mermaid
 flowchart LR
-    UI["CLI / TUI / Web UI"] --> Session["InteractionSession"]
-    Session --> Bootstrap["bootstrapAutoresearchRuntime"]
-    Bootstrap --> Runtime["AutoresearchRuntime"]
-
-    Runtime --> Stores["RunStore + CheckpointStore"]
-    Runtime --> Events["InMemoryEventStream"]
-    Runtime --> Graph["StateGraphRuntime + AgentOrchestrator"]
+    UI["CLI / TUI / Web UI"] --> Session["InteractionSession / web composer"]
+    Session --> Orchestrator["AgentOrchestrator"]
+    Orchestrator --> Runtime["StateGraphRuntime"]
     Runtime --> Registry["DefaultNodeRegistry"]
+    Runtime --> Stores["RunStore + CheckpointStore + EventStream"]
 
-    Registry --> Nodes["core/nodes/*"]
-    Nodes --> Memory["RunContextMemory + EpisodeMemory + LongTermStore"]
-    Nodes --> Providers["Codex / OpenAI / Responses API"]
-    Nodes --> Tools["Semantic Scholar + Local ACI"]
-    Nodes --> Artifacts[".autoresearch/runs/<run_id>"]
+    Registry --> Collect["collect_papers"]
+    Registry --> Analyze["analyze_papers"]
+    Registry --> Hyp["generate_hypotheses"]
+    Registry --> Design["design_experiments"]
+    Registry --> Impl["implement_experiments"]
+    Registry --> Run["run_experiments"]
+    Registry --> Results["analyze_results"]
+    Registry --> Paper["write_paper"]
+
+    Collect --> Scholar["Semantic Scholar + enrichment"]
+    Analyze --> Pdf["Local text/image PDF analysis or Responses API PDF"]
+    Hyp --> ToT["ToT-style branching + staged review"]
+    Design --> ToT
+
+    Impl --> ImplMgr["ImplementSessionManager"]
+    ImplMgr --> Localizer["ImplementationLocalizer"]
+    ImplMgr --> Codex["Codex CLI session"]
+    ImplMgr --> ACI["Local ACI"]
+    ImplMgr --> Reflex["EpisodeMemory + LongTermStore"]
+
+    Run --> ACI
+    Run --> Verify["Metrics + verifier report"]
+    Verify -. feedback loop .-> ImplMgr
+
+    Results --> Synthesis["Objective evaluation + analysis synthesis + transition recommendation"]
+
+    Paper --> PaperMgr["PaperWriterSessionManager"]
+    PaperMgr --> Writer["paper_writer"]
+    PaperMgr --> Reviewer["reviewer"]
+    PaperMgr --> Codex
+    PaperMgr --> LLM["OpenAI / Codex LLM"]
+    PaperMgr --> Latex["Optional LaTeX compile + repair"]
 ```
 
 Key source areas:

@@ -268,6 +268,46 @@ describe("AgentOrchestrator (state graph)", () => {
     expect(jumped.graph.nodeStates.design_experiments.status).toBe("skipped");
   });
 
+  it("applies a pending transition recommendation from analyze_results", async () => {
+    const registry = new DeterministicRegistry({
+      analyze_results: {
+        id: "analyze_results",
+        execute: async () => ({
+          status: "success",
+          summary: "Objective missed; revise the design.",
+          needsApproval: true,
+          toolCallsUsed: 1,
+          transitionRecommendation: {
+            action: "backtrack_to_design",
+            sourceNode: "analyze_results",
+            targetNode: "design_experiments",
+            reason: "The current design needs revision.",
+            confidence: 0.82,
+            autoExecutable: true,
+            evidence: ["Objective metric not met."],
+            suggestedCommands: ["/agent jump design_experiments", "/agent run design_experiments"],
+            generatedAt: new Date().toISOString()
+          }
+        })
+      }
+    });
+    const { store, orchestrator } = await setup(registry);
+    const run = await store.createRun({
+      title: "Run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    await orchestrator.runAgent(run.id, "analyze_results");
+    const applied = await orchestrator.applyPendingTransition(run.id);
+
+    expect(applied.currentNode).toBe("design_experiments");
+    expect(applied.graph.pendingTransition).toBeUndefined();
+    expect(applied.graph.researchCycle).toBe(1);
+    expect(applied.graph.transitionHistory.at(-1)?.action).toBe("backtrack_to_design");
+  });
+
   it("fails with failed_budget when budget is exceeded", async () => {
     const { store, orchestrator } = await setup(new DeterministicRegistry({}));
     const run = await store.createRun({

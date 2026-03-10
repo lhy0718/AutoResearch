@@ -130,9 +130,9 @@ node dist/cli/main.js web
    - `api`: PDF를 Responses API로 직접 전달해 분석 (`OPENAI_API_KEY` 필요)
 6. provider 또는 PDF 분석 모드가 `api`이면 setup wizard와 `/settings`에서 모델을 고를 수 있습니다.
    - 현재 내장 카탈로그: `gpt-5.4`, `gpt-5`, `gpt-5-mini`, `gpt-4.1`, `gpt-4o`, `gpt-4o-mini`
-7. `/model`은 현재 기본 provider를 따릅니다.
-   - Codex provider: Codex 모델 선택기
-   - OpenAI API provider: OpenAI API 모델 선택기
+7. `/model`은 먼저 사용할 백엔드를 고른 뒤, 그 백엔드에 맞는 슬롯/모델을 선택합니다.
+   - Codex CLI backend: Codex 모델 선택기
+   - OpenAI API backend: OpenAI API 모델 선택기
 8. 실행 시 AutoResearch는 `process.env` 또는 `.env`의 `SEMANTIC_SCHOLAR_API_KEY`, `OPENAI_API_KEY`를 읽습니다.
 
 ## Web Ops UI
@@ -154,48 +154,88 @@ node dist/cli/main.js web
 3. 아직 설정되지 않았다면 onboarding을 완료합니다.
 4. run을 만들거나 선택한 뒤 워크플로 카드나 컴포저로 실행을 제어합니다.
 
-## 워크플로 한눈에 보기
+## 노드와 에이전트 구조
+
+AutoResearch에는 이름이 비슷해서 헷갈리기 쉬운 두 레이어가 있습니다.
+
+- 오케스트레이션 레이어: `/agent ...`가 대상으로 삼는 8개 그래프 노드입니다. 코드에서는 `AgentId`가 현재 `GraphNodeId`의 alias입니다.
+- 역할 레이어: 각 노드 내부 프롬프트, 이벤트, 세션 매니저에서 쓰는 `agentRole` 정체성입니다. 예를 들면 `implementer`, `runner`, `paper_writer`가 여기에 속합니다.
+
+### 노드와 역할 매핑
 
 ```mermaid
-flowchart LR
-    Start["run 생성 또는 재개"] --> A
+flowchart TB
+    subgraph Orchestration["오케스트레이션 레이어 (`/agent` 대상)"]
+        O["AgentOrchestrator"]
+        N1["collect_papers"]
+        N2["analyze_papers"]
+        N3["generate_hypotheses"]
+        N4["design_experiments"]
+        N5["implement_experiments"]
+        N6["run_experiments"]
+        N7["analyze_results"]
+        N8["write_paper"]
 
-    subgraph Phase1["1. 수집 단계"]
-        A["collect_papers<br/>query + 필터 + Semantic Scholar + PDF/BibTeX 보강"]
+        O --> N1 --> N2 --> N3 --> N4 --> N5 --> N6 --> N7 --> N8
     end
 
-    subgraph Phase2["2. 근거와 가설 단계"]
-        B["analyze_papers<br/>요약 + 근거 추출 + 분석 매니페스트"]
-        C["generate_hypotheses<br/>후보 아이디어 + 근거 + 중간 아티팩트"]
+    subgraph Roles["역할 레이어 (`agentRole`)"]
+        R1["collector_curator"]
+        R2["reader_evidence_extractor"]
+        R3["hypothesis_agent"]
+        R4["experiment_designer"]
+        R5["implementer"]
+        R6["runner"]
+        R7["analyst_statistician"]
+        R8["paper_writer"]
+        R9["reviewer"]
     end
 
-    subgraph Phase3["3. 설계와 실행 단계"]
-        D["design_experiments<br/>계획 + 지표 + 제약 + 평가 메모"]
-        E["implement_experiments<br/>로컬 ACI 기반 파일 + 명령 + 테스트"]
-        F["run_experiments<br/>실행 로그 + 산출물 + 목표 지표"]
-    end
-
-    subgraph Phase4["4. 결과 종합 단계"]
-        G["analyze_results<br/>비교 + 목표 평가 + 요약"]
-        H["write_paper<br/>main.tex + references.bib + evidence_links.json"]
-    end
-
-    A --> B --> C --> D --> E --> F --> G --> H
-
-    Control["런타임 제어<br/>승인 게이트 + 예산 + retry / jump + checkpoint 재개"]
-    Memory["run 메모리<br/>컨텍스트 + 에피소드 + 노드 아티팩트"]
-
-    Control -. "모든 노드에 적용" .-> A
-    Control -. "모든 노드에 적용" .-> D
-    Control -. "모든 노드에 적용" .-> F
-    Control -. "모든 노드에 적용" .-> H
-
-    Memory -. "각 노드 이후 갱신" .-> B
-    Memory -. "각 노드 이후 갱신" .-> D
-    Memory -. "각 노드 이후 갱신" .-> G
+    N1 -. 주 역할 .-> R1
+    N2 -. 주 역할 .-> R2
+    N3 -. 주 역할 .-> R3
+    N4 -. 주 역할 .-> R4
+    N5 -. 주 역할 .-> R5
+    N6 -. 주 역할 .-> R6
+    N7 -. 주 역할 .-> R7
+    N8 -. 초안 작성 .-> R8
+    N8 -. 리뷰 .-> R9
 ```
 
-기본 흐름은 여전히 선형 `1 -> 8`이지만, 이제 각 노드의 주요 역할과 아티팩트를 그래프에서 함께 보여 주고, 런타임 제어를 통해 재시도, 점프, 체크포인트 재개, 단계별 승인 흐름을 적용할 수 있습니다.
+### 실행 그래프
+
+```mermaid
+stateDiagram-v2
+    [*] --> collect_papers
+    collect_papers --> analyze_papers: approve
+    analyze_papers --> generate_hypotheses: approve
+    generate_hypotheses --> design_experiments: approve
+    design_experiments --> implement_experiments: approve
+    implement_experiments --> run_experiments: auto_handoff 또는 approve
+    run_experiments --> analyze_results: approve
+    analyze_results --> write_paper: advance 또는 approve
+    analyze_results --> implement_experiments: backtrack_to_implement
+    analyze_results --> design_experiments: backtrack_to_design
+    analyze_results --> generate_hypotheses: backtrack_to_hypotheses
+    analyze_results --> manual_review: pause_for_human
+    manual_review --> analyze_results: retry 또는 jump
+    write_paper --> [*]: approve
+```
+
+기본 `agent_approval` 모드에서는 각 노드가 끝날 때마다 멈춥니다. 예외적으로 `implement_experiments`는 `run_experiments`로 자동 handoff할 수 있고, `analyze_results`는 결과에 따라 그래프를 뒤로 되돌리는 추천을 낼 수 있습니다.
+
+| 그래프 노드 | 주 역할 | 현재 구현 형태 |
+| --- | --- | --- |
+| `collect_papers` | `collector_curator` | Semantic Scholar 검색, 중복 제거, 보강, BibTeX 생성 |
+| `analyze_papers` | `reader_evidence_extractor` | 논문 선택 랭킹과 로컬/Responses API PDF 분석 |
+| `generate_hypotheses` | `hypothesis_agent` | evidence-axis -> draft -> review -> selection 단계형 파이프라인 |
+| `design_experiments` | `experiment_designer` | 실험 후보 설계 생성과 `experiment_plan.yaml` 선택 |
+| `implement_experiments` | `implementer` | `ImplementSessionManager`, localization, Codex 패치, 검증, optional handoff |
+| `run_experiments` | `runner` | ACI 기반 preflight/tests/command 실행, metrics 수집, verifier feedback |
+| `analyze_results` | `analyst_statistician` | objective 평가, 결과 합성, transition recommendation |
+| `write_paper` | `paper_writer`, `reviewer` | `PaperWriterSessionManager`, outline/draft/review/finalize, optional LaTeX repair |
+
+역할 카탈로그와 실제 멀티턴 런타임은 완전히 같은 범위는 아닙니다. 현재 가장 깊게 세션 기반으로 묶여 있는 노드는 `implement_experiments`와 `write_paper`이고, 앞단 노드들은 구조화된 node handler와 역할별 프롬프트/이벤트 중심으로 작동합니다.
 
 ### 아티팩트 흐름
 
@@ -205,16 +245,16 @@ flowchart TB
     A1 --> B["analyze_papers"]
     B --> B1["analysis_manifest.json<br/>paper_summaries.jsonl<br/>evidence_store.jsonl"]
     B1 --> C["generate_hypotheses"]
-    C --> C1["hypotheses.jsonl<br/>hypothesis_generation/selection.json<br/>hypothesis_generation/drafts.jsonl<br/>hypothesis_generation/reviews.jsonl"]
+    C --> C1["hypotheses.jsonl<br/>hypothesis_generation/evidence_axes.json<br/>hypothesis_generation/selection.json<br/>hypothesis_generation/drafts.jsonl<br/>hypothesis_generation/reviews.jsonl"]
     C1 --> D["design_experiments"]
     D --> D1["experiment_plan.yaml"]
     D1 --> E["implement_experiments"]
     E --> F["run_experiments"]
-    F --> F1["exec_logs/run_experiments.txt<br/>exec_logs/observations.jsonl<br/>metrics.json<br/>objective_evaluation.json"]
+    F --> F1["exec_logs/run_experiments.txt<br/>exec_logs/observations.jsonl<br/>metrics.json<br/>objective_evaluation.json<br/>run_experiments_verify_report.json"]
     F1 --> G["analyze_results"]
-    G --> G1["result_analysis.json<br/>figures/performance.png"]
+    G --> G1["result_analysis.json<br/>result_analysis_synthesis.json<br/>transition_recommendation.json<br/>figures/performance.svg"]
     G1 --> H["write_paper"]
-    H --> H1["paper/main.tex<br/>paper/references.bib<br/>paper/evidence_links.json"]
+    H --> H1["paper/main.tex<br/>paper/references.bib<br/>paper/evidence_links.json<br/>paper/draft.json<br/>paper/validation.json<br/>paper/main.pdf (optional)"]
 ```
 
 모든 run 아티팩트는 `.autoresearch/runs/<run_id>/` 아래에 저장되므로, TUI와 로컬 웹 UI 양쪽에서 같은 실행 결과를 추적하고 점검할 수 있습니다.
@@ -236,24 +276,48 @@ flowchart TB
     State --> TUI
 ```
 
-### 아키텍처
+### 구체적인 에이전트 런타임
 
 ```mermaid
 flowchart LR
-    UI["CLI / TUI / Web UI"] --> Session["InteractionSession"]
-    Session --> Bootstrap["bootstrapAutoresearchRuntime"]
-    Bootstrap --> Runtime["AutoresearchRuntime"]
-
-    Runtime --> Stores["RunStore + CheckpointStore"]
-    Runtime --> Events["InMemoryEventStream"]
-    Runtime --> Graph["StateGraphRuntime + AgentOrchestrator"]
+    UI["CLI / TUI / Web UI"] --> Session["InteractionSession / web composer"]
+    Session --> Orchestrator["AgentOrchestrator"]
+    Orchestrator --> Runtime["StateGraphRuntime"]
     Runtime --> Registry["DefaultNodeRegistry"]
+    Runtime --> Stores["RunStore + CheckpointStore + EventStream"]
 
-    Registry --> Nodes["core/nodes/*"]
-    Nodes --> Memory["RunContextMemory + EpisodeMemory + LongTermStore"]
-    Nodes --> Providers["Codex / OpenAI / Responses API"]
-    Nodes --> Tools["Semantic Scholar + Local ACI"]
-    Nodes --> Artifacts[".autoresearch/runs/<run_id>"]
+    Registry --> Collect["collect_papers"]
+    Registry --> Analyze["analyze_papers"]
+    Registry --> Hyp["generate_hypotheses"]
+    Registry --> Design["design_experiments"]
+    Registry --> Impl["implement_experiments"]
+    Registry --> Run["run_experiments"]
+    Registry --> Results["analyze_results"]
+    Registry --> Paper["write_paper"]
+
+    Collect --> Scholar["Semantic Scholar + enrichment"]
+    Analyze --> Pdf["Local text/image PDF analysis 또는 Responses API PDF"]
+    Hyp --> ToT["ToT 스타일 branching + staged review"]
+    Design --> ToT
+
+    Impl --> ImplMgr["ImplementSessionManager"]
+    ImplMgr --> Localizer["ImplementationLocalizer"]
+    ImplMgr --> Codex["Codex CLI session"]
+    ImplMgr --> ACI["Local ACI"]
+    ImplMgr --> Reflex["EpisodeMemory + LongTermStore"]
+
+    Run --> ACI
+    Run --> Verify["Metrics + verifier report"]
+    Verify -. feedback loop .-> ImplMgr
+
+    Results --> Synthesis["Objective evaluation + analysis synthesis + transition recommendation"]
+
+    Paper --> PaperMgr["PaperWriterSessionManager"]
+    PaperMgr --> Writer["paper_writer"]
+    PaperMgr --> Reviewer["reviewer"]
+    PaperMgr --> Codex
+    PaperMgr --> LLM["OpenAI / Codex LLM"]
+    PaperMgr --> Latex["Optional LaTeX compile + repair"]
 ```
 
 핵심 소스 영역:

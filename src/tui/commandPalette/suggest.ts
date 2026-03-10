@@ -31,7 +31,10 @@ const AGENT_SUBCOMMANDS = [
   "resume",
   "retry",
   "jump",
-  "budget"
+  "budget",
+  "transition",
+  "apply",
+  "overnight"
 ] as const;
 
 export function buildSuggestions(ctx: SuggestionContext): SuggestionItem[] {
@@ -91,7 +94,6 @@ function commandSuggestions(query: string, ctx: SuggestionContext): SuggestionIt
     })
     .filter((x): x is SuggestionItem & { score: number } => Boolean(x))
     .sort((a, b) => b.score - a.score)
-    .slice(0, 8)
     .map(({ score: _score, ...item }) => item);
 }
 
@@ -126,7 +128,6 @@ function agentCommandSuggestions(parsed: ParsedInput, runs: SlashContextRun[]): 
     })
       .filter((x): x is SuggestionItem & { score: number } => Boolean(x))
       .sort((a, b) => b.score - a.score)
-      .slice(0, 8)
       .map(({ score: _score, ...item }) => item);
   }
 

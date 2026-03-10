@@ -6,7 +6,8 @@ import {
   GRAPH_NODE_ORDER,
   GraphNodeId,
   RunGraphState,
-  RunRecord
+  RunRecord,
+  TransitionRecommendation
 } from "../../types.js";
 import { CheckpointStore } from "./checkpointStore.js";
 import { GraphNodeRegistry, JumpMode } from "./types.js";
@@ -103,6 +104,7 @@ export class StateGraphRuntime {
       }
 
       run.latestSummary = result.summary || run.latestSummary;
+      run.graph.pendingTransition = result.transitionRecommendation;
       run.graph.nodeStates[node] = {
         ...run.graph.nodeStates[node],
         status: result.needsApproval ? "needs_approval" : "completed",
@@ -134,6 +136,19 @@ export class StateGraphRuntime {
         node,
         payload: { summary: result.summary || "completed" }
       });
+      if (result.transitionRecommendation) {
+        this.eventStream.emit({
+          type: "TRANSITION_RECOMMENDED",
+          runId: run.id,
+          node,
+          payload: {
+            action: result.transitionRecommendation.action,
+            targetNode: result.transitionRecommendation.targetNode,
+            reason: result.transitionRecommendation.reason,
+            confidence: result.transitionRecommendation.confidence
+          }
+        });
+      }
 
       await this.runStore.updateRun(run);
       return run;
@@ -198,6 +213,7 @@ export class StateGraphRuntime {
       return run;
     }
 
+    run.graph.pendingTransition = undefined;
     run.graph.nodeStates[node] = {
       ...state,
       status: "completed",
@@ -218,9 +234,61 @@ export class StateGraphRuntime {
     return run;
   }
 
+  async applyPendingTransition(runId: string): Promise<RunRecord> {
+    const run = await this.getRunOrThrow(runId);
+    const recommendation = run.graph.pendingTransition;
+    if (!recommendation) {
+      return run;
+    }
+
+    run.graph.pendingTransition = undefined;
+    run.graph.transitionHistory = [
+      ...(run.graph.transitionHistory || []),
+      {
+        action: recommendation.action,
+        sourceNode: recommendation.sourceNode,
+        fromNode: run.currentNode,
+        toNode: recommendation.targetNode,
+        reason: recommendation.reason,
+        confidence: recommendation.confidence,
+        autoExecutable: recommendation.autoExecutable,
+        appliedAt: new Date().toISOString()
+      }
+    ];
+    await this.runStore.updateRun(run);
+
+    this.eventStream.emit({
+      type: "TRANSITION_APPLIED",
+      runId: run.id,
+      node: recommendation.targetNode || run.currentNode,
+      payload: {
+        action: recommendation.action,
+        fromNode: run.currentNode,
+        targetNode: recommendation.targetNode,
+        reason: recommendation.reason,
+        confidence: recommendation.confidence
+      }
+    });
+
+    if (recommendation.action === "advance") {
+      return this.approveCurrent(run.id);
+    }
+
+    if (recommendation.action === "pause_for_human" || !recommendation.targetNode) {
+      return run;
+    }
+
+    if (recommendation.targetNode === run.currentNode) {
+      return this.retryNode(run.id, recommendation.targetNode);
+    }
+
+    return this.jumpToNode(run.id, recommendation.targetNode, "safe", recommendation.reason);
+  }
+
   async retryNode(runId: string, node?: GraphNodeId): Promise<RunRecord> {
     const run = await this.getRunOrThrow(runId);
     const target = node || run.currentNode;
+    run.graph.pendingTransition = undefined;
     run.currentNode = target;
     run.graph.currentNode = target;
     run.graph.nodeStates[target] = {
@@ -270,17 +338,19 @@ export class StateGraphRuntime {
     }
 
     if (targetIdx < currentIdx) {
+      run.graph.researchCycle = (run.graph.researchCycle || 0) + 1;
       for (let idx = targetIdx + 1; idx < GRAPH_NODE_ORDER.length; idx += 1) {
         const node = GRAPH_NODE_ORDER[idx];
         run.graph.nodeStates[node] = {
           ...run.graph.nodeStates[node],
           status: "pending",
           updatedAt: new Date().toISOString(),
-          note: "Reset by backward jump"
+          note: `Reset by backward jump (cycle ${run.graph.researchCycle})`
         };
       }
     }
 
+    run.graph.pendingTransition = undefined;
     run.currentNode = targetNode;
     run.graph.currentNode = targetNode;
     run.status = "paused";
@@ -313,6 +383,7 @@ export class StateGraphRuntime {
   }
 
   private async handleFailure(run: RunRecord, node: GraphNodeId, errorMessage: string): Promise<RunRecord> {
+    run.graph.pendingTransition = undefined;
     const nextRetry = (run.graph.retryCounters[node] ?? 0) + 1;
     run.graph.retryCounters[node] = nextRetry;
 
@@ -412,6 +483,7 @@ export class StateGraphRuntime {
   }
 
   private async failByBudget(run: RunRecord, reason: string): Promise<RunRecord> {
+    run.graph.pendingTransition = undefined;
     run.status = "failed_budget";
     run.graph.nodeStates[run.currentNode] = {
       ...run.graph.nodeStates[run.currentNode],
@@ -472,6 +544,8 @@ export class StateGraphRuntime {
     if (!run) {
       throw new Error(`Run not found: ${runId}`);
     }
+    run.graph.transitionHistory = run.graph.transitionHistory || [];
+    run.graph.researchCycle = run.graph.researchCycle || 0;
     return run;
   }
 }

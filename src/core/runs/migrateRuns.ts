@@ -207,7 +207,15 @@ function normalizeRunsV3(file: RunsFile): RunsFile {
       version: 3,
       workflowVersion: 3,
       nodeThreads: run.nodeThreads ?? {},
-      graph: run.graph ?? createDefaultGraphState(),
+      graph: {
+        ...createDefaultGraphState(),
+        ...run.graph,
+        nodeStates: run.graph?.nodeStates ?? createDefaultGraphState().nodeStates,
+        retryCounters: run.graph?.retryCounters ?? {},
+        rollbackCounters: run.graph?.rollbackCounters ?? {},
+        researchCycle: run.graph?.researchCycle ?? 0,
+        transitionHistory: run.graph?.transitionHistory ?? []
+      },
       memoryRefs: run.memoryRefs ?? {
         runContextPath: `.autoresearch/runs/${run.id}/memory/run_context.json`,
         longTermPath: `.autoresearch/runs/${run.id}/memory/long_term.jsonl`,

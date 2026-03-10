@@ -186,44 +186,122 @@ describe("TerminalApp pending natural plan execution", () => {
 
   it("shows current slot summary and recommendations before /model selection", async () => {
     const app = makeApp();
-    app.openSelectionMenu = vi.fn().mockResolvedValueOnce(undefined);
+    app.openSelectionMenu = vi
+      .fn()
+      .mockResolvedValueOnce("codex_chatgpt_only")
+      .mockResolvedValueOnce(undefined);
 
     await app.handleModel([]);
 
+    expect(app.logs).toContain("Current model backend: Codex CLI");
     expect(app.logs).toContain("Current model slots:");
     expect(
       app.logs.some((line: string) =>
-        line.includes("- general chat:") && line.includes("Recommended: gpt-5.3-codex + low")
+        line.includes("- general chat:") && line.includes("Recommended: gpt-5.4 + low")
       )
     ).toBe(true);
     expect(
       app.logs.some((line: string) =>
-        line.includes("- analysis/hypothesis:") && line.includes("Recommended: gpt-5.3-codex + xhigh")
+        line.includes("- analysis/hypothesis:") && line.includes("Recommended: gpt-5.4 + xhigh")
       )
     ).toBe(true);
     expect(
       app.logs.some((line: string) =>
-        line.includes("- PDF analysis:") && line.includes("Recommended: gpt-5.3-codex + xhigh")
+        line.includes("- PDF analysis:") && line.includes("Recommended: gpt-5.4 + xhigh")
       )
     ).toBe(true);
-    expect(app.openSelectionMenu).toHaveBeenCalledWith(
+    expect(app.openSelectionMenu).toHaveBeenNthCalledWith(
+      1,
+      "Select model backend",
+      expect.any(Array),
+      "codex_chatgpt_only"
+    );
+    expect(app.openSelectionMenu).toHaveBeenNthCalledWith(
+      2,
       "Select model slot",
       expect.arrayContaining([
         expect.objectContaining({
           value: "chat",
-          description: expect.stringContaining("Recommended: gpt-5.3-codex + low")
+          description: expect.stringContaining("Recommended: gpt-5.4 + low")
         }),
         expect.objectContaining({
           value: "task",
-          description: expect.stringContaining("Recommended: gpt-5.3-codex + xhigh")
+          description: expect.stringContaining("Recommended: gpt-5.4 + xhigh")
         }),
         expect.objectContaining({
           value: "pdf",
-          description: expect.stringContaining("Recommended: gpt-5.3-codex + xhigh")
+          description: expect.stringContaining("Recommended: gpt-5.4 + xhigh")
         })
       ]),
       "task"
     );
+  });
+
+  it("lets /model switch the active backend before choosing a slot", async () => {
+    process.env.OPENAI_API_KEY = "test-openai-key";
+    const saveConfig = vi.fn().mockResolvedValue(undefined);
+    const openAiTextClient = { updateDefaults: vi.fn() };
+    const app = new TerminalApp({
+      config: {
+        papers: { max_results: 100 },
+        providers: {
+          llm_mode: "codex_chatgpt_only",
+          codex: { model: "gpt-5.3-codex", reasoning_effort: "xhigh", fast_mode: false },
+          openai: { model: "gpt-5.4", reasoning_effort: "medium", command_reasoning_effort: "low" }
+        },
+        analysis: {
+          pdf_mode: "codex_text_image_hybrid",
+          responses_model: "gpt-5.4"
+        },
+        research: {
+          default_topic: "Multi-agent collaboration",
+          default_constraints: ["recent papers", "last 5 years"],
+          default_objective_metric: "state-of-the-art reproducibility"
+        }
+      } as any,
+      runStore: {} as any,
+      titleGenerator: {} as any,
+      codex: {} as any,
+      openAiTextClient: openAiTextClient as any,
+      eventStream: { subscribe: () => () => {} } as any,
+      orchestrator: {} as any,
+      semanticScholarApiKeyConfigured: false,
+      onQuit: () => {},
+      saveConfig
+    }) as any;
+
+    app.render = () => {};
+    app.updateSuggestions = () => {};
+    app.drainQueuedInputs = async () => {};
+    app.openSelectionMenu = vi
+      .fn()
+      .mockResolvedValueOnce("openai_api")
+      .mockResolvedValueOnce("task")
+      .mockResolvedValueOnce("gpt-5-mini")
+      .mockResolvedValueOnce("high");
+
+    await app.handleModel([]);
+
+    expect(app.config.providers.llm_mode).toBe("openai_api");
+    expect(app.openSelectionMenu).toHaveBeenNthCalledWith(
+      1,
+      "Select model backend",
+      expect.any(Array),
+      "codex_chatgpt_only"
+    );
+    expect(app.openSelectionMenu).toHaveBeenNthCalledWith(
+      2,
+      "Select model slot",
+      expect.any(Array),
+      "task"
+    );
+    expect(saveConfig).toHaveBeenCalledTimes(2);
+    expect(openAiTextClient.updateDefaults).toHaveBeenCalledWith({
+      model: "gpt-5-mini",
+      reasoningEffort: "high"
+    });
+    expect(app.logs).toContain("Model backend updated to OpenAI API.");
+    delete process.env.OPENAI_API_KEY;
   });
 
   it("marks recommended presets in OpenAI API model menus", async () => {
@@ -277,7 +355,7 @@ describe("TerminalApp pending natural plan execution", () => {
       "Select general chat model",
       expect.arrayContaining([
         expect.objectContaining({
-          value: "gpt-5-mini",
+          value: "gpt-5.4",
           description: expect.stringContaining("Recommended preset.")
         })
       ]),

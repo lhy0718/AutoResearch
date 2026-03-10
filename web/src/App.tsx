@@ -1,4 +1,4 @@
-import { Dispatch, FormEvent, SetStateAction, startTransition, useEffect, useState } from "react";
+import { Dispatch, FormEvent, SetStateAction, startTransition, useEffect, useRef, useState } from "react";
 
 import {
   ArtifactEntry,
@@ -7,6 +7,7 @@ import {
   ConfigSummary,
   DoctorCheck,
   RunRecord,
+  RunInsightCard,
   WebConfigFormData,
   WebConfigOptions,
   WebSessionState
@@ -39,6 +40,11 @@ type SetupFormState = WebConfigFormData & {
   openAiApiKey: string;
 };
 
+interface UiActivityState {
+  id: number;
+  label: string;
+}
+
 export function App() {
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
   const [session, setSession] = useState<WebSessionState | null>(null);
@@ -47,6 +53,7 @@ export function App() {
   const [artifacts, setArtifacts] = useState<ArtifactEntry[]>([]);
   const [selectedArtifact, setSelectedArtifact] = useState<ArtifactEntry | null>(null);
   const [artifactPreview, setArtifactPreview] = useState<string | null>(null);
+  const [expandedInsightReferenceKey, setExpandedInsightReferenceKey] = useState<string | null>(null);
   const [checkpoints, setCheckpoints] = useState<CheckpointEntry[]>([]);
   const [doctorChecks, setDoctorChecks] = useState<DoctorCheck[]>([]);
   const [commandInput, setCommandInput] = useState("");
@@ -59,6 +66,8 @@ export function App() {
   const [configOptions, setConfigOptions] = useState<WebConfigOptions>(createDefaultConfigOptions());
   const [setupForm, setSetupForm] = useState<SetupFormState>(createEmptySetupForm());
   const [setupSeeded, setSetupSeeded] = useState(false);
+  const [uiActivity, setUiActivity] = useState<UiActivityState | null>(null);
+  const uiActivitySeq = useRef(0);
 
   useEffect(() => {
     void refreshBootstrap();
@@ -69,8 +78,19 @@ export function App() {
     if (!selectedRunId) {
       return;
     }
+    setExpandedInsightReferenceKey(null);
     void refreshRunDetails(selectedRunId);
   }, [selectedRunId]);
+
+  useEffect(() => {
+    if (!expandedInsightReferenceKey) {
+      return;
+    }
+    const references = session?.activeRunInsight?.references || [];
+    if (!references.some((reference) => buildInsightReferenceKey(reference) === expandedInsightReferenceKey)) {
+      setExpandedInsightReferenceKey(null);
+    }
+  }, [session?.activeRunInsight?.references, expandedInsightReferenceKey]);
 
   useEffect(() => {
     if (!bootstrap) {
@@ -132,6 +152,13 @@ export function App() {
     ? NODE_ORDER.filter((node) => selectedRun.graph.nodeStates[node].status === "completed").length
     : 0;
   const selectedRunStatusClass = selectedRun ? statusToneClass(selectedRun.status) : "is-neutral";
+  const isBusy = Boolean(session?.busy || uiActivity);
+  const activeBusyLabel = session?.busy
+    ? session.busyLabel || uiActivity?.label || "Working..."
+    : uiActivity?.label;
+  const activityRun =
+    selectedRun ||
+    (bootstrap?.runs || []).find((run) => run.id === (session?.activeRunId || selectedRunId));
 
   async function refreshBootstrap() {
     const data = await api<BootstrapResponse>("/api/bootstrap");
@@ -179,14 +206,27 @@ export function App() {
     setArtifactPreview(text);
   }
 
+  async function openInsightReference(referencePath: string) {
+    const runId = selectedRunId || session?.activeRunId;
+    if (!runId) {
+      return;
+    }
+    const artifact =
+      artifacts.find((item) => item.path === referencePath) || buildFallbackArtifactEntry(referencePath);
+    setActiveTab("artifacts");
+    await loadArtifactPreview(runId, artifact);
+  }
+
   async function runSlashSelection(runId: string) {
-    const response = await api<{ session: WebSessionState }>("/api/session/input", {
-      method: "POST",
-      body: JSON.stringify({ text: `/run ${runId}` })
+    await withUiActivity(`Switching to ${runId}`, async () => {
+      const response = await api<{ session: WebSessionState }>("/api/session/input", {
+        method: "POST",
+        body: JSON.stringify({ text: `/run ${runId}` })
+      });
+      setSession(response.session);
+      setSelectedRunId(runId);
+      await refreshBootstrap();
     });
-    setSession(response.session);
-    setSelectedRunId(runId);
-    await refreshBootstrap();
   }
 
   async function submitComposer(event: FormEvent) {
@@ -194,16 +234,8 @@ export function App() {
     if (!commandInput.trim()) {
       return;
     }
-    const response = await api<{ session: WebSessionState }>("/api/session/input", {
-      method: "POST",
-      body: JSON.stringify({ text: commandInput })
-    });
-    setSession(response.session);
+    await runSessionCommand(commandInput);
     setCommandInput("");
-    await refreshBootstrap();
-    if (response.session.activeRunId) {
-      await refreshRunDetails(response.session.activeRunId);
-    }
   }
 
   async function submitNewRun(event: FormEvent) {
@@ -212,69 +244,108 @@ export function App() {
       .split(",")
       .map((item) => item.trim())
       .filter(Boolean);
-    const response = await api<{ run: RunRecord; session: WebSessionState }>("/api/runs", {
-      method: "POST",
-      body: JSON.stringify({
-        topic: newRunTopic,
-        constraints,
-        objectiveMetric: newRunObjective
-      })
+    await withUiActivity("Creating a new run", async () => {
+      const response = await api<{ run: RunRecord; session: WebSessionState }>("/api/runs", {
+        method: "POST",
+        body: JSON.stringify({
+          topic: newRunTopic,
+          constraints,
+          objectiveMetric: newRunObjective
+        })
+      });
+      setShowNewRunForm(false);
+      setSession(response.session);
+      setSelectedRunId(response.run.id);
+      await refreshBootstrap();
+      await refreshRunDetails(response.run.id);
     });
-    setShowNewRunForm(false);
-    setSession(response.session);
-    setSelectedRunId(response.run.id);
-    await refreshBootstrap();
-    await refreshRunDetails(response.run.id);
   }
 
   async function submitSetup(event: FormEvent) {
     event.preventDefault();
-    await api("/api/setup", {
-      method: "POST",
-      body: JSON.stringify({
-        ...setupForm,
-        defaultConstraints: setupForm.defaultConstraints
-          .split(",")
-          .map((item) => item.trim())
-          .filter(Boolean)
-      })
+    await withUiActivity("Saving workspace settings", async () => {
+      await api("/api/setup", {
+        method: "POST",
+        body: JSON.stringify({
+          ...setupForm,
+          defaultConstraints: setupForm.defaultConstraints
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean)
+        })
+      });
+      await refreshBootstrap();
+      await refreshDoctor();
     });
-    await refreshBootstrap();
-    await refreshDoctor();
   }
 
   async function triggerPending(action: "next" | "all" | "cancel") {
-    const response = await api<{ session: WebSessionState }>("/api/session/pending", {
-      method: "POST",
-      body: JSON.stringify({ action })
+    await withUiActivity(labelPendingPlanAction(action), async () => {
+      const response = await api<{ session: WebSessionState }>("/api/session/pending", {
+        method: "POST",
+        body: JSON.stringify({ action })
+      });
+      setSession(response.session);
+      await refreshBootstrap();
+      if (selectedRunId) {
+        await refreshRunDetails(selectedRunId);
+      }
     });
-    setSession(response.session);
-    await refreshBootstrap();
-    if (selectedRunId) {
-      await refreshRunDetails(selectedRunId);
-    }
   }
 
   async function cancelActive() {
-    const response = await api<{ session: WebSessionState }>("/api/session/cancel", {
-      method: "POST"
+    await withUiActivity("Canceling the active task", async () => {
+      const response = await api<{ session: WebSessionState }>("/api/session/cancel", {
+        method: "POST"
+      });
+      setSession(response.session);
     });
-    setSession(response.session);
   }
 
-  async function runAction(endpoint: string, body?: unknown) {
-    const response = await api<{ session: WebSessionState }>(endpoint, {
-      method: "POST",
-      body: body ? JSON.stringify(body) : undefined
+  async function runAction(endpoint: string, body?: unknown, activityLabel = "Running action") {
+    await withUiActivity(activityLabel, async () => {
+      const response = await api<{ session: WebSessionState }>(endpoint, {
+        method: "POST",
+        body: body ? JSON.stringify(body) : undefined
+      });
+      setSession(response.session);
+      const nextRunId = response.session.activeRunId || selectedRunId;
+      if (nextRunId) {
+        setSelectedRunId(nextRunId);
+      }
+      await refreshBootstrap();
+      if (nextRunId) {
+        await refreshRunDetails(nextRunId);
+      }
     });
-    setSession(response.session);
-    const nextRunId = response.session.activeRunId || selectedRunId;
-    if (nextRunId) {
-      setSelectedRunId(nextRunId);
-    }
-    await refreshBootstrap();
-    if (nextRunId) {
-      await refreshRunDetails(nextRunId);
+  }
+
+  async function runSessionCommand(text: string, activityLabel = `Running ${summarizeCommand(text)}`) {
+    await withUiActivity(activityLabel, async () => {
+      const response = await api<{ session: WebSessionState }>("/api/session/input", {
+        method: "POST",
+        body: JSON.stringify({ text })
+      });
+      setSession(response.session);
+      const nextRunId = response.session.activeRunId || selectedRunId;
+      if (nextRunId) {
+        setSelectedRunId(nextRunId);
+      }
+      await refreshBootstrap();
+      if (nextRunId) {
+        await refreshRunDetails(nextRunId);
+      }
+    });
+  }
+
+  async function withUiActivity<T>(label: string, work: () => Promise<T>): Promise<T> {
+    const id = uiActivitySeq.current + 1;
+    uiActivitySeq.current = id;
+    setUiActivity({ id, label });
+    try {
+      return await work();
+    } finally {
+      setUiActivity((current) => (current?.id === id ? null : current));
     }
   }
 
@@ -304,6 +375,7 @@ export function App() {
           options={configOptions}
           onChange={setSetupForm}
           onSubmit={submitSetup}
+          disabled={isBusy}
           heading="Initial setup"
           submitLabel="Initialize workspace"
           apiKeyHelp="API key fields are required on first setup."
@@ -346,6 +418,7 @@ export function App() {
           <button
             className="button button-primary"
             type="button"
+            disabled={isBusy}
             onClick={() => setShowNewRunForm((current) => !current)}
           >
             {showNewRunForm ? "Close" : "New run"}
@@ -355,19 +428,21 @@ export function App() {
           <form className="subtle-card new-run-form" onSubmit={submitNewRun}>
             <label>
               Topic
-              <input value={newRunTopic} onChange={(event) => setNewRunTopic(event.target.value)} />
+              <input disabled={isBusy} value={newRunTopic} onChange={(event) => setNewRunTopic(event.target.value)} />
             </label>
             <label>
               Constraints
-              <input value={newRunConstraints} onChange={(event) => setNewRunConstraints(event.target.value)} />
+              <input disabled={isBusy} value={newRunConstraints} onChange={(event) => setNewRunConstraints(event.target.value)} />
             </label>
             <label>
               Objective
-              <input value={newRunObjective} onChange={(event) => setNewRunObjective(event.target.value)} />
+              <input disabled={isBusy} value={newRunObjective} onChange={(event) => setNewRunObjective(event.target.value)} />
             </label>
             <div className="form-actions">
-              <button className="button button-primary" type="submit">Create run</button>
-              <button className="button button-secondary" type="button" onClick={() => setShowNewRunForm(false)}>Cancel</button>
+              <button className="button button-primary" type="submit" disabled={isBusy}>
+                {isBusy ? "Working..." : "Create run"}
+              </button>
+              <button className="button button-secondary" type="button" disabled={isBusy} onClick={() => setShowNewRunForm(false)}>Cancel</button>
             </div>
           </form>
         ) : null}
@@ -380,6 +455,7 @@ export function App() {
                 key={run.id}
                 className={`run-list-item ${selectedRunId === run.id ? "selected" : ""}`}
                 type="button"
+                disabled={isBusy}
                 onClick={() => {
                   void runSlashSelection(run.id);
                 }}
@@ -399,6 +475,34 @@ export function App() {
       </aside>
 
       <main className="main-column">
+        {isBusy && activeBusyLabel ? (
+          <section className="panel activity-banner" role="status" aria-live="polite">
+            <div className="activity-banner-main">
+              <span className="activity-spinner" aria-hidden="true" />
+              <div className="activity-banner-copy">
+                <p className="section-kicker">Runtime activity</p>
+                <h2>{activeBusyLabel}</h2>
+                <p className="activity-banner-meta">
+                  {activityRun
+                    ? `${activityRun.title} · ${formatNodeLabel(activityRun.currentNode)}`
+                    : "Waiting for live session updates and artifact refreshes."}
+                </p>
+              </div>
+            </div>
+            <div className="activity-banner-side">
+              <span className="status-pill is-active">
+                <span className="mini-spinner" aria-hidden="true" />
+                {session?.canCancel ? "Cancelable" : session?.busy ? "Running" : "Starting"}
+              </span>
+              {session?.canCancel ? (
+                <button className="button button-danger" type="button" onClick={() => void cancelActive()}>
+                  Cancel active task
+                </button>
+              ) : null}
+            </div>
+          </section>
+        ) : null}
+
         {selectedRun ? (
           <>
             <section className="panel run-header">
@@ -412,8 +516,48 @@ export function App() {
                   <p className="run-topic">{selectedRun.topic}</p>
                 </div>
                 <div className="header-actions">
-                  <button className="button button-primary" type="button" onClick={() => void runAction(`/api/runs/${selectedRun.id}/actions/approve`)}>Approve</button>
-                  <button className="button button-secondary" type="button" onClick={() => void runAction(`/api/runs/${selectedRun.id}/actions/retry`)}>Retry</button>
+                  <button
+                    className="button button-primary"
+                    type="button"
+                    disabled={isBusy}
+                    onClick={() => void runAction(`/api/runs/${selectedRun.id}/actions/approve`, undefined, "Approving current node")}
+                  >
+                    Approve
+                  </button>
+                  {selectedRun.graph.pendingTransition ? (
+                    <button
+                      className="button button-secondary"
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() =>
+                        void runAction(
+                          `/api/runs/${selectedRun.id}/actions/apply-transition`,
+                          undefined,
+                          "Applying transition recommendation"
+                        )
+                      }
+                    >
+                      Apply recommendation
+                    </button>
+                  ) : null}
+                  <button
+                    className="button button-secondary"
+                    type="button"
+                    disabled={isBusy}
+                    onClick={() =>
+                      void runAction(`/api/runs/${selectedRun.id}/actions/overnight`, undefined, "Starting overnight autonomy")
+                    }
+                  >
+                    Overnight
+                  </button>
+                  <button
+                    className="button button-secondary"
+                    type="button"
+                    disabled={isBusy}
+                    onClick={() => void runAction(`/api/runs/${selectedRun.id}/actions/retry`, undefined, "Retrying current node")}
+                  >
+                    Retry
+                  </button>
                   {session?.canCancel ? (
                     <button className="button button-danger" type="button" onClick={() => void cancelActive()}>Cancel</button>
                   ) : null}
@@ -450,6 +594,145 @@ export function App() {
               {selectedRun.latestSummary ? (
                 <p className="summary-copy">{selectedRun.latestSummary}</p>
               ) : null}
+
+              {session?.activeRunId === selectedRun.id && session.activeRunInsight ? (
+                <section className="inline-panel insight-panel">
+                  <p className="section-kicker">{session.activeRunInsight.title}</p>
+                  <div className="insight-list">
+                    {session.activeRunInsight.lines.map((line) => (
+                      <p key={line} className="insight-line">{line}</p>
+                    ))}
+                  </div>
+                  {session.activeRunInsight.actions?.length ? (
+                    <div className="insight-actions">
+                      {session.activeRunInsight.actions.map((action) => (
+                        <button
+                          key={`${action.label}-${action.command}`}
+                          className="button button-secondary button-small insight-action"
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() => void runSessionCommand(action.command, `${action.label} · ${action.command}`)}
+                        >
+                          <span>{action.label}</span>
+                          <code>{action.command}</code>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                  {session.activeRunInsight.references?.length ? (
+                    <div className="insight-references">
+                      {session.activeRunInsight.references.map((reference) => {
+                        const referenceKey = buildInsightReferenceKey(reference);
+                        const isExpanded = expandedInsightReferenceKey === referenceKey;
+                        return (
+                          <article
+                            key={referenceKey}
+                            className={`insight-reference-card ${isExpanded ? "expanded" : ""}`}
+                          >
+                            <button
+                              className="button button-ghost button-small insight-reference"
+                              type="button"
+                              aria-expanded={isExpanded}
+                              onClick={() =>
+                                setExpandedInsightReferenceKey((current) =>
+                                  current === referenceKey ? null : referenceKey
+                                )
+                              }
+                            >
+                              <span className="insight-reference-kind">{labelInsightReferenceKind(reference.kind)}</span>
+                              <span>{reference.label}</span>
+                              <code>{reference.path}</code>
+                              {reference.facts?.length ? (
+                                <div className="insight-reference-facts">
+                                  {reference.facts.map((fact) => (
+                                    <span key={`${reference.label}-${fact.label}-${fact.value}`} className="insight-reference-fact">
+                                      {fact.label} {fact.value}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : null}
+                              <small>{reference.summary}</small>
+                            </button>
+                            {isExpanded ? (
+                              <div className="insight-reference-detail">
+                                {reference.details?.length ? (
+                                  <div className="insight-reference-detail-list">
+                                    {reference.details.map((detail) => (
+                                      <p key={`${referenceKey}-${detail}`} className="insight-reference-detail-line">
+                                        {detail}
+                                      </p>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <p className="insight-reference-detail-line">
+                                    No additional grounded detail is attached to this evidence card yet.
+                                  </p>
+                                )}
+                                <div className="insight-reference-detail-actions">
+                                  <button
+                                    className="button button-secondary button-small"
+                                    type="button"
+                                    disabled={isBusy}
+                                    onClick={() => void openInsightReference(reference.path)}
+                                    aria-label={`Open artifact for ${reference.label}`}
+                                  >
+                                    Open artifact
+                                  </button>
+                                </div>
+                              </div>
+                            ) : null}
+                          </article>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </section>
+              ) : null}
+
+              {selectedRun.graph.pendingTransition ? (
+                <section className="inline-panel">
+                  <p className="section-kicker">Transition recommendation</p>
+                  <h3>
+                    {selectedRun.graph.pendingTransition.action}
+                    {selectedRun.graph.pendingTransition.targetNode
+                      ? ` -> ${formatNodeLabel(selectedRun.graph.pendingTransition.targetNode)}`
+                      : ""}
+                  </h3>
+                  <p className="summary-copy">{selectedRun.graph.pendingTransition.reason}</p>
+                  <p className="run-meta">
+                    Confidence {selectedRun.graph.pendingTransition.confidence.toFixed(2)}
+                    {" · "}
+                    {selectedRun.graph.pendingTransition.autoExecutable ? "auto-executable" : "review first"}
+                  </p>
+                  <div className="chip-list">
+                    {selectedRun.graph.pendingTransition.evidence.map((item) => (
+                      <span key={item} className="chip">{item}</span>
+                    ))}
+                  </div>
+                  <div className="insight-actions">
+                    <button
+                      className="button button-secondary button-small insight-action"
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => void runSessionCommand("/agent apply", "Applying transition recommendation")}
+                    >
+                      <span>Apply recommendation</span>
+                      <code>/agent apply</code>
+                    </button>
+                    {selectedRun.graph.pendingTransition.autoExecutable ? (
+                      <button
+                        className="button button-secondary button-small insight-action"
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => void runSessionCommand("/agent overnight", "Starting overnight autonomy")}
+                      >
+                        <span>Start overnight</span>
+                        <code>/agent overnight</code>
+                      </button>
+                    ) : null}
+                  </div>
+                </section>
+              ) : null}
             </section>
 
             <section className="panel workflow-panel">
@@ -478,9 +761,30 @@ export function App() {
                       <div className="node-footer">
                         <span className="node-meta">{isCurrent ? "Current node" : formatTimestamp(state.updatedAt)}</span>
                         <div className="node-actions">
-                          <button className="button button-secondary button-small" type="button" onClick={() => void runAction(`/api/runs/${selectedRun.id}/actions/run-node`, { node })}>Run</button>
-                          <button className="button button-secondary button-small" type="button" onClick={() => void runAction(`/api/runs/${selectedRun.id}/actions/retry`, { node })}>Retry</button>
-                          <button className="button button-ghost button-small" type="button" onClick={() => void runAction(`/api/runs/${selectedRun.id}/actions/jump`, { node, force: true })}>Jump</button>
+                          <button
+                            className="button button-secondary button-small"
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => void runAction(`/api/runs/${selectedRun.id}/actions/run-node`, { node }, `Running ${formatNodeLabel(node)}`)}
+                          >
+                            Run
+                          </button>
+                          <button
+                            className="button button-secondary button-small"
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => void runAction(`/api/runs/${selectedRun.id}/actions/retry`, { node }, `Retrying ${formatNodeLabel(node)}`)}
+                          >
+                            Retry
+                          </button>
+                          <button
+                            className="button button-ghost button-small"
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => void runAction(`/api/runs/${selectedRun.id}/actions/jump`, { node, force: true }, `Jumping to ${formatNodeLabel(node)}`)}
+                          >
+                            Jump
+                          </button>
                         </div>
                       </div>
                     </article>
@@ -512,11 +816,11 @@ export function App() {
                 ))}
               </ol>
               <div className="pending-actions">
-                <button className="button button-primary" type="button" onClick={() => void triggerPending("next")}>Run next</button>
+                <button className="button button-primary" type="button" disabled={isBusy} onClick={() => void triggerPending("next")}>Run next</button>
                 {session.pendingPlan.totalSteps > 1 ? (
-                  <button className="button button-secondary" type="button" onClick={() => void triggerPending("all")}>Run all</button>
+                  <button className="button button-secondary" type="button" disabled={isBusy} onClick={() => void triggerPending("all")}>Run all</button>
                 ) : null}
-                <button className="button button-danger" type="button" onClick={() => void triggerPending("cancel")}>Cancel</button>
+                <button className="button button-danger" type="button" disabled={isBusy} onClick={() => void triggerPending("cancel")}>Cancel</button>
               </div>
             </div>
           </section>
@@ -640,6 +944,7 @@ export function App() {
               options={configOptions}
               onChange={setSetupForm}
               onSubmit={submitSetup}
+              disabled={isBusy}
               heading="Workspace settings"
               submitLabel="Save settings"
               apiKeyHelp="Leave API key fields blank to keep the current stored value."
@@ -671,8 +976,15 @@ export function App() {
               <p className="section-kicker">Command input</p>
               <h3>{activeTab === "logs" ? "Logs and input together" : "Run a command"}</h3>
             </div>
-            <span className={`status-pill ${session?.busy ? "is-active" : "is-neutral"}`}>
-              {session?.busy ? session.busyLabel || "Working..." : "Idle"}
+            <span className={`status-pill ${isBusy ? "is-active" : "is-neutral"}`}>
+              {isBusy ? (
+                <>
+                  <span className="mini-spinner" aria-hidden="true" />
+                  {activeBusyLabel || "Working..."}
+                </>
+              ) : (
+                "Idle"
+              )}
             </span>
           </div>
           <label className="field-label">
@@ -682,10 +994,13 @@ export function App() {
               onChange={(event) => setCommandInput(event.target.value)}
               placeholder="collect 100 papers from the last 5 years by relevance"
               rows={3}
+              disabled={isBusy}
             />
           </label>
           <div className="composer-actions">
-            <button className="button button-primary" type="submit" disabled={session?.busy}>Send</button>
+            <button className="button button-primary" type="submit" disabled={isBusy}>
+              {isBusy ? "Running..." : "Send"}
+            </button>
             {session?.canCancel ? (
               <button className="button button-danger" type="button" onClick={() => void cancelActive()}>Cancel active task</button>
             ) : null}
@@ -702,6 +1017,7 @@ interface ConfigEditorFormProps {
   options: WebConfigOptions;
   onChange: Dispatch<SetStateAction<SetupFormState>>;
   onSubmit: (event: FormEvent) => Promise<void>;
+  disabled?: boolean;
   heading: string;
   submitLabel: string;
   apiKeyHelp: string;
@@ -719,25 +1035,26 @@ function ConfigEditorForm(props: ConfigEditorFormProps) {
 
       <label>
         Project name
-        <input value={props.form.projectName} onChange={(event) => patchSetupForm(props.onChange, { projectName: event.target.value })} />
+        <input disabled={props.disabled} value={props.form.projectName} onChange={(event) => patchSetupForm(props.onChange, { projectName: event.target.value })} />
       </label>
       <label>
         Default topic
-        <input value={props.form.defaultTopic} onChange={(event) => patchSetupForm(props.onChange, { defaultTopic: event.target.value })} />
+        <input disabled={props.disabled} value={props.form.defaultTopic} onChange={(event) => patchSetupForm(props.onChange, { defaultTopic: event.target.value })} />
       </label>
       <label>
         Default constraints
-        <input value={props.form.defaultConstraints} onChange={(event) => patchSetupForm(props.onChange, { defaultConstraints: event.target.value })} />
+        <input disabled={props.disabled} value={props.form.defaultConstraints} onChange={(event) => patchSetupForm(props.onChange, { defaultConstraints: event.target.value })} />
       </label>
       <label>
         Objective metric
-        <input value={props.form.defaultObjectiveMetric} onChange={(event) => patchSetupForm(props.onChange, { defaultObjectiveMetric: event.target.value })} />
+        <input disabled={props.disabled} value={props.form.defaultObjectiveMetric} onChange={(event) => patchSetupForm(props.onChange, { defaultObjectiveMetric: event.target.value })} />
       </label>
 
       <div className="inline-fields">
         <label>
           Primary provider
           <select
+            disabled={props.disabled}
             value={props.form.llmMode}
             onChange={(event) =>
               patchSetupForm(props.onChange, { llmMode: event.target.value as SetupFormState["llmMode"] })
@@ -750,6 +1067,7 @@ function ConfigEditorForm(props: ConfigEditorFormProps) {
         <label>
           PDF mode
           <select
+            disabled={props.disabled}
             value={props.form.pdfAnalysisMode}
             onChange={(event) =>
               patchSetupForm(props.onChange, { pdfAnalysisMode: event.target.value as SetupFormState["pdfAnalysisMode"] })
@@ -764,6 +1082,7 @@ function ConfigEditorForm(props: ConfigEditorFormProps) {
       <ConfigModelSection
         title="Codex chat"
         description="General chat, titles, and lightweight interactive turns."
+        disabled={props.disabled}
         modelValue={props.form.codexChatModelChoice}
         effortValue={props.form.codexChatReasoningEffort}
         modelOptions={props.options.codexModels}
@@ -774,6 +1093,7 @@ function ConfigEditorForm(props: ConfigEditorFormProps) {
       <ConfigModelSection
         title="Codex task"
         description="Analysis, hypothesis, and planning tasks."
+        disabled={props.disabled}
         modelValue={props.form.codexTaskModelChoice}
         effortValue={props.form.codexTaskReasoningEffort}
         modelOptions={props.options.codexModels}
@@ -784,6 +1104,7 @@ function ConfigEditorForm(props: ConfigEditorFormProps) {
       <ConfigModelSection
         title="Codex experiment"
         description="Used when a real_execution runner needs model calls during experiment execution."
+        disabled={props.disabled}
         modelValue={props.form.codexExperimentModelChoice}
         effortValue={props.form.codexExperimentReasoningEffort}
         modelOptions={props.options.codexModels}
@@ -794,6 +1115,7 @@ function ConfigEditorForm(props: ConfigEditorFormProps) {
       <ConfigModelSection
         title="Codex PDF"
         description="Local text-extract PDF analysis when Codex mode is selected."
+        disabled={props.disabled}
         modelValue={props.form.codexPdfModelChoice}
         effortValue={props.form.codexPdfReasoningEffort}
         modelOptions={props.options.codexModels}
@@ -805,6 +1127,7 @@ function ConfigEditorForm(props: ConfigEditorFormProps) {
       <ConfigModelSection
         title="OpenAI chat"
         description="General chat model and reasoning for API mode."
+        disabled={props.disabled}
         modelValue={props.form.openAiChatModel}
         effortValue={props.form.openAiChatReasoningEffort}
         modelOptions={props.options.openAiModels}
@@ -815,6 +1138,7 @@ function ConfigEditorForm(props: ConfigEditorFormProps) {
       <ConfigModelSection
         title="OpenAI task"
         description="Analysis and hypothesis model for API mode."
+        disabled={props.disabled}
         modelValue={props.form.openAiTaskModel}
         effortValue={props.form.openAiReasoningEffort}
         modelOptions={props.options.openAiModels}
@@ -825,6 +1149,7 @@ function ConfigEditorForm(props: ConfigEditorFormProps) {
       <ConfigModelSection
         title="OpenAI experiment"
         description="Used when a real_execution runner should call the OpenAI API."
+        disabled={props.disabled}
         modelValue={props.form.openAiExperimentModel}
         effortValue={props.form.openAiExperimentReasoningEffort}
         modelOptions={props.options.openAiModels}
@@ -835,6 +1160,7 @@ function ConfigEditorForm(props: ConfigEditorFormProps) {
       <ConfigModelSection
         title="OpenAI PDF"
         description="Text-based PDF analysis when API mode is selected."
+        disabled={props.disabled}
         modelValue={props.form.openAiPdfModel}
         effortValue={props.form.openAiPdfReasoningEffort}
         modelOptions={props.options.openAiModels}
@@ -845,6 +1171,7 @@ function ConfigEditorForm(props: ConfigEditorFormProps) {
       <ConfigModelSection
         title="Responses PDF"
         description="Vision-capable PDF analysis when Responses API PDF mode is selected."
+        disabled={props.disabled}
         modelValue={props.form.responsesPdfModel}
         effortValue={props.form.responsesPdfReasoningEffort}
         modelOptions={props.options.responsesPdfModels}
@@ -855,16 +1182,16 @@ function ConfigEditorForm(props: ConfigEditorFormProps) {
 
       <label>
         Semantic Scholar API key
-        <input type="password" value={props.form.semanticScholarApiKey} onChange={(event) => patchSetupForm(props.onChange, { semanticScholarApiKey: event.target.value })} />
+        <input disabled={props.disabled} type="password" value={props.form.semanticScholarApiKey} onChange={(event) => patchSetupForm(props.onChange, { semanticScholarApiKey: event.target.value })} />
       </label>
       <label>
         OpenAI API key
-        <input type="password" value={props.form.openAiApiKey} onChange={(event) => patchSetupForm(props.onChange, { openAiApiKey: event.target.value })} />
+        <input disabled={props.disabled} type="password" value={props.form.openAiApiKey} onChange={(event) => patchSetupForm(props.onChange, { openAiApiKey: event.target.value })} />
       </label>
       <p className="form-help">{props.apiKeyHelp}</p>
 
       <div className="form-actions">
-        <button className="button button-primary" type="submit">{props.submitLabel}</button>
+        <button className="button button-primary" type="submit" disabled={props.disabled}>{props.disabled ? "Working..." : props.submitLabel}</button>
       </div>
     </form>
   );
@@ -873,6 +1200,7 @@ function ConfigEditorForm(props: ConfigEditorFormProps) {
 interface ConfigModelSectionProps {
   title: string;
   description: string;
+  disabled?: boolean;
   modelValue: string;
   effortValue: string;
   modelOptions: string[];
@@ -891,7 +1219,7 @@ function ConfigModelSection(props: ConfigModelSectionProps) {
       <div className="inline-fields">
         <label>
           Model
-          <select value={props.modelValue} onChange={(event) => props.onModelChange(event.target.value)}>
+          <select disabled={props.disabled} value={props.modelValue} onChange={(event) => props.onModelChange(event.target.value)}>
             {props.modelOptions.map((option) => (
               <option key={option} value={option}>{option}</option>
             ))}
@@ -899,7 +1227,7 @@ function ConfigModelSection(props: ConfigModelSectionProps) {
         </label>
         <label>
           Reasoning effort
-          <select value={props.effortValue} onChange={(event) => props.onEffortChange(event.target.value)}>
+          <select disabled={props.disabled} value={props.effortValue} onChange={(event) => props.onEffortChange(event.target.value)}>
             {props.effortOptions.map((option) => (
               <option key={option} value={option}>{option}</option>
             ))}
@@ -1048,6 +1376,25 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+function summarizeCommand(text: string): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "command";
+  }
+  return normalized.length <= 52 ? normalized : `${normalized.slice(0, 49)}...`;
+}
+
+function labelPendingPlanAction(action: "next" | "all" | "cancel"): string {
+  switch (action) {
+    case "next":
+      return "Running the next pending step";
+    case "all":
+      return "Running the full pending plan";
+    case "cancel":
+      return "Canceling the pending plan";
+  }
+}
+
 function formatNodeLabel(value: string): string {
   return toHeadline(value.replace(/_/g, " "));
 }
@@ -1073,6 +1420,50 @@ function labelArtifactKind(value: ArtifactEntry["kind"]): string {
     default:
       return toHeadline(value);
   }
+}
+
+function buildFallbackArtifactEntry(path: string): ArtifactEntry {
+  const lower = path.toLowerCase();
+  const kind: ArtifactEntry["kind"] =
+    lower.endsWith(".json") || lower.endsWith(".jsonl")
+      ? "json"
+      : lower.endsWith(".yaml") ||
+          lower.endsWith(".yml") ||
+          lower.endsWith(".txt") ||
+          lower.endsWith(".tex") ||
+          lower.endsWith(".bib") ||
+          lower.endsWith(".md") ||
+          lower.endsWith(".log") ||
+          lower.endsWith(".py")
+        ? "text"
+        : lower.endsWith(".png") ||
+            lower.endsWith(".jpg") ||
+            lower.endsWith(".jpeg") ||
+            lower.endsWith(".gif") ||
+            lower.endsWith(".webp") ||
+            lower.endsWith(".svg")
+          ? "image"
+          : lower.endsWith(".pdf")
+            ? "pdf"
+            : "download";
+
+  return {
+    path,
+    kind,
+    size: 0,
+    modifiedAt: "",
+    previewable: kind !== "download"
+  };
+}
+
+function labelInsightReferenceKind(
+  kind: "figure" | "comparison" | "statistics" | "transition" | "report" | "metrics"
+): string {
+  return toHeadline(kind);
+}
+
+function buildInsightReferenceKey(reference: NonNullable<RunInsightCard["references"]>[number]): string {
+  return `${reference.kind}:${reference.label}:${reference.path}`;
 }
 
 function statusToneClass(status?: string): string {

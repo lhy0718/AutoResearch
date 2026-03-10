@@ -20,6 +20,8 @@ export function createDefaultGraphState(): RunGraphState {
     nodeStates: createDefaultNodeState(),
     retryCounters: {},
     rollbackCounters: {},
+    researchCycle: 0,
+    transitionHistory: [],
     budget: {
       toolCallsUsed: 0,
       wallClockMsUsed: 0,

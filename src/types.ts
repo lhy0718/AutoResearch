@@ -49,6 +49,37 @@ export const AGENT_ROLE_ORDER: AgentRoleId[] = [
 export type NodeStatus = "pending" | "running" | "needs_approval" | "completed" | "failed" | "skipped";
 export type AgentStatus = NodeStatus;
 
+export type TransitionAction =
+  | "advance"
+  | "retry_same"
+  | "backtrack_to_implement"
+  | "backtrack_to_design"
+  | "backtrack_to_hypotheses"
+  | "pause_for_human";
+
+export interface TransitionRecommendation {
+  action: TransitionAction;
+  sourceNode: GraphNodeId;
+  targetNode?: GraphNodeId;
+  reason: string;
+  confidence: number;
+  autoExecutable: boolean;
+  evidence: string[];
+  suggestedCommands: string[];
+  generatedAt: string;
+}
+
+export interface TransitionHistoryEntry {
+  action: TransitionAction;
+  sourceNode: GraphNodeId;
+  fromNode: GraphNodeId;
+  toNode?: GraphNodeId;
+  reason: string;
+  confidence: number;
+  autoExecutable: boolean;
+  appliedAt: string;
+}
+
 export interface NodeState {
   status: NodeStatus;
   updatedAt: string;
@@ -79,6 +110,9 @@ export interface RunGraphState {
   nodeStates: Record<GraphNodeId, NodeState>;
   retryCounters: Partial<Record<GraphNodeId, number>>;
   rollbackCounters: Partial<Record<GraphNodeId, number>>;
+  researchCycle: number;
+  pendingTransition?: TransitionRecommendation;
+  transitionHistory: TransitionHistoryEntry[];
   budget: BudgetState;
   checkpointSeq: number;
   retryPolicy: RetryPolicy;
@@ -209,6 +243,26 @@ export interface PendingPlan {
   totalSteps: number;
 }
 
+export interface RunInsightCard {
+  title: string;
+  lines: string[];
+  actions?: Array<{
+    label: string;
+    command: string;
+  }>;
+  references?: Array<{
+    kind: "figure" | "comparison" | "statistics" | "transition" | "report" | "metrics";
+    label: string;
+    path: string;
+    summary: string;
+    facts?: Array<{
+      label: string;
+      value: string;
+    }>;
+    details?: string[];
+  }>;
+}
+
 export interface WebSessionState {
   activeRunId?: string;
   busy: boolean;
@@ -216,6 +270,7 @@ export interface WebSessionState {
   pendingPlan?: PendingPlan;
   logs: string[];
   canCancel: boolean;
+  activeRunInsight?: RunInsightCard;
 }
 
 export interface ArtifactEntry {

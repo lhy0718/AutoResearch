@@ -4,6 +4,7 @@ import { promises as fs } from "node:fs";
 import { RunStore } from "../core/runs/runStore.js";
 import { TitleGenerator } from "../core/runs/titleGenerator.js";
 import { AgentOrchestrator } from "../core/agents/agentOrchestrator.js";
+import { AutonomousRunController, buildDefaultOvernightPolicy } from "../core/agents/autonomousRunController.js";
 import { EventStream, AutoResearchEvent } from "../core/events.js";
 import { buildNaturalAssistantResponse, matchesNaturalAssistantIntent } from "../core/commands/naturalAssistant.js";
 import { buildNaturalAssistantResponseWithLlm } from "../core/commands/naturalLlmAssistant.js";
@@ -22,6 +23,11 @@ import { runDoctor } from "../core/doctor.js";
 import { resolveRunByQuery } from "../core/runs/runResolver.js";
 import { RunContextMemory } from "../core/memory/runContextMemory.js";
 import { parseSlashCommand } from "../core/commands/parseSlash.js";
+import { parseAnalysisReport } from "../core/resultAnalysis.js";
+import {
+  buildAnalyzeResultsInsightCard,
+  formatAnalyzeResultsArtifactLines
+} from "../core/resultAnalysisPresentation.js";
 import { CodexCliClient, CodexReasoningEffort } from "../integrations/codex/codexCliClient.js";
 import { OpenAiResponsesTextClient } from "../integrations/openai/responsesTextClient.js";
 import {
@@ -30,7 +36,8 @@ import {
   RunRecord,
   WebSessionState,
   PendingPlan,
-  AGENT_ORDER
+  AGENT_ORDER,
+  RunInsightCard
 } from "../types.js";
 import {
   CollectCommandRequest,
@@ -115,6 +122,7 @@ export class InteractionSession {
   private logs: string[] = [];
   private runIndex: RunRecord[] = [];
   private activeRunId?: string;
+  private activeRunInsight?: RunInsightCard;
   private busy = false;
   private thinking = false;
   private queuedInputs: string[] = [];
@@ -176,7 +184,8 @@ export class InteractionSession {
           }
         : undefined,
       logs: [...this.logs],
-      canCancel: this.busy
+      canCancel: this.busy,
+      activeRunInsight: this.activeRunInsight
     };
   }
 
@@ -281,6 +290,7 @@ export class InteractionSession {
     } else {
       this.activeRunId = undefined;
     }
+    await this.refreshActiveRunInsight();
     this.notify();
   }
 
@@ -979,6 +989,7 @@ export class InteractionSession {
     this.pushLog("/help | /runs | /run <run> | /resume <run> | /title <new title>");
     this.pushLog("/doctor | /approve | /retry");
     this.pushLog("/agent list | /agent status [run] | /agent graph [run] | /agent budget [run]");
+    this.pushLog("/agent transition [run] | /agent apply [run] | /agent overnight [run]");
     this.pushLog("/agent run <node> [run] [--top-n <n> | --top-k <n> --branch-count <n>]");
     this.pushLog("/agent collect [query] [options] | /agent jump <node> [run] [--force]");
   }
@@ -1127,6 +1138,12 @@ export class InteractionSession {
         const rollback = run.graph.rollbackCounters[node] ?? 0;
         this.pushLog(`- ${node}: ${state.status} (retry=${retry}, rollback=${rollback})`);
       }
+      if (run.graph.pendingTransition) {
+        this.pushLog(
+          `Pending transition: ${run.graph.pendingTransition.action} -> ${run.graph.pendingTransition.targetNode || "stay"}`
+        );
+        this.pushLog(`Reason: ${run.graph.pendingTransition.reason}`);
+      }
       return { ok: true };
     }
 
@@ -1159,7 +1176,9 @@ export class InteractionSession {
       if (!run) {
         return { ok: false, reason: "target run not found" };
       }
-      this.pushLog(await this.countNodeArtifacts(run, nodeRaw));
+      for (const line of await this.countNodeArtifacts(run, nodeRaw)) {
+        this.pushLog(line);
+      }
       return { ok: true };
     }
 
@@ -1280,7 +1299,62 @@ export class InteractionSession {
       return { ok: true };
     }
 
-    this.pushLog("Usage: /agent list | run | status | collect | recollect | clear | count | clear_papers | focus | graph | resume | retry | jump | budget");
+    if (sub === "transition") {
+      const run = await this.resolveTargetRun(args.slice(1).join(" ").trim() || undefined);
+      if (!run) {
+        return { ok: false, reason: "target run not found" };
+      }
+      const recommendation = run.graph.pendingTransition;
+      if (!recommendation) {
+        this.pushLog("No pending transition recommendation.");
+        return { ok: true };
+      }
+      this.pushLog(
+        `Transition: ${recommendation.action} -> ${recommendation.targetNode || "stay"} (confidence ${recommendation.confidence})`
+      );
+      this.pushLog(`Reason: ${recommendation.reason}`);
+      for (const evidence of recommendation.evidence) {
+        this.pushLog(`- ${evidence}`);
+      }
+      return { ok: true };
+    }
+
+    if (sub === "apply") {
+      const run = await this.resolveTargetRun(args.slice(1).join(" ").trim() || undefined);
+      if (!run) {
+        return { ok: false, reason: "target run not found" };
+      }
+      const recommendation = run.graph.pendingTransition;
+      const updated = await this.orchestrator.applyPendingTransition(run.id);
+      this.pushLog(
+        recommendation
+          ? `Applied transition ${recommendation.action} -> ${recommendation.targetNode || "stay"}.`
+          : "No pending transition recommendation to apply."
+      );
+      this.pushLog(`Current node is ${updated.currentNode}.`);
+      await this.refreshRunIndex();
+      return { ok: true };
+    }
+
+    if (sub === "overnight") {
+      const run = await this.resolveTargetRun(args.slice(1).join(" ").trim() || undefined);
+      if (!run) {
+        return { ok: false, reason: "target run not found" };
+      }
+      this.pushLog("Starting overnight autonomy with the default safe policy.");
+      const controller = new AutonomousRunController(this.runStore, this.orchestrator, this.eventStream);
+      const outcome = await controller.runOvernight(run.id, buildDefaultOvernightPolicy(), { abortSignal });
+      this.pushLog(`Overnight autonomy ${outcome.status}: ${outcome.reason}`);
+      this.pushLog(
+        `Iterations=${outcome.iterations}, approvals=${outcome.approvalsApplied}, transitions=${outcome.transitionsApplied}`
+      );
+      await this.refreshRunIndex();
+      return { ok: outcome.status !== "failed", reason: outcome.status === "failed" ? outcome.reason : undefined };
+    }
+
+    this.pushLog(
+      "Usage: /agent list | run | status | collect | recollect | clear | count | clear_papers | focus | graph | resume | retry | jump | budget | transition | apply | overnight"
+    );
     return { ok: false, reason: `unknown /agent subcommand ${sub}` };
   }
 
@@ -1591,7 +1665,23 @@ export class InteractionSession {
 
   private async setActiveRunId(runId?: string): Promise<void> {
     this.activeRunId = runId;
+    await this.refreshActiveRunInsight();
     this.notify();
+  }
+
+  private async refreshActiveRunInsight(): Promise<void> {
+    if (!this.activeRunId) {
+      this.activeRunInsight = undefined;
+      return;
+    }
+
+    const runDir = path.join(this.workspaceRoot, ".autoresearch", "runs", this.activeRunId);
+    try {
+      const report = parseAnalysisReport(await safeRead(path.join(runDir, "result_analysis.json")));
+      this.activeRunInsight = report ? buildAnalyzeResultsInsightCard(report) : undefined;
+    } catch {
+      this.activeRunInsight = undefined;
+    }
   }
 
   private startThinking(): void {
@@ -1722,29 +1812,39 @@ export class InteractionSession {
     await this.runStore.updateRun(run);
   }
 
-  private async countNodeArtifacts(run: RunRecord, node: GraphNodeId): Promise<string> {
+  private async countNodeArtifacts(run: RunRecord, node: GraphNodeId): Promise<string[]> {
     const runDir = path.join(this.workspaceRoot, ".autoresearch", "runs", run.id);
     switch (node) {
       case "collect_papers":
-        return `Count(${node}): ${await countJsonl(path.join(runDir, "corpus.jsonl"))} papers`;
+        return [`Count(${node}): ${await countJsonl(path.join(runDir, "corpus.jsonl"))} papers`];
       case "analyze_papers": {
         const evidence = await countJsonl(path.join(runDir, "evidence_store.jsonl"));
         const summaries = await countJsonl(path.join(runDir, "paper_summaries.jsonl"));
         const selection = await readAnalyzeSelectionCount(path.join(runDir, "analysis_manifest.json"));
-        return selection
-          ? `Count(${node}): ${evidence} evidences, ${summaries} summaries, selected ${selection.selected}/${selection.total}`
-          : `Count(${node}): ${evidence} evidences, ${summaries} summaries`;
+        return [
+          selection
+            ? `Count(${node}): ${evidence} evidences, ${summaries} summaries, selected ${selection.selected}/${selection.total}`
+            : `Count(${node}): ${evidence} evidences, ${summaries} summaries`
+        ];
       }
       case "generate_hypotheses":
-        return `Count(${node}): ${await countJsonl(path.join(runDir, "hypotheses.jsonl"))} hypotheses`;
+        return [`Count(${node}): ${await countJsonl(path.join(runDir, "hypotheses.jsonl"))} hypotheses`];
       case "design_experiments":
-        return `Count(${node}): ${await countYamlList(path.join(runDir, "experiment_plan.yaml"), "hypotheses:")} planned hypotheses`;
+        return [`Count(${node}): ${await countYamlList(path.join(runDir, "experiment_plan.yaml"), "hypotheses:")} planned hypotheses`];
       case "implement_experiments":
-        return `Count(${node}): ${(await pathExists(path.join(runDir, "experiment.py"))) ? 1 : 0} implementation file`;
+        return [`Count(${node}): ${(await pathExists(path.join(runDir, "experiment.py"))) ? 1 : 0} implementation file`];
       case "run_experiments":
-        return `Count(${node}): ${await countJsonl(path.join(runDir, "exec_logs", "observations.jsonl"))} execution logs, metrics ${(await pathExists(path.join(runDir, "metrics.json"))) ? "present" : "missing"}`;
-      case "analyze_results":
-        return `Count(${node}): ${await countDirFiles(path.join(runDir, "figures"))} figure files, metrics ${(await pathExists(path.join(runDir, "metrics.json"))) ? "present" : "missing"}`;
+        return [`Count(${node}): ${await countJsonl(path.join(runDir, "exec_logs", "observations.jsonl"))} execution logs, metrics ${(await pathExists(path.join(runDir, "metrics.json"))) ? "present" : "missing"}`];
+      case "analyze_results": {
+        const figures = await countDirFiles(path.join(runDir, "figures"));
+        const metricsPresent = await pathExists(path.join(runDir, "metrics.json"));
+        const report = parseAnalysisReport(await safeRead(path.join(runDir, "result_analysis.json")));
+        return formatAnalyzeResultsArtifactLines({
+          figureCount: figures,
+          metricsPresent,
+          report
+        });
+      }
       case "write_paper": {
         const paperFiles = ["paper/main.tex", "paper/references.bib", "paper/evidence_links.json"];
         let count = 0;
@@ -1753,7 +1853,7 @@ export class InteractionSession {
             count += 1;
           }
         }
-        return `Count(${node}): ${count}/${paperFiles.length} paper artifacts`;
+        return [`Count(${node}): ${count}/${paperFiles.length} paper artifacts`];
       }
     }
   }
@@ -1782,6 +1882,10 @@ function formatEventLog(event: AutoResearchEvent): string | undefined {
       return typeof event.payload.text === "string" ? oneLine(event.payload.text) : undefined;
     case "TEST_FAILED":
       return `Test failed: ${oneLine(String(event.payload.stderr || event.payload.error || event.payload.text || "unknown"))}`;
+    case "TRANSITION_RECOMMENDED":
+      return `Transition recommended: ${oneLine(String(event.payload.action || "unknown"))} -> ${oneLine(String(event.payload.targetNode || "stay"))}`;
+    case "TRANSITION_APPLIED":
+      return `Transition applied: ${oneLine(String(event.payload.action || "unknown"))} -> ${oneLine(String(event.payload.targetNode || "advance"))}`;
     default:
       return undefined;
   }
@@ -2035,7 +2139,7 @@ function nodeArtifactTargets(node: GraphNodeId): string[] {
     case "run_experiments":
       return ["exec_logs/observations.jsonl", "exec_logs/run_experiments.txt", "metrics.json"];
     case "analyze_results":
-      return ["figures", "metrics.json"];
+      return ["figures", "metrics.json", "result_analysis.json", "result_analysis_synthesis.json"];
     case "write_paper":
       return ["paper/main.tex", "paper/references.bib", "paper/evidence_links.json"];
   }
@@ -2060,8 +2164,18 @@ function nodeContextKeys(node: GraphNodeId): string[] {
       return ["design_experiments.primary"];
     case "implement_experiments":
       return ["implement_experiments.script"];
+    case "analyze_results":
+      return ["analyze_results.last_summary", "analyze_results.last_error", "analyze_results.last_synthesis"];
     default:
       return [];
+  }
+}
+
+async function safeRead(filePath: string): Promise<string> {
+  try {
+    return await fs.readFile(filePath, "utf8");
+  } catch {
+    return "";
   }
 }
 

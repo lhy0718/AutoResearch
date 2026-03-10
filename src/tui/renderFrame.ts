@@ -1,4 +1,4 @@
-import { RunRecord, SuggestionItem } from "../types.js";
+import { RunInsightCard, RunRecord, SuggestionItem } from "../types.js";
 import { ContextualGuidance, GuidanceItem } from "./contextualGuidance.js";
 import { PaintStyle, paint, reset, stripAnsi } from "./theme.js";
 import { getDisplayWidth } from "./displayWidth.js";
@@ -11,6 +11,7 @@ export interface RenderFrameInput {
   thinkingFrame: number;
   terminalWidth?: number;
   run?: RunRecord;
+  runInsight?: RunInsightCard;
   logs: string[];
   input: string;
   inputCursor: number;
@@ -57,6 +58,27 @@ export function buildFrame(input: RenderFrameInput): RenderFrameOutput {
     );
   } else {
     rawLines.push(renderLabelValue("Run", "none", input.colorEnabled, true));
+  }
+
+  if (input.runInsight?.lines.length) {
+    rawLines.push("");
+    rawLines.push(paint(input.runInsight.title, { fg: 97, bold: true }, input.colorEnabled));
+    for (const line of input.runInsight.lines.slice(0, 4)) {
+      rawLines.push(renderInsightLine(line, input.colorEnabled));
+    }
+    for (const action of input.runInsight.actions?.slice(0, 2) || []) {
+      rawLines.push(renderInsightAction(action.label, action.command, input.colorEnabled));
+    }
+    for (const reference of input.runInsight.references?.slice(0, 5) || []) {
+      rawLines.push(renderInsightReference(reference.kind, reference.label, reference.path, input.colorEnabled));
+      rawLines.push(renderInsightReferenceSummary(reference.summary, input.colorEnabled));
+      if (reference.facts?.length) {
+        rawLines.push(renderInsightReferenceFacts(reference.facts, input.colorEnabled));
+      }
+      if (reference.details?.[0]) {
+        rawLines.push(renderInsightReferenceDetail(reference.details[0], input.colorEnabled));
+      }
+    }
   }
 
   rawLines.push("");
@@ -258,6 +280,48 @@ function renderSelectionRow(args: SelectionRowArgs): string {
 
 function renderLabelValue(label: string, value: string, colorEnabled: boolean, emphasizeValue = false): string {
   return `${paint(`${label}:`, { fg: 97, bold: true }, colorEnabled)} ${paint(value, emphasizeValue ? { fg: 97 } : { fg: 90 }, colorEnabled)}`;
+}
+
+function renderInsightLine(line: string, colorEnabled: boolean): string {
+  return `${paint("•", { fg: 96, bold: true }, colorEnabled)} ${paint(line, { fg: 97 }, colorEnabled)}`;
+}
+
+function renderInsightAction(label: string, command: string, colorEnabled: boolean): string {
+  return `${paint("›", { fg: 90, bold: true }, colorEnabled)} ${paint(`${label}:`, { fg: 90, bold: true }, colorEnabled)} ${paint(command, { fg: 96 }, colorEnabled)}`;
+}
+
+function renderInsightReference(
+  kind: "figure" | "comparison" | "statistics" | "transition" | "report" | "metrics",
+  label: string,
+  referencePath: string,
+  colorEnabled: boolean
+): string {
+  const kindLabel = kind.toUpperCase();
+  return `${paint(">", { fg: 90, bold: true }, colorEnabled)} ${paint(`[${kindLabel}]`, { fg: 96, bold: true }, colorEnabled)} ${paint(`${label}:`, { fg: 90 }, colorEnabled)} ${paint(referencePath, { fg: 92 }, colorEnabled)}`;
+}
+
+function renderInsightReferenceSummary(summary: string, colorEnabled: boolean): string {
+  return `  ${paint(truncateForInsight(summary), { fg: 90, dim: true }, colorEnabled)}`;
+}
+
+function renderInsightReferenceFacts(
+  facts: Array<{ label: string; value: string }>,
+  colorEnabled: boolean
+): string {
+  const joined = facts.map((fact) => `${fact.label} ${fact.value}`).join(" | ");
+  return `  ${paint(truncateForInsight(joined), { fg: 96 }, colorEnabled)}`;
+}
+
+function renderInsightReferenceDetail(detail: string, colorEnabled: boolean): string {
+  return `  ${paint(truncateForInsight(detail), { fg: 90 }, colorEnabled)}`;
+}
+
+function truncateForInsight(text: string, maxLength = 170): string {
+  const compact = text.replace(/\s+/g, " ").trim();
+  if (compact.length <= maxLength) {
+    return compact;
+  }
+  return `${compact.slice(0, maxLength - 3)}...`;
 }
 
 function renderLogLine(log: string, colorEnabled: boolean): string {

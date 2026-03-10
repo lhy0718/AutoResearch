@@ -3,7 +3,7 @@ import readline from "node:readline";
 import path from "node:path";
 import { promises as fs } from "node:fs";
 
-import { AGENT_ORDER, AgentId, AppConfig, GraphNodeId, RunRecord, SuggestionItem } from "../types.js";
+import { AGENT_ORDER, AgentId, AppConfig, GraphNodeId, RunInsightCard, RunRecord, SuggestionItem } from "../types.js";
 import { RunStore } from "../core/runs/runStore.js";
 import { TitleGenerator } from "../core/runs/titleGenerator.js";
 import { CodexCliClient, CodexReasoningEffort } from "../integrations/codex/codexCliClient.js";
@@ -49,7 +49,13 @@ import { askLine } from "../utils/prompt.js";
 import { ensureDir } from "../utils/fs.js";
 import { resolveOpenAiApiKey, upsertEnvVar } from "../config.js";
 import { AgentOrchestrator } from "../core/agents/agentOrchestrator.js";
+import { AutonomousRunController, buildDefaultOvernightPolicy } from "../core/agents/autonomousRunController.js";
 import { RunContextMemory } from "../core/memory/runContextMemory.js";
+import { parseAnalysisReport } from "../core/resultAnalysis.js";
+import {
+  buildAnalyzeResultsInsightCard,
+  formatAnalyzeResultsArtifactLines
+} from "../core/resultAnalysisPresentation.js";
 import { getAppVersion } from "./version.js";
 import { buildAnimatedStatusText, buildFrame, buildThinkingText, RenderFrameOutput, SelectionMenuOption } from "./renderFrame.js";
 import { supportsColor } from "./theme.js";
@@ -177,6 +183,7 @@ export class TerminalApp {
   private selectedSuggestion = 0;
   private runIndex: RunRecord[] = [];
   private activeRunId?: string;
+  private activeRunInsight?: RunInsightCard;
   private busy = false;
   private thinking = false;
   private thinkingFrame = 0;
@@ -1440,6 +1447,7 @@ export class TerminalApp {
     this.pushLog("Workflow:");
     this.pushLog("/approve | /retry");
     this.pushLog("/agent list | /agent status [run] | /agent graph [run] | /agent budget [run]");
+    this.pushLog("/agent transition [run] | /agent apply [run] | /agent overnight [run]");
     this.pushLog(
       "/agent run <node> [run] [--top-n <n> | --top-k <n> --branch-count <n>] | /agent retry [node] [run] | /agent jump <node> [run] [--force]"
     );
@@ -1668,6 +1676,12 @@ export class TerminalApp {
         const rollback = run.graph.rollbackCounters[node] ?? 0;
         this.pushLog(`- ${node}: ${state.status} (retry=${retry}, rollback=${rollback})`);
       }
+      if (run.graph.pendingTransition) {
+        this.pushLog(
+          `Pending transition: ${run.graph.pendingTransition.action} -> ${run.graph.pendingTransition.targetNode || "stay"}`
+        );
+        this.pushLog(`Reason: ${run.graph.pendingTransition.reason}`);
+      }
       return { ok: true };
     }
 
@@ -1703,8 +1717,9 @@ export class TerminalApp {
       if (!run) {
         return { ok: false, reason: "target run not found" };
       }
-      const countSummary = await this.countNodeArtifacts(run, nodeRaw);
-      this.pushLog(countSummary);
+      for (const line of await this.countNodeArtifacts(run, nodeRaw)) {
+        this.pushLog(line);
+      }
       return { ok: true };
     }
 
@@ -1845,8 +1860,64 @@ export class TerminalApp {
       return { ok: true };
     }
 
+    if (sub === "transition") {
+      const runQuery = args.slice(1).join(" ").trim() || undefined;
+      const run = await this.resolveTargetRun(runQuery);
+      if (!run) {
+        return { ok: false, reason: "target run not found" };
+      }
+      const recommendation = run.graph.pendingTransition;
+      if (!recommendation) {
+        this.pushLog("No pending transition recommendation.");
+        return { ok: true };
+      }
+      this.pushLog(
+        `Transition: ${recommendation.action} -> ${recommendation.targetNode || "stay"} (confidence ${recommendation.confidence})`
+      );
+      this.pushLog(`Reason: ${recommendation.reason}`);
+      for (const evidence of recommendation.evidence) {
+        this.pushLog(`- ${evidence}`);
+      }
+      return { ok: true };
+    }
+
+    if (sub === "apply") {
+      const runQuery = args.slice(1).join(" ").trim() || undefined;
+      const run = await this.resolveTargetRun(runQuery);
+      if (!run) {
+        return { ok: false, reason: "target run not found" };
+      }
+      const recommendation = run.graph.pendingTransition;
+      const updated = await this.orchestrator.applyPendingTransition(run.id);
+      this.pushLog(
+        recommendation
+          ? `Applied transition ${recommendation.action} -> ${recommendation.targetNode || "stay"}.`
+          : "No pending transition recommendation to apply."
+      );
+      this.pushLog(`Current node is ${updated.currentNode}.`);
+      await this.refreshRunIndex();
+      return { ok: true };
+    }
+
+    if (sub === "overnight") {
+      const runQuery = args.slice(1).join(" ").trim() || undefined;
+      const run = await this.resolveTargetRun(runQuery);
+      if (!run) {
+        return { ok: false, reason: "target run not found" };
+      }
+      this.pushLog("Starting overnight autonomy with the default safe policy.");
+      const controller = new AutonomousRunController(this.runStore, this.orchestrator, this.eventStream);
+      const outcome = await controller.runOvernight(run.id, buildDefaultOvernightPolicy(), { abortSignal });
+      this.pushLog(`Overnight autonomy ${outcome.status}: ${outcome.reason}`);
+      this.pushLog(
+        `Iterations=${outcome.iterations}, approvals=${outcome.approvalsApplied}, transitions=${outcome.transitionsApplied}`
+      );
+      await this.refreshRunIndex();
+      return { ok: outcome.status !== "failed", reason: outcome.status === "failed" ? outcome.reason : undefined };
+    }
+
     this.pushLog(
-      "Usage: /agent list | run | status | collect | recollect | clear | count | clear_papers | focus | graph | resume | retry | jump | budget"
+      "Usage: /agent list | run | status | collect | recollect | clear | count | clear_papers | focus | graph | resume | retry | jump | budget | transition | apply | overnight"
     );
     return { ok: false, reason: `unknown /agent subcommand ${sub}` };
   }
@@ -2146,7 +2217,24 @@ export class TerminalApp {
       return;
     }
 
+    this.pushLog(`Current model backend: ${this.describePrimaryLlmProvider(this.config.providers.llm_mode)}`);
     this.pushModelSlotSummary();
+    const llmMode = await this.openSelectionMenu(
+      "Select model backend",
+      this.buildPrimaryLlmProviderOptions(),
+      this.config.providers.llm_mode
+    );
+    if (!llmMode) {
+      this.pushLog("Model selection canceled.");
+      return;
+    }
+    if (
+      !(await this.applyModelBackendSelection(
+        llmMode as AppConfig["providers"]["llm_mode"]
+      ))
+    ) {
+      return;
+    }
     const slot = await this.openSelectionMenu(
       "Select model slot",
       this.buildModelSlotOptions(),
@@ -2162,6 +2250,29 @@ export class TerminalApp {
       return;
     }
     await this.handleCodexModelSelection(slot as "chat" | "task" | "pdf");
+  }
+
+  private async applyModelBackendSelection(
+    llmMode: AppConfig["providers"]["llm_mode"]
+  ): Promise<boolean> {
+    const nextMode = llmMode === "openai_api" ? "openai_api" : "codex_chatgpt_only";
+    if (nextMode === "openai_api" && !(await resolveOpenAiApiKey(process.cwd()))) {
+      const openAiApiKey = await this.askWithinTui("OpenAI API key", "");
+      if (!openAiApiKey.trim()) {
+        this.pushLog("OpenAI API key is required for the OpenAI API backend.");
+        return false;
+      }
+      await upsertEnvVar(path.join(process.cwd(), ".env"), "OPENAI_API_KEY", openAiApiKey.trim());
+    }
+
+    if (this.config.providers.llm_mode === nextMode) {
+      return true;
+    }
+
+    this.config.providers.llm_mode = nextMode;
+    await this.saveConfigFn(this.config);
+    this.pushLog(`Model backend updated to ${this.describePrimaryLlmProvider(nextMode)}.`);
+    return true;
   }
 
   private async handleCodexModelSelection(slot: "chat" | "task" | "pdf"): Promise<void> {
@@ -2292,13 +2403,13 @@ export class TerminalApp {
     return [
       {
         value: "codex_chatgpt_only",
-        label: "codex_chatgpt_only",
-        description: "Default. Use Codex ChatGPT login as the main LLM provider."
+        label: "codex_cli",
+        description: "Use the Codex CLI backend (ChatGPT sign-in)."
       },
       {
         value: "openai_api",
         label: "openai_api",
-        description: "Fallback. Use OpenAI API models as the main LLM provider."
+        description: "Use the OpenAI API backend (OPENAI_API_KEY required)."
       }
     ];
   }
@@ -2398,7 +2509,7 @@ export class TerminalApp {
   }
 
   private describePrimaryLlmProvider(mode: AppConfig["providers"]["llm_mode"]): string {
-    return mode === "openai_api" ? "OpenAI API" : "Codex ChatGPT";
+    return mode === "openai_api" ? "OpenAI API" : "Codex CLI";
   }
 
   private getNaturalAssistantClient(): {
@@ -2797,13 +2908,10 @@ export class TerminalApp {
   }
 
   private getRecommendedCodexSelection(slot: "chat" | "task" | "pdf"): string {
-    return DEFAULT_CODEX_MODEL;
+    return "gpt-5.4";
   }
 
   private getRecommendedOpenAiModel(slot: "chat" | "task" | "pdf"): string {
-    if (slot === "chat") {
-      return "gpt-5-mini";
-    }
     return "gpt-5.4";
   }
 
@@ -2984,6 +3092,22 @@ export class TerminalApp {
     this.activeRunId = runId;
     this.collectProgress = undefined;
     await this.loadHistoryForRun(runId);
+    await this.refreshActiveRunInsight();
+  }
+
+  private async refreshActiveRunInsight(): Promise<void> {
+    if (!this.activeRunId) {
+      this.activeRunInsight = undefined;
+      return;
+    }
+
+    const runDir = path.join(process.cwd(), ".autoresearch", "runs", this.activeRunId);
+    try {
+      const report = parseAnalysisReport(await safeRead(path.join(runDir, "result_analysis.json")));
+      this.activeRunInsight = report ? buildAnalyzeResultsInsightCard(report) : undefined;
+    } catch {
+      this.activeRunInsight = undefined;
+    }
   }
 
   private async loadHistoryForRun(runId?: string): Promise<void> {
@@ -3076,6 +3200,7 @@ export class TerminalApp {
     } else if (this.activeRunId) {
       await this.setActiveRunId(undefined);
     }
+    await this.refreshActiveRunInsight();
     this.updateSuggestions();
   }
 
@@ -3093,6 +3218,7 @@ export class TerminalApp {
       thinkingFrame: this.thinkingFrame,
       terminalWidth: this.resolveTerminalWidth(),
       run,
+      runInsight: this.activeRunInsight,
       logs: this.getRenderableLogs(run),
       input: this.input,
       inputCursor: this.cursorIndex,
@@ -3402,43 +3528,48 @@ export class TerminalApp {
     await this.runStore.updateRun(run);
   }
 
-  private async countNodeArtifacts(run: RunRecord, node: GraphNodeId): Promise<string> {
+  private async countNodeArtifacts(run: RunRecord, node: GraphNodeId): Promise<string[]> {
     const runDir = path.join(process.cwd(), ".autoresearch", "runs", run.id);
     switch (node) {
       case "collect_papers": {
         const count = await countJsonl(path.join(runDir, "corpus.jsonl"));
-        return `Count(${node}): ${count} papers`;
+        return [`Count(${node}): ${count} papers`];
       }
       case "analyze_papers": {
         const evidence = await countJsonl(path.join(runDir, "evidence_store.jsonl"));
         const summaries = await countJsonl(path.join(runDir, "paper_summaries.jsonl"));
         const selection = await readAnalyzeSelectionCount(path.join(runDir, "analysis_manifest.json"));
         if (selection) {
-          return `Count(${node}): ${evidence} evidences, ${summaries} summaries, selected ${selection.selected}/${selection.total}`;
+          return [`Count(${node}): ${evidence} evidences, ${summaries} summaries, selected ${selection.selected}/${selection.total}`];
         }
-        return `Count(${node}): ${evidence} evidences, ${summaries} summaries`;
+        return [`Count(${node}): ${evidence} evidences, ${summaries} summaries`];
       }
       case "generate_hypotheses": {
         const count = await countJsonl(path.join(runDir, "hypotheses.jsonl"));
-        return `Count(${node}): ${count} hypotheses`;
+        return [`Count(${node}): ${count} hypotheses`];
       }
       case "design_experiments": {
         const count = await countYamlList(path.join(runDir, "experiment_plan.yaml"), "hypotheses:");
-        return `Count(${node}): ${count} planned hypotheses`;
+        return [`Count(${node}): ${count} planned hypotheses`];
       }
       case "implement_experiments": {
         const exists = await pathExists(path.join(runDir, "experiment.py"));
-        return `Count(${node}): ${exists ? 1 : 0} implementation file`;
+        return [`Count(${node}): ${exists ? 1 : 0} implementation file`];
       }
       case "run_experiments": {
         const runs = await countJsonl(path.join(runDir, "exec_logs", "observations.jsonl"));
         const metrics = await pathExists(path.join(runDir, "metrics.json"));
-        return `Count(${node}): ${runs} execution logs, metrics ${metrics ? "present" : "missing"}`;
+        return [`Count(${node}): ${runs} execution logs, metrics ${metrics ? "present" : "missing"}`];
       }
       case "analyze_results": {
         const figures = await countDirFiles(path.join(runDir, "figures"));
         const metrics = await pathExists(path.join(runDir, "metrics.json"));
-        return `Count(${node}): ${figures} figure files, metrics ${metrics ? "present" : "missing"}`;
+        const report = parseAnalysisReport(await safeRead(path.join(runDir, "result_analysis.json")));
+        return formatAnalyzeResultsArtifactLines({
+          figureCount: figures,
+          metricsPresent: metrics,
+          report
+        });
       }
       case "write_paper": {
         const paperFiles = [
@@ -3452,10 +3583,10 @@ export class TerminalApp {
             count += 1;
           }
         }
-        return `Count(${node}): ${count}/${paperFiles.length} paper artifacts`;
+        return [`Count(${node}): ${count}/${paperFiles.length} paper artifacts`];
       }
       default:
-        return `Count(${node}): unsupported`;
+        return [`Count(${node}): unsupported`];
     }
   }
 
@@ -3600,6 +3731,10 @@ function formatEventLog(event: AutoResearchEvent): string | undefined {
       return typeof event.payload.text === "string" ? oneLine(event.payload.text) : undefined;
     case "TEST_FAILED":
       return `Test failed: ${oneLine(String(event.payload.stderr || event.payload.error || event.payload.text || "unknown"))}`;
+    case "TRANSITION_RECOMMENDED":
+      return `Transition recommended: ${oneLine(String(event.payload.action || "unknown"))} -> ${oneLine(String(event.payload.targetNode || "stay"))}`;
+    case "TRANSITION_APPLIED":
+      return `Transition applied: ${oneLine(String(event.payload.action || "unknown"))} -> ${oneLine(String(event.payload.targetNode || "advance"))}`;
     default:
       return undefined;
   }
@@ -4150,7 +4285,7 @@ function nodeArtifactTargets(node: GraphNodeId): string[] {
     case "run_experiments":
       return ["exec_logs/observations.jsonl", "exec_logs/run_experiments.txt", "metrics.json"];
     case "analyze_results":
-      return ["figures", "metrics.json"];
+      return ["figures", "metrics.json", "result_analysis.json", "result_analysis_synthesis.json"];
     case "write_paper":
       return ["paper/main.tex", "paper/references.bib", "paper/evidence_links.json"];
     default:
@@ -4195,8 +4330,18 @@ function nodeContextKeys(node: GraphNodeId): string[] {
       return ["design_experiments.primary"];
     case "implement_experiments":
       return ["implement_experiments.script"];
+    case "analyze_results":
+      return ["analyze_results.last_summary", "analyze_results.last_error", "analyze_results.last_synthesis"];
     default:
       return [];
+  }
+}
+
+async function safeRead(filePath: string): Promise<string> {
+  try {
+    return await fs.readFile(filePath, "utf8");
+  } catch {
+    return "";
   }
 }
 

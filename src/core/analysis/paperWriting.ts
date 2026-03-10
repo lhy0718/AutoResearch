@@ -1249,6 +1249,13 @@ function renderResultsLines(
     }
   }
 
+  if ((resultAnalysis?.failure_taxonomy || []).length > 0) {
+    lines.push("Failure taxonomy:");
+    for (const item of (resultAnalysis?.failure_taxonomy || []).slice(0, 3)) {
+      lines.push(`- ${latexEscape(`[${item.severity}/${item.status}] ${item.summary}`)}`);
+    }
+  }
+
   if ((resultAnalysis?.synthesis?.discussion_points || []).length > 0) {
     lines.push("Discussion cues:");
     for (const point of (resultAnalysis?.synthesis?.discussion_points || []).slice(0, 3)) {

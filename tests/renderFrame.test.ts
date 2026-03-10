@@ -114,6 +114,109 @@ describe("buildFrame", () => {
     expect(stripAnsi(frame.lines[0])).toBe("AutoResearch v1.0.0");
   });
 
+  it("renders active run insight lines above recent logs", () => {
+    const frame = buildFrame({
+      appVersion: "1.0.0",
+      busy: false,
+      thinking: false,
+      thinkingFrame: 0,
+      run: makeRun(),
+      runInsight: {
+        title: "Result analysis",
+        lines: [
+          "Objective: met - accuracy reached the configured target.",
+          "Top issue: Only one confirmatory configuration was executed.",
+          "Recommendation: advance -> write_paper (88%)",
+          "Next: Run an additional confirmatory configuration.",
+          "Confidence: Overall confidence is moderate."
+        ],
+        actions: [{ label: "Run recommendation", command: "/approve" }],
+        references: [
+          {
+            kind: "comparison",
+            label: "Comparison: Treatment vs baseline",
+            path: "result_analysis.json",
+            summary: "Treatment improved accuracy over the baseline by 0.05.",
+            facts: [
+              { label: "Metric", value: "accuracy" },
+              { label: "Delta", value: "+0.050" },
+              { label: "Support", value: "yes" }
+            ],
+            details: [
+              "Hypothesis support: supported by this comparison.",
+              "accuracy: primary 0.81 vs baseline 0.76 (+0.05)."
+            ]
+          },
+          {
+            kind: "statistics",
+            label: "Statistics: accuracy",
+            path: "result_analysis.json",
+            summary: "The treatment delivered a positive effect estimate of +0.05 accuracy versus baseline.",
+            facts: [
+              { label: "Metric", value: "accuracy" },
+              { label: "Delta", value: "+0.050" },
+              { label: "Confidence", value: "95%" }
+            ],
+            details: [
+              "Effect direction: positive for accuracy.",
+              "Sampling profile: 3 total, 3 executed."
+            ]
+          },
+          {
+            kind: "figure",
+            label: "Figure: Performance overview",
+            path: "figures/performance.svg",
+            summary: "Primary visualization for the recommendation.",
+            facts: [
+              { label: "Matched metric", value: "accuracy" },
+              { label: "Runs", value: "3" }
+            ],
+            details: ["Metrics charted: accuracy, f1."]
+          },
+          {
+            kind: "report",
+            label: "Analysis report",
+            path: "result_analysis.json",
+            summary: "Full structured report with the statistical summary and synthesis.",
+            facts: [
+              { label: "Mean", value: "0.810" },
+              { label: "Matched metric", value: "accuracy" },
+              { label: "Objective", value: "met" }
+            ],
+            details: ["The treatment cleared the objective threshold with limited run-to-run variance."]
+          }
+        ]
+      },
+      logs: ["ready"],
+      input: "",
+      inputCursor: 0,
+      suggestions: [],
+      selectedSuggestion: 0,
+      colorEnabled: false
+    });
+
+    const plain = frame.lines.map((line) => stripAnsi(line));
+    const insightTitleIndex = plain.indexOf("Result analysis");
+    const logsIndex = plain.indexOf("Recent logs");
+    expect(insightTitleIndex).toBeGreaterThan(0);
+    expect(logsIndex).toBeGreaterThan(insightTitleIndex);
+    expect(plain).toContain("• Objective: met - accuracy reached the configured target.");
+    expect(plain).toContain("• Recommendation: advance -> write_paper (88%)");
+    expect(plain).toContain("• Next: Run an additional confirmatory configuration.");
+    expect(plain).toContain("› Run recommendation: /approve");
+    expect(plain).toContain("> [COMPARISON] Comparison: Treatment vs baseline: result_analysis.json");
+    expect(plain).toContain("  Treatment improved accuracy over the baseline by 0.05.");
+    expect(plain).toContain("  Metric accuracy | Delta +0.050 | Support yes");
+    expect(plain).toContain("  Hypothesis support: supported by this comparison.");
+    expect(plain).toContain("> [STATISTICS] Statistics: accuracy: result_analysis.json");
+    expect(plain).toContain("  Metric accuracy | Delta +0.050 | Confidence 95%");
+    expect(plain).toContain("  Effect direction: positive for accuracy.");
+    expect(plain).toContain("> [FIGURE] Figure: Performance overview: figures/performance.svg");
+    expect(plain).toContain("  Primary visualization for the recommendation.");
+    expect(plain).toContain("  Matched metric accuracy | Runs 3");
+    expect(plain).toContain("> [REPORT] Analysis report: result_analysis.json");
+  });
+
   it("does not render Busy label", () => {
     const frame = buildFrame({
       appVersion: "1.0.0",

@@ -374,6 +374,14 @@ class AutoresearchWebController {
           const result = await session.submitInput(command);
           return jsonResponse(res, 200, buildSessionInputResponse(result, session.getActiveRunId()));
         }
+        if (action === "apply-transition") {
+          const result = await session.submitInput(`/agent apply ${runId}`);
+          return jsonResponse(res, 200, buildSessionInputResponse(result, session.getActiveRunId()));
+        }
+        if (action === "overnight") {
+          const result = await session.submitInput(`/agent overnight ${runId}`);
+          return jsonResponse(res, 200, buildSessionInputResponse(result, session.getActiveRunId()));
+        }
         if (action === "jump") {
           const node = asTrimmedString(body.node);
           if (!node) {
@@ -663,7 +671,8 @@ function emptySessionState(): WebSessionState {
     busyLabel: undefined,
     pendingPlan: undefined,
     logs: [],
-    canCancel: false
+    canCancel: false,
+    activeRunInsight: undefined
   };
 }
 

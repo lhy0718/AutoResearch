@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { buildSuggestions } from "../src/tui/commandPalette/suggest.js";
+import { SLASH_COMMANDS } from "../src/tui/commandPalette/commands.js";
 
 const runs = [
   {
@@ -24,6 +25,11 @@ describe("buildSuggestions", () => {
     const suggestions = buildSuggestions({ input: "/", runs, activeRunId: "run-alpha-123" });
     expect(suggestions.length).toBeGreaterThan(0);
     expect(suggestions[0].applyValue.startsWith("/")).toBe(true);
+    expect(
+      SLASH_COMMANDS.every((command) =>
+        suggestions.some((suggestion) => suggestion.applyValue === `/${command.name} `)
+      )
+    ).toBe(true);
   });
 
   it("filters commands fuzzily", () => {
@@ -153,5 +159,30 @@ describe("buildSuggestions", () => {
   it("suggests run ids for /agent status", () => {
     const suggestions = buildSuggestions({ input: "/agent status run-", runs, activeRunId: "run-alpha-123" });
     expect(suggestions.some((s) => s.applyValue === "/agent status run-alpha-123")).toBe(true);
+  });
+
+  it("shows every supported /agent subcommand", () => {
+    const suggestions = buildSuggestions({ input: "/agent ", runs, activeRunId: "run-alpha-123" });
+    for (const subcommand of [
+      "list",
+      "run",
+      "status",
+      "collect",
+      "clear",
+      "count",
+      "recollect",
+      "clear_papers",
+      "focus",
+      "graph",
+      "resume",
+      "retry",
+      "jump",
+      "budget",
+      "transition",
+      "apply",
+      "overnight"
+    ]) {
+      expect(suggestions.some((suggestion) => suggestion.applyValue === `/agent ${subcommand} `)).toBe(true);
+    }
   });
 });

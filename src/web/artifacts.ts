@@ -107,7 +107,14 @@ function artifactKind(relativePath: string): ArtifactEntry["kind"] {
   ) {
     return "text";
   }
-  if (lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".gif") || lower.endsWith(".webp")) {
+  if (
+    lower.endsWith(".png") ||
+    lower.endsWith(".jpg") ||
+    lower.endsWith(".jpeg") ||
+    lower.endsWith(".gif") ||
+    lower.endsWith(".webp") ||
+    lower.endsWith(".svg")
+  ) {
     return "image";
   }
   if (lower.endsWith(".pdf")) {
@@ -131,6 +138,9 @@ function contentTypeForPath(relativePath: string, kind: ArtifactEntry["kind"]): 
       }
       if (relativePath.toLowerCase().endsWith(".webp")) {
         return "image/webp";
+      }
+      if (relativePath.toLowerCase().endsWith(".svg")) {
+        return "image/svg+xml";
       }
       return "image/jpeg";
     case "pdf":

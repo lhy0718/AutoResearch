@@ -15,6 +15,26 @@ export interface PendingPlan {
   totalSteps: number;
 }
 
+export interface RunInsightCard {
+  title: string;
+  lines: string[];
+  actions?: Array<{
+    label: string;
+    command: string;
+  }>;
+  references?: Array<{
+    kind: "figure" | "comparison" | "statistics" | "transition" | "report" | "metrics";
+    label: string;
+    path: string;
+    summary: string;
+    facts?: Array<{
+      label: string;
+      value: string;
+    }>;
+    details?: string[];
+  }>;
+}
+
 export interface WebSessionState {
   activeRunId?: string;
   busy: boolean;
@@ -22,6 +42,7 @@ export interface WebSessionState {
   pendingPlan?: PendingPlan;
   logs: string[];
   canCancel: boolean;
+  activeRunInsight?: RunInsightCard;
 }
 
 export interface RunRecord {
@@ -58,6 +79,16 @@ export interface RunRecord {
         lastError?: string;
       }
     >;
+    pendingTransition?: {
+      action: string;
+      targetNode?: NodeId;
+      reason: string;
+      confidence: number;
+      autoExecutable: boolean;
+      evidence: string[];
+      suggestedCommands: string[];
+      generatedAt: string;
+    };
   };
 }
 

@@ -12,9 +12,17 @@ import {
   ObjectiveMetricEvaluation,
   resolveObjectiveMetricProfile
 } from "../objectiveMetric.js";
-import { buildAnalysisReport, renderPerformanceFigureSvg } from "../resultAnalysis.js";
+import {
+  AnalysisConditionComparison,
+  AnalysisFailureCategory,
+  AnalysisReport,
+  buildAnalysisReport,
+  renderPerformanceFigureSvg
+} from "../resultAnalysis.js";
+import { buildAnalyzeResultsCompletionSummary } from "../resultAnalysisPresentation.js";
 import { synthesizeAnalysisReport } from "../resultAnalysisSynthesis.js";
 import { RunVerifierReport } from "../experiments/runVerifierFeedback.js";
+import { TransitionRecommendation } from "../../types.js";
 
 export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
@@ -108,11 +116,18 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
           node: "analyze_results"
         });
       }
+      const transitionRecommendation = buildTransitionRecommendation(summary);
+      summary.transition_recommendation = transitionRecommendation;
 
       await writeRunArtifact(run, "result_analysis.json", JSON.stringify(summary, null, 2));
       if (summary.synthesis) {
         await writeRunArtifact(run, "result_analysis_synthesis.json", JSON.stringify(summary.synthesis, null, 2));
       }
+      await writeRunArtifact(
+        run,
+        "transition_recommendation.json",
+        JSON.stringify(transitionRecommendation, null, 2)
+      );
       const figureSvg = renderPerformanceFigureSvg(summary);
       if (figureSvg) {
         await writeRunArtifact(run, "figures/performance.svg", figureSvg);
@@ -120,6 +135,7 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
       await runContextMemory.put("analyze_results.last_summary", summary);
       await runContextMemory.put("analyze_results.last_error", metricsLoadError || null);
       await runContextMemory.put("analyze_results.last_synthesis", summary.synthesis || null);
+      await runContextMemory.put("analyze_results.last_transition", transitionRecommendation);
       await longTermStore.append({
         runId: run.id,
         category: "results",
@@ -150,9 +166,10 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
 
       return {
         status: "success",
-        summary: `Result analysis complete. mean_score=${summary.mean_score}. ${objectiveEvaluation.summary}`,
+        summary: buildAnalyzeResultsCompletionSummary(summary),
         needsApproval: true,
-        toolCallsUsed: 1
+        toolCallsUsed: 1,
+        transitionRecommendation
       };
     }
   };
@@ -226,4 +243,135 @@ function resolveMaybeRelative(value: string | undefined, workspaceRoot: string):
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function buildTransitionRecommendation(summary: AnalysisReport): TransitionRecommendation {
+  const runtimeFailure = findFailure(summary.failure_taxonomy, "runtime_failure");
+  if (runtimeFailure || summary.verifier_feedback?.status === "fail") {
+    return createRecommendation({
+      action: "backtrack_to_implement",
+      targetNode: "implement_experiments",
+      reason:
+        runtimeFailure?.summary ||
+        `Verifier requested another implementation pass: ${summary.verifier_feedback?.summary || "runtime failure"}.`,
+      confidence: 0.93,
+      autoExecutable: true,
+      evidence: collectEvidence(
+        summary,
+        runtimeFailure?.summary,
+        summary.verifier_feedback?.suggested_next_action,
+        summary.synthesis?.follow_up_actions?.[0]
+      )
+    });
+  }
+
+  if (summary.overview.objective_status === "not_met") {
+    const supportedComparison = summary.condition_comparisons.some((item) => item.hypothesis_supported === true);
+    const unsupportedComparison = summary.condition_comparisons.some((item) => item.hypothesis_supported === false);
+    const evidenceGap = findFailure(summary.failure_taxonomy, "evidence_gap");
+    const scopeLimit = findFailure(summary.failure_taxonomy, "scope_limit");
+    const unsupportedSummary = firstUnsupportedComparison(summary.condition_comparisons)?.summary;
+    const strongHypothesisReset = Boolean(unsupportedSummary) && !evidenceGap;
+
+    if (!supportedComparison && unsupportedComparison) {
+      return createRecommendation({
+        action: "backtrack_to_hypotheses",
+        targetNode: "generate_hypotheses",
+        reason:
+          "Current experiment outcomes do not support the shortlisted hypothesis, so the loop should revisit the idea set.",
+        confidence: strongHypothesisReset ? 0.9 : 0.72,
+        autoExecutable: strongHypothesisReset,
+        evidence: collectEvidence(
+          summary,
+          summary.overview.objective_summary,
+          unsupportedSummary,
+          summary.synthesis?.follow_up_actions?.[0]
+        )
+      });
+    }
+
+    return createRecommendation({
+      action: "backtrack_to_design",
+      targetNode: "design_experiments",
+      reason:
+        "The objective was not met under the current setup, so the next step is to revise the experiment design before another run.",
+      confidence: evidenceGap || scopeLimit ? 0.8 : 0.76,
+      autoExecutable: true,
+      evidence: collectEvidence(
+        summary,
+        summary.overview.objective_summary,
+        evidenceGap?.summary,
+        scopeLimit?.summary,
+        summary.synthesis?.follow_up_actions?.[0]
+      )
+    });
+  }
+
+  return createRecommendation({
+    action: "advance",
+    targetNode: "write_paper",
+    reason: "The objective is met and no blocking runtime issue remains, so the run can proceed to paper writing.",
+    confidence: summary.synthesis?.confidence_statement ? 0.88 : 0.82,
+    autoExecutable: true,
+    evidence: collectEvidence(
+      summary,
+      summary.overview.objective_summary,
+      summary.synthesis?.confidence_statement,
+      summary.synthesis?.discussion_points?.[0]
+    )
+  });
+}
+
+function createRecommendation(input: {
+  action: TransitionRecommendation["action"];
+  reason: string;
+  confidence: number;
+  autoExecutable: boolean;
+  evidence: string[];
+  targetNode?: TransitionRecommendation["targetNode"];
+}): TransitionRecommendation {
+  const suggestedCommands =
+    input.action === "advance"
+      ? ["/approve"]
+      : input.targetNode
+        ? [`/agent jump ${input.targetNode}`, `/agent run ${input.targetNode}`]
+        : ["/agent status"];
+  return {
+    action: input.action,
+    sourceNode: "analyze_results",
+    targetNode: input.targetNode,
+    reason: input.reason,
+    confidence: Number(input.confidence.toFixed(2)),
+    autoExecutable: input.autoExecutable,
+    evidence: input.evidence,
+    suggestedCommands,
+    generatedAt: new Date().toISOString()
+  };
+}
+
+function collectEvidence(summary: AnalysisReport, ...items: Array<string | undefined>): string[] {
+  const evidence = new Set<string>();
+  for (const item of items) {
+    const value = item?.trim();
+    if (value) {
+      evidence.add(value);
+    }
+  }
+  if (evidence.size === 0) {
+    evidence.add(summary.overview.objective_summary);
+  }
+  return Array.from(evidence).slice(0, 4);
+}
+
+function findFailure(
+  failures: AnalysisFailureCategory[],
+  category: AnalysisFailureCategory["category"]
+): AnalysisFailureCategory | undefined {
+  return failures.find((item) => item.category === category && item.status === "observed");
+}
+
+function firstUnsupportedComparison(
+  comparisons: AnalysisConditionComparison[]
+): AnalysisConditionComparison | undefined {
+  return comparisons.find((item) => item.hypothesis_supported === false);
 }

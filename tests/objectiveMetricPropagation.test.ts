@@ -347,6 +347,17 @@ describe("objective metric propagation", () => {
         }>;
         notes: string[];
       };
+      failure_taxonomy: Array<{
+        id: string;
+        category: string;
+        severity: string;
+        status: string;
+        summary: string;
+      }>;
+      transition_recommendation?: {
+        action: string;
+        targetNode?: string;
+      };
       synthesis?: {
         source: string;
         discussion_points: string[];
@@ -380,12 +391,24 @@ describe("objective metric propagation", () => {
     expect(
       analysis.statistical_summary.notes.some((item) => item.includes("95% CI"))
     ).toBe(true);
+    expect(analysis.failure_taxonomy[0]?.id).toBe("scope_limit");
+    expect(
+      analysis.failure_taxonomy.some(
+        (item) => item.category === "scope_limit" && item.status === "risk"
+      )
+    ).toBe(true);
+    expect(analysis.transition_recommendation).toMatchObject({
+      action: "advance",
+      targetNode: "write_paper"
+    });
     expect(analysis.synthesis?.source).toBe("llm");
     expect(analysis.synthesis?.discussion_points[0]).toContain("shared-state schema");
     expect(analysis.synthesis?.confidence_statement).toContain("Confidence is moderate");
 
     const synthesisRaw = await readFile(path.join(runDir, "result_analysis_synthesis.json"), "utf8");
     expect(synthesisRaw).toContain('"source": "llm"');
+    const transitionRaw = await readFile(path.join(runDir, "transition_recommendation.json"), "utf8");
+    expect(transitionRaw).toContain('"action": "advance"');
 
     const figureRaw = await readFile(path.join(runDir, "figures", "performance.svg"), "utf8");
     expect(figureRaw).toContain("<svg");
@@ -403,6 +426,7 @@ describe("objective metric propagation", () => {
     expect(tex).toContain("\\begin{figure}[t]");
     expect(tex).toContain("Artifact: Performance overview figures/performance.svg.");
     expect(tex).toContain("Statistical summary:");
+    expect(tex).toContain("Failure taxonomy:");
     expect(tex).toContain("Discussion cues:");
     expect(tex).toContain("Confidence statement:");
     expect(tex).toContain("95\\% CI");
@@ -439,6 +463,7 @@ describe("objective metric propagation", () => {
 
     const analysisRaw = await readFile(path.join(runDir, "result_analysis.json"), "utf8");
     expect(analysisRaw).toContain("requires a valid metrics file");
+    expect(analysisRaw).toContain("missing_numeric_metrics");
 
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);
     expect(await memory.get("analyze_results.last_error")).toBeTruthy();

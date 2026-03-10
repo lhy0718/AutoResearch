@@ -99,6 +99,10 @@ export class AgentOrchestrator {
     return this.runtime.approveCurrent(runId);
   }
 
+  async applyPendingTransition(runId: string): Promise<RunRecord> {
+    return this.runtime.applyPendingTransition(runId);
+  }
+
   async retryCurrent(runId: string, node?: GraphNodeId): Promise<RunRecord> {
     return this.runtime.retryNode(runId, node);
   }

@@ -138,6 +138,13 @@ function buildAnalysisSynthesisPrompt(
           suggested_next_action: report.verifier_feedback.suggested_next_action
         }
       : undefined,
+    failure_taxonomy: report.failure_taxonomy.slice(0, 5).map((item) => ({
+      category: item.category,
+      severity: item.severity,
+      status: item.status,
+      summary: item.summary,
+      recommended_action: item.recommended_action
+    })),
     warnings: report.warnings.slice(0, 5),
     limitations: report.limitations.slice(0, 5)
   };
@@ -221,6 +228,9 @@ function buildFallbackAnalysisSynthesis(report: AnalysisReport): AnalysisSynthes
   }
 
   const failureAnalysis: string[] = [];
+  for (const item of report.failure_taxonomy.slice(0, 3)) {
+    failureAnalysis.push(item.summary);
+  }
   if (report.verifier_feedback?.status === "fail") {
     failureAnalysis.push(
       `Verifier failure at ${report.verifier_feedback.stage}: ${report.verifier_feedback.summary}`
@@ -239,6 +249,11 @@ function buildFallbackAnalysisSynthesis(report: AnalysisReport): AnalysisSynthes
   }
 
   const followUpActions: string[] = [];
+  for (const item of report.failure_taxonomy.slice(0, 3)) {
+    if (item.recommended_action) {
+      followUpActions.push(item.recommended_action);
+    }
+  }
   if (report.verifier_feedback?.status === "fail" && report.verifier_feedback.suggested_next_action) {
     followUpActions.push(report.verifier_feedback.suggested_next_action);
   }

@@ -2,7 +2,7 @@ import YAML from "yaml";
 
 import { evaluateObjectiveMetric, ObjectiveMetricEvaluation, ObjectiveMetricProfile } from "./objectiveMetric.js";
 import { RunVerifierReport } from "./experiments/runVerifierFeedback.js";
-import { RunRecord } from "../types.js";
+import { RunRecord, TransitionRecommendation } from "../types.js";
 
 export interface AnalysisMetricEntry {
   key: string;
@@ -137,6 +137,16 @@ export interface AnalysisStatisticalSummary {
   notes: string[];
 }
 
+export interface AnalysisFailureCategory {
+  id: string;
+  category: "runtime_failure" | "objective_gap" | "missing_artifact" | "evidence_gap" | "scope_limit";
+  severity: "high" | "medium" | "low";
+  status: "observed" | "risk";
+  summary: string;
+  evidence: string[];
+  recommended_action?: string;
+}
+
 export interface AnalysisSynthesis {
   source: "llm" | "fallback";
   discussion_points: string[];
@@ -187,7 +197,9 @@ export interface AnalysisReport {
   supplemental_runs: AnalysisSupplementalRun[];
   external_comparisons: AnalysisExternalComparison[];
   statistical_summary: AnalysisStatisticalSummary;
+  failure_taxonomy: AnalysisFailureCategory[];
   synthesis?: AnalysisSynthesis;
+  transition_recommendation?: TransitionRecommendation;
 }
 
 interface ExecutionObservation {
@@ -259,6 +271,15 @@ export function buildAnalysisReport(args: BuildAnalysisReportArgs): AnalysisRepo
     conditionComparisons,
     supplementalMetrics: args.supplementalMetrics || []
   });
+  const failureTaxonomy = buildFailureTaxonomy({
+    objectiveEvaluation: args.objectiveEvaluation,
+    metricTable,
+    planContext,
+    warnings,
+    verifierFeedback,
+    supplementalRuns,
+    statisticalSummary
+  });
   const figureSpecs = buildFigureSpecs(
     metricTable,
     args.objectiveEvaluation.matchedMetricKey,
@@ -274,7 +295,8 @@ export function buildAnalysisReport(args: BuildAnalysisReportArgs): AnalysisRepo
     verifierFeedback,
     supplementalRuns,
     externalComparisons,
-    statisticalSummary
+    statisticalSummary,
+    failureTaxonomy
   });
   const paperClaims = buildPaperClaims(primaryFindings, planContext, conditionComparisons, externalComparisons);
 
@@ -318,7 +340,8 @@ export function buildAnalysisReport(args: BuildAnalysisReportArgs): AnalysisRepo
     verifier_feedback: verifierFeedback,
     supplemental_runs: supplementalRuns,
     external_comparisons: externalComparisons,
-    statistical_summary: statisticalSummary
+    statistical_summary: statisticalSummary,
+    failure_taxonomy: failureTaxonomy
   };
 }
 
@@ -614,6 +637,7 @@ function buildPrimaryFindings(args: {
   supplementalRuns: AnalysisSupplementalRun[];
   externalComparisons: AnalysisExternalComparison[];
   statisticalSummary: AnalysisStatisticalSummary;
+  failureTaxonomy: AnalysisFailureCategory[];
 }): string[] {
   const findings: string[] = [args.objectiveEvaluation.summary];
 
@@ -641,6 +665,10 @@ function buildPrimaryFindings(args: {
 
   if (args.statisticalSummary.notes[0]) {
     findings.push(args.statisticalSummary.notes[0]);
+  }
+
+  if (args.failureTaxonomy[0]) {
+    findings.push(args.failureTaxonomy[0].summary);
   }
 
   if (args.topMetric && args.topMetric.key !== args.objectiveEvaluation.matchedMetricKey) {
@@ -915,6 +943,100 @@ function buildStatisticalSummary(args: {
     effect_estimates: effectEstimates,
     notes
   };
+}
+
+function buildFailureTaxonomy(args: {
+  objectiveEvaluation: ObjectiveMetricEvaluation;
+  metricTable: AnalysisMetricEntry[];
+  planContext: AnalysisPlanContext;
+  warnings: string[];
+  verifierFeedback?: AnalysisVerifierFeedback;
+  supplementalRuns: AnalysisSupplementalRun[];
+  statisticalSummary: AnalysisStatisticalSummary;
+}): AnalysisFailureCategory[] {
+  const categories: AnalysisFailureCategory[] = [];
+
+  if (args.verifierFeedback?.status === "fail") {
+    categories.push({
+      id: "runtime_failure",
+      category: "runtime_failure",
+      severity: "high",
+      status: "observed",
+      summary: `Runtime verification failed at ${args.verifierFeedback.stage}: ${args.verifierFeedback.summary}`,
+      evidence: ["verifier_feedback.summary"],
+      recommended_action: args.verifierFeedback.suggested_next_action
+    });
+  }
+
+  if (args.metricTable.length === 0) {
+    categories.push({
+      id: "missing_numeric_metrics",
+      category: "missing_artifact",
+      severity: "high",
+      status: "observed",
+      summary: "Structured analysis could not find usable numeric metrics in the run artifacts.",
+      evidence: ["warnings"],
+      recommended_action: "Ensure metrics.json contains numeric metrics before running analyze_results."
+    });
+  }
+
+  if (args.objectiveEvaluation.status === "not_met") {
+    categories.push({
+      id: "objective_not_met",
+      category: "objective_gap",
+      severity: "high",
+      status: "observed",
+      summary: args.objectiveEvaluation.summary,
+      evidence: ["objective_metric.evaluation.summary"],
+      recommended_action: "Revise the primary condition or experiment setup and rerun until the target metric is satisfied."
+    });
+  }
+
+  if (args.supplementalRuns.length === 0) {
+    categories.push({
+      id: "supplemental_coverage_gap",
+      category: "evidence_gap",
+      severity: "medium",
+      status: "risk",
+      summary: "Supplemental confirmatory and quick-check runs are missing, so robustness across sampling budgets is still unverified.",
+      evidence: ["warnings"],
+      recommended_action: "Run confirmatory and quick-check profiles to validate stability."
+    });
+  }
+
+  if (args.statisticalSummary.confidence_intervals.length === 0) {
+    categories.push({
+      id: "missing_confidence_intervals",
+      category: "evidence_gap",
+      severity: "medium",
+      status: "risk",
+      summary: "Confidence intervals are missing for the primary metrics, which limits statistical confidence.",
+      evidence: ["statistical_summary.notes"],
+      recommended_action: "Record repeated-trial confidence intervals for the matched metric."
+    });
+  }
+
+  const scopeRisk =
+    args.planContext.selected_design?.risks[0] ||
+    args.planContext.selected_design?.budget_notes[0] ||
+    args.planContext.assumptions[0];
+  if (scopeRisk) {
+    categories.push({
+      id: "scope_limit",
+      category: "scope_limit",
+      severity: "low",
+      status: "risk",
+      summary: `Scope limitation: ${scopeRisk}`,
+      evidence: [
+        "plan_context.selected_design.risks",
+        "plan_context.selected_design.budget_notes",
+        "plan_context.assumptions"
+      ],
+      recommended_action: "Expand the evaluation scope or document the limitation explicitly in the discussion."
+    });
+  }
+
+  return categories.slice(0, 6);
 }
 
 function extractConfidenceIntervals(args: {

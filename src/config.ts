@@ -717,12 +717,12 @@ async function askPrimaryLlmMode(
         {
           label: "codex",
           value: "codex_chatgpt_only",
-          description: "(ChatGPT sign-in)"
+          description: "(Codex CLI backend, ChatGPT sign-in)"
         },
         {
           label: "api",
           value: "openai_api",
-          description: "(OPENAI_API_KEY required)"
+          description: "(OpenAI API backend, OPENAI_API_KEY required)"
         }
       ],
       "codex_chatgpt_only"
