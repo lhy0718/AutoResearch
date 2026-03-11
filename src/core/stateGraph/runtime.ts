@@ -213,6 +213,16 @@ export class StateGraphRuntime {
       return run;
     }
 
+    if (node === "review" && run.graph.pendingTransition) {
+      const recommendation = run.graph.pendingTransition;
+      if (recommendation.action === "pause_for_human") {
+        return run;
+      }
+      if (recommendation.action !== "advance") {
+        return this.applyPendingTransition(run.id);
+      }
+    }
+
     run.graph.pendingTransition = undefined;
     run.graph.nodeStates[node] = {
       ...state,

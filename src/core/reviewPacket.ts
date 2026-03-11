@@ -607,11 +607,14 @@ function buildSuggestedActions(
   const decisionOutcome = panel?.decision.outcome;
   const transition = panel?.decision.recommended_transition;
 
+  if (decisionOutcome === "backtrack_to_hypotheses") {
+    return ["/approve", "/agent jump generate_hypotheses --force", "/agent transition", "/agent review"];
+  }
   if (decisionOutcome === "backtrack_to_implement") {
-    return ["/agent jump implement_experiments --force", "/agent transition", "/agent review"];
+    return ["/approve", "/agent jump implement_experiments --force", "/agent transition", "/agent review"];
   }
   if (decisionOutcome === "backtrack_to_design") {
-    return ["/agent jump design_experiments --force", "/agent transition", "/agent review"];
+    return ["/approve", "/agent jump design_experiments --force", "/agent transition", "/agent review"];
   }
   if (decisionOutcome === "manual_block") {
     return ["/agent review", "/agent transition", "/agent jump analyze_results --force"];
@@ -774,6 +777,8 @@ function labelReviewAction(command: string): string {
     case "/agent jump analyze_results":
     case "/agent jump analyze_results --force":
       return "Jump analyze_results";
+    case "/agent jump generate_hypotheses --force":
+      return "Jump generate_hypotheses";
     case "/agent jump design_experiments --force":
       return "Jump design_experiments";
     case "/agent jump implement_experiments --force":
@@ -798,6 +803,8 @@ function mapDecisionTransitionToNode(value: string | undefined): string | undefi
   switch (value) {
     case "advance":
       return "write_paper";
+    case "backtrack_to_hypotheses":
+      return "generate_hypotheses";
     case "backtrack_to_design":
       return "design_experiments";
     case "backtrack_to_implement":

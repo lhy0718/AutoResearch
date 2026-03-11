@@ -7,6 +7,7 @@ import { ReviewArtifactPresence, runReviewPanel } from "../reviewSystem.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { safeRead, writeRunArtifact } from "./helpers.js";
 import { NodeExecutionDeps } from "./types.js";
+import { TransitionRecommendation } from "../../types.js";
 
 export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
@@ -35,6 +36,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         abortSignal
       });
       const packet = buildReviewPacket(report, presence, panel);
+      const transitionRecommendation = buildReviewTransitionRecommendation(panel, packet);
       const markdown = renderReviewChecklist(run, packet, panel);
 
       await writeRunArtifact(run, "review/findings.jsonl", renderJsonl(panel.findings));
@@ -78,13 +80,105 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
           blockers > 0
             ? `Review panel prepared ${panel.findings.length} finding(s) with ${blockers} blocking issue(s), ${warnings} warning(s), and ${manual} manual sign-off item(s). Resolve the blockers before approving write_paper.`
             : warnings > 0 || manual > 0
-              ? `Review panel prepared ${panel.findings.length} finding(s) with ${warnings} warning(s) and ${manual} manual sign-off item(s). Approve review to continue to write_paper or follow the revision plan.`
+              ? `Review panel prepared ${panel.findings.length} finding(s) with ${warnings} warning(s) and ${manual} manual sign-off item(s). Approve review to continue or apply the recommended backtrack.`
               : `Review panel completed with outcome ${panel.decision.outcome}. Approve review to continue to write_paper.`,
         needsApproval: true,
         toolCallsUsed: Math.max(1, panel.llm_calls_used),
-        costUsd: panel.llm_cost_usd
+        costUsd: panel.llm_cost_usd,
+        transitionRecommendation
       };
     }
+  };
+}
+
+function buildReviewTransitionRecommendation(
+  panel: Awaited<ReturnType<typeof runReviewPanel>>,
+  packet: ReturnType<typeof buildReviewPacket>
+): TransitionRecommendation | undefined {
+  const action = panel.decision.outcome;
+  const confidence = Number(panel.decision.confidence.toFixed(2));
+  const evidence = [
+    panel.decision.summary,
+    ...panel.findings.slice(0, 3).map((finding) => finding.title)
+  ].filter((value, index, items) => Boolean(value) && items.indexOf(value) === index);
+
+  if (action === "advance") {
+    return createReviewTransition({
+      action: "advance",
+      targetNode: "write_paper",
+      reason: panel.decision.summary,
+      confidence,
+      autoExecutable: true,
+      evidence,
+      suggestedCommands: packet.suggested_actions
+    });
+  }
+
+  if (action === "backtrack_to_hypotheses") {
+    return createReviewTransition({
+      action: "backtrack_to_hypotheses",
+      targetNode: "generate_hypotheses",
+      reason: panel.decision.summary,
+      confidence,
+      autoExecutable: confidence >= 0.88 && panel.consistency.panel_agreement !== "low",
+      evidence,
+      suggestedCommands: packet.suggested_actions
+    });
+  }
+
+  if (action === "backtrack_to_design") {
+    return createReviewTransition({
+      action: "backtrack_to_design",
+      targetNode: "design_experiments",
+      reason: panel.decision.summary,
+      confidence,
+      autoExecutable: confidence >= 0.75 && panel.consistency.panel_agreement !== "low",
+      evidence,
+      suggestedCommands: packet.suggested_actions
+    });
+  }
+
+  if (action === "backtrack_to_implement") {
+    return createReviewTransition({
+      action: "backtrack_to_implement",
+      targetNode: "implement_experiments",
+      reason: panel.decision.summary,
+      confidence,
+      autoExecutable: confidence >= 0.75 && panel.consistency.panel_agreement !== "low",
+      evidence,
+      suggestedCommands: packet.suggested_actions
+    });
+  }
+
+  return createReviewTransition({
+    action: "pause_for_human",
+    reason: panel.decision.summary,
+    confidence,
+    autoExecutable: false,
+    evidence,
+    suggestedCommands: packet.suggested_actions
+  });
+}
+
+function createReviewTransition(input: {
+  action: TransitionRecommendation["action"];
+  reason: string;
+  confidence: number;
+  autoExecutable: boolean;
+  evidence: string[];
+  suggestedCommands: string[];
+  targetNode?: TransitionRecommendation["targetNode"];
+}): TransitionRecommendation {
+  return {
+    action: input.action,
+    sourceNode: "review",
+    targetNode: input.targetNode,
+    reason: input.reason,
+    confidence: input.confidence,
+    autoExecutable: input.autoExecutable,
+    evidence: input.evidence.slice(0, 4),
+    suggestedCommands: input.suggestedCommands.slice(0, 4),
+    generatedAt: new Date().toISOString()
   };
 }
 

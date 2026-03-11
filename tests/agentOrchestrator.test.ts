@@ -167,6 +167,42 @@ describe("AgentOrchestrator (state graph)", () => {
     expect(latest?.graph.nodeStates.run_experiments.status).toBe("needs_approval");
   });
 
+  it("applies a review backtrack when the review approval is accepted", async () => {
+    const { store, orchestrator } = await setup(new DeterministicRegistry({}));
+
+    const run = await store.createRun({
+      title: "Run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "review";
+    run.graph.currentNode = "review";
+    run.status = "paused";
+    run.graph.nodeStates.review.status = "needs_approval";
+    run.graph.pendingTransition = {
+      action: "backtrack_to_design",
+      sourceNode: "review",
+      targetNode: "design_experiments",
+      reason: "Methodological blockers remain after review.",
+      confidence: 0.84,
+      autoExecutable: true,
+      evidence: ["The specialist review found unresolved methodological blockers."],
+      suggestedCommands: ["/approve", "/agent jump design_experiments --force"],
+      generatedAt: new Date().toISOString()
+    };
+    await store.updateRun(run);
+
+    const updated = await orchestrator.approveCurrent(run.id);
+    expect(updated.currentNode).toBe("design_experiments");
+    expect(updated.graph.transitionHistory.at(-1)).toMatchObject({
+      action: "backtrack_to_design",
+      fromNode: "review",
+      toNode: "design_experiments"
+    });
+  });
+
   it("feeds run_experiments failure context back into implement_experiments after rollback", async () => {
     let implementCalls = 0;
     const seenFeedback: string[] = [];

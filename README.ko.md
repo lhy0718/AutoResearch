@@ -158,15 +158,16 @@ node dist/cli/main.js web
 
 AutoLabOS에는 이름이 비슷해서 헷갈리기 쉬운 두 레이어가 있습니다.
 
-- 오케스트레이션 레이어: `/agent ...`가 대상으로 삼는 8개 그래프 노드입니다. 코드에서는 `AgentId`가 현재 `GraphNodeId`의 alias입니다.
-- 역할 레이어: 각 노드 내부 프롬프트, 이벤트, 세션 매니저에서 쓰는 `agentRole` 정체성입니다. 예를 들면 `implementer`, `runner`, `paper_writer`가 여기에 속합니다.
+- 오케스트레이션 레이어: `/agent ...`가 대상으로 삼는 9개 그래프 노드입니다. 코드에서는 `AgentId`가 현재 `GraphNodeId`의 alias입니다.
+- 역할 레이어: 각 노드 내부 프롬프트, 이벤트, 세션 매니저에서 쓰는 export된 `agentRole` 정체성입니다. 예를 들면 `implementer`, `runner`, `paper_writer`, `reviewer`가 여기에 속합니다.
+- 일부 노드는 여기서 한 단계 더 내려가 node 내부 전용 프롬프트 정체성으로 fan-out합니다. 현재 가장 뚜렷한 예시는 `generate_hypotheses` 안의 evidence synthesizer + skeptical reviewer, 그리고 `review` 안의 5인 specialist review panel입니다.
 
 ### 노드와 역할 매핑
 
 ```mermaid
 flowchart TB
-    subgraph Orchestration["오케스트레이션 레이어 (`/agent` 대상)"]
-        O["AgentOrchestrator"]
+    subgraph Orchestration["오케스트레이션 레이어 (`/agent` 대상, 9개 노드)"]
+        O["AgentOrchestrator + StateGraphRuntime"]
         N1["collect_papers"]
         N2["analyze_papers"]
         N3["generate_hypotheses"]
@@ -180,7 +181,7 @@ flowchart TB
         O --> N1 --> N2 --> N3 --> N4 --> N5 --> N6 --> N7 --> N8 --> N9
     end
 
-    subgraph Roles["역할 레이어 (`agentRole`)"]
+    subgraph Roles["export된 역할 레이어 (`agentRole`)"]
         R1["collector_curator"]
         R2["reader_evidence_extractor"]
         R3["hypothesis_agent"]
@@ -192,15 +193,33 @@ flowchart TB
         R9["reviewer"]
     end
 
+    subgraph Internal["노드 내부 프롬프트 정체성"]
+        P1["evidence synthesizer"]
+        P2["skeptical reviewer"]
+        P3["claim verifier"]
+        P4["methodology reviewer"]
+        P5["statistics reviewer"]
+        P6["writing readiness reviewer"]
+        P7["integrity reviewer"]
+    end
+
     N1 -. 주 역할 .-> R1
     N2 -. 주 역할 .-> R2
     N3 -. 주 역할 .-> R3
+    N3 -. synthesis .-> P1
+    N3 -. critique .-> P2
     N4 -. 주 역할 .-> R4
     N5 -. 주 역할 .-> R5
     N6 -. 주 역할 .-> R6
     N7 -. 주 역할 .-> R7
-    N8 -. 주 역할 .-> R9
-    N9 -. 주 역할 .-> R8
+    N8 -. panel role .-> R9
+    N8 -. specialist .-> P3
+    N8 -. specialist .-> P4
+    N8 -. specialist .-> P5
+    N8 -. specialist .-> P6
+    N8 -. specialist .-> P7
+    N9 -. drafting .-> R8
+    N9 -. critique .-> R9
 ```
 
 ### 실행 그래프
@@ -218,11 +237,15 @@ stateDiagram-v2
     analyze_results --> implement_experiments: backtrack_to_implement
     analyze_results --> design_experiments: backtrack_to_design
     analyze_results --> generate_hypotheses: backtrack_to_hypotheses
-    review --> write_paper: approve
+    review --> write_paper: approve + advance
+    review --> implement_experiments: approve + backtrack_to_implement
+    review --> design_experiments: approve + backtrack_to_design
+    review --> generate_hypotheses: approve + backtrack_to_hypotheses
+    review --> review: pause_for_human
     write_paper --> [*]: approve
 ```
 
-기본 `agent_approval` 모드에서는 각 노드가 끝날 때마다 멈춥니다. 예외적으로 `implement_experiments`는 `run_experiments`로 자동 handoff할 수 있고, `analyze_results`는 결과에 따라 그래프를 뒤로 되돌리는 추천을 낼 수 있으며, `review`는 `write_paper` 직전의 수동 검토 게이트입니다.
+기본 `agent_approval` 모드에서는 각 노드가 끝날 때마다 멈춥니다. 예외적으로 `implement_experiments`는 `run_experiments`로 자동 handoff할 수 있고, `analyze_results`는 명시적인 backward recommendation을 낼 수 있으며, `review`는 패널 결정을 review packet으로 묶은 뒤 approve 시 advance, backtrack, human hold 중 하나로 이어질 수 있습니다.
 
 ### 단계별 연결 그래프
 
@@ -239,10 +262,12 @@ flowchart LR
     Enrich --> Corpus["corpus.jsonl + bibtex.bib"]
 
     Corpus --> AP["analyze_papers"]
-    AP --> RE["reader_evidence_extractor"]
-    RE --> Select["논문 선택 + rerank"]
-    Select --> Pdf["로컬 PDF/text 분석 또는 Responses API PDF"]
-    Pdf --> Evidence["paper_summaries.jsonl + evidence_store.jsonl"]
+    AP --> Select["selection request + hybrid rerank"]
+    Select --> Manifest["analysis_manifest resume / prune"]
+    Manifest --> RE["reader_evidence_extractor"]
+    RE --> Pdf["로컬 text/image 분석 또는 Responses API PDF"]
+    Pdf --> ReviewLoop["extractor -> reviewer normalization"]
+    ReviewLoop --> Evidence["paper_summaries.jsonl + evidence_store.jsonl"]
 ```
 
 #### 가설과 실험 설계
@@ -251,17 +276,22 @@ flowchart LR
 flowchart LR
     Evidence["paper_summaries.jsonl + evidence_store.jsonl"] --> GH["generate_hypotheses"]
     GH --> HA["hypothesis_agent"]
-    HA --> Axes["evidence axes"]
-    Axes --> Drafts["후보 draft"]
-    Drafts --> Reviews["후보 review"]
-    Reviews --> Select["selection / top-k"]
-    Select --> Hyp["hypotheses.jsonl"]
+    HA --> Axes["evidence synthesizer -> evidence axes"]
+    Axes --> ToT["ToT branch expansion"]
+    ToT --> Drafts["mechanism / contradiction / intervention drafts"]
+    Drafts --> Reviews["skeptical reviewer"]
+    Reviews --> Select["diversity + evidence-quality top-k selection"]
+    Select --> Hyp["hypotheses.jsonl + axes/reviews/llm_trace"]
 
     Hyp --> DE["design_experiments"]
     DE --> ED["experiment_designer"]
-    ED --> Profiles["constraint profile + objective profile"]
+    ED --> Profiles["constraint profile + objective metric profile"]
     Profiles --> Plans["설계 후보"]
-    Plans --> PlanYaml["experiment_plan.yaml"]
+    Plans --> Bundle{"managed real_execution bundle 지원?"}
+    Bundle -->|yes| Managed["bundle sections + runnable profiles"]
+    Bundle -->|no| Plain["plain experiment plan"]
+    Managed --> PlanYaml["experiment_plan.yaml"]
+    Plain --> PlanYaml
 ```
 
 #### 구현, 실행, 결과 루프
@@ -271,10 +301,10 @@ flowchart LR
     PlanYaml["experiment_plan.yaml"] --> IE["implement_experiments"]
     IE --> IM["ImplementSessionManager"]
     IM --> Impl["implementer"]
-    IM --> Localizer["ImplementationLocalizer"]
+    IM --> Localizer["ImplementationLocalizer + branch planning"]
     IM --> Codex["Codex CLI session"]
-    IM --> Memory["episode + long-term memory"]
-    Codex --> VerifyPatch["로컬 verify report"]
+    IM --> Memory["EpisodeMemory + LongTermStore"]
+    Codex --> VerifyPatch["로컬 검증 + verify report"]
     VerifyPatch --> Handoff{"auto handoff?"}
 
     Handoff -->|yes| RX["run_experiments"]
@@ -282,11 +312,12 @@ flowchart LR
     Approve --> RX
 
     RX --> Runner["runner"]
-    Runner --> ACI["ACI 테스트 + 명령 실행"]
-    ACI --> Metrics["metrics.json + verifier report"]
+    Runner --> ACI["Local ACI preflight/tests/command 실행"]
+    ACI --> Metrics["metrics.json + run_verifier_feedback"]
+    Metrics -. runner feedback .-> IM
     Metrics --> AR["analyze_results"]
     AR --> Analyst["analyst_statistician"]
-    Analyst --> Synth["analysis synthesis + transition recommendation"]
+    Analyst --> Synth["objective evaluation + synthesis + transition recommendation"]
 
     Synth -->|advance| RV["review"]
     Synth -->|backtrack_to_implement| IE
@@ -294,18 +325,37 @@ flowchart LR
     Synth -->|backtrack_to_hypotheses| GH["generate_hypotheses"]
 ```
 
-#### 집필과 리뷰
+#### 리뷰, 집필, 서피싱
 
 ```mermaid
 flowchart LR
-    Inputs["corpus + evidence + hypotheses + experiment_plan + result_analysis"] --> WP["write_paper"]
+    Inputs["result_analysis + corpus + evidence + hypotheses + experiment_plan"] --> RV["review"]
+    RV --> Panel["runReviewPanel"]
+    Panel --> Claim["claim verifier"]
+    Panel --> Method["methodology reviewer"]
+    Panel --> Stats["statistics reviewer"]
+    Panel --> Ready["writing readiness reviewer"]
+    Panel --> Integrity["integrity reviewer"]
+    Panel --> Score["scorecard + consistency + bias"]
+    Panel --> Decision["decision + revision_plan"]
+    Score --> Packet["review_packet.json + checklist.md"]
+    Decision --> Packet
+    Packet --> Insight["review insight + suggested actions"]
+    Insight --> Gate{"review approve?"}
+
+    Gate -->|advance| WP["write_paper"]
+    Gate -->|backtrack_to_hypotheses| GH["generate_hypotheses"]
+    Gate -->|backtrack_to_design| DE["design_experiments"]
+    Gate -->|backtrack_to_implement| IE["implement_experiments"]
+    Gate -->|pause_for_human| Hold["review에 머무름"]
+
     WP --> PWM["PaperWriterSessionManager"]
     PWM --> Mode["Codex session 또는 staged LLM"]
     Mode --> Writer["paper_writer"]
     Mode --> Reviewer["reviewer"]
     Writer --> Outline["outline"]
     Outline --> Draft["draft"]
-    Draft --> Review["review"]
+    Draft --> Review["review critique"]
     Review --> Final["finalize"]
     Final --> Tex["paper/main.tex + references.bib + evidence_links.json"]
     Tex --> Build{"PDF build enabled?"}
@@ -318,14 +368,15 @@ flowchart LR
 | --- | --- | --- |
 | `collect_papers` | `collector_curator` | Semantic Scholar 검색, 중복 제거, 보강, BibTeX 생성 |
 | `analyze_papers` | `reader_evidence_extractor` | 논문 선택 랭킹과 재개 가능한 planner -> extractor -> reviewer 기반 로컬/Responses API PDF 분석 |
-| `generate_hypotheses` | `hypothesis_agent` | evidence-axis -> draft -> review -> selection 단계형 파이프라인 |
+| `generate_hypotheses` | `hypothesis_agent` | evidence-axis synthesis, ToT branching, skeptical review, diversity-aware top-k selection |
 | `design_experiments` | `experiment_designer` | 실험 후보 설계 생성과 `experiment_plan.yaml` 선택 |
 | `implement_experiments` | `implementer` | `ImplementSessionManager`, localization, Codex 패치, 검증, optional handoff |
 | `run_experiments` | `runner` | ACI 기반 preflight/tests/command 실행, metrics 수집, verifier feedback |
 | `analyze_results` | `analyst_statistician` | objective 평가, 결과 합성, transition recommendation |
+| `review` | `reviewer` | `runReviewPanel`, 5인 specialist reviewer, heuristic+LLM refinement, review packet 생성, transition recommendation |
 | `write_paper` | `paper_writer`, `reviewer` | `PaperWriterSessionManager`, outline/draft/review/finalize, optional LaTeX repair |
 
-역할 카탈로그와 실제 멀티턴 런타임은 완전히 같은 범위는 아닙니다. 현재 가장 깊게 세션 기반으로 묶여 있는 노드는 `implement_experiments`와 `write_paper`이고, 앞단 노드들은 구조화된 node handler와 역할별 프롬프트/이벤트 중심으로 작동합니다.
+역할 카탈로그와 실제 멀티턴 런타임은 완전히 같은 범위는 아닙니다. 현재 가장 깊게 세션 기반으로 묶여 있는 노드는 `implement_experiments`와 `write_paper`이고, `review`는 공용 `reviewer` 역할 아래 specialist review panel을 실행한 뒤 review packet과 suggested command를 만들며, `generate_hypotheses`는 내부 evidence-synthesis / skeptical-review 프롬프트를 거친 뒤 다시 메인 그래프로 돌아옵니다.
 
 ### 아티팩트 흐름
 
@@ -344,7 +395,7 @@ flowchart TB
     F1 --> G["analyze_results"]
     G --> G1["result_analysis.json<br/>result_analysis_synthesis.json<br/>transition_recommendation.json<br/>figures/performance.svg"]
     G1 --> H["review"]
-    H --> H1["review/review_packet.json<br/>review/checklist.md"]
+    H --> H1["review/findings.jsonl<br/>review/scorecard.json<br/>review/consistency_report.json<br/>review/bias_report.json<br/>review/revision_plan.json<br/>review/decision.json<br/>review/review_packet.json<br/>review/checklist.md"]
     H1 --> I["write_paper"]
     I --> I1["paper/main.tex<br/>paper/references.bib<br/>paper/evidence_links.json<br/>paper/draft.json<br/>paper/validation.json<br/>paper/main.pdf (optional)"]
 ```
@@ -365,20 +416,46 @@ flowchart TB
     Runtime --> Nodes["9개 노드 워크플로 실행"]
     Runtime --> Artifacts["run 아티팩트<br/>.autolabos/runs/<run_id>"]
     Runtime --> State["run 상태와 메모리<br/>context + episodes + long-term store"]
+    Runtime --> Insight["analyze_results / review insight 카드"]
 
     Artifacts --> Web
     State --> TUI
+    Insight --> TUI
+    Insight --> Web
+```
+
+### Review Decision Loop
+
+```mermaid
+flowchart LR
+    ReviewNode["review 노드"] --> Packet["review_packet.json"]
+    Packet --> Parse["parseReviewPacket"]
+    Parse --> Insight["buildReviewInsightCard<br/>formatReviewPacketLines"]
+    Insight --> TUI["TUI active run insight<br/>/agent review 출력"]
+    Insight --> Web["웹 review preview<br/>suggested action 버튼"]
+    TUI --> Approve["approve current"]
+    Web --> Approve
+    Approve --> Runtime["StateGraphRuntime.approveCurrent"]
+    Runtime -->|advance| Paper["write_paper"]
+    Runtime -->|safe backtrack| Backtrack["generate_hypotheses / design_experiments / implement_experiments"]
+    Runtime -->|pause_for_human| ReviewNode
 ```
 
 ### 구체적인 에이전트 런타임
 
 ```mermaid
 flowchart LR
-    UI["CLI / TUI / Web UI"] --> Session["InteractionSession / web composer"]
-    Session --> Orchestrator["AgentOrchestrator"]
-    Orchestrator --> Runtime["StateGraphRuntime"]
+    UI["CLI / TUI / Web UI"] --> Session["InteractionSession + web composer"]
+    Session --> Bootstrap["createAutoLabOSRuntime"]
+    Bootstrap --> Orchestrator["AgentOrchestrator"]
+    Bootstrap --> Overnight["AutonomousRunController"]
+    Bootstrap --> Runtime["StateGraphRuntime"]
+    Bootstrap --> Providers["RoutedLLMClient + CodexCliClient + SemanticScholarClient + ResponsesPdfAnalysisClient + LocalAciAdapter"]
+    Orchestrator --> Runtime
+    Overnight --> Orchestrator
     Runtime --> Registry["DefaultNodeRegistry"]
     Runtime --> Stores["RunStore + CheckpointStore + EventStream"]
+    Providers --> Registry
 
     Registry --> Collect["collect_papers"]
     Registry --> Analyze["analyze_papers"]
@@ -391,38 +468,26 @@ flowchart LR
     Registry --> Paper["write_paper"]
 
     Collect --> Scholar["Semantic Scholar + enrichment"]
-    Analyze --> Pdf["Local text/image PDF analysis 또는 Responses API PDF"]
-    Hyp --> ToT["ToT 스타일 branching + staged review"]
-    Design --> ToT
-
-    Impl --> ImplMgr["ImplementSessionManager"]
-    ImplMgr --> Localizer["ImplementationLocalizer"]
-    ImplMgr --> Codex["Codex CLI session"]
-    ImplMgr --> ACI["Local ACI"]
-    ImplMgr --> Reflex["EpisodeMemory + LongTermStore"]
-
-    Run --> ACI
-    Run --> Verify["Metrics + verifier report"]
-    Verify -. feedback loop .-> ImplMgr
-
-    Results --> Synthesis["Objective evaluation + analysis synthesis + transition recommendation"]
-
-    Paper --> PaperMgr["PaperWriterSessionManager"]
-    PaperMgr --> Writer["paper_writer"]
-    PaperMgr --> Reviewer["reviewer"]
-    PaperMgr --> Codex
-    PaperMgr --> LLM["OpenAI / Codex LLM"]
-    PaperMgr --> Latex["Optional LaTeX compile + repair"]
+    Analyze --> AnalyzeStack["paperSelection + paperAnalyzer + analysis manifest"]
+    Hyp --> HypStack["researchPlanning.generateHypothesesFromEvidence + ToT"]
+    Design --> DesignStack["researchPlanning.designExperimentsFromHypotheses"]
+    Impl --> ImplStack["ImplementSessionManager + ImplementationLocalizer"]
+    Run --> RunStack["LocalAciAdapter + runVerifierFeedback"]
+    Results --> ResultStack["resultAnalysis + synthesis + transition recommendation"]
+    Review --> ReviewStack["runReviewPanel + reviewPacket + transition recommendation"]
+    Paper --> PaperStack["PaperWriterSessionManager + paperWriting + LaTeX build"]
 ```
 
 핵심 소스 영역:
 
-- `src/runtime/createRuntime.ts`: 설정, provider, store, event stream, runtime, orchestrator를 조립
+- `src/runtime/createRuntime.ts`: 설정, provider, store, runtime, orchestrator, 공용 실행 의존성을 조립
 - `src/interaction/*`: TUI와 웹 컴포저가 함께 쓰는 공용 command/session 레이어
 - `src/core/stateGraph/*`: 노드 실행, 재시도, 승인, 예산, 점프, 체크포인트 처리
-- `src/core/nodes/*`: 8개 워크플로 핸들러와 아티팩트 생성 로직
-- `src/integrations/*`, `src/tools/*`: provider 클라이언트, Semantic Scholar 연동, 로컬 실행 어댑터
-- `src/web/*`, `web/src/*`: 같은 런타임 위에 얹힌 로컬 HTTP 서버와 브라우저 UI
+- `src/core/nodes/*`: 9개 워크플로 핸들러와 아티팩트 생성 로직
+- `src/core/analysis/researchPlanning.ts`, `src/core/reviewSystem.ts`, `src/core/reviewPacket.ts`: 다단계 가설 생성/실험 설계, specialist review panel, review packet 빌드/서피싱
+- `src/core/agents/*`: 세션 매니저, export된 역할 정의, search-backed implementation localization
+- `src/integrations/*`, `src/tools/*`: provider 클라이언트, Semantic Scholar 연동, Responses PDF 분석, 로컬 실행 어댑터
+- `src/web/*`, `web/src/*`, `src/interaction/*`, `src/tui/*`: 같은 런타임 위에 얹힌 로컬 HTTP 서버, 브라우저 UI, 터미널 surface와 insight 카드
 
 ## 자주 쓰는 명령어
 

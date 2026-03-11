@@ -11,6 +11,8 @@ export interface HypothesisEvidenceSeed {
   dataset_slot?: string;
   metric_slot?: string;
   confidence?: number;
+  source_type?: "full_text" | "abstract";
+  confidence_reason?: string;
 }
 
 export interface HypothesisCandidate {
@@ -73,10 +75,12 @@ export interface HypothesisSelectionScore {
   candidate_id: string;
   raw_base_score: number;
   base_score: number;
+  evidence_quality_adjustment: number;
   implementation_bonus: number;
   bundling_penalty: number;
   scope_penalty: number;
   diversity_penalty: number;
+  evidence_quality_notes: string[];
   final_score: number;
 }
 
@@ -179,6 +183,7 @@ const HYPOTHESIS_REVIEW_SYSTEM_PROMPT = [
   "Critique hypothesis drafts for groundedness, causal clarity, falsifiability, experimentability, and objective-metric alignment.",
   "Apply hard gates: hypotheses with too few evidence links, ignored limitations/counterexamples, or no operational measurement plan should not survive review.",
   "When the objective is reproducibility, penalize performance-only hypotheses that do not specify a repeated-run or stability-based outcome.",
+  "Penalize hypotheses that rely mostly on abstract-only or heavily caveated evidence when stronger full-text evidence is available.",
   "Revise weak wording instead of praising it.",
   "Return one JSON object only.",
   "No markdown, no prose outside JSON."
@@ -331,7 +336,13 @@ export async function generateHypothesesFromEvidence(args: {
           `Hard-gated ${gatedCandidates.rejected.length} single-pass hypothesis candidate(s) for weak grounding or missing measurement detail.`
         );
       }
-      const selected = selectHypothesesWithDiversity(gatedCandidates.kept, [], topK, args.objectiveMetric);
+      const selected = selectHypothesesWithDiversity(
+        gatedCandidates.kept,
+        [],
+        topK,
+        args.objectiveMetric,
+        args.evidenceSeeds
+      );
       if (gatedCandidates.kept.length === 0 || selected.selected.length === 0) {
         throw new Error("No valid hypothesis candidates were returned.");
       }
@@ -368,11 +379,19 @@ export async function generateHypothesesFromEvidence(args: {
       const legacyReason = legacyError instanceof Error ? legacyError.message : String(legacyError);
       args.onProgress?.(`Hypothesis generation fallback: ${legacyReason}`);
       const fallback = buildFallbackHypotheses(args.evidenceSeeds, branchCount, topK);
+      const fallbackSelection = selectHypothesesWithDiversity(
+        fallback.candidates,
+        [],
+        topK,
+        args.objectiveMetric,
+        args.evidenceSeeds
+      );
+      const fallbackSelected = fallbackSelection.selected.length > 0 ? fallbackSelection.selected : fallback.selected;
       return {
         source: "fallback",
         summary: `Fallback generated ${fallback.candidates.length} hypothesis candidate(s).`,
         candidates: fallback.candidates,
-        selected: fallback.selected,
+        selected: fallbackSelected,
         fallbackReason: `${stagedReason}; single_pass=${legacyReason}`,
         toolCallsUsed: 0,
         artifacts: {
@@ -381,18 +400,9 @@ export async function generateHypothesesFromEvidence(args: {
           drafts: fallback.candidates,
           reviews: [],
           selection: {
-            selected_ids: fallback.selected.map((candidate) => candidate.id),
-            ranked_ids: fallback.candidates.map((candidate) => candidate.id),
-            scores: fallback.candidates.map((candidate) => ({
-              candidate_id: candidate.id,
-              raw_base_score: scoreHypothesis(candidate),
-              base_score: scoreHypothesis(candidate),
-              implementation_bonus: 0,
-              bundling_penalty: 0,
-              scope_penalty: 0,
-              diversity_penalty: 0,
-              final_score: scoreHypothesis(candidate)
-            }))
+            selected_ids: fallbackSelected.map((candidate) => candidate.id),
+            ranked_ids: fallbackSelection.ranked.map((candidate) => candidate.id),
+            scores: fallbackSelection.scores
           },
           llm_trace: {
             drafts: []
@@ -530,7 +540,13 @@ async function runStagedHypothesisPipeline(args: {
       `Hard-gated ${gatedCandidates.rejected.length} staged hypothesis candidate(s) for weak grounding or missing measurement detail.`
     );
   }
-  const selection = selectHypothesesWithDiversity(gatedCandidates.kept, reviews, args.topK, args.objectiveMetric);
+  const selection = selectHypothesesWithDiversity(
+    gatedCandidates.kept,
+    reviews,
+    args.topK,
+    args.objectiveMetric,
+    evidencePanel
+  );
 
   if (selection.selected.length === 0) {
     throw new Error("no_selected_hypotheses");
@@ -666,19 +682,7 @@ function buildHypothesisPrompt(
   ];
 
   evidenceSeeds.slice(0, 16).forEach((seed, index) => {
-    lines.push(
-      [
-        `${index + 1}. evidence_id=${seed.evidence_id ?? `ev_${index + 1}`}`,
-        `paper_id=${seed.paper_id ?? "unknown"}`,
-        `claim=${seed.claim ?? "unknown"}`,
-        seed.limitation_slot ? `limitation=${seed.limitation_slot}` : undefined,
-        seed.dataset_slot ? `dataset=${seed.dataset_slot}` : undefined,
-        seed.metric_slot ? `metric=${seed.metric_slot}` : undefined,
-        typeof seed.confidence === "number" ? `confidence=${seed.confidence}` : undefined
-      ]
-        .filter(Boolean)
-        .join(" | ")
-    );
+    lines.push(renderEvidenceSeed(seed, index));
   });
 
   return lines.join("\n");
@@ -1271,14 +1275,18 @@ function selectHypothesesWithDiversity(
   candidates: HypothesisCandidate[],
   reviews: HypothesisReview[],
   topK: number,
-  objectiveMetric?: string
+  objectiveMetric?: string,
+  evidenceSeeds: HypothesisEvidenceSeed[] = []
 ): { selected: HypothesisCandidate[]; ranked: HypothesisCandidate[]; scores: HypothesisSelectionScore[] } {
   const reviewMap = new Map(reviews.map((review) => [review.candidate_id, review] as const));
+  const evidenceById = new Map(
+    evidenceSeeds.map((seed, index) => [seed.evidence_id || `ev_${index + 1}`, seed] as const)
+  );
   const pool = reviews.length > 0 ? candidates.filter((candidate) => reviewMap.get(candidate.id)?.keep === true) : candidates;
   const adjustedBaseById = new Map(
     pool.map((candidate) => [
       candidate.id,
-      buildHypothesisSelectionBase(candidate, reviewMap.get(candidate.id), objectiveMetric)
+      buildHypothesisSelectionBase(candidate, reviewMap.get(candidate.id), objectiveMetric, evidenceById)
     ] as const)
   );
   const ranked = [...pool].sort(
@@ -1310,7 +1318,8 @@ function selectHypothesesWithDiversity(
       const score = buildHypothesisSelectionScore(
         candidate,
         selected,
-        adjustedBaseById.get(candidate.id) ?? buildHypothesisSelectionBase(candidate, reviewMap.get(candidate.id), objectiveMetric)
+        adjustedBaseById.get(candidate.id) ??
+          buildHypothesisSelectionBase(candidate, reviewMap.get(candidate.id), objectiveMetric, evidenceById)
       );
       if (score.final_score > bestScore) {
         bestIndex = index;
@@ -1341,7 +1350,8 @@ function selectHypothesesWithDiversity(
       buildHypothesisSelectionScore(
         candidate,
         selected.filter((item) => item.id !== candidate.id),
-        adjustedBaseById.get(candidate.id) ?? buildHypothesisSelectionBase(candidate, reviewMap.get(candidate.id), objectiveMetric)
+        adjustedBaseById.get(candidate.id) ??
+          buildHypothesisSelectionBase(candidate, reviewMap.get(candidate.id), objectiveMetric, evidenceById)
       )
     );
   }
@@ -1398,7 +1408,8 @@ function selectHypothesisEvidencePanel(
         (seed.limitation_slot ? 3 : 0) +
         (seed.dataset_slot ? 2 : 0) +
         (seed.metric_slot ? 2 : 0) +
-        (seed.claim ? Math.min(2, seed.claim.length / 80) : 0)
+        (seed.claim ? Math.min(2, seed.claim.length / 80) : 0) +
+        assessEvidenceSeedQuality(seed).panel_adjustment
     }))
     .sort((a, b) => b.score - a.score || a.index - b.index);
 
@@ -1440,10 +1451,17 @@ function renderEvidenceSeed(seed: HypothesisEvidenceSeed, index: number): string
     seed.limitation_slot ? `limitation=${seed.limitation_slot}` : undefined,
     seed.dataset_slot ? `dataset=${seed.dataset_slot}` : undefined,
     seed.metric_slot ? `metric=${seed.metric_slot}` : undefined,
-    typeof seed.confidence === "number" ? `confidence=${seed.confidence}` : undefined
+    typeof seed.confidence === "number" ? `confidence=${seed.confidence}` : undefined,
+    seed.source_type ? `source_type=${seed.source_type}` : undefined,
+    seed.confidence_reason ? `confidence_reason=${truncateEvidenceReason(seed.confidence_reason)}` : undefined
   ]
     .filter(Boolean)
     .join(" | ");
+}
+
+function truncateEvidenceReason(value: string): string {
+  const trimmed = value.trim();
+  return trimmed.length > 120 ? `${trimmed.slice(0, 117)}...` : trimmed;
 }
 
 function roleLabel(kind: HypothesisGeneratorKind): string {
@@ -1776,24 +1794,35 @@ function hypothesisBaseScore(candidate: HypothesisCandidate, objectiveMetric?: s
 function buildHypothesisSelectionBase(
   candidate: HypothesisCandidate,
   review: HypothesisReview | undefined,
-  objectiveMetric?: string
+  objectiveMetric?: string,
+  evidenceById: Map<string, HypothesisEvidenceSeed> = new Map()
 ): {
   raw_base_score: number;
   base_score: number;
+  evidence_quality_adjustment: number;
   implementation_bonus: number;
   bundling_penalty: number;
   scope_penalty: number;
+  evidence_quality_notes: string[];
 } {
   const rawBaseScore = hypothesisBaseScore(candidate, objectiveMetric);
+  const evidenceSupport = assessCandidateEvidenceSupport(candidate, evidenceById);
   const implementationBonus = hypothesisImplementationBonus(candidate, review);
   const bundlingPenalty = hypothesisBundlingPenalty(candidate, review);
   const scopePenalty = hypothesisScopePenalty(candidate, review);
   return {
     raw_base_score: rawBaseScore,
-    base_score: rawBaseScore + implementationBonus - bundlingPenalty - scopePenalty,
+    base_score:
+      rawBaseScore +
+      evidenceSupport.adjustment +
+      implementationBonus -
+      bundlingPenalty -
+      scopePenalty,
+    evidence_quality_adjustment: evidenceSupport.adjustment,
     implementation_bonus: implementationBonus,
     bundling_penalty: bundlingPenalty,
-    scope_penalty: scopePenalty
+    scope_penalty: scopePenalty,
+    evidence_quality_notes: evidenceSupport.notes
   };
 }
 
@@ -1803,9 +1832,11 @@ function buildHypothesisSelectionScore(
   adjustedBase: {
     raw_base_score: number;
     base_score: number;
+    evidence_quality_adjustment: number;
     implementation_bonus: number;
     bundling_penalty: number;
     scope_penalty: number;
+    evidence_quality_notes: string[];
   }
 ): HypothesisSelectionScore {
   const diversityPenalty = calculateDiversityPenalty(candidate, selected);
@@ -1813,11 +1844,112 @@ function buildHypothesisSelectionScore(
     candidate_id: candidate.id,
     raw_base_score: adjustedBase.raw_base_score,
     base_score: adjustedBase.base_score,
+    evidence_quality_adjustment: adjustedBase.evidence_quality_adjustment,
     implementation_bonus: adjustedBase.implementation_bonus,
     bundling_penalty: adjustedBase.bundling_penalty,
     scope_penalty: adjustedBase.scope_penalty,
     diversity_penalty: diversityPenalty,
+    evidence_quality_notes: adjustedBase.evidence_quality_notes,
     final_score: adjustedBase.base_score - diversityPenalty
+  };
+}
+
+function assessCandidateEvidenceSupport(
+  candidate: HypothesisCandidate,
+  evidenceById: Map<string, HypothesisEvidenceSeed>
+): { adjustment: number; notes: string[] } {
+  const linkedEvidence = dedupeStrings(candidate.evidence_links)
+    .map((evidenceId) => evidenceById.get(evidenceId))
+    .filter((seed): seed is HypothesisEvidenceSeed => Boolean(seed));
+  if (linkedEvidence.length === 0) {
+    return {
+      adjustment: -0.75,
+      notes: ["missing_linked_evidence"]
+    };
+  }
+
+  const assessments = linkedEvidence.map((seed) => assessEvidenceSeedQuality(seed));
+  let adjustment =
+    assessments.reduce((sum, assessment) => sum + assessment.candidate_adjustment, 0) / assessments.length;
+  const notes = dedupeStrings(assessments.flatMap((assessment) => assessment.notes));
+
+  if (linkedEvidence.every((seed) => seed.source_type === "abstract")) {
+    adjustment -= 0.5;
+    notes.push("abstract_only_support");
+  }
+
+  const strongEvidenceCount = assessments.filter((assessment) => assessment.candidate_adjustment >= 0.2).length;
+  if (linkedEvidence.length >= 2 && strongEvidenceCount >= 2) {
+    adjustment += 0.35;
+    notes.push("multi_source_support");
+  }
+
+  const riskyEvidenceCount = assessments.filter((assessment) => assessment.candidate_adjustment <= -0.75).length;
+  if (riskyEvidenceCount === linkedEvidence.length && riskyEvidenceCount > 0) {
+    adjustment -= 0.5;
+    notes.push("all_support_caveated");
+  }
+
+  return {
+    adjustment: Number(adjustment.toFixed(3)),
+    notes: dedupeStrings(notes)
+  };
+}
+
+function assessEvidenceSeedQuality(
+  seed: HypothesisEvidenceSeed
+): { panel_adjustment: number; candidate_adjustment: number; notes: string[] } {
+  let panelAdjustment = 0;
+  let candidateAdjustment = 0;
+  const notes: string[] = [];
+
+  if (seed.source_type === "full_text") {
+    panelAdjustment += 0.75;
+    candidateAdjustment += 0.4;
+    notes.push("full_text_support");
+  } else if (seed.source_type === "abstract") {
+    panelAdjustment -= 1.1;
+    candidateAdjustment -= 0.85;
+    notes.push("abstract_support");
+  }
+
+  const confidence = typeof seed.confidence === "number" && Number.isFinite(seed.confidence) ? seed.confidence : 0.5;
+  if (confidence >= 0.9) {
+    panelAdjustment += 0.3;
+    candidateAdjustment += 0.2;
+  } else if (confidence < 0.55) {
+    panelAdjustment -= 1.2;
+    candidateAdjustment -= 1.1;
+    notes.push("low_confidence");
+  } else if (confidence < 0.7) {
+    panelAdjustment -= 0.55;
+    candidateAdjustment -= 0.45;
+    notes.push("mid_confidence");
+  }
+
+  const reason = (seed.confidence_reason || "").toLowerCase();
+  if (reason) {
+    if (/(could not be grounded|not be grounded|fallback evidence|no structured evidence|synthesi[sz]ed)/.test(reason)) {
+      panelAdjustment -= 1.8;
+      candidateAdjustment -= 1.6;
+      notes.push("ungrounded_support");
+    } else if (/(only the abstract|abstract-level|abstract only|indirect|supplemental)/.test(reason)) {
+      panelAdjustment -= 1.05;
+      candidateAdjustment -= 0.9;
+      notes.push("indirect_support");
+    }
+
+    if (/(single benchmark|external validity|limited|tentative|weak|caveat|partial support)/.test(reason)) {
+      panelAdjustment -= 0.35;
+      candidateAdjustment -= 0.3;
+      notes.push("limited_generalizability");
+    }
+  }
+
+  return {
+    panel_adjustment: Number(panelAdjustment.toFixed(3)),
+    candidate_adjustment: Number(candidateAdjustment.toFixed(3)),
+    notes: dedupeStrings(notes)
   };
 }
 

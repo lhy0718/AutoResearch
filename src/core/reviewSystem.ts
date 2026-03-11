@@ -14,6 +14,7 @@ export type ReviewSeverity = "low" | "medium" | "high";
 export type ReviewRecommendation =
   | "advance"
   | "revise_in_place"
+  | "backtrack_to_hypotheses"
   | "backtrack_to_design"
   | "backtrack_to_implement"
   | "manual_block";
@@ -112,7 +113,7 @@ export interface ReviewRevisionPlan {
 
 export interface ReviewDecision {
   outcome: ReviewRecommendation;
-  recommended_transition?: "advance" | "backtrack_to_design" | "backtrack_to_implement";
+  recommended_transition?: "advance" | "backtrack_to_hypotheses" | "backtrack_to_design" | "backtrack_to_implement";
   confidence: number;
   summary: string;
   rationale: string;
@@ -288,7 +289,7 @@ function buildReviewerSystemPrompt(spec: ReviewerSpec): string {
     "Use only facts explicitly present in the payload.",
     "Be conservative: if evidence is incomplete, say so instead of guessing.",
     "Keep the review concise and actionable.",
-    "Allowed recommendations: advance, revise_in_place, backtrack_to_design, backtrack_to_implement, manual_block."
+    "Allowed recommendations: advance, revise_in_place, backtrack_to_hypotheses, backtrack_to_design, backtrack_to_implement, manual_block."
   ].join("\n");
 }
 
@@ -381,7 +382,7 @@ function buildReviewerPrompt(
     '  "summary": string,',
     '  "score_1_to_5": number,',
     '  "confidence": number,',
-    '  "recommendation": "advance" | "revise_in_place" | "backtrack_to_design" | "backtrack_to_implement" | "manual_block",',
+    '  "recommendation": "advance" | "revise_in_place" | "backtrack_to_hypotheses" | "backtrack_to_design" | "backtrack_to_implement" | "manual_block",',
     '  "findings": [',
     "    {",
     '      "title": string,',
@@ -901,6 +902,14 @@ function buildDecision(
   const hasRuntimeFailure =
     report.failure_taxonomy.some((item) => item.category === "runtime_failure" && item.severity === "high") ||
     report.verifier_feedback?.status === "fail";
+  const supportedComparison = report.condition_comparisons.some((item) => item.hypothesis_supported === true);
+  const unsupportedComparison = report.condition_comparisons.some((item) => item.hypothesis_supported === false);
+  const hasClaimBlocker = highFindings.some((item) => item.dimension === "claim_verification");
+  const shouldResetHypotheses =
+    report.transition_recommendation?.action === "backtrack_to_hypotheses" ||
+    (!supportedComparison &&
+      unsupportedComparison &&
+      (report.overview.objective_status !== "met" || hasClaimBlocker));
   const hasMethodologyBlocker = highFindings.some((item) => item.dimension === "methodology" || item.dimension === "statistics");
   const hasIntegrityBlocker = highFindings.some((item) => item.dimension === "integrity" || item.dimension === "claim_verification");
   const mediumCount = findings.filter((item) => item.severity === "medium").length;
@@ -910,6 +919,9 @@ function buildDecision(
   if (hasRuntimeFailure) {
     outcome = "backtrack_to_implement";
     recommendedTransition = "backtrack_to_implement";
+  } else if (shouldResetHypotheses) {
+    outcome = "backtrack_to_hypotheses";
+    recommendedTransition = "backtrack_to_hypotheses";
   } else if (hasMethodologyBlocker) {
     outcome = "backtrack_to_design";
     recommendedTransition = "backtrack_to_design";
@@ -969,6 +981,8 @@ function summarizeDecision(
   switch (outcome) {
     case "backtrack_to_implement":
       return `Backtrack to implement: runtime or verifier issues still block paper readiness.`;
+    case "backtrack_to_hypotheses":
+      return `Backtrack to hypotheses: the current claim set is no longer well supported by the reviewed evidence bundle.`;
     case "backtrack_to_design":
       return `Backtrack to design: methodological or statistical blockers remain.`;
     case "manual_block":
@@ -1157,12 +1171,14 @@ function recommendationRank(value: ReviewRecommendation): number {
       return 0;
     case "revise_in_place":
       return 1;
-    case "backtrack_to_design":
-      return 2;
     case "backtrack_to_implement":
+      return 2;
+    case "backtrack_to_design":
       return 3;
-    case "manual_block":
+    case "backtrack_to_hypotheses":
       return 4;
+    case "manual_block":
+      return 5;
   }
 }
 
@@ -1170,6 +1186,7 @@ function normalizeRecommendation(value: unknown): ReviewRecommendation | undefin
   switch (value) {
     case "advance":
     case "revise_in_place":
+    case "backtrack_to_hypotheses":
     case "backtrack_to_design":
     case "backtrack_to_implement":
     case "manual_block":

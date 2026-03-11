@@ -2035,7 +2035,14 @@ export class TerminalApp {
     }
 
     const updated = await this.orchestrator.approveCurrent(run.id);
-    if (updated.status === "completed") {
+    if (
+      run.currentNode === "review" &&
+      updated.currentNode === "review" &&
+      updated.graph.nodeStates.review.status === "needs_approval" &&
+      updated.graph.pendingTransition?.action === "pause_for_human"
+    ) {
+      this.pushLog("Review remains blocked. Use /agent transition or follow the suggested jump command.");
+    } else if (updated.status === "completed") {
       this.pushLog("Run completed.");
     } else {
       this.pushLog(`Approved ${run.currentNode}. Next node is ${updated.currentNode}.`);

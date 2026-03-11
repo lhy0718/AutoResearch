@@ -286,6 +286,220 @@ describe("normalizeGenerateHypothesesRequest", () => {
     expect(selectionJson.scores?.[0]?.bundling_penalty).toBeTypeOf("number");
   });
 
+  it("down-weights abstract-only or caveated evidence during hypothesis selection", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-hypothesis-evidence-quality-"));
+    process.chdir(root);
+
+    const runId = "run-hypothesis-evidence-quality";
+    const run = makeRun(runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "evidence_store.jsonl"),
+      [
+        JSON.stringify({
+          evidence_id: "ev_1",
+          paper_id: "paper_1",
+          claim: "Message schemas may reduce ambiguity.",
+          evidence_span: "The abstract suggests structured handoffs can help.",
+          limitation_slot: "No full-text validation was available.",
+          dataset_slot: "HumanEval",
+          metric_slot: "pass@1 variance",
+          source_type: "abstract",
+          confidence: 0.58,
+          confidence_reason: "Only the abstract supports this claim."
+        }),
+        JSON.stringify({
+          evidence_id: "ev_2",
+          paper_id: "paper_2",
+          claim: "Execution feedback improves reproducibility.",
+          evidence_span: "Repeated test-repair loops reduced run-to-run variance in the full paper.",
+          limitation_slot: "Adds validator cost.",
+          dataset_slot: "MBPP",
+          metric_slot: "executability",
+          source_type: "full_text",
+          confidence: 0.93
+        })
+      ].join("\n") + "\n",
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "corpus.jsonl"),
+      [
+        JSON.stringify({ paper_id: "paper_1", title: "Paper One" }),
+        JSON.stringify({ paper_id: "paper_2", title: "Paper Two" })
+      ].join("\n") + "\n",
+      "utf8"
+    );
+
+    const llm = new QueueJsonLLMClient([
+      JSON.stringify({
+        summary: "Mapped evidence into two axes.",
+        axes: [
+          {
+            id: "ax_1",
+            label: "Structured messaging",
+            mechanism: "Typed handoffs may reduce ambiguity.",
+            intervention: "Constrain agent messages to fixed schemas.",
+            evaluation_hint: "Measure run-to-run variance.",
+            evidence_links: ["ev_1"]
+          },
+          {
+            id: "ax_2",
+            label: "Execution feedback",
+            mechanism: "Validator-backed correction reduces failure cascades.",
+            intervention: "Add bounded execute-test-repair loops.",
+            evaluation_hint: "Measure failure-mode stability.",
+            evidence_links: ["ev_2"]
+          }
+        ]
+      }),
+      JSON.stringify({
+        summary: "Generated mechanism drafts.",
+        candidates: [
+          {
+            id: "cand_1",
+            text: "Schema-constrained handoffs will reduce run-to-run variance relative to free-form chat.",
+            novelty: 5,
+            feasibility: 4,
+            testability: 5,
+            cost: 2,
+            expected_gain: 5,
+            evidence_links: ["ev_1"],
+            axis_ids: ["ax_1"],
+            rationale: "The intervention is easy to implement."
+          }
+        ]
+      }),
+      JSON.stringify({
+        summary: "Generated contradiction drafts.",
+        candidates: [
+          {
+            id: "cand_2",
+            text: "Schema-constrained handoffs help less when tasks already expose deterministic interfaces.",
+            novelty: 3,
+            feasibility: 4,
+            testability: 4,
+            cost: 2,
+            expected_gain: 3,
+            evidence_links: ["ev_1"],
+            axis_ids: ["ax_1"],
+            rationale: "The effect likely weakens when ambiguity is already low."
+          }
+        ]
+      }),
+      JSON.stringify({
+        summary: "Generated intervention drafts.",
+        candidates: [
+          {
+            id: "cand_3",
+            text: "Bounded execute-test-repair loops will improve reproducibility more than extra peer discussion.",
+            novelty: 4,
+            feasibility: 4,
+            testability: 5,
+            cost: 2,
+            expected_gain: 5,
+            evidence_links: ["ev_2"],
+            axis_ids: ["ax_2"],
+            rationale: "Execution-grounded correction is directly testable."
+          }
+        ]
+      }),
+      JSON.stringify({
+        summary: "Selected the strongest drafts.",
+        reviews: [
+          {
+            candidate_id: "mechanism_1",
+            keep: true,
+            groundedness: 5,
+            causal_clarity: 5,
+            falsifiability: 5,
+            experimentability: 5,
+            reproducibility_specificity: 5,
+            reproducibility_signals: ["run_to_run_variance"],
+            measurement_hint: "Measure repeated-run variance across fixed seeds.",
+            limitation_reflection: 4,
+            measurement_readiness: 5,
+            strengths: ["Clear intervention and baseline."],
+            weaknesses: ["Evidence is abstract-only."],
+            critique_summary: "Good idea but the support is indirect."
+          },
+          {
+            candidate_id: "contradiction_1",
+            keep: false,
+            groundedness: 3,
+            causal_clarity: 3,
+            falsifiability: 2,
+            experimentability: 2,
+            reproducibility_specificity: 2,
+            reproducibility_signals: [],
+            limitation_reflection: 3,
+            measurement_readiness: 1,
+            strengths: ["Interesting boundary condition."],
+            weaknesses: ["Still underspecified."],
+            critique_summary: "Too weak."
+          },
+          {
+            candidate_id: "intervention_1",
+            keep: true,
+            groundedness: 5,
+            causal_clarity: 5,
+            falsifiability: 5,
+            experimentability: 5,
+            reproducibility_specificity: 5,
+            reproducibility_signals: ["failure_mode_stability", "run_to_run_variance"],
+            measurement_hint: "Track failure-mode stability and repeated-run variance.",
+            limitation_reflection: 4,
+            measurement_readiness: 5,
+            strengths: ["Directly implementable."],
+            weaknesses: ["Adds validator cost."],
+            critique_summary: "Best overall evidence support."
+          }
+        ]
+      })
+    ]);
+
+    const eventStream = new InMemoryEventStream();
+    const node = createGenerateHypothesesNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream,
+      llm,
+      pdfTextLlm: llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const hypotheses = await readFile(path.join(runDir, "hypotheses.jsonl"), "utf8");
+    const selection = await readFile(path.join(runDir, "hypothesis_generation", "selection.json"), "utf8");
+    const selectionJson = JSON.parse(selection) as {
+      scores?: Array<{
+        candidate_id: string;
+        evidence_quality_adjustment?: number;
+        evidence_quality_notes?: string[];
+        final_score?: number;
+      }>;
+    };
+
+    expect(hypotheses).toContain('"candidate_id":"intervention_1"');
+    expect(hypotheses).toContain('"selection_rank":1');
+    expect(hypotheses).toContain('"evidence_quality_adjustment"');
+    const mechanismScore = selectionJson.scores?.find((item) => item.candidate_id === "mechanism_1");
+    const interventionScore = selectionJson.scores?.find((item) => item.candidate_id === "intervention_1");
+    expect(mechanismScore?.evidence_quality_adjustment).toBeLessThan(0);
+    expect(mechanismScore?.evidence_quality_notes).toContain("abstract_support");
+    expect(interventionScore?.evidence_quality_adjustment).toBeGreaterThan(0);
+    expect((interventionScore?.final_score ?? 0)).toBeGreaterThan(mechanismScore?.final_score ?? 0);
+    const logs = eventStream.history().map((event) => String(event.payload?.text ?? ""));
+    expect(logs.some((line) => line.includes("Evidence-quality guardrail"))).toBe(true);
+  });
+
   it("fails fast when no evidence items are available", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-hypothesis-node-empty-"));
     process.chdir(root);

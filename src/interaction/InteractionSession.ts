@@ -1460,7 +1460,16 @@ export class InteractionSession {
       return { ok: false, reason: "target run not found" };
     }
     const updated = await this.orchestrator.approveCurrent(run.id);
-    this.pushLog(updated.status === "completed" ? "Run completed." : `Approved ${run.currentNode}. Next node is ${updated.currentNode}.`);
+    if (
+      run.currentNode === "review" &&
+      updated.currentNode === "review" &&
+      updated.graph.nodeStates.review.status === "needs_approval" &&
+      updated.graph.pendingTransition?.action === "pause_for_human"
+    ) {
+      this.pushLog("Review remains blocked. Use /agent transition or follow the suggested jump command.");
+    } else {
+      this.pushLog(updated.status === "completed" ? "Run completed." : `Approved ${run.currentNode}. Next node is ${updated.currentNode}.`);
+    }
     await this.refreshRunIndex();
     return { ok: true };
   }

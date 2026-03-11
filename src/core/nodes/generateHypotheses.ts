@@ -62,6 +62,13 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
         };
       }
 
+      const weakEvidenceCount = evidenceRows.filter((item) => isWeakEvidenceSeed(item)).length;
+      if (weakEvidenceCount > 0) {
+        emitLog(
+          `Evidence-quality guardrail: ${weakEvidenceCount}/${evidenceRows.length} evidence item(s) are abstract-only or caveated, so hypothesis selection will down-weight them.`
+        );
+      }
+
       emitLog(
         `Generating hypotheses from ${evidenceRows.length} evidence item(s) with branchCount=${request.branchCount} and topK=${request.topK}.`
       );
@@ -90,8 +97,10 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
         diversity_penalty: selectionScores.get(candidate.id)?.diversity_penalty,
         final_score: selectionScores.get(candidate.id)?.final_score,
         text: candidate.text,
-        score: scoreCandidate(candidate),
+        score: selectionScores.get(candidate.id)?.base_score ?? scoreCandidate(candidate, evidenceById),
         evidence_links: candidate.evidence_links,
+        evidence_quality_adjustment: selectionScores.get(candidate.id)?.evidence_quality_adjustment,
+        evidence_quality_notes: selectionScores.get(candidate.id)?.evidence_quality_notes,
         evidence_snippets: uniqueStrings(
           candidate.evidence_links
             .map((evidenceId) => buildEvidenceSnippet(evidenceById.get(evidenceId)))
@@ -262,7 +271,11 @@ function uniqueStrings(items: string[]): string[] {
   return out;
 }
 
-function scoreCandidate(candidate: HypothesisCandidate): number {
+function scoreCandidate(
+  candidate: HypothesisCandidate,
+  evidenceById: Map<string, EvidenceRow>
+): number {
+  const evidenceAdjustment = averageEvidenceAdjustment(candidate, evidenceById);
   return (
     candidate.novelty +
     candidate.feasibility +
@@ -275,6 +288,58 @@ function scoreCandidate(candidate: HypothesisCandidate): number {
     candidate.cost +
     (candidate.reproducibility_specificity ?? 0) +
     (candidate.limitation_reflection ?? 0) +
-    (candidate.measurement_readiness ?? 0)
+    (candidate.measurement_readiness ?? 0) +
+    evidenceAdjustment
   );
+}
+
+function averageEvidenceAdjustment(
+  candidate: HypothesisCandidate,
+  evidenceById: Map<string, EvidenceRow>
+): number {
+  const linkedEvidence = uniqueStrings(candidate.evidence_links)
+    .map((evidenceId) => evidenceById.get(evidenceId))
+    .filter((item): item is EvidenceRow => Boolean(item));
+  if (linkedEvidence.length === 0) {
+    return -0.75;
+  }
+  const average =
+    linkedEvidence.reduce((sum, item) => sum + estimateEvidenceAdjustment(item), 0) / linkedEvidence.length;
+  return Number(average.toFixed(3));
+}
+
+function estimateEvidenceAdjustment(evidence: EvidenceRow): number {
+  let adjustment = 0;
+  if (evidence.source_type === "full_text") {
+    adjustment += 0.4;
+  } else if (evidence.source_type === "abstract") {
+    adjustment -= 0.85;
+  }
+
+  const confidence = typeof evidence.confidence === "number" && Number.isFinite(evidence.confidence)
+    ? evidence.confidence
+    : 0.5;
+  if (confidence < 0.55) {
+    adjustment -= 1.1;
+  } else if (confidence < 0.7) {
+    adjustment -= 0.45;
+  } else if (confidence >= 0.9) {
+    adjustment += 0.2;
+  }
+
+  const reason = typeof evidence.confidence_reason === "string" ? evidence.confidence_reason.toLowerCase() : "";
+  if (/(could not be grounded|not be grounded|fallback evidence|no structured evidence|synthesi[sz]ed)/.test(reason)) {
+    adjustment -= 1.6;
+  } else if (/(only the abstract|abstract-level|abstract only|indirect|supplemental)/.test(reason)) {
+    adjustment -= 0.9;
+  }
+  if (/(single benchmark|external validity|limited|tentative|weak|caveat|partial support)/.test(reason)) {
+    adjustment -= 0.3;
+  }
+
+  return Number(adjustment.toFixed(3));
+}
+
+function isWeakEvidenceSeed(evidence: EvidenceRow): boolean {
+  return evidence.source_type === "abstract" || estimateEvidenceAdjustment(evidence) <= -0.75;
 }

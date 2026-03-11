@@ -1680,12 +1680,21 @@ function labelReviewAction(command: string): string {
       return "Approve review";
     case "/agent run write_paper":
       return "Run write_paper";
+    case "/agent review":
+      return "Refresh review";
     case "/agent apply":
       return "Apply transition";
     case "/agent transition":
       return "Show transition";
     case "/agent jump analyze_results":
+    case "/agent jump analyze_results --force":
       return "Jump analyze_results";
+    case "/agent jump generate_hypotheses --force":
+      return "Jump generate_hypotheses";
+    case "/agent jump design_experiments --force":
+      return "Jump design_experiments";
+    case "/agent jump implement_experiments --force":
+      return "Jump implement_experiments";
     default:
       return command.replace(/^\//, "");
   }

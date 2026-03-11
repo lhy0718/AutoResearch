@@ -159,15 +159,16 @@ Typical web flow:
 
 AutoLabOS has two layers that are easy to conflate:
 
-- Orchestration layer: `/agent ...` targets the 8 graph nodes. In code, `AgentId` is currently an alias of `GraphNodeId`.
-- Role layer: nodes emit or run `agentRole` identities such as `implementer`, `runner`, and `paper_writer` inside prompts, events, and session managers.
+- Orchestration layer: `/agent ...` targets the 9 graph nodes. In code, `AgentId` is currently an alias of `GraphNodeId`.
+- Role layer: nodes emit or run exported `agentRole` identities such as `implementer`, `runner`, `paper_writer`, and `reviewer`.
+- Some nodes also fan out into node-internal prompt personas. Today the clearest examples are the evidence synthesizer plus skeptical reviewer inside `generate_hypotheses`, and the 5-specialist review panel inside `review`.
 
 ### Node-to-Role Map
 
 ```mermaid
 flowchart TB
-    subgraph Orchestration["Orchestration layer (`/agent` targets)"]
-        O["AgentOrchestrator"]
+    subgraph Orchestration["Orchestration layer (`/agent` targets, 9 nodes)"]
+        O["AgentOrchestrator + StateGraphRuntime"]
         N1["collect_papers"]
         N2["analyze_papers"]
         N3["generate_hypotheses"]
@@ -181,7 +182,7 @@ flowchart TB
         O --> N1 --> N2 --> N3 --> N4 --> N5 --> N6 --> N7 --> N8 --> N9
     end
 
-    subgraph Roles["Role layer (`agentRole`)"]
+    subgraph Roles["Exported role layer (`agentRole`)"]
         R1["collector_curator"]
         R2["reader_evidence_extractor"]
         R3["hypothesis_agent"]
@@ -193,15 +194,33 @@ flowchart TB
         R9["reviewer"]
     end
 
+    subgraph Internal["Node-internal prompt personas"]
+        P1["evidence synthesizer"]
+        P2["skeptical reviewer"]
+        P3["claim verifier"]
+        P4["methodology reviewer"]
+        P5["statistics reviewer"]
+        P6["writing readiness reviewer"]
+        P7["integrity reviewer"]
+    end
+
     N1 -. primary role .-> R1
     N2 -. primary role .-> R2
     N3 -. primary role .-> R3
+    N3 -. synthesis .-> P1
+    N3 -. critique .-> P2
     N4 -. primary role .-> R4
     N5 -. primary role .-> R5
     N6 -. primary role .-> R6
     N7 -. primary role .-> R7
-    N8 -. primary role .-> R9
-    N9 -. primary role .-> R8
+    N8 -. panel role .-> R9
+    N8 -. specialist .-> P3
+    N8 -. specialist .-> P4
+    N8 -. specialist .-> P5
+    N8 -. specialist .-> P6
+    N8 -. specialist .-> P7
+    N9 -. drafting .-> R8
+    N9 -. critique .-> R9
 ```
 
 ### Execution Graph
@@ -219,11 +238,15 @@ stateDiagram-v2
     analyze_results --> implement_experiments: backtrack_to_implement
     analyze_results --> design_experiments: backtrack_to_design
     analyze_results --> generate_hypotheses: backtrack_to_hypotheses
-    review --> write_paper: approve
+    review --> write_paper: approve + advance
+    review --> implement_experiments: approve + backtrack_to_implement
+    review --> design_experiments: approve + backtrack_to_design
+    review --> generate_hypotheses: approve + backtrack_to_hypotheses
+    review --> review: pause_for_human
     write_paper --> [*]: approve
 ```
 
-Default `agent_approval` mode pauses after every node. `implement_experiments` is the one forward step that can skip its pause through automatic handoff to `run_experiments`, `analyze_results` is the node that can explicitly redirect the graph backward, and `review` is the manual gate before `write_paper`.
+Default `agent_approval` mode pauses after every node. `implement_experiments` is the one forward step that can skip its pause through automatic handoff to `run_experiments`, `analyze_results` can emit explicit backward recommendations, and `review` now packages a review decision that approval can turn into an advance, a backtrack, or a human hold.
 
 ### Phase-by-Phase Connection Graphs
 
@@ -240,10 +263,12 @@ flowchart LR
     Enrich --> Corpus["corpus.jsonl + bibtex.bib"]
 
     Corpus --> AP["analyze_papers"]
-    AP --> RE["reader_evidence_extractor"]
-    RE --> Select["paper selection + rerank"]
-    Select --> Pdf["local PDF/text analysis or Responses API PDF"]
-    Pdf --> Evidence["paper_summaries.jsonl + evidence_store.jsonl"]
+    AP --> Select["selection request + hybrid rerank"]
+    Select --> Manifest["analysis_manifest resume / prune"]
+    Manifest --> RE["reader_evidence_extractor"]
+    RE --> Pdf["local text/image analysis or Responses API PDF"]
+    Pdf --> ReviewLoop["extractor -> reviewer normalization"]
+    ReviewLoop --> Evidence["paper_summaries.jsonl + evidence_store.jsonl"]
 ```
 
 #### Hypothesis and Experiment Design
@@ -252,17 +277,22 @@ flowchart LR
 flowchart LR
     Evidence["paper_summaries.jsonl + evidence_store.jsonl"] --> GH["generate_hypotheses"]
     GH --> HA["hypothesis_agent"]
-    HA --> Axes["evidence axes"]
-    Axes --> Drafts["candidate drafts"]
-    Drafts --> Reviews["candidate reviews"]
-    Reviews --> Select["selection / top-k"]
-    Select --> Hyp["hypotheses.jsonl"]
+    HA --> Axes["evidence synthesizer -> evidence axes"]
+    Axes --> ToT["ToT branch expansion"]
+    ToT --> Drafts["mechanism / contradiction / intervention drafts"]
+    Drafts --> Reviews["skeptical reviewer"]
+    Reviews --> Select["diversity + evidence-quality top-k selection"]
+    Select --> Hyp["hypotheses.jsonl + axes/reviews/llm_trace"]
 
     Hyp --> DE["design_experiments"]
     DE --> ED["experiment_designer"]
-    ED --> Profiles["constraint profile + objective profile"]
+    ED --> Profiles["constraint profile + objective metric profile"]
     Profiles --> Plans["design candidates"]
-    Plans --> PlanYaml["experiment_plan.yaml"]
+    Plans --> Bundle{"supports managed real_execution bundle?"}
+    Bundle -->|yes| Managed["bundle sections + runnable profiles"]
+    Bundle -->|no| Plain["plain experiment plan"]
+    Managed --> PlanYaml["experiment_plan.yaml"]
+    Plain --> PlanYaml
 ```
 
 #### Implementation, Execution, and Result Loop
@@ -272,10 +302,10 @@ flowchart LR
     PlanYaml["experiment_plan.yaml"] --> IE["implement_experiments"]
     IE --> IM["ImplementSessionManager"]
     IM --> Impl["implementer"]
-    IM --> Localizer["ImplementationLocalizer"]
+    IM --> Localizer["ImplementationLocalizer + branch planning"]
     IM --> Codex["Codex CLI session"]
-    IM --> Memory["episode + long-term memory"]
-    Codex --> VerifyPatch["local verify report"]
+    IM --> Memory["EpisodeMemory + LongTermStore"]
+    Codex --> VerifyPatch["local verification + verify reports"]
     VerifyPatch --> Handoff{"auto handoff?"}
 
     Handoff -->|yes| RX["run_experiments"]
@@ -283,11 +313,12 @@ flowchart LR
     Approve --> RX
 
     RX --> Runner["runner"]
-    Runner --> ACI["ACI test + command execution"]
-    ACI --> Metrics["metrics.json + verifier report"]
+    Runner --> ACI["Local ACI preflight/tests/command execution"]
+    ACI --> Metrics["metrics.json + run_verifier_feedback"]
+    Metrics -. runner feedback .-> IM
     Metrics --> AR["analyze_results"]
     AR --> Analyst["analyst_statistician"]
-    Analyst --> Synth["analysis synthesis + transition recommendation"]
+    Analyst --> Synth["objective evaluation + synthesis + transition recommendation"]
 
     Synth -->|advance| RV["review"]
     Synth -->|backtrack_to_implement| IE
@@ -295,18 +326,37 @@ flowchart LR
     Synth -->|backtrack_to_hypotheses| GH["generate_hypotheses"]
 ```
 
-#### Writing and Review
+#### Review, Writing, and Surfacing
 
 ```mermaid
 flowchart LR
-    Inputs["corpus + evidence + hypotheses + experiment_plan + result_analysis"] --> WP["write_paper"]
+    Inputs["result_analysis + corpus + evidence + hypotheses + experiment_plan"] --> RV["review"]
+    RV --> Panel["runReviewPanel"]
+    Panel --> Claim["claim verifier"]
+    Panel --> Method["methodology reviewer"]
+    Panel --> Stats["statistics reviewer"]
+    Panel --> Ready["writing readiness reviewer"]
+    Panel --> Integrity["integrity reviewer"]
+    Panel --> Score["scorecard + consistency + bias"]
+    Panel --> Decision["decision + revision_plan"]
+    Score --> Packet["review_packet.json + checklist.md"]
+    Decision --> Packet
+    Packet --> Insight["review insight + suggested actions"]
+    Insight --> Gate{"approve review?"}
+
+    Gate -->|advance| WP["write_paper"]
+    Gate -->|backtrack_to_hypotheses| GH["generate_hypotheses"]
+    Gate -->|backtrack_to_design| DE["design_experiments"]
+    Gate -->|backtrack_to_implement| IE["implement_experiments"]
+    Gate -->|pause_for_human| Hold["stay on review"]
+
     WP --> PWM["PaperWriterSessionManager"]
     PWM --> Mode["Codex session or staged LLM"]
     Mode --> Writer["paper_writer"]
     Mode --> Reviewer["reviewer"]
     Writer --> Outline["outline"]
     Outline --> Draft["draft"]
-    Draft --> Review["review"]
+    Draft --> Review["review critique"]
     Review --> Final["finalize"]
     Final --> Tex["paper/main.tex + references.bib + evidence_links.json"]
     Tex --> Build{"PDF build enabled?"}
@@ -319,14 +369,15 @@ flowchart LR
 | --- | --- | --- |
 | `collect_papers` | `collector_curator` | Semantic Scholar search, de-duplication, enrichment, and BibTeX generation |
 | `analyze_papers` | `reader_evidence_extractor` | ranked paper selection plus resumable planner -> extractor -> reviewer analysis over local or Responses API PDF inputs |
-| `generate_hypotheses` | `hypothesis_agent` | staged evidence-axis -> draft -> review -> selection pipeline |
+| `generate_hypotheses` | `hypothesis_agent` | evidence-axis synthesis, ToT branching, skeptical review, and diversity-aware top-k selection |
 | `design_experiments` | `experiment_designer` | candidate design generation and `experiment_plan.yaml` selection |
 | `implement_experiments` | `implementer` | `ImplementSessionManager`, localization, Codex patching, verification, and optional handoff |
 | `run_experiments` | `runner` | ACI preflight/tests/command execution, metrics capture, and verifier feedback |
 | `analyze_results` | `analyst_statistician` | objective evaluation, result synthesis, and transition recommendation |
+| `review` | `reviewer` | `runReviewPanel`, 5 specialist reviewers, heuristic+LLM refinement, review packet generation, and transition recommendation |
 | `write_paper` | `paper_writer`, `reviewer` | `PaperWriterSessionManager`, outline/draft/review/finalize stages, optional LaTeX repair |
 
-The role catalog is broader than the concrete runtime wiring. Today the deepest multi-turn session managers are `implement_experiments` and `write_paper`, while the earlier nodes mainly use structured node handlers plus role-specific prompts and events.
+The role catalog is broader than the concrete runtime wiring. Today the deepest multi-turn session managers are `implement_experiments` and `write_paper`, `review` runs a specialist review panel behind the shared `reviewer` role and then turns that panel into a reusable review packet plus suggested commands, and `generate_hypotheses` fans out into internal evidence-synthesis and skeptical-review prompts before returning to the main graph.
 
 ### Artifact Flow
 
@@ -345,7 +396,7 @@ flowchart TB
     F1 --> G["analyze_results"]
     G --> G1["result_analysis.json<br/>result_analysis_synthesis.json<br/>transition_recommendation.json<br/>figures/performance.svg"]
     G1 --> H["review"]
-    H --> H1["review/review_packet.json<br/>review/checklist.md"]
+    H --> H1["review/findings.jsonl<br/>review/scorecard.json<br/>review/consistency_report.json<br/>review/bias_report.json<br/>review/revision_plan.json<br/>review/decision.json<br/>review/review_packet.json<br/>review/checklist.md"]
     H1 --> I["write_paper"]
     I --> I1["paper/main.tex<br/>paper/references.bib<br/>paper/evidence_links.json<br/>paper/draft.json<br/>paper/validation.json<br/>paper/main.pdf (optional)"]
 ```
@@ -366,20 +417,46 @@ flowchart TB
     Runtime --> Nodes["9-node workflow execution"]
     Runtime --> Artifacts["Run artifacts<br/>.autolabos/runs/<run_id>"]
     Runtime --> State["Run state and memory<br/>context + episodes + long-term store"]
+    Runtime --> Insight["Analyze-results / review insight cards"]
 
     Artifacts --> Web
     State --> TUI
+    Insight --> TUI
+    Insight --> Web
+```
+
+### Review Decision Loop
+
+```mermaid
+flowchart LR
+    ReviewNode["review node"] --> Packet["review_packet.json"]
+    Packet --> Parse["parseReviewPacket"]
+    Parse --> Insight["buildReviewInsightCard<br/>formatReviewPacketLines"]
+    Insight --> TUI["TUI active run insight<br/>/agent review output"]
+    Insight --> Web["Web review preview<br/>suggested action buttons"]
+    TUI --> Approve["approve current"]
+    Web --> Approve
+    Approve --> Runtime["StateGraphRuntime.approveCurrent"]
+    Runtime -->|advance| Paper["write_paper"]
+    Runtime -->|safe backtrack| Backtrack["generate_hypotheses / design_experiments / implement_experiments"]
+    Runtime -->|pause_for_human| ReviewNode
 ```
 
 ### Concrete Agent Runtime
 
 ```mermaid
 flowchart LR
-    UI["CLI / TUI / Web UI"] --> Session["InteractionSession / web composer"]
-    Session --> Orchestrator["AgentOrchestrator"]
-    Orchestrator --> Runtime["StateGraphRuntime"]
+    UI["CLI / TUI / Web UI"] --> Session["InteractionSession + web composer"]
+    Session --> Bootstrap["createAutoLabOSRuntime"]
+    Bootstrap --> Orchestrator["AgentOrchestrator"]
+    Bootstrap --> Overnight["AutonomousRunController"]
+    Bootstrap --> Runtime["StateGraphRuntime"]
+    Bootstrap --> Providers["RoutedLLMClient + CodexCliClient + SemanticScholarClient + ResponsesPdfAnalysisClient + LocalAciAdapter"]
+    Orchestrator --> Runtime
+    Overnight --> Orchestrator
     Runtime --> Registry["DefaultNodeRegistry"]
     Runtime --> Stores["RunStore + CheckpointStore + EventStream"]
+    Providers --> Registry
 
     Registry --> Collect["collect_papers"]
     Registry --> Analyze["analyze_papers"]
@@ -392,38 +469,26 @@ flowchart LR
     Registry --> Paper["write_paper"]
 
     Collect --> Scholar["Semantic Scholar + enrichment"]
-    Analyze --> Pdf["Local text/image PDF analysis or Responses API PDF"]
-    Hyp --> ToT["ToT-style branching + staged review"]
-    Design --> ToT
-
-    Impl --> ImplMgr["ImplementSessionManager"]
-    ImplMgr --> Localizer["ImplementationLocalizer"]
-    ImplMgr --> Codex["Codex CLI session"]
-    ImplMgr --> ACI["Local ACI"]
-    ImplMgr --> Reflex["EpisodeMemory + LongTermStore"]
-
-    Run --> ACI
-    Run --> Verify["Metrics + verifier report"]
-    Verify -. feedback loop .-> ImplMgr
-
-    Results --> Synthesis["Objective evaluation + analysis synthesis + transition recommendation"]
-
-    Paper --> PaperMgr["PaperWriterSessionManager"]
-    PaperMgr --> Writer["paper_writer"]
-    PaperMgr --> Reviewer["reviewer"]
-    PaperMgr --> Codex
-    PaperMgr --> LLM["OpenAI / Codex LLM"]
-    PaperMgr --> Latex["Optional LaTeX compile + repair"]
+    Analyze --> AnalyzeStack["paperSelection + paperAnalyzer + analysis manifest"]
+    Hyp --> HypStack["researchPlanning.generateHypothesesFromEvidence + ToT"]
+    Design --> DesignStack["researchPlanning.designExperimentsFromHypotheses"]
+    Impl --> ImplStack["ImplementSessionManager + ImplementationLocalizer"]
+    Run --> RunStack["LocalAciAdapter + runVerifierFeedback"]
+    Results --> ResultStack["resultAnalysis + synthesis + transition recommendation"]
+    Review --> ReviewStack["runReviewPanel + reviewPacket + transition recommendation"]
+    Paper --> PaperStack["PaperWriterSessionManager + paperWriting + LaTeX build"]
 ```
 
 Key source areas:
 
-- `src/runtime/createRuntime.ts`: wires config, providers, stores, event stream, runtime, and orchestrator
+- `src/runtime/createRuntime.ts`: wires config, providers, stores, runtime, orchestrator, and the shared execution dependencies
 - `src/interaction/*`: shared command/session layer used by the TUI and the web composer
 - `src/core/stateGraph/*`: node execution, retries, approvals, budgets, jumps, and checkpoints
-- `src/core/nodes/*`: the 8 workflow handlers and their artifact-writing logic
-- `src/integrations/*` and `src/tools/*`: provider clients, Semantic Scholar access, and local execution adapters
-- `src/web/*` and `web/src/*`: local HTTP server plus browser UI on top of the same runtime
+- `src/core/nodes/*`: the 9 workflow handlers and their artifact-writing logic
+- `src/core/analysis/researchPlanning.ts`, `src/core/reviewSystem.ts`, and `src/core/reviewPacket.ts`: multi-stage hypothesis generation/design plus the specialist review panel, packet building, and review surfacing
+- `src/core/agents/*`: session managers, exported roles, and search-backed implementation localization
+- `src/integrations/*` and `src/tools/*`: provider clients, Semantic Scholar access, Responses PDF analysis, and local execution adapters
+- `src/web/*`, `web/src/*`, `src/interaction/*`, and `src/tui/*`: local HTTP server, browser UI, and terminal surfaces that expose analysis/review insight cards
 
 ## Most-Used Commands
 
