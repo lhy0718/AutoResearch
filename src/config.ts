@@ -37,6 +37,14 @@ import { askChoice, askLine, askRequiredLine, PromptReader } from "./utils/promp
 
 export const DEFAULT_PRIMARY_LLM_MODE = "codex_chatgpt_only" as const;
 export const DEFAULT_PDF_ANALYSIS_MODE = "codex_text_image_hybrid" as const;
+export const DEFAULT_CODEX_CHAT_SETUP_MODEL = "gpt-5.3-codex-spark" as const;
+export const DEFAULT_CODEX_CHAT_SETUP_REASONING_EFFORT = "medium" as const;
+
+export function getDefaultPdfAnalysisModeForLlmMode(
+  llmMode: "codex_chatgpt_only" | "openai_api"
+): "codex_text_image_hybrid" | "responses_api_pdf" {
+  return llmMode === "openai_api" ? "responses_api_pdf" : DEFAULT_PDF_ANALYSIS_MODE;
+}
 
 export interface AppPaths {
   cwd: string;
@@ -229,27 +237,36 @@ export async function runSetupWizard(
   );
   const llmMode = await askPrimaryLlmMode(promptReader);
   await maybeNotifyCodexLoginStatus(paths, llmMode, promptReader, opts);
-  const defaultCodexChatSetupModel = DEFAULT_CODEX_MODEL;
+  const defaultCodexChatSetupModel = DEFAULT_CODEX_CHAT_SETUP_MODEL;
   const defaultCodexBackendSetupModel = RECOMMENDED_CODEX_MODEL;
   const codexChatModelChoice =
     llmMode === "codex_chatgpt_only"
-      ? await askCodexModel("General chat model", defaultCodexChatSetupModel, promptReader, DEFAULT_CODEX_MODEL)
+      ? await askCodexModel(
+          "General chat model",
+          defaultCodexChatSetupModel,
+          promptReader,
+          DEFAULT_CODEX_CHAT_SETUP_MODEL
+        )
       : DEFAULT_CODEX_MODEL;
   const codexChatReasoningEffort = await askCodexReasoningEffort(
     "General chat reasoning effort",
     resolveCodexModelSelection(codexChatModelChoice).model,
-    "low",
-    "low",
+    DEFAULT_CODEX_CHAT_SETUP_REASONING_EFFORT,
+    DEFAULT_CODEX_CHAT_SETUP_REASONING_EFFORT,
     promptReader
   );
-  const codexTaskModelChoice =
+  const researchBackendModelChoice =
     llmMode === "codex_chatgpt_only"
       ? await askCodexModel(
-          "Research backend model",
+          "Research backend selection",
           defaultCodexBackendSetupModel,
           promptReader,
           RECOMMENDED_CODEX_MODEL
         )
+      : await askOpenAiResponsesModel("Research backend selection", DEFAULT_OPENAI_RESPONSES_MODEL, promptReader);
+  const codexTaskModelChoice =
+    llmMode === "codex_chatgpt_only"
+      ? researchBackendModelChoice
       : DEFAULT_CODEX_MODEL;
   const codexTaskReasoningEffort = await askCodexReasoningEffort(
     "Research backend reasoning effort",
@@ -280,11 +297,7 @@ export async function runSetupWizard(
       : ("low" as AppConfig["providers"]["openai"]["reasoning_effort"]);
   const openAiTaskModel =
     llmMode === "openai_api"
-      ? await askOpenAiResponsesModel(
-          "OpenAI API research backend model",
-          DEFAULT_OPENAI_RESPONSES_MODEL,
-          promptReader
-        )
+      ? researchBackendModelChoice
       : DEFAULT_OPENAI_RESPONSES_MODEL;
   const openAiReasoningEffort =
     llmMode === "openai_api"
@@ -298,7 +311,7 @@ export async function runSetupWizard(
       : (DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT as AppConfig["providers"]["openai"]["reasoning_effort"]);
   const openAiExperimentModel = openAiTaskModel;
   const openAiExperimentReasoningEffort = openAiReasoningEffort;
-  const pdfAnalysisMode = await askPdfAnalysisMode(promptReader, "Research backend PDF mode");
+  const pdfAnalysisMode = getDefaultPdfAnalysisModeForLlmMode(llmMode);
   const codexPdfModelChoice = codexTaskModelChoice;
   const codexPdfReasoningEffort = codexTaskReasoningEffort;
   const openAiPdfModel = openAiTaskModel;
@@ -374,7 +387,7 @@ export async function runNonInteractiveSetup(
   input: NonInteractiveSetupInput
 ): Promise<AppConfig> {
   const llmMode = input.llmMode || DEFAULT_PRIMARY_LLM_MODE;
-  const pdfAnalysisMode = input.pdfAnalysisMode || DEFAULT_PDF_ANALYSIS_MODE;
+  const pdfAnalysisMode = input.pdfAnalysisMode || getDefaultPdfAnalysisModeForLlmMode(llmMode);
   const defaultConstraints = (input.defaultConstraints || ["recent papers", "last 5 years"])
     .map((item) => item.trim())
     .filter(Boolean);
@@ -385,8 +398,8 @@ export async function runNonInteractiveSetup(
     defaultConstraints,
     defaultObjectiveMetric: (input.defaultObjectiveMetric || "state-of-the-art reproducibility").trim(),
     llmMode,
-    codexChatModelChoice: input.codexChatModelChoice || DEFAULT_CODEX_MODEL,
-    codexChatReasoningEffort: input.codexChatReasoningEffort || "low",
+    codexChatModelChoice: input.codexChatModelChoice || DEFAULT_CODEX_CHAT_SETUP_MODEL,
+    codexChatReasoningEffort: input.codexChatReasoningEffort || DEFAULT_CODEX_CHAT_SETUP_REASONING_EFFORT,
     codexTaskModelChoice: input.codexTaskModelChoice || DEFAULT_CODEX_MODEL,
     codexTaskReasoningEffort: input.codexTaskReasoningEffort || "xhigh",
     codexExperimentModelChoice:
@@ -747,47 +760,6 @@ async function askPrimaryLlmMode(
   }
 }
 
-async function askPdfAnalysisMode(
-  promptReader: PromptReader = askLine,
-  label = "PDF analysis mode"
-): Promise<"codex_text_image_hybrid" | "responses_api_pdf"> {
-  if (promptReader === askLine) {
-    const answer = await askChoice(
-      label,
-      [
-        {
-          label: "codex",
-          value: "codex_text_image_hybrid",
-          description: "(local text + page image hybrid)"
-        },
-        {
-          label: "api",
-          value: "responses_api_pdf",
-          description: "(Responses API PDF)"
-        }
-      ],
-      "codex_text_image_hybrid"
-    );
-    return answer === "responses_api_pdf" ? "responses_api_pdf" : "codex_text_image_hybrid";
-  }
-
-  while (true) {
-    const answer = (await promptReader(`${label} (codex/api)`, "codex")).trim().toLowerCase();
-    if (
-      !answer ||
-      answer === "codex" ||
-      answer === "codex_text_extract" ||
-      answer === "codex_text_image_hybrid"
-    ) {
-      return "codex_text_image_hybrid";
-    }
-    if (answer === "api" || answer === "responses" || answer === "responses_api_pdf") {
-      return "responses_api_pdf";
-    }
-    output.write(`${label} must be 'codex' or 'api'.\n`);
-  }
-}
-
 async function askOpenAiResponsesModel(
   label: string,
   defaultValue: string,
@@ -961,10 +933,17 @@ function buildReasoningDescription(
 
 function buildCodexModelPromptDescription(choice: string, recommendedSelection: string): string | undefined {
   const base = getCodexModelSelectionDescription(choice);
-  if (choice === recommendedSelection) {
-    return base ? `(${base} [recommended])` : "([recommended])";
+  return buildRecommendedPromptDescription(base, choice === recommendedSelection);
+}
+
+function buildRecommendedPromptDescription(base: string | undefined, recommended: boolean): string | undefined {
+  if (!base) {
+    return recommended ? "([recommended])" : undefined;
   }
-  return base ? `(${base})` : undefined;
+  if (recommended) {
+    return `(${base} [recommended])`;
+  }
+  return `(${base})`;
 }
 
 async function maybeNotifyCodexLoginStatus(

@@ -638,6 +638,7 @@ function buildOutlinePrompt(bundle: PaperWritingBundle): string {
     `Topic: ${bundle.topic}`,
     `Objective metric: ${bundle.objectiveMetric}`,
     `Constraints: ${bundle.constraints.join(", ") || "none"}`,
+    `Related-work scout papers: ${bundle.relatedWorkScout?.papers.length || 0}`,
     `Fallback section order: ${fallbackDraft.sections.map((item) => item.heading).join(", ")}`
   ].join("\n");
 }

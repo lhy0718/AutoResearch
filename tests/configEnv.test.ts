@@ -199,7 +199,6 @@ describe("config .env overrides", () => {
       "low",
       "gpt-5.3-codex",
       "xhigh",
-      "codex",
       "   ",
       "required-key"
     ];
@@ -220,7 +219,7 @@ describe("config .env overrides", () => {
     await expect(hasOpenAiApiKey(cwd)).resolves.toBe(true);
   });
 
-  it("writes OPENAI_API_KEY during setup when Responses PDF mode is selected", async () => {
+  it("writes OPENAI_API_KEY during setup when OpenAI API provider implies Responses PDF mode", async () => {
     delete process.env.OPENAI_API_KEY;
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autolabos-setup-openai-key-"));
     const paths = resolveAppPaths(cwd);
@@ -231,12 +230,11 @@ describe("config .env overrides", () => {
         "Default research topic": "Multi-agent collaboration",
         "Default constraints (comma-separated)": "recent papers,last 5 years",
         "Default objective metric": "reproducibility",
-        "Primary LLM provider (codex/api)": "codex",
-        "General chat model": "gpt-5.3-codex",
+        "Primary LLM provider (codex/api)": "api",
+        "OpenAI API general chat model": "gpt-5.4",
         "General chat reasoning effort": "low",
-        "Research backend model": "gpt-5.3-codex",
+        "Research backend selection": "gpt-5-mini",
         "Research backend reasoning effort": "xhigh",
-        "Research backend PDF mode (codex/api)": "api",
         "Research backend Responses API PDF model": "gpt-4o",
         "Research backend PDF reasoning effort": "xhigh",
         "Semantic Scholar API key": "semantic-key",
@@ -250,7 +248,7 @@ describe("config .env overrides", () => {
     await expect(fs.readFile(path.join(cwd, ".env"), "utf8")).resolves.toContain('OPENAI_API_KEY="openai-key"');
   });
 
-  it("defaults first-run Codex chat prompts to gpt-5.3-codex and research backend prompts to gpt-5.4", async () => {
+  it("defaults first-run Codex chat prompts to gpt-5.3-codex-spark + medium and research backend prompts to gpt-5.4", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autolabos-setup-codex-defaults-"));
     const paths = resolveAppPaths(cwd);
 
@@ -264,15 +262,16 @@ describe("config .env overrides", () => {
         "Primary LLM provider (codex/api)": "codex",
         "General chat model": "",
         "General chat reasoning effort": "",
-        "Research backend model": "",
+        "Research backend selection": "",
         "Research backend reasoning effort": "",
-        "Research backend PDF mode (codex/api)": "codex",
         "Semantic Scholar API key": "semantic-key"
       })
     );
 
     expect(config.providers.llm_mode).toBe("codex_chatgpt_only");
-    expect(config.providers.codex.chat_model).toBe("gpt-5.3-codex");
+    expect(config.providers.codex.chat_model).toBe("gpt-5.3-codex-spark");
+    expect(config.providers.codex.chat_reasoning_effort).toBe("medium");
+    expect(config.providers.codex.command_reasoning_effort).toBe("medium");
     expect(config.providers.codex.model).toBe("gpt-5.4");
     expect(config.providers.codex.pdf_model).toBe("gpt-5.4");
   });
@@ -294,11 +293,10 @@ describe("config .env overrides", () => {
         "Default constraints (comma-separated)": "recent papers,last 5 years",
         "Default objective metric": "reproducibility",
         "Primary LLM provider (codex/api)": "codex",
-        "General chat model": "gpt-5.4",
+        "General chat model": "gpt-5.3-codex-spark",
         "General chat reasoning effort": "low",
-        "Research backend model": "gpt-5.4",
+        "Research backend selection": "gpt-5.4",
         "Research backend reasoning effort": "xhigh",
-        "Research backend PDF mode (codex/api)": "codex",
         "Semantic Scholar API key": "semantic-key"
       }),
       {
@@ -384,9 +382,8 @@ describe("config .env overrides", () => {
         "Primary LLM provider (codex/api)": "api",
         "OpenAI API general chat model": "gpt-5.4",
         "General chat reasoning effort": "low",
-        "OpenAI API research backend model": "gpt-5-mini",
+        "Research backend selection": "gpt-5-mini",
         "Research backend reasoning effort": "high",
-        "Research backend PDF mode (codex/api)": "api",
         "Research backend Responses API PDF model": "gpt-4o",
         "Research backend PDF reasoning effort": "xhigh",
         "Semantic Scholar API key": "",
@@ -398,6 +395,7 @@ describe("config .env overrides", () => {
     expect(config.providers.openai.command_reasoning_effort).toBe("low");
     expect(config.providers.openai.reasoning_effort).toBe("high");
     expect(config.analysis.pdf_mode).toBe("responses_api_pdf");
+    expect(asked).not.toContain("Research backend PDF mode (codex/api)");
     expect(asked).toContain("Semantic Scholar API key (press Enter to keep existing)");
     expect(asked).toContain("OpenAI API key (press Enter to keep existing)");
     await expect(resolveSemanticScholarApiKey(cwd)).resolves.toBe("existing-semantic");
@@ -418,9 +416,10 @@ describe("config .env overrides", () => {
         "Primary LLM provider (codex/api)": "api",
         "OpenAI API general chat model": "gpt-5-mini",
         "General chat reasoning effort": "low",
-        "OpenAI API research backend model": "gpt-5-mini",
+        "Research backend selection": "gpt-5-mini",
         "Research backend reasoning effort": "xhigh",
-        "Research backend PDF mode (codex/api)": "codex",
+        "Research backend Responses API PDF model": "gpt-5.4",
+        "Research backend PDF reasoning effort": "xhigh",
         "Semantic Scholar API key": "semantic-key",
         "OpenAI API key": "openai-key"
       })

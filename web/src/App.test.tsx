@@ -10,7 +10,7 @@ afterEach(() => {
 });
 
 describe("App", () => {
-  it("renders onboarding when the workspace is not configured", async () => {
+  it("renders onboarding without a PDF mode prompt when the workspace is not configured", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -52,6 +52,12 @@ describe("App", () => {
       expect(screen.getByText("Initial setup")).toBeInTheDocument();
       expect(screen.getByText("Initialize workspace")).toBeInTheDocument();
     });
+
+    const codexChatSection = screen.getByText("Codex chat").closest("section");
+    expect(codexChatSection).not.toBeNull();
+    expect(screen.queryByLabelText("PDF mode")).not.toBeInTheDocument();
+    expect(within(codexChatSection as HTMLElement).getAllByRole("combobox")[0]).toHaveValue("gpt-5.3-codex-spark");
+    expect(within(codexChatSection as HTMLElement).getAllByRole("combobox")[1]).toHaveValue("medium");
   });
 
   it("shows per-slot model and reasoning selectors in workspace settings and submits them", async () => {

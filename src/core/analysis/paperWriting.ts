@@ -53,6 +53,22 @@ export interface ExperimentPlanArtifact {
   rawText?: string;
 }
 
+export interface RelatedWorkScoutPaperArtifact {
+  paper_id: string;
+  title: string;
+  summary: string;
+  source_type: "semantic_scholar_scout";
+  year?: number;
+  venue?: string;
+  citation_count?: number;
+}
+
+export interface RelatedWorkScoutArtifact {
+  query: string;
+  rationale: string;
+  papers: RelatedWorkScoutPaperArtifact[];
+}
+
 export interface PaperWritingBundle {
   runTitle: string;
   topic: string;
@@ -64,6 +80,7 @@ export interface PaperWritingBundle {
   corpus: StoredCorpusRow[];
   experimentPlan?: ExperimentPlanArtifact;
   resultAnalysis?: ResultAnalysisArtifact;
+  relatedWorkScout?: RelatedWorkScoutArtifact;
   reviewContext?: {
     outcome: string;
     summary: string;
@@ -221,6 +238,20 @@ export function buildPaperWriterPrompt(input: {
           top_findings: input.bundle.reviewContext.topFindings.slice(0, 4)
         }
       : undefined,
+    related_work_scout: input.bundle.relatedWorkScout
+      ? {
+          query: input.bundle.relatedWorkScout.query,
+          rationale: input.bundle.relatedWorkScout.rationale,
+          papers: input.bundle.relatedWorkScout.papers.slice(0, 6).map((item) => ({
+            paper_id: item.paper_id,
+            title: item.title,
+            summary: truncateText(item.summary, 220),
+            year: item.year,
+            venue: item.venue,
+            citation_count: item.citation_count
+          }))
+        }
+      : undefined,
     analyzed_papers: input.bundle.paperSummaries.slice(0, 6).map((item) => ({
       paper_id: item.paper_id,
       title: item.title,
@@ -296,6 +327,8 @@ export function buildPaperWriterPrompt(input: {
     "- Section-level evidence_ids and citation_paper_ids should summarize the union of the paragraph-level grounding.",
     "- Results must mention the objective metric and the observed outcome when available.",
     "- Use only provided paper_ids and evidence_ids.",
+    "- Related-work scout papers may be cited conservatively for broad literature framing, especially in Related Work.",
+    "- Do not treat related-work scout papers as direct experimental evidence unless they also appear in analyzed_papers or the evidence bank.",
     "- Keep claims aligned with cited papers and evidence IDs.",
     "- If a section has no direct evidence, keep it conservative and omit unsupported claims.",
     "",
@@ -348,6 +381,7 @@ export function buildFallbackPaperDraft(bundle: PaperWritingBundle): PaperDraft 
     .slice()
     .sort((left, right) => right.confidence - left.confidence)
     .slice(0, 4);
+  const scoutPaperIds = bundle.relatedWorkScout?.papers.slice(0, 3).map((item) => item.paper_id) || [];
   const citedPaperIds = uniqueStrings(
     [
       ...bundle.paperSummaries.slice(0, 4).map((item) => item.paper_id),
@@ -364,9 +398,25 @@ export function buildFallbackPaperDraft(bundle: PaperWritingBundle): PaperDraft 
       : ""
   ].filter(Boolean).join(" ");
   const relatedWorkParagraph =
-    bundle.paperSummaries.length > 0
-      ? `Prior work emphasizes ${bundle.paperSummaries.slice(0, 3).map((item) => item.novelty || item.title).join("; ")}.`
+    bundle.paperSummaries.length > 0 || bundle.relatedWorkScout?.papers.length
+      ? [
+          bundle.paperSummaries.length > 0
+            ? `Prior work emphasizes ${bundle.paperSummaries.slice(0, 3).map((item) => item.novelty || item.title).join("; ")}.`
+            : "",
+          bundle.relatedWorkScout?.papers.length
+            ? `A related-work scout additionally surfaced ${bundle.relatedWorkScout.papers
+                .slice(0, 3)
+                .map((item) => item.title)
+                .join("; ")}.`
+            : ""
+        ]
+          .filter(Boolean)
+          .join(" ")
       : "Related work will need to be expanded once more literature summaries are available.";
+  const relatedWorkCitationIds = uniqueStrings([
+    ...citedPaperIds.slice(0, 3),
+    ...scoutPaperIds
+  ]).slice(0, 4);
   const methodParagraph = [
     bundle.experimentPlan?.selectedSummary
       ? `The selected experimental design is ${bundle.experimentPlan.selectedTitle || "the current plan"}: ${bundle.experimentPlan.selectedSummary}.`
@@ -405,11 +455,11 @@ export function buildFallbackPaperDraft(bundle: PaperWritingBundle): PaperDraft 
         buildDraftParagraph(
           relatedWorkParagraph,
           topEvidence.slice(0, 2).map((item) => item.evidence_id),
-          citedPaperIds.slice(0, 3)
+          relatedWorkCitationIds
         )
       ],
       evidence_ids: topEvidence.slice(0, 2).map((item) => item.evidence_id),
-      citation_paper_ids: citedPaperIds.slice(0, 3)
+      citation_paper_ids: relatedWorkCitationIds
     },
     {
       heading: "Method",

@@ -27,6 +27,7 @@ import {
   validatePaperDraft
 } from "../analysis/paperWriting.js";
 import { PaperWriterSessionManager } from "../agents/paperWriterSessionManager.js";
+import { maybeRunRelatedWorkScout } from "../writePaperRelatedWorkScout.js";
 
 interface PaperCompileCommandResult {
   step: string;
@@ -147,6 +148,31 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       });
       const objectiveEvaluation = await loadObjectiveEvaluation(runContextMemory, run.id);
       const bundle = bundleResult.bundle;
+      const relatedWorkScout = await maybeRunRelatedWorkScout({
+        run,
+        bundle,
+        constraintProfile,
+        semanticScholar: deps.semanticScholar,
+        abortSignal,
+        emitLog
+      });
+      await runContextMemory.put("write_paper.related_work_scout", {
+        status: relatedWorkScout.status,
+        reason: relatedWorkScout.reason,
+        query: relatedWorkScout.query,
+        rationale: relatedWorkScout.rationale,
+        requested_limit: relatedWorkScout.requested_limit,
+        paper_count: relatedWorkScout.papers.length,
+        papers: relatedWorkScout.papers,
+        planned_query_count: relatedWorkScout.queryPlan?.planned_queries.length || 0,
+        executed_query_count: relatedWorkScout.coverageAudit?.after.executed_query_count || 0,
+        coverage_status: relatedWorkScout.coverageAudit?.status,
+        coverage_stop_reason: relatedWorkScout.coverageAudit?.stop_reason
+      });
+      if (relatedWorkScout.scout && relatedWorkScout.corpusRows.length > 0) {
+        bundle.relatedWorkScout = relatedWorkScout.scout;
+        bundle.corpus = mergeBundleCorpus(bundle.corpus, relatedWorkScout.corpusRows);
+      }
 
       emitLog(
         `Preparing paper draft from ${bundle.paperSummaries.length} summaries, ${bundle.evidenceRows.length} evidence items, and ${bundle.hypotheses.length} hypotheses.`
@@ -315,8 +341,21 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         needsApproval: true,
         toolCallsUsed
       };
+  }
+};
+}
+
+function mergeBundleCorpus(existing: PaperWritingBundle["corpus"], additions: PaperWritingBundle["corpus"]): PaperWritingBundle["corpus"] {
+  const seen = new Set(existing.map((item) => item.paper_id));
+  const merged = [...existing];
+  for (const row of additions) {
+    if (!row.paper_id || seen.has(row.paper_id)) {
+      continue;
     }
-  };
+    seen.add(row.paper_id);
+    merged.push(row);
+  }
+  return merged;
 }
 
 async function loadValidatedPaperBundle(

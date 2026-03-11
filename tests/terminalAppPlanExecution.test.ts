@@ -200,7 +200,7 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(app.logs).toContain("Current model slots:");
     expect(
       app.logs.some((line: string) =>
-        line.includes("- general chat:") && line.includes("Recommended: gpt-5.3-codex + low")
+        line.includes("- general chat:") && line.includes("Recommended: gpt-5.3-codex-spark + medium")
       )
     ).toBe(true);
     expect(
@@ -225,7 +225,7 @@ describe("TerminalApp pending natural plan execution", () => {
       expect.arrayContaining([
         expect.objectContaining({
           value: "chat",
-          description: expect.stringContaining("Recommended: gpt-5.3-codex + low")
+          description: expect.stringContaining("Recommended: gpt-5.3-codex-spark + medium")
         }),
         expect.objectContaining({
           value: "backend",

@@ -319,6 +319,76 @@ function buildValidationRepairResponses(): string[] {
   return [outline, flawedDraft, review, flawedDraft, repairedDraft];
 }
 
+function buildRelatedWorkScoutResponses(): string[] {
+  const outline = JSON.stringify({
+    title: "PDF-backed Paper Writer",
+    abstract_focus: ["persistent drafting", "related work coverage"],
+    section_headings: ["Introduction", "Related Work", "Method", "Results", "Conclusion"],
+    key_claim_themes: ["Thread-backed drafting improves revisability."],
+    citation_plan: ["paper_1", "paper_scout_1"]
+  });
+  const draft = JSON.stringify({
+    title: "PDF-backed Paper Writer",
+    abstract: "A paper-writing workflow with related-work scouting support.",
+    keywords: ["agent collaboration", "paper writing", "related work"],
+    sections: [
+      {
+        heading: "Introduction",
+        paragraphs: ["This paper studies PDF-backed drafting for agent collaboration workflows."],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_1"]
+      },
+      {
+        heading: "Related Work",
+        paragraphs: [
+          {
+            text: "Recent related-work scouting highlights complementary literature on revision stability and related evidence synthesis.",
+            evidence_ids: ["ev_1"],
+            citation_paper_ids: ["paper_1", "paper_scout_1", "paper_scout_2"]
+          }
+        ],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_1", "paper_scout_1", "paper_scout_2"]
+      },
+      {
+        heading: "Method",
+        paragraphs: ["The workflow stages outline, drafting, review, and finalization before compiling LaTeX."],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_1"]
+      },
+      {
+        heading: "Results",
+        paragraphs: ["Persistent drafting support improved revision stability in repeated runs."],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_1"]
+      },
+      {
+        heading: "Conclusion",
+        paragraphs: ["Scoped literature scouting helps the writer place results in context."],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_1", "paper_scout_1", "paper_scout_2"]
+      }
+    ],
+    claims: [
+      {
+        claim_id: "c1",
+        statement: "Persistent drafting support improved revision stability in repeated runs.",
+        section_heading: "Results",
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_1"]
+      }
+    ]
+  });
+  const review = JSON.stringify({
+    summary: "The draft is coherent and now cites related work more explicitly.",
+    revision_notes: ["Keep the related-work framing concise."],
+    unsupported_claims: [],
+    missing_sections: [],
+    missing_citations: []
+  });
+  return [outline, draft, review, draft];
+}
+
 function createPdfBuildAci(options?: { failFirstCompile?: boolean; failAllCompiles?: boolean }) {
   const commands: string[] = [];
   let firstCompileFailed = false;
@@ -391,6 +461,104 @@ async function exists(filePath: string): Promise<boolean> {
 }
 
 describe("writePaper PDF build", () => {
+  it("runs a related-work scout and allows the writer to cite scout-only papers", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-related-work-scout-"));
+    process.chdir(root);
+
+    const run = makeRun("run-paper-related-work-scout");
+    const runDir = await seedRun(root, run);
+    const requests: Array<{ query: string; limit: number }> = [];
+    const semanticScholar = {
+      async searchPapers(request: { query: string; limit: number }) {
+        requests.push({ query: request.query, limit: request.limit });
+        const paperIndex = requests.length;
+        return [
+          {
+            paperId: `paper_scout_${paperIndex}`,
+            title: paperIndex === 1 ? "Scout Results for Related Work" : "Coverage Backfill for Related Work",
+            abstract: "A lightweight scouting pass can expand related-work coverage during drafting.",
+            year: 2024,
+            venue: paperIndex === 1 ? "EMNLP" : "NAACL",
+            authors: ["Sam Scout"],
+            citationCount: 17 + paperIndex,
+            url: `https://example.org/scout-results-${paperIndex}`
+          }
+        ];
+      }
+    };
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient(buildRelatedWorkScoutResponses()),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: semanticScholar as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(requests).toHaveLength(2);
+    expect(requests[0]?.query).toContain("agent collaboration");
+    expect(requests[0]?.query).toContain("Thread-backed drafting benchmark");
+    expect(requests[1]?.query).toContain("agent collaboration");
+
+    const scoutRequest = JSON.parse(
+      await readFile(path.join(runDir, "paper", "related_work_scout", "request.json"), "utf8")
+    ) as { query: string; planned_queries: Array<{ id: string }> };
+    expect(scoutRequest.query).toContain("agent collaboration");
+    expect(scoutRequest.planned_queries.length).toBeGreaterThanOrEqual(2);
+
+    const scoutPlan = JSON.parse(
+      await readFile(path.join(runDir, "paper", "related_work_scout", "plan.json"), "utf8")
+    ) as { planned_queries: Array<{ id: string }> };
+    expect(scoutPlan.planned_queries.length).toBeGreaterThanOrEqual(2);
+
+    const scoutResult = JSON.parse(
+      await readFile(path.join(runDir, "paper", "related_work_scout", "result.json"), "utf8")
+    ) as { status: string; paper_count: number };
+    expect(scoutResult).toMatchObject({
+      status: "collected",
+      paper_count: 2
+    });
+
+    const coverageAudit = JSON.parse(
+      await readFile(path.join(runDir, "paper", "related_work_scout", "coverage_audit.json"), "utf8")
+    ) as { status: string; executed_queries: Array<{ query: string }>; stop_reason: string };
+    expect(coverageAudit.status).toBe("sufficient");
+    expect(coverageAudit.executed_queries).toHaveLength(2);
+    expect(coverageAudit.stop_reason).toMatch(/venue diversity|citation gap|target additional paper count/i);
+
+    expect(await exists(path.join(runDir, "paper", "related_work_scout", "corpus.jsonl"))).toBe(true);
+    expect(await exists(path.join(runDir, "paper", "related_work_scout", "bibtex.bib"))).toBe(true);
+
+    const draft = JSON.parse(await readFile(path.join(runDir, "paper", "draft.json"), "utf8")) as {
+      sections: Array<{ heading: string; citation_paper_ids: string[] }>;
+    };
+    const relatedWorkSection = draft.sections.find((section) => section.heading === "Related Work");
+    expect(relatedWorkSection?.citation_paper_ids).toContain("paper_scout_1");
+
+    const references = await readFile(path.join(runDir, "paper", "references.bib"), "utf8");
+    expect(references).toContain("Scout Results for Related Work");
+    expect(references).toContain("Coverage Backfill for Related Work");
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    expect(await memory.get("write_paper.cited_paper_ids")).toContain("paper_scout_1");
+    expect(await memory.get("write_paper.related_work_scout")).toMatchObject({
+      status: "collected",
+      paper_count: 2,
+      planned_query_count: 3,
+      executed_query_count: 2,
+      coverage_status: "sufficient"
+    });
+  });
+
   it("runs one validation repair pass before rendering when warnings accumulate", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-validation-repair-"));
     process.chdir(root);

@@ -272,6 +272,7 @@ stateDiagram-v2
 | `run_experiments` | execution plan을 만들고, 실패를 분류하고, transient failure에 대해 1회 자동 재시도 정책을 적용 | primary run command가 해석되었을 때 | policy block, missing metrics, invalid metrics는 재시도하지 않고, transient command failure만 1회 재시도 |
 | `run_experiments` | managed `standard -> quick_check -> confirmatory` 프로필을 연쇄 실행 | managed `real_execution` bundle이 standard run을 observed/met로 끝냈을 때 | supplemental run은 best effort이며 primary success를 뒤집지 않음 |
 | `analyze_results` | best-effort metric rematch로 objective grounding을 다시 시도한 뒤 결정적 result panel로 confidence를 보정 | 캐시된 또는 fresh objective evaluation이 `missing` 또는 `unknown`이거나, 최종 transition recommendation을 확정해야 할 때 | 사람 clarification pause 전 1회 bounded rematch, 그리고 내부 `analyze_results_panel/*` 아티팩트 생성 |
+| `write_paper` | 문헌 커버리지가 얇을 때 drafting 전에 작은 query planner와 coverage auditor가 붙은 bounded related-work scout를 수행 | 검증된 writing bundle의 analyzed paper/corpus 수가 부족하거나 review context가 citation gap을 가리킬 때 | best-effort Semantic Scholar scout를 `paper/related_work_scout/*`에 기록하고, planned query를 coverage가 충분해지면 일찍 멈춘 뒤 메인 `corpus.jsonl` 대신 집필용 in-memory bundle에만 합침 |
 | `write_paper` | validation-aware repair를 한 번 더 돌리고 재검증 | draft validation에서 repair 가능한 borrowed grounding warning이 나올 때 | 최대 1회 repair, warning 수가 늘어나면 채택하지 않음 |
 
 ### 단계별 연결 그래프
@@ -414,7 +415,7 @@ flowchart LR
 | `run_experiments` | `runner` | ACI 기반 preflight/tests/command 실행, execution-plan + triage + watchdog 제어, transient failure 1회 재시도, managed supplemental profile chaining, verifier feedback |
 | `analyze_results` | `analyst_statistician` | best-effort metric rematching, 결정적 result panel 기반 confidence calibration, 결과 합성, transition recommendation |
 | `review` | `reviewer` | `runReviewPanel`, 5인 specialist reviewer, heuristic+LLM refinement, review packet 생성, transition recommendation |
-| `write_paper` | `paper_writer`, `reviewer` | `PaperWriterSessionManager`, outline/draft/review/finalize, validation-aware repair, optional LaTeX repair |
+| `write_paper` | `paper_writer`, `reviewer` | `PaperWriterSessionManager`, bounded related-work scout, outline/draft/review/finalize, validation-aware repair, optional LaTeX repair |
 
 역할 카탈로그와 실제 멀티턴 런타임은 완전히 같은 범위는 아닙니다. 가장 깊은 멀티턴 session manager는 여전히 `implement_experiments`, `write_paper`이고, `review`는 가장 강한 LLM-panelized 노드로 남아 있으며, `generate_hypotheses`도 evidence-synthesis / skeptical-review 프롬프트를 유지합니다. 새로 강화된 `design_experiments`, `run_experiments`, `analyze_results`는 상위 그래프 역할이나 운영자 표면을 바꾸지 않고, 노드 내부에서만 동작하는 결정적 패널/컨트롤러를 추가한 형태입니다.
 
@@ -437,7 +438,7 @@ flowchart TB
     G1 --> H["review"]
     H --> H1["review/findings.jsonl<br/>review/scorecard.json<br/>review/consistency_report.json<br/>review/bias_report.json<br/>review/revision_plan.json<br/>review/decision.json<br/>review/review_packet.json<br/>review/checklist.md"]
     H1 --> I["write_paper"]
-    I --> I1["paper/main.tex<br/>paper/references.bib<br/>paper/evidence_links.json<br/>paper/draft.json<br/>paper/validation.json<br/>paper/validation_repair_report.json<br/>paper/main.pdf (optional)"]
+    I --> I1["paper/main.tex<br/>paper/references.bib<br/>paper/evidence_links.json<br/>paper/draft.json<br/>paper/validation.json<br/>paper/validation_repair_report.json<br/>paper/related_work_scout/* (optional)<br/>paper/main.pdf (optional)"]
 ```
 
 모든 run 아티팩트는 `.autolabos/runs/<run_id>/` 아래에 저장되므로, TUI와 로컬 웹 UI 양쪽에서 같은 실행 결과를 추적하고 점검할 수 있습니다.
@@ -446,7 +447,7 @@ flowchart TB
 
 새로운 중간 파이프라인 강화는 v1에서 내부 전용으로만 노출됩니다. `design_experiments`는 `design_experiments_panel/*`, `run_experiments`는 `run_experiments_panel/*`, `analyze_results`는 `analyze_results_panel/*`를 쓰고, 대응되는 run-context memory key는 `design_experiments.panel_selection`, `run_experiments.triage`, `analyze_results.panel_decision`입니다.
 
-managed `run_experiments`는 successful standard run 뒤에 자동으로 `quick_check`, `confirmatory`를 따라 돌리면 `run_experiments_supplemental_runs.json`도 남깁니다. `write_paper`는 bounded repair loop가 실제로 실행되면 `validation_repair_report.json`과 `validation_repair.*` 아티팩트도 기록합니다.
+managed `run_experiments`는 successful standard run 뒤에 자동으로 `quick_check`, `confirmatory`를 따라 돌리면 `run_experiments_supplemental_runs.json`도 남깁니다. `write_paper`는 planned query variant와 coverage audit가 붙은 bounded related-work scout를 실행하면 `paper/related_work_scout/*`도 남기고, bounded repair loop가 실제로 실행되면 `validation_repair_report.json`과 `validation_repair.*` 아티팩트도 기록합니다.
 
 ### 제어 표면
 

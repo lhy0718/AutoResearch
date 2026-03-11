@@ -2588,7 +2588,7 @@ export class TerminalApp {
   ): string {
     const recommendation =
       recommended === "command"
-        ? value === "low"
+        ? value === "medium"
           ? "recommended for commands"
           : ""
         : recommended === "task"
@@ -3007,11 +3007,11 @@ export class TerminalApp {
       }
       return `${this.getRecommendedOpenAiModel(slot)} + ${slot === "chat" ? "low" : "xhigh"}`;
     }
-    return `${this.getRecommendedCodexSelection(slot)} + ${slot === "chat" ? "low" : "xhigh"}`;
+    return `${this.getRecommendedCodexSelection(slot)} + ${slot === "chat" ? "medium" : "xhigh"}`;
   }
 
   private getRecommendedCodexSelection(slot: "chat" | "task" | "pdf"): string {
-    return slot === "chat" ? DEFAULT_CODEX_MODEL : RECOMMENDED_CODEX_MODEL;
+    return slot === "chat" ? "gpt-5.3-codex-spark" : RECOMMENDED_CODEX_MODEL;
   }
 
   private getRecommendedOpenAiModel(slot: "chat" | "task" | "pdf"): string {

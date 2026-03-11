@@ -15,6 +15,8 @@ import {
 } from "../integrations/openai/modelCatalog.js";
 import { buildResponsesPdfModelChoices } from "../integrations/openai/pdfModelCatalog.js";
 import {
+  DEFAULT_CODEX_CHAT_SETUP_MODEL,
+  DEFAULT_CODEX_CHAT_SETUP_REASONING_EFFORT,
   DEFAULT_PDF_ANALYSIS_MODE,
   DEFAULT_PRIMARY_LLM_MODE,
   ensureScaffold,
@@ -599,7 +601,7 @@ function buildConfigFormData(
   cwd = process.cwd()
 ): WebConfigFormData {
   const codexModel = config?.providers.codex.model || DEFAULT_CODEX_MODEL;
-  const codexChatModel = config?.providers.codex.chat_model || codexModel;
+  const codexChatModel = config?.providers.codex.chat_model || DEFAULT_CODEX_CHAT_SETUP_MODEL;
   const codexExperimentModel = config?.providers.codex.experiment_model || codexModel;
   const codexPdfModel = config?.providers.codex.pdf_model || codexModel;
   const openAiModel = config?.providers.openai.model || "gpt-5.4";
@@ -616,7 +618,9 @@ function buildConfigFormData(
     pdfAnalysisMode: config?.analysis.pdf_mode || DEFAULT_PDF_ANALYSIS_MODE,
     codexChatModelChoice: getCurrentCodexModelSelectionValue(codexChatModel, config?.providers.codex.chat_fast_mode),
     codexChatReasoningEffort:
-      config?.providers.codex.chat_reasoning_effort || config?.providers.codex.reasoning_effort || "low",
+      config?.providers.codex.chat_reasoning_effort ||
+      config?.providers.codex.reasoning_effort ||
+      DEFAULT_CODEX_CHAT_SETUP_REASONING_EFFORT,
     codexTaskModelChoice: getCurrentCodexModelSelectionValue(codexModel, config?.providers.codex.fast_mode),
     codexTaskReasoningEffort: config?.providers.codex.reasoning_effort || "xhigh",
     codexExperimentModelChoice: getCurrentCodexModelSelectionValue(

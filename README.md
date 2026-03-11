@@ -273,6 +273,7 @@ In the default setup, review outcomes auto-apply into `write_paper` or one of th
 | `run_experiments` | Builds an execution plan, classifies failures, and applies a one-shot transient rerun policy | The primary run command has been resolved | Never retries policy blocks, missing metrics, or invalid metrics; retries only one transient command failure |
 | `run_experiments` | Chains managed `standard -> quick_check -> confirmatory` profiles | A managed `real_execution` bundle completes the standard run with an observed/met objective | Supplemental runs are best effort and do not overturn a successful primary run |
 | `analyze_results` | Re-tries objective grounding with best-effort metric rematching, then calibrates confidence with a deterministic result panel | Cached or fresh objective evaluation comes back `missing` or `unknown`, or a transition recommendation must be finalized | One bounded rematch before any human clarification pause, plus internal `analyze_results_panel/*` artifacts |
+| `write_paper` | Runs a bounded related-work scout with a small query planner and coverage auditor before drafting when literature coverage is thin | The validated writing bundle has too few analyzed papers/corpus entries, or review context flags citation gaps | Best-effort Semantic Scholar scout under `paper/related_work_scout/*`; planned queries stop early once coverage is good enough, and results are merged into the in-memory writing bundle only |
 | `write_paper` | Runs a validation-aware repair pass, then re-validates | Draft validation reports repairable borrowed grounding warnings | One extra repair pass, adopted only when warning count does not increase |
 
 ### Phase-by-Phase Connection Graphs
@@ -415,7 +416,7 @@ flowchart LR
 | `run_experiments` | `runner` | ACI preflight/tests/command execution, execution-plan + triage + watchdog control, one-shot transient rerun, managed supplemental profile chaining, and verifier feedback |
 | `analyze_results` | `analyst_statistician` | objective evaluation with best-effort metric rematching, deterministic result-panel calibration, result synthesis, and transition recommendation |
 | `review` | `reviewer` | `runReviewPanel`, 5 specialist reviewers, heuristic+LLM refinement, review packet generation, and transition recommendation |
-| `write_paper` | `paper_writer`, `reviewer` | `PaperWriterSessionManager`, outline/draft/review/finalize stages, validation-aware repair, and optional LaTeX repair |
+| `write_paper` | `paper_writer`, `reviewer` | `PaperWriterSessionManager`, bounded related-work scout, outline/draft/review/finalize stages, validation-aware repair, and optional LaTeX repair |
 
 The role catalog is broader than the concrete runtime wiring. The deepest multi-turn session managers are still `implement_experiments` and `write_paper`, `review` remains the most LLM-panelized node, and `generate_hypotheses` still fans out into evidence-synthesis and skeptical-review prompts. The newer mid-pipeline reinforcements in `design_experiments`, `run_experiments`, and `analyze_results` are intentionally node-local deterministic panels/controllers that write internal artifacts without changing top-level graph roles or operator surfaces.
 
@@ -438,7 +439,7 @@ flowchart TB
     G1 --> H["review"]
     H --> H1["review/findings.jsonl<br/>review/scorecard.json<br/>review/consistency_report.json<br/>review/bias_report.json<br/>review/revision_plan.json<br/>review/decision.json<br/>review/review_packet.json<br/>review/checklist.md"]
     H1 --> I["write_paper"]
-    I --> I1["paper/main.tex<br/>paper/references.bib<br/>paper/evidence_links.json<br/>paper/draft.json<br/>paper/validation.json<br/>paper/validation_repair_report.json<br/>paper/main.pdf (optional)"]
+    I --> I1["paper/main.tex<br/>paper/references.bib<br/>paper/evidence_links.json<br/>paper/draft.json<br/>paper/validation.json<br/>paper/validation_repair_report.json<br/>paper/related_work_scout/* (optional)<br/>paper/main.pdf (optional)"]
 ```
 
 All run artifacts live under `.autolabos/runs/<run_id>/`, which makes the pipeline inspectable from both the TUI and the local web UI.
@@ -447,7 +448,7 @@ All run artifacts live under `.autolabos/runs/<run_id>/`, which makes the pipeli
 
 The new mid-pipeline reinforcements are internal-only in v1: `design_experiments` writes `design_experiments_panel/*`, `run_experiments` writes `run_experiments_panel/*`, and `analyze_results` writes `analyze_results_panel/*`. The corresponding run-context memory keys are `design_experiments.panel_selection`, `run_experiments.triage`, and `analyze_results.panel_decision`.
 
-Managed `run_experiments` runs may also emit `run_experiments_supplemental_runs.json` when the runtime automatically follows a successful standard run with `quick_check` and `confirmatory` profiles. `write_paper` emits `validation_repair_report.json`, plus `validation_repair.*` artifacts when the bounded repair loop actually runs.
+Managed `run_experiments` runs may also emit `run_experiments_supplemental_runs.json` when the runtime automatically follows a successful standard run with `quick_check` and `confirmatory` profiles. `write_paper` may emit `paper/related_work_scout/*` when it performs a bounded related-work scout with planned query variants and a coverage audit, and it emits `validation_repair_report.json` plus `validation_repair.*` artifacts when the bounded repair loop actually runs.
 
 ### Control Surfaces
 
