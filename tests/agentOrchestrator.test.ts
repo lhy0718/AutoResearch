@@ -226,6 +226,54 @@ describe("AgentOrchestrator (state graph)", () => {
     });
   });
 
+  it("auto-applies review backtracks under the default minimal approval mode", async () => {
+    const registry = new DeterministicRegistry({
+      review: {
+        id: "review",
+        execute: async () => ({
+          status: "success",
+          summary: "Review found methodological blockers and will backtrack to design.",
+          needsApproval: true,
+          toolCallsUsed: 1,
+          transitionRecommendation: {
+            action: "backtrack_to_design",
+            sourceNode: "review",
+            targetNode: "design_experiments",
+            reason: "Methodological blockers remain after review.",
+            confidence: 0.84,
+            autoExecutable: true,
+            evidence: ["The specialist review found unresolved methodological blockers."],
+            suggestedCommands: ["/agent jump design_experiments --force"],
+            generatedAt: new Date().toISOString()
+          }
+        })
+      }
+    });
+    const { store, orchestrator } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "review";
+    run.graph.currentNode = "review";
+    await store.updateRun(run);
+
+    const result = await orchestrator.runAgent(run.id, "review");
+    expect(result.result.status).toBe("success");
+
+    const latest = await store.getRun(run.id);
+    expect(latest?.currentNode).toBe("design_experiments");
+    expect(latest?.graph.transitionHistory.at(-1)).toMatchObject({
+      action: "backtrack_to_design",
+      fromNode: "review",
+      toNode: "design_experiments"
+    });
+  });
+
   it("feeds run_experiments failure context back into implement_experiments after rollback", async () => {
     let implementCalls = 0;
     const seenFeedback: string[] = [];

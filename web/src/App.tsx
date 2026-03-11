@@ -429,9 +429,12 @@ export function App() {
           </div>
           <div className="config-card">
             <div className="chip-list">
+              <span className="chip">{labelWorkflowMode(bootstrap.configSummary?.workflowMode)}</span>
+              <span className="chip">{labelApprovalMode(bootstrap.configSummary?.approvalMode)}</span>
               <span className="chip">{labelProviderMode(bootstrap.configSummary?.llmMode)}</span>
               <span className="chip">{labelPdfMode(bootstrap.configSummary?.pdfMode)}</span>
             </div>
+            <small>Autonomy preset: Overnight safe policy on demand via <code>/agent overnight</code>.</small>
             <small>Task: {bootstrap.configSummary?.taskModel} · {bootstrap.configSummary?.taskReasoning}</small>
             <small>Experiment: {bootstrap.configSummary?.experimentModel} · {bootstrap.configSummary?.experimentReasoning}</small>
           </div>
@@ -579,10 +582,14 @@ export function App() {
                     type="button"
                     disabled={isBusy}
                     onClick={() =>
-                      void runAction(`/api/runs/${selectedRun.id}/actions/overnight`, undefined, "Starting overnight autonomy")
+                      void runAction(
+                        `/api/runs/${selectedRun.id}/actions/overnight`,
+                        undefined,
+                        "Starting autonomy preset: overnight"
+                      )
                     }
                   >
-                    Overnight
+                    Overnight preset
                   </button>
                   <button
                     className="button button-secondary"
@@ -758,9 +765,9 @@ export function App() {
                         className="button button-secondary button-small insight-action"
                         type="button"
                         disabled={isBusy}
-                        onClick={() => void runSessionCommand("/agent overnight", "Starting overnight autonomy")}
+                        onClick={() => void runSessionCommand("/agent overnight", "Starting autonomy preset: overnight")}
                       >
-                        <span>Start overnight</span>
+                        <span>Start overnight preset</span>
                         <code>/agent overnight</code>
                       </button>
                     ) : null}
@@ -1180,6 +1187,10 @@ function ConfigEditorForm(props: ConfigEditorFormProps) {
         Objective metric
         <input disabled={props.disabled} value={props.form.defaultObjectiveMetric} onChange={(event) => patchSetupForm(props.onChange, { defaultObjectiveMetric: event.target.value })} />
       </label>
+      <p className="form-help">
+        Workflow mode is fixed to Agent approval. Approval mode defaults to Minimal. Overnight is a separate
+        autonomy preset, not a third workflow mode.
+      </p>
 
       <div className="inline-fields">
         <label>
@@ -1709,11 +1720,19 @@ function formatStatusLabel(value: string): string {
 }
 
 function labelProviderMode(value: ConfigSummary["llmMode"] | undefined): string {
-  return value === "openai_api" ? "OpenAI API" : "Codex ChatGPT";
+  return value === "openai_api" ? "Provider: OpenAI API" : "Provider: Codex ChatGPT";
 }
 
 function labelPdfMode(value: ConfigSummary["pdfMode"] | undefined): string {
-  return value === "responses_api_pdf" ? "Responses API PDF" : "Codex text + image hybrid";
+  return value === "responses_api_pdf" ? "PDF: Responses API PDF" : "PDF: Codex text + image hybrid";
+}
+
+function labelWorkflowMode(value: ConfigSummary["workflowMode"] | undefined): string {
+  return value === "agent_approval" ? "Workflow: Agent approval" : "Workflow: Agent approval";
+}
+
+function labelApprovalMode(value: ConfigSummary["approvalMode"] | undefined): string {
+  return value === "manual" ? "Approval: Manual" : "Approval: Minimal";
 }
 
 function labelArtifactKind(value: ArtifactEntry["kind"]): string {

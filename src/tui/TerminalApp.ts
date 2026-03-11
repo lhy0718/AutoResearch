@@ -1915,7 +1915,7 @@ export class TerminalApp {
       if (!run) {
         return { ok: false, reason: "target run not found" };
       }
-      this.pushLog("Starting overnight autonomy with the default safe policy.");
+      this.pushLog("Starting autonomy preset: overnight (default safe policy).");
       const controller = new AutonomousRunController(this.runStore, this.orchestrator, this.eventStream);
       const outcome = await controller.runOvernight(run.id, buildDefaultOvernightPolicy(), { abortSignal });
       this.pushLog(`Overnight autonomy ${outcome.status}: ${outcome.reason}`);
@@ -2208,8 +2208,9 @@ export class TerminalApp {
       this.config.analysis.pdf_mode === "responses_api_pdf"
         ? `${this.describePdfAnalysisMode(this.config.analysis.pdf_mode)} (${this.config.analysis.responses_model})`
         : this.describePdfAnalysisMode(this.config.analysis.pdf_mode);
+    const approvalSummary = this.config.workflow?.approval_mode === "manual" ? "Manual" : "Minimal";
     this.pushLog(
-      `Settings saved. LLM provider: ${this.describePrimaryLlmProvider(this.config.providers.llm_mode)}. PDF analysis mode: ${analysisSummary}.`
+      `Settings saved. Workflow mode: Agent approval. Approval mode: ${approvalSummary}. LLM provider: ${this.describePrimaryLlmProvider(this.config.providers.llm_mode)}. PDF analysis mode: ${analysisSummary}.`
     );
   }
 

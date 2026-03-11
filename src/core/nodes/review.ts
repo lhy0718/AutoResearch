@@ -78,10 +78,10 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         status: "success",
         summary:
           blockers > 0
-            ? `Review panel prepared ${panel.findings.length} finding(s) with ${blockers} blocking issue(s), ${warnings} warning(s), and ${manual} manual sign-off item(s). Resolve the blockers before approving write_paper.`
+            ? `Review panel prepared ${panel.findings.length} finding(s) with ${blockers} blocking issue(s), ${warnings} warning(s), and ${manual} manual review item(s). The runtime will take the conservative backtrack recommended by review before paper drafting.`
             : warnings > 0 || manual > 0
-              ? `Review panel prepared ${panel.findings.length} finding(s) with ${warnings} warning(s) and ${manual} manual sign-off item(s). Approve review to continue or apply the recommended backtrack.`
-              : `Review panel completed with outcome ${panel.decision.outcome}. Approve review to continue to write_paper.`,
+              ? `Review panel prepared ${panel.findings.length} finding(s) with ${warnings} warning(s) and ${manual} manual review item(s). The next stage will carry the attached revision checklist or follow the recommended backtrack automatically.`
+              : `Review panel completed with outcome ${panel.decision.outcome}. The runtime can continue automatically from the review recommendation.`,
         needsApproval: true,
         toolCallsUsed: Math.max(1, panel.llm_calls_used),
         costUsd: panel.llm_cost_usd,
@@ -120,7 +120,7 @@ function buildReviewTransitionRecommendation(
       targetNode: "generate_hypotheses",
       reason: panel.decision.summary,
       confidence,
-      autoExecutable: confidence >= 0.88 && panel.consistency.panel_agreement !== "low",
+      autoExecutable: true,
       evidence,
       suggestedCommands: packet.suggested_actions
     });
@@ -132,7 +132,7 @@ function buildReviewTransitionRecommendation(
       targetNode: "design_experiments",
       reason: panel.decision.summary,
       confidence,
-      autoExecutable: confidence >= 0.75 && panel.consistency.panel_agreement !== "low",
+      autoExecutable: true,
       evidence,
       suggestedCommands: packet.suggested_actions
     });
@@ -144,17 +144,18 @@ function buildReviewTransitionRecommendation(
       targetNode: "implement_experiments",
       reason: panel.decision.summary,
       confidence,
-      autoExecutable: confidence >= 0.75 && panel.consistency.panel_agreement !== "low",
+      autoExecutable: true,
       evidence,
       suggestedCommands: packet.suggested_actions
     });
   }
 
   return createReviewTransition({
-    action: "pause_for_human",
-    reason: panel.decision.summary,
+    action: "advance",
+    targetNode: "write_paper",
+    reason: `${panel.decision.summary} Carry the review checklist into paper drafting and keep the revisions conservative.`,
     confidence,
-    autoExecutable: false,
+    autoExecutable: true,
     evidence,
     suggestedCommands: packet.suggested_actions
   });

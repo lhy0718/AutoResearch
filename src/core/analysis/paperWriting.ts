@@ -64,6 +64,12 @@ export interface PaperWritingBundle {
   corpus: StoredCorpusRow[];
   experimentPlan?: ExperimentPlanArtifact;
   resultAnalysis?: ResultAnalysisArtifact;
+  reviewContext?: {
+    outcome: string;
+    summary: string;
+    requiredActions: string[];
+    topFindings: string[];
+  };
 }
 
 export interface PaperDraftParagraph {
@@ -207,6 +213,14 @@ export function buildPaperWriterPrompt(input: {
       excerpt: truncateText(input.bundle.experimentPlan?.rawText || "", 1400)
     },
     result_analysis: input.bundle.resultAnalysis || undefined,
+    review_context: input.bundle.reviewContext
+      ? {
+          outcome: input.bundle.reviewContext.outcome,
+          summary: input.bundle.reviewContext.summary,
+          required_actions: input.bundle.reviewContext.requiredActions.slice(0, 4),
+          top_findings: input.bundle.reviewContext.topFindings.slice(0, 4)
+        }
+      : undefined,
     analyzed_papers: input.bundle.paperSummaries.slice(0, 6).map((item) => ({
       paper_id: item.paper_id,
       title: item.title,

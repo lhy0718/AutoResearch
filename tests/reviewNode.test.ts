@@ -263,7 +263,7 @@ describe("review node", () => {
     expect(packet.objective_status).toBe("met");
     expect(packet.readiness.status).toBe("ready");
     expect(packet.readiness.blocking_checks).toBe(0);
-    expect(packet.suggested_actions).toContain("/approve");
+    expect(packet.suggested_actions).toContain("/agent run write_paper");
 
     const checklist = await readFile(path.join(runDir, "review", "checklist.md"), "utf8");
     expect(checklist).toContain("# Review checklist");
@@ -403,7 +403,7 @@ describe("review node", () => {
       targetNode: "design_experiments"
     });
     expect(packet.suggested_actions).toContain("/agent review");
-    expect(packet.suggested_actions).toContain("/approve");
+    expect(packet.suggested_actions).toContain("/agent jump design_experiments --force");
   });
 
   it("recommends a hypothesis reset when review finds unsupported claims", async () => {
@@ -589,7 +589,7 @@ describe("review node", () => {
 
     const packetRaw = await readFile(path.join(runDir, "review", "review_packet.json"), "utf8");
     const packet = JSON.parse(packetRaw) as { suggested_actions: string[] };
-    expect(packet.suggested_actions).toContain("/approve");
+    expect(packet.suggested_actions).not.toContain("/approve");
     expect(packet.suggested_actions).toContain("/agent jump generate_hypotheses --force");
   });
 });

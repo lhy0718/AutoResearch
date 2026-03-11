@@ -916,6 +916,7 @@ function buildDecision(
 
   let outcome: ReviewRecommendation = "advance";
   let recommendedTransition: ReviewDecision["recommended_transition"];
+  const shouldCarryRevisionChecklist = mediumCount >= 3 || revisionPlan.items.some((item) => item.owner === "writing");
   if (hasRuntimeFailure) {
     outcome = "backtrack_to_implement";
     recommendedTransition = "backtrack_to_implement";
@@ -926,9 +927,16 @@ function buildDecision(
     outcome = "backtrack_to_design";
     recommendedTransition = "backtrack_to_design";
   } else if (hasIntegrityBlocker || consistency.panel_agreement === "low" || bias.flags.some((item) => item.severity === "high")) {
-    outcome = "manual_block";
-  } else if (mediumCount >= 3 || revisionPlan.items.some((item) => item.owner === "writing")) {
-    outcome = "revise_in_place";
+    if (report.transition_recommendation?.action === "backtrack_to_implement" || revisionPlan.items.some((item) => item.owner === "implementation")) {
+      outcome = "backtrack_to_implement";
+      recommendedTransition = "backtrack_to_implement";
+    } else if (hasClaimBlocker) {
+      outcome = "backtrack_to_hypotheses";
+      recommendedTransition = "backtrack_to_hypotheses";
+    } else {
+      outcome = "backtrack_to_design";
+      recommendedTransition = "backtrack_to_design";
+    }
   } else {
     outcome = "advance";
     recommendedTransition = "advance";
@@ -944,7 +952,7 @@ function buildDecision(
     outcome,
     recommended_transition: recommendedTransition,
     confidence,
-    summary: summarizeDecision(outcome, highFindings, mediumCount),
+    summary: summarizeDecision(outcome, highFindings, mediumCount, shouldCarryRevisionChecklist),
     rationale,
     blocking_finding_ids: blockingIds,
     required_actions: revisionPlan.items.slice(0, 4).map((item) => item.action)
@@ -976,8 +984,13 @@ function buildDecisionRationale(
 function summarizeDecision(
   outcome: ReviewRecommendation,
   highFindings: ReviewFinding[],
-  mediumCount: number
+  mediumCount: number,
+  carryRevisionChecklist = false
 ): string {
+  if (outcome === "advance" && carryRevisionChecklist) {
+    return `Advance with revisions: ${mediumCount} medium-severity issue(s) should be addressed while drafting the paper.`;
+  }
+
   switch (outcome) {
     case "backtrack_to_implement":
       return `Backtrack to implement: runtime or verifier issues still block paper readiness.`;

@@ -260,6 +260,8 @@ async function loadValidatedPaperBundle(
   const corpusPath = path.join(runRoot, "corpus.jsonl");
   const experimentPlanPath = path.join(runRoot, "experiment_plan.yaml");
   const resultAnalysisPath = path.join(runRoot, "result_analysis.json");
+  const reviewDecisionPath = path.join(runRoot, "review", "decision.json");
+  const reviewFindingsPath = path.join(runRoot, "review", "findings.jsonl");
 
   const [
     paperSummariesRaw,
@@ -267,14 +269,18 @@ async function loadValidatedPaperBundle(
     hypothesesRaw,
     corpusRaw,
     experimentPlanRaw,
-    resultAnalysisRaw
+    resultAnalysisRaw,
+    reviewDecisionRaw,
+    reviewFindingsRaw
   ] = await Promise.all([
     readRequiredRunArtifact(paperSummariesPath, "paper_summaries.jsonl", issues),
     readRequiredRunArtifact(evidenceStorePath, "evidence_store.jsonl", issues),
     readRequiredRunArtifact(hypothesesPath, "hypotheses.jsonl", issues),
     readRequiredRunArtifact(corpusPath, "corpus.jsonl", issues),
     readRequiredRunArtifact(experimentPlanPath, "experiment_plan.yaml", issues),
-    readRequiredRunArtifact(resultAnalysisPath, "result_analysis.json", issues)
+    readRequiredRunArtifact(resultAnalysisPath, "result_analysis.json", issues),
+    safeRead(reviewDecisionPath),
+    safeRead(reviewFindingsPath)
   ]);
 
   const paperSummaries = paperSummariesRaw ? parsePaperSummaries(paperSummariesRaw) : [];
@@ -330,6 +336,7 @@ async function loadValidatedPaperBundle(
       reason: "the result analysis could not be parsed"
     });
   }
+  const reviewContext = parseReviewContext(reviewDecisionRaw, reviewFindingsRaw);
 
   const report: PaperInputValidationReport = {
     ok: issues.length === 0,
@@ -355,11 +362,60 @@ async function loadValidatedPaperBundle(
       hypotheses,
       corpus,
       experimentPlan,
-      resultAnalysis
+      resultAnalysis,
+      reviewContext
     },
     report,
     error: ""
   };
+}
+
+function parseReviewContext(
+  reviewDecisionRaw: string,
+  reviewFindingsRaw: string
+): PaperWritingBundle["reviewContext"] | undefined {
+  if (!reviewDecisionRaw) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(reviewDecisionRaw) as {
+      outcome?: unknown;
+      summary?: unknown;
+      required_actions?: unknown;
+    };
+    if (typeof parsed.outcome !== "string" || typeof parsed.summary !== "string") {
+      return undefined;
+    }
+
+    const topFindings = reviewFindingsRaw
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        try {
+          const finding = JSON.parse(line) as { title?: unknown; detail?: unknown };
+          const title = typeof finding.title === "string" ? finding.title.trim() : "";
+          const detail = typeof finding.detail === "string" ? finding.detail.trim() : "";
+          return title && detail ? `${title}: ${detail}` : title || detail;
+        } catch {
+          return "";
+        }
+      })
+      .filter(Boolean)
+      .slice(0, 4);
+
+    return {
+      outcome: parsed.outcome,
+      summary: parsed.summary,
+      requiredActions: Array.isArray(parsed.required_actions)
+        ? parsed.required_actions.filter((item): item is string => typeof item === "string").slice(0, 4)
+        : [],
+      topFindings
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 async function loadObjectiveEvaluation(

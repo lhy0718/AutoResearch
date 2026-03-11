@@ -489,7 +489,7 @@ describe("objective metric propagation", () => {
 
     const reviewResult = await reviewNode.execute({ run, graph: run.graph });
     expect(reviewResult.status).toBe("success");
-    expect(reviewResult.summary).toContain("Approve review to continue");
+    expect(reviewResult.summary).toContain("revision checklist");
 
     const reviewPacketRaw = await readFile(path.join(runDir, "review", "review_packet.json"), "utf8");
     expect(reviewPacketRaw).toContain('"objective_status": "met"');

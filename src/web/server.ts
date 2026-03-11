@@ -551,6 +551,8 @@ function buildSessionInputResponse(
 function summarizeConfig(config: AutoLabOSRuntime["config"]): ConfigSummary {
   return {
     projectName: config.project_name,
+    workflowMode: config.workflow.mode,
+    approvalMode: config.workflow.approval_mode || "minimal",
     llmMode: config.providers.llm_mode,
     pdfMode: config.analysis.pdf_mode,
     taskModel:

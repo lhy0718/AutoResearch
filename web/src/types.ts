@@ -95,6 +95,8 @@ export interface RunRecord {
 
 export interface ConfigSummary {
   projectName: string;
+  workflowMode: "agent_approval";
+  approvalMode: "manual" | "minimal";
   llmMode: "codex_chatgpt_only" | "openai_api";
   pdfMode: "codex_text_image_hybrid" | "responses_api_pdf";
   taskModel: string;

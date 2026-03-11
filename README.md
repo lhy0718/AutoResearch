@@ -205,25 +205,30 @@ flowchart TB
 ```mermaid
 stateDiagram-v2
     [*] --> collect_papers
-    collect_papers --> analyze_papers: approve
-    analyze_papers --> generate_hypotheses: approve
-    generate_hypotheses --> design_experiments: approve
-    design_experiments --> implement_experiments: approve
-    implement_experiments --> run_experiments: auto_handoff or approve
-    run_experiments --> analyze_results: approve
-    analyze_results --> review: advance or approve
-    analyze_results --> implement_experiments: backtrack_to_implement
-    analyze_results --> design_experiments: backtrack_to_design
-    analyze_results --> generate_hypotheses: backtrack_to_hypotheses
-    review --> write_paper: approve + advance
-    review --> implement_experiments: approve + backtrack_to_implement
-    review --> design_experiments: approve + backtrack_to_design
-    review --> generate_hypotheses: approve + backtrack_to_hypotheses
-    review --> review: pause_for_human
-    write_paper --> [*]: approve
+    collect_papers --> analyze_papers: complete
+    analyze_papers --> generate_hypotheses: complete
+    generate_hypotheses --> design_experiments: complete
+    design_experiments --> implement_experiments: complete
+    implement_experiments --> run_experiments: auto_handoff or complete
+    run_experiments --> analyze_results: complete
+    analyze_results --> review: auto_advance
+    analyze_results --> implement_experiments: auto_backtrack_to_implement
+    analyze_results --> design_experiments: auto_backtrack_to_design
+    analyze_results --> generate_hypotheses: auto_backtrack_to_hypotheses
+    analyze_results --> analyze_results: human_clarification_required
+    review --> write_paper: auto_advance
+    review --> implement_experiments: auto_backtrack_to_implement
+    review --> design_experiments: auto_backtrack_to_design
+    review --> generate_hypotheses: auto_backtrack_to_hypotheses
+    write_paper --> [*]: auto_complete
 ```
 
-Default `agent_approval` mode now runs with `workflow.approval_mode: minimal`, so successful nodes auto-advance and human approval is only requested when a transition explicitly requires human judgment. Set `workflow.approval_mode: manual` if you want the legacy pause-after-each-node behavior. `implement_experiments` can still auto-handoff into `run_experiments`, `analyze_results` can emit explicit backward recommendations, and `review` still turns panel output into an advance, a backtrack, or a human hold.
+Terminology:
+- Workflow mode: `agent_approval` is the current execution structure for the 9-node graph.
+- Approval mode: `minimal` (default) auto-resolves ordinary approval gates, while `manual` pauses at every approval boundary.
+- Autonomy preset: `/agent overnight` runs a separate safe overnight policy. It is not a third workflow mode.
+
+Within the `agent_approval` workflow mode, the default approval mode is `minimal`, so successful nodes auto-advance and review outcomes auto-apply into `write_paper` or one of the supported backtracks. The main human-only gates are in `analyze_results`: explicit clarification when the objective metric cannot be grounded to a concrete numeric signal, and low-confidence hypothesis-reset recommendations that are not marked auto-executable. Set `workflow.approval_mode: manual` if you want the legacy pause-after-each-node behavior, including explicit `/approve` on review backtracks.
 
 ### Phase-by-Phase Connection Graphs
 
@@ -319,13 +324,12 @@ flowchart LR
     Score --> Packet["review_packet.json + checklist.md"]
     Decision --> Packet
     Packet --> Insight["review insight + suggested actions"]
-    Insight --> Gate{"approve review?"}
+    Insight --> Gate{"resolve review outcome"}
 
     Gate -->|advance| WP["write_paper"]
     Gate -->|backtrack_to_hypotheses| GH["generate_hypotheses"]
     Gate -->|backtrack_to_design| DE["design_experiments"]
     Gate -->|backtrack_to_implement| IE["implement_experiments"]
-    Gate -->|pause_for_human| Hold["stay on review"]
 
     WP --> PWM["PaperWriterSessionManager"]
     PWM --> Mode["Codex session or staged LLM"]
@@ -411,12 +415,11 @@ flowchart LR
     Parse --> Insight["buildReviewInsightCard<br/>formatReviewPacketLines"]
     Insight --> TUI["TUI active run insight<br/>/agent review output"]
     Insight --> Web["Web review preview<br/>suggested action buttons"]
-    TUI --> Approve["approve current"]
+    TUI --> Approve["auto transition or /approve (manual approval mode)"]
     Web --> Approve
-    Approve --> Runtime["StateGraphRuntime.approveCurrent"]
+    Approve --> Runtime["StateGraphRuntime.approveCurrent / auto gate resolver"]
     Runtime -->|advance| Paper["write_paper"]
     Runtime -->|safe backtrack| Backtrack["generate_hypotheses / design_experiments / implement_experiments"]
-    Runtime -->|pause_for_human| ReviewNode
 ```
 
 ### Concrete Agent Runtime
@@ -560,8 +563,9 @@ Implementation references:
 | `/agent retry [node] [run]` | Retry node |
 | `/agent jump <node> [run] [--force]` | Jump node |
 | `/agent budget [run]` | Show budget usage |
+| `/agent overnight [run]` | Run the overnight autonomy preset with the default safe policy |
 | `/model` | Open arrow-key selector for model and reasoning effort |
-| `/approve` | Approve current node |
+| `/approve` | Approve the current paused node (mainly when approval mode is `manual`) |
 | `/retry` | Retry current node |
 | `/settings` | Edit defaults |
 | `/quit` | Exit |
@@ -587,7 +591,7 @@ Implementation references:
 6. Node control
    - Examples: `jump back to collect_papers`, `retry the hypothesis node`, `focus on implement_experiments`
 7. Graph / budget / approval
-   - Examples: `show graph`, `show budget`, `approve current node`, `retry current node`
+   - Examples: `show graph`, `show budget`, `approve the current paused node`, `retry current node`
 8. Direct questions about collected papers
    - Examples: `how many papers were collected?`
    - Examples: `how many papers are missing PDF paths?`

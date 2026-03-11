@@ -608,29 +608,29 @@ function buildSuggestedActions(
   const transition = panel?.decision.recommended_transition;
 
   if (decisionOutcome === "backtrack_to_hypotheses") {
-    return ["/approve", "/agent jump generate_hypotheses --force", "/agent transition", "/agent review"];
+    return ["/agent jump generate_hypotheses --force", "/agent transition", "/agent review"];
   }
   if (decisionOutcome === "backtrack_to_implement") {
-    return ["/approve", "/agent jump implement_experiments --force", "/agent transition", "/agent review"];
+    return ["/agent jump implement_experiments --force", "/agent transition", "/agent review"];
   }
   if (decisionOutcome === "backtrack_to_design") {
-    return ["/approve", "/agent jump design_experiments --force", "/agent transition", "/agent review"];
+    return ["/agent jump design_experiments --force", "/agent transition", "/agent review"];
   }
   if (decisionOutcome === "manual_block") {
-    return ["/agent review", "/agent transition", "/agent jump analyze_results --force"];
+    return ["/agent jump design_experiments --force", "/agent transition", "/agent review"];
   }
   if (decisionOutcome === "revise_in_place") {
-    return ["/agent review", "/agent jump analyze_results --force", "/agent transition"];
+    return ["/agent run write_paper", "/agent review", "/agent transition"];
   }
 
   if (transition === "advance" || recommendation?.action === "advance") {
-    return ["/approve", "/agent run write_paper", "/agent review"];
+    return ["/agent run write_paper", "/agent review"];
   }
 
   if (readiness.blocking_checks > 0) {
-    return ["/agent review", "/agent transition", "/agent jump analyze_results --force"];
+    return ["/agent transition", "/agent review", "/agent jump analyze_results --force"];
   }
-  return ["/agent transition", "/approve", "/agent review"];
+  return ["/agent transition", "/agent review"];
 }
 
 function normalizeReviewCheck(value: unknown, index: number): ReviewPacketCheck | undefined {

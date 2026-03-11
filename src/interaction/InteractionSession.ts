@@ -1350,7 +1350,7 @@ export class InteractionSession {
       if (!run) {
         return { ok: false, reason: "target run not found" };
       }
-      this.pushLog("Starting overnight autonomy with the default safe policy.");
+      this.pushLog("Starting autonomy preset: overnight (default safe policy).");
       const controller = new AutonomousRunController(this.runStore, this.orchestrator, this.eventStream);
       const outcome = await controller.runOvernight(run.id, buildDefaultOvernightPolicy(), { abortSignal });
       this.pushLog(`Overnight autonomy ${outcome.status}: ${outcome.reason}`);

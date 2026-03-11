@@ -590,7 +590,10 @@ function buildReviewPrompt(input: {
     JSON.stringify(input.outline, null, 2),
     "",
     "Draft JSON:",
-    JSON.stringify(input.draft, null, 2)
+    JSON.stringify(input.draft, null, 2),
+    "",
+    "Review context JSON:",
+    JSON.stringify(input.bundle.reviewContext || {}, null, 2)
   ].join("\n");
 }
 
