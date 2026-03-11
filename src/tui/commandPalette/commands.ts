@@ -6,7 +6,8 @@ export interface SlashCommandDef {
 
 export const SLASH_COMMANDS: SlashCommandDef[] = [
   { name: "help", usage: "/help", description: "Show command list and usage" },
-  { name: "new", usage: "/new", description: "Create a new run" },
+  { name: "new", usage: "/new", description: "Create a research brief file" },
+  { name: "brief", usage: "/brief start <path|--latest>", description: "Start research from a brief file" },
   { name: "doctor", usage: "/doctor", description: "Run environment checks" },
   { name: "runs", usage: "/runs", description: "List and search runs" },
   { name: "run", usage: "/run <run>", description: "Select a run" },

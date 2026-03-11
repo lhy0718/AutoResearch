@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
+import { ensureScaffold, resolveAppPaths } from "../src/config.js";
+import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
+import { RunStore } from "../src/core/runs/runStore.js";
 import { TerminalApp } from "../src/tui/TerminalApp.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 
@@ -90,11 +94,6 @@ describe("TerminalApp pending natural plan execution", () => {
     app.render = () => {};
     app.updateSuggestions = () => {};
     app.drainQueuedInputs = async () => {};
-    app.askWithinTui = vi
-      .fn()
-      .mockResolvedValueOnce("Pilot topic")
-      .mockResolvedValueOnce("recent papers,last 5 years")
-      .mockResolvedValueOnce("reproducibility");
     app.openSelectionMenu = vi
       .fn()
       .mockResolvedValueOnce("codex_chatgpt_only")
@@ -987,5 +986,227 @@ describe("TerminalApp pending natural plan execution", () => {
     app.pushLog('Analyzing paper 5/30: "Paper 5".');
     expect(app.logs).toEqual([]);
     expect(app.getRenderableLogs(run)[0]).toContain("Analyzing... 5/30");
+  });
+
+  it("creates a Markdown brief file when /new is used without an editor", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "autolabos-brief-new-"));
+    const originalCwd = process.cwd();
+    process.chdir(cwd);
+    try {
+      const paths = resolveAppPaths(cwd);
+      await ensureScaffold(paths);
+      const app = makeApp();
+      app.openResearchBriefInEditor = vi.fn().mockResolvedValue(false);
+
+      await app.handleNewRun();
+
+      const briefsDir = path.join(cwd, ".autolabos", "briefs");
+      const files = await readdir(briefsDir);
+      expect(files).toHaveLength(1);
+      const raw = await readFile(path.join(briefsDir, files[0]), "utf8");
+      expect(raw).toContain("# Research Brief");
+      expect(raw).toContain("## Topic");
+      expect(app.logs.some((line: string) => line.includes("Created research brief:"))).toBe(true);
+    } finally {
+      process.chdir(originalCwd);
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("starts a run from the latest brief file, snapshots it, and auto-starts execution", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "autolabos-brief-start-"));
+    const originalCwd = process.cwd();
+    process.chdir(cwd);
+    try {
+      const paths = resolveAppPaths(cwd);
+      await ensureScaffold(paths);
+      const runStore = new RunStore(paths);
+      const orchestrator = {
+        runCurrentAgentWithOptions: vi.fn(async (runId: string) => {
+          const run = await runStore.getRun(runId);
+          if (!run) {
+            throw new Error("expected run");
+          }
+          run.status = "completed";
+          run.latestSummary = "research completed";
+          run.graph.nodeStates.write_paper.status = "completed";
+          run.currentNode = "write_paper";
+          run.graph.currentNode = "write_paper";
+          await runStore.updateRun(run);
+          return {
+            run,
+            result: {
+              status: "success" as const,
+              summary: "research completed"
+            }
+          };
+        })
+      };
+      const app = new TerminalApp({
+        config: {
+          papers: { max_results: 100 },
+          providers: {
+            llm_mode: "codex_chatgpt_only",
+            codex: {
+              model: "gpt-5.3-codex",
+              chat_model: "gpt-5.3-codex",
+              reasoning_effort: "medium",
+              chat_reasoning_effort: "medium",
+              fast_mode: false,
+              chat_fast_mode: false
+            },
+            openai: { model: "gpt-5.4", reasoning_effort: "medium" }
+          },
+          analysis: {
+            pdf_mode: "codex_text_image_hybrid",
+            responses_model: "gpt-5.4"
+          },
+          research: {
+            default_topic: "Multi-agent collaboration",
+            default_constraints: ["recent papers"],
+            default_objective_metric: "reproducibility"
+          }
+        } as any,
+        runStore,
+        titleGenerator: {
+          generateTitle: vi.fn().mockResolvedValue("Brief-driven run")
+        } as any,
+        codex: {
+          runTurnStream: vi.fn(async () => {
+            throw new Error("llm unavailable");
+          })
+        } as any,
+        eventStream: { subscribe: () => () => {} } as any,
+        orchestrator: orchestrator as any,
+        semanticScholarApiKeyConfigured: false,
+        onQuit: () => {},
+        saveConfig: async () => {}
+      }) as any;
+      app.render = () => {};
+      app.updateSuggestions = () => {};
+      app.drainQueuedInputs = async () => {};
+
+      const briefDir = path.join(cwd, ".autolabos", "briefs");
+      await mkdir(briefDir, { recursive: true });
+      const briefPath = path.join(briefDir, "20260311-190000-agent-study.md");
+      await writeFile(
+        briefPath,
+        [
+          "# Research Brief",
+          "",
+          "## Topic",
+          "",
+          "Multi-agent code repair on SWE-bench",
+          "",
+          "## Objective Metric",
+          "",
+          "pass@1 >= 0.4",
+          "",
+          "## Constraints",
+          "",
+          "- recent papers",
+          "- 6 hour budget",
+          "",
+          "## Plan",
+          "",
+          "Run baseline, ablation, and confirmatory evaluations."
+        ].join("\n"),
+        "utf8"
+      );
+
+      await app.handleBriefCommand(["start", "--latest"]);
+
+      const runs = await runStore.listRuns();
+      expect(runs).toHaveLength(1);
+      const run = runs[0];
+      expect(run.title).toBe("Brief-driven run");
+      expect(orchestrator.runCurrentAgentWithOptions).toHaveBeenCalledWith(
+        run.id,
+        expect.objectContaining({ abortSignal: undefined })
+      );
+      const snapshot = await readFile(path.join(cwd, ".autolabos", "runs", run.id, "brief", "source_brief.md"), "utf8");
+      expect(snapshot).toContain("Multi-agent code repair on SWE-bench");
+      const runContext = new RunContextMemory(path.join(cwd, run.memoryRefs.runContextPath));
+      expect(await runContext.get("run_brief.source_path")).toBe(await realpath(briefPath));
+      expect(await runContext.get("run_brief.snapshot_path")).toBe(`.autolabos/runs/${run.id}/brief/source_brief.md`);
+    } finally {
+      process.chdir(originalCwd);
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("restores a pending human intervention request for the active run", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "autolabos-human-restore-"));
+    const originalCwd = process.cwd();
+    process.chdir(cwd);
+    try {
+      const paths = resolveAppPaths(cwd);
+      await ensureScaffold(paths);
+      const runStore = new RunStore(paths);
+      const run = await runStore.createRun({
+        title: "Pending question run",
+        topic: "topic",
+        constraints: [],
+        objectiveMetric: "metric"
+      });
+      run.status = "paused";
+      run.currentNode = "analyze_results";
+      run.graph.currentNode = "analyze_results";
+      run.graph.nodeStates.analyze_results.status = "needs_approval";
+      await runStore.updateRun(run);
+
+      const runContext = new RunContextMemory(path.join(cwd, run.memoryRefs.runContextPath));
+      await runContext.put("human_intervention.pending", {
+        id: "request-1",
+        sourceNode: "analyze_results",
+        kind: "objective_metric_clarification",
+        title: "Clarify the objective metric",
+        question: "Which metric should count as the objective?",
+        context: ["Available metrics: accuracy, pass_at_1."],
+        inputMode: "free_text",
+        resumeAction: "retry_current",
+        createdAt: new Date().toISOString()
+      });
+
+      const app = new TerminalApp({
+        config: {
+          papers: { max_results: 100 },
+          providers: {
+            llm_mode: "codex_chatgpt_only",
+            codex: { model: "gpt-5.3-codex", reasoning_effort: "xhigh", fast_mode: false },
+            openai: { model: "gpt-5.4", reasoning_effort: "medium" }
+          },
+          analysis: {
+            pdf_mode: "codex_text_image_hybrid",
+            responses_model: "gpt-5.4"
+          },
+          research: {
+            default_topic: "topic",
+            default_constraints: ["recent papers"],
+            default_objective_metric: "metric"
+          }
+        } as any,
+        runStore,
+        titleGenerator: {} as any,
+        codex: {} as any,
+        eventStream: { subscribe: () => () => {} } as any,
+        orchestrator: {} as any,
+        initialRunId: run.id,
+        semanticScholarApiKeyConfigured: false,
+        onQuit: () => {},
+        saveConfig: async () => {}
+      }) as any;
+      app.render = () => {};
+      app.updateSuggestions = () => {};
+      app.drainQueuedInputs = async () => {};
+
+      await app.refreshRunIndex();
+
+      expect(app.pendingHumanIntervention?.request.id).toBe("request-1");
+      expect(app.logs.some((line: string) => line.includes("Human input required"))).toBe(true);
+    } finally {
+      process.chdir(originalCwd);
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 });

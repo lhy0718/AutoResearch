@@ -39,6 +39,9 @@ export const DEFAULT_PRIMARY_LLM_MODE = "codex_chatgpt_only" as const;
 export const DEFAULT_PDF_ANALYSIS_MODE = "codex_text_image_hybrid" as const;
 export const DEFAULT_CODEX_CHAT_SETUP_MODEL = "gpt-5.3-codex-spark" as const;
 export const DEFAULT_CODEX_CHAT_SETUP_REASONING_EFFORT = "medium" as const;
+export const DEFAULT_RESEARCH_TOPIC = "Multi-agent collaboration" as const;
+export const DEFAULT_RESEARCH_CONSTRAINTS = ["recent papers", "last 5 years"] as const;
+export const DEFAULT_RESEARCH_OBJECTIVE_METRIC = "state-of-the-art reproducibility" as const;
 
 export function getDefaultPdfAnalysisModeForLlmMode(
   llmMode: "codex_chatgpt_only" | "openai_api"
@@ -225,16 +228,10 @@ export async function runSetupWizard(
   opts: SetupWizardOptions = {}
 ): Promise<AppConfig> {
   const defaultProjectName = path.basename(paths.cwd);
-  const projectName = await promptReader("Project name", defaultProjectName);
-  const defaultTopic = await promptReader("Default research topic", "Multi-agent collaboration");
-  const constraintsRaw = await promptReader(
-    "Default constraints (comma-separated)",
-    "recent papers,last 5 years"
-  );
-  const defaultObjectiveMetric = await promptReader(
-    "Default objective metric",
-    "state-of-the-art reproducibility"
-  );
+  const projectName = defaultProjectName;
+  const defaultTopic = DEFAULT_RESEARCH_TOPIC;
+  const defaultConstraints = [...DEFAULT_RESEARCH_CONSTRAINTS];
+  const defaultObjectiveMetric = DEFAULT_RESEARCH_OBJECTIVE_METRIC;
   const llmMode = await askPrimaryLlmMode(promptReader);
   await maybeNotifyCodexLoginStatus(paths, llmMode, promptReader, opts);
   const defaultCodexChatSetupModel = DEFAULT_CODEX_CHAT_SETUP_MODEL;
@@ -330,22 +327,11 @@ export async function runSetupWizard(
           promptReader
         )
       : ("xhigh" as AppConfig["analysis"]["responses_reasoning_effort"]);
-  const existingApiKey = await resolveSemanticScholarApiKey(paths.cwd);
-  const semanticScholarApiKey = await askApiKey(
-    "Semantic Scholar API key",
-    existingApiKey,
-    promptReader
-  );
   const existingOpenAiApiKey = await resolveOpenAiApiKey(paths.cwd);
   const openAiApiKey =
     llmMode === "openai_api" || pdfAnalysisMode === "responses_api_pdf"
       ? await askApiKey("OpenAI API key", existingOpenAiApiKey, promptReader)
       : undefined;
-
-  const defaultConstraints = constraintsRaw
-    .split(",")
-    .map((x) => x.trim())
-    .filter(Boolean);
 
   const config = buildConfigFromWizardAnswers({
     projectName,
@@ -375,7 +361,6 @@ export async function runSetupWizard(
   });
 
   await saveConfig(paths, config);
-  await upsertEnvVar(path.join(paths.cwd, ".env"), "SEMANTIC_SCHOLAR_API_KEY", semanticScholarApiKey.trim());
   if (openAiApiKey?.trim()) {
     await upsertEnvVar(path.join(paths.cwd, ".env"), "OPENAI_API_KEY", openAiApiKey.trim());
   }

@@ -254,17 +254,35 @@ class AutoLabOSWebController {
           return;
         }
         const body = (await readJsonBody(req)) as JsonBody;
+        const brief = asTrimmedString(body.brief);
+        const autoStart = body.autoStart === true;
         const topic = asTrimmedString(body.topic) || runtime.config.research.default_topic;
         const objectiveMetric =
           asTrimmedString(body.objectiveMetric) || runtime.config.research.default_objective_metric;
         const constraints = Array.isArray(body.constraints)
           ? body.constraints.map((item) => String(item).trim()).filter(Boolean)
           : runtime.config.research.default_constraints;
-        const run = await session.createRun({
-          topic,
-          constraints,
-          objectiveMetric
-        });
+        const run = brief
+          ? await session.createRunFromBrief({
+              brief,
+              topic,
+              constraints,
+              objectiveMetric,
+              autoStart
+            })
+          : autoStart
+            ? await session
+                .createRun({
+                  topic,
+                  constraints,
+                  objectiveMetric
+                })
+                .then((created) => session.startRun(created.id))
+            : await session.createRun({
+                topic,
+                constraints,
+                objectiveMetric
+              });
         return jsonResponse(res, 200, {
           run,
           session: session.snapshot(),

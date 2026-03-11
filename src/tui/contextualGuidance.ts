@@ -21,9 +21,19 @@ export interface PendingPlanGuidance {
   totalSteps: number;
 }
 
+export interface PendingHumanInterventionGuidance {
+  title: string;
+  question: string;
+  choices?: Array<{
+    label: string;
+    description?: string;
+  }>;
+}
+
 export interface ContextualGuidanceInput {
   run?: RunRecord;
   pendingPlan?: PendingPlanGuidance;
+  humanIntervention?: PendingHumanInterventionGuidance;
   language?: GuidanceLanguage;
 }
 
@@ -33,16 +43,41 @@ export function buildContextualGuidance(input: ContextualGuidanceInput): Context
     return buildPendingPlanGuidance(input.pendingPlan, language);
   }
 
+  if (input.humanIntervention) {
+    return {
+      title: localize(language, "Awaiting input", "답변 대기 중"),
+      items: dedupeGuidanceItems([
+        {
+          label: input.humanIntervention.question,
+          description: localize(language, "Reply directly in the TUI to continue the run", "TUI에 바로 답하면 실행이 재개됩니다")
+        },
+        ...(input.humanIntervention.choices || []).map((choice, index) => ({
+          label: `${index + 1}) ${choice.label}`,
+          description: choice.description || localize(language, "Choice", "선택지")
+        })),
+        {
+          label: "/approve",
+          description: localize(language, "Manual override for the current approval boundary", "현재 승인 경계를 수동으로 넘기기")
+        },
+        {
+          label: "/agent transition",
+          description: localize(language, "Inspect the pending transition before deciding", "결정 전에 pending transition 확인")
+        }
+      ])
+    };
+  }
+
   if (!input.run) {
     return {
       title: localize(language, "Start here", "시작 가이드"),
       items: dedupeGuidanceItems([
-        { label: "/new", description: localize(language, "Create the first run", "첫 run 만들기") },
+        { label: "/new", description: localize(language, "Create the first research brief file", "첫 research brief 파일 만들기") },
         { label: "/runs", description: localize(language, "Browse existing runs", "기존 run 둘러보기") },
         { label: "/doctor", description: localize(language, "Check keys and local environment", "키와 로컬 환경 점검") },
-        { label: "/settings", description: localize(language, "Edit default research settings", "기본 연구 설정 수정") },
+        { label: "/settings", description: localize(language, "Edit model and PDF settings", "모델과 PDF 설정 수정") },
         { label: "/model", description: localize(language, "Open the model selector", "모델 선택기 열기") },
         { label: "/help", description: localize(language, "Show the full command list", "전체 명령어 목록 보기") },
+        { label: "/brief start --latest", description: localize(language, "Start the latest brief file", "가장 최근 brief 파일 실행") },
         {
           label: localize(language, "what natural inputs are supported?", "지원되는 자연어 입력을 보여줘"),
           description: localize(language, "Show the live natural-language catalog", "현재 지원하는 자연어 목록 보기")
@@ -75,7 +110,7 @@ export function buildContextualGuidance(input: ContextualGuidanceInput): Context
     return {
       title: localize(language, "Next actions", "다음 액션"),
       items: dedupeGuidanceItems([
-        { label: "/new", description: localize(language, "Start another run", "새 run 시작") },
+        { label: "/new", description: localize(language, "Draft another research brief", "새 research brief 만들기") },
         { label: "/runs", description: localize(language, "Browse previous runs", "이전 run 둘러보기") },
         { label: statusCommand, description: localize(language, "Show the final run status", "최종 run 상태 보기") },
         { label: graphCommand, description: localize(language, "Inspect this completed workflow", "완료된 워크플로 상태 보기") },

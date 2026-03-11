@@ -25,6 +25,11 @@ import { RunContextMemory } from "../core/memory/runContextMemory.js";
 import { parseSlashCommand } from "../core/commands/parseSlash.js";
 import { parseAnalysisReport } from "../core/resultAnalysis.js";
 import {
+  extractRunBrief,
+  looksLikeRunBriefRequest,
+  summarizeRunBrief
+} from "../core/runs/runBriefParser.js";
+import {
   buildReviewInsightCard,
   formatReviewPacketLines,
   parseReviewPacket
@@ -109,6 +114,15 @@ export interface CreateRunRequest {
   topic: string;
   constraints: string[];
   objectiveMetric: string;
+}
+
+export interface CreateRunFromBriefRequest {
+  brief: string;
+  topic?: string;
+  constraints?: string[];
+  objectiveMetric?: string;
+  autoStart?: boolean;
+  abortSignal?: AbortSignal;
 }
 
 export class InteractionSession {
@@ -228,6 +242,50 @@ export class InteractionSession {
     this.pushLog(`Created run ${run.id}`);
     this.pushLog(`Title: ${run.title}`);
     return run;
+  }
+
+  async createRunFromBrief(input: CreateRunFromBriefRequest): Promise<RunRecord> {
+    const extracted = await extractRunBrief({
+      brief: input.brief,
+      defaults: {
+        topic: input.topic?.trim() || this.config.research.default_topic,
+        constraints: input.constraints?.length ? input.constraints : this.config.research.default_constraints,
+        objectiveMetric: input.objectiveMetric?.trim() || this.config.research.default_objective_metric
+      },
+      llm: this.getCommandIntentClient(),
+      abortSignal: input.abortSignal
+    });
+    for (const line of summarizeRunBrief(extracted)) {
+      this.pushLog(line);
+    }
+    const run = await this.createRun({
+      topic: extracted.topic,
+      constraints: extracted.constraints,
+      objectiveMetric: extracted.objectiveMetric
+    });
+    const runContextMemory = new RunContextMemory(this.resolveWorkspacePath(run.memoryRefs.runContextPath));
+    await runContextMemory.put("run_brief.raw", input.brief);
+    await runContextMemory.put("run_brief.extracted", extracted);
+    await runContextMemory.put("run_brief.plan_summary", extracted.planSummary || null);
+    if (!input.autoStart) {
+      return run;
+    }
+    return this.startRun(run.id, input.abortSignal);
+  }
+
+  async startRun(runId: string, abortSignal?: AbortSignal): Promise<RunRecord> {
+    await this.setActiveRunId(runId);
+    this.pushLog(`Auto-starting research for ${runId} from collect_papers...`);
+    const response = await this.orchestrator.runCurrentAgentWithOptions(runId, {
+      abortSignal
+    });
+    await this.refreshRunIndex();
+    await this.setActiveRunId(response.run.id);
+    this.pushLog(`Research start result: ${response.result.summary}`);
+    if (response.result.status === "failure" && response.result.error) {
+      this.pushLog(`Research start error: ${response.result.error}`);
+    }
+    return response.run;
   }
 
   async submitInput(text: string): Promise<WebSessionState> {
@@ -551,6 +609,20 @@ export class InteractionSession {
     }
 
     const language = detectQueryLanguage(text);
+    if (looksLikeRunBriefRequest(text)) {
+      const run = await this.createRunFromBrief({
+        brief: text,
+        autoStart: true,
+        abortSignal
+      });
+      this.pushLog(
+        language === "ko"
+          ? `자연어 brief로 run ${run.id}을 만들고 연구를 시작했습니다.`
+          : `Created run ${run.id} from the natural-language brief and started research.`
+      );
+      return true;
+    }
+
     const titleChange = extractTitleChangeIntent(text);
     if (titleChange) {
       const run = await this.resolveTargetRun(undefined);
@@ -1674,6 +1746,13 @@ export class InteractionSession {
       return this.runIndex.find((run) => run.id === this.activeRunId) || this.runIndex[0];
     }
     return this.runIndex[0];
+  }
+
+  private resolveWorkspacePath(maybeRelative: string): string {
+    if (path.isAbsolute(maybeRelative)) {
+      return maybeRelative;
+    }
+    return path.join(this.workspaceRoot, maybeRelative);
   }
 
   private armPendingNaturalCommands(

@@ -186,28 +186,23 @@ describe("config .env overrides", () => {
     expect(raw).toContain('SEMANTIC_SCHOLAR_API_KEY="wizard-key"');
   });
 
-  it("requires a Semantic Scholar API key during first-run setup", async () => {
+  it("derives the project name from the workspace and does not require a Semantic Scholar API key during first-run setup", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autolabos-setup-required-key-"));
     const paths = resolveAppPaths(cwd);
-    const answers = [
-      "project",
-      "Multi-agent collaboration",
-      "recent papers,last 5 years",
-      "reproducibility",
-      "codex",
-      "gpt-5.3-codex",
-      "low",
-      "gpt-5.3-codex",
-      "xhigh",
-      "   ",
-      "required-key"
-    ];
+    const config = await runSetupWizard(
+      paths,
+      makePromptReaderFromQuestionMap({
+        "Primary LLM provider (codex/api)": "codex",
+        "General chat model": "gpt-5.3-codex",
+        "General chat reasoning effort": "low",
+        "Research backend selection": "gpt-5.3-codex",
+        "Research backend reasoning effort": "xhigh"
+      })
+    );
 
-    const config = await runSetupWizard(paths, makePromptReaderFromAnswers(answers));
-
-    expect(config.project_name).toBe("project");
-    await expect(resolveSemanticScholarApiKey(cwd)).resolves.toBe("required-key");
-    await expect(fs.readFile(paths.configFile, "utf8")).resolves.toContain("project_name: project");
+    expect(config.project_name).toBe(path.basename(cwd));
+    await expect(resolveSemanticScholarApiKey(cwd)).resolves.toBeUndefined();
+    await expect(fs.readFile(paths.configFile, "utf8")).resolves.toContain(`project_name: ${path.basename(cwd)}`);
   });
 
   it("uses OPENAI_API_KEY from .env when Responses PDF mode is enabled", async () => {
@@ -226,10 +221,6 @@ describe("config .env overrides", () => {
     const config = await runSetupWizard(
       paths,
       makePromptReaderFromQuestionMap({
-        "Project name": "project",
-        "Default research topic": "Multi-agent collaboration",
-        "Default constraints (comma-separated)": "recent papers,last 5 years",
-        "Default objective metric": "reproducibility",
         "Primary LLM provider (codex/api)": "api",
         "OpenAI API general chat model": "gpt-5.4",
         "General chat reasoning effort": "low",
@@ -237,7 +228,6 @@ describe("config .env overrides", () => {
         "Research backend reasoning effort": "xhigh",
         "Research backend Responses API PDF model": "gpt-4o",
         "Research backend PDF reasoning effort": "xhigh",
-        "Semantic Scholar API key": "semantic-key",
         "OpenAI API key": "openai-key"
       })
     );
@@ -255,16 +245,11 @@ describe("config .env overrides", () => {
     const config = await runSetupWizard(
       paths,
       makePromptReaderFromQuestionMap({
-        "Project name": "project",
-        "Default research topic": "Multi-agent collaboration",
-        "Default constraints (comma-separated)": "recent papers,last 5 years",
-        "Default objective metric": "reproducibility",
         "Primary LLM provider (codex/api)": "codex",
         "General chat model": "",
         "General chat reasoning effort": "",
         "Research backend selection": "",
-        "Research backend reasoning effort": "",
-        "Semantic Scholar API key": "semantic-key"
+        "Research backend reasoning effort": ""
       })
     );
 
@@ -288,16 +273,11 @@ describe("config .env overrides", () => {
     await runSetupWizard(
       paths,
       makePromptReaderFromQuestionMap({
-        "Project name": "project",
-        "Default research topic": "Multi-agent collaboration",
-        "Default constraints (comma-separated)": "recent papers,last 5 years",
-        "Default objective metric": "reproducibility",
         "Primary LLM provider (codex/api)": "codex",
         "General chat model": "gpt-5.3-codex-spark",
         "General chat reasoning effort": "low",
         "Research backend selection": "gpt-5.4",
-        "Research backend reasoning effort": "xhigh",
-        "Semantic Scholar API key": "semantic-key"
+        "Research backend reasoning effort": "xhigh"
       }),
       {
         codexCli: fakeCodexCli,
@@ -375,10 +355,6 @@ describe("config .env overrides", () => {
     const config = await runSetupWizard(paths, async (question, defaultValue = "") => {
       asked.push(question);
       return makePromptReaderFromQuestionMap({
-        "Project name": "project",
-        "Default research topic": "Multi-agent collaboration",
-        "Default constraints (comma-separated)": "recent papers,last 5 years",
-        "Default objective metric": "reproducibility",
         "Primary LLM provider (codex/api)": "api",
         "OpenAI API general chat model": "gpt-5.4",
         "General chat reasoning effort": "low",
@@ -386,7 +362,6 @@ describe("config .env overrides", () => {
         "Research backend reasoning effort": "high",
         "Research backend Responses API PDF model": "gpt-4o",
         "Research backend PDF reasoning effort": "xhigh",
-        "Semantic Scholar API key": "",
         "OpenAI API key": ""
       })(question, defaultValue);
     });
@@ -396,8 +371,9 @@ describe("config .env overrides", () => {
     expect(config.providers.openai.reasoning_effort).toBe("high");
     expect(config.analysis.pdf_mode).toBe("responses_api_pdf");
     expect(asked).not.toContain("Research backend PDF mode (codex/api)");
-    expect(asked).toContain("Semantic Scholar API key (press Enter to keep existing)");
     expect(asked).toContain("OpenAI API key (press Enter to keep existing)");
+    expect(asked).not.toContain("Project name");
+    expect(asked).not.toContain("Default research topic");
     await expect(resolveSemanticScholarApiKey(cwd)).resolves.toBe("existing-semantic");
     await expect(resolveOpenAiApiKey(cwd)).resolves.toBe("existing-openai");
   });
@@ -409,10 +385,6 @@ describe("config .env overrides", () => {
     const config = await runSetupWizard(
       paths,
       makePromptReaderFromQuestionMap({
-        "Project name": "project",
-        "Default research topic": "Multi-agent collaboration",
-        "Default constraints (comma-separated)": "recent papers,last 5 years",
-        "Default objective metric": "reproducibility",
         "Primary LLM provider (codex/api)": "api",
         "OpenAI API general chat model": "gpt-5-mini",
         "General chat reasoning effort": "low",
@@ -420,7 +392,6 @@ describe("config .env overrides", () => {
         "Research backend reasoning effort": "xhigh",
         "Research backend Responses API PDF model": "gpt-5.4",
         "Research backend PDF reasoning effort": "xhigh",
-        "Semantic Scholar API key": "semantic-key",
         "OpenAI API key": "openai-key"
       })
     );

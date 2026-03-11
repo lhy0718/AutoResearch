@@ -983,4 +983,167 @@ describe("App", () => {
       expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
     });
   });
+
+  it("submits a natural-language research brief and auto-start preference when creating a run", async () => {
+    let createdRun:
+      | {
+          id: string;
+          title: string;
+          topic: string;
+          constraints: string[];
+          objectiveMetric: string;
+          status: string;
+          currentNode: string;
+          latestSummary?: string;
+          updatedAt: string;
+          graph: {
+            currentNode: string;
+            checkpointSeq: number;
+            retryCounters: Record<string, number>;
+            rollbackCounters: Record<string, number>;
+            budget: {
+              toolCallsUsed: number;
+              wallClockMsUsed: number;
+              usdUsed: number;
+              policy: {
+                maxToolCalls: number;
+                maxWallClockMinutes: number;
+                maxUsd: number;
+              };
+            };
+            nodeStates: Record<string, { status: string; updatedAt: string }>;
+          };
+        }
+      | undefined;
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/bootstrap")) {
+        return new Response(
+          JSON.stringify({
+            configured: true,
+            setupDefaults: {
+              projectName: "AutoLabOS",
+              defaultTopic: "Multi-agent collaboration",
+              defaultConstraints: ["recent papers", "last 5 years"],
+              defaultObjectiveMetric: "state-of-the-art reproducibility"
+            },
+            session: {
+              activeRunId: createdRun?.id,
+              busy: false,
+              logs: [],
+              canCancel: false
+            },
+            runs: createdRun ? [createdRun] : []
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.includes("/api/doctor")) {
+        return new Response(JSON.stringify({ configured: true, checks: [] }), { status: 200 });
+      }
+      if (url === "/api/runs") {
+        const body = JSON.parse(String(init?.body));
+        expect(body).toMatchObject({
+          brief: "주제: 멀티에이전트 실험 자동화\n목표: accuracy >= 0.9\n제약: 최근 5년, 오픈소스만",
+          autoStart: true
+        });
+        createdRun = {
+          id: "run-brief-1",
+          title: "Run brief",
+          topic: "멀티에이전트 실험 자동화",
+          constraints: ["최근 5년", "오픈소스만"],
+          objectiveMetric: "accuracy >= 0.9",
+          status: "running",
+          currentNode: "collect_papers",
+          latestSummary: "collect_papers started",
+          updatedAt: "2026-03-11T10:00:00.000Z",
+          graph: {
+            currentNode: "collect_papers",
+            checkpointSeq: 0,
+            retryCounters: {},
+            rollbackCounters: {},
+            budget: {
+              toolCallsUsed: 0,
+              wallClockMsUsed: 0,
+              usdUsed: 0,
+              policy: {
+                maxToolCalls: 20,
+                maxWallClockMinutes: 60,
+                maxUsd: 5
+              }
+            },
+            nodeStates: {
+              collect_papers: { status: "running", updatedAt: "2026-03-11T10:00:00.000Z" },
+              analyze_papers: { status: "pending", updatedAt: "2026-03-11T10:00:00.000Z" },
+              generate_hypotheses: { status: "pending", updatedAt: "2026-03-11T10:00:00.000Z" },
+              design_experiments: { status: "pending", updatedAt: "2026-03-11T10:00:00.000Z" },
+              implement_experiments: { status: "pending", updatedAt: "2026-03-11T10:00:00.000Z" },
+              run_experiments: { status: "pending", updatedAt: "2026-03-11T10:00:00.000Z" },
+              analyze_results: { status: "pending", updatedAt: "2026-03-11T10:00:00.000Z" },
+              review: { status: "pending", updatedAt: "2026-03-11T10:00:00.000Z" },
+              write_paper: { status: "pending", updatedAt: "2026-03-11T10:00:00.000Z" }
+            }
+          }
+        };
+        return new Response(
+          JSON.stringify({
+            run: createdRun,
+            session: {
+              activeRunId: createdRun.id,
+              busy: false,
+              logs: ["Created from brief."],
+              canCancel: false
+            }
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.includes("/api/runs/run-brief-1/artifacts")) {
+        return new Response(JSON.stringify({ artifacts: [] }), { status: 200 });
+      }
+      if (url.includes("/api/runs/run-brief-1/checkpoints")) {
+        return new Response(JSON.stringify({ checkpoints: [] }), { status: 200 });
+      }
+      if (url.includes("/api/runs/run-brief-1") && !url.includes("/actions")) {
+        return new Response(JSON.stringify({ run: createdRun }), { status: 200 });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal(
+      "EventSource",
+      class {
+        addEventListener() {}
+        close() {}
+      } as unknown as typeof EventSource
+    );
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "New run" })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "New run" }));
+    fireEvent.change(screen.getByLabelText("Research brief"), {
+      target: {
+        value: "주제: 멀티에이전트 실험 자동화\n목표: accuracy >= 0.9\n제약: 최근 5년, 오픈소스만"
+      }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create run" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/runs",
+        expect.objectContaining({
+          method: "POST"
+        })
+      );
+    });
+
+    expect(screen.getAllByText("Run brief").length).toBeGreaterThan(0);
+    expect(screen.getByText("collect_papers started")).toBeInTheDocument();
+  });
 });

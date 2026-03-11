@@ -43,7 +43,7 @@
 
 | Capability | What it gives you |
 | --- | --- |
-| Slash-first TUI | Operate the system from `/new`, `/agent ...`, `/model`, `/settings`, and `/doctor` |
+| Slash-first TUI | Create a brief with `/new`, launch it with `/brief start`, then steer the run with `/agent ...`, `/model`, `/settings`, and `/doctor` |
 | Local Web Ops UI | Run `autolabos web` for onboarding, dashboard controls, artifacts, checkpoints, and live session state in the browser |
 | Deterministic natural-language routing | Common intents map to local handlers or slash commands before LLM fallback |
 | Hybrid provider model | Default to Codex login for the primary flow, or move to OpenAI API models when you want explicit API-backed execution |
@@ -93,15 +93,25 @@ The web server listens on `http://127.0.0.1:4317` by default. Use `autolabos` in
 
 5. Confirm the first run worked. You should now have `.autolabos/config.yaml`, a configured workspace, and either the dashboard or the TUI home screen ready for a run.
 
-6. Create or select a run, then start with `/new`, `/agent collect "your topic"`, or the workflow cards in the web UI.
+6. In the TUI, create a Markdown brief with `/new`, then start it with `/brief start --latest`. In the web UI, you can still start from structured fields, a natural-language brief, or the workflow cards.
 
 ## What Happens On First Run
 
 - AutoLabOS stores workspace config in `.autolabos/config.yaml` and reads `SEMANTIC_SCHOLAR_API_KEY` and `OPENAI_API_KEY` from `process.env` or `.env`.
+- The TUI first-run wizard is model-focused: choose the primary provider, model slots, reasoning defaults, PDF mode, and an OpenAI API key only when `api` is involved.
+- The workspace folder name becomes `project_name` automatically in the TUI flow, and the TUI does not create a run until you explicitly start a research brief.
 - Choose the primary LLM provider: `codex` uses your local Codex session, while `api` uses OpenAI API models.
 - Choose the PDF analysis mode separately: `codex` keeps PDF extraction local before analysis, while `api` sends the PDF to the Responses API.
 - If the primary provider or PDF mode is `api`, onboarding and `/settings` let you choose the OpenAI model.
 - `/model` lets you switch the active backend first, then choose the slot and model later.
+
+## TUI Brief-First Flow
+
+- `/new` creates a Markdown template under `.autolabos/briefs/<timestamp>-<slug>.md`.
+- If `$EDITOR` or `$VISUAL` is set, AutoLabOS opens the brief there, validates the required sections, and asks once whether it should start the run now.
+- `/brief start <path>` or `/brief start --latest` snapshots the brief into `.autolabos/runs/<run_id>/brief/source_brief.md`, extracts `topic`, `objective metric`, `constraints`, and `plan`, then auto-starts from `collect_papers`.
+- The generated template uses these sections: `# Research Brief`, `## Topic`, `## Objective Metric`, `## Constraints`, `## Plan`, plus optional `## Notes` and `## Questions / Risks`.
+- Natural-language run creation still works, but the recommended TUI path is file-first so the research brief stays editable and inspectable outside the terminal.
 
 ## Common First-Run Fixes
 
@@ -117,6 +127,7 @@ The web server listens on `http://127.0.0.1:4317` by default. Use `autolabos` in
 - Onboarding uses the same non-interactive setup helper, so web setup writes the same `.autolabos/config.yaml` and `.env` values as the TUI wizard.
 - The dashboard includes run search and selection, the 9-node workflow view, node actions, live logs, checkpoints, artifacts, metadata, and `/doctor` summaries.
 - The bottom composer accepts both slash commands and supported natural-language requests.
+- New runs can start from either the structured form fields or a single natural-language research brief. The brief parser extracts topic, objective metric, constraints, and a short plan hint, then can auto-start the run from `collect_papers`.
 - Multi-step natural-language plans use browser buttons instead of `y/a/n`: `Run next`, `Run all`, and `Cancel`.
 - Artifact browsing is restricted to `.autolabos/runs/<run_id>` and previews common text files, images, and PDFs inline.
 
@@ -252,13 +263,14 @@ The top-level workflow remains a fixed 9-node graph. Recent automation work live
 | Approval mode | `workflow.approval_mode: minimal` | Yes | Auto-approves ordinary completion gates and auto-applies safe transition recommendations, including review outcomes | Pauses when a recommendation is `pause_for_human` or `autoExecutable=false` |
 | Approval mode | `workflow.approval_mode: manual` | Optional | Pauses at every approval boundary instead of auto-resolving it | Use `/approve`, `/agent apply`, or `/agent jump` to continue |
 | Autonomy preset | `/agent overnight` | On demand | Runs the current run unattended with a conservative overnight policy layered on top of the workflow | Stops before `write_paper`, on low-confidence or disallowed backtracks, repeated recommendations, time limit, or manual-only recommendations |
+| TUI supervisor | Interactive run supervisor | Default in `autolabos` | Keeps a run moving in `minimal` mode, restores pending questions after restart, and only hands control back when a real human answer is needed | Captures the answer in the TUI, applies the configured resume action, then continues the run automatically |
 
 ### Human Intervention Triggers
 
 | Where | Condition | What happens |
 | --- | --- | --- |
-| `analyze_results` | The objective metric still cannot be grounded to a concrete numeric signal after best-effort rematching | The run pauses for clarification before moving on |
-| `analyze_results` | A hypothesis reset is recommended, but confidence is too low for `autoExecutable=true` | The run pauses for human review instead of auto-backtracking |
+| `analyze_results` | The objective metric still cannot be grounded to a concrete numeric signal after best-effort rematching | The TUI asks which metric or success criterion to use, stores the answer, retries `analyze_results`, and then resumes automatic execution |
+| `analyze_results` | A hypothesis reset is recommended, but confidence is too low for `autoExecutable=true` | The TUI presents explicit next-step choices, applies the selected transition or jump, and then resumes automatic execution |
 | Any node in `manual` approval mode | The node reaches an approval boundary | The run waits for `/approve`, `/agent apply`, or another explicit operator choice |
 | `/agent overnight` | The run reaches `write_paper`, hits a low-confidence or disallowed recommendation, repeats the same recommendation too many times, or reaches the overnight time budget | Overnight stops and hands control back to the operator |
 
@@ -450,11 +462,13 @@ The new mid-pipeline reinforcements are internal-only in v1: `design_experiments
 
 Managed `run_experiments` runs may also emit `run_experiments_supplemental_runs.json` when the runtime automatically follows a successful standard run with `quick_check` and `confirmatory` profiles. `write_paper` may emit `paper/related_work_scout/*` when it performs a bounded related-work scout with planned query variants and a coverage audit, and it emits `validation_repair_report.json` plus `validation_repair.*` artifacts when the bounded repair loop actually runs.
 
+When a run starts from the TUI brief flow, AutoLabOS snapshots the source Markdown brief to `.autolabos/runs/<run_id>/brief/source_brief.md` and records provenance in `run_brief.*` memory entries. If a human answer is required, the active request is mirrored to `.autolabos/runs/<run_id>/human_intervention/request.json` and tracked through `human_intervention.pending` and `human_intervention.history`.
+
 ### Control Surfaces
 
 ```mermaid
 flowchart TB
-    TUI["Slash-first TUI<br/>/new + /agent + /model + /doctor"] --> Session["Interaction session"]
+    TUI["Slash-first TUI<br/>/new + /brief start + /agent + /model + /doctor"] --> Session["Interaction session"]
     Web["Local Web Ops UI<br/>onboarding + dashboard + composer + artifact browser"] --> Session
     Natural["Natural-language routing<br/>deterministic first, LLM fallback second"] --> Session
 
@@ -538,7 +552,8 @@ Key source areas:
 
 | Command | Description |
 | --- | --- |
-| `/new` | Create a run |
+| `/new` | Create a research brief file |
+| `/brief start <path|--latest>` | Start research from a brief file |
 | `/runs [query]` | List or search runs |
 | `/run <run>` | Select a run |
 | `/resume <run>` | Resume a run |
@@ -551,7 +566,7 @@ Key source areas:
 | `/agent jump <node> [run] [--force]` | Jump between nodes |
 | `/agent budget [run]` | Show budget usage |
 | `/model` | Open model and reasoning selector |
-| `/settings` | Edit defaults |
+| `/settings` | Edit provider, model, and PDF settings |
 | `/doctor` | Run environment checks |
 
 Common collection options:
@@ -588,11 +603,13 @@ Ask this inside the TUI to see the live supported list:
 
 Typical examples:
 
-- `create a new run`
+- `create a new research run`
 - `collect 100 papers from the last 5 years by relevance`
 - `show current status`
 - `jump back to collect_papers`
 - `how many papers were collected?`
+
+In the TUI, the recommended path is still `/new` plus `/brief start --latest`, because that leaves an editable brief file on disk. Natural-language run creation remains available for quick one-shot starts.
 
 Multi-step natural-language plans pause between steps:
 
@@ -611,7 +628,8 @@ Implementation references:
 | Command | Description |
 | --- | --- |
 | `/help` | Show command list |
-| `/new` | Create run |
+| `/new` | Create a research brief file |
+| `/brief start <path|--latest>` | Start research from a brief file |
 | `/doctor` | Environment checks |
 | `/runs [query]` | List or search runs |
 | `/run <run>` | Select run |
@@ -631,7 +649,7 @@ Implementation references:
 | `/model` | Open arrow-key selector for model and reasoning effort |
 | `/approve` | Approve the current paused node |
 | `/retry` | Retry current node |
-| `/settings` | Edit defaults |
+| `/settings` | Edit provider, model, and PDF settings |
 | `/quit` | Exit |
 
 </details>
@@ -643,6 +661,7 @@ Implementation references:
    - Examples: `show help`, `open model selector`, `run environment checks`
 2. Run lifecycle
    - Examples: `create a new run`, `list runs`, `open run alpha`, `resume the previous run`
+   - Examples: `start a new research run: topic: multi-agent code repair, objective: pass@1, constraints: recent papers only`
 3. Run title changes
    - Examples: `change the run title to Multi-agent collaboration`
 4. Workflow structure / status / next step

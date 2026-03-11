@@ -30,6 +30,10 @@ export interface AnalyzeProgressState {
   samples: AnalyzeProgressSample[];
   phase: "ranking" | "rerank" | "analyzing";
   candidatePoolSize?: number;
+  rerankStage?: number;
+  rerankStageTotal?: number;
+  rerankPercent?: number;
+  rerankLabel?: string;
 }
 
 const MAX_SAMPLES = 8;
@@ -397,7 +401,40 @@ export function updateAnalyzeProgressFromLog(
         lastUpdatedAtMs: nowMs,
         samples: current?.samples ? [...current.samples] : [],
         phase: "rerank",
-        candidatePoolSize: Number.isFinite(candidatePoolSize) && candidatePoolSize > 0 ? candidatePoolSize : undefined
+        candidatePoolSize: Number.isFinite(candidatePoolSize) && candidatePoolSize > 0 ? candidatePoolSize : undefined,
+        rerankStage: undefined,
+        rerankStageTotal: undefined,
+        rerankPercent: undefined,
+        rerankLabel: undefined
+      };
+    }
+  }
+
+  const rerankProgressMatch = line.match(/Rerank progress: (\d+)\/(\d+) \((\d+)%\) (.+)\./u);
+  if (rerankProgressMatch?.[1] && rerankProgressMatch?.[2] && rerankProgressMatch?.[3] && rerankProgressMatch?.[4]) {
+    const stage = Number(rerankProgressMatch[1]);
+    const stageTotal = Number(rerankProgressMatch[2]);
+    const rerankPercent = Number(rerankProgressMatch[3]);
+    const rerankLabel = rerankProgressMatch[4].trim();
+    if (
+      Number.isFinite(stage) &&
+      Number.isFinite(stageTotal) &&
+      Number.isFinite(rerankPercent) &&
+      stage > 0 &&
+      stageTotal > 0
+    ) {
+      return {
+        total: current?.total ?? 0,
+        current: current?.current ?? 0,
+        startedAtMs: current?.startedAtMs ?? nowMs,
+        lastUpdatedAtMs: nowMs,
+        samples: current?.samples ? [...current.samples] : [],
+        phase: "rerank",
+        candidatePoolSize: current?.candidatePoolSize,
+        rerankStage: stage,
+        rerankStageTotal: stageTotal,
+        rerankPercent: rerankPercent >= 0 ? Math.min(100, rerankPercent) : undefined,
+        rerankLabel
       };
     }
   }
@@ -449,6 +486,7 @@ export function isAnalyzeProgressLog(line: string): boolean {
     /Deterministic pre-rank started for \d+ paper\(s\)/u.test(line) ||
     /Deterministic pre-rank completed for \d+ candidate\(s\)\./u.test(line) ||
     /Preparing LLM rerank for \d+ candidate\(s\) to choose top \d+\./u.test(line) ||
+    /Rerank progress: \d+\/\d+ \(\d+%\) .+\./u.test(line) ||
     /Analyzing paper \d+\/\d+: /u.test(line)
   );
 }
@@ -476,9 +514,13 @@ export function formatAnalyzeProgressLogLine(
   }
 
   if (state.phase === "rerank") {
-    return state.candidatePoolSize
+    const base = state.candidatePoolSize
       ? `Analyzing... reranking ${state.candidatePoolSize} candidates for top ${state.total}`
       : `Analyzing... reranking candidates for top ${state.total}`;
+    if (typeof state.rerankPercent === "number" && state.rerankLabel) {
+      return `${base} (${state.rerankPercent}%, ${state.rerankLabel})`;
+    }
+    return base;
   }
 
   const base = `Analyzing... ${Math.max(0, state.current)}/${state.total}`;

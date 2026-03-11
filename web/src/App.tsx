@@ -90,9 +90,11 @@ export function App() {
   const [runSearch, setRunSearch] = useState("");
   const [activeTab, setActiveTab] = useState<TabId>("logs");
   const [showNewRunForm, setShowNewRunForm] = useState(false);
+  const [newRunBrief, setNewRunBrief] = useState("");
   const [newRunTopic, setNewRunTopic] = useState("");
   const [newRunConstraints, setNewRunConstraints] = useState("");
   const [newRunObjective, setNewRunObjective] = useState("");
+  const [newRunAutoStart, setNewRunAutoStart] = useState(true);
   const [configOptions, setConfigOptions] = useState<WebConfigOptions>(createDefaultConfigOptions());
   const [setupForm, setSetupForm] = useState<SetupFormState>(createEmptySetupForm());
   const [setupSeeded, setSetupSeeded] = useState(false);
@@ -282,12 +284,15 @@ export function App() {
       const response = await api<{ run: RunRecord; session: WebSessionState }>("/api/runs", {
         method: "POST",
         body: JSON.stringify({
+          brief: newRunBrief.trim() || undefined,
           topic: newRunTopic,
           constraints,
-          objectiveMetric: newRunObjective
+          objectiveMetric: newRunObjective,
+          autoStart: newRunAutoStart
         })
       });
       setShowNewRunForm(false);
+      setNewRunBrief("");
       setSession(response.session);
       setSelectedRunId(response.run.id);
       await refreshBootstrap();
@@ -465,6 +470,16 @@ export function App() {
         {showNewRunForm ? (
           <form className="subtle-card new-run-form" onSubmit={submitNewRun}>
             <label>
+              Research brief
+              <textarea
+                disabled={isBusy}
+                value={newRunBrief}
+                onChange={(event) => setNewRunBrief(event.target.value)}
+                rows={4}
+                placeholder="Describe the topic, objective, constraints, and experiment plan in natural language."
+              />
+            </label>
+            <label>
               Topic
               <input disabled={isBusy} value={newRunTopic} onChange={(event) => setNewRunTopic(event.target.value)} />
             </label>
@@ -475,6 +490,15 @@ export function App() {
             <label>
               Objective
               <input disabled={isBusy} value={newRunObjective} onChange={(event) => setNewRunObjective(event.target.value)} />
+            </label>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                disabled={isBusy}
+                checked={newRunAutoStart}
+                onChange={(event) => setNewRunAutoStart(event.target.checked)}
+              />
+              <span>Auto-start research after creating the run</span>
             </label>
             <div className="form-actions">
               <button className="button button-primary" type="submit" disabled={isBusy}>

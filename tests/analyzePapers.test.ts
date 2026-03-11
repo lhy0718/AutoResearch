@@ -42,6 +42,22 @@ class SequenceJsonLLM extends MockLLMClient {
   }
 }
 
+class CountingJsonLLM extends MockLLMClient {
+  private index = 0;
+  callCount = 0;
+
+  constructor(private readonly outputs: string[]) {
+    super();
+  }
+
+  override async complete(_prompt: string): Promise<{ text: string }> {
+    const output = this.outputs[Math.min(this.index, this.outputs.length - 1)] ?? "";
+    this.index += 1;
+    this.callCount += 1;
+    return { text: output };
+  }
+}
+
 function makeRun(runId: string): RunRecord {
   return {
     version: 3,
@@ -568,6 +584,115 @@ describe("analyzePapers node", () => {
     expect(manifestRaw).toContain('"selectedPaperIds": [');
     expect(manifestRaw).toContain('"p2"');
     expect(manifestRaw).toContain('"selectionFingerprint"');
+  });
+
+  it("reuses cached rerank selection when request and corpus are unchanged", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-rerank-cache-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-rerank-cache";
+    const run = makeRun(runId);
+    await writeCorpus(runId, [
+      {
+        paper_id: "p1",
+        title: "Paper 1",
+        abstract: "Abstract 1",
+        authors: ["Alice"],
+        pdf_url: "https://example.com/p1.pdf"
+      },
+      {
+        paper_id: "p2",
+        title: "Paper 2",
+        abstract: "Abstract 2",
+        authors: ["Bob"],
+        pdf_url: "https://example.com/p2.pdf"
+      },
+      {
+        paper_id: "p3",
+        title: "Paper 3",
+        abstract: "Abstract 3",
+        authors: ["Cara"],
+        pdf_url: "https://example.com/p3.pdf"
+      }
+    ]);
+
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    await runContext.put("analyze_papers.request", {
+      topN: 1,
+      selectionMode: "top_n",
+      selectionPolicy: "hybrid_title_citation_recency_pdf_v2"
+    });
+
+    const firstRerankLlm = new CountingJsonLLM([
+      JSON.stringify({
+        ordered_paper_ids: ["p2", "p1", "p3"]
+      })
+    ]);
+    let analyzePdfCalls = 0;
+    const firstNode = createAnalyzePapersNode({
+      config: {
+        analysis: {
+          pdf_mode: "responses_api_pdf",
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: firstRerankLlm,
+      pdfTextLlm: new SequenceJsonLLM([]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: {
+        hasApiKey: async () => true,
+        analyzePdf: async () => {
+          analyzePdfCalls += 1;
+          return { text: jsonOutput("pdf summary", "pdf claim") };
+        }
+      } as unknown as ResponsesPdfAnalysisClient
+    });
+
+    const first = await firstNode.execute({ run, graph: run.graph });
+    expect(first.status).toBe("success");
+    expect(firstRerankLlm.callCount).toBe(1);
+    expect(analyzePdfCalls).toBe(1);
+
+    const secondRerankLlm = new CountingJsonLLM(["should-not-be-used"]);
+    const secondEventStream = new InMemoryEventStream();
+    const secondNode = createAnalyzePapersNode({
+      config: {
+        analysis: {
+          pdf_mode: "responses_api_pdf",
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: secondEventStream,
+      llm: secondRerankLlm,
+      pdfTextLlm: new SequenceJsonLLM([]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: {
+        hasApiKey: async () => true,
+        analyzePdf: async () => {
+          throw new Error("analysis should not rerun");
+        }
+      } as unknown as ResponsesPdfAnalysisClient
+    });
+
+    const second = await secondNode.execute({ run, graph: run.graph });
+    expect(second.status).toBe("success");
+    expect(secondRerankLlm.callCount).toBe(0);
+
+    const secondLogs = secondEventStream.history().map((event) => String(event.payload?.text ?? ""));
+    expect(secondLogs.some((text) => text.includes("Reusing cached paper rerank from analysis_manifest.json"))).toBe(true);
+    expect(secondLogs.some((text) => text.includes("Preparing LLM rerank for"))).toBe(false);
+
+    const manifestRaw = await readFile(path.join(".autolabos", "runs", runId, "analysis_manifest.json"), "utf8");
+    expect(manifestRaw).toContain('"selectionRequestFingerprint"');
+    expect(manifestRaw).toContain('"corpusFingerprint"');
   });
 
   it("auto-expands a sparse top-N selection and preserves completed analyses", async () => {

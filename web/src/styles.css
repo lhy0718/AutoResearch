@@ -108,6 +108,18 @@ p {
   gap: 16px;
 }
 
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+}
+
+.checkbox-row input {
+  width: auto;
+  margin: 0;
+}
+
 .hero {
   align-content: start;
 }

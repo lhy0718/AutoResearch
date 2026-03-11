@@ -328,7 +328,7 @@ describe("buildFrame", () => {
       guidance: {
         title: "Next actions",
         items: [
-          { label: "/new", description: "Create a new run" },
+          { label: "/new", description: "Create a research brief file" },
           { label: "what should I do next?", description: "Ask for the recommended next step" }
         ]
       }
@@ -336,7 +336,7 @@ describe("buildFrame", () => {
 
     const plain = frame.lines.map((line) => stripAnsi(line));
     expect(plain).toContain("Next actions");
-    expect(plain).toContain("  /new  Create a new run");
+    expect(plain).toContain("  /new  Create a research brief file");
     expect(plain).toContain("  what should I do next?  Ask for the recommended next step");
   });
 

@@ -2,6 +2,7 @@ import process from "node:process";
 import readline from "node:readline";
 import path from "node:path";
 import { promises as fs } from "node:fs";
+import { spawn } from "node:child_process";
 
 import { AGENT_ORDER, AgentId, AppConfig, GraphNodeId, RunInsightCard, RunRecord, SuggestionItem } from "../types.js";
 import { RunStore } from "../core/runs/runStore.js";
@@ -30,7 +31,7 @@ import {
   supportsOpenAiResponsesReasoning
 } from "../integrations/openai/modelCatalog.js";
 import { buildSuggestions } from "./commandPalette/suggest.js";
-import { parseSlashCommand } from "../core/commands/parseSlash.js";
+import { parseSlashCommand, tokenizeShellLike } from "../core/commands/parseSlash.js";
 import { buildNaturalAssistantResponse, matchesNaturalAssistantIntent } from "../core/commands/naturalAssistant.js";
 import { buildNaturalAssistantResponseWithLlm } from "../core/commands/naturalLlmAssistant.js";
 import {
@@ -47,12 +48,27 @@ import {
 import { runDoctor } from "../core/doctor.js";
 import { resolveRunByQuery } from "../core/runs/runResolver.js";
 import { askLine } from "../utils/prompt.js";
-import { ensureDir } from "../utils/fs.js";
+import { ensureDir, fileExists } from "../utils/fs.js";
 import { resolveOpenAiApiKey, upsertEnvVar } from "../config.js";
 import { AgentOrchestrator } from "../core/agents/agentOrchestrator.js";
 import { AutonomousRunController, buildDefaultOvernightPolicy } from "../core/agents/autonomousRunController.js";
 import { RunContextMemory } from "../core/memory/runContextMemory.js";
 import { parseAnalysisReport } from "../core/resultAnalysis.js";
+import {
+  extractRunBrief,
+  looksLikeRunBriefRequest,
+  summarizeRunBrief
+} from "../core/runs/runBriefParser.js";
+import { InteractiveRunSupervisor } from "../core/runs/interactiveRunSupervisor.js";
+import { HumanInterventionRequest } from "../core/humanIntervention.js";
+import {
+  createResearchBriefFile,
+  findLatestResearchBrief,
+  resolveResearchBriefPath,
+  snapshotResearchBriefToRun,
+  summarizeBriefValidation,
+  validateResearchBriefFile
+} from "../core/runs/researchBriefFiles.js";
 import {
   buildReviewInsightCard,
   formatReviewPacketLines,
@@ -126,6 +142,11 @@ interface PendingNaturalCommandState {
   presentation?: "default" | "collect_replan_summary";
 }
 
+interface PendingHumanInterventionState {
+  runId: string;
+  request: HumanInterventionRequest;
+}
+
 interface ActiveSelectionMenu {
   title: string;
   options: SelectionMenuOption[];
@@ -175,6 +196,7 @@ export class TerminalApp {
   private readonly onQuit: () => void;
   private readonly saveConfigFn: (nextConfig: AppConfig) => Promise<void>;
   private readonly semanticScholarApiKeyConfigured: boolean;
+  private readonly interactiveSupervisor: InteractiveRunSupervisor;
   private readonly appVersion = getAppVersion();
   private readonly colorEnabled = supportsColor();
 
@@ -209,6 +231,8 @@ export class TerminalApp {
   private unsubscribeEvents?: () => void;
   private lastRenderedFrame?: RenderFrameOutput;
   private pendingNaturalCommand?: PendingNaturalCommandState;
+  private pendingHumanIntervention?: PendingHumanInterventionState;
+  private announcedHumanInterventionId?: string;
   private guidanceLanguage: GuidanceLanguage = detectInitialGuidanceLanguage();
 
   private readonly keypressHandler = (str: string, key: readline.Key) => {
@@ -225,6 +249,7 @@ export class TerminalApp {
     this.orchestrator = deps.orchestrator;
     this.activeRunId = deps.initialRunId;
     this.semanticScholarApiKeyConfigured = deps.semanticScholarApiKeyConfigured;
+    this.interactiveSupervisor = new InteractiveRunSupervisor(process.cwd(), deps.runStore, deps.orchestrator);
     this.onQuit = deps.onQuit;
     this.saveConfigFn = deps.saveConfig;
   }
@@ -243,6 +268,9 @@ export class TerminalApp {
       this.render();
     });
     this.pushLog("Slash command palette is ready. Type /help to see commands.");
+    if (this.runIndex.length === 0) {
+      this.pushLog("Use /new to create a research brief file in .autolabos/briefs.");
+    }
     this.attachKeyboard();
     this.render();
 
@@ -567,6 +595,11 @@ export class TerminalApp {
       return;
     }
 
+    if (this.pendingHumanIntervention && !isSlashPrefixed(text)) {
+      await this.handlePendingHumanInterventionAnswer(text);
+      return;
+    }
+
     if (this.pendingNaturalCommand && !isSlashPrefixed(text)) {
       await this.handlePendingNaturalConfirmation(text);
       return;
@@ -841,6 +874,20 @@ export class TerminalApp {
     }
 
     const language = detectQueryLanguage(text);
+    if (looksLikeRunBriefRequest(text)) {
+      const run = await this.createRunFromBrief({
+        brief: text,
+        autoStart: true,
+        abortSignal
+      });
+      this.pushLog(
+        language === "ko"
+          ? `자연어 brief로 run ${run.id}을 만들고 연구를 시작했습니다.`
+          : `Created run ${run.id} from the natural-language brief and started research.`
+      );
+      return true;
+    }
+
     const titleChange = extractTitleChangeIntent(text);
     if (titleChange) {
       const run = await this.resolveTargetRun(undefined);
@@ -1410,6 +1457,8 @@ export class TerminalApp {
       case "new":
         await this.handleNewRun();
         return { ok: true };
+      case "brief":
+        return this.handleBriefCommand(args, abortSignal);
       case "doctor":
         await this.handleDoctor();
         return { ok: true };
@@ -1447,7 +1496,7 @@ export class TerminalApp {
     this.pushLog("Help");
     this.pushLog("");
     this.pushLog("Core:");
-    this.pushLog("/help | /new | /runs | /run <run> | /resume <run> | /title <new title>");
+    this.pushLog("/help | /new | /brief start <path|--latest> | /runs | /run <run> | /resume <run> | /title <new title>");
     this.pushLog("/doctor | /model | /settings | /quit");
     this.pushLog("");
     this.pushLog("Workflow:");
@@ -1468,42 +1517,271 @@ export class TerminalApp {
     this.pushLog("Ask 'what natural inputs are supported?' to list the live intent catalog.");
     this.pushLog("Examples: What should I do next? | Show current status | Collect 100 papers from the last 5 years by relevance");
     this.pushLog("Examples: Show artifact count for the analyze_results node | Change the run title to Multi-agent collaboration");
+    this.pushLog("Use /new to create a Markdown research brief, then /brief start --latest to launch it.");
     this.pushLog("Execution requests require 'y' to run or 'n' to cancel.");
     this.pushLog("Multi-step plans: 'y' runs the next step, 'a' runs all remaining steps, 'n' cancels the rest.");
     this.pushLog("While thinking, any new input is treated as steering.");
   }
 
   private async handleNewRun(): Promise<void> {
-    const topic = await this.askWithinTui("Topic", this.config.research.default_topic);
-    const constraintsRaw = await this.askWithinTui(
-      "Constraints (comma-separated)",
-      this.config.research.default_constraints.join(", ")
-    );
-    const objectiveMetric = await this.askWithinTui(
-      "Objective metric",
-      this.config.research.default_objective_metric
-    );
+    const filePath = await createResearchBriefFile(process.cwd());
+    this.pushLog(`Created research brief: ${filePath}`);
 
-    const constraints = constraintsRaw
-      .split(",")
-      .map((x) => x.trim())
-      .filter(Boolean);
+    const openedInEditor = await this.openResearchBriefInEditor(filePath);
+    if (!openedInEditor) {
+      this.pushLog("Edit the brief, then run /brief start --latest or /brief start <path> to begin research.");
+      return;
+    }
 
+    const validation = await validateResearchBriefFile(filePath);
+    for (const line of summarizeBriefValidation(validation)) {
+      this.pushLog(line);
+    }
+    if (validation.errors.length > 0) {
+      this.pushLog("Research brief is not ready yet. Update the missing sections and start it with /brief start.");
+      return;
+    }
+
+    const autoStartAnswer = await this.askWithinTui("Start research from this brief now? (Y/n)", "Y");
+    if (!["n", "no"].includes(autoStartAnswer.trim().toLowerCase())) {
+      await this.startRunFromBriefPath(filePath);
+    }
+  }
+
+  private async createRunFromBrief(input: {
+    brief: string;
+    topic?: string;
+    constraints?: string[];
+    objectiveMetric?: string;
+    autoStart?: boolean;
+    abortSignal?: AbortSignal;
+    sourcePath?: string;
+  }): Promise<RunRecord> {
+    const extracted = await extractRunBrief({
+      brief: input.brief,
+      defaults: {
+        topic: input.topic?.trim() || this.config.research.default_topic,
+        constraints: input.constraints?.length ? input.constraints : this.config.research.default_constraints,
+        objectiveMetric: input.objectiveMetric?.trim() || this.config.research.default_objective_metric
+      },
+      llm: this.getCommandIntentClient(),
+      abortSignal: input.abortSignal
+    });
+    for (const line of summarizeRunBrief(extracted)) {
+      this.pushLog(line);
+    }
     this.pushLog(`Generating run title with ${this.describePrimaryLlmProvider(this.config.providers.llm_mode)}...`);
     this.render();
 
-    const title = await this.titleGenerator.generateTitle(topic, constraints, objectiveMetric);
+    const title = await this.titleGenerator.generateTitle(
+      extracted.topic,
+      extracted.constraints,
+      extracted.objectiveMetric
+    );
     const run = await this.runStore.createRun({
       title,
-      topic,
-      constraints,
-      objectiveMetric
+      topic: extracted.topic,
+      constraints: extracted.constraints,
+      objectiveMetric: extracted.objectiveMetric
     });
+    const runContext = new RunContextMemory(this.resolveWorkspacePath(run.memoryRefs.runContextPath));
+    await runContext.put("run_brief.raw", input.brief);
+    await runContext.put("run_brief.extracted", extracted);
+    await runContext.put("run_brief.plan_summary", extracted.planSummary || null);
+    if (input.sourcePath) {
+      const resolvedSourcePath = path.isAbsolute(input.sourcePath)
+        ? input.sourcePath
+        : path.join(process.cwd(), input.sourcePath);
+      const snapshotPath = await snapshotResearchBriefToRun(process.cwd(), run.id, resolvedSourcePath);
+      await runContext.put("run_brief.source_path", resolvedSourcePath);
+      await runContext.put(
+        "run_brief.snapshot_path",
+        path.relative(process.cwd(), snapshotPath).replace(/\\/g, "/")
+      );
+    }
 
     await this.setActiveRunId(run.id);
     this.pushLog(`Created run ${run.id}`);
     this.pushLog(`Title: ${run.title}`);
     await this.refreshRunIndex();
+    if (input.autoStart) {
+      await this.startRun(run.id, input.abortSignal);
+    }
+    return run;
+  }
+
+  private async startRun(runId: string, abortSignal?: AbortSignal): Promise<RunRecord> {
+    await this.setActiveRunId(runId);
+    this.pushLog(`Auto-starting research for ${runId} from collect_papers...`);
+    return this.continueSupervisedRun(runId, abortSignal);
+  }
+
+  private async handleBriefCommand(args: string[], abortSignal?: AbortSignal): Promise<SlashExecutionResult> {
+    const [subcommand, ...rest] = args;
+    if (subcommand !== "start") {
+      this.pushLog("Usage: /brief start <path|--latest>");
+      return { ok: false, reason: "invalid /brief usage" };
+    }
+
+    const briefArg = rest.join(" ").trim();
+    const briefPath =
+      briefArg === "--latest" || !briefArg
+        ? await findLatestResearchBrief(process.cwd())
+        : resolveResearchBriefPath(process.cwd(), briefArg);
+    if (!briefPath) {
+      this.pushLog("No research brief file was found. Use /new to create one first.");
+      return { ok: false, reason: "research brief not found" };
+    }
+    if (!(await fileExists(briefPath))) {
+      this.pushLog(`Research brief not found: ${briefPath}`);
+      return { ok: false, reason: `research brief not found: ${briefPath}` };
+    }
+
+    await this.startRunFromBriefPath(briefPath, abortSignal);
+    return { ok: true };
+  }
+
+  private async startRunFromBriefPath(filePath: string, abortSignal?: AbortSignal): Promise<RunRecord | undefined> {
+    const validation = await validateResearchBriefFile(filePath);
+    for (const line of summarizeBriefValidation(validation)) {
+      this.pushLog(line);
+    }
+    if (validation.errors.length > 0) {
+      this.pushLog("The brief still needs required sections before AutoLabOS can start the run.");
+      return undefined;
+    }
+
+    const brief = await fs.readFile(filePath, "utf8");
+    return this.createRunFromBrief({
+      brief,
+      sourcePath: filePath,
+      autoStart: true,
+      abortSignal
+    });
+  }
+
+  private async continueSupervisedRun(runId: string, abortSignal?: AbortSignal): Promise<RunRecord> {
+    const outcome = await this.interactiveSupervisor.runUntilStop(runId, { abortSignal });
+    await this.refreshRunIndex();
+    await this.setActiveRunId(outcome.run.id);
+
+    if (outcome.status === "awaiting_human") {
+      this.pendingHumanIntervention = {
+        runId: outcome.run.id,
+        request: outcome.request
+      };
+      this.announceHumanIntervention(outcome.request);
+      return outcome.run;
+    }
+
+    this.pendingHumanIntervention = undefined;
+    this.announcedHumanInterventionId = undefined;
+
+    if (outcome.status === "paused") {
+      this.pushLog(`Run paused: ${oneLine(outcome.reason, 220)}`);
+      const recommendation = outcome.run.graph.pendingTransition;
+      if (recommendation) {
+        this.pushLog(
+          `Pending transition: ${recommendation.action} -> ${recommendation.targetNode || "stay"}`
+        );
+        if (recommendation.evidence[0]) {
+          this.pushLog(`Evidence: ${oneLine(recommendation.evidence[0], 220)}`);
+        }
+      }
+      this.pushLog("Manual slash commands are still available: /approve, /retry, /agent transition, /agent jump.");
+      return outcome.run;
+    }
+
+    if (outcome.status === "completed") {
+      this.pushLog(`Research finished: ${oneLine(outcome.summary, 220)}`);
+      return outcome.run;
+    }
+
+    this.pushLog(`Research stopped: ${oneLine(outcome.summary, 220)}`);
+    return outcome.run;
+  }
+
+  private async handlePendingHumanInterventionAnswer(answer: string): Promise<void> {
+    const pending = this.pendingHumanIntervention;
+    if (!pending) {
+      return;
+    }
+
+    await this.runBusyAction(
+      async (abortSignal) => {
+        const result = await this.interactiveSupervisor.answerHumanIntervention(
+          pending.runId,
+          pending.request,
+          answer
+        );
+        if (result.status === "invalid_answer") {
+          this.pushLog(result.message);
+          this.announcedHumanInterventionId = undefined;
+          this.announceHumanIntervention(result.request);
+          return;
+        }
+
+        this.pushLog(result.message);
+        this.pendingHumanIntervention = undefined;
+        this.announcedHumanInterventionId = undefined;
+        await this.refreshRunIndex();
+        await this.setActiveRunId(result.run.id);
+        await this.continueSupervisedRun(result.run.id, abortSignal);
+      },
+      `Answering ${pending.request.sourceNode} question`
+    );
+  }
+
+  private announceHumanIntervention(request: HumanInterventionRequest): void {
+    if (this.announcedHumanInterventionId === request.id) {
+      return;
+    }
+    this.announcedHumanInterventionId = request.id;
+    this.pushLog(`Human input required: ${request.title}`);
+    this.pushLog(request.question);
+    for (const line of request.context) {
+      this.pushLog(`- ${oneLine(line, 220)}`);
+    }
+    if (request.choices?.length) {
+      for (const [index, choice] of request.choices.entries()) {
+        this.pushLog(`${index + 1}) ${choice.label}${choice.description ? ` - ${choice.description}` : ""}`);
+      }
+    }
+    this.pushLog("Type your answer directly in the TUI. Slash commands still work for manual control.");
+  }
+
+  private async openResearchBriefInEditor(filePath: string): Promise<boolean> {
+    const editorCommand = process.env.VISUAL || process.env.EDITOR;
+    if (!editorCommand) {
+      this.pushLog(`No editor configured. Open this file manually: ${filePath}`);
+      return false;
+    }
+
+    const [command, ...args] = tokenizeShellLike(editorCommand);
+    if (!command) {
+      this.pushLog(`Could not parse EDITOR command: ${editorCommand}`);
+      return false;
+    }
+
+    this.detachKeyboard();
+    process.stdout.write("\n");
+    const exitCode = await new Promise<number>((resolve, reject) => {
+      const child = spawn(command, [...args, filePath], {
+        stdio: "inherit",
+        env: process.env
+      });
+      child.on("error", reject);
+      child.on("exit", (code) => resolve(code ?? 0));
+    }).catch((error) => {
+      this.pushLog(`Failed to launch editor: ${error instanceof Error ? error.message : String(error)}`);
+      return -1;
+    });
+    this.attachKeyboard();
+    if (exitCode !== 0) {
+      this.pushLog(`Editor exited with code ${exitCode}.`);
+      return false;
+    }
+    return true;
   }
 
   private async handleDoctor(): Promise<void> {
@@ -1516,6 +1794,13 @@ export class TerminalApp {
       const mark = check.ok ? "OK" : "FAIL";
       this.pushLog(`[${mark}] ${check.name}: ${check.detail}`);
     }
+  }
+
+  private resolveWorkspacePath(maybeRelative: string): string {
+    if (path.isAbsolute(maybeRelative)) {
+      return maybeRelative;
+    }
+    return path.join(process.cwd(), maybeRelative);
   }
 
   private async handleRuns(args: string[]): Promise<void> {
@@ -2126,15 +2411,6 @@ export class TerminalApp {
   }
 
   private async handleSettings(): Promise<void> {
-    const topic = await this.askWithinTui("Default topic", this.config.research.default_topic);
-    const constraintsRaw = await this.askWithinTui(
-      "Default constraints",
-      this.config.research.default_constraints.join(", ")
-    );
-    const metric = await this.askWithinTui(
-      "Default objective metric",
-      this.config.research.default_objective_metric
-    );
     const llmMode = await this.openSelectionMenu(
       "Select primary LLM provider",
       this.buildPrimaryLlmProviderOptions(),
@@ -2183,12 +2459,6 @@ export class TerminalApp {
       return;
     }
 
-    this.config.research.default_topic = topic;
-    this.config.research.default_constraints = constraintsRaw
-      .split(",")
-      .map((x) => x.trim())
-      .filter(Boolean);
-    this.config.research.default_objective_metric = metric;
     this.config.providers.llm_mode = llmMode as AppConfig["providers"]["llm_mode"];
     if (this.config.providers.llm_mode === "openai_api") {
       this.openAiTextClient?.updateDefaults({
@@ -3236,6 +3506,28 @@ export class TerminalApp {
     }
   }
 
+  private async refreshPendingHumanInterventionState(): Promise<void> {
+    const run = this.activeRunId ? this.runIndex.find((item) => item.id === this.activeRunId) : undefined;
+    if (!run) {
+      this.pendingHumanIntervention = undefined;
+      this.announcedHumanInterventionId = undefined;
+      return;
+    }
+
+    const request = await this.interactiveSupervisor.getActiveRequest(run);
+    if (!request) {
+      this.pendingHumanIntervention = undefined;
+      this.announcedHumanInterventionId = undefined;
+      return;
+    }
+
+    this.pendingHumanIntervention = {
+      runId: run.id,
+      request
+    };
+    this.announceHumanIntervention(request);
+  }
+
   private async loadHistoryForRun(runId?: string): Promise<void> {
     this.exitHistoryBrowsing();
     if (!runId) {
@@ -3327,6 +3619,7 @@ export class TerminalApp {
       await this.setActiveRunId(undefined);
     }
     await this.refreshActiveRunInsight();
+    await this.refreshPendingHumanInterventionState();
     this.updateSuggestions();
   }
 
@@ -3375,6 +3668,7 @@ export class TerminalApp {
   private getContextualGuidance(run = this.activeRunId ? this.runIndex.find((x) => x.id === this.activeRunId) : undefined) {
     return buildContextualGuidance({
       run,
+      humanIntervention: this.pendingHumanIntervention?.request,
       language: this.guidanceLanguage,
       pendingPlan: this.pendingNaturalCommand
         ? {

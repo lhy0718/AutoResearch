@@ -96,6 +96,22 @@ export function normalizeAnalysisSelectionRequest(topN?: number | null): Analysi
   };
 }
 
+export function buildSelectionRequestFingerprint(
+  request: AnalysisSelectionRequest,
+  runTitle: string,
+  runTopic: string
+): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        request,
+        runTitle,
+        runTopic
+      })
+    )
+    .digest("hex");
+}
+
 export async function selectPapersForAnalysis(args: {
   llm: LLMClient;
   runTitle: string;
@@ -137,6 +153,7 @@ export async function selectPapersForAnalysis(args: {
   args.onProgress?.(
     `Preparing LLM rerank for ${candidatePool.length} candidate(s) to choose top ${args.request.topN}.`
   );
+  args.onProgress?.(`Rerank progress: 1/4 (25%) preparing prompt for ${candidatePool.length} candidate(s).`);
   args.onProgress?.(
     `Rerank candidate preview: ${candidatePool
       .slice(0, 5)
@@ -203,9 +220,7 @@ export function buildSelectionFingerprint(
   selectedPaperIds: string[]
 ): string {
   const payload = JSON.stringify({
-    request,
-    runTitle,
-    runTopic,
+    selectionRequestFingerprint: buildSelectionRequestFingerprint(request, runTitle, runTopic),
     selectedPaperIds
   });
   return createHash("sha256").update(payload).digest("hex");
@@ -260,17 +275,22 @@ async function rerankCandidates(
 ): Promise<{ orderedPaperIds: string[]; applied: boolean; fallbackReason?: string }> {
   try {
     onProgress?.(`Submitting rerank request for ${candidates.length} candidate(s).`);
+    onProgress?.("Rerank progress: 2/4 (50%) waiting for model response.");
     const response = await llm.complete(buildRerankPrompt(referenceTitle, runTopic, topN, candidates), {
       systemPrompt: RERANK_SYSTEM_PROMPT,
       abortSignal,
       onProgress: (event) => {
+        if (event.type === "delta") {
+          return;
+        }
         const text = event.text.trim();
         if (!text) {
           return;
         }
-        onProgress?.(event.type === "delta" ? `LLM rerank> ${text}` : text);
+        onProgress?.(text);
       }
     });
+    onProgress?.("Rerank progress: 3/4 (75%) parsing model ordering.");
     onProgress?.("Received rerank response. Parsing JSON ordering.");
     const parsed = parseRerankJson(response.text);
     const seen = new Set<string>();
@@ -284,6 +304,7 @@ async function rerankCandidates(
         return true;
       });
     onProgress?.(`Parsed rerank JSON with ${orderedPaperIds.length} explicit paper id(s).`);
+    onProgress?.("Rerank progress: 4/4 (100%) applying rerank order.");
 
     const fallbackRemainder = candidates
       .map((candidate) => candidate.paper.paper_id)

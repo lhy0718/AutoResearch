@@ -81,6 +81,17 @@ describe("activityStatus", () => {
     expect(formatAnalyzeProgressLogLine(state, 5_000)).toBe("Analyzing... reranking 150 candidates for top 30");
   });
 
+  it("shows staged rerank progress when detailed rerank logs are present", () => {
+    let state = updateAnalyzeProgressFromLog(undefined, "Ranking 300 papers and selecting the top 30 for analysis.", 0);
+    state = updateAnalyzeProgressFromLog(state, "Preparing LLM rerank for 90 candidate(s) to choose top 30.", 5_000);
+    state = updateAnalyzeProgressFromLog(state, "Rerank progress: 2/4 (50%) waiting for model response.", 10_000);
+
+    expect(formatAnalyzeProgressLogLine(state, 10_000)).toBe(
+      "Analyzing... reranking 90 candidates for top 30 (50%, waiting for model response)"
+    );
+    expect(isAnalyzeProgressLog("Rerank progress: 3/4 (75%) parsing model ordering.")).toBe(true);
+  });
+
   it("recognizes and clears analyze progress log lines", () => {
     expect(isAnalyzeProgressLog("Deterministic pre-rank started for 300 paper(s) using title/topic similarity, citation count, and recency.")).toBe(true);
     expect(isAnalyzeProgressLog('Analyzing paper 5/30: "Paper".')).toBe(true);

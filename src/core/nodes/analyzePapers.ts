@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { promises as fs } from "node:fs";
 
@@ -20,9 +21,11 @@ import {
 } from "../analysis/paperText.js";
 import {
   AnalysisSelectionRequest,
+  buildSelectionRequestFingerprint,
   DeterministicScoreBreakdown,
   normalizeAnalysisSelectionRequest,
   PaperSelectionResult,
+  RankedPaperCandidate,
   selectPapersForAnalysis
 } from "../analysis/paperSelection.js";
 
@@ -31,9 +34,13 @@ interface AnalysisManifest {
   updatedAt: string;
   request: AnalysisSelectionRequest;
   selectionFingerprint: string;
+  selectionRequestFingerprint?: string;
   analysisFingerprint?: string;
+  corpusFingerprint?: string;
   totalCandidates: number;
   candidatePoolSize: number;
+  rerankApplied?: boolean;
+  rerankFallbackReason?: string;
   selectedPaperIds: string[];
   rerankedPaperIds: string[];
   deterministicRankingPreview: Array<{
@@ -91,6 +98,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       };
       const runContextMemory = new RunContextMemory(run.memoryRefs.runContextPath);
       const corpusRows = await readCorpusRows(run.id);
+      const corpusFingerprint = buildCorpusFingerprint(corpusRows);
       const analysisMode = deps.config.analysis.pdf_mode;
       const artifactsRoot = runArtifactsDir(run);
       const manifestPath = path.join(artifactsRoot, "analysis_manifest.json");
@@ -111,22 +119,46 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
 
       while (true) {
         await runContextMemory.put("analyze_papers.request", request);
-
-        emitLog(
-          request.selectionMode === "top_n" && request.topN
-            ? `Ranking ${corpusRows.length} papers and selecting the top ${request.topN} for analysis.`
-            : `Analyzing all ${corpusRows.length} collected papers.`
+        const selectionRequestFingerprint = buildSelectionRequestFingerprint(request, run.title, run.topic);
+        const existingManifest = await readExistingManifest(manifestPath);
+        if (startedWithExistingManifest === undefined) {
+          startedWithExistingManifest = Boolean(existingManifest);
+        }
+        const reuseCachedSelection = canReuseManifestSelection(
+          existingManifest,
+          request,
+          selectionRequestFingerprint,
+          analysisFingerprint,
+          corpusFingerprint,
+          corpusRows
         );
 
-        const selection = await selectPapersForAnalysis({
-          llm: deps.llm,
-          runTitle: run.title,
-          runTopic: run.topic,
-          corpusRows,
-          request,
-          onProgress: (text) => emitLog(text),
-          abortSignal
-        });
+        const selection = reuseCachedSelection
+          ? restoreSelectionFromManifest(existingManifest as AnalysisManifest, corpusRows)
+          : await (async () => {
+              emitLog(
+                request.selectionMode === "top_n" && request.topN
+                  ? `Ranking ${corpusRows.length} papers and selecting the top ${request.topN} for analysis.`
+                  : `Analyzing all ${corpusRows.length} collected papers.`
+              );
+              return selectPapersForAnalysis({
+                llm: deps.llm,
+                runTitle: run.title,
+                runTopic: run.topic,
+                corpusRows,
+                request,
+                onProgress: (text) => emitLog(text),
+                abortSignal
+              });
+            })();
+
+        if (existingManifest && reuseCachedSelection) {
+          emitLog(
+            request.selectionMode === "top_n" && request.topN
+              ? `Reusing cached paper rerank from analysis_manifest.json for top ${request.topN}; skipping a new LLM rerank.`
+              : "Reusing cached paper selection from analysis_manifest.json."
+          );
+        }
 
         deps.eventStream.emit({
           type: "PLAN_CREATED",
@@ -172,10 +204,6 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           };
         }
 
-        const existingManifest = await readExistingManifest(manifestPath);
-        if (startedWithExistingManifest === undefined) {
-          startedWithExistingManifest = Boolean(existingManifest);
-        }
         const canExtendExistingManifest = Boolean(
           existingManifest && canExtendManifestForExpandedSelection(existingManifest, selection, analysisFingerprint)
         );
@@ -193,11 +221,24 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           existingManifest.analysisFingerprint === analysisFingerprint
             ? existingManifest
             : canExtendExistingManifest && existingManifest
-              ? extendManifestForExpandedSelection(existingManifest, selection, analysisFingerprint)
+              ? extendManifestForExpandedSelection(
+                  existingManifest,
+                  selection,
+                  analysisFingerprint,
+                  selectionRequestFingerprint,
+                  corpusFingerprint
+                )
               : undefined;
 
         if (!manifest && !existingManifest && selection.request.selectionMode === "all") {
-          manifest = await bootstrapManifestFromExistingOutputs(selection, summaryPath, evidencePath, analysisFingerprint);
+          manifest = await bootstrapManifestFromExistingOutputs(
+            selection,
+            summaryPath,
+            evidencePath,
+            analysisFingerprint,
+            selectionRequestFingerprint,
+            corpusFingerprint
+          );
           await writeJsonFile(manifestPath, manifest);
         }
 
@@ -210,7 +251,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             emitLog("Analysis settings changed since the previous run. Resetting summaries/evidence and re-analyzing the selected papers.");
           }
           await resetAnalysisOutputs(summaryPath, evidencePath);
-          manifest = createFreshManifest(selection, analysisFingerprint);
+          manifest = createFreshManifest(selection, analysisFingerprint, selectionRequestFingerprint, corpusFingerprint);
           await writeJsonFile(manifestPath, manifest);
         } else if (canExtendExistingManifest && existingManifest) {
           emitLog(
@@ -638,6 +679,104 @@ async function readExistingManifest(manifestPath: string): Promise<AnalysisManif
   return undefined;
 }
 
+function buildCorpusFingerprint(corpusRows: AnalysisCorpusRow[]): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify(
+        corpusRows.map((row) => ({
+          paper_id: row.paper_id,
+          title: row.title,
+          abstract: row.abstract || "",
+          year: row.year ?? null,
+          venue: row.venue ?? null,
+          citation_count: row.citation_count ?? 0,
+          pdf_url: resolvePaperPdfUrl(row) ?? null
+        }))
+      )
+    )
+    .digest("hex");
+}
+
+function canReuseManifestSelection(
+  manifest: AnalysisManifest | undefined,
+  request: AnalysisSelectionRequest,
+  selectionRequestFingerprint: string,
+  analysisFingerprint: string,
+  corpusFingerprint: string,
+  corpusRows: AnalysisCorpusRow[]
+): manifest is AnalysisManifest {
+  if (!manifest) {
+    return false;
+  }
+  if (manifest.analysisFingerprint !== analysisFingerprint) {
+    return false;
+  }
+  if (manifest.selectionRequestFingerprint !== selectionRequestFingerprint) {
+    return false;
+  }
+  if (manifest.corpusFingerprint !== corpusFingerprint) {
+    return false;
+  }
+  if (manifest.request.selectionMode !== request.selectionMode || manifest.request.topN !== request.topN) {
+    return false;
+  }
+
+  const manifestPaperIds = new Set(Object.keys(manifest.papers));
+  return corpusRows.length === manifestPaperIds.size && corpusRows.every((row) => manifestPaperIds.has(row.paper_id));
+}
+
+function restoreSelectionFromManifest(
+  manifest: AnalysisManifest,
+  corpusRows: AnalysisCorpusRow[]
+): PaperSelectionResult {
+  const paperById = new Map(corpusRows.map((row) => [row.paper_id, row] as const));
+  const rankedCandidates: RankedPaperCandidate[] = [];
+  for (const entry of Object.values(manifest.papers)) {
+    const paper = paperById.get(entry.paper_id);
+    if (!paper) {
+      continue;
+    }
+    rankedCandidates.push({
+      paper,
+      deterministicScore: entry.deterministic_score ?? 0,
+      selectionScore: entry.selection_score ?? entry.deterministic_score ?? 0,
+      rerankPosition: entry.rerank_position,
+      selected: entry.selected,
+      rank: entry.rank,
+      scoreBreakdown: entry.score_breakdown ?? {
+        title_similarity_score: 0,
+        citation_score: 0,
+        recency_score: 0,
+        pdf_availability_score: 0
+      }
+    });
+  }
+
+  rankedCandidates.sort((left, right) => {
+      const leftRank = left.selected ? left.rank ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER;
+      const rightRank = right.selected ? right.rank ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER;
+      return (
+        leftRank - rightRank ||
+        (right.selectionScore ?? right.deterministicScore) - (left.selectionScore ?? left.deterministicScore) ||
+        right.deterministicScore - left.deterministicScore ||
+        left.paper.paper_id.localeCompare(right.paper.paper_id)
+      );
+    });
+
+  return {
+    request: manifest.request,
+    totalCandidates: manifest.totalCandidates,
+    candidatePoolSize: manifest.candidatePoolSize,
+    deterministicRankingPreview: manifest.deterministicRankingPreview,
+    rerankedPaperIds: manifest.rerankedPaperIds,
+    selectedPaperIds: manifest.selectedPaperIds,
+    selectionFingerprint: manifest.selectionFingerprint,
+    rerankApplied: manifest.rerankApplied ?? manifest.rerankedPaperIds.length > 0,
+    rerankFallbackReason: manifest.rerankFallbackReason,
+    rankedCandidates
+  };
+}
+
 function canExtendManifestForExpandedSelection(
   existingManifest: AnalysisManifest,
   selection: PaperSelectionResult,
@@ -662,9 +801,11 @@ function canExtendManifestForExpandedSelection(
 function extendManifestForExpandedSelection(
   existingManifest: AnalysisManifest,
   selection: PaperSelectionResult,
-  analysisFingerprint: string
+  analysisFingerprint: string,
+  selectionRequestFingerprint: string,
+  corpusFingerprint: string
 ): AnalysisManifest {
-  const fresh = createFreshManifest(selection, analysisFingerprint);
+  const fresh = createFreshManifest(selection, analysisFingerprint, selectionRequestFingerprint, corpusFingerprint);
   for (const [paperId, freshEntry] of Object.entries(fresh.papers)) {
     const previousEntry = existingManifest.papers[paperId];
     if (!previousEntry?.selected || !freshEntry.selected) {
@@ -694,16 +835,25 @@ function extendManifestForExpandedSelection(
   return fresh;
 }
 
-function createFreshManifest(selection: PaperSelectionResult, analysisFingerprint: string): AnalysisManifest {
+function createFreshManifest(
+  selection: PaperSelectionResult,
+  analysisFingerprint: string,
+  selectionRequestFingerprint: string,
+  corpusFingerprint: string
+): AnalysisManifest {
   const now = new Date().toISOString();
   return {
     version: 3,
     updatedAt: now,
     request: selection.request,
     selectionFingerprint: selection.selectionFingerprint,
+    selectionRequestFingerprint,
     analysisFingerprint,
+    corpusFingerprint,
     totalCandidates: selection.totalCandidates,
     candidatePoolSize: selection.candidatePoolSize,
+    rerankApplied: selection.rerankApplied,
+    rerankFallbackReason: selection.rerankFallbackReason,
     selectedPaperIds: selection.selectedPaperIds,
     rerankedPaperIds: selection.rerankedPaperIds,
     deterministicRankingPreview: selection.deterministicRankingPreview,
@@ -743,9 +893,11 @@ async function bootstrapManifestFromExistingOutputs(
   selection: PaperSelectionResult,
   summaryPath: string,
   evidencePath: string,
-  analysisFingerprint: string
+  analysisFingerprint: string,
+  selectionRequestFingerprint: string,
+  corpusFingerprint: string
 ): Promise<AnalysisManifest> {
-  const manifest = createFreshManifest(selection, analysisFingerprint);
+  const manifest = createFreshManifest(selection, analysisFingerprint, selectionRequestFingerprint, corpusFingerprint);
   const summaries = await readSummaryRows(summaryPath);
   const evidences = await readEvidenceRows(evidencePath);
   const summariesByPaper = new Map<string, PaperSummaryRow[]>();

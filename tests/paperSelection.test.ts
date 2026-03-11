@@ -178,9 +178,13 @@ describe("paperSelection", () => {
 
     expect(selection.selectedPaperIds).toEqual(["p1", "p2"]);
     expect(logs.some((message) => message.includes("Preparing LLM rerank for"))).toBe(true);
+    expect(logs.some((message) => message.includes("Rerank progress: 1/4"))).toBe(true);
     expect(logs.some((message) => message.includes("Submitting rerank request"))).toBe(true);
+    expect(logs.some((message) => message.includes("Rerank progress: 2/4"))).toBe(true);
     expect(logs.some((message) => message.includes("Received rerank response. Parsing JSON ordering."))).toBe(true);
+    expect(logs.some((message) => message.includes("Rerank progress: 3/4"))).toBe(true);
     expect(logs.some((message) => message.includes("Parsed rerank JSON with"))).toBe(true);
+    expect(logs.some((message) => message.includes("Rerank progress: 4/4"))).toBe(true);
     expect(logs.some((message) => message.includes("LLM rerank completed. Top selection preview"))).toBe(true);
   });
 

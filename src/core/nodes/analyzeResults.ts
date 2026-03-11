@@ -9,6 +9,7 @@ import { LongTermStore } from "../memory/longTermStore.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import {
   evaluateObjectiveMetric,
+  normalizeObjectiveMetricProfile,
   ObjectiveMetricEvaluation,
   resolveObjectiveMetricProfile
 } from "../objectiveMetric.js";
@@ -22,8 +23,15 @@ import {
 import { buildAnalyzeResultsCompletionSummary } from "../resultAnalysisPresentation.js";
 import { synthesizeAnalysisReport } from "../resultAnalysisSynthesis.js";
 import { RunVerifierReport } from "../experiments/runVerifierFeedback.js";
-import { TransitionRecommendation } from "../../types.js";
+import { GraphNodeId, TransitionRecommendation } from "../../types.js";
 import { runAnalyzeResultsPanel } from "../analyzeResultsPanel.js";
+import {
+  clearPendingHumanInterventionRequest,
+  createHumanInterventionRequest,
+  HumanInterventionRequest,
+  readPendingHumanInterventionRequest,
+  writeHumanInterventionRequest
+} from "../humanIntervention.js";
 
 export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
@@ -60,19 +68,37 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         });
       }
 
-      const objectiveProfile = await resolveObjectiveMetricProfile({
-        run,
+      const manualObjectiveClarification =
+        (await runContextMemory.get<string>("analyze_results.objective_clarification"))?.trim() || undefined;
+      const effectiveObjectiveMetric = manualObjectiveClarification || run.objectiveMetric;
+      const objectiveProfileBase = await resolveObjectiveMetricProfile({
+        run: {
+          ...run,
+          objectiveMetric: effectiveObjectiveMetric
+        },
         runContextMemory,
         llm: deps.llm,
         eventStream: deps.eventStream,
         node: "analyze_results"
       });
+      const objectiveProfile = manualObjectiveClarification
+        ? normalizeObjectiveMetricProfile(
+            {
+              ...objectiveProfileBase,
+              assumptions: [
+                `Human clarification: ${manualObjectiveClarification}`,
+                ...objectiveProfileBase.assumptions
+              ]
+            },
+            effectiveObjectiveMetric
+          )
+        : objectiveProfileBase;
       const cachedEvaluation =
         await runContextMemory.get<ObjectiveMetricEvaluation>("objective_metric.last_evaluation");
       const shouldRefreshObjectiveEvaluation =
         !cachedEvaluation || cachedEvaluation.status === "unknown" || cachedEvaluation.status === "missing";
       const objectiveEvaluation = shouldRefreshObjectiveEvaluation
-        ? evaluateObjectiveMetric(metrics, objectiveProfile, run.objectiveMetric)
+        ? evaluateObjectiveMetric(metrics, objectiveProfile, effectiveObjectiveMetric)
         : cachedEvaluation;
       if (
         shouldRefreshObjectiveEvaluation &&
@@ -148,6 +174,11 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         baselineRecommendation: baselineTransitionRecommendation
       });
       const transitionRecommendation = panelResult.recommendation;
+      const humanInterventionRequest = buildAnalyzeResultsHumanInterventionRequest({
+        run,
+        report: summary,
+        transitionRecommendation
+      });
       summary.transition_recommendation = transitionRecommendation;
 
       await writeRunArtifact(
@@ -188,6 +219,19 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
       await runContextMemory.put("analyze_results.last_synthesis", summary.synthesis || null);
       await runContextMemory.put("analyze_results.last_transition", transitionRecommendation);
       await runContextMemory.put("analyze_results.panel_decision", panelResult.decision);
+      if (humanInterventionRequest) {
+        await writeHumanInterventionRequest({
+          workspaceRoot: process.cwd(),
+          run,
+          runContext: runContextMemory,
+          request: humanInterventionRequest
+        });
+      } else {
+        const pendingRequest = await readPendingHumanInterventionRequest(runContextMemory);
+        if (pendingRequest?.sourceNode === "analyze_results") {
+          await clearPendingHumanInterventionRequest(runContextMemory);
+        }
+      }
       await longTermStore.append({
         runId: run.id,
         category: "results",
@@ -225,6 +269,75 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
       };
     }
   };
+}
+
+function buildAnalyzeResultsHumanInterventionRequest(input: {
+  run: { id: string; currentNode: GraphNodeId };
+  report: AnalysisReport;
+  transitionRecommendation: TransitionRecommendation;
+}): HumanInterventionRequest | undefined {
+  if (input.report.overview.objective_status === "unknown") {
+    const metricKeys = input.report.metric_table.map((item) => item.key);
+    return createHumanInterventionRequest({
+      sourceNode: "analyze_results",
+      kind: "objective_metric_clarification",
+      title: "Clarify the objective metric",
+      question:
+        'Reply with the metric key or success criterion to use for this run (for example: "accuracy >= 0.9").',
+      context: [
+        input.report.overview.objective_summary,
+        metricKeys.length > 0
+          ? `Available numeric metrics: ${metricKeys.join(", ")}.`
+          : "No numeric metrics were available for automatic grounding."
+      ],
+      inputMode: "free_text",
+      resumeAction: "retry_current"
+    });
+  }
+
+  if (
+    input.transitionRecommendation.action === "backtrack_to_hypotheses" &&
+    !input.transitionRecommendation.autoExecutable
+  ) {
+    return createHumanInterventionRequest({
+      sourceNode: "analyze_results",
+      kind: "transition_choice",
+      title: "Choose the next recovery step",
+      question: "Choose how the run should continue.",
+      context: [
+        input.transitionRecommendation.reason,
+        ...input.transitionRecommendation.evidence.slice(0, 3)
+      ],
+      inputMode: "single_choice",
+      resumeAction: "apply_transition",
+      choices: [
+        {
+          id: "revisit_hypotheses",
+          label: "Backtrack to generate_hypotheses",
+          description: "Follow the current recommendation and revisit the hypothesis set.",
+          answerAliases: ["hypotheses", "generate_hypotheses"]
+        },
+        {
+          id: "revise_design",
+          label: "Jump to design_experiments",
+          description: "Keep the current hypothesis set and revise only the experiment design.",
+          answerAliases: ["design", "design_experiments"],
+          resumeAction: "jump",
+          targetNode: "design_experiments"
+        },
+        {
+          id: "inspect_implementation",
+          label: "Jump to implement_experiments",
+          description: "Inspect implementation and execution details before changing the hypothesis.",
+          answerAliases: ["implement", "implement_experiments"],
+          resumeAction: "jump",
+          targetNode: "implement_experiments"
+        }
+      ]
+    });
+  }
+
+  return undefined;
 }
 
 async function loadSupplementalMetrics(publicDir: string | undefined, warnings: string[]): Promise<
