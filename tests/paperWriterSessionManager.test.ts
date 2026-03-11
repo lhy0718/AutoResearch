@@ -282,7 +282,11 @@ describe("PaperWriterSessionManager", () => {
     expect(result.source).toBe("codex_session");
     expect(result.threadId).toBe("fake-thread");
     expect(result.trace).toHaveLength(5);
+    expect(result.draft.title).toBe("Schema Benchmark: A Reproducibility Study of Agent Collaboration");
+    expect(result.draft.title).not.toBe(run.title);
     expect(result.draft.sections[0]?.heading).toBe("Introduction");
+    expect(result.manuscript.title).toBe("Schema Benchmark: A Reproducibility Study of Agent Collaboration");
+    expect(result.manuscript.title).not.toBe(run.title);
     expect(result.manuscript.sections[0]?.heading).toBe("Introduction");
     expect(storedRun.nodeThreads.write_paper).toBe("fake-thread");
 

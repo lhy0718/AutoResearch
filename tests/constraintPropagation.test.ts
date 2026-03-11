@@ -476,10 +476,12 @@ describe("constraint propagation", () => {
 
     expect(result.status).toBe("success");
     const tex = await readFile(path.join(runDir, "paper", "main.tex"), "utf8");
-    expect(tex).toContain("\\title{Multi-Agent Collaboration}");
+    expect(tex).toContain("\\title{Constraint Propagation Benchmark: A Reproducibility Study of AI Agent Automation}");
+    expect(tex).not.toContain("\\title{Multi-Agent Collaboration}");
     expect(tex).not.toContain("\\section{Writing Constraints}");
     expect(tex).not.toContain("\\section{Results Overview}");
     const manuscript = await readFile(path.join(runDir, "paper", "manuscript.json"), "utf8");
+    expect(manuscript).toContain('"title": "Constraint Propagation Benchmark: A Reproducibility Study of AI Agent Automation"');
     expect(manuscript).toContain('"heading": "Introduction"');
     expect(manuscript).toContain("configured writing constraints");
     const traceability = await readFile(path.join(runDir, "paper", "traceability.json"), "utf8");

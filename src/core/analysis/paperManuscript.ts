@@ -1,6 +1,8 @@
 import { ObjectiveMetricEvaluation, ObjectiveMetricProfile } from "../objectiveMetric.js";
 import { ConstraintProfile } from "../runConstraints.js";
 import {
+  buildSuggestedPaperTitle,
+  choosePaperTitle,
   ExperimentPlanArtifact,
   PaperDraft,
   PaperDraftClaim,
@@ -184,6 +186,10 @@ export function buildPaperPolishPrompt(input: {
       objective_metric: input.bundle.objectiveMetric,
       constraints: input.bundle.constraints
     },
+    title_guidance: {
+      suggested_paper_title: input.draft.title || buildSuggestedPaperTitle(input.bundle),
+      note: "Do not reuse the workflow run title as the paper title. Prefer a method, benchmark, or empirical-study title."
+    },
     writing_profile: {
       target_venue: input.constraintProfile.writing.targetVenue,
       tone_hint: input.constraintProfile.writing.toneHint,
@@ -217,6 +223,8 @@ export function buildPaperPolishPrompt(input: {
     "}",
     "",
     "Requirements:",
+    "- Choose a title that reads like a human-written methods, benchmark, or empirical study paper title.",
+    "- Do not copy the workflow run title verbatim or with only cosmetic edits.",
     "- Write plain academic prose that reads like a human-authored submission draft.",
     "- Preserve the grounded draft's claims conservatively; do not add new results.",
     "- Do not include evidence IDs, claim IDs, paper IDs, file paths, JSON field names, or internal artifact names in the prose.",
@@ -233,6 +241,7 @@ export function buildPaperPolishPrompt(input: {
 export function normalizePaperManuscript(input: {
   raw?: RawPaperManuscript;
   draft: PaperDraft;
+  runTitle?: string;
   resultAnalysis?: ResultAnalysisArtifact;
   objectiveEvaluation?: ObjectiveMetricEvaluation;
   objectiveMetricProfile?: ObjectiveMetricProfile;
@@ -256,7 +265,11 @@ export function normalizePaperManuscript(input: {
   );
 
   return {
-    title: cleanString(input.raw?.title) || fallback.title,
+    title: choosePaperTitle({
+      candidateTitle: input.raw?.title,
+      runTitle: input.runTitle || input.draft.title,
+      fallbackTitle: fallback.title
+    }),
     abstract: cleanString(input.raw?.abstract) || fallback.abstract,
     keywords:
       normalizeStringArray(input.raw?.keywords).slice(0, 6).length > 0

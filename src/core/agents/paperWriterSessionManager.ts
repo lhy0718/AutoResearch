@@ -5,8 +5,10 @@ import { RunStore } from "../runs/runStore.js";
 import { CodexCliClient } from "../../integrations/codex/codexCliClient.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import {
+  buildSuggestedPaperTitle,
   buildFallbackPaperDraft,
   buildPaperWriterPrompt,
+  choosePaperTitle,
   PaperDraft,
   PaperDraftValidationIssue,
   PaperWritingBundle,
@@ -291,6 +293,7 @@ export class PaperWriterSessionManager {
         manuscript = normalizePaperManuscript({
           raw: parsePaperManuscriptJson(polishStage.text),
           draft: finalDraft,
+          runTitle: input.bundle.runTitle,
           resultAnalysis: input.bundle.resultAnalysis,
           objectiveEvaluation: input.objectiveEvaluation,
           objectiveMetricProfile: input.objectiveMetricProfile,
@@ -700,11 +703,12 @@ function buildOutlinePrompt(bundle: PaperWritingBundle): string {
     "}",
     "",
     "Base the outline only on the provided workflow outputs.",
-    `Run title: ${bundle.runTitle}`,
+    `Workflow run title (context only, do not copy literally as the paper title): ${bundle.runTitle}`,
     `Topic: ${bundle.topic}`,
     `Objective metric: ${bundle.objectiveMetric}`,
     `Constraints: ${bundle.constraints.join(", ") || "none"}`,
     `Related-work scout papers: ${bundle.relatedWorkScout?.papers.length || 0}`,
+    `Suggested paper title: ${buildSuggestedPaperTitle(bundle)}`,
     `Fallback section order: ${fallbackDraft.sections.map((item) => item.heading).join(", ")}`
   ].join("\n");
 }
@@ -858,7 +862,11 @@ function normalizeOutline(raw: Record<string, unknown>, bundle: PaperWritingBund
   const fallback = buildFallbackOutline(bundle);
   const sectionHeadings = normalizeStringArray(raw.section_headings).slice(0, 6);
   return {
-    title: cleanString(raw.title) || fallback.title,
+    title: choosePaperTitle({
+      candidateTitle: raw.title,
+      runTitle: bundle.runTitle,
+      fallbackTitle: fallback.title
+    }),
     abstract_focus: normalizeStringArray(raw.abstract_focus).slice(0, 6),
     section_headings: sectionHeadings.length > 0 ? sectionHeadings : fallback.section_headings,
     key_claim_themes: normalizeStringArray(raw.key_claim_themes).slice(0, 6),

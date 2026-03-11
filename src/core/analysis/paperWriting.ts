@@ -202,6 +202,10 @@ export function buildPaperWriterPrompt(input: {
       objective_metric: input.bundle.objectiveMetric,
       constraints: input.bundle.constraints
     },
+    title_guidance: {
+      suggested_paper_title: buildSuggestedPaperTitle(input.bundle),
+      note: "Treat the workflow run title as background context only. The paper title should sound like a methods, benchmark, or empirical study title."
+    },
     writing_profile: {
       target_venue: input.constraintProfile.writing.targetVenue,
       tone_hint: input.constraintProfile.writing.toneHint,
@@ -321,6 +325,9 @@ export function buildPaperWriterPrompt(input: {
     "}",
     "",
     "Requirements:",
+    "- Choose a paper title that reads like an academic methods, benchmark, or empirical study title.",
+    "- Do not copy the workflow run title verbatim or with only cosmetic edits.",
+    "- Prefer a title centered on the selected design, method, comparison, or study framing when available.",
     "- Write 4 to 6 sections in this general order: Introduction, Related Work, Method, Results, Conclusion.",
     "- Each section should have 1 to 2 concise paragraphs.",
     "- Each paragraph must carry the evidence_ids and citation_paper_ids that support that paragraph.",
@@ -365,7 +372,11 @@ export function normalizePaperDraft(input: {
   );
 
   return {
-    title: cleanString(raw?.title) || fallback.title,
+    title: choosePaperTitle({
+      candidateTitle: raw?.title,
+      runTitle: input.bundle.runTitle,
+      fallbackTitle: fallback.title
+    }),
     abstract: cleanString(raw?.abstract) || fallback.abstract,
     keywords:
       normalizeStringArray(raw?.keywords).slice(0, 6).length > 0
@@ -508,7 +519,7 @@ export function buildFallbackPaperDraft(bundle: PaperWritingBundle): PaperDraft 
   ];
 
   return {
-    title: bundle.runTitle,
+    title: buildSuggestedPaperTitle(bundle),
     abstract: [
       `We study ${bundle.topic}.`,
       `The draft integrates literature analysis, hypothesis generation, experiment design, and experimental results around the objective metric ${bundle.objectiveMetric}.`,
@@ -1632,6 +1643,41 @@ function cleanString(value: unknown): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+export function buildSuggestedPaperTitle(bundle: PaperWritingBundle): string {
+  const designTitle = cleanTitleFragment(bundle.experimentPlan?.selectedTitle);
+  const topicFocus = buildPaperTopicFocus(bundle);
+  const studyDescriptor = buildStudyDescriptor(bundle.objectiveMetric);
+
+  if (designTitle) {
+    return composePaperTitle(toTitleCase(designTitle), studyDescriptor, topicFocus);
+  }
+
+  const noveltyTitle = cleanTitleFragment(bundle.paperSummaries[0]?.novelty);
+  if (noveltyTitle && !isTitleTooClose(noveltyTitle, bundle.runTitle)) {
+    return composePaperTitle(toTitleCase(noveltyTitle), studyDescriptor, topicFocus);
+  }
+
+  return limitPaperTitle(`${studyDescriptor} of ${topicFocus}`);
+}
+
+export function choosePaperTitle(input: {
+  candidateTitle?: unknown;
+  runTitle: string;
+  fallbackTitle: string;
+}): string {
+  const candidateTitle = cleanString(input.candidateTitle);
+  if (!candidateTitle) {
+    return input.fallbackTitle;
+  }
+  if (candidateTitle.length < 12) {
+    return input.fallbackTitle;
+  }
+  if (isTitleTooClose(candidateTitle, input.runTitle)) {
+    return input.fallbackTitle;
+  }
+  return candidateTitle;
+}
+
 function normalizeStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return [];
@@ -1723,6 +1769,141 @@ function lowercaseLeadingWord(text: string): string {
     return text;
   }
   return text.charAt(0).toLowerCase() + text.slice(1);
+}
+
+function buildStudyDescriptor(objectiveMetric: string): string {
+  const metric = cleanString(objectiveMetric).toLowerCase();
+  if (metric.includes("reproduc")) {
+    return "A Reproducibility Study";
+  }
+  if (metric.includes("robust")) {
+    return "A Robustness Study";
+  }
+  if (metric.includes("benchmark")) {
+    return "An Empirical Benchmark";
+  }
+  return "An Empirical Study";
+}
+
+function buildPaperTopicFocus(bundle: PaperWritingBundle): string {
+  const topic = cleanTitleFragment(bundle.topic) || cleanTitleFragment(bundle.runTitle);
+  const normalized =
+    topic ||
+    cleanTitleFragment(bundle.paperSummaries[0]?.title) ||
+    "Multi-Agent Collaboration";
+  return toTitleCase(normalized);
+}
+
+function cleanTitleFragment(value: unknown): string {
+  const cleaned = cleanString(value)
+    .replace(/\bstate[- ]of[- ]the[- ]art\b/giu, "")
+    .replace(/\breproducibility\b/giu, "")
+    .replace(/\brecent research\b/giu, "")
+    .replace(/\bin recent (?:research|papers?)\b/giu, "")
+    .replace(/\bresearch workflows?\b/giu, "workflows")
+    .replace(/\s*[:;,-]\s*$/u, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned || "";
+}
+
+function limitPaperTitle(value: string): string {
+  const cleaned = value.replace(/\s+/g, " ").trim();
+  if (cleaned.length <= 120) {
+    return cleaned;
+  }
+  const slice = cleaned.slice(0, 120);
+  const lastSpace = slice.lastIndexOf(" ");
+  return (lastSpace >= 72 ? slice.slice(0, lastSpace) : slice).trim();
+}
+
+function composePaperTitle(lead: string, studyDescriptor: string, topicFocus: string): string {
+  const fullTitle = `${lead}: ${studyDescriptor} of ${topicFocus}`;
+  if (fullTitle.length <= 120) {
+    return fullTitle;
+  }
+  const shorterTitle = `${lead}: ${studyDescriptor}`;
+  if (shorterTitle.length <= 120) {
+    return shorterTitle;
+  }
+  return limitPaperTitle(shorterTitle);
+}
+
+function normalizeTitleForComparison(value: string): string {
+  return cleanString(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/giu, " ")
+    .trim();
+}
+
+function isTitleTooClose(candidate: string, reference: string): boolean {
+  const candidateNormalized = normalizeTitleForComparison(candidate);
+  const referenceNormalized = normalizeTitleForComparison(reference);
+  if (!candidateNormalized || !referenceNormalized) {
+    return false;
+  }
+  if (candidateNormalized === referenceNormalized) {
+    return true;
+  }
+  if (
+    candidateNormalized.startsWith(referenceNormalized) ||
+    referenceNormalized.startsWith(candidateNormalized)
+  ) {
+    return true;
+  }
+
+  const candidateTokens = new Set(candidateNormalized.split(" ").filter(Boolean));
+  const referenceTokens = new Set(referenceNormalized.split(" ").filter(Boolean));
+  if (referenceTokens.size < 5) {
+    return false;
+  }
+  const sharedCount = [...candidateTokens].filter((token) => referenceTokens.has(token)).length;
+  const overlap = sharedCount / Math.min(candidateTokens.size, referenceTokens.size);
+  return overlap >= 0.8;
+}
+
+function toTitleCase(value: string): string {
+  const lowerCaseWords = new Set([
+    "a",
+    "an",
+    "the",
+    "and",
+    "or",
+    "for",
+    "of",
+    "in",
+    "on",
+    "to",
+    "vs",
+    "versus",
+    "with",
+    "by",
+    "from"
+  ]);
+
+  return cleanString(value)
+    .split(" ")
+    .map((word, index, words) => {
+      const lower = word.toLowerCase();
+      const parts = word.split("-");
+      const formatted = parts
+        .map((part) => {
+          if (!part) {
+            return part;
+          }
+          if (/^[A-Z0-9]{2,}$/u.test(part)) {
+            return part;
+          }
+          const normalizedPart = part.toLowerCase();
+          return normalizedPart.charAt(0).toUpperCase() + normalizedPart.slice(1);
+        })
+        .join("-");
+      if (index > 0 && index < words.length - 1 && lowerCaseWords.has(lower)) {
+        return lower;
+      }
+      return formatted;
+    })
+    .join(" ");
 }
 
 function latexEscape(text: string): string {
