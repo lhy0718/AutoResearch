@@ -73,6 +73,20 @@ interface PaperInputValidationReport {
   issues: PaperInputValidationIssue[];
 }
 
+interface PaperDraftValidationRepairReport {
+  threshold: number;
+  attempted: boolean;
+  applied: boolean;
+  source?: string;
+  error?: string;
+  reason?: string;
+  initial_warning_count: number;
+  candidate_warning_count?: number;
+  final_warning_count: number;
+}
+
+const VALIDATION_REPAIR_WARNING_THRESHOLD = 1;
+
 export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler {
   const sessions = new PaperWriterSessionManager({
     config: deps.config,
@@ -149,13 +163,64 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       let paperDraft = sessionResult.draft;
       emitLog(`Structured paper draft prepared with ${paperDraft.sections.length} sections via ${sessionResult.source}.`);
 
-      const validation = validatePaperDraft({
+      let validation = validatePaperDraft({
         draft: paperDraft,
         bundle
       });
       paperDraft = validation.draft;
       if (validation.issues.length > 0) {
         emitLog(`Validated paper draft and recorded ${validation.issues.length} evidence-alignment warning(s).`);
+      }
+      const validationRepair: PaperDraftValidationRepairReport = {
+        threshold: VALIDATION_REPAIR_WARNING_THRESHOLD,
+        attempted: false,
+        applied: false,
+        initial_warning_count: validation.issues.length,
+        final_warning_count: validation.issues.length
+      };
+      if (shouldAttemptValidationRepair(validation)) {
+        emitLog(
+          `Validation accumulated ${validation.issues.length} warning(s); attempting one automatic repair pass before rendering.`
+        );
+        const repairResult = await sessions.reviseAfterValidation({
+          run,
+          bundle,
+          constraintProfile,
+          objectiveMetricProfile,
+          objectiveEvaluation,
+          outline: sessionResult.outline,
+          draft: paperDraft,
+          review: sessionResult.review,
+          validationIssues: validation.issues,
+          abortSignal
+        });
+        validationRepair.attempted = repairResult.attempted;
+        validationRepair.source = repairResult.source;
+        validationRepair.error = repairResult.error;
+        if (repairResult.applied) {
+          const repairedValidation = validatePaperDraft({
+            draft: repairResult.draft,
+            bundle
+          });
+          validationRepair.candidate_warning_count = repairedValidation.issues.length;
+          if (repairedValidation.issues.length <= validation.issues.length) {
+            paperDraft = repairedValidation.draft;
+            validation = repairedValidation;
+            validationRepair.applied = true;
+            validationRepair.final_warning_count = repairedValidation.issues.length;
+            emitLog(
+              `Automatic validation repair ${repairedValidation.issues.length < validationRepair.initial_warning_count ? "reduced" : "stabilized"} warnings at ${repairedValidation.issues.length}.`
+            );
+          } else {
+            validationRepair.reason = "repair did not improve warning count";
+            emitLog(
+              `Automatic validation repair was discarded because warnings increased from ${validation.issues.length} to ${repairedValidation.issues.length}.`
+            );
+          }
+        } else if (repairResult.error) {
+          validationRepair.reason = "repair pass failed";
+          emitLog(`Automatic validation repair failed: ${repairResult.error}`);
+        }
       }
 
       const citedPaperIds = collectPaperCitationIds(paperDraft, bundle);
@@ -179,6 +244,11 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await writeRunArtifact(run, "paper/evidence_links.json", evidenceMap);
       await writeRunArtifact(run, "paper/draft.json", `${JSON.stringify(paperDraft, null, 2)}\n`);
       await writeRunArtifact(run, "paper/validation.json", `${JSON.stringify(validation, null, 2)}\n`);
+      await writeRunArtifact(
+        run,
+        "paper/validation_repair_report.json",
+        `${JSON.stringify(validationRepair, null, 2)}\n`
+      );
 
       const publicPaperDir = buildPublicPaperDir(process.cwd(), run);
       await ensureDir(publicPaperDir);
@@ -194,7 +264,10 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         emitLog,
         publicPaperDir
       });
-      const toolCallsUsed = Math.max(1, 4 - sessionResult.stageFallbacks) + compileResult.toolCallsUsed;
+      const toolCallsUsed =
+        Math.max(1, 4 - sessionResult.stageFallbacks) +
+        compileResult.toolCallsUsed +
+        (validationRepair.attempted ? 1 : 0);
 
       await runContextMemory.put("write_paper.public_dir", publicPaperDir);
       await runContextMemory.put("write_paper.source", sessionResult.source);
@@ -202,6 +275,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await runContextMemory.put("write_paper.cited_paper_ids", bibtex.usedPaperIds);
       await runContextMemory.put("write_paper.last_draft", paperDraft);
       await runContextMemory.put("write_paper.validation", validation);
+      await runContextMemory.put("write_paper.validation_repair", validationRepair);
       await runContextMemory.put("write_paper.compile_status", compileResult.status);
       await runContextMemory.put("write_paper.compile_report", compileResult);
       await runContextMemory.put("write_paper.pdf_path", compileResult.pdf_path || null);
@@ -236,8 +310,8 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         status: "success",
         summary:
           sessionResult.source === "fallback"
-            ? `Paper draft generated in LaTeX using staged fallbacks. Validation warnings: ${validation.issues.length}. PDF: ${describeCompileStatus(compileResult)}.`
-            : `Paper draft generated in LaTeX from ${paperDraft.sections.length} structured section(s) via ${sessionResult.source} with ${validation.issues.length} validation warning(s). PDF: ${describeCompileStatus(compileResult)}.`,
+            ? `Paper draft generated in LaTeX using staged fallbacks. Validation warnings: ${validation.issues.length}${describeValidationRepair(validationRepair)}. PDF: ${describeCompileStatus(compileResult)}.`
+            : `Paper draft generated in LaTeX from ${paperDraft.sections.length} structured section(s) via ${sessionResult.source} with ${validation.issues.length} validation warning(s)${describeValidationRepair(validationRepair)}. PDF: ${describeCompileStatus(compileResult)}.`,
         needsApproval: true,
         toolCallsUsed
       };
@@ -416,6 +490,32 @@ function parseReviewContext(
   } catch {
     return undefined;
   }
+}
+
+function describeValidationRepair(report: PaperDraftValidationRepairReport): string {
+  if (!report.attempted) {
+    return "";
+  }
+  if (report.applied) {
+    return ` after one automatic validation repair (${report.initial_warning_count} -> ${report.final_warning_count})`;
+  }
+  if (report.error) {
+    return ` after one failed validation repair attempt`;
+  }
+  return ` after one discarded validation repair attempt`;
+}
+
+function shouldAttemptValidationRepair(validation: {
+  issues: Array<{ message: string }>;
+}): boolean {
+  return (
+    validation.issues.length >= VALIDATION_REPAIR_WARNING_THRESHOLD &&
+    validation.issues.some((issue) => isValidationRepairableIssue(issue.message))
+  );
+}
+
+function isValidationRepairableIssue(message: string): boolean {
+  return /\bborrowed\b/iu.test(message);
 }
 
 async function loadObjectiveEvaluation(

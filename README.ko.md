@@ -219,6 +219,8 @@ stateDiagram-v2
     write_paper --> [*]: auto_complete
 ```
 
+상위 워크플로우는 계속 고정 9노드 그래프입니다. 최근 자동화는 노드 내부의 bounded loop로 들어가므로, evidence window 확장, 보강 실험 프로필, objective grounding 재시도, 논문 초안 repair 때문에 상위 노드를 더 늘리지는 않습니다.
+
 ### 실행 제어 표
 
 | 계층 | 설정 또는 명령 | 기본값 | 하는 일 | 사람이 개입하는 시점 |
@@ -232,12 +234,21 @@ stateDiagram-v2
 
 | 위치 | 조건 | 결과 |
 | --- | --- | --- |
-| `analyze_results` | objective metric을 구체적인 수치 신호에 연결하지 못함 | 다음 단계로 넘어가기 전에 clarification을 위해 pause |
+| `analyze_results` | best-effort metric rematch 뒤에도 objective metric을 구체적인 수치 신호에 연결하지 못함 | 다음 단계로 넘어가기 전에 clarification을 위해 pause |
 | `analyze_results` | hypothesis reset 추천이 나왔지만 confidence가 낮아 `autoExecutable=true`가 아님 | 자동 backtrack 대신 사람 검토를 위해 pause |
 | 모든 노드 (`manual` approval mode) | 노드가 승인 경계에 도달함 | `/approve`, `/agent apply`, 또는 다른 명시적 운영자 선택을 기다림 |
 | `/agent overnight` | `write_paper` 도달, low-confidence 또는 비허용 recommendation, recommendation 반복 과다, 야간 시간 예산 도달 | overnight 실행을 중단하고 운영자에게 제어를 돌려줌 |
 
 기본 설정에서는 review 결과가 자동으로 `write_paper` 또는 지원되는 backtrack으로 적용됩니다. `minimal` 모드에서 review는 별도의 수동 hold 지점이 아닙니다.
+
+### Bounded Automation Loops
+
+| 노드 | 자동 루프 | 트리거 | 제한 |
+| --- | --- | --- | --- |
+| `analyze_papers` | fresh `top_n` 선택을 자동 확장하고 manifest 기반 완료 분석을 재사용 | 처음 선택된 범위의 evidence가 너무 얇아 가설 grounding이 약할 때 | 최대 2회 자동 확장 |
+| `run_experiments` | managed `standard -> quick_check -> confirmatory` 프로필을 연쇄 실행 | managed `real_execution` bundle이 standard run을 observed/met로 끝냈을 때 | supplemental run은 best effort이며 primary success를 뒤집지 않음 |
+| `analyze_results` | best-effort metric rematch로 objective grounding을 다시 시도 | 캐시된 또는 fresh objective evaluation이 `missing` 또는 `unknown`일 때 | 사람 clarification pause 전 1회 bounded retry |
+| `write_paper` | validation-aware repair를 한 번 더 돌리고 재검증 | draft validation에서 repair 가능한 borrowed grounding warning이 나올 때 | 최대 1회 repair, warning 수가 늘어나면 채택하지 않음 |
 
 ### 단계별 연결 그래프
 
@@ -300,16 +311,18 @@ flowchart LR
     VerifyPatch --> Handoff{"auto handoff?"}
 
     Handoff -->|yes| RX["run_experiments"]
-    Handoff -->|no| Approve["수동 승인"]
-    Approve --> RX
+    Handoff -->|no| Gate["승인 경계<br/>minimal이면 자동 해소"]
+    Gate --> RX
 
     RX --> Runner["runner"]
     Runner --> ACI["Local ACI preflight/tests/command 실행"]
-    ACI --> Metrics["metrics.json + run_verifier_feedback"]
+    ACI --> Profiles["managed standard -> quick_check -> confirmatory"]
+    Profiles --> Metrics["metrics.json + supplemental runs + run_verifier_feedback"]
     Metrics -. runner feedback .-> IM
     Metrics --> AR["analyze_results"]
     AR --> Analyst["analyst_statistician"]
-    Analyst --> Synth["objective evaluation + synthesis + transition recommendation"]
+    Analyst --> Ground["best-effort metric rematch"]
+    Ground --> Synth["objective evaluation + synthesis + transition recommendation"]
 
     Synth -->|advance| RV["review"]
     Synth -->|backtrack_to_implement| IE
@@ -348,7 +361,12 @@ flowchart LR
     Outline --> Draft["draft"]
     Draft --> Review["review critique"]
     Review --> Final["finalize"]
-    Final --> Tex["paper/main.tex + references.bib + evidence_links.json"]
+    Final --> Validate["draft validation"]
+    Validate --> Repair{"repair 가능한 borrowed warning?"}
+    Repair -->|yes| Revise["validation-aware repair (최대 1회)"]
+    Revise --> Revalidate["재검증"]
+    Repair -->|no| Tex["paper/main.tex + references.bib + evidence_links.json"]
+    Revalidate --> Tex
     Tex --> Build{"PDF build enabled?"}
     Build -->|yes| Latex["LaTeX compile + optional repair"]
     Build -->|no| Done["LaTeX 산출물만 생성"]
@@ -358,14 +376,14 @@ flowchart LR
 | 그래프 노드 | 주 역할 | 현재 구현 형태 |
 | --- | --- | --- |
 | `collect_papers` | `collector_curator` | Semantic Scholar 검색, 중복 제거, 보강, BibTeX 생성 |
-| `analyze_papers` | `reader_evidence_extractor` | 논문 선택 랭킹과 재개 가능한 planner -> extractor -> reviewer 기반 로컬/Responses API PDF 분석 |
+| `analyze_papers` | `reader_evidence_extractor` | 논문 선택 랭킹과 재개 가능한 planner -> extractor -> reviewer 기반 로컬/Responses API PDF 분석, evidence가 얇으면 bounded top-N auto-expansion 포함 |
 | `generate_hypotheses` | `hypothesis_agent` | evidence-axis synthesis, ToT branching, skeptical review, diversity-aware top-k selection |
 | `design_experiments` | `experiment_designer` | 실험 후보 설계 생성과 `experiment_plan.yaml` 선택 |
 | `implement_experiments` | `implementer` | `ImplementSessionManager`, localization, Codex 패치, 검증, optional handoff |
-| `run_experiments` | `runner` | ACI 기반 preflight/tests/command 실행, metrics 수집, verifier feedback |
-| `analyze_results` | `analyst_statistician` | objective 평가, 결과 합성, transition recommendation |
+| `run_experiments` | `runner` | ACI 기반 preflight/tests/command 실행, metrics 수집, managed supplemental profile chaining, verifier feedback |
+| `analyze_results` | `analyst_statistician` | best-effort metric rematching을 포함한 objective 평가, 결과 합성, transition recommendation |
 | `review` | `reviewer` | `runReviewPanel`, 5인 specialist reviewer, heuristic+LLM refinement, review packet 생성, transition recommendation |
-| `write_paper` | `paper_writer`, `reviewer` | `PaperWriterSessionManager`, outline/draft/review/finalize, optional LaTeX repair |
+| `write_paper` | `paper_writer`, `reviewer` | `PaperWriterSessionManager`, outline/draft/review/finalize, validation-aware repair, optional LaTeX repair |
 
 역할 카탈로그와 실제 멀티턴 런타임은 완전히 같은 범위는 아닙니다. 현재 가장 깊게 세션 기반으로 묶여 있는 노드는 `implement_experiments`와 `write_paper`이고, `review`는 공용 `reviewer` 역할 아래 specialist review panel을 실행한 뒤 review packet과 suggested command를 만들며, `generate_hypotheses`는 내부 evidence-synthesis / skeptical-review 프롬프트를 거친 뒤 다시 메인 그래프로 돌아옵니다.
 
@@ -382,18 +400,20 @@ flowchart TB
     D --> D1["experiment_plan.yaml"]
     D1 --> E["implement_experiments"]
     E --> F["run_experiments"]
-    F --> F1["exec_logs/run_experiments.txt<br/>exec_logs/observations.jsonl<br/>metrics.json<br/>objective_evaluation.json<br/>run_experiments_verify_report.json"]
+    F --> F1["exec_logs/run_experiments.txt<br/>exec_logs/observations.jsonl<br/>metrics.json<br/>objective_evaluation.json<br/>run_experiments_supplemental_runs.json (optional)<br/>run_experiments_verify_report.json"]
     F1 --> G["analyze_results"]
     G --> G1["result_analysis.json<br/>result_analysis_synthesis.json<br/>transition_recommendation.json<br/>figures/performance.svg"]
     G1 --> H["review"]
     H --> H1["review/findings.jsonl<br/>review/scorecard.json<br/>review/consistency_report.json<br/>review/bias_report.json<br/>review/revision_plan.json<br/>review/decision.json<br/>review/review_packet.json<br/>review/checklist.md"]
     H1 --> I["write_paper"]
-    I --> I1["paper/main.tex<br/>paper/references.bib<br/>paper/evidence_links.json<br/>paper/draft.json<br/>paper/validation.json<br/>paper/main.pdf (optional)"]
+    I --> I1["paper/main.tex<br/>paper/references.bib<br/>paper/evidence_links.json<br/>paper/draft.json<br/>paper/validation.json<br/>paper/validation_repair_report.json<br/>paper/main.pdf (optional)"]
 ```
 
 모든 run 아티팩트는 `.autolabos/runs/<run_id>/` 아래에 저장되므로, TUI와 로컬 웹 UI 양쪽에서 같은 실행 결과를 추적하고 점검할 수 있습니다.
 
 `analyze_papers`는 `analysis_manifest.json`을 이용해 미완료 작업만 재개합니다. 선택된 논문 집합이 바뀌거나, 분석 설정이 바뀌거나, `paper_summaries.jsonl` / `evidence_store.jsonl`가 manifest와 어긋나면 AutoLabOS는 오래된 행을 정리하고 영향받은 논문만 다시 큐에 넣은 뒤 downstream 노드를 계속 진행합니다.
+
+managed `run_experiments`는 successful standard run 뒤에 자동으로 `quick_check`, `confirmatory`를 따라 돌리면 `run_experiments_supplemental_runs.json`도 남깁니다. `write_paper`는 bounded repair loop가 실제로 실행되면 `validation_repair_report.json`과 `validation_repair.*` 아티팩트도 기록합니다.
 
 ### 제어 표면
 

@@ -209,6 +209,116 @@ function buildSessionResponses(): string[] {
   return [outline, draft, review, draft];
 }
 
+function buildValidationRepairResponses(): string[] {
+  const outline = JSON.stringify({
+    title: "PDF-backed Paper Writer",
+    abstract_focus: ["persistent drafting", "revisability"],
+    section_headings: ["Introduction", "Method", "Results", "Conclusion"],
+    key_claim_themes: ["Thread-backed drafting improves revisability."],
+    citation_plan: ["paper_1"]
+  });
+  const flawedDraft = JSON.stringify({
+    title: "PDF-backed Paper Writer",
+    abstract: "A paper-writing workflow with validation-aware repair support.",
+    keywords: ["agent collaboration", "paper writing"],
+    sections: [
+      {
+        heading: "Introduction",
+        paragraphs: ["This paper studies PDF-backed drafting for agent collaboration workflows."],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_1"]
+      },
+      {
+        heading: "Method",
+        paragraphs: ["The workflow stages outline, drafting, review, and finalization before compiling LaTeX."],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_1"]
+      },
+      {
+        heading: "Results",
+        paragraphs: [
+          {
+            text: "Persistent drafting support improved revision stability in repeated runs.",
+            evidence_ids: [],
+            citation_paper_ids: []
+          }
+        ],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_1"]
+      },
+      {
+        heading: "Conclusion",
+        paragraphs: ["Validation-aware repair makes the writer more self-correcting."],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_1"]
+      }
+    ],
+    claims: [
+      {
+        claim_id: "c1",
+        statement: "Persistent drafting support improved revision stability in repeated runs.",
+        section_heading: "Results",
+        evidence_ids: [],
+        citation_paper_ids: []
+      }
+    ]
+  });
+  const review = JSON.stringify({
+    summary: "The draft is coherent but should make evidence links explicit.",
+    revision_notes: ["Keep the PDF-compilation framing explicit."],
+    unsupported_claims: [],
+    missing_sections: [],
+    missing_citations: ["Results"]
+  });
+  const repairedDraft = JSON.stringify({
+    title: "PDF-backed Paper Writer",
+    abstract: "A paper-writing workflow with validation-aware repair support.",
+    keywords: ["agent collaboration", "paper writing"],
+    sections: [
+      {
+        heading: "Introduction",
+        paragraphs: ["This paper studies PDF-backed drafting for agent collaboration workflows."],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_1"]
+      },
+      {
+        heading: "Method",
+        paragraphs: ["The workflow stages outline, drafting, review, and finalization before compiling LaTeX."],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_1"]
+      },
+      {
+        heading: "Results",
+        paragraphs: [
+          {
+            text: "Persistent drafting support improved revision stability in repeated runs.",
+            evidence_ids: ["ev_1"],
+            citation_paper_ids: ["paper_1"]
+          }
+        ],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_1"]
+      },
+      {
+        heading: "Conclusion",
+        paragraphs: ["Validation-aware repair makes the writer more self-correcting."],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_1"]
+      }
+    ],
+    claims: [
+      {
+        claim_id: "c1",
+        statement: "Persistent drafting support improved revision stability in repeated runs.",
+        section_heading: "Results",
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_1"]
+      }
+    ]
+  });
+  return [outline, flawedDraft, review, flawedDraft, repairedDraft];
+}
+
 function createPdfBuildAci(options?: { failFirstCompile?: boolean; failAllCompiles?: boolean }) {
   const commands: string[] = [];
   let firstCompileFailed = false;
@@ -281,6 +391,64 @@ async function exists(filePath: string): Promise<boolean> {
 }
 
 describe("writePaper PDF build", () => {
+  it("runs one validation repair pass before rendering when warnings accumulate", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-validation-repair-"));
+    process.chdir(root);
+
+    const run = makeRun("run-paper-validation-repair");
+    const runDir = await seedRun(root, run);
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient(buildValidationRepairResponses()),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(result.summary).toContain("after one automatic validation repair (1 -> 0)");
+
+    const validation = JSON.parse(await readFile(path.join(runDir, "paper", "validation.json"), "utf8")) as {
+      issues: Array<{ message: string }>;
+    };
+    expect(validation.issues).toHaveLength(0);
+
+    const repairReport = JSON.parse(
+      await readFile(path.join(runDir, "paper", "validation_repair_report.json"), "utf8")
+    ) as {
+      attempted: boolean;
+      applied: boolean;
+      initial_warning_count: number;
+      final_warning_count: number;
+    };
+    expect(repairReport).toMatchObject({
+      attempted: true,
+      applied: true,
+      initial_warning_count: 1,
+      final_warning_count: 0
+    });
+
+    const traceRaw = await readFile(path.join(runDir, "paper", "session_trace.json"), "utf8");
+    expect(traceRaw).toContain('"stage": "validation_repair"');
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    expect(await memory.get("write_paper.validation_repair")).toMatchObject({
+      attempted: true,
+      applied: true,
+      initial_warning_count: 1,
+      final_warning_count: 0
+    });
+  });
+
   it("builds a paper PDF and publishes the compiled artifact", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-pdf-"));
     process.chdir(root);

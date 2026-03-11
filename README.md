@@ -220,6 +220,8 @@ stateDiagram-v2
     write_paper --> [*]: auto_complete
 ```
 
+The top-level workflow remains a fixed 9-node graph. Recent automation work lives inside bounded node-internal loops so we do not add extra top-level nodes for evidence-window expansion, supplemental experiment profiles, objective grounding retries, or paper-draft repair.
+
 ### Execution Controls
 
 | Layer | Setting or command | Default | What it does | When a human steps in |
@@ -233,12 +235,21 @@ stateDiagram-v2
 
 | Where | Condition | What happens |
 | --- | --- | --- |
-| `analyze_results` | The objective metric cannot be grounded to a concrete numeric signal | The run pauses for clarification before moving on |
+| `analyze_results` | The objective metric still cannot be grounded to a concrete numeric signal after best-effort rematching | The run pauses for clarification before moving on |
 | `analyze_results` | A hypothesis reset is recommended, but confidence is too low for `autoExecutable=true` | The run pauses for human review instead of auto-backtracking |
 | Any node in `manual` approval mode | The node reaches an approval boundary | The run waits for `/approve`, `/agent apply`, or another explicit operator choice |
 | `/agent overnight` | The run reaches `write_paper`, hits a low-confidence or disallowed recommendation, repeats the same recommendation too many times, or reaches the overnight time budget | Overnight stops and hands control back to the operator |
 
 In the default setup, review outcomes auto-apply into `write_paper` or one of the supported backtracks. Review is no longer a dedicated manual hold in `minimal` mode.
+
+### Bounded Automation Loops
+
+| Node | Automatic loop | Trigger | Bound |
+| --- | --- | --- | --- |
+| `analyze_papers` | Expands a fresh `top_n` selection and reuses manifest-backed completed analyses | The initial selected window is too sparse to ground hypotheses well | At most 2 auto-expansions |
+| `run_experiments` | Chains managed `standard -> quick_check -> confirmatory` profiles | A managed `real_execution` bundle completes the standard run with an observed/met objective | Supplemental runs are best effort and do not overturn a successful primary run |
+| `analyze_results` | Re-tries objective grounding with best-effort metric rematching | Cached or fresh objective evaluation comes back `missing` or `unknown` | One bounded retry before any human clarification pause |
+| `write_paper` | Runs a validation-aware repair pass, then re-validates | Draft validation reports repairable borrowed grounding warnings | One extra repair pass, adopted only when warning count does not increase |
 
 ### Phase-by-Phase Connection Graphs
 
@@ -301,16 +312,18 @@ flowchart LR
     VerifyPatch --> Handoff{"auto handoff?"}
 
     Handoff -->|yes| RX["run_experiments"]
-    Handoff -->|no| Approve["manual approval"]
-    Approve --> RX
+    Handoff -->|no| Gate["approval boundary<br/>minimal auto-resolves"]
+    Gate --> RX
 
     RX --> Runner["runner"]
     Runner --> ACI["Local ACI preflight/tests/command execution"]
-    ACI --> Metrics["metrics.json + run_verifier_feedback"]
+    ACI --> Profiles["managed standard -> quick_check -> confirmatory"]
+    Profiles --> Metrics["metrics.json + supplemental runs + run_verifier_feedback"]
     Metrics -. runner feedback .-> IM
     Metrics --> AR["analyze_results"]
     AR --> Analyst["analyst_statistician"]
-    Analyst --> Synth["objective evaluation + synthesis + transition recommendation"]
+    Analyst --> Ground["best-effort metric rematch"]
+    Ground --> Synth["objective evaluation + synthesis + transition recommendation"]
 
     Synth -->|advance| RV["review"]
     Synth -->|backtrack_to_implement| IE
@@ -349,7 +362,12 @@ flowchart LR
     Outline --> Draft["draft"]
     Draft --> Review["review critique"]
     Review --> Final["finalize"]
-    Final --> Tex["paper/main.tex + references.bib + evidence_links.json"]
+    Final --> Validate["draft validation"]
+    Validate --> Repair{"repairable borrowed warnings?"}
+    Repair -->|yes| Revise["validation-aware repair (1 pass max)"]
+    Revise --> Revalidate["re-validate"]
+    Repair -->|no| Tex["paper/main.tex + references.bib + evidence_links.json"]
+    Revalidate --> Tex
     Tex --> Build{"PDF build enabled?"}
     Build -->|yes| Latex["LaTeX compile + optional repair"]
     Build -->|no| Done["LaTeX artifacts only"]
@@ -359,14 +377,14 @@ flowchart LR
 | Graph node | Primary role(s) | Current implementation shape |
 | --- | --- | --- |
 | `collect_papers` | `collector_curator` | Semantic Scholar search, de-duplication, enrichment, and BibTeX generation |
-| `analyze_papers` | `reader_evidence_extractor` | ranked paper selection plus resumable planner -> extractor -> reviewer analysis over local or Responses API PDF inputs |
+| `analyze_papers` | `reader_evidence_extractor` | ranked paper selection plus resumable planner -> extractor -> reviewer analysis over local or Responses API PDF inputs, with bounded top-N auto-expansion when evidence is too thin |
 | `generate_hypotheses` | `hypothesis_agent` | evidence-axis synthesis, ToT branching, skeptical review, and diversity-aware top-k selection |
 | `design_experiments` | `experiment_designer` | candidate design generation and `experiment_plan.yaml` selection |
 | `implement_experiments` | `implementer` | `ImplementSessionManager`, localization, Codex patching, verification, and optional handoff |
-| `run_experiments` | `runner` | ACI preflight/tests/command execution, metrics capture, and verifier feedback |
-| `analyze_results` | `analyst_statistician` | objective evaluation, result synthesis, and transition recommendation |
+| `run_experiments` | `runner` | ACI preflight/tests/command execution, metrics capture, managed supplemental profile chaining, and verifier feedback |
+| `analyze_results` | `analyst_statistician` | objective evaluation with best-effort metric rematching, result synthesis, and transition recommendation |
 | `review` | `reviewer` | `runReviewPanel`, 5 specialist reviewers, heuristic+LLM refinement, review packet generation, and transition recommendation |
-| `write_paper` | `paper_writer`, `reviewer` | `PaperWriterSessionManager`, outline/draft/review/finalize stages, optional LaTeX repair |
+| `write_paper` | `paper_writer`, `reviewer` | `PaperWriterSessionManager`, outline/draft/review/finalize stages, validation-aware repair, and optional LaTeX repair |
 
 The role catalog is broader than the concrete runtime wiring. Today the deepest multi-turn session managers are `implement_experiments` and `write_paper`, `review` runs a specialist review panel behind the shared `reviewer` role and then turns that panel into a reusable review packet plus suggested commands, and `generate_hypotheses` fans out into internal evidence-synthesis and skeptical-review prompts before returning to the main graph.
 
@@ -383,18 +401,20 @@ flowchart TB
     D --> D1["experiment_plan.yaml"]
     D1 --> E["implement_experiments"]
     E --> F["run_experiments"]
-    F --> F1["exec_logs/run_experiments.txt<br/>exec_logs/observations.jsonl<br/>metrics.json<br/>objective_evaluation.json<br/>run_experiments_verify_report.json"]
+    F --> F1["exec_logs/run_experiments.txt<br/>exec_logs/observations.jsonl<br/>metrics.json<br/>objective_evaluation.json<br/>run_experiments_supplemental_runs.json (optional)<br/>run_experiments_verify_report.json"]
     F1 --> G["analyze_results"]
     G --> G1["result_analysis.json<br/>result_analysis_synthesis.json<br/>transition_recommendation.json<br/>figures/performance.svg"]
     G1 --> H["review"]
     H --> H1["review/findings.jsonl<br/>review/scorecard.json<br/>review/consistency_report.json<br/>review/bias_report.json<br/>review/revision_plan.json<br/>review/decision.json<br/>review/review_packet.json<br/>review/checklist.md"]
     H1 --> I["write_paper"]
-    I --> I1["paper/main.tex<br/>paper/references.bib<br/>paper/evidence_links.json<br/>paper/draft.json<br/>paper/validation.json<br/>paper/main.pdf (optional)"]
+    I --> I1["paper/main.tex<br/>paper/references.bib<br/>paper/evidence_links.json<br/>paper/draft.json<br/>paper/validation.json<br/>paper/validation_repair_report.json<br/>paper/main.pdf (optional)"]
 ```
 
 All run artifacts live under `.autolabos/runs/<run_id>/`, which makes the pipeline inspectable from both the TUI and the local web UI.
 
 `analyze_papers` uses `analysis_manifest.json` to resume unfinished work. If the selected paper set changes, the analysis configuration changes, or `paper_summaries.jsonl` / `evidence_store.jsonl` drift out of sync with the manifest, AutoLabOS prunes stale rows and re-queues only the affected papers before downstream nodes continue.
+
+Managed `run_experiments` runs may also emit `run_experiments_supplemental_runs.json` when the runtime automatically follows a successful standard run with `quick_check` and `confirmatory` profiles. `write_paper` emits `validation_repair_report.json`, plus `validation_repair.*` artifacts when the bounded repair loop actually runs.
 
 ### Control Surfaces
 

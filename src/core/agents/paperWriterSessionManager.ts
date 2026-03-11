@@ -8,6 +8,7 @@ import {
   buildFallbackPaperDraft,
   buildPaperWriterPrompt,
   PaperDraft,
+  PaperDraftValidationIssue,
   PaperWritingBundle,
   parsePaperDraftJson,
   normalizePaperDraft
@@ -36,7 +37,7 @@ interface PaperWriterReview {
 }
 
 interface SessionTraceEntry {
-  stage: "outline" | "draft" | "review" | "finalize";
+  stage: "outline" | "draft" | "review" | "finalize" | "validation_repair";
   mode: "codex_session" | "staged_llm";
   threadId?: string;
   fallbackUsed: boolean;
@@ -55,6 +56,15 @@ export interface PaperWriterSessionResult {
   trace: SessionTraceEntry[];
   stageFallbacks: number;
   errors: string[];
+}
+
+export interface PaperWriterValidationRepairResult {
+  attempted: boolean;
+  applied: boolean;
+  draft: PaperDraft;
+  source: "codex_session" | "staged_llm" | "fallback";
+  threadId?: string;
+  error?: string;
 }
 
 interface PaperWriterSessionDeps {
@@ -355,10 +365,109 @@ export class PaperWriterSessionManager {
     }
   }
 
+  async reviseAfterValidation(input: {
+    run: RunRecord;
+    bundle: PaperWritingBundle;
+    constraintProfile: ConstraintProfile;
+    objectiveMetricProfile: ObjectiveMetricProfile;
+    objectiveEvaluation?: ObjectiveMetricEvaluation;
+    outline: PaperWriterOutline;
+    draft: PaperDraft;
+    review: PaperWriterReview;
+    validationIssues: PaperDraftValidationIssue[];
+    abortSignal?: AbortSignal;
+  }): Promise<PaperWriterValidationRepairResult> {
+    const runContext = new RunContextMemory(input.run.memoryRefs.runContextPath);
+    let activeThreadId =
+      input.run.nodeThreads.write_paper ||
+      (await runContext.get<string>("write_paper.thread_id"));
+    const useCodexSession =
+      typeof this.deps.codex?.runTurnStream === "function" &&
+      this.deps.config?.providers?.llm_mode !== "openai_api";
+    const mode: "codex_session" | "staged_llm" = useCodexSession ? "codex_session" : "staged_llm";
+    const trace = (await runContext.get<SessionTraceEntry[]>("write_paper.session_trace")) || [];
+
+    if (input.validationIssues.length === 0) {
+      return {
+        attempted: false,
+        applied: false,
+        draft: input.draft,
+        source: mode
+      };
+    }
+
+    this.emit(
+      input.run,
+      `Paper writer validation repair started in ${mode} mode for ${input.validationIssues.length} warning(s).`
+    );
+
+    try {
+      const mergedReview = mergeReviewWithValidationIssues(input.review, input.validationIssues);
+      const repairStage = await this.runStage({
+        run: input.run,
+        runContext,
+        stage: "validation_repair",
+        mode,
+        threadId: activeThreadId,
+        systemPrompt: buildRoleSystemPrompt("paper_writer", this.writerRole.sop),
+        prompt: buildRevisionPrompt({
+          bundle: input.bundle,
+          constraintProfile: input.constraintProfile,
+          objectiveMetricProfile: input.objectiveMetricProfile,
+          objectiveEvaluation: input.objectiveEvaluation,
+          outline: input.outline,
+          draft: input.draft,
+          review: mergedReview,
+          validationIssues: input.validationIssues
+        }),
+        agentRole: "paper_writer",
+        abortSignal: input.abortSignal,
+        trace
+      });
+      activeThreadId = repairStage.threadId || activeThreadId;
+      const repairedDraft = repairStage.text
+        ? normalizePaperDraft({
+            raw: parsePaperDraftJson(repairStage.text),
+            bundle: input.bundle
+          })
+        : input.draft;
+      await this.persistStageArtifacts(
+        input.run,
+        "validation_repair",
+        repairedDraft,
+        repairStage.text
+      );
+      await writeRunArtifact(input.run, "paper/session_trace.json", `${JSON.stringify(trace, null, 2)}\n`);
+      await runContext.put("write_paper.thread_id", activeThreadId || null);
+      await runContext.put("write_paper.session_trace", trace);
+      await this.persistThreadToRunStore(input.run, activeThreadId);
+      this.emit(input.run, "Paper writer validation repair completed.");
+      return {
+        attempted: true,
+        applied: true,
+        draft: repairedDraft,
+        source: mode,
+        threadId: activeThreadId
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await writeRunArtifact(input.run, "paper/validation_repair.raw.txt", `${message}\n`);
+      this.emit(input.run, `Paper writer validation repair failed: ${message}`);
+      return {
+        attempted: true,
+        applied: false,
+        draft: input.draft,
+        source: "fallback",
+        threadId: activeThreadId,
+        error: message
+      };
+    }
+  }
+
   private async runStage(input: {
     run: RunRecord;
     runContext: RunContextMemory;
-    stage: "outline" | "draft" | "review" | "finalize";
+    stage: "outline" | "draft" | "review" | "finalize" | "validation_repair";
     mode: "codex_session" | "staged_llm";
     threadId?: string;
     systemPrompt: string;
@@ -440,7 +549,7 @@ export class PaperWriterSessionManager {
 
   private async persistStageArtifacts(
     run: RunRecord,
-    stage: "outline" | "draft" | "review" | "finalize",
+    stage: "outline" | "draft" | "review" | "finalize" | "validation_repair",
     parsed: unknown,
     rawText: string
   ): Promise<void> {
@@ -605,6 +714,7 @@ function buildRevisionPrompt(input: {
   outline: PaperWriterOutline;
   draft: PaperDraft;
   review: PaperWriterReview;
+  validationIssues?: PaperDraftValidationIssue[];
 }): string {
   return [
     buildPaperWriterPrompt({
@@ -623,6 +733,17 @@ function buildRevisionPrompt(input: {
     "Reviewer JSON:",
     JSON.stringify(input.review, null, 2),
     "",
+    ...(input.validationIssues?.length
+      ? [
+          "Validation issues JSON:",
+          JSON.stringify(input.validationIssues, null, 2),
+          "",
+          "Address the validation issues directly.",
+          "Do not invent new evidence IDs, paper IDs, or experimental results.",
+          "If a statement lacks support, make it more conservative instead of overstating it.",
+          ""
+        ]
+      : []),
     "Return the revised final structured paper draft JSON."
   ].join("\n");
 }
@@ -704,6 +825,42 @@ function normalizeReview(raw: Record<string, unknown>, draft: PaperDraft): Paper
           .map((item) => item.heading)
           .slice(0, 6)
   };
+}
+
+function mergeReviewWithValidationIssues(
+  review: PaperWriterReview,
+  validationIssues: PaperDraftValidationIssue[]
+): PaperWriterReview {
+  const revisionNotes = normalizeStringArray([
+    ...review.revision_notes,
+    ...validationIssues.slice(0, 8).map((issue) => formatValidationIssueAsRevisionNote(issue))
+  ]).slice(0, 10);
+  const missingCitations = normalizeStringArray([
+    ...review.missing_citations,
+    ...validationIssues
+      .filter((issue) => issue.citation_paper_ids.length === 0 || /citation/i.test(issue.message))
+      .map((issue) => issue.section_heading || issue.claim_id || "")
+      .filter(Boolean)
+  ]).slice(0, 8);
+
+  return {
+    ...review,
+    summary: review.summary
+      ? `${review.summary} Resolve the validation warnings without inventing support.`
+      : "Resolve the validation warnings without inventing support.",
+    revision_notes: revisionNotes,
+    missing_citations: missingCitations
+  };
+}
+
+function formatValidationIssueAsRevisionNote(issue: PaperDraftValidationIssue): string {
+  const scope =
+    issue.kind === "claim"
+      ? `claim ${issue.claim_id || "unknown"}`
+      : issue.kind === "paragraph"
+        ? `paragraph ${typeof issue.paragraph_index === "number" ? issue.paragraph_index + 1 : "unknown"} of ${issue.section_heading || "unknown section"}`
+        : `section ${issue.section_heading || "unknown section"}`;
+  return `${scope}: ${issue.message}`;
 }
 
 function parseJsonObject(text: string): Record<string, unknown> {
