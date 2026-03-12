@@ -150,85 +150,21 @@ AutoLabOS has two layers that are easy to conflate:
 
 ### Node-to-Role Map
 
-```mermaid
-flowchart TB
-    subgraph Orchestration["Orchestration layer (`/agent` targets, 9 nodes)"]
-        O["AgentOrchestrator + StateGraphRuntime"]
-        N1["collect_papers"]
-        N2["analyze_papers"]
-        N3["generate_hypotheses"]
-        N4["design_experiments"]
-        N5["implement_experiments"]
-        N6["run_experiments"]
-        N7["analyze_results"]
-        N8["review"]
-        N9["write_paper"]
+- Read it top-down from the `Node` column. `/agent ...` always targets one of these 9 nodes.
+- `Exported role(s)` are the public `agentRole` identities you will see in prompts, events, and session managers.
+- `Internal helpers` are node-local personas or deterministic controllers, not extra top-level `/agent` targets.
 
-        O --> N1 --> N2 --> N3 --> N4 --> N5 --> N6 --> N7 --> N8 --> N9
-    end
-
-    subgraph Roles["Exported role layer (`agentRole`)"]
-        R1["collector_curator"]
-        R2["reader_evidence_extractor"]
-        R3["hypothesis_agent"]
-        R4["experiment_designer"]
-        R5["implementer"]
-        R6["runner"]
-        R7["analyst_statistician"]
-        R8["paper_writer"]
-        R9["reviewer"]
-    end
-
-    subgraph Internal["Node-internal personas and controllers"]
-        P1["evidence synthesizer"]
-        P2["skeptical reviewer"]
-        P3["feasibility reviewer"]
-        P4["statistical reviewer"]
-        P5["ops-budget planner"]
-        P6["trial manager"]
-        P7["failure triager"]
-        P8["resource/log watchdog"]
-        P9["rerun planner"]
-        P10["metric auditor"]
-        P11["robustness reviewer"]
-        P12["confounder detector"]
-        P13["decision calibrator"]
-        P14["claim verifier"]
-        P15["methodology reviewer"]
-        P16["statistics reviewer"]
-        P17["writing readiness reviewer"]
-        P18["integrity reviewer"]
-    end
-
-    N1 -. primary role .-> R1
-    N2 -. primary role .-> R2
-    N3 -. primary role .-> R3
-    N3 -. synthesis .-> P1
-    N3 -. critique .-> P2
-    N4 -. primary role .-> R4
-    N4 -. selection panel .-> P3
-    N4 -. selection panel .-> P4
-    N4 -. selection panel .-> P5
-    N5 -. primary role .-> R5
-    N6 -. primary role .-> R6
-    N6 -. execution controller .-> P6
-    N6 -. execution controller .-> P7
-    N6 -. execution controller .-> P8
-    N6 -. execution controller .-> P9
-    N7 -. primary role .-> R7
-    N7 -. result panel .-> P10
-    N7 -. result panel .-> P11
-    N7 -. result panel .-> P12
-    N7 -. result panel .-> P13
-    N8 -. panel role .-> R9
-    N8 -. specialist .-> P14
-    N8 -. specialist .-> P15
-    N8 -. specialist .-> P16
-    N8 -. specialist .-> P17
-    N8 -. specialist .-> P18
-    N9 -. drafting .-> R8
-    N9 -. critique .-> R9
-```
+| Node | Exported role(s) | Internal helpers | What the extra layer does |
+| --- | --- | --- | --- |
+| `collect_papers` | `collector_curator` | None | Collects and curates the candidate paper set |
+| `analyze_papers` | `reader_evidence_extractor` | None | Extracts summaries and evidence from selected papers |
+| `generate_hypotheses` | `hypothesis_agent` | `evidence synthesizer`, `skeptical reviewer` | Synthesizes ideas, then pressure-tests them |
+| `design_experiments` | `experiment_designer` | `feasibility reviewer`, `statistical reviewer`, `ops-budget planner` | Filters plans for practicality, statistical quality, and budget fit |
+| `implement_experiments` | `implementer` | None | Produces code and local workspace changes through ACI actions |
+| `run_experiments` | `runner` | `trial manager`, `failure triager`, `resource/log watchdog`, `rerun planner` | Drives execution, catches failures, and decides reruns |
+| `analyze_results` | `analyst_statistician` | `metric auditor`, `robustness reviewer`, `confounder detector`, `decision calibrator` | Checks whether results are reliable enough to act on |
+| `review` | `reviewer` | `claim verifier`, `methodology reviewer`, `statistics reviewer`, `writing readiness reviewer`, `integrity reviewer` | Runs the multi-specialist review gate before drafting |
+| `write_paper` | `paper_writer`, `reviewer` | None | Drafts the paper, then runs a reviewer critique pass |
 
 ### Execution Graph
 
