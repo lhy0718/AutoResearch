@@ -1,4 +1,5 @@
 import { GRAPH_NODE_ORDER, RunRecord } from "../types.js";
+import { normalizeRunForDisplay } from "./runProjection.js";
 
 export type GuidanceLanguage = "en" | "ko";
 
@@ -90,7 +91,7 @@ export function buildContextualGuidance(input: ContextualGuidanceInput): Context
     };
   }
 
-  const run = input.run;
+  const run = normalizeRunForDisplay(input.run);
   const nodeStatus = run.graph.nodeStates[run.currentNode].status;
   const nextNode = getNextNode(run.currentNode);
   const statusCommand = `/agent status ${run.id}`;

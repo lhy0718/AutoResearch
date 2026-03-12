@@ -4,7 +4,13 @@ import { mkdtemp, access, readFile, mkdir, writeFile } from "node:fs/promises";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { buildBibtexEntry, buildBibtexFile, createCollectPapersNode } from "../src/core/nodes/collectPapers.js";
+import {
+  buildBibtexEntry,
+  buildBibtexFile,
+  createCollectPapersNode,
+  waitForAllCollectEnrichmentJobs,
+  waitForCollectEnrichmentJob
+} from "../src/core/nodes/collectPapers.js";
 import { InMemoryEventStream } from "../src/core/events.js";
 import { MockLLMClient } from "../src/core/llm/client.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
@@ -22,7 +28,8 @@ class JsonLLMClient extends MockLLMClient {
   }
 }
 
-afterEach(() => {
+afterEach(async () => {
+  await waitForAllCollectEnrichmentJobs();
   process.chdir(ORIGINAL_CWD);
 });
 
@@ -40,6 +47,12 @@ async function* failingBatchStream<T>(
     yield batch;
   }
   throw error;
+}
+
+async function readRunContextValue(root: string, runId: string, key: string): Promise<unknown> {
+  const raw = await readFile(path.join(root, ".autolabos", "runs", runId, "memory", "run_context.json"), "utf8");
+  const parsed = JSON.parse(raw) as { items?: Array<{ key?: string; value?: unknown }> };
+  return parsed.items?.find((item) => item.key === key)?.value;
 }
 
 describe("collectPapers bibtex", () => {
@@ -331,8 +344,9 @@ describe("collectPapers bibtex", () => {
         .some((event) => String(event.payload?.text ?? "").includes("Requesting Semantic Scholar batch 1/1."))
     ).toBe(true);
     expect(result.summary).toBe(
-      'Semantic Scholar stored 1 papers for "Multi-Agent Collaboration". PDF recovered 0; BibTeX enriched 0.'
+      'Semantic Scholar stored 1 papers for "Multi-Agent Collaboration". Deferred enrichment continues for 1 paper(s).'
     );
+    await waitForCollectEnrichmentJob(runId);
     expect(result.summary).not.toContain("Collection objective");
     expect(eventStream.history().some((event) => event.type === "TOOL_CALLED")).toBe(false);
     expect(
@@ -448,8 +462,9 @@ describe("collectPapers bibtex", () => {
 
     expect(result.status).toBe("success");
     expect(result.summary).toBe(
-      'Semantic Scholar stored 3 total papers for "Multi-Agent Collaboration" (2 newly added). PDF recovered 0; BibTeX enriched 0.'
+      'Semantic Scholar stored 3 total papers for "Multi-Agent Collaboration" (2 newly added). Deferred enrichment continues for 3 paper(s).'
     );
+    await waitForCollectEnrichmentJob(runId);
     const corpus = await readFile(path.join(runDir, "corpus.jsonl"), "utf8");
     expect(corpus).toContain('"paper_id":"paper-1"');
     expect(corpus).toContain('"paper_id":"paper-2"');
@@ -561,8 +576,9 @@ describe("collectPapers bibtex", () => {
 
     expect(result.status).toBe("success");
     expect(result.summary).toBe(
-      'Semantic Scholar stored 2 total papers for "Multi-Agent Collaboration" (1 newly added). PDF recovered 0; BibTeX enriched 0.'
+      'Semantic Scholar stored 2 total papers for "Multi-Agent Collaboration" (1 newly added). Deferred enrichment continues for 1 paper(s).'
     );
+    await waitForCollectEnrichmentJob(runId);
     const corpus = await readFile(path.join(runDir, "corpus.jsonl"), "utf8");
     expect(corpus).toContain('"paper_id":"paper-1"');
     expect(corpus).toContain('"paper_id":"paper-2"');
@@ -1068,8 +1084,9 @@ describe("collectPapers bibtex", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
-    expect(streamSearchPapers).toHaveBeenCalledOnce();
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("Semantic Scholar returned 0 papers after automatic fallback broadening.");
+    expect(streamSearchPapers.mock.calls.length).toBeGreaterThan(0);
   });
 
   it("defers enrichment until after fast Semantic Scholar fetch completes and emits enrichment progress", async () => {
@@ -1161,6 +1178,10 @@ describe("collectPapers bibtex", () => {
     });
 
     expect(result.status).toBe("success");
+    expect(result.summary).toBe(
+      'Semantic Scholar stored 2 papers for "Multi-Agent Collaboration". Deferred enrichment continues for 2 paper(s).'
+    );
+    await waitForCollectEnrichmentJob(runId);
     const observedTexts = eventStream
       .history()
       .filter((event) => event.type === "OBS_RECEIVED")
@@ -1178,11 +1199,24 @@ describe("collectPapers bibtex", () => {
     const progressIndex = observedTexts.findIndex((text) =>
       text.includes("Collect enrichment progress: processed 1/2, stored 2/2.")
     );
+    const completionIndex = observedTexts.findIndex((text) =>
+      text.includes("Deferred enrichment finished for 2 paper(s). PDF recovered 0; BibTeX enriched 0.")
+    );
 
     expect(requestIndex).toBeGreaterThanOrEqual(0);
     expect(collectedIndex).toBeGreaterThan(requestIndex);
     expect(collectedIndex).toBeGreaterThanOrEqual(0);
     expect(deferredIndex).toBeGreaterThan(collectedIndex);
     expect(progressIndex).toBeGreaterThan(deferredIndex);
+    expect(completionIndex).toBeGreaterThan(progressIndex);
+
+    const lastResult = (await readRunContextValue(root, runId, "collect_papers.last_result")) as {
+      enrichment?: { status?: string; processedCount?: number };
+    } | undefined;
+    expect(lastResult?.enrichment).toMatchObject({
+      status: "completed",
+      processedCount: 2
+    });
+    expect(await readRunContextValue(root, runId, "collect_papers.last_error")).toBeNull();
   });
 });

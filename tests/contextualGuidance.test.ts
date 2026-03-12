@@ -64,6 +64,24 @@ describe("buildContextualGuidance", () => {
     expect(guidance?.items.length).toBeGreaterThanOrEqual(10);
   });
 
+  it("switches guidance to the running recovery node instead of the stale failed node", () => {
+    const run = makeRun({
+      id: "run-recovery",
+      currentNode: "generate_hypotheses",
+      status: "failed"
+    });
+    run.graph.currentNode = "generate_hypotheses";
+    run.graph.nodeStates.generate_hypotheses.status = "failed";
+    run.graph.nodeStates.generate_hypotheses.updatedAt = "2026-03-12T06:59:13.286Z";
+    run.graph.nodeStates.analyze_papers.status = "running";
+    run.graph.nodeStates.analyze_papers.updatedAt = "2026-03-12T06:59:20.000Z";
+
+    const guidance = buildContextualGuidance({ run });
+
+    expect(guidance?.items[0]?.label).toBe("/agent run analyze_papers run-recovery");
+    expect(guidance?.items.some((item) => item.label === "/agent retry generate_hypotheses run-recovery")).toBe(false);
+  });
+
   it("shows y/a/n controls for pending plans", () => {
     const guidance = buildContextualGuidance({
       pendingPlan: {

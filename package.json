@@ -44,7 +44,7 @@
     "predev:web": "npm run web:install",
     "dev:web": "npm --prefix web run build && tsx src/cli/main.ts web",
     "pretest": "npm run web:install",
-    "test": "vitest run && npm --prefix web run test",
+    "test": "node ./run-tests.mjs",
     "pretest:web": "npm run web:install",
     "test:web": "npm --prefix web run test",
     "test:watch": "vitest",

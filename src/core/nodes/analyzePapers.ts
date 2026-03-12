@@ -16,6 +16,7 @@ import {
 } from "../analysis/paperAnalyzer.js";
 import {
   AnalysisCorpusRow,
+  ResolvedPaperSource,
   resolvePaperPdfUrl,
   resolvePaperTextSource
 } from "../analysis/paperText.js";
@@ -28,6 +29,7 @@ import {
   RankedPaperCandidate,
   selectPapersForAnalysis
 } from "../analysis/paperSelection.js";
+import { TransitionRecommendation } from "../../types.js";
 
 interface AnalysisManifest {
   version: 2 | 3;
@@ -207,6 +209,8 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         const canExtendExistingManifest = Boolean(
           existingManifest && canExtendManifestForExpandedSelection(existingManifest, selection, analysisFingerprint)
         );
+        let existingSummaryRows = await readSummaryRows(summaryPath);
+        let existingEvidenceRows = await readEvidenceRows(evidencePath);
         const resetReason =
           existingManifest && existingManifest.selectionFingerprint !== selection.selectionFingerprint
             ? "selection_changed"
@@ -215,6 +219,40 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
               : existingManifest && existingManifest.analysisFingerprint !== analysisFingerprint
                 ? "analysis_config_changed"
                 : undefined;
+        const preservedSelectionRegression = shouldPreservePartialArtifactsOnSelectionRegression({
+          runId: run.id,
+          existingManifest,
+          selection,
+          resetReason,
+          selectionRequestFingerprint,
+          analysisFingerprint,
+          corpusFingerprint,
+          existingSummaryRows,
+          existingEvidenceRows
+        });
+        if (preservedSelectionRegression) {
+          emitLog(preservedSelectionRegression.logMessage);
+          const progress = buildAnalysisProgress(existingSummaryRows, existingEvidenceRows);
+          await syncAnalysisProgress(runContextMemory, {
+            summaryRows: existingSummaryRows,
+            evidenceRows: existingEvidenceRows,
+            selectedCount: existingManifest?.selectedPaperIds.length ?? progress.summaryRows.length,
+            totalCandidates: existingManifest?.totalCandidates ?? selection.totalCandidates,
+            selectionFingerprint: existingManifest?.selectionFingerprint ?? selection.selectionFingerprint
+          });
+          await runContextMemory.put("analyze_papers.auto_expand_count", autoExpansionCount);
+          await runContextMemory.put("analyze_papers.auto_expand_reason", autoExpansionReason || null);
+          emitLog(
+            `Analysis totals: summaries=${progress.summaryRows.length}, evidence=${progress.evidenceRows.length}, full_text=${progress.fullTextCount}, abstract_fallback=${progress.abstractFallbackCount}.`
+          );
+          return {
+            status: "success",
+            summary: preservedSelectionRegression.summary,
+            needsApproval: true,
+            toolCallsUsed: 0,
+            transitionRecommendation: preservedSelectionRegression.transitionRecommendation
+          };
+        }
         let manifest =
           existingManifest &&
           existingManifest.selectionFingerprint === selection.selectionFingerprint &&
@@ -251,6 +289,8 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             emitLog("Analysis settings changed since the previous run. Resetting summaries/evidence and re-analyzing the selected papers.");
           }
           await resetAnalysisOutputs(summaryPath, evidencePath);
+          existingSummaryRows = [];
+          existingEvidenceRows = [];
           manifest = createFreshManifest(selection, analysisFingerprint, selectionRequestFingerprint, corpusFingerprint);
           await writeJsonFile(manifestPath, manifest);
         } else if (canExtendExistingManifest && existingManifest) {
@@ -260,8 +300,6 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           await writeJsonFile(manifestPath, manifest);
         }
 
-        const existingSummaryRows = await readSummaryRows(summaryPath);
-        const existingEvidenceRows = await readEvidenceRows(evidencePath);
         const reconciledState = reconcileManifestWithOutputs(manifest, existingSummaryRows, existingEvidenceRows);
         manifest = reconciledState.manifest;
         if (reconciledState.changed) {
@@ -276,8 +314,18 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           await appendJsonl(run, "evidence_store.jsonl", reconciledState.evidenceRows);
           await writeJsonFile(manifestPath, manifest);
         }
+        let summaryRowsState = reconciledState.summaryRows;
+        let evidenceRowsState = reconciledState.evidenceRows;
+        await syncAnalysisProgress(runContextMemory, {
+          summaryRows: summaryRowsState,
+          evidenceRows: evidenceRowsState,
+          selectedCount: selection.selectedPaperIds.length,
+          totalCandidates: selection.totalCandidates,
+          selectionFingerprint: selection.selectionFingerprint
+        });
 
         const pendingRows = selectedRows.filter((row) => manifest!.papers[row.paper_id]?.status !== "completed");
+        const previousFailedPaperIds = getSelectedFailedPaperIds(manifest);
         const analysisConcurrency = getAnalysisConcurrency(analysisMode);
         if (pendingRows.length > 0) {
           emitLog(`Analyzing ${pendingRows.length} paper(s) with concurrency ${analysisConcurrency}.`);
@@ -333,6 +381,11 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         );
 
         try {
+          const sourceMismatchError = validateResolvedSourceIdentity(row, source);
+          if (sourceMismatchError) {
+            throw new Error(sourceMismatchError);
+          }
+
           let analysis;
           if (useResponsesPdf && pdfUrl) {
             try {
@@ -394,9 +447,6 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           await persistQueue.run(async () => {
             await appendJsonlItems(run, "paper_summaries.jsonl", [analysis.summaryRow]);
             await appendJsonlItems(run, "evidence_store.jsonl", analysis.evidenceRows);
-            emitLog(
-              `Persisted analysis outputs for "${row.title}" (1 summary row, ${analysis.evidenceRows.length} evidence row(s)).`
-            );
             const structureSignals = analyzeStructureSignals(source.text);
 
             const manifestEntry = manifest.papers[row.paper_id];
@@ -425,6 +475,18 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             };
             manifest.updatedAt = new Date().toISOString();
             await writeJsonFile(manifestPath, manifest);
+            summaryRowsState = replaceSummaryRow(summaryRowsState, analysis.summaryRow);
+            evidenceRowsState = replaceEvidenceRowsForPaper(evidenceRowsState, row.paper_id, analysis.evidenceRows);
+            await syncAnalysisProgress(runContextMemory, {
+              summaryRows: summaryRowsState,
+              evidenceRows: evidenceRowsState,
+              selectedCount: selection.selectedPaperIds.length,
+              totalCandidates: selection.totalCandidates,
+              selectionFingerprint: selection.selectionFingerprint
+            });
+            emitLog(
+              `Persisted analysis outputs for "${row.title}" (1 summary row, ${analysis.evidenceRows.length} evidence row(s)).`
+            );
           });
 
           emitLog(`Analyzed "${row.title}" (${analysis.evidenceRows.length} evidence item(s), source=${source.sourceType}).`);
@@ -475,29 +537,60 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
 
         await persistQueue.onIdle();
 
-        const summaryRows = await readSummaryRows(summaryPath);
-        const evidenceRows = await readEvidenceRows(evidencePath);
-        const fullTextCount = summaryRows.filter((row) => row.source_type === "full_text").length;
-        const abstractFallbackCount = summaryRows.filter((row) => row.source_type === "abstract").length;
-
-        await runContextMemory.put("analyze_papers.summary_count", summaryRows.length);
-        await runContextMemory.put("analyze_papers.evidence_count", evidenceRows.length);
-        await runContextMemory.put("analyze_papers.full_text_count", fullTextCount);
-        await runContextMemory.put("analyze_papers.abstract_fallback_count", abstractFallbackCount);
-        await runContextMemory.put("analyze_papers.selected_count", selection.selectedPaperIds.length);
-        await runContextMemory.put("analyze_papers.total_candidates", selection.totalCandidates);
-        await runContextMemory.put("analyze_papers.selection_fingerprint", selection.selectionFingerprint);
+        const progress = buildAnalysisProgress(summaryRowsState, evidenceRowsState);
+        await syncAnalysisProgress(runContextMemory, {
+          summaryRows: summaryRowsState,
+          evidenceRows: evidenceRowsState,
+          selectedCount: selection.selectedPaperIds.length,
+          totalCandidates: selection.totalCandidates,
+          selectionFingerprint: selection.selectionFingerprint
+        });
         emitLog(
-          `Analysis totals: summaries=${summaryRows.length}, evidence=${evidenceRows.length}, full_text=${fullTextCount}, abstract_fallback=${abstractFallbackCount}.`
+          `Analysis totals: summaries=${progress.summaryRows.length}, evidence=${progress.evidenceRows.length}, full_text=${progress.fullTextCount}, abstract_fallback=${progress.abstractFallbackCount}.`
         );
 
         if (failedCount > 0) {
+          const failedPaperIds = getSelectedFailedPaperIds(manifest);
+          const stalledFailures = shouldPauseForRepeatedAnalysisFailures({
+            previousFailedPaperIds,
+            currentFailedPaperIds: failedPaperIds,
+            priorRetryCount: run.graph.retryCounters.analyze_papers ?? 0
+          });
+          if (stalledFailures && progress.evidenceRows.length > 0) {
+            const summary =
+              request.selectionMode === "top_n" && request.topN
+                ? `Preserved partial analysis for top ${selection.selectedPaperIds.length}/${selection.totalCandidates} ranked papers (${progress.summaryRows.length} summaries, ${progress.evidenceRows.length} evidence item(s)) after ${failedPaperIds.size} repeated paper failure(s) stopped shrinking across retries.`
+                : `Preserved partial analysis (${progress.summaryRows.length} summaries, ${progress.evidenceRows.length} evidence item(s)) after ${failedPaperIds.size} repeated paper failure(s) stopped shrinking across retries.`;
+            emitLog(
+              `Repeated analyze_papers retry would not reduce the failed subset (${failedPaperIds.size} paper(s) still failing). Preserving partial artifacts and pausing for manual review instead of triggering another destructive reset path.`
+            );
+            return {
+              status: "success",
+              summary,
+              needsApproval: true,
+              toolCallsUsed: Math.max(1, pendingRows.length),
+              transitionRecommendation: createAnalyzePapersManualReviewRecommendation({
+                runId: run.id,
+                reason:
+                  "analyze_papers preserved partial evidence because retrying again did not shrink the failed-paper subset.",
+                confidence: 0.92,
+                targetNode: "generate_hypotheses",
+                evidence: [
+                  `${progress.summaryRows.length} summary row(s) and ${progress.evidenceRows.length} evidence item(s) are already persisted.`,
+                  `${failedPaperIds.size} paper(s) remain failed after repeated retries.`,
+                  previousFailedPaperIds.size > 0
+                    ? `The failed subset stayed at ${previousFailedPaperIds.size} -> ${failedPaperIds.size} paper(s).`
+                    : `Retry counter before this pass was ${run.graph.retryCounters.analyze_papers ?? 0}.`
+                ]
+              })
+            };
+          }
           return {
             status: "failure",
             summary:
               request.selectionMode === "top_n" && request.topN
-                ? `Analyzed ${summaryRows.length}/${selection.selectedPaperIds.length} selected papers from ${selection.totalCandidates} candidates; ${failedCount} failed and can be retried.`
-                : `Analyzed ${summaryRows.length}/${corpusRows.length} papers, ${failedCount} failed and can be retried.`,
+                ? `Analyzed ${progress.summaryRows.length}/${selection.selectedPaperIds.length} selected papers from ${selection.totalCandidates} candidates; ${failedCount} failed and can be retried.`
+                : `Analyzed ${progress.summaryRows.length}/${corpusRows.length} papers, ${failedCount} failed and can be retried.`,
             error: `Analysis incomplete: ${failedCount} paper(s) failed validation or LLM extraction.`,
             toolCallsUsed: Math.max(1, pendingRows.length)
           };
@@ -506,9 +599,9 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         const expansionDecision = decideAutomaticSelectionExpansion({
           request,
           selection,
-          summaryRows,
-          evidenceRows,
-          fullTextCount,
+          summaryRows: progress.summaryRows,
+          evidenceRows: progress.evidenceRows,
+          fullTextCount: progress.fullTextCount,
           autoExpansionCount,
           startedWithExistingManifest: Boolean(startedWithExistingManifest)
         });
@@ -527,8 +620,8 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
 
         const baseSummary =
           request.selectionMode === "top_n" && request.topN
-            ? `Analyzed top ${selection.selectedPaperIds.length}/${selection.totalCandidates} ranked papers into ${evidenceRows.length} evidence item(s); ${fullTextCount} full-text and ${abstractFallbackCount} abstract fallback (mode=${analysisMode}).`
-            : `Analyzed ${summaryRows.length} papers into ${evidenceRows.length} evidence item(s); ${fullTextCount} full-text and ${abstractFallbackCount} abstract fallback (mode=${analysisMode}).`;
+            ? `Analyzed top ${selection.selectedPaperIds.length}/${selection.totalCandidates} ranked papers into ${progress.evidenceRows.length} evidence item(s); ${progress.fullTextCount} full-text and ${progress.abstractFallbackCount} abstract fallback (mode=${analysisMode}).`
+            : `Analyzed ${progress.summaryRows.length} papers into ${progress.evidenceRows.length} evidence item(s); ${progress.fullTextCount} full-text and ${progress.abstractFallbackCount} abstract fallback (mode=${analysisMode}).`;
 
         return {
           status: "success",
@@ -961,6 +1054,272 @@ function buildAnalysisFingerprint(args: {
     analysisMode: args.analysisMode,
     ...modeSpecificConfig
   });
+}
+
+function buildAnalysisProgress(summaryRows: PaperSummaryRow[], evidenceRows: PaperEvidenceRow[]): {
+  summaryRows: PaperSummaryRow[];
+  evidenceRows: PaperEvidenceRow[];
+  fullTextCount: number;
+  abstractFallbackCount: number;
+} {
+  return {
+    summaryRows,
+    evidenceRows,
+    fullTextCount: summaryRows.filter((row) => row.source_type === "full_text").length,
+    abstractFallbackCount: summaryRows.filter((row) => row.source_type === "abstract").length
+  };
+}
+
+async function syncAnalysisProgress(
+  runContextMemory: RunContextMemory,
+  input: {
+    summaryRows: PaperSummaryRow[];
+    evidenceRows: PaperEvidenceRow[];
+    selectedCount: number;
+    totalCandidates: number;
+    selectionFingerprint: string;
+  }
+): Promise<void> {
+  const progress = buildAnalysisProgress(input.summaryRows, input.evidenceRows);
+  await runContextMemory.put("analyze_papers.summary_count", progress.summaryRows.length);
+  await runContextMemory.put("analyze_papers.evidence_count", progress.evidenceRows.length);
+  await runContextMemory.put("analyze_papers.full_text_count", progress.fullTextCount);
+  await runContextMemory.put("analyze_papers.abstract_fallback_count", progress.abstractFallbackCount);
+  await runContextMemory.put("analyze_papers.selected_count", input.selectedCount);
+  await runContextMemory.put("analyze_papers.total_candidates", input.totalCandidates);
+  await runContextMemory.put("analyze_papers.selection_fingerprint", input.selectionFingerprint);
+}
+
+function replaceSummaryRow(rows: PaperSummaryRow[], nextRow: PaperSummaryRow): PaperSummaryRow[] {
+  return [...rows.filter((row) => row.paper_id !== nextRow.paper_id), nextRow];
+}
+
+function replaceEvidenceRowsForPaper(
+  rows: PaperEvidenceRow[],
+  paperId: string,
+  nextRows: PaperEvidenceRow[]
+): PaperEvidenceRow[] {
+  return [...rows.filter((row) => row.paper_id !== paperId), ...nextRows];
+}
+
+function getSelectedFailedPaperIds(manifest: AnalysisManifest): Set<string> {
+  return new Set(
+    Object.entries(manifest.papers)
+      .filter(([, entry]) => entry.selected && entry.status === "failed")
+      .map(([paperId]) => paperId)
+  );
+}
+
+function shouldPauseForRepeatedAnalysisFailures(input: {
+  previousFailedPaperIds: Set<string>;
+  currentFailedPaperIds: Set<string>;
+  priorRetryCount: number;
+}): boolean {
+  if (input.priorRetryCount < 1 || input.previousFailedPaperIds.size === 0 || input.currentFailedPaperIds.size === 0) {
+    return false;
+  }
+  if (input.currentFailedPaperIds.size < input.previousFailedPaperIds.size) {
+    for (const paperId of input.currentFailedPaperIds) {
+      if (!input.previousFailedPaperIds.has(paperId)) {
+        return false;
+      }
+    }
+    return false;
+  }
+  return true;
+}
+
+function shouldPreservePartialArtifactsOnSelectionRegression(input: {
+  runId: string;
+  existingManifest?: AnalysisManifest;
+  selection: PaperSelectionResult;
+  resetReason?: "selection_changed" | "legacy_manifest" | "analysis_config_changed";
+  selectionRequestFingerprint: string;
+  analysisFingerprint: string;
+  corpusFingerprint: string;
+  existingSummaryRows: PaperSummaryRow[];
+  existingEvidenceRows: PaperEvidenceRow[];
+}):
+  | {
+      logMessage: string;
+      summary: string;
+      transitionRecommendation: TransitionRecommendation;
+    }
+  | undefined {
+  if (
+    input.resetReason !== "selection_changed" ||
+    !input.existingManifest ||
+    input.existingSummaryRows.length === 0 ||
+    input.existingEvidenceRows.length === 0
+  ) {
+    return undefined;
+  }
+  if (
+    input.existingManifest.selectionRequestFingerprint !== input.selectionRequestFingerprint ||
+    input.existingManifest.analysisFingerprint !== input.analysisFingerprint ||
+    !input.existingManifest.corpusFingerprint ||
+    input.existingManifest.corpusFingerprint === input.corpusFingerprint
+  ) {
+    return undefined;
+  }
+
+  const previousCompletedCount = countCompletedSelectedEntries(input.existingManifest);
+  const previousSelectedCount = input.existingManifest.selectedPaperIds.length;
+  const nextSelectedCount = input.selection.selectedPaperIds.length;
+  const suspiciousRegression =
+    input.selection.totalCandidates === 0 ||
+    nextSelectedCount === 0 ||
+    nextSelectedCount < Math.min(previousSelectedCount, previousCompletedCount);
+  if (!suspiciousRegression || previousCompletedCount === 0) {
+    return undefined;
+  }
+
+  const reason =
+    `Preserving ${input.existingSummaryRows.length} summary row(s) and ${input.existingEvidenceRows.length} evidence row(s) ` +
+    `after the analysis selection regressed from ${previousSelectedCount} paper(s) to ${nextSelectedCount} ` +
+    `without any selection-request change.`;
+  return {
+    logMessage:
+      `${reason} Manual review is required before replacing the recovered artifacts because the corpus fingerprint changed.`,
+    summary:
+      `${reason} Approval can continue with the preserved partial analysis, or you can re-run collection/analysis after reviewing the corpus regression.`,
+    transitionRecommendation: createAnalyzePapersManualReviewRecommendation({
+      runId: input.runId,
+      reason:
+        "analyze_papers detected a corpus regression with the same selection request and preserved the previous partial analysis instead of deleting it.",
+      confidence: 0.97,
+      targetNode: "generate_hypotheses",
+      evidence: [
+        `${input.existingSummaryRows.length} summary row(s) and ${input.existingEvidenceRows.length} evidence item(s) already exist on disk.`,
+        `Selected papers regressed from ${previousSelectedCount} to ${nextSelectedCount}.`,
+        `Corpus fingerprint changed while the selection request fingerprint stayed the same.`
+      ]
+    })
+  };
+}
+
+function countCompletedSelectedEntries(manifest: AnalysisManifest): number {
+  return Object.values(manifest.papers).filter((entry) => entry.selected && entry.status === "completed").length;
+}
+
+function createAnalyzePapersManualReviewRecommendation(input: {
+  runId: string;
+  reason: string;
+  evidence: string[];
+  confidence: number;
+  targetNode?: TransitionRecommendation["targetNode"];
+}): TransitionRecommendation {
+  return {
+    action: "pause_for_human",
+    sourceNode: "analyze_papers",
+    targetNode: input.targetNode,
+    reason: input.reason,
+    confidence: Number(input.confidence.toFixed(2)),
+    autoExecutable: false,
+    evidence: input.evidence.slice(0, 4),
+    suggestedCommands: [`/agent run generate_hypotheses ${input.runId}`, `/agent run analyze_papers ${input.runId}`],
+    generatedAt: new Date().toISOString()
+  };
+}
+
+const SOURCE_IDENTITY_STOPWORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "approach",
+  "assessment",
+  "based",
+  "benchmark",
+  "benchmarking",
+  "classification",
+  "comparative",
+  "data",
+  "driven",
+  "empirical",
+  "evaluation",
+  "for",
+  "framework",
+  "from",
+  "improved",
+  "in",
+  "learning",
+  "machine",
+  "method",
+  "methods",
+  "model",
+  "models",
+  "of",
+  "on",
+  "paper",
+  "predicting",
+  "review",
+  "study",
+  "system",
+  "systems",
+  "tabular",
+  "the",
+  "toward",
+  "using",
+  "with"
+]);
+
+function validateResolvedSourceIdentity(paper: AnalysisCorpusRow, source: ResolvedPaperSource): string | undefined {
+  if (source.sourceType !== "full_text") {
+    return undefined;
+  }
+
+  const sourceText = source.text.trim();
+  if (!sourceText) {
+    return undefined;
+  }
+
+  const abstractText = paper.abstract?.trim();
+  if (sourceText === paper.title.trim() || (abstractText && sourceText === abstractText)) {
+    return undefined;
+  }
+
+  const normalizedSource = normalizeIdentityText(sourceText);
+  const normalizedTitle = normalizeIdentityText(paper.title);
+  if (normalizedTitle && normalizedSource.includes(normalizedTitle)) {
+    return undefined;
+  }
+
+  const titleTokens = Array.from(
+    new Set(
+      (paper.title.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter(
+        (token) => token.length >= 4 && !SOURCE_IDENTITY_STOPWORDS.has(token)
+      )
+    )
+  );
+  if (titleTokens.length === 0) {
+    return undefined;
+  }
+
+  const matchedTitleTokens = titleTokens.filter((token) => normalizedSource.includes(token));
+  if (matchedTitleTokens.length >= Math.min(2, titleTokens.length)) {
+    return undefined;
+  }
+
+  const authorTokens = Array.from(
+    new Set(
+      paper.authors
+        .flatMap((author) => author.toLowerCase().match(/[a-z0-9]+/g) ?? [])
+        .filter((token) => token.length >= 4 && !SOURCE_IDENTITY_STOPWORDS.has(token))
+    )
+  );
+  const hasAuthorMatch = authorTokens.some((token) => normalizedSource.includes(token));
+  if (matchedTitleTokens.length >= 1 && hasAuthorMatch) {
+    return undefined;
+  }
+
+  return (
+    `source_content_mismatch: resolved source text for "${paper.title}" did not match the paper identity strongly enough ` +
+    `(matched_title_tokens=${matchedTitleTokens.length}/${titleTokens.length}, author_match=${hasAuthorMatch ? "yes" : "no"}).`
+  );
+}
+
+function normalizeIdentityText(text: string): string {
+  return text.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 function reconcileManifestWithOutputs(

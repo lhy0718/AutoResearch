@@ -45,7 +45,8 @@ export class AgentOrchestrator {
 
     const run = await this.runtime.runUntilPause(runId, {
       abortSignal: opts?.abortSignal,
-      stopAfterApprovalBoundary: true
+      stopAfterApprovalBoundary: true,
+      floorNode: nodeId
     });
     if (["failed", "failed_budget"].includes(run.status)) {
       return {
@@ -62,7 +63,7 @@ export class AgentOrchestrator {
       run,
       result: {
         status: "success",
-        summary: run.graph.nodeStates[nodeId].note || run.latestSummary || `${nodeId} executed`
+        summary: summarizeRun(run, nodeId)
       }
     };
   }
@@ -76,8 +77,13 @@ export class AgentOrchestrator {
     opts?: { abortSignal?: AbortSignal }
   ): Promise<AgentRunResponse> {
     await this.runtime.start(runId);
+    const current = await this.runStore.getRun(runId);
+    if (!current) {
+      throw new Error(`Run not found: ${runId}`);
+    }
     const run = await this.runtime.runUntilPause(runId, {
-      abortSignal: opts?.abortSignal
+      abortSignal: opts?.abortSignal,
+      floorNode: current.currentNode
     });
 
     if (["failed", "failed_budget"].includes(run.status)) {
@@ -138,4 +144,17 @@ export class AgentOrchestrator {
     const items = await this.checkpointStore.list(runId);
     return items.map((item) => item.seq);
   }
+}
+
+function summarizeRun(run: RunRecord, requestedNode?: GraphNodeId): string {
+  if (requestedNode) {
+    const currentIdx = GRAPH_NODE_ORDER.indexOf(run.currentNode);
+    const requestedIdx = GRAPH_NODE_ORDER.indexOf(requestedNode);
+    if (currentIdx >= 0 && requestedIdx >= 0 && currentIdx < requestedIdx) {
+      return run.graph.nodeStates[run.currentNode].note || run.graph.nodeStates[requestedNode].note || run.latestSummary || `${requestedNode} executed`;
+    }
+    return run.graph.nodeStates[requestedNode].note || run.latestSummary || `${requestedNode} executed`;
+  }
+
+  return run.graph.nodeStates[run.currentNode].note || run.latestSummary || "node executed";
 }

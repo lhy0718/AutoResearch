@@ -1,6 +1,7 @@
 import { EventStream } from "../events.js";
 import { saveReflexion } from "../agents/runtime/reflexion.js";
 import { EpisodeMemory } from "../memory/episodeMemory.js";
+import { RunContextMemory } from "../memory/runContextMemory.js";
 import { RunStore } from "../runs/runStore.js";
 import {
   GRAPH_NODE_ORDER,
@@ -37,16 +38,21 @@ export class StateGraphRuntime {
   }
 
   async resume(runId: string, checkpointSeq?: number): Promise<RunRecord> {
+    const current = await this.getRunOrThrow(runId);
     const checkpoint = await this.checkpointStore.load(runId, checkpointSeq);
     if (checkpoint) {
+      if (checkpointSeq == null && this.isCheckpointSnapshotStale(current, checkpoint.runSnapshot)) {
+        current.status = current.status === "completed" ? "completed" : defaultRunStatusForGraph(current.graph);
+        await this.runStore.updateRun(current);
+        return current;
+      }
       await this.runStore.updateRun(checkpoint.runSnapshot);
       return checkpoint.runSnapshot;
     }
 
-    const run = await this.getRunOrThrow(runId);
-    run.status = run.status === "completed" ? "completed" : defaultRunStatusForGraph(run.graph);
-    await this.runStore.updateRun(run);
-    return run;
+    current.status = current.status === "completed" ? "completed" : defaultRunStatusForGraph(current.graph);
+    await this.runStore.updateRun(current);
+    return current;
   }
 
   async step(runId: string, abortSignal?: AbortSignal): Promise<RunRecord> {
@@ -170,6 +176,7 @@ export class StateGraphRuntime {
         return run;
       }
       const message = error instanceof Error ? error.message : String(error);
+      run = await this.getRunOrThrow(run.id);
       return this.handleFailure(run, node, message);
     }
   }
@@ -179,6 +186,7 @@ export class StateGraphRuntime {
     opts?: {
       abortSignal?: AbortSignal;
       stopAfterApprovalBoundary?: boolean;
+      floorNode?: GraphNodeId;
     }
   ): Promise<RunRecord> {
     let run = await this.getRunOrThrow(runId);
@@ -190,12 +198,14 @@ export class StateGraphRuntime {
       while (true) {
         this.throwIfAborted(opts?.abortSignal);
         run = await this.step(run.id, opts?.abortSignal);
+        run = await this.pauseIfRegressedBelowFloor(run, opts?.floorNode);
         if (["completed", "failed", "failed_budget"].includes(run.status)) {
           return run;
         }
 
         if (run.status === "paused" && run.graph.nodeStates[run.currentNode].status === "needs_approval") {
           run = await this.resolveApprovalGate(run);
+          run = await this.pauseIfRegressedBelowFloor(run, opts?.floorNode);
           if (["completed", "failed", "failed_budget"].includes(run.status)) {
             return run;
           }
@@ -536,6 +546,13 @@ export class StateGraphRuntime {
       return run;
     }
 
+    const restoredCollectQuery = await this.restoreRollbackCollectRequest(run, prev);
+    const maxAttempts = run.graph.retryPolicy.maxAttemptsPerNode;
+    const maxRollbacks = run.graph.retryPolicy.maxAutoRollbacksPerNode;
+    const rollbackNote = restoredCollectQuery
+      ? `Auto rollback from ${node} after ${nextRetry}/${maxAttempts} retries (rollback ${rollbackCount}/${maxRollbacks}); reusing collect query "${restoredCollectQuery}".`
+      : `Auto rollback from ${node} after ${nextRetry}/${maxAttempts} retries (rollback ${rollbackCount}/${maxRollbacks}).`;
+
     run.currentNode = prev;
     run.graph.currentNode = prev;
     run.status = "running";
@@ -544,7 +561,7 @@ export class StateGraphRuntime {
       ...run.graph.nodeStates[prev],
       status: "running",
       updatedAt: new Date().toISOString(),
-      note: `Auto rollback from ${node}`
+      note: rollbackNote
     };
 
     const rollbackCheckpoint = await this.checkpointStore.save(run, "jump", `rollback to ${prev}`);
@@ -629,6 +646,78 @@ export class StateGraphRuntime {
     run.graph.researchCycle = run.graph.researchCycle || 0;
     return run;
   }
+
+  private async pauseIfRegressedBelowFloor(run: RunRecord, floorNode?: GraphNodeId): Promise<RunRecord> {
+    if (!floorNode || ["completed", "failed", "failed_budget"].includes(run.status)) {
+      return run;
+    }
+
+    const currentIdx = GRAPH_NODE_ORDER.indexOf(run.currentNode);
+    const floorIdx = GRAPH_NODE_ORDER.indexOf(floorNode);
+    if (currentIdx < 0 || floorIdx < 0 || currentIdx >= floorIdx) {
+      return run;
+    }
+
+    const currentState = run.graph.nodeStates[run.currentNode];
+    run.status = "paused";
+    run.graph.nodeStates[run.currentNode] = {
+      ...currentState,
+      status: currentState.status === "running" ? "pending" : currentState.status,
+      updatedAt: new Date().toISOString(),
+      note: appendPauseSuffix(
+        currentState.note,
+        `Paused before rerunning ${run.currentNode} because execution started from ${floorNode}.`
+      )
+    };
+
+    await this.runStore.updateRun(run);
+    return run;
+  }
+
+  private isCheckpointSnapshotStale(current: RunRecord, snapshot: RunRecord): boolean {
+    const currentSeq = current.graph.checkpointSeq ?? 0;
+    const snapshotSeq = snapshot.graph.checkpointSeq ?? 0;
+    if (currentSeq > snapshotSeq) {
+      return true;
+    }
+
+    const currentUpdated = Date.parse(current.updatedAt || "");
+    const snapshotUpdated = Date.parse(snapshot.updatedAt || "");
+    return Number.isFinite(currentUpdated) && Number.isFinite(snapshotUpdated) && currentUpdated > snapshotUpdated;
+  }
+
+  private async restoreRollbackCollectRequest(
+    run: RunRecord,
+    targetNode: GraphNodeId
+  ): Promise<string | undefined> {
+    if (targetNode !== "collect_papers") {
+      return undefined;
+    }
+
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    const pendingRequest = await runContext.get<Record<string, unknown> | null>("collect_papers.request");
+    if (pendingRequest) {
+      const pendingQuery = pendingRequest.query;
+      return typeof pendingQuery === "string" && pendingQuery.trim() ? pendingQuery.trim() : undefined;
+    }
+
+    const lastRequest = await runContext.get<Record<string, unknown> | null>("collect_papers.last_request");
+    const lastResult = await runContext.get<{ stored?: number; completed?: boolean } | null>("collect_papers.last_result");
+    if (!lastRequest || !lastResult || lastResult.completed === false || Number(lastResult.stored ?? 0) <= 0) {
+      return undefined;
+    }
+
+    const query = typeof lastRequest.query === "string" ? lastRequest.query.trim() : "";
+    if (!query) {
+      return undefined;
+    }
+
+    const nextRequest = structuredClone(lastRequest);
+    await runContext.put("collect_papers.request", nextRequest);
+    const limit = typeof nextRequest.limit === "number" && Number.isFinite(nextRequest.limit) ? nextRequest.limit : null;
+    await runContext.put("collect_papers.requested_limit", limit);
+    return query;
+  }
 }
 
 function isAbortError(error: unknown): boolean {
@@ -637,4 +726,15 @@ function isAbortError(error: unknown): boolean {
   }
   const lower = error.message.toLowerCase();
   return lower.includes("aborted") || lower.includes("abort");
+}
+
+function appendPauseSuffix(note: string | undefined, suffix: string): string {
+  const base = (note || "").trim();
+  if (!base) {
+    return suffix;
+  }
+  if (base.includes(suffix)) {
+    return base;
+  }
+  return `${base} ${suffix}`;
 }

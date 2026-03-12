@@ -355,9 +355,68 @@ describe("AgentOrchestrator (state graph)", () => {
     expect(outcome.result.status).toBe("success");
 
     const latest = await store.getRun(run.id);
-    expect(latest?.currentNode).toBe("generate_hypotheses");
+    expect(latest?.currentNode).toBe("analyze_papers");
+    expect(latest?.status).toBe("paused");
+    expect(latest?.graph.nodeStates.analyze_papers.status).toBe("pending");
     expect(latest?.graph.rollbackCounters.generate_hypotheses).toBe(1);
     expect((latest?.graph.retryCounters.generate_hypotheses ?? 0)).toBeGreaterThanOrEqual(3);
+  });
+
+  it("restores the last successful collect request before pausing a rollback below the requested node", async () => {
+    const registry = new DeterministicRegistry({
+      analyze_papers: failingNode("analyze_papers", "analysis failed")
+    });
+    const { store, orchestrator } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Run",
+      topic: "resource-aware baselines for tabular classification on small public datasets",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "analyze_papers";
+    run.graph.currentNode = "analyze_papers";
+    run.status = "running";
+    run.graph.nodeStates.collect_papers = {
+      status: "completed",
+      updatedAt: new Date().toISOString(),
+      note: "Recovered collect stored 100 papers."
+    };
+    run.graph.nodeStates.analyze_papers = {
+      status: "pending",
+      updatedAt: new Date().toISOString()
+    };
+    await store.updateRun(run);
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put("collect_papers.last_request", {
+      query: "classical machine learning baselines for tabular classification",
+      limit: 100,
+      sort: { field: "relevance", order: "desc" },
+      filters: {}
+    });
+    await memory.put("collect_papers.last_result", {
+      query: "classical machine learning baselines for tabular classification",
+      stored: 100,
+      completed: true
+    });
+
+    const outcome = await orchestrator.runCurrentAgentWithOptions(run.id);
+    expect(outcome.result.status).toBe("success");
+
+    const latest = await store.getRun(run.id);
+    expect(latest?.currentNode).toBe("collect_papers");
+    expect(latest?.status).toBe("paused");
+    expect(latest?.graph.nodeStates.collect_papers.status).toBe("pending");
+    expect(latest?.graph.nodeStates.collect_papers.note).toContain("reusing collect query");
+    expect(latest?.graph.nodeStates.collect_papers.note).toContain("Paused before rerunning collect_papers");
+
+    const restoredRequest = await memory.get<{ query?: string; limit?: number }>("collect_papers.request");
+    expect(restoredRequest).toMatchObject({
+      query: "classical machine learning baselines for tabular classification",
+      limit: 100
+    });
   });
 
   it("supports force jump and marks skipped nodes", async () => {
@@ -450,6 +509,40 @@ describe("AgentOrchestrator (state graph)", () => {
     const target = points[Math.max(0, points.length - 1)];
     const resumed = await orchestrator.resumeRun(run.id, target);
     expect(resumed.id).toBe(run.id);
+  });
+
+  it("keeps the newer run state when /resume would otherwise restore a stale latest checkpoint", async () => {
+    const { store, orchestrator } = await setup(new DeterministicRegistry({}));
+    const run = await store.createRun({
+      title: "Run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    await orchestrator.runAgent(run.id, "collect_papers");
+
+    const updated = await store.getRun(run.id);
+    expect(updated).toBeTruthy();
+    if (!updated) {
+      throw new Error("Run missing after collect_papers execution");
+    }
+
+    updated.currentNode = "generate_hypotheses";
+    updated.graph.currentNode = "generate_hypotheses";
+    updated.status = "paused";
+    updated.graph.nodeStates.generate_hypotheses = {
+      ...updated.graph.nodeStates.generate_hypotheses,
+      status: "pending",
+      updatedAt: new Date().toISOString(),
+      note: "Recovered manually after the last checkpoint."
+    };
+    await store.updateRun(updated);
+
+    const resumed = await orchestrator.resumeRun(run.id);
+    expect(resumed.currentNode).toBe("generate_hypotheses");
+    expect(resumed.graph.currentNode).toBe("generate_hypotheses");
+    expect(resumed.graph.nodeStates.generate_hypotheses.note).toContain("Recovered manually");
   });
 
   it("cancels a running agent task with abort signal", async () => {

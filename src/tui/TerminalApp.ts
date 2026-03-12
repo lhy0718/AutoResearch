@@ -95,6 +95,7 @@ import {
   updateAnalyzeProgressFromLog,
   updateCollectProgressFromLog
 } from "./activityStatus.js";
+import { applyEventToRunProjection, normalizeRunForDisplay, resolveFailedNode } from "./runProjection.js";
 import {
   deleteBackward,
   deleteToLineStart,
@@ -260,6 +261,7 @@ export class TerminalApp {
       await this.loadHistoryForRun(this.activeRunId);
     }
     this.unsubscribeEvents = this.eventStream.subscribe((event) => {
+      this.applyProjectedRunEvent(event);
       const line = formatEventLog(event);
       if (!line) {
         return;
@@ -1947,11 +1949,12 @@ export class TerminalApp {
       }
 
       if (["failed", "failed_budget"].includes(updatedRun.status)) {
+        const failedNode = resolveFailedNode(updatedRun);
         const failure =
-          updatedRun.graph.nodeStates[updatedRun.currentNode].lastError ||
+          updatedRun.graph.nodeStates[failedNode].lastError ||
           updatedRun.latestSummary ||
-          `${updatedRun.currentNode} failed`;
-        this.pushLog(`Node ${nodeRaw} failed: ${failure}`);
+          `${failedNode} failed`;
+        this.pushLog(`Node ${failedNode} failed: ${failure}`);
         return { ok: false, reason: failure };
       }
 
@@ -3391,6 +3394,29 @@ export class TerminalApp {
     return this.runIndex[0];
   }
 
+  private getRenderableRun(): RunRecord | undefined {
+    const run = this.getActiveIndexedRun();
+    return run ? normalizeRunForDisplay(run) : undefined;
+  }
+
+  private applyProjectedRunEvent(event: AutoLabOSEvent): void {
+    const index = this.runIndex.findIndex((run) => run.id === event.runId);
+    if (index === -1) {
+      return;
+    }
+
+    const projected = applyEventToRunProjection(this.runIndex[index], event);
+    if (projected === this.runIndex[index]) {
+      return;
+    }
+
+    this.runIndex = [
+      ...this.runIndex.slice(0, index),
+      projected,
+      ...this.runIndex.slice(index + 1)
+    ];
+  }
+
   private armPendingNaturalCommands(
     sourceInput: string,
     commands: string[],
@@ -3489,6 +3515,7 @@ export class TerminalApp {
     }
     this.activeRunId = runId;
     this.collectProgress = undefined;
+    this.analyzeProgress = undefined;
     await this.loadHistoryForRun(runId);
     await this.refreshActiveRunInsight();
   }
@@ -3636,7 +3663,7 @@ export class TerminalApp {
   }
 
   private render(): void {
-    const run = this.activeRunId ? this.runIndex.find((x) => x.id === this.activeRunId) : undefined;
+    const run = this.getRenderableRun();
     const guidance =
       this.input.trim().length === 0 && this.suggestions.length === 0 && !this.activeSelectionMenu
         ? this.getContextualGuidance(run)
@@ -3677,7 +3704,7 @@ export class TerminalApp {
     process.stdout.write(`\x1b[${frame.inputColumn}G`);
   }
 
-  private getContextualGuidance(run = this.activeRunId ? this.runIndex.find((x) => x.id === this.activeRunId) : undefined) {
+  private getContextualGuidance(run = this.getRenderableRun()) {
     return buildContextualGuidance({
       run,
       humanIntervention: this.pendingHumanIntervention?.request,
@@ -3714,6 +3741,14 @@ export class TerminalApp {
       return undefined;
     }
 
+    const nodeStatus = run ? run.graph.nodeStates[run.currentNode]?.status : undefined;
+    if (run && nodeStatus === "running") {
+      if (run.currentNode === "collect_papers") {
+        return formatCollectActivityLabel(this.collectProgress);
+      }
+      return describeNodeActivity(run.currentNode);
+    }
+
     const explicit = this.activeBusyLabel?.trim();
     if (explicit && explicit !== "operation") {
       if (explicit.startsWith("Collecting")) {
@@ -3722,18 +3757,7 @@ export class TerminalApp {
       return explicit;
     }
 
-    if (!run) {
-      return undefined;
-    }
-
-    const nodeStatus = run.graph.nodeStates[run.currentNode]?.status;
-    if (nodeStatus !== "running") {
-      return undefined;
-    }
-    if (run.currentNode === "collect_papers") {
-      return formatCollectActivityLabel(this.collectProgress);
-    }
-    return describeNodeActivity(run.currentNode);
+    return undefined;
   }
 
   private getRenderableLogs(run?: RunRecord): string[] {
@@ -3749,12 +3773,20 @@ export class TerminalApp {
       return undefined;
     }
 
-    const explicit = this.activeBusyLabel?.trim() ?? "";
-    if (explicit.startsWith("Collecting") || run?.currentNode === "collect_papers") {
+    if (run?.currentNode === "collect_papers") {
       return formatCollectActivityLabel(this.collectProgress);
     }
 
-    if (explicit.startsWith("Analyzing") || run?.currentNode === "analyze_papers") {
+    if (run?.currentNode === "analyze_papers") {
+      return formatAnalyzeProgressLogLine(this.analyzeProgress);
+    }
+
+    const explicit = this.activeBusyLabel?.trim() ?? "";
+    if (explicit.startsWith("Collecting")) {
+      return formatCollectActivityLabel(this.collectProgress);
+    }
+
+    if (explicit.startsWith("Analyzing")) {
       return formatAnalyzeProgressLogLine(this.analyzeProgress);
     }
 
@@ -3769,10 +3801,11 @@ export class TerminalApp {
     }
 
     const up = frame.inputLineIndex - frame.thinkingLineIndex;
+    const activityLabel = this.getActivityLabel(this.getRenderableRun());
     const text = this.thinking
       ? buildThinkingText(this.thinkingFrame, this.colorEnabled)
-      : this.activeBusyLabel
-        ? buildAnimatedStatusText(this.activeBusyLabel, this.thinkingFrame, this.colorEnabled)
+      : activityLabel
+        ? buildAnimatedStatusText(activityLabel, this.thinkingFrame, this.colorEnabled)
         : "";
     if (!text) {
       this.render();
@@ -4190,10 +4223,32 @@ function formatEventLog(event: AutoLabOSEvent): string | undefined {
       return typeof event.payload.text === "string" ? oneLine(event.payload.text) : undefined;
     case "TEST_FAILED":
       return `Test failed: ${oneLine(String(event.payload.stderr || event.payload.error || event.payload.text || "unknown"))}`;
+    case "NODE_STARTED":
+      return event.node ? `Node ${event.node} started.` : "Node started.";
+    case "NODE_COMPLETED":
+      return event.node
+        ? `Node ${event.node} completed: ${oneLine(String(event.payload.summary || "completed"))}`
+        : `Node completed: ${oneLine(String(event.payload.summary || "completed"))}`;
+    case "NODE_FAILED":
+      return event.node
+        ? `Node ${event.node} failed: ${oneLine(String(event.payload.error || "unknown error"))}`
+        : `Node failed: ${oneLine(String(event.payload.error || "unknown error"))}`;
+    case "NODE_JUMP":
+      return event.node
+        ? `Jumped to ${event.node} (${oneLine(String(event.payload.mode || "safe"))}).`
+        : `Node jump applied (${oneLine(String(event.payload.mode || "safe"))}).`;
+    case "NODE_RETRY":
+      return event.node ? `Retrying ${event.node}.` : "Retrying node.";
+    case "NODE_ROLLBACK": {
+      const from = event.payload.from ? ` from ${oneLine(String(event.payload.from))}` : "";
+      return event.node ? `Rolled back to ${event.node}${from}.` : `Rolled back${from}.`;
+    }
     case "TRANSITION_RECOMMENDED":
       return `Transition recommended: ${oneLine(String(event.payload.action || "unknown"))} -> ${oneLine(String(event.payload.targetNode || "stay"))}`;
     case "TRANSITION_APPLIED":
       return `Transition applied: ${oneLine(String(event.payload.action || "unknown"))} -> ${oneLine(String(event.payload.targetNode || "advance"))}`;
+    case "BUDGET_EXCEEDED":
+      return `Budget exceeded: ${oneLine(String(event.payload.reason || "budget limit reached"))}`;
     default:
       return undefined;
   }

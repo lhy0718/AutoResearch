@@ -27,6 +27,8 @@ describe("activityStatus", () => {
   it("clears collect progress on completion and failure lines", () => {
     expect(shouldClearCollectProgress('Semantic Scholar stored 300 papers for "topic".')).toBe(true);
     expect(shouldClearCollectProgress("collect_papers failed: rate limited")).toBe(true);
+    expect(shouldClearCollectProgress("Jumped to collect_papers (safe).")).toBe(true);
+    expect(shouldClearCollectProgress("Rolled back to collect_papers from analyze_papers.")).toBe(true);
     expect(shouldClearCollectProgress("Collected 50 paper(s) so far (50 new) for \"topic\".")).toBe(false);
   });
 
@@ -99,6 +101,8 @@ describe("activityStatus", () => {
 
     expect(shouldClearAnalyzeProgress("Analysis totals: summaries=30, evidence=120, full_text=30, abstract_fallback=0.")).toBe(true);
     expect(shouldClearAnalyzeProgress("Node analyze_papers failed: timeout")).toBe(true);
+    expect(shouldClearAnalyzeProgress("Jumped to analyze_papers (force).")).toBe(true);
+    expect(shouldClearAnalyzeProgress("Rolled back to analyze_papers from generate_hypotheses.")).toBe(true);
     expect(shouldClearAnalyzeProgress('Analyzing paper 5/30: "Paper".')).toBe(false);
   });
 });

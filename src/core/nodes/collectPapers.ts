@@ -11,7 +11,12 @@ import {
   SemanticScholarSearchRequest
 } from "../../tools/semanticScholar.js";
 import { BibtexMode } from "../commands/collectOptions.js";
-import { mergeCollectConstraintDefaults } from "../runConstraints.js";
+import {
+  buildLiteratureQueryCandidates,
+  extractResearchBriefTopic,
+  LiteratureQueryCandidate,
+  mergeCollectConstraintDefaults
+} from "../runConstraints.js";
 import { resolveConstraintProfile } from "../constraintProfile.js";
 export { buildBibtexEntry, buildBibtexFile } from "../collection/bibtex.js";
 import { buildBibtexFile, normalizeS2Bibtex, scoreBibtexRichness } from "../collection/bibtex.js";
@@ -67,13 +72,62 @@ interface CollectResultMeta {
   bibtexEnriched: number;
   fallbackAttempts: number;
   fallbackSources: string[];
+  requestedQuery?: string;
+  queryAttempts: CollectQueryAttemptMeta[];
+  enrichment: CollectEnrichmentMeta;
   timestamp: string;
+}
+
+interface CollectQueryAttemptMeta {
+  query: string;
+  reason: LiteratureQueryCandidate["reason"];
+  filtersRelaxed: boolean;
+  fetched: number;
+  attemptCount: number;
+  lastStatus?: number;
+  retryAfterMs?: number;
+}
+
+interface CollectEnrichmentMeta {
+  status: "not_needed" | "pending" | "completed" | "failed";
+  targetCount: number;
+  processedCount: number;
+  lastError?: string;
+}
+
+interface PlannedCollectSearch {
+  request: SemanticScholarSearchRequest;
+  reason: LiteratureQueryCandidate["reason"];
+  filtersRelaxed: boolean;
+}
+
+interface PreparedCollectRequestPlan {
+  primaryRequest: SemanticScholarSearchRequest;
+  searchPlan: PlannedCollectSearch[];
+  requestedQuery?: string;
+}
+
+const activeCollectEnrichmentJobs = new Map<string, Promise<void>>();
+
+interface CollectRunRef {
+  id: string;
+  memoryRefs: {
+    runContextPath: string;
+  };
+}
+
+export async function waitForCollectEnrichmentJob(runId: string): Promise<void> {
+  await activeCollectEnrichmentJobs.get(runId);
+}
+
+export async function waitForAllCollectEnrichmentJobs(): Promise<void> {
+  await Promise.all(Array.from(activeCollectEnrichmentJobs.values()));
 }
 
 export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
     id: "collect_papers",
-    async execute({ run, graph, abortSignal }) {
+    async execute({ run, abortSignal }) {
       const runContextMemory = new RunContextMemory(run.memoryRefs.runContextPath);
       const longTermStore = new LongTermStore(run.memoryRefs.longTermPath);
       const constraintProfile = await resolveConstraintProfile({
@@ -84,9 +138,11 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         node: "collect_papers"
       });
       const requestFromContext = await runContextMemory.get<CollectPapersNodeRequest>("collect_papers.request");
+      const rawBrief = await runContextMemory.get<string>("run_brief.raw");
       const normalizedRequest = normalizeCollectRequest({
         request: requestFromContext,
         topic: run.topic,
+        rawBrief,
         constraintProfile,
         configuredLimit: deps.config.papers.max_results
       });
@@ -114,185 +170,226 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       const persistedEnrichmentLogs = new Map<string, CollectEnrichmentLogEntry>(
         existingEnrichmentLogs.map((entry) => [entry.paper_id, entry])
       );
-      let diagnostics: SemanticScholarSearchDiagnostics =
-        deps.semanticScholar.getLastSearchDiagnostics?.() ?? emptyCollectDiagnostics();
+      let diagnostics: SemanticScholarSearchDiagnostics = emptyCollectDiagnostics();
+      const queryAttempts: CollectQueryAttemptMeta[] = [];
+      let effectiveRequest = normalizedRequest.primaryRequest;
 
       let fetchError: string | undefined;
-      try {
-        let batchIndex = 0;
-        const estimatedTotalBatches = Math.max(1, Math.ceil(normalizedRequest.limit / 50));
-        deps.eventStream.emit({
-          type: "OBS_RECEIVED",
-          runId: run.id,
-          node: "collect_papers",
-          payload: {
-            text: `Requesting Semantic Scholar batch 1/${estimatedTotalBatches}.`
-          }
-        });
-        for await (const batch of deps.semanticScholar.streamSearchPapers(normalizedRequest, abortSignal)) {
-          batchIndex += 1;
-          fetchedPapers.push(...batch);
-          let changed = false;
-          for (const paper of batch) {
-            const currentRow = storedRows.get(paper.paperId);
-            if (!currentRow && additionalLimit !== undefined && newPaperIds.size >= additionalLimit) {
-              continue;
-            }
-            const mergedRow = mergeStoredCorpusRows(currentRow, normalizeCorpusRow(paper));
-            const prevSerialized = currentRow ? JSON.stringify(currentRow) : undefined;
-            const nextSerialized = JSON.stringify(mergedRow);
-            if (!currentRow) {
-              newPaperIds.add(paper.paperId);
-              changed = true;
-            } else if (prevSerialized !== nextSerialized) {
-              changed = true;
-            }
-            storedRows.set(paper.paperId, mergedRow);
-          }
+      for (let searchIndex = 0; searchIndex < normalizedRequest.searchPlan.length; searchIndex += 1) {
+        const plannedSearch = normalizedRequest.searchPlan[searchIndex];
+        effectiveRequest = plannedSearch.request;
+        let searchDiagnostics = emptyCollectDiagnostics();
+        let searchFetched = 0;
 
-          if (changed) {
-            storedCount = storedRows.size;
-            await persistCollectSnapshot({
-              run,
-              rows: Array.from(storedRows.values()),
-              mode,
-              request: normalizedRequest,
-              resultMeta: buildCollectResultMeta({
-                request: normalizedRequest,
-                fetched: fetchedPapers.length,
-                stored: storedCount,
-                added: newPaperIds.size,
-                baseCount,
-                mode,
-                diagnostics,
-                filters: normalizedRequest.filters || {},
-                bibtexMode: normalizeBibtexMode(requestFromContext?.bibtexMode),
-                completed: false,
-                pdfRecovered,
-                bibtexEnriched,
-                fallbackAttempts: countFallbackAttempts(currentEnrichmentLogs),
-                fallbackSources: Array.from(fallbackSources)
-              }),
-              enrichmentLogs: Array.from(persistedEnrichmentLogs.values()),
-              bibtexMode: normalizeBibtexMode(requestFromContext?.bibtexMode)
-            });
-            deps.eventStream.emit({
-              type: "OBS_RECEIVED",
-              runId: run.id,
-              node: "collect_papers",
-              payload: {
-                text: `Collected ${storedCount} paper(s) so far (${newPaperIds.size} new) for "${normalizedRequest.query}".`
-              }
-            });
-          }
-
+        try {
+          const estimatedTotalBatches = Math.max(1, Math.ceil(effectiveRequest.limit / 50));
           deps.eventStream.emit({
             type: "OBS_RECEIVED",
             runId: run.id,
             node: "collect_papers",
             payload: {
-              text: `Fetched Semantic Scholar batch ${Math.min(batchIndex, estimatedTotalBatches)}/${estimatedTotalBatches} (${batch.length} paper(s)). Deferred enrichment will run after fetch completes.`
+              text:
+                searchIndex === 0
+                  ? `Searching Semantic Scholar for "${effectiveRequest.query}" (${plannedSearch.reason}).`
+                  : `No papers found yet; retrying with broader query "${effectiveRequest.query}"${plannedSearch.filtersRelaxed ? " and relaxed filters" : ""}.`
             }
           });
-          if (additionalLimit !== undefined && newPaperIds.size >= additionalLimit) {
-            break;
-          }
-          if (fetchedPapers.length < normalizedRequest.limit) {
+          deps.eventStream.emit({
+            type: "OBS_RECEIVED",
+            runId: run.id,
+            node: "collect_papers",
+            payload: {
+              text: `Requesting Semantic Scholar batch 1/${estimatedTotalBatches}.`
+            }
+          });
+
+          let batchIndex = 0;
+          for await (const batch of deps.semanticScholar.streamSearchPapers(effectiveRequest, abortSignal)) {
+            batchIndex += 1;
+            searchDiagnostics = deps.semanticScholar.getLastSearchDiagnostics?.() ?? searchDiagnostics;
+            fetchedPapers.push(...batch);
+            searchFetched += batch.length;
+            let changed = false;
+            for (const paper of batch) {
+              const currentRow = storedRows.get(paper.paperId);
+              if (!currentRow && additionalLimit !== undefined && newPaperIds.size >= additionalLimit) {
+                continue;
+              }
+              const mergedRow = mergeStoredCorpusRows(currentRow, normalizeCorpusRow(paper));
+              const prevSerialized = currentRow ? JSON.stringify(currentRow) : undefined;
+              const nextSerialized = JSON.stringify(mergedRow);
+              if (!currentRow) {
+                newPaperIds.add(paper.paperId);
+                changed = true;
+              } else if (prevSerialized !== nextSerialized) {
+                changed = true;
+              }
+              storedRows.set(paper.paperId, mergedRow);
+            }
+
+            if (changed) {
+              storedCount = storedRows.size;
+              await persistCollectSnapshot({
+                run,
+                rows: Array.from(storedRows.values()),
+                mode,
+                request: effectiveRequest,
+                resultMeta: buildCollectResultMeta({
+                  request: effectiveRequest,
+                  fetched: fetchedPapers.length,
+                  stored: storedCount,
+                  added: newPaperIds.size,
+                  baseCount,
+                  mode,
+                  diagnostics: mergeCollectDiagnostics(diagnostics, searchDiagnostics),
+                  filters: effectiveRequest.filters || {},
+                  bibtexMode: normalizeBibtexMode(requestFromContext?.bibtexMode),
+                  completed: false,
+                  pdfRecovered,
+                  bibtexEnriched,
+                  enrichmentAttempts: countEnrichmentAttempts(currentEnrichmentLogs),
+                  fallbackSources: Array.from(fallbackSources),
+                  requestedQuery: normalizedRequest.requestedQuery,
+                  queryAttempts,
+                  enrichment: {
+                    status: "not_needed",
+                    targetCount: 0,
+                    processedCount: 0
+                  }
+                }),
+                enrichmentLogs: Array.from(persistedEnrichmentLogs.values()),
+                bibtexMode: normalizeBibtexMode(requestFromContext?.bibtexMode)
+              });
+              deps.eventStream.emit({
+                type: "OBS_RECEIVED",
+                runId: run.id,
+                node: "collect_papers",
+                payload: {
+                  text: `Collected ${storedCount} paper(s) so far (${newPaperIds.size} new) for "${effectiveRequest.query}".`
+                }
+              });
+            }
+
             deps.eventStream.emit({
               type: "OBS_RECEIVED",
               runId: run.id,
               node: "collect_papers",
               payload: {
-                text: `Requesting Semantic Scholar batch ${Math.min(batchIndex + 1, estimatedTotalBatches)}/${estimatedTotalBatches}.`
+                text: `Fetched Semantic Scholar batch ${Math.min(batchIndex, estimatedTotalBatches)}/${estimatedTotalBatches} (${batch.length} paper(s)).`
               }
             });
+            if (additionalLimit !== undefined && newPaperIds.size >= additionalLimit) {
+              break;
+            }
+            if (searchFetched < effectiveRequest.limit) {
+              deps.eventStream.emit({
+                type: "OBS_RECEIVED",
+                runId: run.id,
+                node: "collect_papers",
+                payload: {
+                  text: `Requesting Semantic Scholar batch ${Math.min(batchIndex + 1, estimatedTotalBatches)}/${estimatedTotalBatches}.`
+                }
+              });
+            }
           }
+
+          searchDiagnostics = deps.semanticScholar.getLastSearchDiagnostics?.() ?? searchDiagnostics;
+          diagnostics = mergeCollectDiagnostics(diagnostics, searchDiagnostics);
+          queryAttempts.push({
+            query: effectiveRequest.query,
+            reason: plannedSearch.reason,
+            filtersRelaxed: plannedSearch.filtersRelaxed,
+            fetched: searchFetched,
+            attemptCount: searchDiagnostics.attemptCount,
+            lastStatus: searchDiagnostics.lastStatus,
+            retryAfterMs: searchDiagnostics.retryAfterMs
+          });
+
+          if (searchFetched > 0) {
+            break;
+          }
+        } catch (error) {
+          fetchError = error instanceof Error ? error.message : String(error);
+          searchDiagnostics = deps.semanticScholar.getLastSearchDiagnostics?.() ?? searchDiagnostics;
+          diagnostics = mergeCollectDiagnostics(diagnostics, searchDiagnostics);
+          queryAttempts.push({
+            query: effectiveRequest.query,
+            reason: plannedSearch.reason,
+            filtersRelaxed: plannedSearch.filtersRelaxed,
+            fetched: searchFetched,
+            attemptCount: searchDiagnostics.attemptCount,
+            lastStatus: searchDiagnostics.lastStatus,
+            retryAfterMs: searchDiagnostics.retryAfterMs
+          });
+          break;
         }
-        diagnostics = deps.semanticScholar.getLastSearchDiagnostics?.() ?? diagnostics;
+      }
+
+      if (!fetchError) {
         await runContextMemory.put("collect_papers.requested_limit", null);
         await runContextMemory.put("collect_papers.request", null);
-      } catch (error) {
-        fetchError = error instanceof Error ? error.message : String(error);
-        diagnostics = deps.semanticScholar.getLastSearchDiagnostics?.() ?? diagnostics;
       }
 
       const bibtexMode = normalizeBibtexMode(requestFromContext?.bibtexMode);
-      const papersToEnrich = fetchedPapers.filter((paper) =>
-        shouldEnrichStoredRow(storedRows.get(paper.paperId), bibtexMode)
-      );
-      if (papersToEnrich.length > 0) {
-        deps.eventStream.emit({
-          type: "OBS_RECEIVED",
-          runId: run.id,
-          node: "collect_papers",
-          payload: {
-            text: `Starting deferred enrichment for ${papersToEnrich.length} paper(s) with concurrency ${Math.min(
-              ENRICHMENT_CONCURRENCY,
-              papersToEnrich.length
-            )}.`
-          }
-        });
-
-        const enrichmentState = await runEnrichmentPass({
-          papers: papersToEnrich,
-          storedRows,
-          run,
-          request: normalizedRequest,
-          fetchedCount: fetchedPapers.length,
-          mode,
-          baseCount,
-          diagnostics,
-          bibtexMode,
-          requireOpenAccessPdf: normalizedRequest.filters?.openAccessPdf === true,
-          abortSignal,
-          eventStream: deps.eventStream,
-          pdfRecovered,
-          bibtexEnriched,
-          fallbackSources,
-          currentEnrichmentLogs,
-          persistedEnrichmentLogs,
-          storedCount,
-          newPaperIds
-        });
-        pdfRecovered = enrichmentState.pdfRecovered;
-        bibtexEnriched = enrichmentState.bibtexEnriched;
-        storedCount = enrichmentState.storedCount;
-      }
+      const zeroResultFailure =
+        !fetchError && mode === "replace" && storedRows.size === 0
+          ? buildCollectZeroResultsMessage(queryAttempts, normalizedRequest.requestedQuery)
+          : undefined;
+      const papersToEnrich = zeroResultFailure
+        ? []
+        : fetchedPapers.filter((paper) =>
+            shouldEnrichStoredRow(storedRows.get(paper.paperId), bibtexMode)
+          );
 
       storedCount = storedRows.size;
       const resultMeta = buildCollectResultMeta({
-        request: normalizedRequest,
+        request: effectiveRequest,
         fetched: fetchedPapers.length,
         stored: storedCount,
         added: newPaperIds.size,
         baseCount,
         mode,
         diagnostics,
-        filters: normalizedRequest.filters || {},
+        filters: effectiveRequest.filters || {},
         bibtexMode,
-        completed: !fetchError,
-        fetchError,
+        completed: !fetchError && !zeroResultFailure,
+        fetchError: fetchError || zeroResultFailure,
         pdfRecovered,
         bibtexEnriched,
-        fallbackAttempts: countFallbackAttempts(currentEnrichmentLogs),
-        fallbackSources: Array.from(fallbackSources)
+        enrichmentAttempts: countEnrichmentAttempts(currentEnrichmentLogs),
+        fallbackSources: Array.from(fallbackSources),
+        requestedQuery: normalizedRequest.requestedQuery,
+        queryAttempts,
+        enrichment:
+          papersToEnrich.length > 0
+            ? {
+                status: "pending",
+                targetCount: papersToEnrich.length,
+                processedCount: 0
+              }
+            : {
+                status: "not_needed",
+                targetCount: 0,
+                processedCount: 0
+              }
       });
 
       await persistCollectSnapshot({
         run,
         rows: Array.from(storedRows.values()),
         mode,
-        request: normalizedRequest,
+        request: effectiveRequest,
         resultMeta,
         enrichmentLogs: Array.from(persistedEnrichmentLogs.values()),
         bibtexMode
       });
 
-      await runContextMemory.put("collect_papers.last_request", normalizedRequest);
-      await runContextMemory.put("collect_papers.last_result", resultMeta);
-      await runContextMemory.put("collect_papers.last_attempt_count", diagnostics.attemptCount);
-      await runContextMemory.put("collect_papers.count", storedCount);
-      await runContextMemory.put("collect_papers.source", "semantic_scholar");
+      await syncCollectRunContext({
+        runContextMemory,
+        request: effectiveRequest,
+        resultMeta,
+        diagnostics
+      });
       if (diagnostics.attemptCount > 0) {
         deps.eventStream.emit({
           type: "OBS_RECEIVED",
@@ -303,15 +400,14 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           }
         });
       }
-      if (fetchError) {
-        await runContextMemory.put("collect_papers.last_error", fetchError);
+      if (fetchError || zeroResultFailure) {
+        // syncCollectRunContext already persisted the fetch/zero-result error.
       } else {
-        await runContextMemory.put("collect_papers.last_error", null);
         await longTermStore.append({
           runId: run.id,
           category: "papers",
-          text: `Collected ${storedCount} papers for ${normalizedRequest.query}`,
-          tags: ["collect_papers", normalizedRequest.query]
+          text: `Collected ${storedCount} papers for ${effectiveRequest.query}`,
+          tags: ["collect_papers", effectiveRequest.query]
         });
       }
 
@@ -322,14 +418,14 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         payload: {
           source: "semantic_scholar",
           papers: storedCount,
-          query: normalizedRequest.query,
-          requested_limit: normalizedRequest.limit,
-          fetch_error: fetchError
+          query: effectiveRequest.query,
+          requested_limit: effectiveRequest.limit,
+          fetch_error: fetchError || zeroResultFailure
         }
       });
 
       if (fetchError) {
-        const failureMessage = buildCollectFailureMessage(normalizedRequest, fetchError);
+        const failureMessage = buildCollectFailureMessage(effectiveRequest, fetchError);
         return {
           status: "failure",
           error: failureMessage,
@@ -338,12 +434,59 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         };
       }
 
+      if (zeroResultFailure) {
+        return {
+          status: "failure",
+          error: zeroResultFailure,
+          summary: zeroResultFailure,
+          toolCallsUsed: 1
+        };
+      }
+
+      if (papersToEnrich.length > 0) {
+        deps.eventStream.emit({
+          type: "OBS_RECEIVED",
+          runId: run.id,
+          node: "collect_papers",
+          payload: {
+            text: `Corpus saved with ${storedCount} paper(s). Deferred enrichment will continue in the background for ${papersToEnrich.length} paper(s).`
+          }
+        });
+
+        startDetachedEnrichment({
+          deps,
+          run,
+          request: effectiveRequest,
+          mode,
+          baseCount,
+          bibtexMode,
+          abortSignal,
+          papers: papersToEnrich,
+          fetchedCount: fetchedPapers.length,
+          diagnostics,
+          storedRows,
+          pdfRecovered,
+          bibtexEnriched,
+          fallbackSources,
+          currentEnrichmentLogs,
+          persistedEnrichmentLogs,
+          storedCount,
+          newPaperIds,
+          requestedQuery: normalizedRequest.requestedQuery,
+          queryAttempts
+        });
+      }
+
       return {
         status: "success",
         summary:
           mode === "additional"
-            ? `Semantic Scholar stored ${storedCount} total papers for "${normalizedRequest.query}" (${newPaperIds.size} newly added). PDF recovered ${pdfRecovered}; BibTeX enriched ${bibtexEnriched}.`
-            : `Semantic Scholar stored ${storedCount} papers for "${normalizedRequest.query}". PDF recovered ${pdfRecovered}; BibTeX enriched ${bibtexEnriched}.`,
+            ? papersToEnrich.length > 0
+              ? `Semantic Scholar stored ${storedCount} total papers for "${effectiveRequest.query}" (${newPaperIds.size} newly added). Deferred enrichment continues for ${papersToEnrich.length} paper(s).`
+              : `Semantic Scholar stored ${storedCount} total papers for "${effectiveRequest.query}" (${newPaperIds.size} newly added).`
+            : papersToEnrich.length > 0
+              ? `Semantic Scholar stored ${storedCount} papers for "${effectiveRequest.query}". Deferred enrichment continues for ${papersToEnrich.length} paper(s).`
+              : `Semantic Scholar stored ${storedCount} papers for "${effectiveRequest.query}".`,
         needsApproval: true,
         toolCallsUsed: 1
       };
@@ -354,9 +497,10 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
 function normalizeCollectRequest(input: {
   request?: CollectPapersNodeRequest;
   topic: string;
+  rawBrief?: string;
   constraintProfile: { collect: CollectPapersNodeRequest["filters"] };
   configuredLimit: number;
-}): SemanticScholarSearchRequest {
+}): PreparedCollectRequestPlan {
   const configuredLimit = Math.max(1, input.configuredLimit);
   const request = input.request;
   const requestedLimitFromCommand =
@@ -369,20 +513,69 @@ function normalizeCollectRequest(input: {
       : undefined;
 
   const limit = requestedLimitFromCommand ?? requestedAdditional ?? configuredLimit;
-  const query = (request?.query || input.topic).trim();
   const sortField = request?.sort?.field ?? "relevance";
   const sortOrder = request?.sort?.order ?? (sortField === "paperId" ? "asc" : "desc");
+  const requestedQuery = request?.query?.trim() || undefined;
+  const briefTopic = extractResearchBriefTopic(input.rawBrief);
+  const queryCandidates = buildLiteratureQueryCandidates({
+    requestedQuery,
+    runTopic: input.topic,
+    briefTopic
+  });
+  const mergedFilters = buildSemanticScholarFilters(
+    mergeCollectConstraintDefaults(request?.filters, input.constraintProfile.collect)
+  );
+  const explicitFilters = buildSemanticScholarFilters(request?.filters);
+  const sort = {
+    field: sortField,
+    order: sortOrder
+  } as const;
+  const searchPlan: PlannedCollectSearch[] = [];
+  const seen = new Set<string>();
+  const pushSearch = (
+    query: string,
+    reason: LiteratureQueryCandidate["reason"],
+    filters: SemanticScholarSearchFilters,
+    filtersRelaxed: boolean
+  ) => {
+    const normalizedQuery = query.trim();
+    if (!normalizedQuery) {
+      return;
+    }
+    const candidateRequest: SemanticScholarSearchRequest = {
+      query: normalizedQuery,
+      limit,
+      sort,
+      filters
+    };
+    const key = `${normalizedQuery.toLowerCase()}::${serializeSearchFilters(filters)}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    searchPlan.push({
+      request: candidateRequest,
+      reason,
+      filtersRelaxed
+    });
+  };
+
+  for (const candidate of queryCandidates) {
+    pushSearch(candidate.query, candidate.reason, mergedFilters, false);
+  }
+  if (!sameSearchFilters(mergedFilters, explicitFilters)) {
+    for (const candidate of queryCandidates) {
+      pushSearch(candidate.query, candidate.reason, explicitFilters, true);
+    }
+  }
+  if (searchPlan.length === 0) {
+    pushSearch(input.topic.trim(), "run_topic", mergedFilters, false);
+  }
 
   return {
-    query,
-    limit,
-    sort: {
-      field: sortField,
-      order: sortOrder
-    },
-    filters: buildSemanticScholarFilters(
-      mergeCollectConstraintDefaults(request?.filters, input.constraintProfile.collect)
-    )
+    primaryRequest: searchPlan[0].request,
+    searchPlan: searchPlan.slice(0, 6),
+    requestedQuery
   };
 }
 
@@ -505,7 +698,7 @@ function shouldEnrichStoredRow(row: StoredCorpusRow | undefined, bibtexMode: Bib
 async function runEnrichmentPass(input: {
   papers: SemanticScholarPaper[];
   storedRows: Map<string, StoredCorpusRow>;
-  run: { id: string };
+  run: CollectRunRef;
   request: SemanticScholarSearchRequest;
   fetchedCount: number;
   mode: "replace" | "additional";
@@ -522,10 +715,15 @@ async function runEnrichmentPass(input: {
   persistedEnrichmentLogs: Map<string, CollectEnrichmentLogEntry>;
   storedCount: number;
   newPaperIds: Set<string>;
+  requestedQuery?: string;
+  queryAttempts: CollectQueryAttemptMeta[];
+  writeCorpusArtifactsOnProgress: boolean;
+  runContextMemory: RunContextMemory;
 }): Promise<{
   pdfRecovered: number;
   bibtexEnriched: number;
   storedCount: number;
+  processedCount: number;
 }> {
   let processed = 0;
   let changedSinceLastPersist = false;
@@ -534,29 +732,44 @@ async function runEnrichmentPass(input: {
     if (!changedSinceLastPersist) {
       return;
     }
+    const progressMeta = buildCollectResultMeta({
+      request: input.request,
+      fetched: input.fetchedCount,
+      stored: input.storedCount,
+      added: input.newPaperIds.size,
+      baseCount: input.baseCount,
+      mode: input.mode,
+      diagnostics: input.diagnostics,
+      filters: input.request.filters || {},
+      bibtexMode: input.bibtexMode,
+      completed: true,
+      pdfRecovered: input.pdfRecovered,
+      bibtexEnriched: input.bibtexEnriched,
+      enrichmentAttempts: countEnrichmentAttempts(input.currentEnrichmentLogs),
+      fallbackSources: Array.from(input.fallbackSources),
+      requestedQuery: input.requestedQuery,
+      queryAttempts: input.queryAttempts,
+      enrichment: {
+        status: "pending",
+        targetCount: input.papers.length,
+        processedCount: processed
+      }
+    });
     await persistCollectSnapshot({
       run: input.run,
       rows: Array.from(input.storedRows.values()),
       mode: input.mode,
       request: input.request,
-        resultMeta: buildCollectResultMeta({
-          request: input.request,
-          fetched: input.fetchedCount,
-        stored: input.storedCount,
-        added: input.newPaperIds.size,
-        baseCount: input.baseCount,
-        mode: input.mode,
-        diagnostics: input.diagnostics,
-        filters: input.request.filters || {},
-        bibtexMode: input.bibtexMode,
-        completed: false,
-        pdfRecovered: input.pdfRecovered,
-        bibtexEnriched: input.bibtexEnriched,
-        fallbackAttempts: countFallbackAttempts(input.currentEnrichmentLogs),
-        fallbackSources: Array.from(input.fallbackSources)
-      }),
+      resultMeta: progressMeta,
       enrichmentLogs: Array.from(input.persistedEnrichmentLogs.values()),
-      bibtexMode: input.bibtexMode
+      bibtexMode: input.bibtexMode,
+      writeCorpusArtifacts: input.writeCorpusArtifactsOnProgress
+    });
+    await syncCollectRunContext({
+      runContextMemory: input.runContextMemory,
+      request: input.request,
+      resultMeta: progressMeta,
+      diagnostics: input.diagnostics
     });
     changedSinceLastPersist = false;
   };
@@ -641,7 +854,8 @@ async function runEnrichmentPass(input: {
   return {
     pdfRecovered: input.pdfRecovered,
     bibtexEnriched: input.bibtexEnriched,
-    storedCount: input.storedCount
+    storedCount: input.storedCount,
+    processedCount: processed
   };
 }
 
@@ -711,8 +925,11 @@ function buildCollectResultMeta(input: {
   fetchError?: string;
   pdfRecovered: number;
   bibtexEnriched: number;
-  fallbackAttempts: number;
+  enrichmentAttempts: number;
   fallbackSources: string[];
+  requestedQuery?: string;
+  queryAttempts: CollectQueryAttemptMeta[];
+  enrichment: CollectEnrichmentMeta;
 }): CollectResultMeta {
   return {
     query: input.request.query,
@@ -737,8 +954,11 @@ function buildCollectResultMeta(input: {
     bibtexMode: input.bibtexMode,
     pdfRecovered: input.pdfRecovered,
     bibtexEnriched: input.bibtexEnriched,
-    fallbackAttempts: input.fallbackAttempts,
+    fallbackAttempts: input.enrichmentAttempts,
     fallbackSources: input.fallbackSources,
+    requestedQuery: input.requestedQuery,
+    queryAttempts: input.queryAttempts,
+    enrichment: input.enrichment,
     timestamp: new Date().toISOString()
   };
 }
@@ -751,10 +971,14 @@ async function persistCollectSnapshot(input: {
   resultMeta: CollectResultMeta;
   enrichmentLogs: CollectEnrichmentLogEntry[];
   bibtexMode: BibtexMode;
+  writeCorpusArtifacts?: boolean;
 }): Promise<void> {
   await writeRunArtifact(input.run as any, "collect_request.json", JSON.stringify(input.request, null, 2));
   await writeRunArtifact(input.run as any, "collect_result.json", JSON.stringify(input.resultMeta, null, 2));
   await appendJsonl(input.run as any, "collect_enrichment.jsonl", input.enrichmentLogs);
+  if (input.writeCorpusArtifacts === false) {
+    return;
+  }
   const shouldWriteArtifacts =
     input.resultMeta.completed || input.mode === "additional" || input.rows.length > 0;
   if (!shouldWriteArtifacts) {
@@ -764,6 +988,30 @@ async function persistCollectSnapshot(input: {
   await appendJsonl(input.run as any, "corpus.jsonl", input.rows);
   const bibtex = buildBibtexFile(input.rows, input.bibtexMode).trim();
   await writeRunArtifact(input.run as any, "bibtex.bib", bibtex ? `${bibtex}\n` : "");
+}
+
+async function syncCollectRunContext(input: {
+  runContextMemory: RunContextMemory;
+  request: SemanticScholarSearchRequest;
+  resultMeta: CollectResultMeta;
+  diagnostics: SemanticScholarSearchDiagnostics;
+}): Promise<void> {
+  await input.runContextMemory.put("collect_papers.last_request", input.request);
+  await input.runContextMemory.put("collect_papers.last_result", input.resultMeta);
+  await input.runContextMemory.put("collect_papers.last_attempt_count", input.diagnostics.attemptCount);
+  await input.runContextMemory.put("collect_papers.count", input.resultMeta.stored);
+  await input.runContextMemory.put("collect_papers.source", "semantic_scholar");
+  await input.runContextMemory.put("collect_papers.last_error", deriveCollectRunContextError(input.resultMeta));
+}
+
+function deriveCollectRunContextError(resultMeta: CollectResultMeta): string | null {
+  if (resultMeta.fetchError) {
+    return resultMeta.fetchError;
+  }
+  if (resultMeta.enrichment.status === "failed" && resultMeta.enrichment.lastError) {
+    return `Deferred enrichment failed: ${resultMeta.enrichment.lastError}`;
+  }
+  return null;
 }
 
 function emptyCollectDiagnostics(): SemanticScholarSearchDiagnostics {
@@ -792,12 +1040,238 @@ function formatAttemptSummary(diagnostics: SemanticScholarSearchDiagnostics): st
     .join(", ");
 }
 
-function countFallbackAttempts(entries: Map<string, CollectEnrichmentLogEntry>): number {
+function countEnrichmentAttempts(entries: Map<string, CollectEnrichmentLogEntry>): number {
   let count = 0;
   for (const entry of entries.values()) {
     count += entry.attempts.length;
   }
   return count;
+}
+
+function mergeCollectDiagnostics(
+  previous: SemanticScholarSearchDiagnostics,
+  next: SemanticScholarSearchDiagnostics
+): SemanticScholarSearchDiagnostics {
+  return {
+    attemptCount: previous.attempts.length + next.attempts.length,
+    lastStatus: next.lastStatus ?? previous.lastStatus,
+    retryAfterMs: next.retryAfterMs ?? previous.retryAfterMs,
+    attempts: [...previous.attempts.map((attempt) => ({ ...attempt })), ...next.attempts.map((attempt) => ({ ...attempt }))]
+  };
+}
+
+function serializeSearchFilters(filters: SemanticScholarSearchFilters | undefined): string {
+  return JSON.stringify({
+    publicationTypes: [...(filters?.publicationTypes || [])],
+    openAccessPdf: filters?.openAccessPdf === true,
+    minCitationCount: filters?.minCitationCount,
+    publicationDateOrYear: filters?.publicationDateOrYear,
+    year: filters?.year,
+    venue: [...(filters?.venue || [])],
+    fieldsOfStudy: [...(filters?.fieldsOfStudy || [])]
+  });
+}
+
+function sameSearchFilters(a: SemanticScholarSearchFilters | undefined, b: SemanticScholarSearchFilters | undefined): boolean {
+  return serializeSearchFilters(a) === serializeSearchFilters(b);
+}
+
+function buildCollectZeroResultsMessage(
+  queryAttempts: CollectQueryAttemptMeta[],
+  requestedQuery?: string
+): string {
+  const attempted = queryAttempts
+    .map((attempt) => `"${attempt.query}"${attempt.filtersRelaxed ? " (relaxed filters)" : ""}`)
+    .join(", ");
+  const requested = requestedQuery ? ` Requested query was "${requestedQuery}".` : "";
+  const queries = attempted ? ` Tried ${queryAttempts.length} query variant(s): ${attempted}.` : "";
+  return `Semantic Scholar returned 0 papers after automatic fallback broadening.${requested}${queries}`;
+}
+
+function startDetachedEnrichment(input: {
+  deps: NodeExecutionDeps;
+  run: CollectRunRef;
+  request: SemanticScholarSearchRequest;
+  mode: "replace" | "additional";
+  baseCount: number;
+  bibtexMode: BibtexMode;
+  abortSignal?: AbortSignal;
+  papers: SemanticScholarPaper[];
+  fetchedCount: number;
+  diagnostics: SemanticScholarSearchDiagnostics;
+  storedRows: Map<string, StoredCorpusRow>;
+  pdfRecovered: number;
+  bibtexEnriched: number;
+  fallbackSources: Set<string>;
+  currentEnrichmentLogs: Map<string, CollectEnrichmentLogEntry>;
+  persistedEnrichmentLogs: Map<string, CollectEnrichmentLogEntry>;
+  storedCount: number;
+  newPaperIds: Set<string>;
+  requestedQuery?: string;
+  queryAttempts: CollectQueryAttemptMeta[];
+}): void {
+  if (input.papers.length === 0) {
+    return;
+  }
+  if (activeCollectEnrichmentJobs.has(input.run.id)) {
+    input.deps.eventStream.emit({
+      type: "OBS_RECEIVED",
+      runId: input.run.id,
+      node: "collect_papers",
+      payload: {
+        text: "Deferred enrichment is already running for this run."
+      }
+    });
+    return;
+  }
+
+  const runContextMemory = new RunContextMemory(input.run.memoryRefs.runContextPath);
+  input.deps.eventStream.emit({
+    type: "OBS_RECEIVED",
+    runId: input.run.id,
+    node: "collect_papers",
+    payload: {
+      text: `Starting deferred enrichment for ${input.papers.length} paper(s) with concurrency ${Math.min(
+        ENRICHMENT_CONCURRENCY,
+        input.papers.length
+      )}.`
+    }
+  });
+
+  const job = (async () => {
+    try {
+      const enrichmentState = await runEnrichmentPass({
+        papers: input.papers,
+        storedRows: input.storedRows,
+        run: input.run,
+        request: input.request,
+        fetchedCount: input.fetchedCount,
+        mode: input.mode,
+        baseCount: input.baseCount,
+        diagnostics: input.diagnostics,
+        bibtexMode: input.bibtexMode,
+        requireOpenAccessPdf: input.request.filters?.openAccessPdf === true,
+        abortSignal: input.abortSignal,
+        eventStream: input.deps.eventStream,
+        pdfRecovered: input.pdfRecovered,
+        bibtexEnriched: input.bibtexEnriched,
+        fallbackSources: input.fallbackSources,
+        currentEnrichmentLogs: input.currentEnrichmentLogs,
+        persistedEnrichmentLogs: input.persistedEnrichmentLogs,
+        storedCount: input.storedCount,
+        newPaperIds: input.newPaperIds,
+        requestedQuery: input.requestedQuery,
+        queryAttempts: input.queryAttempts,
+        writeCorpusArtifactsOnProgress: false,
+        runContextMemory
+      });
+
+      const completionMeta = buildCollectResultMeta({
+        request: input.request,
+        fetched: input.fetchedCount,
+        stored: enrichmentState.storedCount,
+        added: input.newPaperIds.size,
+        baseCount: input.baseCount,
+        mode: input.mode,
+        diagnostics: input.diagnostics,
+        filters: input.request.filters || {},
+        bibtexMode: input.bibtexMode,
+        completed: true,
+        pdfRecovered: enrichmentState.pdfRecovered,
+        bibtexEnriched: enrichmentState.bibtexEnriched,
+        enrichmentAttempts: countEnrichmentAttempts(input.currentEnrichmentLogs),
+        fallbackSources: Array.from(input.fallbackSources),
+        requestedQuery: input.requestedQuery,
+        queryAttempts: input.queryAttempts,
+        enrichment: {
+          status: "completed",
+          targetCount: input.papers.length,
+          processedCount: enrichmentState.processedCount
+        }
+      });
+
+      await persistCollectSnapshot({
+        run: input.run,
+        rows: Array.from(input.storedRows.values()),
+        mode: input.mode,
+        request: input.request,
+        resultMeta: completionMeta,
+        enrichmentLogs: Array.from(input.persistedEnrichmentLogs.values()),
+        bibtexMode: input.bibtexMode
+      });
+      await syncCollectRunContext({
+        runContextMemory,
+        request: input.request,
+        resultMeta: completionMeta,
+        diagnostics: input.diagnostics
+      });
+
+      input.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId: input.run.id,
+        node: "collect_papers",
+        payload: {
+          text: `Deferred enrichment finished for ${input.papers.length} paper(s). PDF recovered ${enrichmentState.pdfRecovered}; BibTeX enriched ${enrichmentState.bibtexEnriched}.`
+        }
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const failureMeta = buildCollectResultMeta({
+        request: input.request,
+        fetched: input.fetchedCount,
+        stored: input.storedCount,
+        added: input.newPaperIds.size,
+        baseCount: input.baseCount,
+        mode: input.mode,
+        diagnostics: input.diagnostics,
+        filters: input.request.filters || {},
+        bibtexMode: input.bibtexMode,
+        completed: true,
+        pdfRecovered: input.pdfRecovered,
+        bibtexEnriched: input.bibtexEnriched,
+        enrichmentAttempts: countEnrichmentAttempts(input.currentEnrichmentLogs),
+        fallbackSources: Array.from(input.fallbackSources),
+        requestedQuery: input.requestedQuery,
+        queryAttempts: input.queryAttempts,
+        enrichment: {
+          status: "failed",
+          targetCount: input.papers.length,
+          processedCount: input.currentEnrichmentLogs.size,
+          lastError: message
+        }
+      });
+
+      await persistCollectSnapshot({
+        run: input.run,
+        rows: Array.from(input.storedRows.values()),
+        mode: input.mode,
+        request: input.request,
+        resultMeta: failureMeta,
+        enrichmentLogs: Array.from(input.persistedEnrichmentLogs.values()),
+        bibtexMode: input.bibtexMode,
+        writeCorpusArtifacts: false
+      });
+      await syncCollectRunContext({
+        runContextMemory,
+        request: input.request,
+        resultMeta: failureMeta,
+        diagnostics: input.diagnostics
+      });
+
+      input.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId: input.run.id,
+        node: "collect_papers",
+        payload: {
+          text: `Deferred enrichment failed: ${message}`
+        }
+      });
+    } finally {
+      activeCollectEnrichmentJobs.delete(input.run.id);
+    }
+  })();
+
+  activeCollectEnrichmentJobs.set(input.run.id, job);
 }
 
 function isSemanticScholarUrl(url: string | undefined): boolean {

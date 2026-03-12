@@ -138,6 +138,8 @@ export class SemanticScholarClient {
     request: SemanticScholarSearchRequest,
     abortSignal?: AbortSignal
   ): AsyncGenerator<SemanticScholarPaper[], void, void> {
+    this.lastSearchDiagnostics = emptyDiagnostics();
+
     const fakeResponse = process.env.AUTOLABOS_FAKE_SEMANTIC_SCHOLAR_RESPONSE;
     if (typeof fakeResponse === "string" && fakeResponse.trim()) {
       const papers = parseFakeSemanticScholarResponse(fakeResponse).slice(

@@ -31,6 +31,16 @@ export interface ConstraintProfile {
   assumptions: string[];
 }
 
+export interface LiteratureQueryCandidate {
+  query: string;
+  reason:
+    | "requested_query"
+    | "brief_topic"
+    | "run_topic"
+    | "constraint_stripped"
+    | "keyword_anchor";
+}
+
 export function buildHeuristicConstraintProfile(constraints: string[]): ConstraintProfile {
   const raw = constraints.map((constraint) => constraint.trim()).filter(Boolean);
   return {
@@ -180,6 +190,78 @@ export function normalizeConstraintProfile(input: Partial<ConstraintProfile> | u
   };
 }
 
+export function extractResearchBriefTopic(rawBrief: string | undefined): string | undefined {
+  const text = cleanString(rawBrief);
+  if (!text) {
+    return undefined;
+  }
+
+  const lines = text.split(/\r?\n/u);
+  const headingIndex = lines.findIndex((line) => /^\s{0,3}#{1,6}\s*topic\s*$/iu.test(line.trim()));
+  if (headingIndex >= 0) {
+    const collected: string[] = [];
+    for (let index = headingIndex + 1; index < lines.length; index += 1) {
+      if (/^\s{0,3}#{1,6}\s+\S/iu.test(lines[index])) {
+        break;
+      }
+      collected.push(lines[index]);
+    }
+    const topic = cleanBriefTopic(collected.join("\n"));
+    if (topic) {
+      return topic;
+    }
+  }
+
+  const labeledMatch = text.match(/^\s*(?:topic|research topic|study topic|주제)\s*:\s*(.+)$/imu);
+  if (labeledMatch?.[1]) {
+    return cleanBriefTopic(labeledMatch[1]);
+  }
+
+  return undefined;
+}
+
+export function buildLiteratureQueryCandidates(input: {
+  requestedQuery?: string;
+  runTopic: string;
+  briefTopic?: string;
+}): LiteratureQueryCandidate[] {
+  const candidates: LiteratureQueryCandidate[] = [];
+  const pushCandidate = (query: string | undefined, reason: LiteratureQueryCandidate["reason"]) => {
+    const normalized = normalizeLiteratureQuery(query);
+    if (!normalized) {
+      return;
+    }
+    if (candidates.some((candidate) => candidate.query.toLowerCase() === normalized.toLowerCase())) {
+      return;
+    }
+    candidates.push({ query: normalized, reason });
+  };
+
+  const requested = normalizeLiteratureQuery(input.requestedQuery);
+  const briefTopic = normalizeLiteratureQuery(input.briefTopic);
+  const runTopic = normalizeLiteratureQuery(input.runTopic);
+  const strippedRequested = stripLiteratureConstraintPhrases(requested);
+  const strippedBriefTopic = stripLiteratureConstraintPhrases(briefTopic);
+  const strippedRunTopic = stripLiteratureConstraintPhrases(runTopic);
+
+  pushCandidate(requested, "requested_query");
+
+  if (!requested) {
+    pushCandidate(briefTopic, "brief_topic");
+    pushCandidate(runTopic, "run_topic");
+  } else {
+    pushCandidate(briefTopic, "brief_topic");
+    pushCandidate(runTopic, "run_topic");
+  }
+
+  pushCandidate(strippedRequested, "constraint_stripped");
+  pushCandidate(strippedBriefTopic, "constraint_stripped");
+  pushCandidate(strippedRunTopic, "constraint_stripped");
+  pushCandidate(buildKeywordAnchorQuery(strippedRequested || strippedBriefTopic || strippedRunTopic || briefTopic || runTopic), "keyword_anchor");
+
+  return candidates;
+}
+
 function detectTargetVenue(text: string): string | undefined {
   const patterns: Array<[RegExp, string]> = [
     [/\bacl\b/iu, "ACL"],
@@ -198,6 +280,113 @@ function detectTargetVenue(text: string): string | undefined {
     }
   }
   return undefined;
+}
+
+function cleanBriefTopic(value: string | undefined): string | undefined {
+  const normalized = normalizeLiteratureQuery(value);
+  if (!normalized) {
+    return undefined;
+  }
+  return normalized.replace(/\s+/g, " ").trim();
+}
+
+function normalizeLiteratureQuery(value: string | undefined): string | undefined {
+  const cleaned = cleanString(value)
+    ?.replace(/^[*_\-#>\s]+/u, "")
+    .replace(/\s+/g, " ")
+    .replace(/[.?!,:;]+$/u, "")
+    .trim();
+  return cleaned || undefined;
+}
+
+function stripLiteratureConstraintPhrases(value: string | undefined): string | undefined {
+  const text = normalizeLiteratureQuery(value);
+  if (!text) {
+    return undefined;
+  }
+
+  let next = ` ${text} `;
+  const phrasePatterns = [
+    /\b(?:resource-aware|resource constrained|resource-constrained|resource efficient|resource-efficient)\b/giu,
+    /\b(?:cpu[-\s]?only|cpu[-\s]?safe|gpu[-\s]?free|laptop[-\s]?safe|consumer[-\s]?hardware)\b/giu,
+    /\b(?:locally reproducible|reproducible|seeded|seed[-\s]?controlled|lightweight)\b/giu,
+    /\b(?:small|compact)\s+public\s+(?:datasets?|benchmarks?)\b/giu,
+    /\bon\s+(?:small|compact)\s+public\s+(?:tabular\s+)?(?:datasets?|benchmarks?)\b/giu,
+    /\bfor\s+ordinary\s+local\s+iteration(?:\s+on\s+consumer\s+hardware)?\b/giu,
+    /\bwith\s+(?:fixed|seed[-\s]?controlled)\s+(?:train\/validation\/test|train validation test)\s+protocol\b/giu,
+    /\b(?:runtime|memory|macro[-\s]?f1|wall[-\s]?clock)\b/giu
+  ];
+
+  for (const pattern of phrasePatterns) {
+    next = next.replace(pattern, " ");
+  }
+
+  next = next
+    .replace(/\b(?:on|with|under)\s+(?:consumer|ordinary|local)\s+(?:hardware|execution|iteration)\b/giu, " ")
+    .replace(/\s+/g, " ")
+    .replace(/\b(?:for|on|with)\s*$/iu, "")
+    .trim();
+
+  if (!next) {
+    return undefined;
+  }
+  return normalizeLiteratureQuery(next);
+}
+
+function buildKeywordAnchorQuery(value: string | undefined): string | undefined {
+  const text = normalizeLiteratureQuery(value);
+  if (!text) {
+    return undefined;
+  }
+
+  const stopwords = new Set([
+    "a",
+    "an",
+    "and",
+    "for",
+    "from",
+    "in",
+    "of",
+    "on",
+    "the",
+    "to",
+    "using",
+    "with"
+  ]);
+  const keywords = text
+    .toLowerCase()
+    .split(/[^a-z0-9]+/iu)
+    .map((token) => token.trim())
+    .filter(Boolean)
+    .filter((token) => !stopwords.has(token))
+    .filter((token) => token.length > 2)
+    .filter(
+      (token) =>
+        ![
+          "resource",
+          "aware",
+          "small",
+          "public",
+          "local",
+          "consumer",
+          "runtime",
+          "memory",
+          "macro",
+          "seeded",
+          "reproducible",
+          "lightweight"
+        ].includes(token)
+    );
+
+  if (keywords.length === 0) {
+    return undefined;
+  }
+
+  const limited = keywords.slice(0, 6);
+  if (limited.length < 2) {
+    return undefined;
+  }
+  return normalizeLiteratureQuery(limited.join(" "));
 }
 
 function detectToneHint(text: string): string | undefined {

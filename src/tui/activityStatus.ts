@@ -248,8 +248,13 @@ export function isCollectProgressLog(line: string): boolean {
 export function shouldClearCollectProgress(line: string): boolean {
   return (
     /Semantic Scholar stored \d+ papers/u.test(line) ||
+    /collect_papers finished:/u.test(line) ||
     /collect_papers failed:/u.test(line) ||
     /Node collect_papers failed:/u.test(line) ||
+    /Node collect_papers completed:/u.test(line) ||
+    /Jumped to collect_papers \(.+\)\./u.test(line) ||
+    /Retrying collect_papers\./u.test(line) ||
+    /Rolled back to collect_papers(?: from .+)?\./u.test(line) ||
     /Cleared paper artifacts:/u.test(line) ||
     /Run reset to collect_papers \(pending\)\./u.test(line) ||
     /Cleared collect_papers artifacts:/u.test(line)
@@ -495,7 +500,11 @@ export function shouldClearAnalyzeProgress(line: string): boolean {
   return (
     /Analysis totals:/u.test(line) ||
     /Node analyze_papers finished:/u.test(line) ||
+    /Node analyze_papers completed:/u.test(line) ||
     /Node analyze_papers failed:/u.test(line) ||
+    /Jumped to analyze_papers \(.+\)\./u.test(line) ||
+    /Retrying analyze_papers\./u.test(line) ||
+    /Rolled back to analyze_papers(?: from .+)?\./u.test(line) ||
     /Cleared analyze_papers artifacts:/u.test(line) ||
     /Run reset to analyze_papers \(pending\)\./u.test(line)
   );
