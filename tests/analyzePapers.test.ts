@@ -4,9 +4,11 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { ensureScaffold, resolveAppPaths } from "../src/config.js";
 import { createAnalyzePapersNode } from "../src/core/nodes/analyzePapers.js";
 import { createGenerateHypothesesNode } from "../src/core/nodes/generateHypotheses.js";
 import { InMemoryEventStream } from "../src/core/events.js";
+import { RunStore } from "../src/core/runs/runStore.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { RunRecord } from "../src/types.js";
 import { MockLLMClient } from "../src/core/llm/client.js";
@@ -296,6 +298,61 @@ describe("analyzePapers node", () => {
     expect(loggedTexts.some((text) => text.includes('[p1] Starting LLM analysis attempt 1/2.'))).toBe(true);
     expect(loggedTexts.some((text) => text.includes('Persisted analysis outputs for "Paper 1"'))).toBe(true);
     expect(loggedTexts.some((text) => text.includes('Analyzed "Paper 1" (1 evidence item(s), source=abstract).'))).toBe(true);
+  });
+
+  it("refreshes runs.json while analysis progress is persisted", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-runstore-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const paths = resolveAppPaths(root);
+    await ensureScaffold(paths);
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Multi-Agent Collaboration",
+      topic: "Multi-Agent Collaboration",
+      constraints: [],
+      objectiveMetric: "accuracy >= 0.9"
+    });
+    run.status = "running";
+    run.currentNode = "analyze_papers";
+    run.graph.currentNode = "analyze_papers";
+    run.graph.nodeStates.analyze_papers = {
+      status: "running",
+      updatedAt: new Date().toISOString()
+    };
+    await runStore.updateRun(run);
+
+    await writeCorpus(run.id, [
+      { paper_id: "p1", title: "Paper 1", abstract: "Abstract 1", authors: ["Alice"] }
+    ]);
+
+    const initialRunsRaw = await readFile(paths.runsFile, "utf8");
+    const node = createAnalyzePapersNode({
+      config: {
+        analysis: {
+          pdf_mode: "codex_text_image_hybrid",
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequenceJsonLLM([jsonOutput("summary 1", "claim 1")]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    await node.execute({ run, graph: run.graph });
+
+    const nextRunsRaw = await readFile(paths.runsFile, "utf8");
+    expect(nextRunsRaw).not.toBe(initialRunsRaw);
+
+    const runsFile = JSON.parse(nextRunsRaw) as { runs: RunRecord[] };
+    const updated = runsFile.runs.find((candidate) => candidate.id === run.id);
+    expect(updated?.latestSummary).toContain("1 evidence item(s)");
+    expect(updated?.graph.nodeStates.analyze_papers.note).toContain("1 evidence item(s)");
   });
 
   it("persists partial progress and resumes only unfinished papers on rerun", async () => {
@@ -652,7 +709,9 @@ describe("analyzePapers node", () => {
     });
 
     const result = await node.execute({ run, graph: run.graph });
-    expect(result.status).toBe("failure");
+    expect(result.status).toBe("success");
+    expect(result.needsApproval).toBe(true);
+    expect(result.transitionRecommendation?.action).toBe("pause_for_human");
     expect(llm.callCount).toBe(0);
 
     const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8").catch(() => "");
@@ -661,10 +720,175 @@ describe("analyzePapers node", () => {
     expect(evidenceRaw).toBe("");
     const manifestRaw = await readFile(path.join(".autolabos", "runs", runId, "analysis_manifest.json"), "utf8");
     expect(manifestRaw).toContain("source_content_mismatch");
+    const quarantineRaw = await readFile(path.join(".autolabos", "runs", runId, "analysis_quarantine.jsonl"), "utf8");
+    expect(quarantineRaw).toContain('"paper_id":"p1"');
+    expect(quarantineRaw).toContain("source_content_mismatch");
 
     const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
     expect(await runContext.get("analyze_papers.summary_count")).toBe(0);
     expect(await runContext.get("analyze_papers.evidence_count")).toBe(0);
+  });
+
+  it("revalidates local full-text identity after Responses API fallback before running LLM extraction", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-pdf-fallback-mismatch-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-pdf-fallback-mismatch";
+    const run = makeRun(runId);
+    await writeCorpus(runId, [
+      {
+        paper_id: "p1",
+        title: "Predicting multi-factor authentication uptake using machine learning and the UTAUT framework",
+        abstract: "Abstract 1",
+        authors: ["Alice Smith"],
+        pdf_url: "https://example.com/p1.pdf"
+      }
+    ]);
+
+    await mkdir(path.join(".autolabos", "runs", runId, "analysis_cache", "texts"), { recursive: true });
+    await writeFile(
+      path.join(".autolabos", "runs", runId, "analysis_cache", "texts", "p1.txt"),
+      "This source text is actually an unrelated paper about economic transformation in Africa and digital inclusion.",
+      "utf8"
+    );
+
+    const llm = new CountingJsonLLM([jsonOutput("should not run", "should not run")]);
+    const pdfTextLlm = new CountingJsonLLM([jsonOutput("should not run", "should not run")]);
+    const eventStream = new InMemoryEventStream();
+    const node = createAnalyzePapersNode({
+      config: {
+        analysis: {
+          pdf_mode: "responses_api_pdf",
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream,
+      llm,
+      pdfTextLlm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: {
+        hasApiKey: async () => true,
+        analyzePdf: async () => {
+          throw new Error(
+            'Responses API request failed: 400 { "error": { "message": "Timeout while downloading https://example.com/p1.pdf" } }'
+          );
+        }
+      } as unknown as ResponsesPdfAnalysisClient
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+    expect(result.needsApproval).toBe(true);
+    expect(result.transitionRecommendation?.action).toBe("pause_for_human");
+    expect(llm.callCount).toBe(0);
+    expect(pdfTextLlm.callCount).toBe(0);
+
+    const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8").catch(() => "");
+    const evidenceRaw = await readFile(path.join(".autolabos", "runs", runId, "evidence_store.jsonl"), "utf8").catch(() => "");
+    expect(summariesRaw).toBe("");
+    expect(evidenceRaw).toBe("");
+
+    const quarantineRaw = await readFile(path.join(".autolabos", "runs", runId, "analysis_quarantine.jsonl"), "utf8");
+    expect(quarantineRaw).toContain('"paper_id":"p1"');
+    expect(quarantineRaw).toContain("source_content_mismatch");
+
+    const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
+    expect(loggedTexts.some((text) => text.includes("Responses API could not download the remote PDF"))).toBe(true);
+    expect(loggedTexts.some((text) => text.includes("source-identity mismatch"))).toBe(true);
+  });
+
+  it("filters off-topic fallback selections and promotes anchored replacements", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-fallback-guard-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-fallback-guard";
+    const run = {
+      ...makeRun(runId),
+      title: "Classical machine learning baselines for tabular classification",
+      topic: "Classical machine learning baselines for tabular classification"
+    };
+    await writeCorpus(runId, [
+      {
+        paper_id: "p1",
+        title: "Classical machine learning baselines for tabular classification",
+        abstract: "Baseline comparison on tabular datasets with logistic regression and random forests.",
+        authors: ["Alice"],
+        citation_count: 5,
+        year: 2022,
+        pdf_url: "https://example.com/p1.pdf"
+      },
+      {
+        paper_id: "p2",
+        title: "A Study on Music Genre Classification using Machine Learning",
+        abstract: "Classification model for audio genre recognition.",
+        authors: ["Bob"],
+        citation_count: 500,
+        year: 2025,
+        pdf_url: "https://example.com/p2.pdf"
+      },
+      {
+        paper_id: "p3",
+        title: "Baseline tree ensembles for structured tabular data",
+        abstract: "Tabular classification baseline study on structured datasets.",
+        authors: ["Cara"],
+        citation_count: 10,
+        year: 2023,
+        pdf_url: "https://example.com/p3.pdf"
+      }
+    ]);
+
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    await runContext.put("analyze_papers.request", {
+      topN: 2,
+      selectionMode: "top_n",
+      selectionPolicy: "hybrid_title_citation_recency_pdf_v2"
+    });
+
+    let analyzePdfCalls = 0;
+    const eventStream = new InMemoryEventStream();
+    const node = createAnalyzePapersNode({
+      config: {
+        analysis: {
+          pdf_mode: "responses_api_pdf",
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream,
+      llm: new FixedErrorLLM(new Error("rerank unavailable")),
+      pdfTextLlm: new SequenceJsonLLM([]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: {
+        hasApiKey: async () => true,
+        analyzePdf: async () => {
+          analyzePdfCalls += 1;
+          return { text: jsonOutput(`summary ${analyzePdfCalls}`, `claim ${analyzePdfCalls}`) };
+        }
+      } as unknown as ResponsesPdfAnalysisClient
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+    expect(analyzePdfCalls).toBe(2);
+
+    const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
+    expect(summariesRaw).toContain('"paper_id":"p1"');
+    expect(summariesRaw).toContain('"paper_id":"p3"');
+    expect(summariesRaw).not.toContain('"paper_id":"p2"');
+
+    const manifestRaw = await readFile(path.join(".autolabos", "runs", runId, "analysis_manifest.json"), "utf8");
+    const manifest = JSON.parse(manifestRaw);
+    expect(manifest.selectedPaperIds).toEqual(["p1", "p3"]);
+
+    const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
+    expect(loggedTexts.some((text) => text.includes("Selection quality safeguard tightened the rerank-fallback shortlist"))).toBe(true);
   });
 
   it("uses Responses API PDF analysis when configured and a PDF URL is present", async () => {

@@ -348,7 +348,7 @@ describe("collectPapers bibtex", () => {
         .some((event) => String(event.payload?.text ?? "").includes("Requesting Semantic Scholar batch 1/1."))
     ).toBe(true);
     expect(result.summary).toBe(
-      'Semantic Scholar stored 1 papers for "Multi-Agent Collaboration". Deferred enrichment scheduled for 1 paper(s).'
+      'Semantic Scholar stored 1 papers for "Multi-Agent Collaboration". Deferred enrichment scheduled in background for 1 paper(s).'
     );
     await waitForCollectEnrichmentJob(runId);
     expect(result.summary).not.toContain("Collection objective");
@@ -466,7 +466,7 @@ describe("collectPapers bibtex", () => {
 
     expect(result.status).toBe("success");
     expect(result.summary).toBe(
-      'Semantic Scholar stored 3 total papers for "Multi-Agent Collaboration" (2 newly added). Deferred enrichment scheduled for 3 paper(s).'
+      'Semantic Scholar stored 3 total papers for "Multi-Agent Collaboration" (2 newly added). Deferred enrichment scheduled in background for 3 paper(s).'
     );
     await waitForCollectEnrichmentJob(runId);
     const corpus = await readFile(path.join(runDir, "corpus.jsonl"), "utf8");
@@ -580,7 +580,7 @@ describe("collectPapers bibtex", () => {
 
     expect(result.status).toBe("success");
     expect(result.summary).toBe(
-      'Semantic Scholar stored 2 total papers for "Multi-Agent Collaboration" (1 newly added). Deferred enrichment scheduled for 1 paper(s).'
+      'Semantic Scholar stored 2 total papers for "Multi-Agent Collaboration" (1 newly added). Deferred enrichment scheduled in background for 1 paper(s).'
     );
     await waitForCollectEnrichmentJob(runId);
     const corpus = await readFile(path.join(runDir, "corpus.jsonl"), "utf8");
@@ -1183,7 +1183,7 @@ describe("collectPapers bibtex", () => {
 
     expect(result.status).toBe("success");
     expect(result.summary).toBe(
-      'Semantic Scholar stored 2 papers for "Multi-Agent Collaboration". Deferred enrichment scheduled for 2 paper(s).'
+      'Semantic Scholar stored 2 papers for "Multi-Agent Collaboration". Deferred enrichment scheduled in background for 2 paper(s).'
     );
     await waitForCollectEnrichmentJob(runId);
     const observedTexts = eventStream
@@ -1215,13 +1215,15 @@ describe("collectPapers bibtex", () => {
     expect(completionIndex).toBeGreaterThan(progressIndex);
 
     const lastResult = (await readRunContextValue(root, runId, "collect_papers.last_result")) as {
-      enrichment?: { status?: string; processedCount?: number };
+      enrichment?: { status?: string; processedCount?: number; blocking?: boolean };
     } | undefined;
     expect(lastResult?.enrichment).toMatchObject({
+      blocking: false,
       status: "completed",
       processedCount: 2
     });
     expect(await readRunContextValue(root, runId, "collect_papers.last_error")).toBeNull();
+    expect(await readRunContextValue(root, runId, "collect_papers.enrichment_last_error")).toBeNull();
   });
 
   it("prefers the explicit brief topic over a narrowed run topic for the first literature query", async () => {
@@ -1318,6 +1320,146 @@ describe("collectPapers bibtex", () => {
     await waitForCollectEnrichmentJob(runId);
   });
 
+  it("falls back from a narrow requested query to the broader brief topic after zero results", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-query-fallback-"));
+    process.chdir(root);
+
+    const runId = "run-collect-query-fallback";
+    const run: RunRecord = {
+      version: 3,
+      workflowVersion: 3,
+      id: runId,
+      title: "Tabular Baselines",
+      topic: "Resource-aware baselines for tabular classification on small public datasets",
+      constraints: [],
+      objectiveMetric: "metric",
+      status: "running",
+      currentNode: "collect_papers",
+      latestSummary: undefined,
+      nodeThreads: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      graph: createDefaultGraphState(),
+      memoryRefs: {
+        runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
+      }
+    };
+
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "collect_papers.request",
+            value: {
+              query: "Resource-aware baselines for tabular classification on small public datasets",
+              limit: 1,
+              sort: { field: "relevance", order: "desc" }
+            },
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "run_brief.raw",
+            value: [
+              "# Research Brief",
+              "",
+              "## Topic",
+              "",
+              "Classical machine learning baselines for tabular classification."
+            ].join("\n"),
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const streamSearchPapers = vi.fn(async function* (request: { query: string }) {
+      if (request.query === "Resource-aware baselines for tabular classification on small public datasets") {
+        yield [];
+        return;
+      }
+      if (request.query === "Classical machine learning baselines for tabular classification") {
+        yield [
+          {
+            paperId: "paper-1",
+            title: "Classical tabular baseline survey",
+            authors: ["Alice Kim"]
+          }
+        ];
+        return;
+      }
+      yield [];
+    });
+
+    const node = createCollectPapersNode({
+      config: {
+        papers: {
+          max_results: 200
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {
+        streamSearchPapers,
+        getLastSearchDiagnostics: vi
+          .fn()
+          .mockReturnValueOnce({
+            attemptCount: 1,
+            lastStatus: 200,
+            attempts: [{ attempt: 1, ok: true, status: 200, endpoint: "search" }]
+          })
+          .mockReturnValueOnce({
+            attemptCount: 1,
+            lastStatus: 200,
+            attempts: [{ attempt: 1, ok: true, status: 200, endpoint: "search" }]
+          })
+      } as any
+    });
+
+    const result = await node.execute({
+      run,
+      graph: run.graph
+    });
+
+    expect(result.status).toBe("success");
+    expect(streamSearchPapers.mock.calls.map((call) => call[0]?.query)).toEqual([
+      "Resource-aware baselines for tabular classification on small public datasets",
+      "Classical machine learning baselines for tabular classification"
+    ]);
+
+    const lastResult = (await readRunContextValue(root, runId, "collect_papers.last_result")) as {
+      query?: string;
+      queryAttempts?: Array<{ query?: string; fetched?: number }>;
+      enrichment?: { blocking?: boolean; status?: string };
+    } | undefined;
+    expect(lastResult?.query).toBe("Classical machine learning baselines for tabular classification");
+    expect(lastResult?.queryAttempts).toEqual([
+      expect.objectContaining({
+        query: "Resource-aware baselines for tabular classification on small public datasets",
+        fetched: 0
+      }),
+      expect.objectContaining({
+        query: "Classical machine learning baselines for tabular classification",
+        fetched: 1
+      })
+    ]);
+    expect(lastResult?.enrichment).toMatchObject({
+      blocking: false,
+      status: "pending"
+    });
+
+    await waitForCollectEnrichmentJob(runId);
+  });
+
   it("updates the stored collect summary after deferred enrichment completes when the latest summary is still stale", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-summary-sync-"));
     process.chdir(root);
@@ -1367,7 +1509,7 @@ describe("collectPapers bibtex", () => {
     );
 
     const pendingSummary =
-      'Semantic Scholar stored 2 papers for "Multi-Agent Collaboration". Deferred enrichment scheduled for 2 paper(s).';
+      'Semantic Scholar stored 2 papers for "Multi-Agent Collaboration". Deferred enrichment scheduled in background for 2 paper(s).';
     let storedRun = cloneRun({
       ...run,
       currentNode: "analyze_papers" as const,

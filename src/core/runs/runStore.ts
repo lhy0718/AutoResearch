@@ -95,9 +95,13 @@ export class RunStore {
       throw new Error(`Run not found: ${run.id}`);
     }
 
-    const reconciled = await this.reconcileRunRecord(run);
-    reconciled.updatedAt = nowIso();
-    runsFile.runs[idx] = reconciled;
+    const [stored, incoming] = await Promise.all([
+      this.reconcileRunRecord(runsFile.runs[idx]),
+      this.reconcileRunRecord(run)
+    ]);
+    const next = preferFresherRunRecord(stored, incoming);
+    next.updatedAt = maxIso([next.updatedAt, nowIso()]) ?? nowIso();
+    runsFile.runs[idx] = next;
     await this.writeRunsFile(runsFile);
   }
 
@@ -193,6 +197,7 @@ export class RunStore {
   private async reconcileRunRecord(run: RunRecord): Promise<RunRecord> {
     let next = normalizeRunRecord(run);
     const details = await this.readDerivedRunDetails(next);
+    next = applyCheckpointDerivedState(next, details.latestCheckpoint);
     const collectSummary = buildCollectDerivedSummary(details);
     const analyzeSummary = buildAnalyzeDerivedSummary(details);
 
@@ -208,6 +213,8 @@ export class RunStore {
     const latestTimestamp = maxIso([
       next.updatedAt,
       ...GRAPH_NODE_ORDER.map((node) => next.graph.nodeStates[node]?.updatedAt),
+      details.latestCheckpoint?.createdAt,
+      details.latestCheckpoint?.runSnapshot.updatedAt,
       collectSummary.updatedAt,
       analyzeSummary.updatedAt
     ]);
@@ -221,12 +228,14 @@ export class RunStore {
   private async readDerivedRunDetails(run: RunRecord): Promise<DerivedRunDetails> {
     const runRoot = path.join(this.paths.runsDir, run.id);
     const runContextPath = this.resolveWorkspacePath(run.memoryRefs.runContextPath);
-    const [contextItems, collectResultFile, analysisManifest, summaryArtifact, evidenceArtifact] = await Promise.all([
+    const [contextItems, collectResultFile, analysisManifest, summaryArtifact, evidenceArtifact, latestCheckpoint] =
+      await Promise.all([
       this.readRunContextItems(runContextPath),
       this.readOptionalJson<CollectResultLike>(path.join(runRoot, "collect_result.json")),
       this.readOptionalJson<AnalysisManifestLike>(path.join(runRoot, "analysis_manifest.json")),
       this.readJsonlArtifact(path.join(runRoot, "paper_summaries.jsonl")),
-      this.readJsonlArtifact(path.join(runRoot, "evidence_store.jsonl"))
+      this.readJsonlArtifact(path.join(runRoot, "evidence_store.jsonl")),
+      this.readLatestCheckpointSnapshot(runRoot)
     ]);
 
     return {
@@ -234,7 +243,8 @@ export class RunStore {
       collectResultFile,
       analysisManifest,
       summaryArtifact,
-      evidenceArtifact
+      evidenceArtifact,
+      latestCheckpoint
     };
   }
 
@@ -277,6 +287,39 @@ export class RunStore {
       return {};
     }
   }
+
+  private async readLatestCheckpointSnapshot(runRoot: string): Promise<DerivedCheckpointRecord | undefined> {
+    const checkpointsDir = path.join(runRoot, "checkpoints");
+    try {
+      const files = (await fs.readdir(checkpointsDir))
+        .filter((file) => file.endsWith(".json") && file !== "latest.json")
+        .sort();
+      if (files.length === 0) {
+        return undefined;
+      }
+
+      let latest: DerivedCheckpointRecord | undefined;
+      for (const file of files) {
+        const record = await readJsonFile<CheckpointRecordLike>(path.join(checkpointsDir, file));
+        if (!record.runSnapshot || typeof record.seq !== "number" || !Number.isFinite(record.seq)) {
+          continue;
+        }
+
+        const candidate: DerivedCheckpointRecord = {
+          seq: record.seq,
+          createdAt: toOptionalString(record.createdAt),
+          runSnapshot: normalizeRunRecord(record.runSnapshot)
+        };
+        if (!latest || compareCheckpointFreshness(candidate, latest) > 0) {
+          latest = candidate;
+        }
+      }
+
+      return latest;
+    } catch {
+      return undefined;
+    }
+  }
 }
 
 function normalizeRunsV3(runsFile: RunsFile): RunsFile {
@@ -287,6 +330,10 @@ function normalizeRunsV3(runsFile: RunsFile): RunsFile {
 }
 
 function normalizeRunRecord(run: RunRecord): RunRecord {
+  const retryPolicy = {
+    ...createDefaultGraphState().retryPolicy,
+    ...(run.graph?.retryPolicy ?? {})
+  };
   return {
     ...run,
     version: 3,
@@ -298,10 +345,17 @@ function normalizeRunRecord(run: RunRecord): RunRecord {
         ...createDefaultGraphState().nodeStates,
         ...(run.graph?.nodeStates ?? {})
       },
-      retryCounters: run.graph?.retryCounters ?? {},
-      rollbackCounters: run.graph?.rollbackCounters ?? {},
+      retryCounters: clampCounters(
+        run.graph?.retryCounters ?? {},
+        Math.max(1, retryPolicy.maxAttemptsPerNode)
+      ),
+      rollbackCounters: clampCounters(
+        run.graph?.rollbackCounters ?? {},
+        Math.max(0, retryPolicy.maxAutoRollbacksPerNode)
+      ),
       researchCycle: run.graph?.researchCycle ?? 0,
       transitionHistory: run.graph?.transitionHistory ?? [],
+      retryPolicy,
       pendingTransition: normalizePendingTransition(run.graph?.pendingTransition)
     },
     nodeThreads: run.nodeThreads ?? {},
@@ -348,11 +402,24 @@ interface DerivedRunDetails {
   analysisManifest: DerivedJsonFile<AnalysisManifestLike>;
   summaryArtifact: DerivedCountFile;
   evidenceArtifact: DerivedCountFile;
+  latestCheckpoint?: DerivedCheckpointRecord;
 }
 
 interface DerivedNodeSummary {
   summary?: string;
   updatedAt?: string;
+}
+
+interface DerivedCheckpointRecord {
+  seq: number;
+  createdAt?: string;
+  runSnapshot: RunRecord;
+}
+
+interface CheckpointRecordLike {
+  seq?: unknown;
+  createdAt?: unknown;
+  runSnapshot?: RunRecord;
 }
 
 interface CollectResultLike {
@@ -363,6 +430,9 @@ interface CollectResultLike {
   enrichment?: {
     status?: unknown;
     targetCount?: unknown;
+    processedCount?: unknown;
+    lastError?: unknown;
+    blocking?: unknown;
   };
 }
 
@@ -387,6 +457,42 @@ interface AnalysisManifestLike {
   selectedPaperIds?: unknown;
   analysisFingerprint?: unknown;
   papers?: Record<string, AnalysisManifestEntryLike>;
+}
+
+function clampCounters(
+  counters: Partial<Record<GraphNodeId, number>>,
+  max: number
+): Partial<Record<GraphNodeId, number>> {
+  return Object.fromEntries(
+    Object.entries(counters).map(([node, value]) => {
+      const numericValue = typeof value === "number" && Number.isFinite(value) ? value : 0;
+      return [node, Math.min(Math.max(numericValue, 0), max)];
+    })
+  ) as Partial<Record<GraphNodeId, number>>;
+}
+
+function compareCheckpointFreshness(left: DerivedCheckpointRecord, right: DerivedCheckpointRecord): number {
+  if (left.seq !== right.seq) {
+    return left.seq - right.seq;
+  }
+
+  const createdAtDiff = updatedAtMs(left.createdAt) - updatedAtMs(right.createdAt);
+  if (createdAtDiff !== 0) {
+    return createdAtDiff;
+  }
+
+  return compareRunFreshness(left.runSnapshot, right.runSnapshot);
+}
+
+function applyCheckpointDerivedState(
+  run: RunRecord,
+  checkpoint: DerivedCheckpointRecord | undefined
+): RunRecord {
+  if (!checkpoint) {
+    return run;
+  }
+
+  return compareRunFreshness(checkpoint.runSnapshot, run) > 0 ? checkpoint.runSnapshot : run;
 }
 
 function applyCollectDerivedState(run: RunRecord, summary: DerivedNodeSummary): RunRecord {
@@ -446,14 +552,26 @@ function buildCollectDerivedSummary(details: DerivedRunDetails): DerivedNodeSumm
   const bibtexEnriched = toFiniteNumber(meta.bibtexEnriched) ?? 0;
   const enrichmentStatus = toOptionalString(meta.enrichment?.status);
   const enrichmentTargetCount = toFiniteNumber(meta.enrichment?.targetCount) ?? 0;
+  const enrichmentProcessedCount = toFiniteNumber(meta.enrichment?.processedCount) ?? 0;
+  const enrichmentLastError = toOptionalString(meta.enrichment?.lastError);
   const baseSummary = query
     ? `Semantic Scholar stored ${stored} papers for "${query}".`
     : `Semantic Scholar stored ${stored} papers.`;
   const enrichmentSummary =
     enrichmentStatus === "completed"
       ? ` PDF recovered ${pdfRecovered}; BibTeX enriched ${bibtexEnriched}.`
+      : enrichmentStatus === "failed"
+        ? ` Deferred enrichment failed after ${Math.min(
+            enrichmentProcessedCount,
+            enrichmentTargetCount
+          )}/${enrichmentTargetCount} paper(s): ${enrichmentLastError || "unknown error"}. Stored corpus remains available.`
       : enrichmentTargetCount > 0
-        ? ` Deferred enrichment continues for ${enrichmentTargetCount} paper(s).`
+        ? enrichmentProcessedCount > 0
+          ? ` Deferred enrichment continues in background for ${enrichmentTargetCount} paper(s) (${Math.min(
+              enrichmentProcessedCount,
+              enrichmentTargetCount
+            )}/${enrichmentTargetCount} processed).`
+          : ` Deferred enrichment continues in background for ${enrichmentTargetCount} paper(s).`
         : "";
 
   return {
@@ -607,6 +725,27 @@ function pickLatestSummary(run: RunRecord): string | undefined {
     return updatedAtMs(run.graph.nodeStates[left]?.updatedAt) - updatedAtMs(run.graph.nodeStates[right]?.updatedAt);
   })[notedNodes.length - 1];
   return run.graph.nodeStates[latestNode]?.note?.trim() || run.latestSummary;
+}
+
+function preferFresherRunRecord(current: RunRecord, candidate: RunRecord): RunRecord {
+  return compareRunFreshness(candidate, current) >= 0 ? candidate : current;
+}
+
+function compareRunFreshness(left: RunRecord, right: RunRecord): number {
+  const leftSeq = left.graph.checkpointSeq ?? 0;
+  const rightSeq = right.graph.checkpointSeq ?? 0;
+  if (leftSeq !== rightSeq) {
+    return leftSeq - rightSeq;
+  }
+
+  return updatedAtMs(runFreshnessTimestamp(left)) - updatedAtMs(runFreshnessTimestamp(right));
+}
+
+function runFreshnessTimestamp(run: RunRecord): string | undefined {
+  return maxIso([
+    run.updatedAt,
+    ...GRAPH_NODE_ORDER.map((node) => run.graph.nodeStates[node]?.updatedAt)
+  ]);
 }
 
 function getContextEntryValue<T>(

@@ -7,7 +7,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { ensureScaffold, resolveAppPaths } from "../src/config.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
+import { CheckpointStore } from "../src/core/stateGraph/checkpointStore.js";
 import { RunStore } from "../src/core/runs/runStore.js";
+import { readJsonFile } from "../src/utils/fs.js";
 
 const tempDirs: string[] = [];
 
@@ -124,5 +126,170 @@ describe("RunStore", () => {
 
     expect(run?.graph.nodeStates.review.status).toBe("pending");
     expect(run?.graph.pendingTransition?.targetNode).toBe("review");
+  });
+
+  it("reconciles stale runs.json pointers from the latest checkpoint snapshot", async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), "autolabos-runcheckpoint-reconcile-"));
+    tempDirs.push(cwd);
+    const paths = resolveAppPaths(cwd);
+    await ensureScaffold(paths);
+
+    const store = new RunStore(paths);
+    const checkpointStore = new CheckpointStore(paths);
+    const run = await store.createRun({
+      title: "Checkpoint Reconcile",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    run.status = "running";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    run.graph.nodeStates.implement_experiments.status = "running";
+    const checkpoint = await checkpointStore.save(run, "before");
+
+    const stale = structuredClone(run);
+    stale.currentNode = "design_experiments";
+    stale.graph.currentNode = "design_experiments";
+    stale.graph.checkpointSeq = checkpoint.seq - 1;
+    stale.graph.nodeStates.design_experiments = {
+      ...stale.graph.nodeStates.design_experiments,
+      status: "running",
+      updatedAt: new Date(Date.now() - 60_000).toISOString()
+    };
+    stale.graph.nodeStates.implement_experiments = {
+      ...stale.graph.nodeStates.implement_experiments,
+      status: "pending",
+      updatedAt: new Date(Date.now() - 60_000).toISOString()
+    };
+    stale.updatedAt = new Date(Date.now() - 60_000).toISOString();
+
+    await writeFile(
+      paths.runsFile,
+      `${JSON.stringify({ version: 3, runs: [stale] }, null, 2)}\n`,
+      "utf8"
+    );
+
+    const reconciled = await store.getRun(run.id);
+    expect(reconciled?.currentNode).toBe("implement_experiments");
+    expect(reconciled?.graph.currentNode).toBe("implement_experiments");
+    expect(reconciled?.graph.checkpointSeq).toBe(checkpoint.seq);
+
+    const runsFile = await readJsonFile<{ runs: Array<{ currentNode: string; graph: { checkpointSeq: number } }> }>(
+      paths.runsFile
+    );
+    expect(runsFile.runs[0]?.currentNode).toBe("implement_experiments");
+    expect(runsFile.runs[0]?.graph.checkpointSeq).toBe(checkpoint.seq);
+  });
+
+  it("prefers the highest checkpoint seq even when latest.json points at an older snapshot", async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), "autolabos-runcheckpoint-latest-regression-"));
+    tempDirs.push(cwd);
+    const paths = resolveAppPaths(cwd);
+    await ensureScaffold(paths);
+
+    const store = new RunStore(paths);
+    const checkpointStore = new CheckpointStore(paths);
+    const run = await store.createRun({
+      title: "Latest Pointer Regression",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "design_experiments";
+    run.graph.currentNode = "design_experiments";
+    run.status = "running";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    const first = await checkpointStore.save(run, "before");
+
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    run.graph.nodeStates.implement_experiments.status = "running";
+    const second = await checkpointStore.save(run, "before");
+
+    await writeFile(
+      path.join(paths.runsDir, run.id, "checkpoints", "latest.json"),
+      `${JSON.stringify(
+        {
+          seq: first.seq,
+          node: first.node,
+          phase: first.phase,
+          createdAt: first.createdAt,
+          file: `${String(first.seq).padStart(4, "0")}-${first.node}-${first.phase}.json`
+        },
+        null,
+        2
+      )}\n`,
+      "utf8"
+    );
+
+    const stale = structuredClone(run);
+    stale.currentNode = "design_experiments";
+    stale.graph.currentNode = "design_experiments";
+    stale.graph.checkpointSeq = first.seq;
+    stale.graph.nodeStates.design_experiments = {
+      ...stale.graph.nodeStates.design_experiments,
+      status: "running",
+      updatedAt: new Date(Date.now() - 60_000).toISOString()
+    };
+    stale.graph.nodeStates.implement_experiments = {
+      ...stale.graph.nodeStates.implement_experiments,
+      status: "pending",
+      updatedAt: new Date(Date.now() - 60_000).toISOString()
+    };
+    stale.updatedAt = new Date(Date.now() - 60_000).toISOString();
+
+    await writeFile(
+      paths.runsFile,
+      `${JSON.stringify({ version: 3, runs: [stale] }, null, 2)}\n`,
+      "utf8"
+    );
+
+    const reconciled = await store.getRun(run.id);
+    expect(reconciled?.currentNode).toBe("implement_experiments");
+    expect(reconciled?.graph.currentNode).toBe("implement_experiments");
+    expect(reconciled?.graph.checkpointSeq).toBe(second.seq);
+  });
+
+  it("ignores stale updateRun snapshots when a newer checkpointed state already exists", async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), "autolabos-runcheckpoint-monotonic-"));
+    tempDirs.push(cwd);
+    const paths = resolveAppPaths(cwd);
+    await ensureScaffold(paths);
+
+    const store = new RunStore(paths);
+    const checkpointStore = new CheckpointStore(paths);
+    const run = await store.createRun({
+      title: "Monotonic Update",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    const stale = structuredClone(run);
+
+    run.currentNode = "analyze_papers";
+    run.graph.currentNode = "analyze_papers";
+    run.status = "running";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "running";
+    await checkpointStore.save(run, "jump", "manual recovery");
+    await store.updateRun(run);
+
+    await store.updateRun(stale);
+
+    const latest = await store.getRun(run.id);
+    expect(latest?.currentNode).toBe("analyze_papers");
+    expect(latest?.graph.currentNode).toBe("analyze_papers");
+    expect(latest?.graph.checkpointSeq).toBeGreaterThan(stale.graph.checkpointSeq);
+    expect(latest?.graph.nodeStates.collect_papers.status).toBe("completed");
   });
 });

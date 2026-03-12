@@ -100,4 +100,34 @@ describe("resolveRunCommand", () => {
     expect(resolved.cwd).toBe(publicDir);
     expect(resolved.source).toBe("public_dir.experiment.py");
   });
+
+  it("falls back to a materialized script when the explicit command points to a missing artifact", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-run-missing-explicit-"));
+    tempDirs.push(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Runner Missing Explicit Artifact",
+      topic: "runner",
+      constraints: [],
+      objectiveMetric: "loss"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const actualScriptPath = path.join(runDir, "run_experiment.py");
+    writeFileSync(actualScriptPath, "print('hi')\n", "utf8");
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put("implement_experiments.run_command", "python3 outputs/demo/experiment.py");
+    await memory.put("implement_experiments.script", actualScriptPath);
+    await memory.put("implement_experiments.cwd", ".");
+    await memory.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const resolved = await resolveRunCommand(run, workspace);
+    expect(resolved.command).toContain(actualScriptPath);
+    expect(resolved.source).toBe("run_context.script");
+  });
 });

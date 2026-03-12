@@ -1078,6 +1078,35 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(lines[1]).toContain("Ignoring stale top-level summary");
   });
 
+  it("renders rollback recovery status without borrowing analyze evidence counts", () => {
+    const app = makeApp();
+    const run = makeRun("run-rollback");
+    run.status = "running";
+    run.currentNode = "design_experiments";
+    run.graph.currentNode = "design_experiments";
+    run.graph.nodeStates.design_experiments.status = "running";
+    run.graph.nodeStates.design_experiments.note =
+      "Auto rollback from implement_experiments after 4/3 retries (rollback 2/2).";
+    run.graph.nodeStates.implement_experiments.status = "failed";
+    run.graph.nodeStates.implement_experiments.lastError =
+      "Local verification failed via python -m py_compile outputs/example/experiment/run.py (environment): [Errno 2] No such file or directory.";
+
+    app.runProjectionHints.set(run.id, {
+      analyze: {
+        selectedCount: 30,
+        totalCandidates: 200,
+        summaryCount: 30,
+        evidenceCount: 119
+      }
+    });
+
+    const lines = app.getRenderableLogs(run);
+
+    expect(lines[0]).toBe("Status: Auto rollback from implement_experiments after 4/3 retries (rollback 2/2).");
+    expect(lines.join(" ")).not.toContain("implement_experiments has 119 evidence item(s)");
+    expect(lines.join(" ")).not.toContain("Persisted 30 summary row(s) and 119 evidence row(s).");
+  });
+
   it("creates a Markdown brief file when /new is used without an editor", async () => {
     const cwd = await mkdtemp(path.join(os.tmpdir(), "autolabos-brief-new-"));
     const originalCwd = process.cwd();

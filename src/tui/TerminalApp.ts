@@ -97,6 +97,7 @@ import {
 } from "./activityStatus.js";
 import {
   applyEventToRunProjection,
+  mergeProjectedRunState,
   normalizeRunForDisplay,
   projectRunForDisplay,
   resolveFailedNode,
@@ -1962,9 +1963,14 @@ export class TerminalApp {
       }
 
       if (["failed", "failed_budget"].includes(updatedRun.status)) {
-        const failedNode = resolveFailedNode(updatedRun);
+        const failedNode =
+          updatedRun.graph.nodeStates[updatedRun.currentNode]?.status === "failed"
+            ? updatedRun.currentNode
+            : resolveFailedNode(updatedRun);
+        const failedState = updatedRun.graph.nodeStates[failedNode];
         const failure =
-          updatedRun.graph.nodeStates[failedNode].lastError ||
+          failedState.lastError ||
+          failedState.note ||
           updatedRun.latestSummary ||
           `${failedNode} failed`;
         this.pushLog(`Node ${failedNode} failed: ${failure}`);
@@ -3431,15 +3437,24 @@ export class TerminalApp {
       return;
     }
 
-    const run = this.runIndex.find((item) => item.id === runId);
-    if (!run) {
+    const index = this.runIndex.findIndex((item) => item.id === runId);
+    if (index === -1) {
       this.runProjectionHints.delete(runId);
       return;
     }
 
+    const run = this.runIndex[index];
     const hints = await readRunProjectionHints(process.cwd(), run);
     if (hints) {
       this.runProjectionHints.set(run.id, hints);
+      const merged = mergeProjectedRunState(run, hints.checkpoint?.snapshot);
+      if (merged !== run) {
+        this.runIndex = [
+          ...this.runIndex.slice(0, index),
+          merged,
+          ...this.runIndex.slice(index + 1)
+        ];
+      }
     } else {
       this.runProjectionHints.delete(run.id);
     }
@@ -3694,7 +3709,8 @@ export class TerminalApp {
   }
 
   private async refreshRunIndex(): Promise<void> {
-    this.runIndex = await this.runStore.listRuns();
+    const previousRuns = new Map(this.runIndex.map((run) => [run.id, run]));
+    this.runIndex = (await this.runStore.listRuns()).map((run) => mergeProjectedRunState(run, previousRuns.get(run.id)));
     if (this.runIndex.length > 0) {
       if (!this.activeRunId) {
         await this.setActiveRunId(this.runIndex[0].id);
@@ -5098,9 +5114,10 @@ async function readAnalyzeSelectionCount(manifestPath: string): Promise<{ select
 
 async function readRunProjectionHints(workspaceRoot: string, run: RunRecord): Promise<RunProjectionHints | undefined> {
   const runDir = path.join(workspaceRoot, ".autolabos", "runs", run.id);
-  const [runContextRaw, analyzeManifestRaw] = await Promise.all([
+  const [runContextRaw, analyzeManifestRaw, checkpointHints] = await Promise.all([
     safeRead(path.join(workspaceRoot, run.memoryRefs.runContextPath)),
-    safeRead(path.join(runDir, "analysis_manifest.json"))
+    safeRead(path.join(runDir, "analysis_manifest.json")),
+    readCheckpointProjectionHints(runDir)
   ]);
 
   const hints: RunProjectionHints = {};
@@ -5119,8 +5136,59 @@ async function readRunProjectionHints(workspaceRoot: string, run: RunRecord): Pr
       ...analyzeManifestHints?.analyze
     };
   }
+  if (checkpointHints) {
+    hints.checkpoint = checkpointHints;
+  }
 
-  return hints.collect || hints.analyze ? hints : undefined;
+  return hints.collect || hints.analyze || hints.checkpoint ? hints : undefined;
+}
+
+async function readCheckpointProjectionHints(runDir: string): Promise<RunProjectionHints["checkpoint"] | undefined> {
+  const checkpointsDir = path.join(runDir, "checkpoints");
+  const latestRaw = await safeRead(path.join(checkpointsDir, "latest.json"));
+  if (!latestRaw.trim()) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(latestRaw) as {
+      seq?: unknown;
+      phase?: unknown;
+      createdAt?: unknown;
+      file?: unknown;
+    };
+    const file = readString(parsed.file);
+    const snapshot = file ? await readCheckpointSnapshot(path.join(checkpointsDir, file)) : undefined;
+    const phase = readCheckpointPhase(parsed.phase);
+    if (typeof parsed.seq !== "number" && !phase && !readString(parsed.createdAt) && !snapshot) {
+      return undefined;
+    }
+
+    return {
+      seq: readNumber(parsed.seq),
+      phase,
+      createdAt: readString(parsed.createdAt),
+      snapshot
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+async function readCheckpointSnapshot(filePath: string): Promise<RunRecord | undefined> {
+  const raw = await safeRead(filePath);
+  if (!raw.trim()) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as {
+      runSnapshot?: unknown;
+    };
+    return readRunRecord(parsed.runSnapshot);
+  } catch {
+    return undefined;
+  }
 }
 
 function parseRunContextProjectionHints(raw: string): RunProjectionHints {
@@ -5240,6 +5308,14 @@ function readRecordMap(value: unknown): Record<string, unknown> | undefined {
   return value as Record<string, unknown>;
 }
 
+function readRunRecord(value: unknown): RunRecord | undefined {
+  const record = readRecord(value);
+  if (!record || !readRecord(record.graph) || !readString(record.currentNode) || !readString(record.status)) {
+    return undefined;
+  }
+  return record as unknown as RunRecord;
+}
+
 function readString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
 }
@@ -5253,6 +5329,12 @@ function readNullableNumber(value: unknown): number | null | undefined {
     return null;
   }
   return readNumber(value);
+}
+
+function readCheckpointPhase(value: unknown): NonNullable<RunProjectionHints["checkpoint"]>["phase"] | undefined {
+  return value === "before" || value === "after" || value === "fail" || value === "jump" || value === "retry"
+    ? value
+    : undefined;
 }
 
 function detectInitialGuidanceLanguage(): GuidanceLanguage {

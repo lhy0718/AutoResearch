@@ -29,8 +29,11 @@ export async function resolveRunCommand(
   const explicitCwd =
     resolveMaybeRelative(await runContext.get<string>("implement_experiments.cwd"), workspaceRoot) || workspaceRoot;
   const testCommand = await runContext.get<string>("implement_experiments.test_command");
+  const explicitCommandArtifact = explicitCommand
+    ? resolveCommandArtifactPath(explicitCommand, explicitCwd, workspaceRoot)
+    : undefined;
 
-  if (explicitCommand) {
+  if (explicitCommand && (!explicitCommandArtifact || (await fileExists(explicitCommandArtifact)))) {
     return {
       command: explicitCommand,
       cwd: explicitCwd,
@@ -41,8 +44,13 @@ export async function resolveRunCommand(
     };
   }
 
-  const scriptPath = resolveMaybeRelative(await runContext.get<string>("implement_experiments.script"), workspaceRoot);
-  if (scriptPath && (await fileExists(scriptPath))) {
+  const scriptPathCandidates = [
+    resolveMaybeRelative(await runContext.get<string>("implement_experiments.script"), workspaceRoot),
+    ...resolveMaybeRelativeArray(await runContext.get<string[]>("implement_experiments.public_artifacts"), workspaceRoot)
+      .filter((filePath) => /\.(py|js|mjs|cjs|sh)$/iu.test(filePath))
+  ].filter((value): value is string => Boolean(value));
+  const scriptPath = await firstExistingPath(scriptPathCandidates);
+  if (scriptPath) {
     return {
       command: inferCommandForScript(scriptPath),
       cwd: explicitCwd,
@@ -60,7 +68,14 @@ export async function resolveRunCommand(
     if (!dir) {
       continue;
     }
-    for (const relative of ["experiment.py", "experiment.js", "experiment.sh"]) {
+    for (const relative of [
+      "experiment.py",
+      "experiment.js",
+      "experiment.sh",
+      "run_experiment.py",
+      "run_experiment.js",
+      "run_experiment.sh"
+    ]) {
       const candidate = path.join(dir, relative);
       if (await fileExists(candidate)) {
         return {
@@ -98,6 +113,17 @@ export async function resolveRunCommand(
     }
   }
 
+  if (explicitCommand) {
+    return {
+      command: explicitCommand,
+      cwd: explicitCwd,
+      source: "run_context.run_command",
+      metricsPath,
+      testCommand: testCommand || undefined,
+      testCwd: explicitCwd
+    };
+  }
+
   throw new Error(`No runnable experiment artifact found for run ${run.id}. Execute implement_experiments first.`);
 }
 
@@ -123,6 +149,55 @@ function resolveMaybeRelative(value: string | undefined, workspaceRoot: string):
     return value;
   }
   return path.join(workspaceRoot, value);
+}
+
+function resolveMaybeRelativeArray(values: string[] | undefined, workspaceRoot: string): string[] {
+  return (values || [])
+    .map((value) => resolveMaybeRelative(value, workspaceRoot))
+    .filter((value): value is string => Boolean(value));
+}
+
+async function firstExistingPath(paths: string[]): Promise<string | undefined> {
+  for (const candidate of paths) {
+    if (await fileExists(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+function resolveCommandArtifactPath(
+  command: string,
+  cwd: string,
+  workspaceRoot: string
+): string | undefined {
+  const tokens = command.match(/"[^"]*"|'[^']*'|\S+/g) || [];
+  for (const token of tokens) {
+    const normalized = token.replace(/^['"]|['"]$/g, "");
+    if (!looksLikeScriptPath(normalized)) {
+      continue;
+    }
+    const resolved = path.isAbsolute(normalized) ? normalized : path.resolve(cwd, normalized);
+    if (isPathInsideOrEqual(resolved, workspaceRoot)) {
+      return resolved;
+    }
+  }
+  return undefined;
+}
+
+function looksLikeScriptPath(value: string): boolean {
+  return (
+    value.startsWith("./") ||
+    value.startsWith("../") ||
+    value.startsWith("/") ||
+    value.includes("/") ||
+    /\.(py|js|mjs|cjs|sh)$/iu.test(value)
+  );
+}
+
+function isPathInsideOrEqual(filePath: string, parentDir: string): boolean {
+  const relative = path.relative(parentDir, filePath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 async function readPackageJson(filePath: string): Promise<{ scripts?: Record<string, string> } | undefined> {

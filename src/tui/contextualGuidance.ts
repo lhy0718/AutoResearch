@@ -119,7 +119,7 @@ export function buildContextualGuidance(input: ContextualGuidanceInput): Context
         { label: "/runs", description: localize(language, "Browse previous runs", "이전 run 둘러보기") },
         { label: statusCommand, description: localize(language, "Show the final run status", "최종 run 상태 보기") },
         { label: graphCommand, description: localize(language, "Inspect this completed workflow", "완료된 워크플로 상태 보기") },
-        { label: countCommand, description: localize(language, `Count ${run.currentNode} artifacts`, `${run.currentNode} 산출물 개수 보기`) },
+        { label: countCommand, description: describeCountAction(run.currentNode, language) },
         { label: focusCommand, description: localize(language, `Focus ${run.currentNode}`, `${run.currentNode} 포커스 이동`) },
         { label: statusPrompt, description: localize(language, "Natural-language status query", "자연어 상태 질문") },
         { label: countPrompt, description: localize(language, "Natural-language artifact count query", "자연어 산출물 개수 질문") }
@@ -153,7 +153,7 @@ export function buildContextualGuidance(input: ContextualGuidanceInput): Context
         },
         {
           label: countCommand,
-          description: localize(language, `Count ${targetNode} artifacts`, `${targetNode} 산출물 개수 보기`)
+          description: describeCountAction(targetNode, language)
         },
         jumpNextCommand
           ? {
@@ -197,11 +197,7 @@ export function buildContextualGuidance(input: ContextualGuidanceInput): Context
         },
         {
           label: countCommand,
-          description: localize(
-            language,
-            `Verify whether ${targetNode} produced any artifacts`,
-            `${targetNode} 산출물이 실제로 생겼는지 확인`
-          )
+          description: describeVerifyOutputsAction(targetNode, language)
         },
         {
           label: graphCommand,
@@ -243,11 +239,7 @@ export function buildContextualGuidance(input: ContextualGuidanceInput): Context
         },
         {
           label: countCommand,
-          description: localize(
-            language,
-            `Check whether ${targetNode} produced the missing artifacts`,
-            `${targetNode}가 필요한 산출물을 만들었는지 확인`
-          )
+          description: describeMissingOutputsAction(targetNode, language)
         },
         {
           label: graphCommand,
@@ -277,12 +269,8 @@ export function buildContextualGuidance(input: ContextualGuidanceInput): Context
       : localize(language, `Retry ${targetNode}`, `${targetNode} 재시도`);
 
     const countDescription = projection.noArtifactProgress
-      ? localize(
-          language,
-          `Confirm that ${targetNode} still has no persisted artifacts`,
-          `${targetNode} 산출물이 아직 없는지 확인`
-        )
-      : localize(language, `Count ${targetNode} artifacts`, `${targetNode} 산출물 개수 보기`);
+      ? describeNoOutputsAction(targetNode, language)
+      : describeCountAction(targetNode, language);
 
     return {
       title: localize(language, "Next actions", "다음 액션"),
@@ -353,7 +341,7 @@ export function buildContextualGuidance(input: ContextualGuidanceInput): Context
         },
         {
           label: countCommand,
-          description: localize(language, `Count ${targetNode} artifacts`, `${targetNode} 산출물 개수 보기`)
+          description: describeCountAction(targetNode, language)
         },
         {
           label: nextPrompt,
@@ -382,12 +370,8 @@ export function buildContextualGuidance(input: ContextualGuidanceInput): Context
         {
           label: countCommand,
           description: projection.noArtifactProgress
-            ? localize(
-                language,
-                `Confirm that ${targetNode} still has no persisted artifacts`,
-                `${targetNode} 산출물이 아직 없는지 확인`
-              )
-            : localize(language, `Count ${targetNode} artifacts`, `${targetNode} 산출물 개수 보기`)
+            ? describeNoOutputsAction(targetNode, language)
+            : describeCountAction(targetNode, language)
         },
         {
           label: retryCommand,
@@ -440,7 +424,7 @@ export function buildContextualGuidance(input: ContextualGuidanceInput): Context
       },
       {
         label: countCommand,
-        description: localize(language, `Count ${targetNode} artifacts`, `${targetNode} 산출물 개수 보기`)
+        description: describeCountAction(targetNode, language)
       },
       {
         label: retryCommand,
@@ -568,12 +552,148 @@ function naturalCountPromptForNode(node: RunRecord["currentNode"], language: Gui
   switch (node) {
     case "collect_papers":
       return localize(language, "how many papers were collected?", "논문 몇 개 모였어?");
+    case "analyze_papers":
+      return localize(language, "how many summaries and evidence rows are saved?", "요약과 근거가 몇 개 저장됐어?");
+    case "generate_hypotheses":
+      return localize(language, "how many hypotheses were generated?", "가설이 몇 개 생성됐어?");
+    case "design_experiments":
+      return localize(language, "show the saved experiment designs", "저장된 실험 설계를 보여줘");
+    case "implement_experiments":
+      return localize(language, "show the generated experiment files", "생성된 실험 파일을 보여줘");
+    case "run_experiments":
+      return localize(language, "show the experiment run outputs", "실험 실행 결과를 보여줘");
+    case "analyze_results":
+      return localize(language, "show the result analysis outputs", "결과 분석 산출물을 보여줘");
+    case "review":
+      return localize(language, "show the review outputs", "리뷰 산출물을 보여줘");
+    case "write_paper":
+      return localize(language, "show the paper draft outputs", "논문 초안 산출물을 보여줘");
     default:
+      return localize(language, `show outputs from ${node}`, `${node} 산출물 보여줘`);
+  }
+}
+
+function describeCountAction(node: RunRecord["currentNode"], language: GuidanceLanguage): string {
+  switch (node) {
+    case "collect_papers":
+      return localize(language, "Count collected papers", "수집된 논문 개수 보기");
+    case "analyze_papers":
+      return localize(language, "Count persisted summaries and evidence", "저장된 요약과 근거 개수 보기");
+    case "generate_hypotheses":
+      return localize(language, "Count generated hypotheses", "생성된 가설 개수 보기");
+    case "design_experiments":
+      return localize(language, "Inspect saved experiment designs", "저장된 실험 설계 확인");
+    case "implement_experiments":
+      return localize(language, "Inspect generated experiment files", "생성된 실험 파일 확인");
+    case "run_experiments":
+      return localize(language, "Inspect run outputs and metrics", "실행 결과와 메트릭 확인");
+    case "analyze_results":
+      return localize(language, "Inspect result analysis outputs", "결과 분석 산출물 확인");
+    case "review":
+      return localize(language, "Inspect review outputs", "리뷰 산출물 확인");
+    case "write_paper":
+      return localize(language, "Inspect paper draft outputs", "논문 초안 산출물 확인");
+    default:
+      return localize(language, `Inspect outputs from ${node}`, `${node} 산출물 확인`);
+  }
+}
+
+function describeVerifyOutputsAction(node: RunRecord["currentNode"], language: GuidanceLanguage): string {
+  switch (node) {
+    case "collect_papers":
+      return localize(language, "Verify whether collect_papers stored any papers", "collect_papers가 논문을 실제로 저장했는지 확인");
+    case "analyze_papers":
       return localize(
         language,
-        `show artifact count for the ${node} node`,
-        `${node} 산출물 개수 보여줘`
+        "Verify whether analyze_papers persisted any summaries or evidence",
+        "analyze_papers가 요약이나 근거를 실제로 저장했는지 확인"
       );
+    case "generate_hypotheses":
+      return localize(language, "Verify whether generate_hypotheses produced any hypotheses", "generate_hypotheses가 가설을 실제로 만들었는지 확인");
+    case "design_experiments":
+      return localize(language, "Verify whether design_experiments saved any experiment designs", "design_experiments가 실험 설계를 실제로 저장했는지 확인");
+    case "implement_experiments":
+      return localize(
+        language,
+        "Verify whether implement_experiments generated any experiment files",
+        "implement_experiments가 실험 파일을 실제로 생성했는지 확인"
+      );
+    case "run_experiments":
+      return localize(language, "Verify whether run_experiments produced any run outputs", "run_experiments가 실행 결과를 실제로 만들었는지 확인");
+    case "analyze_results":
+      return localize(language, "Verify whether analyze_results produced any result analyses", "analyze_results가 결과 분석을 실제로 만들었는지 확인");
+    case "review":
+      return localize(language, "Verify whether review produced any review outputs", "review가 리뷰 산출물을 실제로 만들었는지 확인");
+    case "write_paper":
+      return localize(language, "Verify whether write_paper produced any paper drafts", "write_paper가 논문 초안을 실제로 만들었는지 확인");
+    default:
+      return localize(language, `Verify whether ${node} produced any outputs`, `${node}가 산출물을 실제로 만들었는지 확인`);
+  }
+}
+
+function describeMissingOutputsAction(node: RunRecord["currentNode"], language: GuidanceLanguage): string {
+  switch (node) {
+    case "collect_papers":
+      return localize(language, "Check whether collect_papers stored the required papers", "collect_papers가 필요한 논문을 저장했는지 확인");
+    case "analyze_papers":
+      return localize(
+        language,
+        "Check whether analyze_papers produced the required summaries and evidence",
+        "analyze_papers가 필요한 요약과 근거를 만들었는지 확인"
+      );
+    case "generate_hypotheses":
+      return localize(language, "Check whether generate_hypotheses produced the required hypotheses", "generate_hypotheses가 필요한 가설을 만들었는지 확인");
+    case "design_experiments":
+      return localize(language, "Check whether design_experiments saved the required experiment designs", "design_experiments가 필요한 실험 설계를 저장했는지 확인");
+    case "implement_experiments":
+      return localize(
+        language,
+        "Check whether implement_experiments generated the required experiment files",
+        "implement_experiments가 필요한 실험 파일을 생성했는지 확인"
+      );
+    case "run_experiments":
+      return localize(language, "Check whether run_experiments produced the required run outputs", "run_experiments가 필요한 실행 결과를 만들었는지 확인");
+    case "analyze_results":
+      return localize(language, "Check whether analyze_results produced the required result analyses", "analyze_results가 필요한 결과 분석을 만들었는지 확인");
+    case "review":
+      return localize(language, "Check whether review produced the required review outputs", "review가 필요한 리뷰 산출물을 만들었는지 확인");
+    case "write_paper":
+      return localize(language, "Check whether write_paper produced the required paper drafts", "write_paper가 필요한 논문 초안을 만들었는지 확인");
+    default:
+      return localize(language, `Check whether ${node} produced the required outputs`, `${node}가 필요한 산출물을 만들었는지 확인`);
+  }
+}
+
+function describeNoOutputsAction(node: RunRecord["currentNode"], language: GuidanceLanguage): string {
+  switch (node) {
+    case "collect_papers":
+      return localize(language, "Confirm that collect_papers still has no stored papers", "collect_papers에 저장된 논문이 아직 없는지 확인");
+    case "analyze_papers":
+      return localize(
+        language,
+        "Confirm that analyze_papers still has no persisted summaries or evidence",
+        "analyze_papers에 저장된 요약이나 근거가 아직 없는지 확인"
+      );
+    case "generate_hypotheses":
+      return localize(language, "Confirm that generate_hypotheses still has no saved hypotheses", "generate_hypotheses에 저장된 가설이 아직 없는지 확인");
+    case "design_experiments":
+      return localize(language, "Confirm that design_experiments still has no saved experiment designs", "design_experiments에 저장된 실험 설계가 아직 없는지 확인");
+    case "implement_experiments":
+      return localize(
+        language,
+        "Confirm that implement_experiments still has no generated experiment files",
+        "implement_experiments에 생성된 실험 파일이 아직 없는지 확인"
+      );
+    case "run_experiments":
+      return localize(language, "Confirm that run_experiments still has no run outputs", "run_experiments에 실행 결과가 아직 없는지 확인");
+    case "analyze_results":
+      return localize(language, "Confirm that analyze_results still has no result analyses", "analyze_results에 결과 분석이 아직 없는지 확인");
+    case "review":
+      return localize(language, "Confirm that review still has no review outputs", "review에 리뷰 산출물이 아직 없는지 확인");
+    case "write_paper":
+      return localize(language, "Confirm that write_paper still has no paper drafts", "write_paper에 논문 초안이 아직 없는지 확인");
+    default:
+      return localize(language, `Confirm that ${node} still has no outputs`, `${node}에 산출물이 아직 없는지 확인`);
   }
 }
 

@@ -66,7 +66,6 @@ export async function publishPublicRunOutputs(
   const now = new Date().toISOString();
   const manifest = await loadPublicRunManifest(manifestPath, input.workspaceRoot, input.run);
   const previousSection = manifest.sections[input.section];
-  const sectionFiles = new Set(previousSection?.generated_files || []);
 
   for (const file of input.files) {
     const sourcePath = resolveWorkspacePath(input.workspaceRoot, file.sourcePath);
@@ -80,7 +79,6 @@ export async function publishPublicRunOutputs(
     const sourceExists = await fileExists(sourcePath);
 
     if (!sourceExists) {
-      sectionFiles.delete(targetRelativePath);
       if (await fileExists(targetPath)) {
         await fs.rm(targetPath, { force: true });
       }
@@ -91,25 +89,21 @@ export async function publishPublicRunOutputs(
     if (path.resolve(sourcePath) !== path.resolve(targetPath)) {
       await fs.copyFile(sourcePath, targetPath);
     }
-    sectionFiles.add(targetRelativePath);
   }
+  const sectionFiles = await listSectionFiles(sectionDir, outputRoot);
 
   const normalizedWorkspaceChangedFiles = normalizeWorkspaceChangedFiles(
     input.workspaceChangedFiles || [],
     input.workspaceRoot,
     outputRoot
   );
-  const mergedWorkspaceChangedFiles = new Set<string>([
-    ...manifest.workspace_changed_files,
-    ...normalizedWorkspaceChangedFiles
-  ]);
 
   manifest.sections[input.section] = {
     dir: normalizeRelativePath(path.relative(input.workspaceRoot, sectionDir)),
-    generated_files: [...sectionFiles].sort(),
+    generated_files: sectionFiles,
     updated_at: now
   };
-  manifest.workspace_changed_files = [...mergedWorkspaceChangedFiles].sort();
+  manifest.workspace_changed_files = normalizedWorkspaceChangedFiles;
   manifest.generated_files = collectGeneratedFiles(manifest.sections);
   manifest.updated_at = now;
   await writeJsonFile(manifestPath, manifest);
@@ -130,9 +124,9 @@ export async function publishPublicRunOutputs(
     sectionDirRelative: normalizeRelativePath(path.relative(input.workspaceRoot, sectionDir)),
     manifestPath,
     manifestPathRelative: normalizeRelativePath(path.relative(input.workspaceRoot, manifestPath)),
-    generatedFiles: [...sectionFiles].sort(),
-    workspaceChangedFiles: [...mergedWorkspaceChangedFiles].sort(),
-    firstPublished: (previousSection?.generated_files.length || 0) === 0 && sectionFiles.size > 0
+    generatedFiles: sectionFiles,
+    workspaceChangedFiles: normalizedWorkspaceChangedFiles,
+    firstPublished: (previousSection?.generated_files.length || 0) === 0 && sectionFiles.length > 0
   };
 }
 
@@ -187,12 +181,40 @@ function normalizeWorkspaceChangedFiles(
   workspaceRoot: string,
   outputRoot: string
 ): string[] {
+  const outputsDir = path.join(workspaceRoot, "outputs");
   return [...new Set(filePaths.map((filePath) => resolveWorkspacePath(workspaceRoot, filePath)))]
     .filter((filePath) => isPathInsideOrEqual(filePath, workspaceRoot))
     .filter((filePath) => !isPathInsideOrEqual(filePath, path.join(workspaceRoot, ".autolabos")))
+    .filter((filePath) => !isPathInsideOrEqual(filePath, outputsDir))
     .filter((filePath) => !isPathInsideOrEqual(filePath, outputRoot))
     .map((filePath) => normalizeRelativePath(path.relative(workspaceRoot, filePath)))
     .sort();
+}
+
+async function listSectionFiles(sectionDir: string, outputRoot: string): Promise<string[]> {
+  const collected = new Set<string>();
+  async function walk(currentDir: string): Promise<void> {
+    let entries: Awaited<ReturnType<typeof fs.readdir>>;
+    try {
+      entries = await fs.readdir(currentDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const absolutePath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(absolutePath);
+        continue;
+      }
+      if (!entry.isFile()) {
+        continue;
+      }
+      collected.add(normalizeRelativePath(path.relative(outputRoot, absolutePath)));
+    }
+  }
+
+  await walk(sectionDir);
+  return [...collected].sort();
 }
 
 function resolveWorkspacePath(workspaceRoot: string, filePath: string): string {

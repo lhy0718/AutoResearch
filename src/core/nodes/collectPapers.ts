@@ -89,6 +89,7 @@ interface CollectQueryAttemptMeta {
 }
 
 interface CollectEnrichmentMeta {
+  blocking: false;
   status: "not_needed" | "pending" | "completed" | "failed";
   targetCount: number;
   processedCount: number;
@@ -252,6 +253,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                   requestedQuery: normalizedRequest.requestedQuery,
                   queryAttempts,
                   enrichment: {
+                    blocking: false,
                     status: "not_needed",
                     targetCount: 0,
                     processedCount: 0
@@ -363,11 +365,13 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         enrichment:
           papersToEnrich.length > 0
             ? {
+                blocking: false,
                 status: "pending",
                 targetCount: papersToEnrich.length,
                 processedCount: 0
               }
             : {
+                blocking: false,
                 status: "not_needed",
                 targetCount: 0,
                 processedCount: 0
@@ -567,7 +571,7 @@ function normalizeCollectRequest(input: {
 
   return {
     primaryRequest: searchPlan[0].request,
-    searchPlan: searchPlan.slice(0, 6),
+    searchPlan: searchPlan.slice(0, 8),
     requestedQuery
   };
 }
@@ -645,14 +649,19 @@ function buildCollectSummary(resultMeta: CollectResultMeta): string {
 
   switch (resultMeta.enrichment.status) {
     case "pending":
-      return `${storedSummary} Deferred enrichment scheduled for ${resultMeta.enrichment.targetCount} paper(s).`;
+      return resultMeta.enrichment.processedCount > 0
+        ? `${storedSummary} Deferred enrichment continues in background for ${resultMeta.enrichment.targetCount} paper(s) (${Math.min(
+            resultMeta.enrichment.processedCount,
+            resultMeta.enrichment.targetCount
+          )}/${resultMeta.enrichment.targetCount} processed).`
+        : `${storedSummary} Deferred enrichment scheduled in background for ${resultMeta.enrichment.targetCount} paper(s).`;
     case "completed":
       return `${storedSummary} Deferred enrichment finished for ${resultMeta.enrichment.targetCount} paper(s). PDF recovered ${resultMeta.pdfRecovered}; BibTeX enriched ${resultMeta.bibtexEnriched}.`;
     case "failed":
       return `${storedSummary} Deferred enrichment failed after ${Math.min(
         resultMeta.enrichment.processedCount,
         resultMeta.enrichment.targetCount
-      )}/${resultMeta.enrichment.targetCount} paper(s): ${resultMeta.enrichment.lastError || "unknown error"}.`;
+      )}/${resultMeta.enrichment.targetCount} paper(s): ${resultMeta.enrichment.lastError || "unknown error"}. Stored corpus remains available.`;
     case "not_needed":
     default:
       return storedSummary;
@@ -765,6 +774,7 @@ async function runEnrichmentPass(input: {
       requestedQuery: input.requestedQuery,
       queryAttempts: input.queryAttempts,
       enrichment: {
+        blocking: false,
         status: "pending",
         targetCount: input.papers.length,
         processedCount: processed
@@ -1017,16 +1027,14 @@ async function syncCollectRunContext(input: {
   await input.runContextMemory.put("collect_papers.count", input.resultMeta.stored);
   await input.runContextMemory.put("collect_papers.source", "semantic_scholar");
   await input.runContextMemory.put("collect_papers.last_error", deriveCollectRunContextError(input.resultMeta));
+  await input.runContextMemory.put(
+    "collect_papers.enrichment_last_error",
+    input.resultMeta.enrichment.status === "failed" ? input.resultMeta.enrichment.lastError || null : null
+  );
 }
 
 function deriveCollectRunContextError(resultMeta: CollectResultMeta): string | null {
-  if (resultMeta.fetchError) {
-    return resultMeta.fetchError;
-  }
-  if (resultMeta.enrichment.status === "failed" && resultMeta.enrichment.lastError) {
-    return `Deferred enrichment failed: ${resultMeta.enrichment.lastError}`;
-  }
-  return null;
+  return resultMeta.fetchError || null;
 }
 
 function emptyCollectDiagnostics(): SemanticScholarSearchDiagnostics {
@@ -1198,6 +1206,7 @@ function startDetachedEnrichment(input: {
         requestedQuery: input.requestedQuery,
         queryAttempts: input.queryAttempts,
         enrichment: {
+          blocking: false,
           status: "completed",
           targetCount: input.papers.length,
           processedCount: enrichmentState.processedCount
@@ -1254,6 +1263,7 @@ function startDetachedEnrichment(input: {
         requestedQuery: input.requestedQuery,
         queryAttempts: input.queryAttempts,
         enrichment: {
+          blocking: false,
           status: "failed",
           targetCount: input.papers.length,
           processedCount: input.currentEnrichmentLogs.size,

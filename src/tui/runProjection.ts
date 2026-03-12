@@ -30,9 +30,17 @@ export interface AnalyzeProjectionHints {
   selectedFailedCount?: number;
 }
 
+export interface CheckpointProjectionHints {
+  seq?: number;
+  phase?: "before" | "after" | "fail" | "jump" | "retry";
+  createdAt?: string;
+  snapshot?: RunRecord;
+}
+
 export interface RunProjectionHints {
   collect?: CollectProjectionHints;
   analyze?: AnalyzeProjectionHints;
+  checkpoint?: CheckpointProjectionHints;
 }
 
 export interface RunDisplayProjection {
@@ -71,29 +79,41 @@ export function applyEventToRunProjection(run: RunRecord, event: AutoLabOSEvent)
         clearPendingTransition: true
       });
     case "NODE_RETRY":
-      return updateProjectedRun(run, event.node, event.timestamp, {
-        runStatus: "running",
-        nodeStatus: "running",
-        note: buildRetryNote(event),
-        clearLastError: true,
-        clearPendingTransition: true
-      });
+      return updateRetryCounter(
+        updateProjectedRun(run, event.node, event.timestamp, {
+          runStatus: "running",
+          nodeStatus: "running",
+          note: buildRetryNote(event),
+          clearLastError: true,
+          clearPendingTransition: true
+        }),
+        event.node,
+        readNumberPayload(event.payload.attempt) ?? readNumberPayload(event.payload.attempts)
+      );
     case "NODE_ROLLBACK":
-      return updateProjectedRun(run, event.node, event.timestamp, {
-        runStatus: "running",
-        nodeStatus: "running",
-        note: buildRollbackNote(event),
-        clearLastError: true,
-        clearPendingTransition: true
-      });
+      return updateRollbackCounter(
+        updateProjectedRun(run, event.node, event.timestamp, {
+          runStatus: "running",
+          nodeStatus: "running",
+          note: buildRollbackNote(event),
+          clearLastError: true,
+          clearPendingTransition: true
+        }),
+        readStringPayload(event.payload.from) as GraphNodeId | undefined,
+        readNumberPayload(event.payload.rollbackCount)
+      );
     case "NODE_FAILED":
-      return updateProjectedRun(run, event.node, event.timestamp, {
-        runStatus: "failed",
-        nodeStatus: "failed",
-        note: readStringPayload(event.payload.error),
-        lastError: readStringPayload(event.payload.error),
-        clearPendingTransition: true
-      });
+      return updateRetryCounter(
+        updateProjectedRun(run, event.node, event.timestamp, {
+          runStatus: "failed",
+          nodeStatus: "failed",
+          note: readStringPayload(event.payload.error),
+          lastError: readStringPayload(event.payload.error),
+          clearPendingTransition: true
+        }),
+        event.node,
+        readNumberPayload(event.payload.retryAttempt)
+      );
     case "BUDGET_EXCEEDED":
       return updateProjectedRun(run, event.node, event.timestamp, {
         runStatus: "failed_budget",
@@ -115,25 +135,34 @@ export function applyEventToRunProjection(run: RunRecord, event: AutoLabOSEvent)
 }
 
 export function normalizeRunForDisplay(run: RunRecord, hints?: RunProjectionHints): RunRecord {
-  const currentNode = resolveDisplayNode(run, hints);
-  const nodeStatus = run.graph.nodeStates[currentNode]?.status;
-  const runStatus = resolveDisplayRunStatus(run.status, nodeStatus, currentNode !== run.currentNode);
-  if (currentNode === run.currentNode && runStatus === run.status) {
-    return run;
+  const projected = mergeProjectedRunState(run, hints?.checkpoint?.snapshot);
+  const currentNode = resolveDisplayNode(projected, hints);
+  const nodeStatus = projected.graph.nodeStates[currentNode]?.status;
+  const runStatus = resolveDisplayRunStatus(projected.status, nodeStatus, currentNode !== projected.currentNode);
+  if (currentNode === projected.currentNode && runStatus === projected.status) {
+    return projected;
   }
 
   return {
-    ...run,
+    ...projected,
     currentNode,
     status: runStatus,
     graph: {
-      ...run.graph,
+      ...projected.graph,
       currentNode
     }
   };
 }
 
 export function resolveFailedNode(run: RunRecord): GraphNodeId {
+  if (run.graph.nodeStates[run.currentNode]?.status === "failed") {
+    return run.currentNode;
+  }
+
+  if (run.graph.currentNode !== run.currentNode && run.graph.nodeStates[run.graph.currentNode]?.status === "failed") {
+    return run.graph.currentNode;
+  }
+
   const failed = GRAPH_NODE_ORDER.filter((node) => run.graph.nodeStates[node]?.status === "failed");
   if (failed.length === 0) {
     return run.currentNode;
@@ -148,6 +177,7 @@ export function projectRunForDisplay(run: RunRecord, hints?: RunProjectionHints)
   const normalized = normalizeRunForDisplay(run, hints);
   const actionableNode = resolveActionableNode(normalized);
   const actionableState = normalized.graph.nodeStates[actionableNode];
+  const currentState = normalized.graph.nodeStates[normalized.currentNode];
   const retryCount = normalized.graph.retryCounters[actionableNode] ?? 0;
   const retryLimit = normalized.graph.retryPolicy.maxAttemptsPerNode;
   const blockedByUpstream = actionableNode !== normalized.currentNode;
@@ -170,7 +200,7 @@ export function projectRunForDisplay(run: RunRecord, hints?: RunProjectionHints)
 
   let headline: string | undefined;
   if (blockedByUpstream) {
-    headline = `${normalized.currentNode} is blocked because ${actionableNode} has ${hints?.analyze?.evidenceCount ?? 0} evidence item(s).`;
+    headline = buildBlockedByUpstreamHeadline(normalized.currentNode, actionableNode, hints);
   } else if (usageLimitBlocked && pausedRetry) {
     headline = `${actionableNode} is paused after retry ${retryCount}/${retryLimit} because a model usage limit blocked progress.`;
   } else if (usageLimitBlocked) {
@@ -194,11 +224,18 @@ export function projectRunForDisplay(run: RunRecord, hints?: RunProjectionHints)
   const detailParts: string[] = [];
   if (blockedByUpstream) {
     detailParts.push(`Retry or rerun ${actionableNode} before retrying ${normalized.currentNode}.`);
+    const upstreamIssue = currentState?.lastError || actionableState?.lastError || actionableState?.note || currentState?.note;
+    if (upstreamIssue) {
+      detailParts.push(`Latest ${actionableNode} issue: ${toOneLine(upstreamIssue)}.`);
+    }
   }
   if (staleLatestSummary && normalized.latestSummary) {
     detailParts.push(`Ignoring stale top-level summary: ${toOneLine(normalized.latestSummary)}.`);
   }
-  const analyzeSelectionDetail = buildAnalyzeSelectionDetail(hints?.analyze);
+  const analyzeSelectionDetail =
+    actionableNode === "analyze_papers" || normalized.currentNode === "analyze_papers"
+      ? buildAnalyzeSelectionDetail(hints?.analyze)
+      : undefined;
   if (analyzeSelectionDetail) {
     detailParts.push(analyzeSelectionDetail);
   }
@@ -229,6 +266,22 @@ export function projectRunForDisplay(run: RunRecord, hints?: RunProjectionHints)
     headline,
     detail: detail || undefined,
     lastError
+  };
+}
+
+export function mergeProjectedRunState(run: RunRecord, projected?: RunRecord): RunRecord {
+  if (!projected || projected.id !== run.id || !isRunStateFresher(projected, run)) {
+    return run;
+  }
+
+  return {
+    ...run,
+    currentNode: projected.currentNode,
+    status: projected.status,
+    latestSummary: projected.latestSummary,
+    nodeThreads: projected.nodeThreads,
+    updatedAt: projected.updatedAt,
+    graph: projected.graph
   };
 }
 
@@ -317,6 +370,40 @@ function updateProjectedRun(
   };
 }
 
+function updateRetryCounter(run: RunRecord, node: GraphNodeId, attempt?: number): RunRecord {
+  if (typeof attempt !== "number" || !Number.isFinite(attempt) || attempt <= 0) {
+    return run;
+  }
+
+  return {
+    ...run,
+    graph: {
+      ...run.graph,
+      retryCounters: {
+        ...run.graph.retryCounters,
+        [node]: attempt
+      }
+    }
+  };
+}
+
+function updateRollbackCounter(run: RunRecord, node: GraphNodeId | undefined, count?: number): RunRecord {
+  if (!node || !GRAPH_NODE_ORDER.includes(node) || typeof count !== "number" || !Number.isFinite(count) || count <= 0) {
+    return run;
+  }
+
+  return {
+    ...run,
+    graph: {
+      ...run.graph,
+      rollbackCounters: {
+        ...run.graph.rollbackCounters,
+        [node]: count
+      }
+    }
+  };
+}
+
 function buildJumpNote(event: AutoLabOSEvent): string {
   const mode = readStringPayload(event.payload.mode);
   const reason = readStringPayload(event.payload.reason);
@@ -383,6 +470,20 @@ function buildAnalyzeSelectionDetail(hints?: AnalyzeProjectionHints): string | u
   return parts.join(" ");
 }
 
+function buildBlockedByUpstreamHeadline(
+  currentNode: GraphNodeId,
+  actionableNode: GraphNodeId,
+  hints?: RunProjectionHints
+): string {
+  if (actionableNode === "analyze_papers" && typeof hints?.analyze?.evidenceCount === "number") {
+    return `${currentNode} is blocked because ${actionableNode} has ${hints.analyze.evidenceCount} evidence item(s).`;
+  }
+  if (actionableNode === "collect_papers" && typeof hints?.collect?.storedCount === "number") {
+    return `${currentNode} is blocked because ${actionableNode} stored ${hints.collect.storedCount} paper(s).`;
+  }
+  return `${currentNode} is blocked until ${actionableNode} is recovered.`;
+}
+
 function resolveUsageLimitDetail(values: Array<string | undefined>): string | undefined {
   for (const value of values) {
     const match = extractUsageLimitDetail(value);
@@ -413,7 +514,7 @@ function extractUpstreamDependencyNode(value: string | undefined): GraphNodeId |
   if (!text) {
     return undefined;
   }
-  const match = text.match(/from ([a-z_]+)/iu);
+  const match = text.match(/\b(?:require(?:s|d)?|need(?:s|ed)?|missing|await(?:s|ed)?|depend(?:s|ed) on)\b[\s\S]*?\bfrom ([a-z_]+)/iu);
   if (!match?.[1]) {
     return undefined;
   }
@@ -435,4 +536,22 @@ function updatedAtMs(value: string | undefined): number {
   }
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isRunStateFresher(candidate: RunRecord, reference: RunRecord): boolean {
+  const candidateCheckpointSeq = candidate.graph.checkpointSeq ?? 0;
+  const referenceCheckpointSeq = reference.graph.checkpointSeq ?? 0;
+  if (candidateCheckpointSeq !== referenceCheckpointSeq) {
+    return candidateCheckpointSeq > referenceCheckpointSeq;
+  }
+
+  const candidateUpdatedAt = updatedAtMs(candidate.updatedAt);
+  const referenceUpdatedAt = updatedAtMs(reference.updatedAt);
+  if (candidateUpdatedAt !== referenceUpdatedAt) {
+    return candidateUpdatedAt > referenceUpdatedAt;
+  }
+
+  const candidateNodeUpdatedAt = updatedAtMs(candidate.graph.nodeStates[candidate.currentNode]?.updatedAt);
+  const referenceNodeUpdatedAt = updatedAtMs(reference.graph.nodeStates[reference.currentNode]?.updatedAt);
+  return candidateNodeUpdatedAt > referenceNodeUpdatedAt;
 }

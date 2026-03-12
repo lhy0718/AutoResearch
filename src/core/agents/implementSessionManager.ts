@@ -347,9 +347,12 @@ export class ImplementSessionManager {
             workspaceRoot: this.deps.workspaceRoot
           });
           for (const item of mapped) {
+            if (item.type === "PATCH_APPLIED" && !shouldTrackPatchEvent(item.payload)) {
+              continue;
+            }
             this.deps.eventStream.emit(item);
             const fileValue = typeof item.payload.file === "string" ? item.payload.file : undefined;
-            if (fileValue) {
+            if (fileValue && item.type === "PATCH_APPLIED") {
               changedFiles.add(fileValue);
               artifacts.add(fileValue);
             }
@@ -960,9 +963,24 @@ export class ImplementSessionManager {
       }
     }
 
+    const materialized = await materializeDeclaredArtifacts({
+      changedFiles: [...params.changedFiles],
+      artifacts: [...params.artifacts],
+      explicitPublicArtifacts: [...params.publicArtifacts],
+      runDir: params.runDir,
+      publicDir: normalizedPublicDir,
+      scriptPath: normalizedScriptPath
+    });
+    replaceSetContents(params.changedFiles, materialized.changedFiles);
+    replaceSetContents(params.artifacts, materialized.artifacts);
+    replaceSetContents(params.publicArtifacts, materialized.publicArtifacts);
+    normalizedScriptPath = materialized.scriptPath;
+
     const localization =
       normalizeLocalizationResult(parsed.localization, this.deps.workspaceRoot) ||
       emptyLocalizationResult();
+    runCommand = rewriteCommandScriptPath(runCommand, originalScriptPath, normalizedScriptPath);
+    testCommand = rewriteCommandScriptPath(testCommand || "", originalScriptPath, normalizedScriptPath) || undefined;
     const verifyReport = !hasRunnableArtifact
       ? buildMissingArtifactVerifyReport(parsedResponse.isStructured)
       : {
@@ -1066,6 +1084,30 @@ export class ImplementSessionManager {
         next_action: "handoff_to_run_experiments",
         summary: "No lightweight local verification command was available."
       };
+    }
+
+    const missingArtifacts = await collectMissingVerificationArtifacts({
+      command,
+      cwd: attempt.workingDir,
+      workspaceRoot: this.deps.workspaceRoot,
+      scriptPath: attempt.scriptPath
+    });
+    if (missingArtifacts.length > 0) {
+      const report = buildMissingArtifactVerifyReport(true, {
+        command,
+        missingArtifacts,
+        workspaceRoot: this.deps.workspaceRoot
+      });
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text: report.summary
+        }
+      });
+      return report;
     }
 
     this.deps.eventStream.emit({
@@ -1420,6 +1462,79 @@ function rewriteCommandScriptPath(
   return rewritten;
 }
 
+function shouldTrackPatchEvent(payload: Record<string, unknown>): boolean {
+  const sourceEvent = typeof payload.source_event === "string" ? payload.source_event.toLowerCase() : "";
+  if (!sourceEvent) {
+    return false;
+  }
+  if (sourceEvent === "item.completed" || sourceEvent === "message.completed" || sourceEvent.endsWith(".completed")) {
+    return false;
+  }
+  return (
+    sourceEvent.includes("patch") ||
+    sourceEvent.includes("file.changed") ||
+    sourceEvent.includes("write") ||
+    sourceEvent.includes("edit")
+  );
+}
+
+async function materializeDeclaredArtifacts(params: {
+  changedFiles: string[];
+  artifacts: string[];
+  explicitPublicArtifacts: string[];
+  runDir: string;
+  publicDir: string;
+  scriptPath?: string;
+}): Promise<{
+  changedFiles: string[];
+  artifacts: string[];
+  publicArtifacts: string[];
+  scriptPath?: string;
+}> {
+  const publishedArtifacts = await publishReusableArtifacts({
+    changedFiles: params.changedFiles,
+    artifacts: params.artifacts,
+    explicitPublicArtifacts: params.explicitPublicArtifacts,
+    runDir: params.runDir,
+    publicDir: params.publicDir
+  });
+  const publicArtifactCandidates = dedupeStrings([
+    ...params.explicitPublicArtifacts,
+    ...params.changedFiles.filter((filePath) => isPathInsideOrEqual(filePath, params.publicDir)),
+    ...params.artifacts.filter((filePath) => isPathInsideOrEqual(filePath, params.publicDir)),
+    ...publishedArtifacts
+  ]);
+  let scriptPath = params.scriptPath;
+  if (scriptPath && isSubpath(scriptPath, params.runDir)) {
+    const candidate = path.join(params.publicDir, path.relative(params.runDir, scriptPath));
+    if (await fileExists(candidate)) {
+      scriptPath = candidate;
+      publicArtifactCandidates.push(candidate);
+    }
+  }
+  if (scriptPath && isPathInsideOrEqual(scriptPath, params.publicDir)) {
+    publicArtifactCandidates.push(scriptPath);
+  }
+
+  const existingChangedFiles = await filterExistingFiles([
+    ...params.changedFiles,
+    ...publishedArtifacts
+  ]);
+  const existingArtifacts = await filterExistingFiles([
+    ...params.artifacts,
+    ...publishedArtifacts,
+    ...(scriptPath ? [scriptPath] : [])
+  ]);
+  const existingPublicArtifacts = await filterExistingFiles(publicArtifactCandidates);
+
+  return {
+    changedFiles: existingChangedFiles,
+    artifacts: existingArtifacts,
+    publicArtifacts: existingPublicArtifacts,
+    scriptPath: scriptPath && (await fileExists(scriptPath)) ? scriptPath : undefined
+  };
+}
+
 async function publishReusableArtifacts(params: {
   changedFiles: string[];
   artifacts: string[];
@@ -1481,16 +1596,28 @@ function isReusablePublicArtifact(filePath: string): boolean {
   ].includes(ext);
 }
 
+async function filterExistingFiles(filePaths: string[]): Promise<string[]> {
+  const existing: string[] = [];
+  for (const filePath of dedupeStrings(filePaths)) {
+    if (filePath && (await fileExists(filePath))) {
+      existing.push(filePath);
+    }
+  }
+  return existing;
+}
+
 function collectWorkspaceChangedFiles(params: {
   changedFiles: string[];
   workspaceRoot: string;
   publicDir: string;
 }): string[] {
   const privateDir = path.join(params.workspaceRoot, ".autolabos");
+  const outputsDir = path.join(params.workspaceRoot, "outputs");
   return [...new Set(params.changedFiles.map((filePath) => normalizeStoredPath(filePath, params.workspaceRoot)))]
     .filter((filePath): filePath is string => Boolean(filePath))
     .filter((filePath) => isPathInsideOrEqual(filePath, params.workspaceRoot))
     .filter((filePath) => !isPathInsideOrEqual(filePath, privateDir))
+    .filter((filePath) => !isPathInsideOrEqual(filePath, outputsDir))
     .filter((filePath) => !isPathInsideOrEqual(filePath, params.publicDir))
     .map((filePath) => path.relative(params.workspaceRoot, filePath).replace(/\\/g, "/"))
     .sort();
@@ -1525,6 +1652,13 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+function replaceSetContents(target: Set<string>, values: string[]): void {
+  target.clear();
+  for (const value of values) {
+    target.add(value);
+  }
 }
 
 function normalizeLocalizationResult(
@@ -2019,7 +2153,31 @@ function deriveFallbackTestCommand(scriptPath: string | undefined): string | und
   return undefined;
 }
 
-function buildMissingArtifactVerifyReport(isStructured: boolean): VerifyReport {
+function buildMissingArtifactVerifyReport(
+  isStructured: boolean,
+  options?: {
+    command?: string;
+    missingArtifacts?: string[];
+    workspaceRoot?: string;
+  }
+): VerifyReport {
+  const missingArtifacts = options?.missingArtifacts || [];
+  if (missingArtifacts.length > 0) {
+    const renderedMissingArtifacts = missingArtifacts
+      .map((filePath) => formatArtifactPath(filePath, options?.workspaceRoot))
+      .join(", ");
+    const summary = options?.command
+      ? `Local verification could not start because required artifact(s) were not materialized for ${options.command}: ${renderedMissingArtifacts}`
+      : `Implementer referenced artifact(s) that were not materialized: ${renderedMissingArtifacts}`;
+    return {
+      status: "fail",
+      failure_type: "spec",
+      next_action: "retry_patch",
+      command: options?.command,
+      stderr_excerpt: `Missing artifact(s): ${renderedMissingArtifacts}`,
+      summary
+    };
+  }
   return {
     status: "fail",
     failure_type: "spec",
@@ -2028,6 +2186,61 @@ function buildMissingArtifactVerifyReport(isStructured: boolean): VerifyReport {
       ? "Implementer did not return a runnable artifact or run_command."
       : "Implementer did not return the required JSON result or any runnable artifact."
   };
+}
+
+async function collectMissingVerificationArtifacts(params: {
+  command: string;
+  cwd: string;
+  workspaceRoot: string;
+  scriptPath?: string;
+}): Promise<string[]> {
+  const candidates = dedupeStrings([
+    ...(params.scriptPath ? [params.scriptPath] : []),
+    ...extractWorkspacePathsFromCommand(params.command, params.cwd, params.workspaceRoot)
+  ]);
+  const missing: string[] = [];
+  for (const candidate of candidates) {
+    if (!(await fileExists(candidate))) {
+      missing.push(candidate);
+    }
+  }
+  return missing.sort();
+}
+
+function extractWorkspacePathsFromCommand(command: string, cwd: string, workspaceRoot: string): string[] {
+  const tokens = command.match(/"[^"]*"|'[^']*'|\S+/g) || [];
+  const paths = new Set<string>();
+  for (const token of tokens) {
+    const normalized = token.replace(/^['"]|['"]$/g, "");
+    if (!looksLikeWorkspacePath(normalized)) {
+      continue;
+    }
+    const resolved = path.isAbsolute(normalized) ? normalized : path.resolve(cwd, normalized);
+    if (isPathInsideOrEqual(resolved, workspaceRoot)) {
+      paths.add(resolved);
+    }
+  }
+  return [...paths];
+}
+
+function looksLikeWorkspacePath(value: string): boolean {
+  if (/^[a-z]+:\/\//iu.test(value)) {
+    return false;
+  }
+  return (
+    value.startsWith("./") ||
+    value.startsWith("../") ||
+    value.startsWith("/") ||
+    value.includes("/") ||
+    /\.(py|js|mjs|cjs|sh|json|yaml|yml|md|txt|toml|cfg|ini)$/iu.test(value)
+  );
+}
+
+function formatArtifactPath(filePath: string, workspaceRoot?: string): string {
+  if (workspaceRoot && isPathInsideOrEqual(filePath, workspaceRoot)) {
+    return path.relative(workspaceRoot, filePath).replace(/\\/g, "/");
+  }
+  return filePath.replace(/\\/g, "/");
 }
 
 function summarizeVerification(

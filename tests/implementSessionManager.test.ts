@@ -23,6 +23,59 @@ afterEach(() => {
   }
 });
 
+function createTestConfig() {
+  return {
+    version: 1,
+    project_name: "test",
+    providers: {
+      llm_mode: "codex_chatgpt_only" as const,
+      codex: {
+        model: "gpt-5.4",
+        chat_model: "gpt-5.4",
+        experiment_model: "gpt-5.4",
+        pdf_model: "gpt-5.4",
+        reasoning_effort: "xhigh" as const,
+        chat_reasoning_effort: "low" as const,
+        experiment_reasoning_effort: "xhigh" as const,
+        pdf_reasoning_effort: "xhigh" as const,
+        command_reasoning_effort: "low" as const,
+        fast_mode: false,
+        chat_fast_mode: false,
+        experiment_fast_mode: false,
+        pdf_fast_mode: false,
+        auth_required: true
+      },
+      openai: {
+        model: "gpt-5.4",
+        chat_model: "gpt-5.4",
+        experiment_model: "gpt-5.4",
+        pdf_model: "gpt-5.4",
+        reasoning_effort: "medium" as const,
+        chat_reasoning_effort: "low" as const,
+        experiment_reasoning_effort: "medium" as const,
+        pdf_reasoning_effort: "medium" as const,
+        command_reasoning_effort: "low" as const,
+        api_key_required: true
+      }
+    },
+    analysis: {
+      pdf_mode: "codex_text_image_hybrid" as const,
+      responses_model: "gpt-5.4",
+      responses_reasoning_effort: "xhigh" as const
+    },
+    papers: { max_results: 200, per_second_limit: 1 },
+    research: {
+      default_topic: "Multi-agent collaboration",
+      default_constraints: ["recent papers"],
+      default_objective_metric: "reproducibility"
+    },
+    workflow: { mode: "agent_approval" as const, wizard_enabled: true },
+    experiments: { runner: "local_python" as const, timeout_sec: 3600, allow_network: false },
+    paper: { template: "acl" as const, build_pdf: true, latex_engine: "auto_install" as const },
+    paths: { runs_dir: ".autolabos/runs", logs_dir: ".autolabos/logs" }
+  };
+}
+
 describe("ImplementSessionManager", () => {
   it("persists thread id and run command from Codex session", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-session-"));
@@ -289,6 +342,145 @@ describe("ImplementSessionManager", () => {
     expect(publicManifest.workspace_changed_files).toContain("src/runner_support.py");
     expect(publicManifest.sections?.experiment?.generated_files).toContain("experiment/workspace_changed_files.json");
     expect(existsSync(path.join(path.dirname(publicDir), "src", "runner_support.py"))).toBe(false);
+  });
+
+  it("materializes run-dir artifacts into the public experiment directory before local verification", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-materialize-"));
+    tempDirs.push(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Materialize Verification Run",
+      topic: "agent reasoning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const privateScriptPath = path.join(runDir, "run_tabular_baselines.py");
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "run_tabular_baselines.py");
+    const codex = {
+      runTurnStream: async ({ onEvent }: { onEvent?: (event: Record<string, unknown>) => void }) => {
+        writeFileSync(privateScriptPath, "print('ok')\n", "utf8");
+        onEvent?.({ type: "file.changed", path: privateScriptPath });
+        return {
+          threadId: "thread-impl-materialize",
+          finalText: JSON.stringify({
+            summary: "Implemented the runnable experiment script in the private run directory.",
+            run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+            changed_files: [privateScriptPath],
+            artifacts: [privateScriptPath],
+            public_artifacts: [publicScriptPath],
+            script_path: publicScriptPath,
+            metrics_path: path.join(runDir, "metrics.json"),
+            experiment_mode: "real_execution"
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexCliClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const publicManifest = JSON.parse(readFileSync(buildPublicRunManifestPath(workspace, run), "utf8")) as {
+      generated_files: string[];
+      sections?: {
+        experiment?: {
+          generated_files: string[];
+        };
+      };
+    };
+
+    expect(result.verifyReport).toMatchObject({ status: "pass" });
+    expect(result.scriptPath).toBe(publicScriptPath);
+    expect(result.publicArtifacts).toContain(publicScriptPath);
+    expect(existsSync(publicScriptPath)).toBe(true);
+    expect(publicManifest.generated_files).toContain("experiment/run_tabular_baselines.py");
+    expect(publicManifest.sections?.experiment?.generated_files).toContain("experiment/run_tabular_baselines.py");
+  });
+
+  it("fails before local verification when the claimed artifact was never materialized", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-missing-artifact-"));
+    tempDirs.push(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Missing Artifact Run",
+      topic: "agent reasoning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "run_tabular_baselines.py");
+    const eventStream = new InMemoryEventStream();
+    const codex = {
+      runTurnStream: async () => ({
+        threadId: "thread-impl-missing-artifact",
+        finalText: JSON.stringify({
+          summary: "Claimed the experiment artifact path, but nothing was written.",
+          run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
+          test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+          changed_files: [publicScriptPath],
+          public_artifacts: [publicScriptPath],
+          script_path: publicScriptPath,
+          metrics_path: path.join(runDir, "metrics.json"),
+          experiment_mode: "real_execution"
+        }),
+        events: []
+      })
+    } as unknown as CodexCliClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream,
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await expect(manager.run(run)).rejects.toThrow("Local verification could not start because required artifact(s) were not materialized");
+
+    const verifyReport = await memory.get<{ status: string; failure_type: string; summary: string }>(
+      "implement_experiments.verify_report"
+    );
+    const publicManifest = JSON.parse(readFileSync(buildPublicRunManifestPath(workspace, run), "utf8")) as {
+      generated_files: string[];
+      workspace_changed_files: string[];
+    };
+
+    expect(verifyReport).toMatchObject({
+      status: "fail",
+      failure_type: "spec"
+    });
+    expect(verifyReport?.summary).toContain("run_tabular_baselines.py");
+    expect(await memory.get<string[]>("implement_experiments.public_artifacts")).not.toContain(publicScriptPath);
+    expect(publicManifest.generated_files).not.toContain("experiment/run_tabular_baselines.py");
+    expect(publicManifest.workspace_changed_files).toEqual([]);
+    expect(eventStream.history().some((event) => event.type === "PATCH_APPLIED")).toBe(false);
   });
 
   it("emits coalesced intermediate Codex output", async () => {

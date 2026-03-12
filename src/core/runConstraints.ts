@@ -245,11 +245,10 @@ export function buildLiteratureQueryCandidates(input: {
   const strippedRunTopic = stripLiteratureConstraintPhrases(runTopic);
 
   pushCandidate(requested, "requested_query");
-  pushCandidate(strippedRequested, "constraint_stripped");
-
   pushCandidate(briefTopic, "brief_topic");
-  pushCandidate(strippedBriefTopic, "constraint_stripped");
   pushCandidate(runTopic, "run_topic");
+  pushCandidate(strippedRequested, "constraint_stripped");
+  pushCandidate(strippedBriefTopic, "constraint_stripped");
   pushCandidate(strippedRunTopic, "constraint_stripped");
   pushCandidate(
     buildKeywordAnchorQuery(strippedRequested || strippedBriefTopic || briefTopic || strippedRunTopic || runTopic),

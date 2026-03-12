@@ -22,6 +22,7 @@ import {
 } from "../analysis/paperText.js";
 import {
   AnalysisSelectionRequest,
+  buildSelectionFingerprint,
   buildSelectionRequestFingerprint,
   DeterministicScoreBreakdown,
   normalizeAnalysisSelectionRequest,
@@ -84,17 +85,102 @@ interface AnalysisManifestEntry {
 
 const MAX_AUTO_SELECTION_EXPANSIONS = 2;
 const DEFAULT_SAFE_ANALYSIS_TOP_N = 30;
+const MIN_SELECTION_GUARD_ANCHORS = 2;
+
+const SELECTION_QUALITY_STOPWORDS = new Set([
+  "a",
+  "an",
+  "analysis",
+  "and",
+  "approach",
+  "benchmark",
+  "benchmarks",
+  "comparison",
+  "comparisons",
+  "dataset",
+  "datasets",
+  "evaluation",
+  "for",
+  "from",
+  "in",
+  "method",
+  "methods",
+  "of",
+  "on",
+  "paper",
+  "public",
+  "research",
+  "results",
+  "small",
+  "study",
+  "task",
+  "tasks",
+  "the",
+  "toward",
+  "using",
+  "with"
+]);
+
+const SELECTION_QUALITY_GENERIC_TOKENS = new Set([
+  "classification",
+  "classifications",
+  "classifier",
+  "classifiers",
+  "data",
+  "dataset",
+  "datasets",
+  "deep",
+  "learning",
+  "machine",
+  "model",
+  "models",
+  "prediction",
+  "predictions",
+  "predictive",
+  "system",
+  "systems"
+]);
 
 interface LoadedAnalysisSelectionRequest {
   request: AnalysisSelectionRequest;
   autoDefaultReason?: string;
 }
 
+interface AnalysisQuarantineRow {
+  paper_id: string;
+  title: string;
+  reason: string;
+  source_type: "full_text" | "abstract";
+  analysis_mode: "codex_text_image_hybrid" | "responses_api_pdf";
+  fallback_reason?: string;
+  summary_preview?: string;
+  source_excerpt?: string;
+  createdAt: string;
+}
+
 interface SelectedFailureSummary {
   failedEntries: AnalysisManifestEntry[];
   usageLimitEntries: AnalysisManifestEntry[];
   environmentBlockedEntries: AnalysisManifestEntry[];
+  sourceMismatchEntries: AnalysisManifestEntry[];
   cleanedMessages: string[];
+}
+
+interface SelectionQualityGuardResult {
+  selection: PaperSelectionResult;
+  applied: boolean;
+  droppedPaperIds: string[];
+  addedPaperIds: string[];
+  reason?: string;
+}
+
+interface SelectionRetargetResult {
+  manifest: AnalysisManifest;
+  summaryRows: PaperSummaryRow[];
+  evidenceRows: PaperEvidenceRow[];
+  preservedCompletedPaperIds: string[];
+  droppedPaperIds: string[];
+  logMessage: string;
 }
 
 export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandler {
@@ -154,7 +240,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           corpusRows
         );
 
-        const selection = reuseCachedSelection
+        const rawSelection = reuseCachedSelection
           ? restoreSelectionFromManifest(existingManifest as AnalysisManifest, corpusRows)
           : await (async () => {
               emitLog(
@@ -172,6 +258,12 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                 abortSignal
               });
             })();
+        const selectionGuard = applySelectionQualitySafeguards({
+          selection: rawSelection,
+          runTitle: run.title,
+          runTopic: run.topic
+        });
+        const selection = selectionGuard.selection;
 
         if (existingManifest && reuseCachedSelection) {
           emitLog(
@@ -179,6 +271,35 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
               ? `Reusing cached paper rerank from analysis_manifest.json for top ${request.topN}; skipping a new LLM rerank.`
               : "Reusing cached paper selection from analysis_manifest.json."
           );
+        }
+        if (selectionGuard.applied && selectionGuard.reason) {
+          emitLog(selectionGuard.reason);
+        }
+        if (rawSelection.selectedPaperIds.length > 0 && selection.selectedPaperIds.length === 0) {
+          emitLog(
+            `Selection quality safeguard removed all ${rawSelection.selectedPaperIds.length} initially selected paper(s); pausing for manual review instead of analyzing an off-topic set.`
+          );
+          return {
+            status: "success",
+            summary:
+              request.selectionMode === "top_n" && request.topN
+                ? `analyze_papers paused because the top ${request.topN} selection candidates did not match the research-specific anchors strongly enough after fallback safeguards.`
+                : "analyze_papers paused because the selected papers did not match the research-specific anchors strongly enough after fallback safeguards.",
+            needsApproval: true,
+            toolCallsUsed: 0,
+            transitionRecommendation: createAnalyzePapersManualReviewRecommendation({
+              runId: run.id,
+              reason:
+                "analyze_papers rejected the current selected paper set because the fallback/off-topic safeguard found no candidate that matched the research-specific anchors strongly enough.",
+              confidence: 0.95,
+              evidence: [
+                `${rawSelection.selectedPaperIds.length} initially selected paper(s) were filtered by the selection quality guard.`,
+                selectionGuard.reason || "No guard reason recorded.",
+                `Research title/topic: ${run.title || run.topic}`
+              ],
+              suggestedCommands: [`/agent run analyze_papers ${run.id}`, "/model"]
+            })
+          };
         }
 
         deps.eventStream.emit({
@@ -228,8 +349,34 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         const canExtendExistingManifest = Boolean(
           existingManifest && canExtendManifestForExpandedSelection(existingManifest, selection, analysisFingerprint)
         );
+        const canRetargetExistingManifest = Boolean(
+          existingManifest &&
+            canRetargetManifestForSelectionChange(
+              existingManifest,
+              selection,
+              analysisFingerprint,
+              selectionRequestFingerprint,
+              corpusFingerprint
+            )
+        );
         let existingSummaryRows = await readSummaryRows(summaryPath);
         let existingEvidenceRows = await readEvidenceRows(evidencePath);
+        const retargetedSelection =
+          canRetargetExistingManifest && existingManifest
+            ? retargetManifestForSelectionChange(
+                existingManifest,
+                selection,
+                existingSummaryRows,
+                existingEvidenceRows,
+                analysisFingerprint,
+                selectionRequestFingerprint,
+                corpusFingerprint
+              )
+            : undefined;
+        if (retargetedSelection) {
+          existingSummaryRows = retargetedSelection.summaryRows;
+          existingEvidenceRows = retargetedSelection.evidenceRows;
+        }
         const resetReason =
           existingManifest && existingManifest.selectionFingerprint !== selection.selectionFingerprint
             ? "selection_changed"
@@ -253,6 +400,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           emitLog(preservedSelectionRegression.logMessage);
           const progress = buildAnalysisProgress(existingSummaryRows, existingEvidenceRows);
           await syncAnalysisProgress(runContextMemory, {
+            runContextPath: run.memoryRefs.runContextPath,
             summaryRows: existingSummaryRows,
             evidenceRows: existingEvidenceRows,
             selectedCount: existingManifest?.selectedPaperIds.length ?? progress.summaryRows.length,
@@ -285,7 +433,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                   selectionRequestFingerprint,
                   corpusFingerprint
                 )
-              : undefined;
+              : retargetedSelection?.manifest;
 
         if (!manifest && !existingManifest && selection.request.selectionMode === "all") {
           manifest = await bootstrapManifestFromExistingOutputs(
@@ -317,6 +465,11 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             `Expanding analysis selection from top ${existingManifest.selectedPaperIds.length} to top ${selection.selectedPaperIds.length}; preserving completed analyses and queueing only the new papers.`
           );
           await writeJsonFile(manifestPath, manifest);
+        } else if (retargetedSelection) {
+          emitLog(retargetedSelection.logMessage);
+          await appendJsonl(run, "paper_summaries.jsonl", existingSummaryRows);
+          await appendJsonl(run, "evidence_store.jsonl", existingEvidenceRows);
+          await writeJsonFile(manifestPath, manifest);
         }
 
         const reconciledState = reconcileManifestWithOutputs(manifest, existingSummaryRows, existingEvidenceRows);
@@ -336,11 +489,24 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         let summaryRowsState = reconciledState.summaryRows;
         let evidenceRowsState = reconciledState.evidenceRows;
         await syncAnalysisProgress(runContextMemory, {
+          runContextPath: run.memoryRefs.runContextPath,
           summaryRows: summaryRowsState,
           evidenceRows: evidenceRowsState,
           selectedCount: selection.selectedPaperIds.length,
           totalCandidates: selection.totalCandidates,
           selectionFingerprint: selection.selectionFingerprint
+        });
+        await syncAnalyzeRunRecord({
+          runStore: deps.runStore,
+          runId: run.id,
+          summary: buildAnalyzeProgressSummary({
+            request,
+            selectedCount: selection.selectedPaperIds.length,
+            totalCandidates: selection.totalCandidates,
+            progress: buildAnalysisProgress(summaryRowsState, evidenceRowsState),
+            failedCount: 0,
+            analysisMode
+          })
         });
 
         const pendingRows = selectedRows.filter((row) => manifest!.papers[row.paper_id]?.status !== "completed");
@@ -386,6 +552,8 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         let analysisModeUsed: "responses_api_pdf" | "codex_text_image_hybrid" = useResponsesPdf
           ? "responses_api_pdf"
           : "codex_text_image_hybrid";
+        let analysisAttempts = 0;
+        let quarantineRecord: AnalysisQuarantineRow | undefined;
 
         emitLog(
           useResponsesPdf
@@ -402,6 +570,12 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         try {
           const sourceMismatchError = validateResolvedSourceIdentity(row, source);
           if (sourceMismatchError) {
+            quarantineRecord = buildAnalysisQuarantineRow({
+              paper: row,
+              source,
+              analysisMode: analysisModeUsed,
+              reason: sourceMismatchError
+            });
             throw new Error(sourceMismatchError);
           }
 
@@ -434,6 +608,16 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                 onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
               });
               analysisModeUsed = "codex_text_image_hybrid";
+              const fallbackSourceMismatchError = validateResolvedSourceIdentity(row, source);
+              if (fallbackSourceMismatchError) {
+                quarantineRecord = buildAnalysisQuarantineRow({
+                  paper: row,
+                  source,
+                  analysisMode: analysisModeUsed,
+                  reason: fallbackSourceMismatchError
+                });
+                throw new Error(fallbackSourceMismatchError);
+              }
               emitLog(
                 source.sourceType === "full_text"
                   ? source.pageImagePaths && source.pageImagePaths.length > 0
@@ -462,14 +646,30 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
               onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
             });
           }
+          analysisAttempts = analysis.attempts;
+          const analysisMismatchError = validateAnalysisBeforePersist(row, source, analysis);
+          if (analysisMismatchError) {
+            quarantineRecord = buildAnalysisQuarantineRow({
+              paper: row,
+              source,
+              analysis,
+              analysisMode: analysisModeUsed,
+              reason: analysisMismatchError
+            });
+            throw new Error(analysisMismatchError);
+          }
 
           await persistQueue.run(async () => {
-            await appendJsonlItems(run, "paper_summaries.jsonl", [analysis.summaryRow]);
-            await appendJsonlItems(run, "evidence_store.jsonl", analysis.evidenceRows);
             const structureSignals = analyzeStructureSignals(source.text);
+            const nextSummaryRowsState = replaceSummaryRow(summaryRowsState, analysis.summaryRow);
+            const nextEvidenceRowsState = replaceEvidenceRowsForPaper(evidenceRowsState, row.paper_id, analysis.evidenceRows);
+            const nextManifest: AnalysisManifest = {
+              ...manifest,
+              papers: { ...manifest.papers }
+            };
 
             const manifestEntry = manifest.papers[row.paper_id];
-            manifest.papers[row.paper_id] = {
+            nextManifest.papers[row.paper_id] = {
               ...manifestEntry,
               paper_id: row.paper_id,
               title: row.title,
@@ -492,17 +692,33 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
               updatedAt: new Date().toISOString(),
               completedAt: new Date().toISOString()
             };
-            manifest.updatedAt = new Date().toISOString();
-            await writeJsonFile(manifestPath, manifest);
-            summaryRowsState = replaceSummaryRow(summaryRowsState, analysis.summaryRow);
-            evidenceRowsState = replaceEvidenceRowsForPaper(evidenceRowsState, row.paper_id, analysis.evidenceRows);
+            nextManifest.updatedAt = new Date().toISOString();
+            await appendJsonl(run, "paper_summaries.jsonl", nextSummaryRowsState);
+            await appendJsonl(run, "evidence_store.jsonl", nextEvidenceRowsState);
+            await writeJsonFile(manifestPath, nextManifest);
             await syncAnalysisProgress(runContextMemory, {
-              summaryRows: summaryRowsState,
-              evidenceRows: evidenceRowsState,
+              runContextPath: run.memoryRefs.runContextPath,
+              summaryRows: nextSummaryRowsState,
+              evidenceRows: nextEvidenceRowsState,
               selectedCount: selection.selectedPaperIds.length,
               totalCandidates: selection.totalCandidates,
               selectionFingerprint: selection.selectionFingerprint
             });
+            await syncAnalyzeRunRecord({
+              runStore: deps.runStore,
+              runId: run.id,
+              summary: buildAnalyzeProgressSummary({
+                request,
+                selectedCount: selection.selectedPaperIds.length,
+                totalCandidates: selection.totalCandidates,
+                progress: buildAnalysisProgress(nextSummaryRowsState, nextEvidenceRowsState),
+                failedCount,
+                analysisMode
+              })
+            });
+            manifest = nextManifest;
+            summaryRowsState = nextSummaryRowsState;
+            evidenceRowsState = nextEvidenceRowsState;
             emitLog(
               `Persisted analysis outputs for "${row.title}" (1 summary row, ${analysis.evidenceRows.length} evidence row(s)).`
             );
@@ -516,6 +732,9 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           failedCount += 1;
           const message = error instanceof Error ? error.message : String(error);
           await persistQueue.run(async () => {
+            if (quarantineRecord) {
+              await appendJsonlItems(run, "analysis_quarantine.jsonl", [quarantineRecord]);
+            }
             const manifestEntry = manifest.papers[row.paper_id];
             manifest.papers[row.paper_id] = {
               ...manifestEntry,
@@ -526,7 +745,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
               source_type: source.sourceType,
               summary_count: 0,
               evidence_count: 0,
-              analysis_attempts: 2,
+              analysis_attempts: analysisAttempts,
               analysis_mode: analysisModeUsed,
               pdf_url: source.pdfUrl,
               pdf_cache_path: source.pdfCachePath,
@@ -541,6 +760,18 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             };
             manifest.updatedAt = new Date().toISOString();
             await writeJsonFile(manifestPath, manifest);
+            await syncAnalyzeRunRecord({
+              runStore: deps.runStore,
+              runId: run.id,
+              summary: buildAnalyzeProgressSummary({
+                request,
+                selectedCount: selection.selectedPaperIds.length,
+                totalCandidates: selection.totalCandidates,
+                progress: buildAnalysisProgress(summaryRowsState, evidenceRowsState),
+                failedCount,
+                analysisMode
+              })
+            });
             deps.eventStream.emit({
               type: "TEST_FAILED",
               runId: run.id,
@@ -558,6 +789,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
 
         const progress = buildAnalysisProgress(summaryRowsState, evidenceRowsState);
         await syncAnalysisProgress(runContextMemory, {
+          runContextPath: run.memoryRefs.runContextPath,
           summaryRows: summaryRowsState,
           evidenceRows: evidenceRowsState,
           selectedCount: selection.selectedPaperIds.length,
@@ -610,6 +842,48 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                   progress.evidenceRows.length > 0
                     ? [`/agent run generate_hypotheses ${run.id}`, `/model`, `/agent run analyze_papers ${run.id}`]
                     : ["/model", `/agent run analyze_papers ${run.id}`]
+              })
+            };
+          }
+
+          if (
+            failureSummary.sourceMismatchEntries.length > 0 &&
+            failureSummary.sourceMismatchEntries.length === failureSummary.failedEntries.length
+          ) {
+            const blockedCount = failureSummary.sourceMismatchEntries.length;
+            const sampleMessage = failureSummary.cleanedMessages[0] || "Resolved source content did not match the requested paper.";
+            emitLog(
+              `Detected non-retriable source-identity mismatch for ${blockedCount} selected paper(s). Pausing instead of auto-retrying the same contaminated analysis inputs.`
+            );
+            return {
+              status: "success",
+              summary:
+                progress.evidenceRows.length > 0
+                  ? request.selectionMode === "top_n" && request.topN
+                    ? `Preserved partial analysis for top ${selection.selectedPaperIds.length}/${selection.totalCandidates} ranked papers while quarantining ${blockedCount} source-mismatched paper(s).`
+                    : `Preserved partial analysis while quarantining ${blockedCount} source-mismatched paper(s).`
+                  : request.selectionMode === "top_n" && request.topN
+                    ? `analyze_papers paused because ${blockedCount}/${selection.selectedPaperIds.length} selected paper(s) failed source-identity validation before any summaries or evidence were persisted.`
+                    : `analyze_papers paused because ${blockedCount} selected paper(s) failed source-identity validation before any summaries or evidence were persisted.`,
+              needsApproval: true,
+              toolCallsUsed: Math.max(1, pendingRows.length),
+              transitionRecommendation: createAnalyzePapersManualReviewRecommendation({
+                runId: run.id,
+                reason:
+                  "analyze_papers quarantined one or more paper analyses because the resolved source content did not match the requested paper identity, so auto-retrying would likely repeat the same contamination.",
+                confidence: 0.97,
+                targetNode: progress.evidenceRows.length > 0 ? "generate_hypotheses" : undefined,
+                evidence: [
+                  `${blockedCount} selected paper(s) failed source-identity validation.`,
+                  progress.evidenceRows.length > 0
+                    ? `${progress.summaryRows.length} summary row(s) and ${progress.evidenceRows.length} evidence item(s) remain safely persisted.`
+                    : "No summaries or evidence were persisted for the quarantined papers.",
+                  sampleMessage
+                ],
+                suggestedCommands:
+                  progress.evidenceRows.length > 0
+                    ? [`/agent run generate_hypotheses ${run.id}`, `/agent run analyze_papers ${run.id}`]
+                    : [`/agent run analyze_papers ${run.id}`, "/model"]
               })
             };
           }
@@ -1079,6 +1353,80 @@ function extendManifestForExpandedSelection(
   return fresh;
 }
 
+function canRetargetManifestForSelectionChange(
+  existingManifest: AnalysisManifest,
+  selection: PaperSelectionResult,
+  analysisFingerprint: string,
+  selectionRequestFingerprint: string,
+  corpusFingerprint: string
+): boolean {
+  return (
+    existingManifest.analysisFingerprint === analysisFingerprint &&
+    existingManifest.selectionRequestFingerprint === selectionRequestFingerprint &&
+    existingManifest.corpusFingerprint === corpusFingerprint &&
+    existingManifest.selectionFingerprint !== selection.selectionFingerprint
+  );
+}
+
+function retargetManifestForSelectionChange(
+  existingManifest: AnalysisManifest,
+  selection: PaperSelectionResult,
+  summaryRows: PaperSummaryRow[],
+  evidenceRows: PaperEvidenceRow[],
+  analysisFingerprint: string,
+  selectionRequestFingerprint: string,
+  corpusFingerprint: string
+): SelectionRetargetResult {
+  const nextManifest = createFreshManifest(selection, analysisFingerprint, selectionRequestFingerprint, corpusFingerprint);
+  const nextSelectedSet = new Set(selection.selectedPaperIds);
+  const preservedCompletedPaperIds: string[] = [];
+
+  for (const [paperId, nextEntry] of Object.entries(nextManifest.papers)) {
+    const previousEntry = existingManifest.papers[paperId];
+    if (!nextEntry.selected || !previousEntry?.selected) {
+      continue;
+    }
+    nextManifest.papers[paperId] = {
+      ...nextEntry,
+      status: previousEntry.status,
+      source_type: previousEntry.source_type,
+      summary_count: previousEntry.summary_count,
+      evidence_count: previousEntry.evidence_count,
+      analysis_attempts: previousEntry.analysis_attempts,
+      analysis_mode: previousEntry.analysis_mode,
+      pdf_url: previousEntry.pdf_url,
+      pdf_cache_path: previousEntry.pdf_cache_path,
+      text_cache_path: previousEntry.text_cache_path,
+      fallback_reason: previousEntry.fallback_reason,
+      last_error: previousEntry.last_error,
+      has_table_references: previousEntry.has_table_references,
+      table_reference_count: previousEntry.table_reference_count,
+      has_figure_references: previousEntry.has_figure_references,
+      figure_reference_count: previousEntry.figure_reference_count,
+      updatedAt: previousEntry.updatedAt,
+      completedAt: previousEntry.completedAt
+    };
+    if (previousEntry.status === "completed") {
+      preservedCompletedPaperIds.push(paperId);
+    }
+  }
+
+  const nextSummaryRows = summaryRows.filter((row) => nextSelectedSet.has(row.paper_id));
+  const nextEvidenceRows = evidenceRows.filter((row) => nextSelectedSet.has(row.paper_id));
+  const droppedPaperIds = existingManifest.selectedPaperIds.filter((paperId) => !nextSelectedSet.has(paperId));
+
+  return {
+    manifest: nextManifest,
+    summaryRows: nextSummaryRows,
+    evidenceRows: nextEvidenceRows,
+    preservedCompletedPaperIds,
+    droppedPaperIds,
+    logMessage:
+      `Analysis selection changed under the same request/corpus fingerprint. ` +
+      `Preserving ${preservedCompletedPaperIds.length} completed paper(s) and pruning ${droppedPaperIds.length} deselected paper(s) instead of resetting all artifacts.`
+  };
+}
+
 function createFreshManifest(
   selection: PaperSelectionResult,
   analysisFingerprint: string,
@@ -1221,9 +1569,39 @@ function buildAnalysisProgress(summaryRows: PaperSummaryRow[], evidenceRows: Pap
   };
 }
 
+function buildAnalyzeProgressSummary(input: {
+  request: AnalysisSelectionRequest;
+  selectedCount: number;
+  totalCandidates: number;
+  progress: ReturnType<typeof buildAnalysisProgress>;
+  failedCount: number;
+  analysisMode: string;
+}): string {
+  if (input.failedCount > 0) {
+    if (input.request.selectionMode === "top_n" && input.request.topN && input.selectedCount > 0 && input.totalCandidates > 0) {
+      return `Analyzed ${input.progress.summaryRows.length}/${input.selectedCount} selected papers from ${input.totalCandidates} candidates; ${input.failedCount} failed and can be retried.`;
+    }
+    return `Analyzed ${input.progress.summaryRows.length} papers, ${input.failedCount} failed and can be retried.`;
+  }
+
+  if (input.progress.summaryRows.length === 0 && input.progress.evidenceRows.length === 0) {
+    if (input.request.selectionMode === "top_n" && input.request.topN && input.selectedCount > 0 && input.totalCandidates > 0) {
+      return `Selected top ${input.selectedCount}/${input.totalCandidates} ranked papers for analysis. Persisted 0 summary row(s) and 0 evidence row(s).`;
+    }
+    return `Selected ${input.selectedCount}/${input.totalCandidates} paper(s) for analysis. Persisted 0 summary row(s) and 0 evidence row(s).`;
+  }
+
+  if (input.request.selectionMode === "top_n" && input.request.topN) {
+    return `Analyzed top ${input.selectedCount}/${input.totalCandidates} ranked papers into ${input.progress.evidenceRows.length} evidence item(s); ${input.progress.fullTextCount} full-text and ${input.progress.abstractFallbackCount} abstract fallback (mode=${input.analysisMode}).`;
+  }
+
+  return `Analyzed ${input.progress.summaryRows.length} papers into ${input.progress.evidenceRows.length} evidence item(s); ${input.progress.fullTextCount} full-text and ${input.progress.abstractFallbackCount} abstract fallback (mode=${input.analysisMode}).`;
+}
+
 async function syncAnalysisProgress(
   runContextMemory: RunContextMemory,
   input: {
+    runContextPath: string;
     summaryRows: PaperSummaryRow[];
     evidenceRows: PaperEvidenceRow[];
     selectedCount: number;
@@ -1232,13 +1610,47 @@ async function syncAnalysisProgress(
   }
 ): Promise<void> {
   const progress = buildAnalysisProgress(input.summaryRows, input.evidenceRows);
-  await runContextMemory.put("analyze_papers.summary_count", progress.summaryRows.length);
-  await runContextMemory.put("analyze_papers.evidence_count", progress.evidenceRows.length);
-  await runContextMemory.put("analyze_papers.full_text_count", progress.fullTextCount);
-  await runContextMemory.put("analyze_papers.abstract_fallback_count", progress.abstractFallbackCount);
-  await runContextMemory.put("analyze_papers.selected_count", input.selectedCount);
-  await runContextMemory.put("analyze_papers.total_candidates", input.totalCandidates);
-  await runContextMemory.put("analyze_papers.selection_fingerprint", input.selectionFingerprint);
+  void runContextMemory;
+  await upsertRunContextValues(input.runContextPath, {
+    "analyze_papers.summary_count": progress.summaryRows.length,
+    "analyze_papers.evidence_count": progress.evidenceRows.length,
+    "analyze_papers.full_text_count": progress.fullTextCount,
+    "analyze_papers.abstract_fallback_count": progress.abstractFallbackCount,
+    "analyze_papers.selected_count": input.selectedCount,
+    "analyze_papers.total_candidates": input.totalCandidates,
+    "analyze_papers.selection_fingerprint": input.selectionFingerprint
+  });
+}
+
+async function syncAnalyzeRunRecord(input: {
+  runStore: Pick<NodeExecutionDeps["runStore"], "getRun" | "updateRun"> | undefined;
+  runId: string;
+  summary: string;
+}): Promise<void> {
+  if (
+    !input.runStore ||
+    typeof input.runStore.getRun !== "function" ||
+    typeof input.runStore.updateRun !== "function"
+  ) {
+    return;
+  }
+
+  const run = await input.runStore.getRun(input.runId);
+  if (!run) {
+    return;
+  }
+
+  run.graph.nodeStates.analyze_papers = {
+    ...run.graph.nodeStates.analyze_papers,
+    updatedAt: new Date().toISOString(),
+    note: input.summary
+  };
+
+  if (run.currentNode === "analyze_papers" || !run.latestSummary) {
+    run.latestSummary = input.summary;
+  }
+
+  await input.runStore.updateRun(run);
 }
 
 function replaceSummaryRow(rows: PaperSummaryRow[], nextRow: PaperSummaryRow): PaperSummaryRow[] {
@@ -1377,6 +1789,233 @@ function createAnalyzePapersManualReviewRecommendation(input: {
   };
 }
 
+function applySelectionQualitySafeguards(input: {
+  selection: PaperSelectionResult;
+  runTitle: string;
+  runTopic: string;
+}): SelectionQualityGuardResult {
+  if (
+    input.selection.request.selectionMode !== "top_n" ||
+    !input.selection.request.topN ||
+    input.selection.selectedPaperIds.length === 0 ||
+    input.selection.selectedPaperIds.length >= input.selection.totalCandidates
+  ) {
+    return {
+      selection: input.selection,
+      applied: false,
+      droppedPaperIds: [],
+      addedPaperIds: []
+    };
+  }
+
+  const referenceAnchors = extractSelectionReferenceAnchors(`${input.runTitle || ""} ${input.runTopic || ""}`);
+  if (referenceAnchors.length < MIN_SELECTION_GUARD_ANCHORS) {
+    return {
+      selection: input.selection,
+      applied: false,
+      droppedPaperIds: [],
+      addedPaperIds: []
+    };
+  }
+
+  const strictMode = Boolean(input.selection.rerankFallbackReason);
+  const candidateSignalsById = new Map(
+    input.selection.rankedCandidates.map((candidate) => [
+      candidate.paper.paper_id,
+      evaluateSelectionCandidateQuality(candidate, referenceAnchors)
+    ] as const)
+  );
+  const orderedPaperIds =
+    input.selection.rerankedPaperIds.length > 0
+      ? input.selection.rerankedPaperIds
+      : input.selection.rankedCandidates
+          .slice()
+          .sort(
+            (left, right) =>
+              (right.selectionScore ?? right.deterministicScore) - (left.selectionScore ?? left.deterministicScore) ||
+              right.deterministicScore - left.deterministicScore ||
+              left.paper.paper_id.localeCompare(right.paper.paper_id)
+          )
+          .map((candidate) => candidate.paper.paper_id);
+  const targetCount = input.selection.selectedPaperIds.length;
+  const nextSelectedPaperIds: string[] = [];
+
+  for (const paperId of orderedPaperIds) {
+    const candidate = input.selection.rankedCandidates.find((item) => item.paper.paper_id === paperId);
+    const signals = candidateSignalsById.get(paperId);
+    if (!candidate || !signals || !passesSelectionQualityGuard(candidate, signals, strictMode)) {
+      continue;
+    }
+    nextSelectedPaperIds.push(paperId);
+    if (nextSelectedPaperIds.length >= targetCount) {
+      break;
+    }
+  }
+
+  const previousSelection = input.selection.selectedPaperIds;
+  if (!strictMode && nextSelectedPaperIds.length < targetCount) {
+    return {
+      selection: input.selection,
+      applied: false,
+      droppedPaperIds: [],
+      addedPaperIds: []
+    };
+  }
+  if (arraysEqual(previousSelection, nextSelectedPaperIds)) {
+    return {
+      selection: input.selection,
+      applied: false,
+      droppedPaperIds: [],
+      addedPaperIds: []
+    };
+  }
+
+  const nextSelectedSet = new Set(nextSelectedPaperIds);
+  const nextRankedCandidates = input.selection.rankedCandidates.map((candidate) => ({
+    ...candidate,
+    selected: nextSelectedSet.has(candidate.paper.paper_id),
+    rank: nextSelectedSet.has(candidate.paper.paper_id)
+      ? nextSelectedPaperIds.indexOf(candidate.paper.paper_id) + 1
+      : undefined
+  }));
+  const droppedPaperIds = previousSelection.filter((paperId) => !nextSelectedSet.has(paperId));
+  const addedPaperIds = nextSelectedPaperIds.filter((paperId) => !previousSelection.includes(paperId));
+  const cleanedFallbackReason = cleanFailureMessage(input.selection.rerankFallbackReason);
+
+  return {
+    selection: {
+      ...input.selection,
+      selectedPaperIds: nextSelectedPaperIds,
+      selectionFingerprint: buildSelectionFingerprint(
+        input.selection.request,
+        input.runTitle,
+        input.runTopic,
+        nextSelectedPaperIds
+      ),
+      rankedCandidates: nextRankedCandidates
+    },
+    applied: true,
+    droppedPaperIds,
+    addedPaperIds,
+    reason:
+      `Selection quality safeguard ${strictMode ? "tightened the rerank-fallback shortlist" : "filtered weakly grounded shortlist items"} ` +
+      `using research anchors [${referenceAnchors.join(", ")}]. ` +
+      `Dropped ${droppedPaperIds.length} off-topic paper(s)` +
+      `${addedPaperIds.length > 0 ? ` and promoted ${addedPaperIds.length} replacement(s)` : ""}.` +
+      `${cleanedFallbackReason ? ` Fallback context: ${cleanedFallbackReason}` : ""}`
+  };
+}
+
+function extractSelectionReferenceAnchors(text: string): string[] {
+  return Array.from(
+    new Set(
+      text
+        .toLowerCase()
+        .match(/[a-z0-9]+/g)
+        ?.map((token) => normalizeSelectionToken(token))
+        .filter(
+          (token): token is string =>
+            Boolean(token) &&
+            token.length >= 4 &&
+            !SELECTION_QUALITY_STOPWORDS.has(token) &&
+            !SELECTION_QUALITY_GENERIC_TOKENS.has(token)
+        ) ?? []
+    )
+  );
+}
+
+function normalizeSelectionToken(token: string): string {
+  const normalized = token.trim().toLowerCase();
+  if (normalized.endsWith("ies") && normalized.length > 4) {
+    return `${normalized.slice(0, -3)}y`;
+  }
+  if (/(ches|shes|xes|zes)$/.test(normalized) && normalized.length > 4) {
+    return normalized.slice(0, -2);
+  }
+  if (normalized.endsWith("s") && normalized.length > 4) {
+    return normalized.slice(0, -1);
+  }
+  return normalized;
+}
+
+function evaluateSelectionCandidateQuality(
+  candidate: RankedPaperCandidate,
+  referenceAnchors: string[]
+): {
+  titleAnchorHits: number;
+  abstractAnchorHits: number;
+  totalAnchorHits: number;
+} {
+  const titleTokens = new Set(
+    (candidate.paper.title.toLowerCase().match(/[a-z0-9]+/g) ?? []).map((token) => normalizeSelectionToken(token))
+  );
+  const abstractTokens = new Set(
+    (candidate.paper.abstract?.toLowerCase().match(/[a-z0-9]+/g) ?? []).map((token) => normalizeSelectionToken(token))
+  );
+  const titleAnchorHits = referenceAnchors.filter((token) => titleTokens.has(token)).length;
+  const abstractAnchorHits = referenceAnchors.filter((token) => !titleTokens.has(token) && abstractTokens.has(token)).length;
+  return {
+    titleAnchorHits,
+    abstractAnchorHits,
+    totalAnchorHits: titleAnchorHits + abstractAnchorHits
+  };
+}
+
+function passesSelectionQualityGuard(
+  candidate: RankedPaperCandidate,
+  signals: {
+    titleAnchorHits: number;
+    abstractAnchorHits: number;
+    totalAnchorHits: number;
+  },
+  strictMode: boolean
+): boolean {
+  if (signals.titleAnchorHits >= 1) {
+    return true;
+  }
+  if (
+    signals.totalAnchorHits >= (strictMode ? 2 : 1) &&
+    candidate.scoreBreakdown.title_similarity_score >= (strictMode ? 0.12 : 0.08)
+  ) {
+    return true;
+  }
+  return !strictMode && candidate.deterministicScore >= 0.5 && candidate.scoreBreakdown.title_similarity_score >= 0.25;
+}
+
+function arraysEqual(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+async function upsertRunContextValues(runContextPath: string, updates: Record<string, unknown>): Promise<void> {
+  const now = new Date().toISOString();
+  const store = await readJsonFile<{ version?: unknown; items?: Array<{ key?: unknown; value?: unknown; updatedAt?: unknown }> }>(
+    runContextPath
+  ).catch(() => ({
+    version: 1,
+    items: []
+  }));
+  const items = Array.isArray(store.items) ? [...store.items] : [];
+
+  for (const [key, value] of Object.entries(updates)) {
+    const nextItem = {
+      key,
+      value,
+      updatedAt: now
+    };
+    const existingIndex = items.findIndex((item) => item?.key === key);
+    if (existingIndex >= 0) {
+      items[existingIndex] = nextItem;
+    } else {
+      items.push(nextItem);
+    }
+  }
+
+  await writeJsonFile(runContextPath, {
+    version: 1,
+    items
+  });
+}
+
 function summarizeSelectedFailures(
   manifest: AnalysisManifest,
   selectedPaperIds: string[]
@@ -1389,6 +2028,7 @@ function summarizeSelectedFailures(
     failedEntries,
     usageLimitEntries: failedEntries.filter((entry) => isModelUsageLimitError(entry.last_error)),
     environmentBlockedEntries: failedEntries.filter((entry) => isEnvironmentBlockedError(entry.last_error)),
+    sourceMismatchEntries: failedEntries.filter((entry) => isSourceContentMismatchError(entry.last_error)),
     cleanedMessages: Array.from(
       new Set(
         failedEntries
@@ -1443,6 +2083,10 @@ function isEnvironmentBlockedError(message: string | undefined): boolean {
     /could not update path/i,
     /attempt to write a readonly database/i
   ].some((pattern) => pattern.test(message));
+}
+
+function isSourceContentMismatchError(message: string | undefined): boolean {
+  return typeof message === "string" && /source_content_mismatch|analysis_content_mismatch/i.test(message);
 }
 
 const SOURCE_IDENTITY_STOPWORDS = new Set([
@@ -1539,6 +2183,72 @@ function validateResolvedSourceIdentity(paper: AnalysisCorpusRow, source: Resolv
     `source_content_mismatch: resolved source text for "${paper.title}" did not match the paper identity strongly enough ` +
     `(matched_title_tokens=${matchedTitleTokens.length}/${titleTokens.length}, author_match=${hasAuthorMatch ? "yes" : "no"}).`
   );
+}
+
+function validateAnalysisBeforePersist(
+  paper: AnalysisCorpusRow,
+  source: ResolvedPaperSource,
+  analysis: {
+    summaryRow: PaperSummaryRow;
+    evidenceRows: PaperEvidenceRow[];
+  }
+): string | undefined {
+  const sourceMismatchError = validateResolvedSourceIdentity(paper, source);
+  if (sourceMismatchError) {
+    return sourceMismatchError;
+  }
+
+  const analysisTexts = [
+    analysis.summaryRow.summary,
+    ...analysis.summaryRow.key_findings,
+    ...analysis.summaryRow.limitations,
+    ...analysis.summaryRow.reproducibility_notes,
+    analysis.summaryRow.novelty,
+    ...analysis.evidenceRows.flatMap((row) => [row.claim, row.confidence_reason ?? "", row.evidence_span])
+  ]
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!analysisTexts) {
+    return undefined;
+  }
+
+  const mismatchPatterns = [
+    /(supplied|provided)\s+source\s+(text|document|paper).*(unrelated|different paper|another paper)/i,
+    /source\s+(text|document|paper).*(does not match|did not match|mismatch)/i,
+    /(document|paper).*(appears|seems)\s+to\s+be.*instead of/i,
+    /metadata.*(does not match|did not match|mismatch)/i
+  ];
+  if (mismatchPatterns.some((pattern) => pattern.test(analysisTexts))) {
+    return (
+      `analysis_content_mismatch: structured analysis for "${paper.title}" reported a probable source-identity mismatch ` +
+      `inside the extracted summary/evidence, so the outputs were quarantined before persistence.`
+    );
+  }
+
+  return undefined;
+}
+
+function buildAnalysisQuarantineRow(input: {
+  paper: AnalysisCorpusRow;
+  source: ResolvedPaperSource;
+  analysisMode: "codex_text_image_hybrid" | "responses_api_pdf";
+  reason: string;
+  analysis?: {
+    summaryRow: PaperSummaryRow;
+  };
+}): AnalysisQuarantineRow {
+  return {
+    paper_id: input.paper.paper_id,
+    title: input.paper.title,
+    reason: input.reason,
+    source_type: input.source.sourceType,
+    analysis_mode: input.analysisMode,
+    fallback_reason: input.source.fallbackReason,
+    summary_preview: input.analysis?.summaryRow.summary.slice(0, 240),
+    source_excerpt: input.source.text.slice(0, 240),
+    createdAt: new Date().toISOString()
+  };
 }
 
 function normalizeIdentityText(text: string): string {

@@ -12,7 +12,7 @@ import {
   WorkflowApprovalMode
 } from "../../types.js";
 import { CheckpointStore } from "./checkpointStore.js";
-import { GraphNodeRegistry, JumpMode } from "./types.js";
+import { CheckpointPhase, GraphNodeRegistry, JumpMode } from "./types.js";
 import { defaultRunStatusForGraph } from "./defaults.js";
 
 export class StateGraphRuntime {
@@ -42,21 +42,33 @@ export class StateGraphRuntime {
     const current = await this.getRunOrThrow(runId);
     const checkpoint = await this.checkpointStore.load(runId, checkpointSeq);
     if (checkpoint) {
-      if (checkpointSeq == null && this.isCheckpointSnapshotStale(current, checkpoint.runSnapshot)) {
+      const restored = structuredClone(checkpoint.runSnapshot);
+      if (checkpointSeq == null && this.isCheckpointSnapshotStale(current, restored)) {
         current.status = current.status === "completed" ? "completed" : defaultRunStatusForGraph(current.graph);
         this.syncLatestSummary(current);
         await this.runStore.updateRun(current);
-        return current;
+        return this.getRunOrThrow(runId);
       }
-      this.syncLatestSummary(checkpoint.runSnapshot);
-      await this.runStore.updateRun(checkpoint.runSnapshot);
-      return checkpoint.runSnapshot;
+
+      if (checkpointSeq != null) {
+        restored.graph.checkpointSeq = Math.max(
+          restored.graph.checkpointSeq ?? 0,
+          current.graph.checkpointSeq ?? 0
+        );
+        this.syncLatestSummary(restored);
+        await this.saveCheckpointAndPersist(restored, "jump", `resume to checkpoint ${checkpoint.seq}`);
+        return this.getRunOrThrow(runId);
+      }
+
+      this.syncLatestSummary(restored);
+      await this.runStore.updateRun(restored);
+      return this.getRunOrThrow(runId);
     }
 
     current.status = current.status === "completed" ? "completed" : defaultRunStatusForGraph(current.graph);
     this.syncLatestSummary(current);
     await this.runStore.updateRun(current);
-    return current;
+    return this.getRunOrThrow(runId);
   }
 
   async step(runId: string, abortSignal?: AbortSignal): Promise<RunRecord> {
@@ -84,7 +96,7 @@ export class StateGraphRuntime {
       payload: { node }
     });
 
-    const before = await this.checkpointStore.save(run, "before");
+    const before = await this.saveCheckpointAndPersist(run, "before");
     this.eventStream.emit({
       type: "CHECKPOINT_SAVED",
       runId: run.id,
@@ -137,7 +149,8 @@ export class StateGraphRuntime {
         }
       }
 
-      const after = await this.checkpointStore.save(run, "after");
+      this.syncLatestSummary(run, node);
+      const after = await this.saveCheckpointAndPersist(run, "after");
       this.eventStream.emit({
         type: "CHECKPOINT_SAVED",
         runId: run.id,
@@ -164,9 +177,7 @@ export class StateGraphRuntime {
         });
       }
 
-      this.syncLatestSummary(run, node);
-      await this.runStore.updateRun(run);
-      return run;
+      return this.getRunOrThrow(run.id);
     } catch (error) {
       if (isAbortError(error)) {
         run = await this.getRunOrThrow(run.id);
@@ -179,7 +190,7 @@ export class StateGraphRuntime {
         };
         this.syncLatestSummary(run);
         await this.runStore.updateRun(run);
-        return run;
+        return this.getRunOrThrow(run.id);
       }
       const message = error instanceof Error ? error.message : String(error);
       run = await this.getRunOrThrow(run.id);
@@ -196,6 +207,11 @@ export class StateGraphRuntime {
     }
   ): Promise<RunRecord> {
     let run = await this.getRunOrThrow(runId);
+    const continuePastCollectRecovery =
+      Boolean(opts?.stopAfterApprovalBoundary) &&
+      opts?.floorNode === "collect_papers" &&
+      this.hasVisitedLaterNodes(run, opts.floorNode);
+    let continuedPastCollectRecovery = false;
     try {
       this.throwIfAborted(opts?.abortSignal);
       run.status = "running";
@@ -211,6 +227,7 @@ export class StateGraphRuntime {
         }
 
         if (run.status === "paused" && run.graph.nodeStates[run.currentNode].status === "needs_approval") {
+          const approvalNode = run.currentNode;
           run = await this.resolveApprovalGate(run);
           run = await this.pauseIfRegressedBelowFloor(run, opts?.floorNode);
           if (["completed", "failed", "failed_budget"].includes(run.status)) {
@@ -220,6 +237,16 @@ export class StateGraphRuntime {
             return run;
           }
           if (opts?.stopAfterApprovalBoundary) {
+            const shouldContinuePastCollectRecovery =
+              continuePastCollectRecovery &&
+              !continuedPastCollectRecovery &&
+              approvalNode === opts.floorNode &&
+              run.status === "running" &&
+              run.currentNode !== approvalNode;
+            if (shouldContinuePastCollectRecovery) {
+              continuedPastCollectRecovery = true;
+              continue;
+            }
             return run;
           }
           continue;
@@ -235,7 +262,7 @@ export class StateGraphRuntime {
         run.status = "paused";
         this.syncLatestSummary(run);
         await this.runStore.updateRun(run);
-        return run;
+        return this.getRunOrThrow(runId);
       }
       throw error;
     }
@@ -328,10 +355,9 @@ export class StateGraphRuntime {
       run.status = "running";
     }
 
-    await this.checkpointStore.save(run, "after", "approved");
     this.syncLatestSummary(run, node);
-    await this.runStore.updateRun(run);
-    return run;
+    await this.saveCheckpointAndPersist(run, "after", "approved");
+    return this.getRunOrThrow(runId);
   }
 
   async applyPendingTransition(runId: string): Promise<RunRecord> {
@@ -389,6 +415,8 @@ export class StateGraphRuntime {
   async retryNode(runId: string, node?: GraphNodeId): Promise<RunRecord> {
     const run = await this.getRunOrThrow(runId);
     const target = node || run.currentNode;
+    const maxAttempts = Math.max(1, run.graph.retryPolicy.maxAttemptsPerNode);
+    const nextAttempt = Math.min((run.graph.retryCounters[target] ?? 0) + 1, maxAttempts);
     run.graph.pendingTransition = undefined;
     run.currentNode = target;
     run.graph.currentNode = target;
@@ -398,20 +426,18 @@ export class StateGraphRuntime {
       updatedAt: new Date().toISOString(),
       note: "manual retry"
     };
-    run.graph.retryCounters[target] = (run.graph.retryCounters[target] ?? 0) + 1;
     run.status = "running";
 
-    const checkpoint = await this.checkpointStore.save(run, "retry", "manual retry");
+    this.syncLatestSummary(run, target);
+    const checkpoint = await this.saveCheckpointAndPersist(run, "retry", "manual retry");
     this.eventStream.emit({
       type: "NODE_RETRY",
       runId: run.id,
       node: target,
-      payload: { attempts: run.graph.retryCounters[target], checkpoint: checkpoint.seq }
+      payload: { attempts: nextAttempt, checkpoint: checkpoint.seq }
     });
 
-    this.syncLatestSummary(run);
-    await this.runStore.updateRun(run);
-    return run;
+    return this.getRunOrThrow(runId);
   }
 
   async jumpToNode(runId: string, targetNode: GraphNodeId, mode: JumpMode, reason: string): Promise<RunRecord> {
@@ -457,7 +483,8 @@ export class StateGraphRuntime {
     run.graph.currentNode = targetNode;
     run.status = "paused";
 
-    const checkpoint = await this.checkpointStore.save(run, "jump", reason);
+    this.syncLatestSummary(run, targetNode);
+    const checkpoint = await this.saveCheckpointAndPersist(run, "jump", reason);
     this.eventStream.emit({
       type: "NODE_JUMP",
       runId: run.id,
@@ -469,9 +496,7 @@ export class StateGraphRuntime {
       }
     });
 
-    this.syncLatestSummary(run, targetNode);
-    await this.runStore.updateRun(run);
-    return run;
+    return this.getRunOrThrow(runId);
   }
 
   async getGraph(runId: string): Promise<RunGraphState> {
@@ -487,7 +512,8 @@ export class StateGraphRuntime {
 
   private async handleFailure(run: RunRecord, node: GraphNodeId, errorMessage: string): Promise<RunRecord> {
     run.graph.pendingTransition = undefined;
-    const nextRetry = (run.graph.retryCounters[node] ?? 0) + 1;
+    const maxAttempts = Math.max(1, run.graph.retryPolicy.maxAttemptsPerNode);
+    const nextRetry = Math.min((run.graph.retryCounters[node] ?? 0) + 1, maxAttempts);
     run.graph.retryCounters[node] = nextRetry;
 
     run.graph.nodeStates[node] = {
@@ -509,7 +535,8 @@ export class StateGraphRuntime {
       eventStream: this.eventStream
     });
 
-    const failCheckpoint = await this.checkpointStore.save(run, "fail", errorMessage);
+    this.syncLatestSummary(run, node);
+    const failCheckpoint = await this.saveCheckpointAndPersist(run, "fail", errorMessage);
     this.eventStream.emit({
       type: "CHECKPOINT_SAVED",
       runId: run.id,
@@ -523,34 +550,33 @@ export class StateGraphRuntime {
       payload: { error: errorMessage, retryAttempt: nextRetry }
     });
 
-    if (nextRetry < run.graph.retryPolicy.maxAttemptsPerNode) {
+    if (nextRetry < maxAttempts) {
       run.status = "running";
       run.graph.nodeStates[node] = {
         ...run.graph.nodeStates[node],
         status: "running",
         updatedAt: new Date().toISOString(),
-        note: `Auto retry scheduled (${nextRetry}/${run.graph.retryPolicy.maxAttemptsPerNode})`
+        note: `Auto retry scheduled after failed attempt ${nextRetry}/${maxAttempts}.`
       };
-      const retryCheckpoint = await this.checkpointStore.save(run, "retry", "auto retry");
+      this.syncLatestSummary(run, node);
+      const retryCheckpoint = await this.saveCheckpointAndPersist(run, "retry", "auto retry");
       this.eventStream.emit({
         type: "NODE_RETRY",
         runId: run.id,
         node,
         payload: { attempt: nextRetry, checkpoint: retryCheckpoint.seq }
       });
-      this.syncLatestSummary(run, node);
-      await this.runStore.updateRun(run);
-      return run;
+      return this.getRunOrThrow(run.id);
     }
 
-    const rollbackCount = (run.graph.rollbackCounters[node] ?? 0) + 1;
-    run.graph.rollbackCounters[node] = rollbackCount;
+    const maxRollbacks = Math.max(0, run.graph.retryPolicy.maxAutoRollbacksPerNode);
+    const currentRollbackCount = run.graph.rollbackCounters[node] ?? 0;
 
-    if (rollbackCount > run.graph.retryPolicy.maxAutoRollbacksPerNode) {
+    if (currentRollbackCount >= maxRollbacks) {
       run.status = "failed";
       this.syncLatestSummary(run, node);
       await this.runStore.updateRun(run);
-      return run;
+      return this.getRunOrThrow(run.id);
     }
 
     const prev = this.previousNode(node);
@@ -558,15 +584,16 @@ export class StateGraphRuntime {
       run.status = "failed";
       this.syncLatestSummary(run, node);
       await this.runStore.updateRun(run);
-      return run;
+      return this.getRunOrThrow(run.id);
     }
 
     const restoredCollectQuery = await this.restoreRollbackCollectRequest(run, prev);
-    const maxAttempts = run.graph.retryPolicy.maxAttemptsPerNode;
-    const maxRollbacks = run.graph.retryPolicy.maxAutoRollbacksPerNode;
+    const rollbackCount = currentRollbackCount + 1;
+    run.graph.rollbackCounters[node] = rollbackCount;
+    run.graph.retryCounters[node] = 0;
     const rollbackNote = restoredCollectQuery
-      ? `Auto rollback from ${node} after ${nextRetry}/${maxAttempts} retries (rollback ${rollbackCount}/${maxRollbacks}); reusing collect query "${restoredCollectQuery}".`
-      : `Auto rollback from ${node} after ${nextRetry}/${maxAttempts} retries (rollback ${rollbackCount}/${maxRollbacks}).`;
+      ? `Auto rollback from ${node} after ${nextRetry}/${maxAttempts} failed attempts (rollback ${rollbackCount}/${maxRollbacks}); reusing collect query "${restoredCollectQuery}".`
+      : `Auto rollback from ${node} after ${nextRetry}/${maxAttempts} failed attempts (rollback ${rollbackCount}/${maxRollbacks}).`;
 
     run.currentNode = prev;
     run.graph.currentNode = prev;
@@ -579,7 +606,8 @@ export class StateGraphRuntime {
       note: rollbackNote
     };
 
-    const rollbackCheckpoint = await this.checkpointStore.save(run, "jump", `rollback to ${prev}`);
+    this.syncLatestSummary(run, prev);
+    const rollbackCheckpoint = await this.saveCheckpointAndPersist(run, "jump", `rollback to ${prev}`);
     this.eventStream.emit({
       type: "NODE_ROLLBACK",
       runId: run.id,
@@ -591,9 +619,7 @@ export class StateGraphRuntime {
       }
     });
 
-    this.syncLatestSummary(run, prev);
-    await this.runStore.updateRun(run);
-    return run;
+    return this.getRunOrThrow(run.id);
   }
 
   private async failByBudget(run: RunRecord, reason: string): Promise<RunRecord> {
@@ -607,7 +633,8 @@ export class StateGraphRuntime {
       lastError: reason
     };
 
-    const checkpoint = await this.checkpointStore.save(run, "fail", reason);
+    this.syncLatestSummary(run);
+    const checkpoint = await this.saveCheckpointAndPersist(run, "fail", reason);
     this.eventStream.emit({
       type: "BUDGET_EXCEEDED",
       runId: run.id,
@@ -619,9 +646,7 @@ export class StateGraphRuntime {
       }
     });
 
-    this.syncLatestSummary(run);
-    await this.runStore.updateRun(run);
-    return run;
+    return this.getRunOrThrow(run.id);
   }
 
   private nextNode(node: GraphNodeId): GraphNodeId | undefined {
@@ -659,6 +684,7 @@ export class StateGraphRuntime {
     if (!run) {
       throw new Error(`Run not found: ${runId}`);
     }
+    run.graph.currentNode = run.currentNode;
     run.graph.transitionHistory = run.graph.transitionHistory || [];
     run.graph.researchCycle = run.graph.researchCycle || 0;
     return run;
@@ -689,7 +715,34 @@ export class StateGraphRuntime {
 
     this.syncLatestSummary(run);
     await this.runStore.updateRun(run);
-    return run;
+    return this.getRunOrThrow(run.id);
+  }
+
+  private hasVisitedLaterNodes(run: RunRecord, floorNode: GraphNodeId): boolean {
+    const floorIdx = GRAPH_NODE_ORDER.indexOf(floorNode);
+    if (floorIdx < 0) {
+      return false;
+    }
+
+    return GRAPH_NODE_ORDER.slice(floorIdx + 1).some((node) => {
+      const state = run.graph.nodeStates[node];
+      return state.status !== "pending" || Boolean(state.note) || Boolean(state.lastError);
+    });
+  }
+
+  private async saveCheckpointAndPersist(
+    run: RunRecord,
+    phase: CheckpointPhase,
+    reason?: string
+  ) {
+    const records = await this.checkpointStore.list(run.id);
+    const highestSeq = records.reduce((max, record) => Math.max(max, record.seq), 0);
+    run.graph.checkpointSeq = Math.max(run.graph.checkpointSeq ?? 0, highestSeq);
+    run.updatedAt = new Date().toISOString();
+    this.syncLatestSummary(run);
+    const checkpoint = await this.checkpointStore.save(run, phase, reason);
+    await this.runStore.updateRun(run);
+    return checkpoint;
   }
 
   private syncLatestSummary(run: RunRecord, preferredNode?: GraphNodeId): void {

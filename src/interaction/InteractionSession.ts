@@ -2366,7 +2366,7 @@ function nodeArtifactTargets(node: GraphNodeId): string[] {
 function nodeContextKeys(node: GraphNodeId): string[] {
   switch (node) {
     case "collect_papers":
-      return ["collect_papers.count", "collect_papers.source", "collect_papers.last_error", "collect_papers.last_attempt_count", "collect_papers.requested_limit", "collect_papers.request", "collect_papers.last_request", "collect_papers.last_result"];
+      return ["collect_papers.count", "collect_papers.source", "collect_papers.last_error", "collect_papers.enrichment_last_error", "collect_papers.last_attempt_count", "collect_papers.requested_limit", "collect_papers.request", "collect_papers.last_request", "collect_papers.last_result"];
     case "analyze_papers":
       return ["analyze_papers.request", "analyze_papers.evidence_count", "analyze_papers.summary_count", "analyze_papers.full_text_count", "analyze_papers.abstract_fallback_count", "analyze_papers.selected_count", "analyze_papers.total_candidates", "analyze_papers.selection_fingerprint"];
     case "generate_hypotheses":

@@ -156,4 +156,65 @@ describe("runBriefParser", () => {
     ]);
     expect(extracted.planSummary).toBe("Compare a few classical models.");
   });
+
+  it("keeps the broader brief topic when the llm injects constraint qualifiers into an unlabeled brief", async () => {
+    const llm = {
+      runForText: vi.fn(async () =>
+        JSON.stringify({
+          topic: "Resource-aware baselines for tabular classification on small public datasets",
+          objective_metric: "macro-F1 over logistic regression",
+          constraints: ["CPU-only execution"],
+          plan_summary: "Compare a few classical models.",
+          assumptions: []
+        })
+      )
+    };
+
+    const extracted = await extractRunBrief({
+      brief: [
+        "Start a new research run on classical machine learning baselines for tabular classification.",
+        "Objective: improve macro-F1 over a logistic regression baseline while preserving reproducible local runtime and memory efficiency.",
+        "Constraints: CPU-only execution, lightweight Python dependencies."
+      ].join("\n"),
+      defaults: {
+        topic: "default topic",
+        constraints: ["default constraint"],
+        objectiveMetric: "default metric"
+      },
+      llm
+    });
+
+    expect(extracted.source).toBe("llm");
+    expect(extracted.topic).toBe("classical machine learning baselines for tabular classification.");
+    expect(extracted.assumptions).toContain(
+      "Preserved broader topic wording from the brief for literature collection stability."
+    );
+  });
+
+  it("recovers inline bullet-like constraints without fragmenting comma-rich items", async () => {
+    const extracted = await extractRunBrief({
+      brief: [
+        "# Research Brief",
+        "",
+        "## Topic",
+        "",
+        "Classical machine learning baselines for tabular classification.",
+        "",
+        "## Constraints",
+        "",
+        "Prefer CPU-only execution and lightweight Python dependencies. - Avoid large model downloads, GPU-specific methods, and heavy preprocessing pipelines. - Use a fixed train/validation/test protocol and report macro-F1, runtime, and memory consistently."
+      ].join("\n"),
+      defaults: {
+        topic: "default topic",
+        constraints: ["default constraint"],
+        objectiveMetric: "default metric"
+      }
+    });
+
+    expect(extracted.constraints).toEqual([
+      "Prefer CPU-only execution and lightweight Python dependencies.",
+      "Avoid large model downloads, GPU-specific methods, and heavy preprocessing pipelines.",
+      "Use a fixed train/validation/test protocol and report macro-F1, runtime, and memory consistently."
+    ]);
+  });
 });

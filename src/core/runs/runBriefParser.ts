@@ -74,9 +74,23 @@ export async function extractRunBrief(input: ExtractRunBriefInput): Promise<Extr
       abortSignal: input.abortSignal
     });
     const parsed = parseRunBriefJson(raw, input.defaults, input.brief);
+    const topic = resolveRunBriefTopic({
+      explicitTopic: explicitAnchors.topic,
+      llmTopic: parsed.topic,
+      heuristicTopic: heuristic.topic
+    });
+    const assumptions = [...parsed.assumptions];
+    if (
+      !explicitAnchors.topic &&
+      topic === heuristic.topic &&
+      cleanText(parsed.topic) &&
+      cleanText(parsed.topic) !== cleanText(heuristic.topic)
+    ) {
+      assumptions.unshift("Preserved broader topic wording from the brief for literature collection stability.");
+    }
     return {
       ...parsed,
-      topic: explicitAnchors.topic || parsed.topic || heuristic.topic,
+      topic,
       objectiveMetric: explicitAnchors.objectiveMetric || parsed.objectiveMetric || heuristic.objectiveMetric,
       constraints:
         explicitAnchors.constraints && explicitAnchors.constraints.length > 0
@@ -85,6 +99,7 @@ export async function extractRunBrief(input: ExtractRunBriefInput): Promise<Extr
             ? parsed.constraints
             : heuristic.constraints,
       planSummary: parsed.planSummary || heuristic.planSummary,
+      assumptions: assumptions.slice(0, 6),
       source: "llm"
     };
   } catch {
@@ -217,6 +232,7 @@ function buildRunBriefPrompt(
     "Rules:",
     "- topic should be concise and specific enough for literature collection.",
     "- If the brief already has an explicit Topic/주제 field, preserve its wording closely and do not fold constraints into the topic.",
+    "- For generalized briefs, keep topic close to the core literature question; do not inject operational qualifiers like resource-aware, CPU-only, runtime, memory, or small public datasets unless they already appear in the explicit topic.",
     "- objective_metric should be the main success criterion or metric.",
     "- constraints should capture explicit limits, required datasets/tools, time windows, venue style, or budget constraints.",
     "- Preserve one constraint per bullet/item when the brief uses a list.",
@@ -303,26 +319,42 @@ function parseConstraintList(value: string | undefined): string[] | undefined {
   if (bulletItems.length > 0) {
     return bulletItems;
   }
+  const inlineBulletItems = parseInlineMarkdownListItems(normalized);
+  if (inlineBulletItems.length > 0) {
+    return inlineBulletItems;
+  }
 
   const lines = normalized
     .split("\n")
-    .map((line) => cleanText(line.replace(/^[-*+]\s*/u, "")))
+    .map((line) => normalizeConstraintItem(line))
     .filter(Boolean);
   if (lines.length > 1) {
     return lines;
   }
 
-  const items = normalized
-    .split(/[;,]/u)
-    .map((item) => cleanText(item.replace(/^[-*+]\s*/u, "")))
-    .filter(Boolean);
-  return items.length > 0 ? items : undefined;
+  const semicolonItems = splitConstraintItems(normalized, /;/u);
+  if (semicolonItems.length > 1) {
+    return semicolonItems;
+  }
+
+  if (looksLikeCommaSeparatedConstraintList(normalized)) {
+    const commaItems = splitConstraintItems(normalized, /,/u);
+    if (commaItems.length > 1) {
+      return commaItems;
+    }
+  }
+
+  const single = normalizeConstraintItem(normalized);
+  return single ? [single] : undefined;
 }
 
 function stripRunCreationLead(text: string): string {
   return cleanText(
     text
-      .replace(/^(?:please\s+)?(?:create|start|begin|launch|kick off)\s+(?:a\s+)?(?:new\s+)?(?:research|experiment|study|run)\s*(?:about|on|for)?\s*/iu, "")
+      .replace(
+        /^(?:please\s+)?(?:create|start|begin|launch|kick off)\s+(?:a\s+)?(?:new\s+)?(?:(?:research|experiment|study)\s+run|research|experiment|study|run)\s*(?:about|on|for)?\s*/iu,
+        ""
+      )
       .replace(/^(?:새\s*)?(?:연구|실험|런|run)(?:를)?\s*(?:만들|시작|돌려|생성|진행)(?:줘|해주세요)?\s*/u, "")
       .split(/\n/u)[0] || ""
   );
@@ -348,6 +380,118 @@ function extractJsonObject(raw: string): string | undefined {
 
 function cleanText(value: unknown): string {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+}
+
+function resolveRunBriefTopic(input: {
+  explicitTopic?: string;
+  llmTopic?: string;
+  heuristicTopic?: string;
+}): string {
+  const explicitTopic = cleanText(input.explicitTopic);
+  if (explicitTopic) {
+    return explicitTopic;
+  }
+
+  const llmTopic = cleanText(input.llmTopic);
+  const heuristicTopic = cleanText(input.heuristicTopic);
+  if (!llmTopic) {
+    return heuristicTopic;
+  }
+  if (!heuristicTopic) {
+    return llmTopic;
+  }
+  if (shouldPreferHeuristicTopic(llmTopic, heuristicTopic)) {
+    return heuristicTopic;
+  }
+  return llmTopic;
+}
+
+function shouldPreferHeuristicTopic(llmTopic: string, heuristicTopic: string): boolean {
+  if (!containsTopicQualifier(llmTopic) || containsTopicQualifier(heuristicTopic)) {
+    return false;
+  }
+
+  const llmTokens = extractTopicCoreTokens(llmTopic);
+  const heuristicTokens = extractTopicCoreTokens(heuristicTopic);
+  if (llmTokens.size === 0 || heuristicTokens.size === 0) {
+    return false;
+  }
+
+  const sharedCount = [...llmTokens].filter((token) => heuristicTokens.has(token)).length;
+  const requiredShared = Math.min(2, Math.min(llmTokens.size, heuristicTokens.size));
+  if (sharedCount < requiredShared) {
+    return false;
+  }
+
+  const heuristicSpecificCount = [...heuristicTokens].filter((token) => !llmTokens.has(token)).length;
+  return heuristicSpecificCount > 0 || llmTopic.length > heuristicTopic.length + 12;
+}
+
+function containsTopicQualifier(value: string): boolean {
+  return [
+    /\b(?:resource-aware|resource constrained|resource-constrained|resource efficient|resource-efficient)\b/iu,
+    /\b(?:cpu[-\s]?only|cpu[-\s]?safe|gpu[-\s]?free|laptop[-\s]?safe|consumer[-\s]?hardware)\b/iu,
+    /\b(?:lightweight|reproducible|seed[-\s]?controlled|fixed splits?)\b/iu,
+    /\b(?:small|compact)\s+public\s+(?:datasets?|benchmarks?)\b/iu,
+    /\b(?:runtime|memory|macro[-\s]?f1|wall[-\s]?clock)\b/iu
+  ].some((pattern) => pattern.test(value));
+}
+
+function extractTopicCoreTokens(value: string): Set<string> {
+  const stopwords = new Set([
+    "a",
+    "an",
+    "and",
+    "aware",
+    "classification",
+    "consumer",
+    "datasets",
+    "efficient",
+    "for",
+    "hardware",
+    "in",
+    "local",
+    "of",
+    "on",
+    "public",
+    "resource",
+    "runtime",
+    "small",
+    "the",
+    "to",
+    "with"
+  ]);
+  return new Set(
+    value
+      .toLowerCase()
+      .split(/[^a-z0-9]+/iu)
+      .map((token) => token.trim())
+      .filter(Boolean)
+      .filter((token) => token.length > 2)
+      .filter((token) => !stopwords.has(token))
+  );
+}
+
+function normalizeConstraintItem(value: string): string {
+  return cleanText(value.replace(/^(?:[-*+]|\d+[.)])\s*/u, ""));
+}
+
+function splitConstraintItems(value: string, separator: RegExp): string[] {
+  return value
+    .split(separator)
+    .map((item) => normalizeConstraintItem(item))
+    .filter(Boolean);
+}
+
+function looksLikeCommaSeparatedConstraintList(value: string): boolean {
+  if (!value.includes(",")) {
+    return false;
+  }
+  if (/\b(?:and|or|및|그리고)\b/iu.test(value) && /[.?!]\s*$/u.test(value)) {
+    return false;
+  }
+  const parts = splitConstraintItems(value, /,/u);
+  return parts.length > 1 && parts.every((item) => item.split(/\s+/u).length <= 8);
 }
 
 function escapeRegex(value: string): string {
@@ -458,4 +602,13 @@ function parseMarkdownListItems(value: string): string[] {
 
   flush();
   return items;
+}
+
+function parseInlineMarkdownListItems(value: string): string[] {
+  const parts = value
+    .trim()
+    .split(/\s+(?=(?:[-*+]|\d+[.)])\s+)/u)
+    .map((part) => normalizeConstraintItem(part))
+    .filter(Boolean);
+  return parts.length > 1 ? parts : [];
 }

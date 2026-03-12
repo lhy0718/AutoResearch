@@ -82,6 +82,99 @@ describe("buildContextualGuidance", () => {
     expect(guidance?.items.some((item) => item.label === "/agent retry generate_hypotheses run-recovery")).toBe(false);
   });
 
+  it("prefers checkpoint-backed node guidance when the run index lags behind", () => {
+    const run = makeRun({
+      id: "run-checkpoint",
+      currentNode: "design_experiments",
+      status: "running",
+      updatedAt: "2026-03-12T10:11:12.151Z"
+    });
+    run.graph.currentNode = "design_experiments";
+    run.graph.checkpointSeq = 15;
+    run.graph.nodeStates.design_experiments.status = "running";
+    run.graph.nodeStates.design_experiments.updatedAt = "2026-03-12T10:11:12.151Z";
+
+    const checkpointSnapshot = makeRun({
+      id: "run-checkpoint",
+      currentNode: "implement_experiments",
+      status: "running",
+      updatedAt: "2026-03-12T10:12:37.354Z"
+    });
+    checkpointSnapshot.graph.currentNode = "implement_experiments";
+    checkpointSnapshot.graph.checkpointSeq = 17;
+    checkpointSnapshot.graph.nodeStates.design_experiments.status = "completed";
+    checkpointSnapshot.graph.nodeStates.implement_experiments.status = "running";
+    checkpointSnapshot.graph.nodeStates.implement_experiments.updatedAt = "2026-03-12T10:12:37.354Z";
+
+    const guidance = buildContextualGuidance({
+      run,
+      projectionHints: {
+        checkpoint: {
+          seq: 17,
+          phase: "before",
+          createdAt: "2026-03-12T10:12:37.354Z",
+          snapshot: checkpointSnapshot
+        }
+      }
+    });
+
+    expect(guidance?.items[0]?.label).toBe("/agent run implement_experiments run-checkpoint");
+    expect(guidance?.items.some((item) => item.label === "/agent run design_experiments run-checkpoint")).toBe(false);
+  });
+
+  it("keeps rollback guidance on the design recovery target after implement_experiments fails", () => {
+    const run = makeRun({
+      id: "run-rollback",
+      currentNode: "implement_experiments",
+      status: "failed",
+      updatedAt: "2026-03-12T10:22:48.582Z"
+    });
+    run.graph.currentNode = "implement_experiments";
+    run.graph.checkpointSeq = 17;
+    run.graph.nodeStates.design_experiments.status = "completed";
+    run.graph.nodeStates.implement_experiments.status = "failed";
+    run.graph.nodeStates.implement_experiments.updatedAt = "2026-03-12T10:22:48.582Z";
+    run.graph.nodeStates.implement_experiments.lastError =
+      "Local verification failed via python -m py_compile outputs/example/experiment/run.py (environment): [Errno 2] No such file or directory.";
+
+    const checkpointSnapshot = makeRun({
+      id: "run-rollback",
+      currentNode: "design_experiments",
+      status: "paused",
+      updatedAt: "2026-03-12T10:24:11.005Z"
+    });
+    checkpointSnapshot.graph.currentNode = "design_experiments";
+    checkpointSnapshot.graph.checkpointSeq = 19;
+    checkpointSnapshot.graph.nodeStates.design_experiments.status = "needs_approval";
+    checkpointSnapshot.graph.nodeStates.design_experiments.updatedAt = "2026-03-12T10:24:11.005Z";
+    checkpointSnapshot.graph.nodeStates.design_experiments.note =
+      "Three executable CPU-only experiment designs compare lightweight tabular classification baselines against unmodified logistic regression.";
+    checkpointSnapshot.graph.nodeStates.implement_experiments.status = "failed";
+    checkpointSnapshot.graph.nodeStates.implement_experiments.updatedAt = "2026-03-12T10:22:48.582Z";
+    checkpointSnapshot.graph.nodeStates.implement_experiments.lastError =
+      "Local verification failed via python -m py_compile outputs/example/experiment/run.py (environment): [Errno 2] No such file or directory.";
+
+    const guidance = buildContextualGuidance({
+      run,
+      projectionHints: {
+        checkpoint: {
+          seq: 19,
+          phase: "after",
+          createdAt: "2026-03-12T10:24:11.005Z",
+          snapshot: checkpointSnapshot
+        }
+      }
+    });
+
+    expect(guidance?.items[0]?.label).toBe("/approve");
+    expect(guidance?.items.some((item) => item.label === "/agent retry design_experiments run-rollback")).toBe(true);
+    expect(guidance?.items.some((item) => item.label === "/agent retry implement_experiments run-rollback")).toBe(false);
+
+    const countItem = guidance?.items.find((item) => item.label === "/agent count design_experiments run-rollback");
+    expect(countItem?.description).toContain("experiment designs");
+    expect(countItem?.description).not.toContain("evidence");
+  });
+
   it("surfaces model-switch guidance when analyze_papers is blocked by a usage limit", () => {
     const run = makeRun({
       id: "run-usage-limit",

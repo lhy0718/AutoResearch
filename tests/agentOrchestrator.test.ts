@@ -335,7 +335,8 @@ describe("AgentOrchestrator (state graph)", () => {
     expect(seenFeedback[1]).toContain("metrics output");
     expect(latest?.currentNode).toBe("run_experiments");
     expect(latest?.graph.nodeStates.implement_experiments.status).toBe("completed");
-    expect((latest?.graph.retryCounters.run_experiments ?? 0)).toBeGreaterThanOrEqual(3);
+    expect(latest?.graph.rollbackCounters.run_experiments).toBe(1);
+    expect(latest?.graph.retryCounters.run_experiments ?? 0).toBe(0);
   });
 
   it("auto retries then rolls back when failure persists", async () => {
@@ -359,7 +360,7 @@ describe("AgentOrchestrator (state graph)", () => {
     expect(latest?.status).toBe("paused");
     expect(latest?.graph.nodeStates.analyze_papers.status).toBe("pending");
     expect(latest?.graph.rollbackCounters.generate_hypotheses).toBe(1);
-    expect((latest?.graph.retryCounters.generate_hypotheses ?? 0)).toBeGreaterThanOrEqual(3);
+    expect(latest?.graph.retryCounters.generate_hypotheses ?? 0).toBe(0);
   });
 
   it("restores the last successful collect request before pausing a rollback below the requested node", async () => {
@@ -511,6 +512,27 @@ describe("AgentOrchestrator (state graph)", () => {
     expect(resumed.id).toBe(run.id);
   });
 
+  it("writes a new latest checkpoint when explicitly resuming an older checkpoint", async () => {
+    const { store, orchestrator } = await setup(new DeterministicRegistry({}));
+    const run = await store.createRun({
+      title: "Run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    await orchestrator.runAgent(run.id, "collect_papers");
+    const pointsBefore = await orchestrator.listCheckpoints(run.id);
+    const target = pointsBefore[0];
+    expect(target).toBeDefined();
+
+    const resumed = await orchestrator.resumeRun(run.id, target);
+    expect(resumed.currentNode).toBe("collect_papers");
+
+    const pointsAfter = await orchestrator.listCheckpoints(run.id);
+    expect(pointsAfter.at(-1)).toBeGreaterThan(pointsBefore.at(-1) ?? 0);
+  });
+
   it("keeps the newer run state when /resume would otherwise restore a stale latest checkpoint", async () => {
     const { store, orchestrator } = await setup(new DeterministicRegistry({}));
     const run = await store.createRun({
@@ -543,6 +565,65 @@ describe("AgentOrchestrator (state graph)", () => {
     expect(resumed.currentNode).toBe("generate_hypotheses");
     expect(resumed.graph.currentNode).toBe("generate_hypotheses");
     expect(resumed.graph.nodeStates.generate_hypotheses.note).toContain("Recovered manually");
+  });
+
+  it("continues into analyze_papers after collect recovery when later nodes were already visited", async () => {
+    let analyzeCalls = 0;
+    const registry = new DeterministicRegistry({
+      collect_papers: {
+        id: "collect_papers",
+        execute: async () => ({
+          status: "success",
+          summary: "Recovered collect completed.",
+          needsApproval: true,
+          toolCallsUsed: 1
+        })
+      },
+      analyze_papers: {
+        id: "analyze_papers",
+        execute: async () => {
+          analyzeCalls += 1;
+          return {
+            status: "success",
+            summary: "Recovered analysis resumed.",
+            needsApproval: true,
+            toolCallsUsed: 1
+          };
+        }
+      }
+    });
+    const { store, orchestrator } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "analyze_papers";
+    run.graph.currentNode = "analyze_papers";
+    run.status = "paused";
+    run.graph.nodeStates.collect_papers = {
+      status: "completed",
+      updatedAt: new Date().toISOString(),
+      note: "Collected before recovery."
+    };
+    run.graph.nodeStates.analyze_papers = {
+      status: "failed",
+      updatedAt: new Date().toISOString(),
+      note: "Need broader collection."
+    };
+    await store.updateRun(run);
+
+    const result = await orchestrator.runAgentWithOptions(run.id, "collect_papers");
+    expect(result.result.status).toBe("success");
+    expect(analyzeCalls).toBe(1);
+
+    const latest = await store.getRun(run.id);
+    expect(latest?.currentNode).toBe("generate_hypotheses");
+    expect(latest?.graph.nodeStates.collect_papers.status).toBe("completed");
+    expect(latest?.graph.nodeStates.analyze_papers.status).toBe("completed");
   });
 
   it("cancels a running agent task with abort signal", async () => {
