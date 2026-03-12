@@ -7,7 +7,31 @@ export interface PaintStyle {
   dim?: boolean;
 }
 
+export interface TuiThemePalette {
+  accent: number;
+  text: number;
+  muted: number;
+  subtle: number;
+  panel: number;
+  selected: number;
+  success: number;
+  warning: number;
+  danger: number;
+}
+
 export const reset = "\x1b[0m";
+
+export const TUI_THEME: TuiThemePalette = {
+  accent: 110,
+  text: 255,
+  muted: 245,
+  subtle: 239,
+  panel: 240,
+  selected: 237,
+  success: 150,
+  warning: 179,
+  danger: 210
+};
 
 export function supportsColor(): boolean {
   if (process.env.NO_COLOR) {
@@ -40,24 +64,45 @@ export function paint(text: string, style: PaintStyle, enabled = supportsColor()
     return text;
   }
 
-  const codes: number[] = [];
+  const codes: string[] = [];
   if (style.bold) {
-    codes.push(1);
+    codes.push("1");
   }
   if (style.dim) {
-    codes.push(2);
+    codes.push("2");
   }
   if (typeof style.fg === "number") {
-    codes.push(style.fg);
+    appendColorCode(codes, style.fg, false);
   }
   if (typeof style.bg === "number") {
-    codes.push(style.bg);
+    appendColorCode(codes, style.bg, true);
   }
 
   if (codes.length === 0) {
     return text;
   }
   return `\x1b[${codes.join(";")}m${text}${reset}`;
+}
+
+function appendColorCode(codes: string[], code: number, background: boolean): void {
+  if (isStandardAnsiCode(code, background)) {
+    codes.push(String(code));
+    return;
+  }
+
+  if (Number.isInteger(code) && code >= 0 && code <= 255) {
+    codes.push(background ? "48" : "38", "5", String(code));
+    return;
+  }
+
+  codes.push(String(code));
+}
+
+function isStandardAnsiCode(code: number, background: boolean): boolean {
+  if (background) {
+    return (code >= 40 && code <= 47) || (code >= 100 && code <= 107);
+  }
+  return (code >= 30 && code <= 37) || (code >= 90 && code <= 97);
 }
 
 export function stripAnsi(text: string): string {

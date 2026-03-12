@@ -63,15 +63,15 @@ describe("buildFrame", () => {
       colorEnabled: true
     });
 
-    const helpLine = frame.lines.find((line) => stripAnsi(line) === "[INFO] Help") ?? "";
-    const usageLine = frame.lines.find((line) => stripAnsi(line) === "[WARN] Usage: /run <run>") ?? "";
-    const successLine = frame.lines.find((line) => stripAnsi(line) === "[OK] Updated title: A -> B") ?? "";
-    const errorLine = frame.lines.find((line) => stripAnsi(line) === "[ERR] Error: bad input") ?? "";
+    const helpLine = frame.lines.find((line) => stripAnsi(line) === "• Help") ?? "";
+    const usageLine = frame.lines.find((line) => stripAnsi(line) === "! Usage: /run <run>") ?? "";
+    const successLine = frame.lines.find((line) => stripAnsi(line) === "+ Updated title: A -> B") ?? "";
+    const errorLine = frame.lines.find((line) => stripAnsi(line) === "x Error: bad input") ?? "";
 
-    expect(helpLine).toMatch(/\x1b\[[0-9;]*96m/);
-    expect(usageLine).toMatch(/\x1b\[[0-9;]*93m/);
-    expect(successLine).toMatch(/\x1b\[[0-9;]*92m/);
-    expect(errorLine).toMatch(/\x1b\[[0-9;]*91m/);
+    expect(helpLine).toMatch(/\x1b\[[0-9;]*38;5;110m/);
+    expect(usageLine).toMatch(/\x1b\[[0-9;]*38;5;179m/);
+    expect(successLine).toMatch(/\x1b\[[0-9;]*38;5;150m/);
+    expect(errorLine).toMatch(/\x1b\[[0-9;]*38;5;210m/);
   });
 
   it("highlights direct answers and numbered titles in white", () => {
@@ -89,11 +89,11 @@ describe("buildFrame", () => {
       colorEnabled: true
     });
 
-    const answerLine = frame.lines.find((line) => stripAnsi(line) === "[INFO] 현재 수집된 논문은 20편입니다.") ?? "";
-    const titleLine = frame.lines.find((line) => stripAnsi(line) === "[INFO] 1. First paper title") ?? "";
+    const answerLine = frame.lines.find((line) => stripAnsi(line) === "• 현재 수집된 논문은 20편입니다.") ?? "";
+    const titleLine = frame.lines.find((line) => stripAnsi(line) === "• 1. First paper title") ?? "";
 
-    expect(answerLine).toMatch(/\x1b\[[0-9;]*97m/);
-    expect(titleLine).toMatch(/\x1b\[[0-9;]*97m/);
+    expect(answerLine).toMatch(/\x1b\[[0-9;]*38;5;255m/);
+    expect(titleLine).toMatch(/\x1b\[[0-9;]*38;5;255m/);
   });
 
   it("renders compact header with version", () => {
@@ -111,7 +111,10 @@ describe("buildFrame", () => {
       colorEnabled: false
     });
 
-    expect(stripAnsi(frame.lines[0])).toBe("AutoLabOS v1.0.0");
+    const plain = frame.lines.map((line) => stripAnsi(line));
+    expect(plain[0]).toMatch(/^\+-+\+$/);
+    expect(plain.some((line) => line.includes("AutoLabOS (v1.0.0)"))).toBe(true);
+    expect(plain.some((line) => line.includes("model: not configured"))).toBe(true);
   });
 
   it("renders active run insight lines above recent logs", () => {
@@ -197,13 +200,13 @@ describe("buildFrame", () => {
 
     const plain = frame.lines.map((line) => stripAnsi(line));
     const insightTitleIndex = plain.indexOf("Result analysis");
-    const logsIndex = plain.indexOf("Recent logs");
+    const logsIndex = plain.indexOf("• ready");
     expect(insightTitleIndex).toBeGreaterThan(0);
     expect(logsIndex).toBeGreaterThan(insightTitleIndex);
     expect(plain).toContain("• Objective: met - accuracy reached the configured target.");
     expect(plain).toContain("• Recommendation: advance -> review (88%)");
     expect(plain).toContain("• Next: Run an additional confirmatory configuration.");
-    expect(plain).toContain("› Run recommendation: /approve");
+    expect(plain).toContain("> Run recommendation: /approve");
     expect(plain).toContain("> [COMPARISON] Comparison: Treatment vs baseline: result_analysis.json");
     expect(plain).toContain("  Treatment improved accuracy over the baseline by 0.05.");
     expect(plain).toContain("  Metric accuracy | Delta +0.050 | Support yes");
@@ -257,11 +260,11 @@ describe("buildFrame", () => {
 
     const plain = frame.lines.map((line) => stripAnsi(line));
     expect(plain).not.toContain("Activity: Collecting...");
-    expect(plain).toContain("Collecting...");
+    expect(plain).toContain("• Collecting...");
     const promptIndex = frame.inputLineIndex - 1;
-    expect(plain[promptIndex]).toBe("> ");
+    expect(plain[promptIndex]).toContain("> ");
     expect(plain[promptIndex - 1]).toBe("");
-    expect(plain[promptIndex - 2]).toBe("Collecting...");
+    expect(plain[promptIndex - 2]).toBe("• Collecting...");
   });
 
   it("renders collecting progress with ETA above the input", () => {
@@ -285,10 +288,10 @@ describe("buildFrame", () => {
     });
 
     const plain = frame.lines.map((line) => stripAnsi(line));
-    expect(plain).toContain("Collecting... 199/300 (ETA ~2m 40s)");
+    expect(plain).toContain("• Collecting... 199/300 (ETA ~2m 40s)");
   });
 
-  it("places suggestions below the input line", () => {
+  it("renders suggestions in a floating panel above the input line", () => {
     const frame = buildFrame({
       appVersion: "1.0.0",
       busy: false,
@@ -304,15 +307,14 @@ describe("buildFrame", () => {
     });
 
     const inputLine = frame.lines[frame.inputLineIndex - 1];
-    expect(stripAnsi(inputLine)).toBe("> /");
-    expect(frame.inputLineIndex).toBeLessThan(frame.lines.length);
+    expect(stripAnsi(inputLine)).toContain("> /");
 
-    const suggestionRows = frame.lines.slice(frame.inputLineIndex + 1).map((line) => stripAnsi(line));
-    expect(suggestionRows[0]).toBe("/doctor  Run environment checks");
-    expect(suggestionRows.every((row) => !row.includes(" - "))).toBe(true);
+    const suggestionRows = frame.lines.slice(0, frame.inputLineIndex - 1).map((line) => stripAnsi(line));
+    expect(suggestionRows.some((row) => row.includes("Command suggestions"))).toBe(true);
+    expect(suggestionRows.some((row) => row.includes("> /doctor  Run environment checks"))).toBe(true);
   });
 
-  it("renders contextual guidance below the input when provided", () => {
+  it("renders contextual guidance in a floating panel above the input when provided", () => {
     const frame = buildFrame({
       appVersion: "1.0.0",
       busy: false,
@@ -335,9 +337,9 @@ describe("buildFrame", () => {
     });
 
     const plain = frame.lines.map((line) => stripAnsi(line));
-    expect(plain).toContain("Next actions");
-    expect(plain).toContain("  /new  Create a research brief file");
-    expect(plain).toContain("  what should I do next?  Ask for the recommended next step");
+    expect(plain.some((line) => line.includes("Next actions"))).toBe(true);
+    expect(plain.some((line) => line.includes("- /new  Create a research brief file"))).toBe(true);
+    expect(plain.some((line) => line.includes("- what should I do next?  Ask for the recommended next step"))).toBe(true);
   });
 
   it("prefixes regular log lines with INFO/WARN/OK/ERR tags", () => {
@@ -356,10 +358,10 @@ describe("buildFrame", () => {
     });
 
     const plain = frame.lines.map((line) => stripAnsi(line));
-    expect(plain).toContain("[INFO] Natural query: test");
-    expect(plain).toContain("[WARN] Canceled pending command: /approve");
-    expect(plain).toContain("[OK] Run completed.");
-    expect(plain).toContain("[ERR] Error: broken");
+    expect(plain).toContain("• Natural query: test");
+    expect(plain).toContain("! Canceled pending command: /approve");
+    expect(plain).toContain("+ Run completed.");
+    expect(plain).toContain("x Error: broken");
   });
 
   it("keeps automatic replan logs out of error styling", () => {
@@ -383,10 +385,10 @@ describe("buildFrame", () => {
     });
 
     const plain = frame.lines.map((line) => stripAnsi(line));
-    expect(plain).toContain("[INFO] Attempting automatic replan after failed step...");
-    expect(plain).toContain("[INFO] The previous collect step failed. I can retry with a corrected collect command.");
-    expect(plain).toContain("[WARN] Replan matched the failed plan. Not re-arming the same commands.");
-    expect(plain).toContain("[WARN] No revised execution plan was suggested.");
+    expect(plain).toContain("• Attempting automatic replan after failed step...");
+    expect(plain).toContain("• The previous collect step failed. I can retry with a corrected collect command.");
+    expect(plain).toContain("! Replan matched the failed plan. Not re-arming the same commands.");
+    expect(plain).toContain("! No revised execution plan was suggested.");
   });
 
   it("computes cursor column at the end of '> input'", () => {
@@ -425,7 +427,7 @@ describe("buildFrame", () => {
     expect(frame.inputColumn).toBe(7);
   });
 
-  it("highlights selected suggestion with blue background", () => {
+  it("highlights selected suggestion with the muted selected panel color", () => {
     const frame = buildFrame({
       appVersion: "1.0.0",
       busy: false,
@@ -440,9 +442,9 @@ describe("buildFrame", () => {
       colorEnabled: true
     });
 
-    const selectedRow = frame.lines[frame.inputLineIndex + 1];
+    const selectedRow = frame.lines.find((line) => stripAnsi(line).includes("> /doctor  Run environment checks")) || "";
     expect(selectedRow).toContain("\x1b[");
-    expect(selectedRow).toContain("44");
+    expect(selectedRow).toContain("48;5;237");
   });
 
   it("renders selection menu rows when active", () => {
@@ -478,10 +480,10 @@ describe("buildFrame", () => {
     const plain = frame.lines.map((line) => stripAnsi(line));
     expect(plain.some((line) => line.includes("Select model"))).toBe(true);
     expect(plain.some((line) => line.includes("gpt-5.3-codex  Primary Codex model."))).toBe(true);
-    expect(plain.some((line) => line.trim() === "gpt-5.2-codex")).toBe(true);
+    expect(plain.some((line) => line.includes("> gpt-5.2-codex"))).toBe(true);
   });
 
-  it("highlights selected selection menu row", () => {
+  it("highlights selected selection menu row with the muted selected panel color", () => {
     const frame = buildFrame({
       appVersion: "1.0.0",
       busy: true,
@@ -505,9 +507,9 @@ describe("buildFrame", () => {
       }
     });
 
-    const selected = frame.lines.find((line) => stripAnsi(line).trim() === "high") || "";
+    const selected = frame.lines.find((line) => stripAnsi(line).includes("> high")) || "";
     expect(selected).toContain("\x1b[");
-    expect(selected).toContain("44");
+    expect(selected).toContain("48;5;237");
   });
 
   it("renders moving monochrome gradient on Thinking text", () => {
@@ -603,10 +605,10 @@ describe("buildFrame", () => {
     });
 
     const plain = frame.lines.map((line) => stripAnsi(line));
-    expect(plain.some((line) => line.includes("reproducibility benchmark"))).toBe(true);
+    expect(plain.some((line) => line.includes("Graph nodes:"))).toBe(true);
     expect(
       plain.filter((line) => line.includes("Graph nodes:") || line.includes("generate_hypotheses") || line.includes("review") || line.includes("write_paper")).length
     ).toBeGreaterThan(1);
-    expect(plain[frame.inputLineIndex - 1]).toBe("> ");
+    expect(plain[frame.inputLineIndex - 1]).toContain("> ");
   });
 });

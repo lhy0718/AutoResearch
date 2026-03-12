@@ -3739,6 +3739,9 @@ export class TerminalApp {
       thinking: this.thinking,
       thinkingFrame: this.thinkingFrame,
       terminalWidth: this.resolveTerminalWidth(),
+      modelLabel: this.getCurrentSlotPreset("chat"),
+      workspaceLabel: this.getWorkspaceLabel(),
+      footerItems: this.buildFooterItems(run),
       run,
       runInsight: this.activeRunInsight,
       logs: this.getRenderableLogs(run),
@@ -3799,6 +3802,36 @@ export class TerminalApp {
       return envWidth;
     }
     return process.stdout.columns ?? 120;
+  }
+
+  private getWorkspaceLabel(): string {
+    return process.cwd();
+  }
+
+  private buildFooterItems(run?: RunRecord): string[] {
+    const items = [this.getCurrentSlotPreset("chat")];
+
+    if (run) {
+      const nodeStatus = run.graph.nodeStates[run.currentNode]?.status || run.status;
+      items.push(`${run.currentNode} ${nodeStatus}`);
+      items.push(run.id);
+    } else {
+      items.push("no active run");
+    }
+
+    if (this.pendingHumanIntervention) {
+      items.push("awaiting approval");
+    } else if (this.pendingNaturalCommand) {
+      items.push(`plan ${this.pendingNaturalCommand.stepIndex + 1}/${this.pendingNaturalCommand.totalSteps}`);
+    } else if (this.thinking) {
+      items.push("thinking");
+    } else if (this.busy) {
+      items.push("running");
+    }
+
+    items.push(this.getWorkspaceLabel());
+    items.push(`v${this.appVersion}`);
+    return items;
   }
 
   private getActivityLabel(run?: RunRecord): string | undefined {

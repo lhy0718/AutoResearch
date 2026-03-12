@@ -1,6 +1,6 @@
 import { RunInsightCard, RunRecord, SuggestionItem } from "../types.js";
 import { ContextualGuidance, GuidanceItem } from "./contextualGuidance.js";
-import { PaintStyle, paint, reset, stripAnsi } from "./theme.js";
+import { PaintStyle, paint, reset, stripAnsi, TUI_THEME } from "./theme.js";
 import { getDisplayWidth } from "./displayWidth.js";
 
 export interface RenderFrameInput {
@@ -10,6 +10,9 @@ export interface RenderFrameInput {
   thinking: boolean;
   thinkingFrame: number;
   terminalWidth?: number;
+  modelLabel?: string;
+  workspaceLabel?: string;
+  footerItems?: string[];
   run?: RunRecord;
   runInsight?: RunInsightCard;
   logs: string[];
@@ -42,27 +45,19 @@ export interface RenderFrameOutput {
 export function buildFrame(input: RenderFrameInput): RenderFrameOutput {
   const rawLines: string[] = [];
   let rawThinkingLineIndex: number | undefined;
+  const wrapWidth = Math.max(20, (input.terminalWidth ?? 120) - 1);
+  const tipLine = buildTipLine(input);
 
-  rawLines.push(paint(`AutoLabOS v${input.appVersion}`, { fg: 96, bold: true }, input.colorEnabled));
+  rawLines.push(...renderHeaderCard(input, wrapWidth));
 
-  if (input.run) {
-    rawLines.push(renderLabelValue("Run", input.run.id, input.colorEnabled, true));
-    rawLines.push(renderLabelValue("Title", input.run.title, input.colorEnabled, true));
-    rawLines.push(
-      renderLabelValue(
-        "Node",
-        `${input.run.currentNode} (${input.run.graph.nodeStates[input.run.currentNode].status})`,
-        input.colorEnabled,
-        true
-      )
-    );
-  } else {
-    rawLines.push(renderLabelValue("Run", "none", input.colorEnabled, true));
+  if (tipLine) {
+    rawLines.push("");
+    rawLines.push(tipLine);
   }
 
   if (input.runInsight?.lines.length) {
     rawLines.push("");
-    rawLines.push(paint(input.runInsight.title, { fg: 97, bold: true }, input.colorEnabled));
+    rawLines.push(renderSectionHeading(input.runInsight.title, input.colorEnabled));
     for (const line of input.runInsight.lines.slice(0, 4)) {
       rawLines.push(renderInsightLine(line, input.colorEnabled));
     }
@@ -81,12 +76,10 @@ export function buildFrame(input: RenderFrameInput): RenderFrameOutput {
     }
   }
 
-  rawLines.push("");
-  rawLines.push(paint("Recent logs", { fg: 97, bold: true }, input.colorEnabled));
-
   const recentLogs = input.logs.slice(-12);
+  rawLines.push("");
   if (recentLogs.length === 0) {
-    rawLines.push(paint("no logs yet", { fg: 90 }, input.colorEnabled));
+    rawLines.push(paint("No transcript yet. Try /new, /help, or describe the task you want to run.", { fg: TUI_THEME.muted }, input.colorEnabled));
   } else {
     for (const log of recentLogs) {
       rawLines.push(renderLogLine(log, input.colorEnabled));
@@ -95,59 +88,79 @@ export function buildFrame(input: RenderFrameInput): RenderFrameOutput {
 
   if (input.thinking || input.activityLabel) {
     rawLines.push("");
-    rawLines.push(buildAnimatedStatusText(input.thinking ? "Thinking..." : input.activityLabel!, input.thinkingFrame, input.colorEnabled));
+    rawLines.push(
+      buildAnimatedStatusText(
+        `• ${input.thinking ? "Thinking..." : input.activityLabel!}`,
+        input.thinkingFrame,
+        input.colorEnabled
+      )
+    );
     rawThinkingLineIndex = rawLines.length;
   }
 
-  rawLines.push("");
-  const prompt = `${paint(">", { fg: 96, bold: true }, input.colorEnabled)} ${paint(input.input, { fg: 97 }, input.colorEnabled)}`;
-  rawLines.push(prompt);
-  const rawInputLineIndex = rawLines.length;
-  const inputColumn = 3 + getDisplayWidth(sliceByChars(input.input, input.inputCursor));
-
   if (input.suggestions.length > 0) {
     rawLines.push("");
-    input.suggestions.forEach((suggestion, idx) => {
-      rawLines.push(renderSuggestionRow({
-        suggestion,
-        selected: idx === input.selectedSuggestion,
-        colorEnabled: input.colorEnabled
-      }));
-    });
+    rawLines.push(
+      ...renderFloatingPanel(
+        "Command suggestions",
+        input.suggestions.map((suggestion, idx) =>
+          renderSuggestionRow({
+            suggestion,
+            selected: idx === input.selectedSuggestion,
+            colorEnabled: input.colorEnabled
+          })
+        ),
+        input.colorEnabled,
+        wrapWidth
+      )
+    );
   }
 
   if (input.guidance && input.guidance.items.length > 0) {
     rawLines.push("");
-    rawLines.push(paint(input.guidance.title, { fg: 97, bold: true }, input.colorEnabled));
-    input.guidance.items.forEach((item) => {
-      rawLines.push(renderGuidanceRow({
-        item,
-        colorEnabled: input.colorEnabled
-      }));
-    });
+    rawLines.push(
+      ...renderFloatingPanel(
+        input.guidance.title,
+        input.guidance.items.map((item) =>
+          renderGuidanceRow({
+            item,
+            colorEnabled: input.colorEnabled
+          })
+        ),
+        input.colorEnabled,
+        wrapWidth
+      )
+    );
   }
 
   if (input.selectionMenu) {
     rawLines.push("");
     rawLines.push(
-      paint(
+      ...renderFloatingPanel(
         `${input.selectionMenu.title}  (↑/↓ move, Enter select, Esc cancel)`,
-        { fg: 97, bold: true },
-        input.colorEnabled
+        input.selectionMenu.options.map((option, idx) =>
+          renderSelectionRow({
+            option,
+            selected: idx === input.selectionMenu?.selectedIndex,
+            colorEnabled: input.colorEnabled
+          })
+        ),
+        input.colorEnabled,
+        wrapWidth
       )
     );
-    input.selectionMenu.options.forEach((option, idx) => {
-      rawLines.push(
-        renderSelectionRow({
-          option,
-          selected: idx === input.selectionMenu?.selectedIndex,
-          colorEnabled: input.colorEnabled
-        })
-      );
-    });
   }
 
-  const wrapWidth = Math.max(20, (input.terminalWidth ?? 120) - 1);
+  rawLines.push("");
+  rawLines.push(renderComposerLine(input));
+  const rawInputLineIndex = rawLines.length;
+  const inputColumn = 3 + getDisplayWidth(sliceByChars(input.input, input.inputCursor));
+
+  const footerLine = renderFooterLine(input);
+  if (footerLine) {
+    rawLines.push(footerLine);
+  }
+
   const lines: string[] = [];
   let inputLineIndex = 0;
   let thinkingLineIndex: number | undefined;
@@ -231,6 +244,118 @@ function wrapAnsiLine(line: string, width: number): string[] {
   return out.length > 0 ? out : [line];
 }
 
+function renderHeaderCard(input: RenderFrameInput, terminalWidth: number): string[] {
+  const lines = [
+    `${paint(">_", { fg: TUI_THEME.accent, bold: true }, input.colorEnabled)} ${paint("AutoLabOS", { fg: TUI_THEME.text, bold: true }, input.colorEnabled)} ${paint(`(v${input.appVersion})`, { fg: TUI_THEME.muted }, input.colorEnabled)}`,
+    renderHeaderMetaLine("model", input.modelLabel || "not configured", input.colorEnabled, "/model to change"),
+    renderHeaderMetaLine("directory", input.workspaceLabel || ".", input.colorEnabled)
+  ];
+
+  return renderFloatingPanel(undefined, lines, input.colorEnabled, Math.min(terminalWidth, 72));
+}
+
+function renderHeaderMetaLine(
+  label: string,
+  value: string,
+  colorEnabled: boolean,
+  hint?: string
+): string {
+  const labelText = paint(`${label}:`, { fg: TUI_THEME.muted }, colorEnabled);
+  const valueText = paint(value, { fg: TUI_THEME.text, bold: label === "model" }, colorEnabled);
+  if (!hint) {
+    return `${labelText} ${valueText}`;
+  }
+  return `${labelText} ${valueText}  ${paint(hint, { fg: TUI_THEME.accent }, colorEnabled)}`;
+}
+
+function buildTipLine(input: RenderFrameInput): string | undefined {
+  let tip: string | undefined;
+  if (input.selectionMenu) {
+    tip = "Tip: Use arrow keys to move, Enter to select, and Esc to cancel.";
+  } else if (input.thinking) {
+    tip = "Tip: While thinking, new input is treated as steering.";
+  } else if (input.suggestions.length > 0) {
+    tip = "Tip: Tab inserts the highlighted command suggestion.";
+  } else if (input.busy) {
+    tip = "Tip: Activity updates stream inline while the active node is running.";
+  } else if (!input.run) {
+    tip = "Tip: Start with /new, /help, or a natural-language request.";
+  } else {
+    tip = "Tip: Use slash commands or plain language in the same prompt.";
+  }
+
+  return tip ? paint(tip, { fg: TUI_THEME.muted }, input.colorEnabled) : undefined;
+}
+
+function renderFooterLine(input: RenderFrameInput): string | undefined {
+  const items = input.footerItems?.filter((item) => item.trim().length > 0) || [];
+  if (items.length === 0) {
+    return undefined;
+  }
+  return paint(items.join(" · "), { fg: TUI_THEME.muted, dim: true }, input.colorEnabled);
+}
+
+function renderComposerLine(input: RenderFrameInput): string {
+  const prompt = paint(">", { fg: TUI_THEME.text, bold: true }, input.colorEnabled);
+  const hasInput = input.input.length > 0;
+  const content = hasInput
+    ? paint(input.input, { fg: TUI_THEME.text }, input.colorEnabled)
+    : paint("Ask AutoLabOS to collect, analyze, or run...", { fg: TUI_THEME.muted, dim: true }, input.colorEnabled);
+  const hint = resolveComposerHint(input);
+  return `${prompt} ${content}${hint ? `  ${paint(hint, { fg: TUI_THEME.subtle, dim: true }, input.colorEnabled)}` : ""}`;
+}
+
+function resolveComposerHint(input: RenderFrameInput): string | undefined {
+  if (input.selectionMenu) {
+    return "Esc to cancel";
+  }
+  if (input.suggestions.length > 0) {
+    return "Tab to insert";
+  }
+  if (input.input.trim().length > 0) {
+    return "Enter to submit";
+  }
+  return "/help";
+}
+
+function renderFloatingPanel(
+  title: string | undefined,
+  rows: string[],
+  colorEnabled: boolean,
+  terminalWidth: number
+): string[] {
+  const visibleRows = title ? [title, ...rows] : [...rows];
+  const maxContentWidth = Math.max(...visibleRows.map((row) => getDisplayWidth(stripAnsi(row))), 0);
+  const contentWidth = Math.min(Math.max(24, maxContentWidth), Math.max(24, terminalWidth - 4));
+  const border = paint(`+${"-".repeat(contentWidth + 2)}+`, { fg: TUI_THEME.panel }, colorEnabled);
+  const rendered = [border];
+
+  visibleRows.forEach((row, index) => {
+    const body =
+      index === 0 && title
+        ? paint(stripAnsi(title) === title ? title : row, { fg: TUI_THEME.text, bold: true }, colorEnabled)
+        : row;
+    rendered.push(
+      `${paint("|", { fg: TUI_THEME.panel }, colorEnabled)} ${padAnsiRight(body, contentWidth)} ${paint("|", { fg: TUI_THEME.panel }, colorEnabled)}`
+    );
+  });
+
+  rendered.push(border);
+  return rendered;
+}
+
+function padAnsiRight(text: string, width: number): string {
+  const plainWidth = getDisplayWidth(stripAnsi(text));
+  if (plainWidth >= width) {
+    return text;
+  }
+  return `${text}${" ".repeat(width - plainWidth)}`;
+}
+
+function renderSectionHeading(title: string, colorEnabled: boolean): string {
+  return paint(title, { fg: TUI_THEME.text, bold: true }, colorEnabled);
+}
+
 interface SuggestionRowArgs {
   suggestion: SuggestionItem;
   selected: boolean;
@@ -238,14 +363,16 @@ interface SuggestionRowArgs {
 }
 
 function renderSuggestionRow(args: SuggestionRowArgs): string {
-  const rowText = `${args.suggestion.label}  ${args.suggestion.description}`;
-  if (args.selected) {
-    return paint(rowText, { fg: 97, bg: 44, bold: true }, args.colorEnabled);
-  }
-
-  const command = paint(args.suggestion.label, { fg: 97 }, args.colorEnabled);
-  const description = paint(args.suggestion.description, { fg: 90 }, args.colorEnabled);
-  return `${command}  ${description}`;
+  const marker = args.selected
+    ? paint(">", { fg: TUI_THEME.accent, bold: true }, args.colorEnabled)
+    : paint(" ", { fg: TUI_THEME.subtle }, args.colorEnabled);
+  const commandStyle = args.selected
+    ? { fg: TUI_THEME.text, bg: TUI_THEME.selected, bold: true }
+    : { fg: TUI_THEME.text };
+  const descriptionStyle = args.selected
+    ? { fg: TUI_THEME.text, bg: TUI_THEME.selected }
+    : { fg: TUI_THEME.muted };
+  return `${marker} ${paint(args.suggestion.label, commandStyle, args.colorEnabled)}  ${paint(args.suggestion.description, descriptionStyle, args.colorEnabled)}`;
 }
 
 interface GuidanceRowArgs {
@@ -254,9 +381,7 @@ interface GuidanceRowArgs {
 }
 
 function renderGuidanceRow(args: GuidanceRowArgs): string {
-  const label = paint(args.item.label, { fg: 97 }, args.colorEnabled);
-  const description = paint(args.item.description, { fg: 90 }, args.colorEnabled);
-  return `  ${label}  ${description}`;
+  return `${paint("-", { fg: TUI_THEME.accent }, args.colorEnabled)} ${paint(args.item.label, { fg: TUI_THEME.text }, args.colorEnabled)}  ${paint(args.item.description, { fg: TUI_THEME.muted }, args.colorEnabled)}`;
 }
 
 interface SelectionRowArgs {
@@ -266,28 +391,28 @@ interface SelectionRowArgs {
 }
 
 function renderSelectionRow(args: SelectionRowArgs): string {
-  const text = args.option.description
-    ? `  ${args.option.label}  ${args.option.description}`
-    : `  ${args.option.label}`;
-  if (args.selected) {
-    return paint(text, { fg: 97, bg: 44, bold: true }, args.colorEnabled);
-  }
+  const marker = args.selected
+    ? paint(">", { fg: TUI_THEME.accent, bold: true }, args.colorEnabled)
+    : paint(" ", { fg: TUI_THEME.subtle }, args.colorEnabled);
+  const labelStyle = args.selected
+    ? { fg: TUI_THEME.text, bg: TUI_THEME.selected, bold: true }
+    : { fg: TUI_THEME.text };
+  const descriptionStyle = args.selected
+    ? { fg: TUI_THEME.text, bg: TUI_THEME.selected }
+    : { fg: TUI_THEME.muted };
+  const text = paint(args.option.label, labelStyle, args.colorEnabled);
   if (!args.option.description) {
-    return paint(text, { fg: 97 }, args.colorEnabled);
+    return `${marker} ${text}`;
   }
-  return `  ${paint(args.option.label, { fg: 97 }, args.colorEnabled)}  ${paint(args.option.description, { fg: 90 }, args.colorEnabled)}`;
-}
-
-function renderLabelValue(label: string, value: string, colorEnabled: boolean, emphasizeValue = false): string {
-  return `${paint(`${label}:`, { fg: 97, bold: true }, colorEnabled)} ${paint(value, emphasizeValue ? { fg: 97 } : { fg: 90 }, colorEnabled)}`;
+  return `${marker} ${text}  ${paint(args.option.description, descriptionStyle, args.colorEnabled)}`;
 }
 
 function renderInsightLine(line: string, colorEnabled: boolean): string {
-  return `${paint("•", { fg: 96, bold: true }, colorEnabled)} ${paint(line, { fg: 97 }, colorEnabled)}`;
+  return `${paint("•", { fg: TUI_THEME.accent, bold: true }, colorEnabled)} ${paint(line, { fg: TUI_THEME.text }, colorEnabled)}`;
 }
 
 function renderInsightAction(label: string, command: string, colorEnabled: boolean): string {
-  return `${paint("›", { fg: 90, bold: true }, colorEnabled)} ${paint(`${label}:`, { fg: 90, bold: true }, colorEnabled)} ${paint(command, { fg: 96 }, colorEnabled)}`;
+  return `${paint(">", { fg: TUI_THEME.muted, bold: true }, colorEnabled)} ${paint(`${label}:`, { fg: TUI_THEME.muted, bold: true }, colorEnabled)} ${paint(command, { fg: TUI_THEME.accent }, colorEnabled)}`;
 }
 
 function renderInsightReference(
@@ -297,11 +422,11 @@ function renderInsightReference(
   colorEnabled: boolean
 ): string {
   const kindLabel = kind.toUpperCase();
-  return `${paint(">", { fg: 90, bold: true }, colorEnabled)} ${paint(`[${kindLabel}]`, { fg: 96, bold: true }, colorEnabled)} ${paint(`${label}:`, { fg: 90 }, colorEnabled)} ${paint(referencePath, { fg: 92 }, colorEnabled)}`;
+  return `${paint(">", { fg: TUI_THEME.muted, bold: true }, colorEnabled)} ${paint(`[${kindLabel}]`, { fg: TUI_THEME.accent, bold: true }, colorEnabled)} ${paint(`${label}:`, { fg: TUI_THEME.muted }, colorEnabled)} ${paint(referencePath, { fg: TUI_THEME.success }, colorEnabled)}`;
 }
 
 function renderInsightReferenceSummary(summary: string, colorEnabled: boolean): string {
-  return `  ${paint(truncateForInsight(summary), { fg: 90, dim: true }, colorEnabled)}`;
+  return `  ${paint(truncateForInsight(summary), { fg: TUI_THEME.muted, dim: true }, colorEnabled)}`;
 }
 
 function renderInsightReferenceFacts(
@@ -309,11 +434,11 @@ function renderInsightReferenceFacts(
   colorEnabled: boolean
 ): string {
   const joined = facts.map((fact) => `${fact.label} ${fact.value}`).join(" | ");
-  return `  ${paint(truncateForInsight(joined), { fg: 96 }, colorEnabled)}`;
+  return `  ${paint(truncateForInsight(joined), { fg: TUI_THEME.accent }, colorEnabled)}`;
 }
 
 function renderInsightReferenceDetail(detail: string, colorEnabled: boolean): string {
-  return `  ${paint(truncateForInsight(detail), { fg: 90 }, colorEnabled)}`;
+  return `  ${paint(truncateForInsight(detail), { fg: TUI_THEME.muted }, colorEnabled)}`;
 }
 
 function truncateForInsight(text: string, maxLength = 170): string {
@@ -330,13 +455,13 @@ function renderLogLine(log: string, colorEnabled: boolean): string {
   }
 
   const classified = classifyLogLine(log);
-  const prefix = paint(`[${classified.level}]`, classified.prefixStyle, colorEnabled);
+  const prefix = paint(classified.marker, classified.prefixStyle, colorEnabled);
   const text = paint(log, classified.textStyle, colorEnabled);
   return `${prefix} ${text}`;
 }
 
 interface ClassifiedLogLine {
-  level: "INFO" | "WARN" | "OK" | "ERR";
+  marker: "•" | "!" | "+" | "x";
   prefixStyle: PaintStyle;
   textStyle: PaintStyle;
 }
@@ -352,44 +477,44 @@ function classifyLogLine(log: string): ClassifiedLogLine {
     log === "Natural language:"
   ) {
     return {
-      level: "INFO",
-      prefixStyle: { fg: 96, bold: true },
-      textStyle: { fg: 96, bold: true }
+      marker: "•",
+      prefixStyle: { fg: TUI_THEME.accent, bold: true },
+      textStyle: { fg: TUI_THEME.accent, bold: true }
     };
   }
   if (log.startsWith("/")) {
     return {
-      level: "INFO",
-      prefixStyle: { fg: 96, bold: true },
-      textStyle: { fg: 97 }
+      marker: "•",
+      prefixStyle: { fg: TUI_THEME.accent, bold: true },
+      textStyle: { fg: TUI_THEME.text }
     };
   }
   if (log.startsWith("Examples:") || log.startsWith("Ask 'what natural inputs are supported?'")) {
     return {
-      level: "INFO",
-      prefixStyle: { fg: 96, bold: true },
-      textStyle: { fg: 97, bold: true }
+      marker: "•",
+      prefixStyle: { fg: TUI_THEME.accent, bold: true },
+      textStyle: { fg: TUI_THEME.text, bold: true }
     };
   }
   if (log.startsWith("Collect options:")) {
     return {
-      level: "INFO",
-      prefixStyle: { fg: 96, bold: true },
-      textStyle: { fg: 90 }
+      marker: "•",
+      prefixStyle: { fg: TUI_THEME.accent, bold: true },
+      textStyle: { fg: TUI_THEME.muted }
     };
   }
   if (log.startsWith("Execution requests require") || log.startsWith("While thinking,")) {
     return {
-      level: "INFO",
-      prefixStyle: { fg: 96, bold: true },
-      textStyle: { fg: 90, dim: true }
+      marker: "•",
+      prefixStyle: { fg: TUI_THEME.accent, bold: true },
+      textStyle: { fg: TUI_THEME.muted, dim: true }
     };
   }
   if (lower.startsWith("collect dry-run plan:") || lower.startsWith("graph nodes:")) {
     return {
-      level: "INFO",
-      prefixStyle: { fg: 96, bold: true },
-      textStyle: { fg: 96, bold: true }
+      marker: "•",
+      prefixStyle: { fg: TUI_THEME.accent, bold: true },
+      textStyle: { fg: TUI_THEME.accent, bold: true }
     };
   }
   if (
@@ -403,9 +528,9 @@ function classifyLogLine(log: string): ClassifiedLogLine {
     lower.startsWith("no active run.")
   ) {
     return {
-      level: "WARN",
-      prefixStyle: { fg: 93, bold: true },
-      textStyle: { fg: 93, bold: true }
+      marker: "!",
+      prefixStyle: { fg: TUI_THEME.warning, bold: true },
+      textStyle: { fg: TUI_THEME.warning, bold: true }
     };
   }
   if (
@@ -418,9 +543,9 @@ function classifyLogLine(log: string): ClassifiedLogLine {
     lower.startsWith("generating run title with codex...")
   ) {
     return {
-      level: "INFO",
-      prefixStyle: { fg: 96, bold: true },
-      textStyle: { fg: 96 }
+      marker: "•",
+      prefixStyle: { fg: TUI_THEME.accent, bold: true },
+      textStyle: { fg: TUI_THEME.accent }
     };
   }
   if (
@@ -443,9 +568,9 @@ function classifyLogLine(log: string): ClassifiedLogLine {
     lower.startsWith("plan completed after ")
   ) {
     return {
-      level: "OK",
-      prefixStyle: { fg: 92, bold: true },
-      textStyle: { fg: 92, bold: true }
+      marker: "+",
+      prefixStyle: { fg: TUI_THEME.success, bold: true },
+      textStyle: { fg: TUI_THEME.success, bold: true }
     };
   }
   if (
@@ -459,30 +584,30 @@ function classifyLogLine(log: string): ClassifiedLogLine {
     lower.startsWith("here are ")
   ) {
     return {
-      level: "INFO",
-      prefixStyle: { fg: 96, bold: true },
-      textStyle: { fg: 97 }
+      marker: "•",
+      prefixStyle: { fg: TUI_THEME.accent, bold: true },
+      textStyle: { fg: TUI_THEME.text }
     };
   }
   if (/^\d+\.\s/u.test(log)) {
     return {
-      level: "INFO",
-      prefixStyle: { fg: 96, bold: true },
-      textStyle: { fg: 97 }
+      marker: "•",
+      prefixStyle: { fg: TUI_THEME.accent, bold: true },
+      textStyle: { fg: TUI_THEME.text }
     };
   }
   if (lower.startsWith("execution plan detected.") || /^-\s*\[\d+\/\d+\]/u.test(log) || /^step \d+\/\d+:/iu.test(log)) {
     return {
-      level: "INFO",
-      prefixStyle: { fg: 96, bold: true },
-      textStyle: { fg: 97, bold: true }
+      marker: "•",
+      prefixStyle: { fg: TUI_THEME.accent, bold: true },
+      textStyle: { fg: TUI_THEME.text, bold: true }
     };
   }
   if (lower.startsWith("next plan step ready") || lower.startsWith("remaining plan steps")) {
     return {
-      level: "INFO",
-      prefixStyle: { fg: 96, bold: true },
-      textStyle: { fg: 97, bold: true }
+      marker: "•",
+      prefixStyle: { fg: TUI_THEME.accent, bold: true },
+      textStyle: { fg: TUI_THEME.text, bold: true }
     };
   }
   if (
@@ -491,38 +616,42 @@ function classifyLogLine(log: string): ClassifiedLogLine {
     lower.startsWith("replan matched the failed plan")
   ) {
     return {
-      level: lower.startsWith("replan matched") ? "WARN" : "INFO",
-      prefixStyle: lower.startsWith("replan matched") ? { fg: 93, bold: true } : { fg: 96, bold: true },
-      textStyle: lower.startsWith("replan matched") ? { fg: 93, bold: true } : { fg: 97 }
+      marker: lower.startsWith("replan matched") ? "!" : "•",
+      prefixStyle: lower.startsWith("replan matched")
+        ? { fg: TUI_THEME.warning, bold: true }
+        : { fg: TUI_THEME.accent, bold: true },
+      textStyle: lower.startsWith("replan matched")
+        ? { fg: TUI_THEME.warning, bold: true }
+        : { fg: TUI_THEME.text }
     };
   }
   if (lower.startsWith("no revised execution plan was suggested.")) {
     return {
-      level: "WARN",
-      prefixStyle: { fg: 93, bold: true },
-      textStyle: { fg: 93, bold: true }
+      marker: "!",
+      prefixStyle: { fg: TUI_THEME.warning, bold: true },
+      textStyle: { fg: TUI_THEME.warning, bold: true }
     };
   }
 
   if (lower.startsWith("error:") || lower.includes("[fail]") || lower.includes("failed")) {
     return {
-      level: "ERR",
-      prefixStyle: { fg: 91, bold: true },
-      textStyle: { fg: 91, bold: true }
+      marker: "x",
+      prefixStyle: { fg: TUI_THEME.danger, bold: true },
+      textStyle: { fg: TUI_THEME.danger, bold: true }
     };
   }
   if (lower.startsWith("next step:") || lower.startsWith("execution intent detected")) {
     return {
-      level: "INFO",
-      prefixStyle: { fg: 96, bold: true },
-      textStyle: { fg: 97, bold: true }
+      marker: "•",
+      prefixStyle: { fg: TUI_THEME.accent, bold: true },
+      textStyle: { fg: TUI_THEME.text, bold: true }
     };
   }
   if (log.startsWith("다음 단계:") || log.startsWith("실행 의도 감지")) {
     return {
-      level: "INFO",
-      prefixStyle: { fg: 96, bold: true },
-      textStyle: { fg: 97, bold: true }
+      marker: "•",
+      prefixStyle: { fg: TUI_THEME.accent, bold: true },
+      textStyle: { fg: TUI_THEME.text, bold: true }
     };
   }
   if (
@@ -532,16 +661,16 @@ function classifyLogLine(log: string): ClassifiedLogLine {
     lower.startsWith("budget:")
   ) {
     return {
-      level: "INFO",
-      prefixStyle: { fg: 96, bold: true },
-      textStyle: { fg: 97, bold: true }
+      marker: "•",
+      prefixStyle: { fg: TUI_THEME.accent, bold: true },
+      textStyle: { fg: TUI_THEME.text, bold: true }
     };
   }
   if (log.startsWith("자연어 질의:") || log.startsWith("현재 노드:") || log.startsWith("예산:")) {
     return {
-      level: "INFO",
-      prefixStyle: { fg: 96, bold: true },
-      textStyle: { fg: 97, bold: true }
+      marker: "•",
+      prefixStyle: { fg: TUI_THEME.accent, bold: true },
+      textStyle: { fg: TUI_THEME.text, bold: true }
     };
   }
   if (
@@ -559,9 +688,9 @@ function classifyLogLine(log: string): ClassifiedLogLine {
     lower.startsWith("approved ")
   ) {
     return {
-      level: "OK",
-      prefixStyle: { fg: 92, bold: true },
-      textStyle: { fg: 97 }
+      marker: "+",
+      prefixStyle: { fg: TUI_THEME.success, bold: true },
+      textStyle: { fg: TUI_THEME.text }
     };
   }
   if (
@@ -577,9 +706,9 @@ function classifyLogLine(log: string): ClassifiedLogLine {
     log.startsWith("승인됨")
   ) {
     return {
-      level: "INFO",
-      prefixStyle: { fg: 96, bold: true },
-      textStyle: { fg: 97 }
+      marker: "•",
+      prefixStyle: { fg: TUI_THEME.accent, bold: true },
+      textStyle: { fg: TUI_THEME.text }
     };
   }
   if (
@@ -590,22 +719,22 @@ function classifyLogLine(log: string): ClassifiedLogLine {
     lower.startsWith("stopped remaining plan")
   ) {
     return {
-      level: "WARN",
-      prefixStyle: { fg: 93, bold: true },
-      textStyle: { fg: 96, bold: true }
+      marker: "!",
+      prefixStyle: { fg: TUI_THEME.warning, bold: true },
+      textStyle: { fg: TUI_THEME.accent, bold: true }
     };
   }
   if (lower.startsWith("use the suggested")) {
     return {
-      level: "INFO",
-      prefixStyle: { fg: 96, bold: true },
-      textStyle: { fg: 90, dim: true }
+      marker: "•",
+      prefixStyle: { fg: TUI_THEME.accent, bold: true },
+      textStyle: { fg: TUI_THEME.muted, dim: true }
     };
   }
   return {
-    level: "INFO",
-    prefixStyle: { fg: 96, bold: true },
-    textStyle: { fg: 90 }
+    marker: "•",
+    prefixStyle: { fg: TUI_THEME.accent, bold: true },
+    textStyle: { fg: TUI_THEME.muted }
   };
 }
 
