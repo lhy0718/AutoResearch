@@ -977,8 +977,9 @@ export class TerminalApp {
     }
 
     const normalized = text.trim().toLowerCase();
+    const runAllRemaining = isRunAllRemainingInput(normalized) && pending.totalSteps > 1;
     const displayCommands = this.resolvePendingDisplayCommands(pending);
-    if (isAffirmative(normalized)) {
+    if (isAffirmative(normalized) || runAllRemaining) {
       this.pendingNaturalCommand = undefined;
       await this.runBusyAction(async (abortSignal) => {
         if (abortSignal.aborted) {
@@ -987,6 +988,8 @@ export class TerminalApp {
         const stepNumber = pending.stepIndex + 1;
         if (pending.totalSteps === 1) {
           this.pushLog("Confirmed. Running the pending step.");
+        } else if (runAllRemaining) {
+          this.pushLog(`Confirmed. Running all remaining steps from ${stepNumber}/${pending.totalSteps}.`);
         } else {
           this.pushLog(`Confirmed. Running step ${stepNumber}/${pending.totalSteps}.`);
         }
@@ -1005,7 +1008,7 @@ export class TerminalApp {
           this.activeBusyLabel = this.describeBusyLabelForSlash(parsed.command, parsed.args);
           this.render();
 
-          if (pending.totalSteps > 1 && offset > 0) {
+          if (pending.totalSteps > 1 && (offset > 0 || runAllRemaining)) {
             this.pushLog(`Step ${currentStepNumber}/${pending.totalSteps}: ${displayCommand}`);
           }
 
@@ -1028,14 +1031,16 @@ export class TerminalApp {
 
           if (pending.totalSteps > 1 && currentStepNumber < pending.totalSteps) {
             this.pushLog(`Step ${currentStepNumber}/${pending.totalSteps} completed.`);
-            this.armPendingNaturalCommands(pending.sourceInput, pending.commands.slice(offset + 1), {
-              stepIndex: currentStepIndex + 1,
-              totalSteps: pending.totalSteps,
-              continuation: true,
-              presentation: pending.presentation,
-              displayCommands: pending.displayCommands?.slice(offset + 1)
-            });
-            return;
+            if (!runAllRemaining) {
+              this.armPendingNaturalCommands(pending.sourceInput, pending.commands.slice(offset + 1), {
+                stepIndex: currentStepIndex + 1,
+                totalSteps: pending.totalSteps,
+                continuation: true,
+                presentation: pending.presentation,
+                displayCommands: pending.displayCommands?.slice(offset + 1)
+              });
+              return;
+            }
           }
         }
 
@@ -1064,7 +1069,9 @@ export class TerminalApp {
       this.pushLog("Type 'y' to run it, or 'n' to cancel.");
     } else {
       this.pushLog(this.buildPendingPlanReminderLine(pending));
-      this.pushLog(`Type 'y' to run step ${pending.stepIndex + 1}/${pending.totalSteps}, or 'n' to cancel the remaining plan.`);
+      this.pushLog(
+        `Type 'y' to run step ${pending.stepIndex + 1}/${pending.totalSteps}, 'a' to run all remaining steps, or 'n' to cancel the remaining plan.`
+      );
     }
     this.render();
   }
@@ -3696,7 +3703,9 @@ export class TerminalApp {
           this.pushLog(`- [${stepIndex + index + 1}/${totalSteps}] ${command}`);
         });
       }
-      this.pushLog(`Type 'y' to run step ${stepIndex + 1}/${totalSteps}, or 'n' to cancel the remaining plan.`);
+      this.pushLog(
+        `Type 'y' to run step ${stepIndex + 1}/${totalSteps}, 'a' to run all remaining steps, or 'n' to cancel the remaining plan.`
+      );
       return;
     }
 
@@ -3708,7 +3717,9 @@ export class TerminalApp {
         this.pushLog(`- [${stepIndex + index + 1}/${totalSteps}] ${command}`);
       });
     }
-    this.pushLog(`Type 'y' to run step ${stepIndex + 1}/${totalSteps}, or 'n' to cancel the plan.`);
+    this.pushLog(
+      `Type 'y' to run step ${stepIndex + 1}/${totalSteps}, 'a' to run all remaining steps, or 'n' to cancel the plan.`
+    );
   }
 
   private buildPendingPlanReminderLine(pending: PendingNaturalCommandState): string {
@@ -4677,7 +4688,7 @@ function formatEventLog(event: AutoLabOSEvent): string | undefined {
 
 function isConfirmationInput(text: string): boolean {
   const normalized = text.trim().toLowerCase();
-  return isAffirmative(normalized) || isNegative(normalized);
+  return isAffirmative(normalized) || isRunAllRemainingInput(normalized) || isNegative(normalized);
 }
 
 export function extractTitleChangeIntent(text: string): { title: string } | undefined {
@@ -5140,6 +5151,10 @@ function looksLikePdfUrl(url: string | undefined): boolean {
 
 function isAffirmative(text: string): boolean {
   return ["y", "yes", "ok", "okay", "ㅇ", "네", "예", "응"].includes(text);
+}
+
+function isRunAllRemainingInput(text: string): boolean {
+  return ["a", "all", "run all", "remaining"].includes(text);
 }
 
 function isNegative(text: string): boolean {

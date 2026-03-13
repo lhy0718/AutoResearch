@@ -17,10 +17,7 @@ set expected_step2 "/agent collect --last-years 5 --sort relevance --open-access
 
 spawn_autolabos $workdir
 
-expect {
-  -re "Slash command palette is ready" {}
-  timeout { fail "FAIL: app did not start" }
-}
+expect_app_ready
 
 send -- "$query\r"
 expect {

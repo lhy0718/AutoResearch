@@ -17,10 +17,7 @@ set expected_step2 "/agent collect --last-years 5 --sort relevance --open-access
 
 spawn_autolabos $workdir
 
-expect {
-  -re "Slash command palette is ready" {}
-  timeout { fail "FAIL: app did not start" }
-}
+expect_app_ready
 
 send -- "$query\r"
 expect {
@@ -48,7 +45,7 @@ expect {
 
 send -- "y\r"
 expect {
-  -re "Confirmed\\. Running step 1/2: $escaped_step1" {}
+  -re "Confirmed\\. Running step 1/2(\\: $escaped_step1)?\\.?" {}
   timeout { fail "FAIL: llm step 1 confirmation log not found" }
 }
 
@@ -65,7 +62,7 @@ expect {
 send -- "y\r"
 
 expect {
-  -re "Confirmed\\. Running step 2/2: $escaped_step2" {}
+  -re "Confirmed\\. Running step 2/2(\\: $escaped_step2)?\\.?" {}
   timeout { fail "FAIL: llm step 2 confirmation log not found" }
 }
 

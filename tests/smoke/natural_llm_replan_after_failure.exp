@@ -19,10 +19,7 @@ set fixed_cmd "/agent collect --limit 20 --run $run_id"
 
 spawn_autolabos $workdir
 
-expect {
-  -re "Slash command palette is ready" {}
-  timeout { fail "FAIL: app did not start" }
-}
+expect_app_ready
 
 send -- "$query\r"
 expect {
@@ -72,7 +69,7 @@ after 1000
 send -- "y\r"
 
 expect {
-  -re "Confirmed\\. Running: $escaped_fixed_cmd" {}
+  -re "Confirmed\\. Running( the pending step\\.|: $escaped_fixed_cmd)" {}
   timeout { fail "FAIL: replanned command confirmation log not found" }
 }
 

@@ -17,10 +17,7 @@ set expected_step2 "Collect papers \\(lastYears=5, openAccess=true\\)"
 
 spawn_autolabos $workdir
 
-expect {
-  -re "Research Brief workflow is ready" {}
-  timeout { fail "FAIL: app did not start" }
-}
+expect_app_ready
 
 send -- "$query\r"
 expect {

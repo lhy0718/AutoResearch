@@ -16,10 +16,7 @@ set expected_label "Collect papers \\(limit=100, lastYears=5\\)"
 
 spawn_autolabos $workdir
 
-expect {
-  -re "Research Brief workflow is ready" {}
-  timeout { fail "FAIL: app did not start" }
-}
+expect_app_ready
 
 send -- "$query\r"
 expect {

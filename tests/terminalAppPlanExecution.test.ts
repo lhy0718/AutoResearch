@@ -1175,6 +1175,34 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(app.pendingNaturalCommand?.commands).toEqual(["/doctor", '/title "done" --run run-1']);
   });
 
+  it("runs all remaining pending plan steps when the user enters a", async () => {
+    const app = makeApp();
+    app.pendingNaturalCommand = {
+      command: "/help",
+      commands: ["/help", "/doctor", '/title "done" --run run-1'],
+      sourceInput: "test",
+      createdAt: new Date().toISOString(),
+      stepIndex: 0,
+      totalSteps: 3
+    };
+
+    app.executeParsedSlash = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: true });
+
+    await app.handlePendingNaturalConfirmation("a");
+
+    expect(app.executeParsedSlash).toHaveBeenCalledTimes(3);
+    expect(app.logs).toContain("Confirmed. Running all remaining steps from 1/3.");
+    expect(app.logs).toContain("Step 1/3: /help");
+    expect(app.logs).toContain("Step 2/3: /doctor");
+    expect(app.logs).toContain('Step 3/3: /title "done" --run run-1');
+    expect(app.logs).toContain("Plan completed after 3 step(s).");
+    expect(app.pendingNaturalCommand).toBeUndefined();
+  });
+
   it("does not re-arm the same failed plan during automatic replan", async () => {
     const app = makeApp();
     app.runIndex = [makeRun("run-1")];

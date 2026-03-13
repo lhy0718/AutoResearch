@@ -26,3 +26,12 @@ proc spawn_autolabos {workdir} {
   spawn env COLUMNS=220 LINES=40 node [file join $repo_root dist cli main.js]
   catch {stty rows 40 cols 220}
 }
+
+proc expect_app_ready {} {
+  expect {
+    -re "Research Brief workflow is ready" {}
+    -re "Add steering, or wait for the next run or approval\\." {}
+    -re "collect_papers pending" {}
+    timeout { fail "FAIL: app did not start" }
+  }
+}
