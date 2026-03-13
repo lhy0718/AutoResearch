@@ -130,4 +130,40 @@ describe("resolveRunCommand", () => {
     expect(resolved.command).toContain(actualScriptPath);
     expect(resolved.source).toBe("run_context.script");
   });
+
+  it("preserves explicit commands when the interpreter path is missing but the script artifact exists", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-run-missing-interpreter-"));
+    tempDirs.push(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Runner Missing Interpreter Artifact",
+      topic: "runner",
+      constraints: [],
+      objectiveMetric: "loss"
+    });
+
+    const publicDir = path.join(workspace, "public-runner");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "run_experiment.py");
+    writeFileSync(scriptPath, "print('hi')\n", "utf8");
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put(
+      "implement_experiments.run_command",
+      `./.venv/bin/python ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(
+        path.join(workspace, ".autolabos", "runs", run.id, "metrics.json")
+      )}`
+    );
+    await memory.put("implement_experiments.script", scriptPath);
+    await memory.put("implement_experiments.cwd", workspace);
+    await memory.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const resolved = await resolveRunCommand(run, workspace);
+    expect(resolved.command).toContain("./.venv/bin/python");
+    expect(resolved.command).toContain("--metrics-path");
+    expect(resolved.source).toBe("run_context.run_command");
+  });
 });

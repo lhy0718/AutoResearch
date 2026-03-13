@@ -336,11 +336,11 @@ async function writeHypothesisProgressStatus(
   runContextMemory: RunContextMemory,
   status: HypothesisProgressStatus
 ): Promise<void> {
-  await writeRunArtifact(run, HYPOTHESIS_PROGRESS_STATUS_ARTIFACT, JSON.stringify(status, null, 2));
   await runContextMemory.put("generate_hypotheses.status", status.status);
   await runContextMemory.put("generate_hypotheses.progress_stage", status.stage);
   await runContextMemory.put("generate_hypotheses.last_progress", status.message);
   await runContextMemory.put("generate_hypotheses.progress", status);
+  await writeRunArtifact(run, HYPOTHESIS_PROGRESS_STATUS_ARTIFACT, JSON.stringify(status, null, 2));
 }
 
 function classifyHypothesisProgressStage(message: string): HypothesisProgressStage {

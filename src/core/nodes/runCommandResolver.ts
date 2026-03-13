@@ -172,17 +172,16 @@ function resolveCommandArtifactPath(
   workspaceRoot: string
 ): string | undefined {
   const tokens = command.match(/"[^"]*"|'[^']*'|\S+/g) || [];
-  for (const token of tokens) {
-    const normalized = token.replace(/^['"]|['"]$/g, "");
-    if (!looksLikeScriptPath(normalized)) {
-      continue;
-    }
-    const resolved = path.isAbsolute(normalized) ? normalized : path.resolve(cwd, normalized);
-    if (isPathInsideOrEqual(resolved, workspaceRoot)) {
-      return resolved;
-    }
-  }
-  return undefined;
+  const candidates = tokens
+    .map((token) => token.replace(/^['"]|['"]$/g, ""))
+    .filter(looksLikeScriptPath)
+    .map((candidate) => ({
+      resolved: path.isAbsolute(candidate) ? candidate : path.resolve(cwd, candidate),
+      score: scoreCommandArtifactCandidate(candidate)
+    }))
+    .filter(({ resolved }) => isPathInsideOrEqual(resolved, workspaceRoot))
+    .sort((left, right) => right.score - left.score);
+  return candidates[0]?.resolved;
 }
 
 function looksLikeScriptPath(value: string): boolean {
@@ -192,6 +191,31 @@ function looksLikeScriptPath(value: string): boolean {
     value.startsWith("/") ||
     value.includes("/") ||
     /\.(py|js|mjs|cjs|sh)$/iu.test(value)
+  );
+}
+
+function scoreCommandArtifactCandidate(value: string): number {
+  const basename = path.basename(value).toLowerCase();
+  let score = 0;
+  if (/\.(py|js|mjs|cjs|sh)$/iu.test(value)) {
+    score += 100;
+  }
+  if (value.startsWith("./") || value.startsWith("../")) {
+    score += 20;
+  }
+  if (value.includes("/")) {
+    score += 10;
+  }
+  if (isLikelyInterpreterBinary(basename)) {
+    score -= 100;
+  }
+  return score;
+}
+
+function isLikelyInterpreterBinary(basename: string): boolean {
+  return (
+    /^(python|python\d+(\.\d+)?)$/u.test(basename) ||
+    /^(node|bash|sh|zsh|ruby|perl)$/u.test(basename)
   );
 }
 

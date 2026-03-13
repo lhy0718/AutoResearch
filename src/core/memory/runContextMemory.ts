@@ -1,7 +1,7 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
 
-import { ensureDir, readJsonFile, writeJsonFile } from "../../utils/fs.js";
+import { ensureDir, normalizeFsPath, readJsonFile, writeJsonFile } from "../../utils/fs.js";
 
 export interface RunContextItem {
   key: string;
@@ -15,7 +15,11 @@ interface RunContextStoreFile {
 }
 
 export class RunContextMemory {
-  constructor(private readonly filePath: string) {}
+  private readonly filePath: string;
+
+  constructor(filePath: string) {
+    this.filePath = normalizeFsPath(filePath);
+  }
 
   async put(key: string, value: unknown): Promise<void> {
     const store = await this.readStore();
@@ -65,9 +69,10 @@ export class RunContextMemory {
 }
 
 export async function ensureJsonFile(filePath: string): Promise<void> {
+  const normalizedPath = normalizeFsPath(filePath);
   try {
-    await fs.access(filePath);
+    await fs.access(normalizedPath);
   } catch {
-    await writeJsonFile(filePath, { version: 1, items: [] });
+    await writeJsonFile(normalizedPath, { version: 1, items: [] });
   }
 }

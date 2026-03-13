@@ -1925,12 +1925,13 @@ describe("ImplementSessionManager", () => {
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
-    mkdirSync(runDir, { recursive: true });
-    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+    const runDirReal = path.join(workspaceReal, ".autolabos", "runs", run.id);
+    mkdirSync(runDirReal, { recursive: true });
+    writeFileSync(path.join(runDirReal, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
 
     const publicDir = buildPublicExperimentDir(workspace, run);
-    const sandboxRunDir = runDir.replace(/^\/private\/tmp(?=\/)/u, "/tmp");
-    const sandboxPublicDir = publicDir.replace(/^\/private\/tmp(?=\/)/u, "/tmp");
+    const sandboxRunDir = runDirReal;
+    const sandboxPublicDir = buildPublicExperimentDir(workspaceReal, run);
     const sandboxScriptPath = path.join(sandboxPublicDir, "experiment.py");
     const sandboxMetricsPath = path.join(sandboxRunDir, "metrics.json");
 
