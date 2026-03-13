@@ -195,6 +195,74 @@ describe("researchPlanning helpers", () => {
     expect(result.artifacts.pipeline).toBe("fallback");
   });
 
+  it("repairs truncated hypothesis-planning JSON and continues the staged pipeline", async () => {
+    const llm = new QueueJsonLLMClient([
+      '{"summary":"Mapped evidence into one axis.","axes":[{"id":"ax_1","label":"Structured communication","mechanism":"Structured interfaces reduce ambiguity.","intervention":"Compare typed messages against free-form chat.","evaluation_hint":"Measure run-to-run variance.","evidence_links":["ev_1"]}]',
+      JSON.stringify({
+        summary: "Generated mechanism drafts.",
+        candidates: [
+          {
+            id: "cand_1",
+            text: "Typed message schemas will reduce run-to-run variance relative to free-form chat.",
+            novelty: 4,
+            feasibility: 4,
+            testability: 5,
+            cost: 2,
+            expected_gain: 5,
+            evidence_links: ["ev_1"],
+            axis_ids: ["ax_1"],
+            rationale: "This isolates communication structure as the intervention."
+          }
+        ]
+      }),
+      JSON.stringify({
+        summary: "Generated contradiction drafts.",
+        candidates: []
+      }),
+      JSON.stringify({
+        summary: "Generated intervention drafts.",
+        candidates: []
+      }),
+      JSON.stringify({
+        summary: "Selected the most falsifiable drafts.",
+        reviews: [
+          {
+            candidate_id: "mechanism_1",
+            keep: true,
+            groundedness: 4,
+            causal_clarity: 5,
+            falsifiability: 5,
+            experimentability: 5,
+            reproducibility_specificity: 5,
+            reproducibility_signals: ["run_to_run_variance"],
+            measurement_hint: "Measure run-to-run variance across repeated seeded runs.",
+            limitation_reflection: 4,
+            measurement_readiness: 5,
+            strengths: ["Clear intervention and baseline."],
+            weaknesses: ["Mostly software-generation focused."],
+            critique_summary: "Strong, targeted hypothesis."
+          }
+        ]
+      })
+    ]);
+
+    const result = await generateHypothesesFromEvidence({
+      llm,
+      runTitle: "Multi-Agent Collaboration",
+      runTopic: "Multi-Agent Collaboration",
+      objectiveMetric: "accuracy >= 0.9",
+      evidenceSeeds: [{ evidence_id: "ev_1", claim: "Planning matters." }],
+      branchCount: 4,
+      topK: 1
+    });
+
+    expect(result.source).toBe("llm");
+    expect(result.artifacts.pipeline).toBe("staged");
+    expect(result.artifacts.evidence_axes).toHaveLength(1);
+    expect(result.selected).toHaveLength(1);
+    expect(result.selected[0]?.id).toBe("mechanism_1");
+  });
+
   it("does not reselect review-rejected hypotheses when fewer than top-k survive review", async () => {
     const llm = new QueueJsonLLMClient([
       JSON.stringify({

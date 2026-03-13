@@ -223,6 +223,7 @@ export function extractResearchBriefTopic(rawBrief: string | undefined): string 
 export function buildLiteratureQueryCandidates(input: {
   requestedQuery?: string;
   runTopic: string;
+  extractedBriefTopic?: string;
   briefTopic?: string;
 }): LiteratureQueryCandidate[] {
   const candidates: LiteratureQueryCandidate[] = [];
@@ -238,20 +239,32 @@ export function buildLiteratureQueryCandidates(input: {
   };
 
   const requested = normalizeLiteratureQuery(input.requestedQuery);
+  const extractedBriefTopic = normalizeLiteratureQuery(input.extractedBriefTopic);
   const briefTopic = normalizeLiteratureQuery(input.briefTopic);
   const runTopic = normalizeLiteratureQuery(input.runTopic);
   const strippedRequested = stripLiteratureConstraintPhrases(requested);
+  const strippedExtractedBriefTopic = stripLiteratureConstraintPhrases(extractedBriefTopic);
   const strippedBriefTopic = stripLiteratureConstraintPhrases(briefTopic);
   const strippedRunTopic = stripLiteratureConstraintPhrases(runTopic);
 
   pushCandidate(requested, "requested_query");
+  pushCandidate(extractedBriefTopic, "brief_topic");
   pushCandidate(briefTopic, "brief_topic");
-  pushCandidate(runTopic, "run_topic");
   pushCandidate(strippedRequested, "constraint_stripped");
+  pushCandidate(strippedExtractedBriefTopic, "constraint_stripped");
   pushCandidate(strippedBriefTopic, "constraint_stripped");
   pushCandidate(strippedRunTopic, "constraint_stripped");
+  pushCandidate(runTopic, "run_topic");
   pushCandidate(
-    buildKeywordAnchorQuery(strippedRequested || strippedBriefTopic || briefTopic || strippedRunTopic || runTopic),
+    buildKeywordAnchorQuery(
+      strippedRequested ||
+        strippedExtractedBriefTopic ||
+        strippedBriefTopic ||
+        extractedBriefTopic ||
+        briefTopic ||
+        strippedRunTopic ||
+        runTopic
+    ),
     "keyword_anchor"
   );
 

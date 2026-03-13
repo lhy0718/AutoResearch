@@ -770,7 +770,6 @@ describe("objective metric propagation", () => {
       ),
       "utf8"
     );
-
     const analyzeNode = createAnalyzeResultsNode({
       config: {} as any,
       runStore: {} as any,
@@ -799,6 +798,893 @@ describe("objective metric propagation", () => {
       action: "advance",
       panel_calibrated: true
     });
+  });
+
+  it("hydrates repeated latest_results detail into analyze_results and clears review blockers for baseline-improvement runs", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-detailed-"));
+    process.chdir(root);
+
+    const runId = "run-analyze-results-detailed";
+    const run = {
+      ...makeRun(runId),
+      currentNode: "analyze_results" as const,
+      objectiveMetric:
+        "Improve macro-F1 over a logistic regression baseline while preserving reproducible CPU-only local execution."
+    };
+    run.graph.currentNode = "analyze_results";
+
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    const memoryDir = path.join(runDir, "memory");
+    const publicDir = path.join(root, "public-bundle");
+    await mkdir(memoryDir, { recursive: true });
+    await mkdir(publicDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "implement_experiments.public_dir",
+            value: publicDir,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.metrics_path",
+            value: `.autolabos/runs/${runId}/metrics.json`,
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "experiment_plan.yaml"),
+      [
+        "selected_hypothesis_ids:",
+        '  - "h_1"',
+        "selected_design:",
+        '  id: "plan_tabular"',
+        '  title: "Repeated tabular baseline comparison"',
+        '  summary: "Compare nested and non-nested CPU-only workflows over repeated reruns on small tabular datasets while tracking macro-F1 deltas against logistic regression."',
+        "  metrics:",
+        '    - "macro_f1_delta_vs_logreg"',
+        '    - "best_mean_test_macro_f1"',
+        '    - "pairwise_ranking_agreement"',
+        '    - "winner_consistency"',
+        "  baselines:",
+        '    - "logistic regression"',
+        "  evaluation_steps:",
+        '    - "Repeat both workflows with fixed CPU-only seeds."',
+        '    - "Compare macro-F1 deltas against logistic regression."',
+        '    - "Summarize repeat-level variability and ranking stability."',
+        "constraints:",
+        "  implementation_notes:",
+        '    - "CPU-only local execution only."',
+        "  evaluation_notes:",
+        '    - "Keep claims scoped to the observed repeated-run evidence."'
+      ].join("\n"),
+      "utf8"
+    );
+    await seedWritePaperInputs(runDir);
+
+    const latestResultsPath = path.join(publicDir, "latest_results.json");
+    const latestResults = {
+      run_id: runId,
+      topic: "Classical ML baselines on small tabular datasets",
+      experiment_mode: "real_execution",
+      protocol: {
+        cpu_only: true,
+        datasets: ["breast_cancer", "iris"],
+        models: ["logreg", "extra_trees"],
+        repeats: 5,
+        seed_schedule: [100, 101, 102, 103, 104],
+        split_seed: 20260313,
+        workflows: ["nested", "non_nested"]
+      },
+      global_metrics: {
+        best_dataset: "breast_cancer",
+        best_mean_test_macro_f1: 0.945,
+        best_model: "extra_trees",
+        best_workflow: "non_nested",
+        mean_logreg_nested_test_macro_f1: 0.91,
+        mean_macro_f1_improvement_over_logreg: 0.021,
+        mean_nested_rank_stability: 0.87
+      },
+      dataset_summaries: [
+        {
+          dataset: "breast_cancer",
+          workflows: {
+            nested: {
+              models: {
+                logreg: {
+                  mean_test_macro_f1: 0.91,
+                  mean_selection_optimism: 0.01,
+                  sign_consistency_vs_logreg: 1
+                },
+                extra_trees: {
+                  mean_test_macro_f1: 0.92,
+                  mean_delta_vs_logreg: 0.01,
+                  mean_selection_optimism: 0.013,
+                  sign_consistency_vs_logreg: 0.8
+                }
+              },
+              pairwise_ranking_agreement: 0.86,
+              winner_consistency: 0.8,
+              runtime_seconds_mean: 1.3,
+              peak_memory_mb_mean: 148
+            },
+            non_nested: {
+              models: {
+                logreg: {
+                  mean_test_macro_f1: 0.91,
+                  mean_selection_optimism: 0.011,
+                  sign_consistency_vs_logreg: 1
+                },
+                extra_trees: {
+                  mean_test_macro_f1: 0.945,
+                  mean_delta_vs_logreg: 0.035,
+                  mean_selection_optimism: 0.018,
+                  sign_consistency_vs_logreg: 1
+                }
+              },
+              pairwise_ranking_agreement: 0.9,
+              winner_consistency: 1,
+              runtime_seconds_mean: 0.9,
+              peak_memory_mb_mean: 152
+            }
+          }
+        },
+        {
+          dataset: "iris",
+          workflows: {
+            nested: {
+              models: {
+                logreg: {
+                  mean_test_macro_f1: 0.89,
+                  mean_selection_optimism: 0.009,
+                  sign_consistency_vs_logreg: 1
+                },
+                extra_trees: {
+                  mean_test_macro_f1: 0.905,
+                  mean_delta_vs_logreg: 0.015,
+                  mean_selection_optimism: 0.012,
+                  sign_consistency_vs_logreg: 0.8
+                }
+              },
+              pairwise_ranking_agreement: 0.84,
+              winner_consistency: 0.8,
+              runtime_seconds_mean: 1.1,
+              peak_memory_mb_mean: 146
+            },
+            non_nested: {
+              models: {
+                logreg: {
+                  mean_test_macro_f1: 0.89,
+                  mean_selection_optimism: 0.01,
+                  sign_consistency_vs_logreg: 1
+                },
+                extra_trees: {
+                  mean_test_macro_f1: 0.92,
+                  mean_delta_vs_logreg: 0.03,
+                  mean_selection_optimism: 0.014,
+                  sign_consistency_vs_logreg: 1
+                }
+              },
+              pairwise_ranking_agreement: 0.89,
+              winner_consistency: 1,
+              runtime_seconds_mean: 0.8,
+              peak_memory_mb_mean: 150
+            }
+          }
+        }
+      ],
+      repeat_records: [
+        {
+          repeat_index: 0,
+          seed: 100,
+          datasets: [
+            {
+              dataset: "breast_cancer",
+              workflows: {
+                nested: {
+                  models: {
+                    logreg: { test_macro_f1: 0.91, selection_optimism: 0.01 },
+                    extra_trees: { test_macro_f1: 0.92, selection_optimism: 0.012 }
+                  }
+                },
+                non_nested: {
+                  models: {
+                    logreg: { test_macro_f1: 0.91, selection_optimism: 0.011 },
+                    extra_trees: { test_macro_f1: 0.946, selection_optimism: 0.018 }
+                  }
+                }
+              }
+            },
+            {
+              dataset: "iris",
+              workflows: {
+                nested: {
+                  models: {
+                    logreg: { test_macro_f1: 0.89, selection_optimism: 0.009 },
+                    extra_trees: { test_macro_f1: 0.904, selection_optimism: 0.012 }
+                  }
+                },
+                non_nested: {
+                  models: {
+                    logreg: { test_macro_f1: 0.89, selection_optimism: 0.01 },
+                    extra_trees: { test_macro_f1: 0.919, selection_optimism: 0.014 }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          repeat_index: 1,
+          seed: 101,
+          datasets: [
+            {
+              dataset: "breast_cancer",
+              workflows: {
+                nested: {
+                  models: {
+                    logreg: { test_macro_f1: 0.91, selection_optimism: 0.011 },
+                    extra_trees: { test_macro_f1: 0.921, selection_optimism: 0.013 }
+                  }
+                },
+                non_nested: {
+                  models: {
+                    logreg: { test_macro_f1: 0.91, selection_optimism: 0.012 },
+                    extra_trees: { test_macro_f1: 0.944, selection_optimism: 0.017 }
+                  }
+                }
+              }
+            },
+            {
+              dataset: "iris",
+              workflows: {
+                nested: {
+                  models: {
+                    logreg: { test_macro_f1: 0.89, selection_optimism: 0.009 },
+                    extra_trees: { test_macro_f1: 0.906, selection_optimism: 0.012 }
+                  }
+                },
+                non_nested: {
+                  models: {
+                    logreg: { test_macro_f1: 0.89, selection_optimism: 0.01 },
+                    extra_trees: { test_macro_f1: 0.921, selection_optimism: 0.014 }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          repeat_index: 2,
+          seed: 102,
+          datasets: [
+            {
+              dataset: "breast_cancer",
+              workflows: {
+                nested: {
+                  models: {
+                    logreg: { test_macro_f1: 0.91, selection_optimism: 0.01 },
+                    extra_trees: { test_macro_f1: 0.919, selection_optimism: 0.012 }
+                  }
+                },
+                non_nested: {
+                  models: {
+                    logreg: { test_macro_f1: 0.91, selection_optimism: 0.011 },
+                    extra_trees: { test_macro_f1: 0.947, selection_optimism: 0.018 }
+                  }
+                }
+              }
+            },
+            {
+              dataset: "iris",
+              workflows: {
+                nested: {
+                  models: {
+                    logreg: { test_macro_f1: 0.89, selection_optimism: 0.009 },
+                    extra_trees: { test_macro_f1: 0.907, selection_optimism: 0.011 }
+                  }
+                },
+                non_nested: {
+                  models: {
+                    logreg: { test_macro_f1: 0.89, selection_optimism: 0.01 },
+                    extra_trees: { test_macro_f1: 0.922, selection_optimism: 0.015 }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          repeat_index: 3,
+          seed: 103,
+          datasets: [
+            {
+              dataset: "breast_cancer",
+              workflows: {
+                nested: {
+                  models: {
+                    logreg: { test_macro_f1: 0.91, selection_optimism: 0.01 },
+                    extra_trees: { test_macro_f1: 0.918, selection_optimism: 0.012 }
+                  }
+                },
+                non_nested: {
+                  models: {
+                    logreg: { test_macro_f1: 0.91, selection_optimism: 0.011 },
+                    extra_trees: { test_macro_f1: 0.943, selection_optimism: 0.017 }
+                  }
+                }
+              }
+            },
+            {
+              dataset: "iris",
+              workflows: {
+                nested: {
+                  models: {
+                    logreg: { test_macro_f1: 0.89, selection_optimism: 0.009 },
+                    extra_trees: { test_macro_f1: 0.905, selection_optimism: 0.012 }
+                  }
+                },
+                non_nested: {
+                  models: {
+                    logreg: { test_macro_f1: 0.89, selection_optimism: 0.01 },
+                    extra_trees: { test_macro_f1: 0.918, selection_optimism: 0.014 }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          repeat_index: 4,
+          seed: 104,
+          datasets: [
+            {
+              dataset: "breast_cancer",
+              workflows: {
+                nested: {
+                  models: {
+                    logreg: { test_macro_f1: 0.91, selection_optimism: 0.01 },
+                    extra_trees: { test_macro_f1: 0.922, selection_optimism: 0.013 }
+                  }
+                },
+                non_nested: {
+                  models: {
+                    logreg: { test_macro_f1: 0.91, selection_optimism: 0.011 },
+                    extra_trees: { test_macro_f1: 0.945, selection_optimism: 0.018 }
+                  }
+                }
+              }
+            },
+            {
+              dataset: "iris",
+              workflows: {
+                nested: {
+                  models: {
+                    logreg: { test_macro_f1: 0.89, selection_optimism: 0.009 },
+                    extra_trees: { test_macro_f1: 0.906, selection_optimism: 0.012 }
+                  }
+                },
+                non_nested: {
+                  models: {
+                    logreg: { test_macro_f1: 0.89, selection_optimism: 0.01 },
+                    extra_trees: { test_macro_f1: 0.92, selection_optimism: 0.014 }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
+    };
+    await writeFile(latestResultsPath, JSON.stringify(latestResults, null, 2), "utf8");
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          best_dataset: "breast_cancer",
+          best_mean_test_macro_f1: 0.945,
+          best_model: "extra_trees",
+          best_workflow: "non_nested",
+          experiment_mode: "real_execution",
+          mean_logreg_nested_test_macro_f1: 0.91,
+          mean_nested_rank_stability: 0.87,
+          metric: "macro_f1_improvement_over_logreg",
+          results_path: latestResultsPath,
+          run_id: runId,
+          value: 0.021
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await mkdir(path.join(runDir, "run_experiments_panel"), { recursive: true });
+    await writeFile(
+      path.join(runDir, "run_experiments_panel", "execution_plan.json"),
+      JSON.stringify(
+        {
+          trigger: "auto_handoff",
+          command: `python3 ${JSON.stringify(path.join(publicDir, "run_experiment.py"))} --metrics-path ${JSON.stringify(path.join(runDir, "metrics.json"))}`,
+          cwd: publicDir,
+          metrics_path: path.join(runDir, "metrics.json"),
+          source: "run_context.run_command",
+          managed_supplemental_profiles: []
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const analyzeNode = createAnalyzeResultsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new StructuredResultAnalysisLLM(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+    const analyzeResult = await analyzeNode.execute({ run, graph: run.graph });
+    expect(analyzeResult.status).toBe("success");
+    expect(analyzeResult.transitionRecommendation).toMatchObject({
+      action: "advance",
+      targetNode: "review"
+    });
+
+    const analysis = JSON.parse(await readFile(path.join(runDir, "result_analysis.json"), "utf8")) as {
+      overview: { objective_status: string; execution_runs: number };
+      objective_metric: { evaluation: { matchedMetricKey?: string } };
+      warnings: string[];
+      supplemental_expectation?: { applicable: boolean; reason?: string };
+      failure_taxonomy: Array<{ id: string }>;
+      condition_comparisons: Array<{ id: string }>;
+      statistical_summary: {
+        notes: string[];
+        confidence_intervals: Array<{ metric_key: string }>;
+        stability_metrics: Array<{ key: string }>;
+      };
+    };
+    expect(analysis.overview.objective_status).toBe("met");
+    expect(analysis.overview.execution_runs).toBe(5);
+    expect(analysis.objective_metric.evaluation.matchedMetricKey).toBe("macro_f1_delta_vs_logreg");
+    expect(analysis.condition_comparisons.length).toBeGreaterThan(0);
+    expect(
+      analysis.statistical_summary.confidence_intervals.some((item) =>
+        item.metric_key.includes("macro_f1_delta_vs_logreg")
+      )
+    ).toBe(true);
+    expect(
+      analysis.statistical_summary.stability_metrics.some((item) =>
+        ["rank_stability", "mean_nested_rank_stability", "pairwise_ranking_agreement"].includes(item.key)
+      )
+    ).toBe(true);
+    expect(analysis.supplemental_expectation).toMatchObject({
+      applicable: false
+    });
+    expect(
+      analysis.statistical_summary.notes.some((item) =>
+        item.includes("Managed quick_check and confirmatory profiles were not configured")
+      )
+    ).toBe(true);
+    expect(
+      analysis.warnings.some((item) => item.includes("No supplemental quick_check or confirmatory metrics"))
+    ).toBe(false);
+    expect(analysis.failure_taxonomy.some((item) => item.id === "supplemental_coverage_gap")).toBe(false);
+
+    const reviewNode = createReviewNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new StructuredResultAnalysisLLM(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+    const reviewResult = await reviewNode.execute({ run, graph: run.graph });
+    expect(reviewResult.status).toBe("success");
+
+    const decision = JSON.parse(await readFile(path.join(runDir, "review", "decision.json"), "utf8")) as {
+      outcome: string;
+    };
+    expect(decision.outcome).toBe("advance");
+
+    const packet = JSON.parse(await readFile(path.join(runDir, "review", "review_packet.json"), "utf8")) as {
+      readiness: { blocking_checks: number };
+    };
+    expect(packet.readiness.blocking_checks).toBe(0);
+  });
+
+  it("hydrates model-centric latest_results detail into analyze_results for repeated tabular runs", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-model-centric-"));
+    process.chdir(root);
+
+    const runId = "run-analyze-results-model-centric";
+    const run = {
+      ...makeRun(runId),
+      currentNode: "analyze_results" as const,
+      objectiveMetric:
+        "Improve macro-F1 over a logistic regression baseline while preserving reproducible CPU-only local execution."
+    };
+    run.graph.currentNode = "analyze_results";
+
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    const memoryDir = path.join(runDir, "memory");
+    const publicDir = path.join(root, "public-model-centric");
+    const latestResultsPath = path.join(publicDir, "latest_results.json");
+    await mkdir(memoryDir, { recursive: true });
+    await mkdir(publicDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "implement_experiments.public_dir",
+            value: publicDir,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.metrics_path",
+            value: `.autolabos/runs/${runId}/metrics.json`,
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "experiment_plan.yaml"),
+      [
+        "selected_hypothesis_ids:",
+        '  - "h_1"',
+        "selected_design:",
+        '  id: "plan_tabular_models"',
+        '  title: "Repeated model-centric tabular comparison"',
+        '  summary: "Compare CPU-only classical baselines over repeated seeds while tracking macro-F1 deltas against logistic regression."',
+        "  metrics:",
+        '    - "macro_f1_delta_vs_logreg"',
+        '    - "best_mean_test_macro_f1"',
+        "  baselines:",
+        '    - "logreg"',
+        "  evaluation_steps:",
+        '    - "Repeat the benchmark with fixed seeds."',
+        '    - "Compare macro-F1 deltas against logistic regression."'
+      ].join("\n"),
+      "utf8"
+    );
+    await seedWritePaperInputs(runDir);
+
+    const latestResults = {
+      run_id: runId,
+      topic: "Classical ML baselines on small tabular datasets",
+      experiment_mode: "real_execution",
+      protocol: {
+        cpu_only: true,
+        repeats: 3
+      },
+      global_metrics: {
+        best_model: "svc_rbf",
+        mean_macro_f1_improvement_over_logreg: 0.019,
+        mean_delta_vs_logreg: 0.019
+      },
+      dataset_summaries: [
+        {
+          dataset: "breast_cancer",
+          models: {
+            logreg: {
+              macro_f1: 0.972,
+              macro_f1_delta_vs_logreg: 0,
+              runtime_seconds: 3.9,
+              peak_memory_mb: 123.4,
+              run_to_run_variance: 0,
+              fold_to_fold_stability: 0.015,
+              seed_sensitivity: 0
+            },
+            svc_rbf: {
+              macro_f1: 0.978,
+              macro_f1_delta_vs_logreg: 0.006,
+              runtime_seconds: 4.2,
+              peak_memory_mb: 124.1,
+              run_to_run_variance: 0.00001,
+              fold_to_fold_stability: 0.013,
+              seed_sensitivity: 0.003
+            }
+          },
+          seed_records: [
+            { models: { logreg: { macro_f1: 0.971, macro_f1_delta_vs_logreg: 0, runtime_seconds: 3.9 }, svc_rbf: { macro_f1: 0.977, macro_f1_delta_vs_logreg: 0.006, runtime_seconds: 4.1 } } },
+            { models: { logreg: { macro_f1: 0.972, macro_f1_delta_vs_logreg: 0, runtime_seconds: 4.0 }, svc_rbf: { macro_f1: 0.979, macro_f1_delta_vs_logreg: 0.007, runtime_seconds: 4.2 } } },
+            { models: { logreg: { macro_f1: 0.973, macro_f1_delta_vs_logreg: 0, runtime_seconds: 3.8 }, svc_rbf: { macro_f1: 0.978, macro_f1_delta_vs_logreg: 0.005, runtime_seconds: 4.0 } } }
+          ]
+        },
+        {
+          dataset: "wine",
+          models: {
+            logreg: {
+              macro_f1: 0.968,
+              macro_f1_delta_vs_logreg: 0,
+              runtime_seconds: 3.6,
+              peak_memory_mb: 121.8,
+              run_to_run_variance: 0,
+              fold_to_fold_stability: 0.014,
+              seed_sensitivity: 0
+            },
+            svc_rbf: {
+              macro_f1: 0.999,
+              macro_f1_delta_vs_logreg: 0.032,
+              runtime_seconds: 4.0,
+              peak_memory_mb: 122.5,
+              run_to_run_variance: 0.00002,
+              fold_to_fold_stability: 0.012,
+              seed_sensitivity: 0.004
+            }
+          },
+          seed_records: [
+            { models: { logreg: { macro_f1: 0.967, macro_f1_delta_vs_logreg: 0, runtime_seconds: 3.5 }, svc_rbf: { macro_f1: 0.998, macro_f1_delta_vs_logreg: 0.031, runtime_seconds: 4.0 } } },
+            { models: { logreg: { macro_f1: 0.968, macro_f1_delta_vs_logreg: 0, runtime_seconds: 3.6 }, svc_rbf: { macro_f1: 0.999, macro_f1_delta_vs_logreg: 0.032, runtime_seconds: 4.1 } } },
+            { models: { logreg: { macro_f1: 0.969, macro_f1_delta_vs_logreg: 0, runtime_seconds: 3.7 }, svc_rbf: { macro_f1: 1, macro_f1_delta_vs_logreg: 0.033, runtime_seconds: 4.0 } } }
+          ]
+        }
+      ]
+    };
+    await writeFile(latestResultsPath, JSON.stringify(latestResults, null, 2), "utf8");
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          experiment_mode: "real_execution",
+          macro_f1: 0.9885,
+          macro_f1_delta_vs_logreg: 0.019,
+          mean_macro_f1_improvement_over_logreg: 0.019,
+          reproducible: true,
+          cpu_only: true,
+          results_path: latestResultsPath
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await mkdir(path.join(runDir, "run_experiments_panel"), { recursive: true });
+    await writeFile(
+      path.join(runDir, "run_experiments_panel", "execution_plan.json"),
+      JSON.stringify(
+        {
+          trigger: "auto_handoff",
+          command: `python3 ${JSON.stringify(path.join(publicDir, "run_experiment.py"))} --metrics-path ${JSON.stringify(path.join(runDir, "metrics.json"))}`,
+          cwd: publicDir,
+          metrics_path: path.join(runDir, "metrics.json"),
+          source: "run_context.run_command",
+          managed_supplemental_profiles: []
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const analyzeNode = createAnalyzeResultsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new StructuredResultAnalysisLLM(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+    const analyzeResult = await analyzeNode.execute({ run, graph: run.graph });
+    expect(analyzeResult.status).toBe("success");
+
+    const analysis = JSON.parse(await readFile(path.join(runDir, "result_analysis.json"), "utf8")) as {
+      overview: { execution_runs: number };
+      objective_metric: { evaluation: { matchedMetricKey?: string; summary: string } };
+      statistical_summary: { confidence_intervals: Array<{ metric_key: string }> };
+      failure_taxonomy: Array<{ id: string }>;
+    };
+    expect(analysis.overview.execution_runs).toBe(3);
+    expect(analysis.objective_metric.evaluation.matchedMetricKey).toBe("macro_f1_delta_vs_logreg");
+    expect(analysis.objective_metric.evaluation.summary).toContain("CPU-only requirement satisfied");
+    expect(analysis.objective_metric.evaluation.summary).toContain("Reproducibility requirement satisfied");
+    expect(
+      analysis.statistical_summary.confidence_intervals.some((item) =>
+        item.metric_key.includes("macro_f1_delta_vs_logreg")
+      )
+    ).toBe(true);
+    expect(analysis.failure_taxonomy.some((item) => item.id === "missing_confidence_intervals")).toBe(false);
+  });
+
+  it("derives confidence intervals when real-execution seed records use model_summaries", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-model-summaries-"));
+    process.chdir(root);
+
+    const runId = "run-analyze-results-model-summaries";
+    const run = makeRun(runId);
+    run.currentNode = "analyze_results";
+    run.graph.currentNode = "analyze_results";
+
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    const memoryDir = path.join(runDir, "memory");
+    const publicDir = path.join(root, "outputs", "model-summaries-analysis", "experiment");
+    const latestResultsPath = path.join(publicDir, "latest_results.json");
+    await mkdir(memoryDir, { recursive: true });
+    await mkdir(publicDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "implement_experiments.public_dir",
+            value: publicDir,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.metrics_path",
+            value: `.autolabos/runs/${runId}/metrics.json`,
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "experiment_plan.yaml"),
+      [
+        "selected_hypothesis_ids:",
+        '  - "h_1"',
+        "selected_design:",
+        '  id: "plan_tabular_models"',
+        '  title: "Repeated model-centric tabular comparison"',
+        '  summary: "Compare CPU-only classical baselines over repeated seeds while tracking macro-F1 deltas against logistic regression."',
+        "  metrics:",
+        '    - "macro_f1_delta_vs_logreg"',
+        '    - "best_mean_test_macro_f1"',
+        "  baselines:",
+        '    - "logreg"',
+        "  evaluation_steps:",
+        '    - "Repeat the benchmark with fixed seeds."',
+        '    - "Compare macro-F1 deltas against logistic regression."'
+      ].join("\n"),
+      "utf8"
+    );
+    await seedWritePaperInputs(runDir);
+
+    const latestResults = {
+      run_id: runId,
+      topic: "Classical ML baselines on small tabular datasets",
+      experiment_mode: "real_execution",
+      protocol: {
+        cpu_only: true,
+        repeats: 3
+      },
+      global_metrics: {
+        best_model: "svc_rbf",
+        mean_macro_f1_improvement_over_logreg: 0.019,
+        mean_delta_vs_logreg: 0.019
+      },
+      dataset_summaries: [
+        {
+          dataset: "breast_cancer",
+          models: {
+            logreg: {
+              macro_f1: 0.972,
+              macro_f1_delta_vs_logreg: 0,
+              runtime_seconds: 3.9,
+              peak_memory_mb: 123.4,
+              run_to_run_variance: 0,
+              fold_to_fold_stability: 0.015,
+              seed_sensitivity: 0
+            },
+            svc_rbf: {
+              macro_f1: 0.978,
+              macro_f1_delta_vs_logreg: 0.006,
+              runtime_seconds: 4.2,
+              peak_memory_mb: 124.1,
+              run_to_run_variance: 0.00001,
+              fold_to_fold_stability: 0.013,
+              seed_sensitivity: 0.003
+            }
+          },
+          seed_records: [
+            { model_summaries: { logreg: { mean_test_macro_f1: 0.971, mean_delta_vs_logreg: 0, mean_runtime_seconds: 3.9 }, svc_rbf: { mean_test_macro_f1: 0.977, mean_delta_vs_logreg: 0.006, mean_runtime_seconds: 4.1 } } },
+            { model_summaries: { logreg: { mean_test_macro_f1: 0.972, mean_delta_vs_logreg: 0, mean_runtime_seconds: 4.0 }, svc_rbf: { mean_test_macro_f1: 0.979, mean_delta_vs_logreg: 0.007, mean_runtime_seconds: 4.2 } } },
+            { model_summaries: { logreg: { mean_test_macro_f1: 0.973, mean_delta_vs_logreg: 0, mean_runtime_seconds: 3.8 }, svc_rbf: { mean_test_macro_f1: 0.978, mean_delta_vs_logreg: 0.005, mean_runtime_seconds: 4.0 } } }
+          ]
+        },
+        {
+          dataset: "wine",
+          models: {
+            logreg: {
+              macro_f1: 0.968,
+              macro_f1_delta_vs_logreg: 0,
+              runtime_seconds: 3.6,
+              peak_memory_mb: 121.8,
+              run_to_run_variance: 0,
+              fold_to_fold_stability: 0.014,
+              seed_sensitivity: 0
+            },
+            svc_rbf: {
+              macro_f1: 0.999,
+              macro_f1_delta_vs_logreg: 0.032,
+              runtime_seconds: 4.0,
+              peak_memory_mb: 122.5,
+              run_to_run_variance: 0.00002,
+              fold_to_fold_stability: 0.012,
+              seed_sensitivity: 0.004
+            }
+          },
+          seed_records: [
+            { model_summaries: { logreg: { mean_test_macro_f1: 0.967, mean_delta_vs_logreg: 0, mean_runtime_seconds: 3.5 }, svc_rbf: { mean_test_macro_f1: 0.998, mean_delta_vs_logreg: 0.031, mean_runtime_seconds: 4.0 } } },
+            { model_summaries: { logreg: { mean_test_macro_f1: 0.968, mean_delta_vs_logreg: 0, mean_runtime_seconds: 3.6 }, svc_rbf: { mean_test_macro_f1: 0.999, mean_delta_vs_logreg: 0.032, mean_runtime_seconds: 4.1 } } },
+            { model_summaries: { logreg: { mean_test_macro_f1: 0.969, mean_delta_vs_logreg: 0, mean_runtime_seconds: 3.7 }, svc_rbf: { mean_test_macro_f1: 1, mean_delta_vs_logreg: 0.033, mean_runtime_seconds: 4.0 } } }
+          ]
+        }
+      ]
+    };
+    await writeFile(latestResultsPath, JSON.stringify(latestResults, null, 2), "utf8");
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          experiment_mode: "real_execution",
+          macro_f1: 0.9885,
+          macro_f1_delta_vs_logreg: 0.019,
+          mean_macro_f1_improvement_over_logreg: 0.019,
+          reproducible: true,
+          cpu_only: true,
+          results_path: latestResultsPath
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await mkdir(path.join(runDir, "run_experiments_panel"), { recursive: true });
+    await writeFile(
+      path.join(runDir, "run_experiments_panel", "execution_plan.json"),
+      JSON.stringify(
+        {
+          trigger: "auto_handoff",
+          command: `python3 ${JSON.stringify(path.join(publicDir, "run_experiment.py"))} --metrics-path ${JSON.stringify(path.join(runDir, "metrics.json"))}`,
+          cwd: publicDir,
+          metrics_path: path.join(runDir, "metrics.json"),
+          source: "run_context.run_command",
+          managed_supplemental_profiles: []
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const analyzeNode = createAnalyzeResultsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new StructuredResultAnalysisLLM(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const analyzeResult = await analyzeNode.execute({ run, graph: run.graph });
+    expect(analyzeResult.status).toBe("success");
+
+    const analysis = JSON.parse(await readFile(path.join(runDir, "result_analysis.json"), "utf8")) as {
+      statistical_summary: { confidence_intervals: Array<{ metric_key: string }> };
+      failure_taxonomy: Array<{ id: string }>;
+    };
+    expect(
+      analysis.statistical_summary.confidence_intervals.some((item) =>
+        item.metric_key.includes("macro_f1_delta_vs_logreg")
+      )
+    ).toBe(true);
+    expect(analysis.failure_taxonomy.some((item) => item.id === "missing_confidence_intervals")).toBe(false);
   });
 
   it("recommends an implementation backtrack when the objective metric is missing from metrics", async () => {
@@ -1446,7 +2332,7 @@ describe("objective metric propagation", () => {
       "utf8"
     );
 
-    const commands: string[] = [];
+    const commands: Array<{ command: string; cwd?: string }> = [];
     const runNode = createRunExperimentsNode({
       config: {} as any,
       runStore: {} as any,
@@ -1454,8 +2340,8 @@ describe("objective metric propagation", () => {
       llm: new MockLLMClient(),
       codex: {} as any,
       aci: {
-        runCommand: async (command: string) => {
-          commands.push(command);
+        runCommand: async (command: string, cwd?: string) => {
+          commands.push({ command, cwd });
           const targetPath = command.includes("--quick-check")
             ? path.join(publicDir, "quick_check_metrics.json")
             : command.includes("--profile confirmatory")
@@ -1491,9 +2377,12 @@ describe("objective metric propagation", () => {
     expect(result.status).toBe("success");
     expect(result.toolCallsUsed).toBe(3);
     expect(commands).toHaveLength(3);
-    expect(commands[0]).toContain("--profile standard");
-    expect(commands[1]).toContain("--quick-check");
-    expect(commands[2]).toContain("--profile confirmatory");
+    expect(commands[0]?.command).toContain("--profile standard");
+    expect(commands[0]?.cwd).toBe(publicDir);
+    expect(commands[1]?.command).toContain("--quick-check");
+    expect(commands[1]?.cwd).toBe(publicDir);
+    expect(commands[2]?.command).toContain("--profile confirmatory");
+    expect(commands[2]?.cwd).toBe(publicDir);
     expect(result.summary).toContain("Supplemental runs: quick_check pass, confirmatory pass.");
 
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);
@@ -1544,6 +2433,264 @@ describe("objective metric propagation", () => {
         metrics_state: "valid"
       }
     });
+  });
+
+  it("derives legacy quick_check and confirmatory profiles for local python runners without a managed manifest", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-legacy-supplemental-"));
+    process.chdir(root);
+
+    const runId = "run-legacy-supplemental";
+    const run = makeRun(runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    const memoryDir = path.join(runDir, "memory");
+    const publicDir = path.join(root, "public-runner");
+    const scriptPath = path.join(publicDir, "run_experiment.py");
+    await mkdir(memoryDir, { recursive: true });
+    await mkdir(publicDir, { recursive: true });
+    await writeFile(scriptPath, "print('legacy runner')\n", "utf8");
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "implement_experiments.run_command",
+            value: `.venv/bin/python public-runner/run_experiment.py --metrics-path .autolabos/runs/${runId}/metrics.json`,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.cwd",
+            value: root,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.metrics_path",
+            value: `.autolabos/runs/${runId}/metrics.json`,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.public_dir",
+            value: publicDir,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.script",
+            value: scriptPath,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.mode",
+            value: "real_execution",
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const commands: Array<{ command: string; cwd?: string }> = [];
+    const runNode = createRunExperimentsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async (command: string, cwd?: string) => {
+          commands.push({ command, cwd });
+          const targetPath = command.includes("quick_check_metrics.json")
+            ? path.join(publicDir, "quick_check_metrics.json")
+            : command.includes("confirmatory_metrics.json")
+              ? path.join(publicDir, "confirmatory_metrics.json")
+              : path.join(runDir, "metrics.json");
+          const metrics =
+            targetPath === path.join(runDir, "metrics.json")
+              ? { accuracy: 0.91, value: 0.02, macro_f1_delta_vs_logreg: 0.02 }
+              : targetPath.includes("quick_check")
+                ? {
+                    accuracy: 0.905,
+                    value: 0.018,
+                    macro_f1_delta_vs_logreg: 0.018,
+                    sampling_profile: { name: "quick_check", total_trials: 2 }
+                  }
+                : {
+                    accuracy: 0.915,
+                    value: 0.021,
+                    macro_f1_delta_vs_logreg: 0.021,
+                    sampling_profile: { name: "confirmatory", total_trials: 8 }
+                  };
+          await writeFile(targetPath, JSON.stringify(metrics, null, 2), "utf8");
+          return {
+            status: "ok" as const,
+            stdout: "done",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await runNode.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+    expect(commands).toHaveLength(3);
+    expect(commands[0]?.command).toContain("--metrics-path");
+    expect(commands[0]?.cwd).toBe(root);
+    expect(commands[1]?.command).toContain(path.join(root, ".venv", "bin", "python"));
+    expect(commands[1]?.command).toContain(scriptPath);
+    expect(commands[1]?.command).toContain("quick_check_metrics.json");
+    expect(commands[1]?.command).toContain("--repeats");
+    expect(commands[1]?.command).toContain("--seed-base");
+    expect(commands[1]?.cwd).toBe(root);
+    expect(commands[2]?.command).toContain(path.join(root, ".venv", "bin", "python"));
+    expect(commands[2]?.command).toContain(scriptPath);
+    expect(commands[2]?.command).toContain("confirmatory_metrics.json");
+    expect(commands[2]?.command).toContain("--repeats");
+    expect(commands[2]?.command).toContain("--seed-base");
+    expect(commands[2]?.cwd).toBe(root);
+    expect(result.summary).toContain("Supplemental runs: quick_check pass, confirmatory pass.");
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    expect(await memory.get("run_experiments.supplemental_runs")).toMatchObject([
+      { profile: "quick_check", status: "pass" },
+      { profile: "confirmatory", status: "pass" }
+    ]);
+    const triageRaw = await readFile(path.join(runDir, "run_experiments_panel", "triage.json"), "utf8");
+    expect(triageRaw).toContain('"profile": "quick_check"');
+    expect(triageRaw).toContain('"profile": "confirmatory"');
+  });
+
+  it("treats unsupported legacy supplemental flags as not applicable instead of a blocker", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-legacy-supplemental-unsupported-"));
+    process.chdir(root);
+
+    const runId = "run-legacy-supplemental-unsupported";
+    const run = makeRun(runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    const memoryDir = path.join(runDir, "memory");
+    const publicDir = path.join(root, "public-runner");
+    const scriptPath = path.join(publicDir, "run_experiment.py");
+    await mkdir(memoryDir, { recursive: true });
+    await mkdir(publicDir, { recursive: true });
+    await writeFile(scriptPath, "print('legacy runner')\n", "utf8");
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "implement_experiments.run_command",
+            value: `.venv/bin/python ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(
+              path.join(runDir, "metrics.json")
+            )}`,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.cwd",
+            value: root,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.metrics_path",
+            value: `.autolabos/runs/${runId}/metrics.json`,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.public_dir",
+            value: publicDir,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.script",
+            value: scriptPath,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.mode",
+            value: "real_execution",
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const commands: Array<{ command: string; cwd?: string }> = [];
+    let invocation = 0;
+    const runNode = createRunExperimentsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async (command: string, cwd?: string) => {
+          commands.push({ command, cwd });
+          invocation += 1;
+          if (invocation === 1) {
+            await writeFile(
+              path.join(runDir, "metrics.json"),
+              JSON.stringify({ accuracy: 0.91, value: 0.02, macro_f1_delta_vs_logreg: 0.02 }, null, 2),
+              "utf8"
+            );
+            return {
+              status: "ok" as const,
+              stdout: "done",
+              stderr: "",
+              exit_code: 0,
+              duration_ms: 10
+            };
+          }
+          return {
+            status: "error" as const,
+            stdout: "",
+            stderr:
+              "usage: run_experiment.py [-h] --metrics-path METRICS_PATH\nrun_experiment.py: error: unrecognized arguments: --repeats 2 --seed-base 700\n",
+            exit_code: 2,
+            duration_ms: 5
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await runNode.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+    expect(commands).toHaveLength(2);
+    expect(result.summary).toContain("not supported by this legacy experiment runner");
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    expect(await memory.get("run_experiments.supplemental_runs")).toMatchObject([
+      { profile: "quick_check", status: "skipped" },
+      { profile: "confirmatory", status: "skipped" }
+    ]);
+    expect(await memory.get("run_experiments.supplemental_expectation")).toMatchObject({
+      applicable: false
+    });
+
+    const expectationRaw = await readFile(
+      path.join(runDir, "run_experiments_supplemental_expectation.json"),
+      "utf8"
+    );
+    expect(expectationRaw).toContain('"applicable": false');
+    const supplementalRaw = await readFile(path.join(runDir, "run_experiments_supplemental_runs.json"), "utf8");
+    expect(supplementalRaw).toContain('"status": "skipped"');
+    expect(supplementalRaw).not.toContain('"status": "fail"');
   });
 
   it("fails second-stage verification when metrics.json is not a JSON object", async () => {

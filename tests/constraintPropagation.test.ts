@@ -291,6 +291,71 @@ describe("constraint propagation", () => {
     expect(parsed.selected_design?.evaluation_steps?.[0]).toBe("Measure line 1\nMeasure line 2");
   });
 
+  it("normalizes predefined runtime guardrails into explicit thresholds before persisting the plan", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-design-threshold-normalization-"));
+    process.chdir(root);
+
+    const runId = "run-design-threshold-normalization";
+    const run = makeRun(root, runId);
+    run.topic = "Classical machine learning baselines for tabular classification on small public datasets.";
+    run.objectiveMetric = "";
+    run.constraints = [];
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "hypotheses.jsonl"),
+      `${JSON.stringify({
+        hypothesis_id: "h_1",
+        text: "Strict fold-local nesting reduces macro-F1 variance without hurting lightweight CPU execution."
+      })}\n`,
+      "utf8"
+    );
+
+    const node = createDesignExperimentsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new CountingJsonLLMClient([
+        JSON.stringify({
+          summary: "Generated a threshold-sensitive design.",
+          candidates: [
+            {
+              id: "plan_1",
+              title: "Variance-aware nested tabular benchmark",
+              hypothesis_ids: ["h_1"],
+              plan_summary:
+                "Compare nested and non-nested pipelines while keeping runtime within a predefined practical threshold such as 25 percent.",
+              datasets: ["adult sample"],
+              metrics: ["macro_f1_delta_vs_logreg", "runtime_seconds"],
+              baselines: ["logistic regression", "non-nested pipeline"],
+              implementation_notes: ["Use compact sklearn-compatible datasets only."],
+              evaluation_steps: [
+                "Declare support if macro-F1 improves without increasing runtime or memory by more than a predefined practical threshold such as 25 percent."
+              ],
+              risks: [
+                "A practical threshold on runtime increase must be specified before analysis to avoid post hoc interpretation."
+              ],
+              resource_notes: ["CPU-only execution on a single workstation."]
+            }
+          ],
+          selected_id: "plan_1"
+        })
+      ]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const plan = await readFile(path.join(runDir, "experiment_plan.yaml"), "utf8");
+    expect(plan).toContain("25% relative to the matched baseline");
+    expect(plan).not.toContain("must be specified before analysis");
+    expect(plan).toContain("Pre-registered runtime and memory guardrail: no more than 25% above the matched baseline.");
+  });
+
   it("prefers the best non-blocked design candidate and records panel selection artifacts", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-design-panel-selection-"));
     process.chdir(root);

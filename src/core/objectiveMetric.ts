@@ -125,14 +125,21 @@ export async function resolveObjectiveMetricProfile(
 export function buildHeuristicObjectiveMetricProfile(rawObjectiveMetric: string): ObjectiveMetricProfile {
   const raw = rawObjectiveMetric.trim();
   const normalized = raw.toLowerCase();
+  const relativeBaseline = inferRelativeBaselineObjective(raw, normalized);
   const metricDef = detectMetricDefinition(normalized);
   const threshold = parseThreshold(raw);
-  const primaryMetric = metricDef?.primaryMetric;
-  const preferredMetricKeys = metricDef?.preferredMetricKeys || [];
-  const direction = metricDef?.direction || inferDirectionFromComparator(threshold?.comparator);
+  const primaryMetric = relativeBaseline?.primaryMetric || metricDef?.primaryMetric;
+  const preferredMetricKeys = dedupe([
+    ...(relativeBaseline?.preferredMetricKeys || []),
+    ...(metricDef?.preferredMetricKeys || [])
+  ]);
+  const direction =
+    relativeBaseline?.direction || metricDef?.direction || inferDirectionFromComparator(threshold?.comparator);
+  const comparator = threshold?.comparator || relativeBaseline?.comparator;
+  const targetValue = threshold?.targetValue ?? relativeBaseline?.targetValue;
   const targetDescription =
-    threshold && typeof threshold.targetValue === "number"
-      ? `${threshold.comparator} ${threshold.targetValue}`
+    typeof targetValue === "number" && comparator
+      ? `${comparator} ${targetValue}`
       : undefined;
 
   const analysisFocus: string[] = [];
@@ -153,8 +160,8 @@ export function buildHeuristicObjectiveMetricProfile(rawObjectiveMetric: string)
     primaryMetric,
     preferredMetricKeys,
     direction,
-    comparator: threshold?.comparator,
-    targetValue: threshold?.targetValue,
+    comparator,
+    targetValue,
     targetDescription,
     analysisFocus,
     paperEmphasis,
@@ -167,14 +174,20 @@ export function normalizeObjectiveMetricProfile(
   rawObjectiveMetric: string
 ): ObjectiveMetricProfile {
   const fallback = buildHeuristicObjectiveMetricProfile(rawObjectiveMetric);
+  const relativeBaseline = inferRelativeBaselineObjective(rawObjectiveMetric, rawObjectiveMetric.trim().toLowerCase());
   const partial = input || {};
 
-  const primaryMetric = cleanString(partial.primaryMetric) || fallback.primaryMetric;
-  const preferredMetricKeys = normalizeStringArray(partial.preferredMetricKeys);
-  const direction = normalizeDirection(partial.direction) || fallback.direction;
-  const comparator = normalizeComparator(partial.comparator) || fallback.comparator;
-  const targetValue = normalizeNumber(partial.targetValue) ?? fallback.targetValue;
-  const targetDescription = cleanString(partial.targetDescription) || fallback.targetDescription;
+  const primaryMetric = relativeBaseline?.primaryMetric || cleanString(partial.primaryMetric) || fallback.primaryMetric;
+  const preferredMetricKeys = dedupe([
+    ...(relativeBaseline?.preferredMetricKeys || []),
+    ...normalizeStringArray(partial.preferredMetricKeys),
+    ...fallback.preferredMetricKeys
+  ]);
+  const direction = relativeBaseline?.direction || normalizeDirection(partial.direction) || fallback.direction;
+  const comparator = relativeBaseline?.comparator || normalizeComparator(partial.comparator) || fallback.comparator;
+  const targetValue = relativeBaseline?.targetValue ?? normalizeNumber(partial.targetValue) ?? fallback.targetValue;
+  const targetDescription =
+    relativeBaseline?.targetDescription || cleanString(partial.targetDescription) || fallback.targetDescription;
 
   return {
     source: partial.source === "llm" ? "llm" : fallback.source,
@@ -210,13 +223,17 @@ export function evaluateObjectiveMetric(
   if (!matched) {
     const inferred = inferBestEffortMetricMatch(flattened, preferredKeys, rawObjectiveMetric);
     if (inferred) {
-      return buildObjectiveEvaluation({
-        rawObjectiveMetric,
-        profile,
-        preferredKeys,
-        matched: inferred.metric,
-        summaryPrefix: inferred.summaryPrefix
-      });
+      return applyObjectiveRequirementChecks(
+        buildObjectiveEvaluation({
+          rawObjectiveMetric,
+          profile,
+          preferredKeys,
+          matched: inferred.metric,
+          summaryPrefix: inferred.summaryPrefix
+        }),
+        metrics,
+        rawObjectiveMetric
+      );
     }
     return {
       rawObjectiveMetric,
@@ -234,12 +251,16 @@ export function evaluateObjectiveMetric(
     };
   }
 
-  return buildObjectiveEvaluation({
-    rawObjectiveMetric,
-    profile,
-    preferredKeys,
-    matched
-  });
+  return applyObjectiveRequirementChecks(
+    buildObjectiveEvaluation({
+      rawObjectiveMetric,
+      profile,
+      preferredKeys,
+      matched
+    }),
+    metrics,
+    rawObjectiveMetric
+  );
 }
 
 function buildObjectiveMetricSystemPrompt(): string {
@@ -406,6 +427,33 @@ function buildObjectiveEvaluation(input: {
   };
 }
 
+function applyObjectiveRequirementChecks(
+  evaluation: ObjectiveMetricEvaluation,
+  metrics: Record<string, unknown>,
+  rawObjectiveMetric: string
+): ObjectiveMetricEvaluation {
+  const requirements = collectObjectiveRequirements(metrics, rawObjectiveMetric);
+  if (requirements.length === 0) {
+    return evaluation;
+  }
+
+  let status = evaluation.status;
+  if (status === "met") {
+    if (requirements.some((item) => item.status === "not_met")) {
+      status = "not_met";
+    } else if (requirements.some((item) => item.status === "missing")) {
+      status = "missing";
+    }
+  }
+
+  const suffix = requirements.map((item) => item.summary).join(" ");
+  return {
+    ...evaluation,
+    status,
+    summary: suffix ? `${evaluation.summary} ${suffix}` : evaluation.summary
+  };
+}
+
 function inferBestEffortMetricMatch(
   metrics: Array<{ key: string; value: number }>,
   preferredKeys: string[],
@@ -540,6 +588,72 @@ function detectMetricDefinition(text: string): {
   return undefined;
 }
 
+function inferRelativeBaselineObjective(
+  rawObjectiveMetric: string,
+  normalized: string
+): {
+  primaryMetric?: string;
+  preferredMetricKeys: string[];
+  direction: ObjectiveDirection;
+  comparator: ObjectiveComparator;
+  targetValue: number;
+  targetDescription: string;
+} | undefined {
+  const indicatesImprovement =
+    /\b(improv(?:e|ement|ing)?|outperform|beat|better|higher|exceed|gain)\b/iu.test(rawObjectiveMetric) ||
+    /\bimprov(?:e|ement|ing)?\b/iu.test(normalized);
+  const indicatesBaselineComparison =
+    /\b(over|vs\.?|versus|than|relative to|against)\b/iu.test(rawObjectiveMetric) ||
+    /\bbaseline\b/iu.test(rawObjectiveMetric) ||
+    /\blogistic regression\b/iu.test(rawObjectiveMetric);
+  if (!indicatesImprovement || !indicatesBaselineComparison) {
+    return undefined;
+  }
+
+  const mentionsMacroF1 = /\bmacro[-_\s]?f1\b|\bf1\b/iu.test(rawObjectiveMetric);
+  const mentionsAccuracy = /\baccuracy\b|\bacc\b/iu.test(rawObjectiveMetric);
+  const mentionsLogreg = /\blogistic regression\b|\blogreg\b/iu.test(rawObjectiveMetric);
+  if (!mentionsMacroF1 && !mentionsAccuracy) {
+    return undefined;
+  }
+
+  if (mentionsMacroF1 && mentionsLogreg) {
+    return {
+      primaryMetric: "macro_f1_delta_vs_logreg",
+      preferredMetricKeys: [
+        "macro_f1_delta_vs_logreg",
+        "mean_macro_f1_improvement_over_logreg",
+        "mean_delta_vs_logreg",
+        "delta_vs_logreg",
+        "value"
+      ],
+      direction: "maximize",
+      comparator: ">",
+      targetValue: 0,
+      targetDescription: "> 0 relative to the logistic regression baseline"
+    };
+  }
+
+  if (mentionsAccuracy && mentionsLogreg) {
+    return {
+      primaryMetric: "accuracy_delta_vs_logreg",
+      preferredMetricKeys: [
+        "accuracy_delta_vs_logreg",
+        "mean_accuracy_improvement_over_logreg",
+        "mean_delta_vs_logreg",
+        "delta_vs_logreg",
+        "value"
+      ],
+      direction: "maximize",
+      comparator: ">",
+      targetValue: 0,
+      targetDescription: "> 0 relative to the logistic regression baseline"
+    };
+  }
+
+  return undefined;
+}
+
 function parseThreshold(text: string): { comparator: ObjectiveComparator; targetValue: number } | undefined {
   const patterns: Array<[RegExp, ObjectiveComparator]> = [
     [/(?:at\s+least|greater\s+than\s+or\s+equal\s+to|no\s+less\s+than|이상)\s*(\d+(?:\.\d+)?)/iu, ">="],
@@ -610,4 +724,77 @@ function normalizeStringArray(value: unknown): string[] {
 
 function dedupe(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
+}
+
+function collectObjectiveRequirements(
+  metrics: Record<string, unknown>,
+  rawObjectiveMetric: string
+): Array<{ status: "met" | "not_met" | "missing"; summary: string }> {
+  const requirements: Array<{ status: "met" | "not_met" | "missing"; summary: string }> = [];
+  if (/\bcpu[-\s]?only\b/iu.test(rawObjectiveMetric)) {
+    requirements.push(describeBooleanRequirement("CPU-only requirement", resolveCpuOnlyEvidence(metrics)));
+  }
+  if (/\breproduc(?:ible|ibility)\b/iu.test(rawObjectiveMetric) || /\breplicab(?:le|ility)\b/iu.test(rawObjectiveMetric)) {
+    requirements.push(describeBooleanRequirement("Reproducibility requirement", resolveReproducibilityEvidence(metrics)));
+  }
+  return requirements;
+}
+
+function describeBooleanRequirement(
+  label: string,
+  value: boolean | undefined
+): { status: "met" | "not_met" | "missing"; summary: string } {
+  if (value === true) {
+    return { status: "met", summary: `${label} satisfied.` };
+  }
+  if (value === false) {
+    return { status: "not_met", summary: `${label} not satisfied.` };
+  }
+  return { status: "missing", summary: `${label} could not be verified from metrics.json.` };
+}
+
+function asBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function resolveCpuOnlyEvidence(metrics: Record<string, unknown>): boolean | undefined {
+  const direct = asBoolean(metrics.cpu_only);
+  if (direct !== undefined) {
+    return direct;
+  }
+  const protocol = asRecord(metrics.protocol);
+  return asBoolean(protocol.cpu_only);
+}
+
+function resolveReproducibilityEvidence(metrics: Record<string, unknown>): boolean | undefined {
+  const direct = asBoolean(metrics.reproducible);
+  if (direct !== undefined) {
+    return direct;
+  }
+  const protocol = asRecord(metrics.protocol);
+  const protocolFlag = asBoolean(protocol.reproducible);
+  if (protocolFlag !== undefined) {
+    return protocolFlag;
+  }
+  const samplingProfile = asRecord(metrics.sampling_profile);
+  const executedTrials = normalizeNumber(samplingProfile.executed_trials);
+  if (typeof executedTrials === "number" && executedTrials > 1) {
+    return true;
+  }
+  const stabilitySignals = [
+    normalizeNumber(metrics.run_to_run_variance),
+    normalizeNumber(metrics.seed_sensitivity),
+    normalizeNumber(metrics.rank_stability),
+    normalizeNumber(metrics.fold_to_fold_stability)
+  ].filter((value): value is number => typeof value === "number");
+  if (stabilitySignals.length > 0) {
+    return true;
+  }
+  return undefined;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }

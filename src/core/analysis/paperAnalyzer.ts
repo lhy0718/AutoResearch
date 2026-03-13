@@ -1,4 +1,5 @@
 import { LLMClient, LLMProgressEvent } from "../llm/client.js";
+import { parseStructuredModelJsonObject } from "./modelJson.js";
 import { AnalysisCorpusRow, ResolvedPaperSource, buildAbstractFallbackText } from "./paperText.js";
 import { ResponsesPdfAnalysisClient } from "../../integrations/openai/responsesPdfAnalysisClient.js";
 
@@ -102,6 +103,10 @@ const ANALYSIS_REVIEWER_SYSTEM_PROMPT = [
   "Whenever you lower confidence or keep a caveat, fill confidence_reason with a short source-grounded explanation."
 ].join(" ");
 
+const DEFAULT_ANALYSIS_PLANNER_TIMEOUT_MS = 20_000;
+const DEFAULT_ANALYSIS_EXTRACT_TIMEOUT_MS = 45_000;
+const DEFAULT_ANALYSIS_REVIEW_TIMEOUT_MS = 20_000;
+
 export async function analyzePaperWithLlm(args: {
   llm: LLMClient;
   paper: AnalysisCorpusRow;
@@ -160,7 +165,9 @@ export async function analyzePaperWithLlm(args: {
         throw error;
       }
       lastError = error instanceof Error ? error : new Error(String(error));
-      args.onProgress?.(`Analysis attempt ${attempt}/${maxAttempts} failed: ${lastError.message}`);
+      args.onProgress?.(
+        `Analysis attempt ${attempt}/${maxAttempts} failed: ${describeAnalysisAttemptFailureReason(lastError)}`
+      );
     }
   }
 
@@ -234,7 +241,9 @@ export async function analyzePaperWithResponsesPdf(args: {
         throw error;
       }
       lastError = error instanceof Error ? error : new Error(String(error));
-      args.onProgress?.(`PDF analysis attempt ${attempt}/${maxAttempts} failed: ${lastError.message}`);
+      args.onProgress?.(
+        `PDF analysis attempt ${attempt}/${maxAttempts} failed: ${describeAnalysisAttemptFailureReason(lastError)}`
+      );
     }
   }
 
@@ -249,12 +258,19 @@ async function planPaperAnalysisWithLlm(args: {
   onProgress?: (message: string) => void;
 }): Promise<{ plan: PaperAnalysisPlan; draft?: RawPaperAnalysis }> {
   try {
-    const completion = await args.llm.complete(buildPaperAnalysisPlannerPrompt(args.paper, args.source), {
-      systemPrompt: ANALYSIS_PLANNER_SYSTEM_PROMPT,
-      inputImagePaths: args.source.pageImagePaths,
-      abortSignal: args.abortSignal,
-      onProgress: (event) => emitLlmProgress(args.onProgress, event)
-    });
+    const timeoutMs = resolveAnalysisPlannerTimeoutMs();
+    const completion = await runWithAbortableTimeout(
+      timeoutMs,
+      args.abortSignal,
+      (abortSignal) =>
+        args.llm.complete(buildPaperAnalysisPlannerPrompt(args.paper, args.source), {
+          systemPrompt: ANALYSIS_PLANNER_SYSTEM_PROMPT,
+          inputImagePaths: args.source.pageImagePaths,
+          abortSignal,
+          onProgress: (event) => emitLlmProgress(args.onProgress, event)
+        }),
+      `paper_analysis_planner_timeout_after_${timeoutMs}ms`
+    );
     const planned = resolvePlannerOutput(completion.text, args.paper, args.source);
     if (planned.draft) {
       args.onProgress?.("Planner returned a directly usable structured analysis; reusing it as the extractor draft.");
@@ -268,7 +284,12 @@ async function planPaperAnalysisWithLlm(args: {
     if (isAbortError(error)) {
       throw error;
     }
-    args.onProgress?.(`Planner unavailable, falling back to direct extraction: ${error instanceof Error ? error.message : String(error)}`);
+    args.onProgress?.(
+      `Planner unavailable, falling back to direct extraction: ${describePlannerFallbackReason(
+        error,
+        resolveAnalysisPlannerTimeoutMs()
+      )}`
+    );
     return {
       plan: buildFallbackAnalysisPlan(args.paper, args.source)
     };
@@ -283,14 +304,24 @@ async function extractPaperAnalysisWithLlm(args: {
   abortSignal?: AbortSignal;
   onProgress?: (message: string) => void;
 }): Promise<RawPaperAnalysis> {
-  const completion = await args.llm.complete(buildPaperAnalysisPrompt(args.paper, args.source, args.plan), {
-    systemPrompt: ANALYSIS_SYSTEM_PROMPT,
-    inputImagePaths: args.source.pageImagePaths,
-    abortSignal: args.abortSignal,
-    onProgress: (event) => emitLlmProgress(args.onProgress, event)
-  });
+  const timeoutMs = resolveAnalysisExtractTimeoutMs();
+  const completion = await runWithAbortableTimeout(
+    timeoutMs,
+    args.abortSignal,
+    (abortSignal) =>
+      args.llm.complete(buildPaperAnalysisPrompt(args.paper, args.source, args.plan), {
+        systemPrompt: ANALYSIS_SYSTEM_PROMPT,
+        inputImagePaths: args.source.pageImagePaths,
+        abortSignal,
+        onProgress: (event) => emitLlmProgress(args.onProgress, event)
+      }),
+    `paper_analysis_extractor_timeout_after_${timeoutMs}ms`
+  );
   args.onProgress?.("Received extractor output. Parsing structured JSON.");
-  const parsed = parsePaperAnalysisJson(completion.text);
+  const { value: parsed, repaired } = parsePaperAnalysisJsonDetailed(completion.text);
+  if (repaired) {
+    args.onProgress?.("Extractor JSON looked truncated; repaired the structured payload before parsing.");
+  }
   args.onProgress?.("Extractor JSON parsed successfully.");
   return parsed;
 }
@@ -305,14 +336,24 @@ async function reviewPaperAnalysisWithLlm(args: {
   onProgress?: (message: string) => void;
 }): Promise<RawPaperAnalysis> {
   try {
-    const completion = await args.llm.complete(buildPaperAnalysisReviewPrompt(args.paper, args.source, args.plan, args.draft), {
-      systemPrompt: ANALYSIS_REVIEWER_SYSTEM_PROMPT,
-      inputImagePaths: args.source.pageImagePaths,
-      abortSignal: args.abortSignal,
-      onProgress: (event) => emitLlmProgress(args.onProgress, event)
-    });
+    const timeoutMs = resolveAnalysisReviewTimeoutMs();
+    const completion = await runWithAbortableTimeout(
+      timeoutMs,
+      args.abortSignal,
+      (abortSignal) =>
+        args.llm.complete(buildPaperAnalysisReviewPrompt(args.paper, args.source, args.plan, args.draft), {
+          systemPrompt: ANALYSIS_REVIEWER_SYSTEM_PROMPT,
+          inputImagePaths: args.source.pageImagePaths,
+          abortSignal,
+          onProgress: (event) => emitLlmProgress(args.onProgress, event)
+        }),
+      `paper_analysis_reviewer_timeout_after_${timeoutMs}ms`
+    );
     args.onProgress?.("Received reviewer output. Parsing corrected structured JSON.");
-    const parsed = parsePaperAnalysisJson(completion.text);
+    const { value: parsed, repaired } = parsePaperAnalysisJsonDetailed(completion.text);
+    if (repaired) {
+      args.onProgress?.("Reviewer JSON looked truncated; repaired the structured payload before parsing.");
+    }
     args.onProgress?.("Reviewer JSON parsed successfully.");
     emitReviewerAudit(args.onProgress, args.draft, parsed);
     return parsed;
@@ -320,7 +361,12 @@ async function reviewPaperAnalysisWithLlm(args: {
     if (isAbortError(error)) {
       throw error;
     }
-    args.onProgress?.(`Reviewer unavailable, using extractor draft as-is: ${error instanceof Error ? error.message : String(error)}`);
+    args.onProgress?.(
+      `Reviewer unavailable, using extractor draft as-is: ${describeReviewerFallbackReason(
+        error,
+        resolveAnalysisReviewTimeoutMs()
+      )}`
+    );
     return args.draft;
   }
 }
@@ -335,15 +381,22 @@ async function planPaperAnalysisWithResponsesPdf(args: {
   onProgress?: (message: string) => void;
 }): Promise<{ plan: PaperAnalysisPlan; draft?: RawPaperAnalysis }> {
   try {
-    const completion = await args.client.analyzePdf({
-      model: args.model,
-      pdfUrl: args.pdfUrl,
-      prompt: buildPaperAnalysisFilePlannerPrompt(args.paper),
-      systemPrompt: ANALYSIS_PLANNER_SYSTEM_PROMPT,
-      reasoningEffort: args.reasoningEffort,
-      abortSignal: args.abortSignal,
-      onProgress: (message) => args.onProgress?.(message)
-    });
+    const timeoutMs = resolveAnalysisPlannerTimeoutMs();
+    const completion = await runWithAbortableTimeout(
+      timeoutMs,
+      args.abortSignal,
+      (abortSignal) =>
+        args.client.analyzePdf({
+          model: args.model,
+          pdfUrl: args.pdfUrl,
+          prompt: buildPaperAnalysisFilePlannerPrompt(args.paper),
+          systemPrompt: ANALYSIS_PLANNER_SYSTEM_PROMPT,
+          reasoningEffort: args.reasoningEffort,
+          abortSignal,
+          onProgress: (message) => args.onProgress?.(message)
+        }),
+      `paper_analysis_planner_timeout_after_${timeoutMs}ms`
+    );
     const planned = resolvePlannerOutput(
       completion.text,
       args.paper,
@@ -366,7 +419,12 @@ async function planPaperAnalysisWithResponsesPdf(args: {
     if (isAbortError(error)) {
       throw error;
     }
-    args.onProgress?.(`PDF planner unavailable, falling back to direct extraction: ${error instanceof Error ? error.message : String(error)}`);
+    args.onProgress?.(
+      `PDF planner unavailable, falling back to direct extraction: ${describePlannerFallbackReason(
+        error,
+        resolveAnalysisPlannerTimeoutMs()
+      )}`
+    );
     return {
       plan: buildFallbackAnalysisPlan(args.paper, {
         sourceType: "full_text",
@@ -388,17 +446,27 @@ async function extractPaperAnalysisWithResponsesPdf(args: {
   abortSignal?: AbortSignal;
   onProgress?: (message: string) => void;
 }): Promise<RawPaperAnalysis> {
-  const completion = await args.client.analyzePdf({
-    model: args.model,
-    pdfUrl: args.pdfUrl,
-    prompt: buildPaperAnalysisFilePrompt(args.paper, args.plan),
-    systemPrompt: ANALYSIS_SYSTEM_PROMPT,
-    reasoningEffort: args.reasoningEffort,
-    abortSignal: args.abortSignal,
-    onProgress: (message) => args.onProgress?.(message)
-  });
+  const timeoutMs = resolveAnalysisExtractTimeoutMs();
+  const completion = await runWithAbortableTimeout(
+    timeoutMs,
+    args.abortSignal,
+    (abortSignal) =>
+      args.client.analyzePdf({
+        model: args.model,
+        pdfUrl: args.pdfUrl,
+        prompt: buildPaperAnalysisFilePrompt(args.paper, args.plan),
+        systemPrompt: ANALYSIS_SYSTEM_PROMPT,
+        reasoningEffort: args.reasoningEffort,
+        abortSignal,
+        onProgress: (message) => args.onProgress?.(message)
+      }),
+    `paper_analysis_extractor_timeout_after_${timeoutMs}ms`
+  );
   args.onProgress?.("Received Responses API extractor output. Parsing structured JSON.");
-  const parsed = parsePaperAnalysisJson(completion.text);
+  const { value: parsed, repaired } = parsePaperAnalysisJsonDetailed(completion.text);
+  if (repaired) {
+    args.onProgress?.("Responses API extractor JSON looked truncated; repaired the structured payload before parsing.");
+  }
   args.onProgress?.("Responses API extractor JSON parsed successfully.");
   return parsed;
 }
@@ -415,17 +483,27 @@ async function reviewPaperAnalysisWithResponsesPdf(args: {
   onProgress?: (message: string) => void;
 }): Promise<RawPaperAnalysis> {
   try {
-    const completion = await args.client.analyzePdf({
-      model: args.model,
-      pdfUrl: args.pdfUrl,
-      prompt: buildPaperAnalysisFileReviewPrompt(args.paper, args.plan, args.draft),
-      systemPrompt: ANALYSIS_REVIEWER_SYSTEM_PROMPT,
-      reasoningEffort: args.reasoningEffort,
-      abortSignal: args.abortSignal,
-      onProgress: (message) => args.onProgress?.(message)
-    });
+    const timeoutMs = resolveAnalysisReviewTimeoutMs();
+    const completion = await runWithAbortableTimeout(
+      timeoutMs,
+      args.abortSignal,
+      (abortSignal) =>
+        args.client.analyzePdf({
+          model: args.model,
+          pdfUrl: args.pdfUrl,
+          prompt: buildPaperAnalysisFileReviewPrompt(args.paper, args.plan, args.draft),
+          systemPrompt: ANALYSIS_REVIEWER_SYSTEM_PROMPT,
+          reasoningEffort: args.reasoningEffort,
+          abortSignal,
+          onProgress: (message) => args.onProgress?.(message)
+        }),
+      `paper_analysis_reviewer_timeout_after_${timeoutMs}ms`
+    );
     args.onProgress?.("Received Responses API reviewer output. Parsing corrected structured JSON.");
-    const parsed = parsePaperAnalysisJson(completion.text);
+    const { value: parsed, repaired } = parsePaperAnalysisJsonDetailed(completion.text);
+    if (repaired) {
+      args.onProgress?.("Responses API reviewer JSON looked truncated; repaired the structured payload before parsing.");
+    }
     args.onProgress?.("Responses API reviewer JSON parsed successfully.");
     emitReviewerAudit(args.onProgress, args.draft, parsed);
     return parsed;
@@ -433,7 +511,12 @@ async function reviewPaperAnalysisWithResponsesPdf(args: {
     if (isAbortError(error)) {
       throw error;
     }
-    args.onProgress?.(`PDF reviewer unavailable, using extractor draft as-is: ${error instanceof Error ? error.message : String(error)}`);
+    args.onProgress?.(
+      `PDF reviewer unavailable, using extractor draft as-is: ${describeReviewerFallbackReason(
+        error,
+        resolveAnalysisReviewTimeoutMs()
+      )}`
+    );
     return args.draft;
   }
 }
@@ -526,6 +609,8 @@ export function buildPaperAnalysisPrompt(
   return [
     "Analyze the following paper and extract structured evidence.",
     "If an evidence item is tentative or indirect, lower confidence and explain why in confidence_reason.",
+    "Keep the JSON compact: summary <= 4 short sentences; key_findings/limitations/datasets/metrics/reproducibility_notes <= 4 short strings each.",
+    "Return at most 4 evidence_items, and keep each evidence_span to one short quoted or paraphrased sentence (<= 240 characters).",
     "Return JSON with this exact top-level shape:",
     ...buildPaperAnalysisSchemaLines(),
     "",
@@ -572,6 +657,8 @@ export function buildPaperAnalysisFilePrompt(paper: AnalysisCorpusRow, plan?: Pa
     "Analyze the attached PDF paper and extract structured evidence.",
     "The attached PDF is the primary source. Use the metadata and abstract below only as supplemental context.",
     "If an evidence item is tentative or indirect, lower confidence and explain why in confidence_reason.",
+    "Keep the JSON compact: summary <= 4 short sentences; key_findings/limitations/datasets/metrics/reproducibility_notes <= 4 short strings each.",
+    "Return at most 4 evidence_items, and keep each evidence_span to one short quoted or paraphrased sentence (<= 240 characters).",
     "Return JSON with this exact top-level shape:",
     ...buildPaperAnalysisSchemaLines(),
     "",
@@ -652,6 +739,8 @@ export function buildPaperAnalysisReviewPrompt(
     "Audit the draft paper analysis against the supplied source and correct it.",
     "Prefer dropping unsupported items over guessing.",
     "Whenever you keep a caveat or lower confidence, explain it in confidence_reason for that evidence item.",
+    "Keep the corrected JSON compact, and if the draft contains more than 4 evidence_items, keep only the 4 strongest supported items.",
+    "Keep each evidence_span to one short quoted or paraphrased sentence (<= 240 characters).",
     "Return JSON with this exact top-level shape:",
     ...buildPaperAnalysisSchemaLines(),
     "",
@@ -674,6 +763,8 @@ export function buildPaperAnalysisFileReviewPrompt(
     "Audit the draft PDF-paper analysis against the attached PDF and correct it.",
     "The attached PDF is the primary source. Prefer dropping unsupported items over guessing.",
     "Whenever you keep a caveat or lower confidence, explain it in confidence_reason for that evidence item.",
+    "Keep the corrected JSON compact, and if the draft contains more than 4 evidence_items, keep only the 4 strongest supported items.",
+    "Keep each evidence_span to one short quoted or paraphrased sentence (<= 240 characters).",
     "Return JSON with this exact top-level shape:",
     ...buildPaperAnalysisSchemaLines(),
     "",
@@ -729,32 +820,29 @@ function buildPlanContextLines(plan: PaperAnalysisPlan | undefined): string[] {
 }
 
 export function parsePaperAnalysisJson(text: string): RawPaperAnalysis {
-  const trimmed = text.trim();
-  if (!trimmed) {
-    throw new Error("empty_analysis_output");
-  }
+  return parsePaperAnalysisJsonDetailed(text).value;
+}
 
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]+?)```/i)?.[1]?.trim();
-  const candidate = fenced || extractFirstJsonObject(trimmed);
-  const parsed = JSON.parse(candidate) as RawPaperAnalysis;
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("invalid_analysis_json");
+function parsePaperAnalysisPlanJson(text: string): RawPaperAnalysisPlan {
+  const { value: parsed } = parseStructuredModelJsonObject<RawPaperAnalysisPlan>(text, {
+    emptyError: "empty_analysis_plan",
+    notFoundError: "analysis_plan_json_not_found",
+    incompleteError: "analysis_plan_json_incomplete",
+    invalidError: "invalid_analysis_plan"
+  });
+  if (!isPaperAnalysisPlanLike(parsed)) {
+    throw new Error("invalid_analysis_plan");
   }
   return parsed;
 }
 
-function parsePaperAnalysisPlanJson(text: string): RawPaperAnalysisPlan {
-  const trimmed = text.trim();
-  if (!trimmed) {
-    throw new Error("empty_analysis_plan");
-  }
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]+?)```/i)?.[1]?.trim();
-  const candidate = fenced || extractFirstJsonObject(trimmed);
-  const parsed = JSON.parse(candidate) as RawPaperAnalysisPlan;
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || !isPaperAnalysisPlanLike(parsed)) {
-    throw new Error("invalid_analysis_plan");
-  }
-  return parsed;
+function parsePaperAnalysisJsonDetailed(text: string): { value: RawPaperAnalysis; repaired: boolean } {
+  return parseStructuredModelJsonObject<RawPaperAnalysis>(text, {
+    emptyError: "empty_analysis_output",
+    notFoundError: "analysis_json_not_found",
+    incompleteError: "analysis_json_incomplete",
+    invalidError: "invalid_analysis_json"
+  });
 }
 
 function normalizePaperAnalysisPlan(
@@ -1027,41 +1115,99 @@ function truncateReviewerText(value: string): string {
   return value.length > 96 ? `${value.slice(0, 93)}...` : value;
 }
 
-function extractFirstJsonObject(text: string): string {
-  const start = text.indexOf("{");
-  if (start < 0) {
-    throw new Error("analysis_json_not_found");
+function resolveAnalysisPlannerTimeoutMs(): number {
+  const configured = Number.parseInt(process.env.AUTOLABOS_ANALYSIS_PLANNER_TIMEOUT_MS || "", 10);
+  if (Number.isFinite(configured) && configured > 0) {
+    return configured;
+  }
+  return DEFAULT_ANALYSIS_PLANNER_TIMEOUT_MS;
+}
+
+function resolveAnalysisExtractTimeoutMs(): number {
+  const configured = Number.parseInt(process.env.AUTOLABOS_ANALYSIS_EXTRACT_TIMEOUT_MS || "", 10);
+  if (Number.isFinite(configured) && configured > 0) {
+    return configured;
+  }
+  return DEFAULT_ANALYSIS_EXTRACT_TIMEOUT_MS;
+}
+
+function resolveAnalysisReviewTimeoutMs(): number {
+  const configured = Number.parseInt(process.env.AUTOLABOS_ANALYSIS_REVIEW_TIMEOUT_MS || "", 10);
+  if (Number.isFinite(configured) && configured > 0) {
+    return configured;
+  }
+  return DEFAULT_ANALYSIS_REVIEW_TIMEOUT_MS;
+}
+
+function describePlannerFallbackReason(error: unknown, timeoutMs: number): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message === `paper_analysis_planner_timeout_after_${timeoutMs}ms`) {
+    return `planner exceeded the ${timeoutMs}ms timeout`;
+  }
+  return message;
+}
+
+function describeReviewerFallbackReason(error: unknown, timeoutMs: number): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message === `paper_analysis_reviewer_timeout_after_${timeoutMs}ms`) {
+    return `reviewer exceeded the ${timeoutMs}ms timeout`;
+  }
+  return message;
+}
+
+function describeAnalysisAttemptFailureReason(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message === `paper_analysis_planner_timeout_after_${resolveAnalysisPlannerTimeoutMs()}ms`) {
+    return `planner exceeded the ${resolveAnalysisPlannerTimeoutMs()}ms timeout`;
+  }
+  if (message === `paper_analysis_extractor_timeout_after_${resolveAnalysisExtractTimeoutMs()}ms`) {
+    return `extractor exceeded the ${resolveAnalysisExtractTimeoutMs()}ms timeout`;
+  }
+  if (message === `paper_analysis_reviewer_timeout_after_${resolveAnalysisReviewTimeoutMs()}ms`) {
+    return `reviewer exceeded the ${resolveAnalysisReviewTimeoutMs()}ms timeout`;
+  }
+  return message;
+}
+
+async function runWithAbortableTimeout<T>(
+  timeoutMs: number,
+  outerAbortSignal: AbortSignal | undefined,
+  operation: (abortSignal: AbortSignal | undefined) => Promise<T>,
+  timeoutErrorMessage: string
+): Promise<T> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return operation(outerAbortSignal);
   }
 
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let index = start; index < text.length; index += 1) {
-    const char = text[index];
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (char === "\\") {
-        escaped = true;
-      } else if (char === "\"") {
-        inString = false;
-      }
-      continue;
-    }
-    if (char === "\"") {
-      inString = true;
-      continue;
-    }
-    if (char === "{") {
-      depth += 1;
-      continue;
-    }
-    if (char === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        return text.slice(start, index + 1);
-      }
+  const controller = new AbortController();
+  let timedOut = false;
+  let timeoutHandle: NodeJS.Timeout | undefined;
+
+  const abortFromOuterSignal = () => controller.abort();
+  if (outerAbortSignal) {
+    if (outerAbortSignal.aborted) {
+      controller.abort();
+    } else {
+      outerAbortSignal.addEventListener("abort", abortFromOuterSignal, { once: true });
     }
   }
-  throw new Error("analysis_json_incomplete");
+
+  timeoutHandle = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  try {
+    return await operation(controller.signal);
+  } catch (error) {
+    if (timedOut) {
+      throw new Error(timeoutErrorMessage);
+    }
+    throw error;
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+    outerAbortSignal?.removeEventListener("abort", abortFromOuterSignal);
+  }
 }

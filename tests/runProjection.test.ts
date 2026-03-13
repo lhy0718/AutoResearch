@@ -246,6 +246,40 @@ describe("runProjection", () => {
     expect(projection.blockedByUpstream).toBe(false);
   });
 
+  it("surfaces implement_experiments progress hints over a stale design summary", () => {
+    const run = makeRun({
+      status: "running",
+      currentNode: "implement_experiments",
+      latestSummary:
+        'Three executable CPU-only experiment designs operationalize reproducibility. Selected "Fixed Split Holdout Reproducibility Stress Test" via best_non_blocked.'
+    });
+    run.graph.currentNode = "implement_experiments";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    run.graph.nodeStates.design_experiments.updatedAt = "2026-03-13T11:39:02.991Z";
+    run.graph.nodeStates.implement_experiments.status = "running";
+    run.graph.nodeStates.implement_experiments.updatedAt = "2026-03-13T11:44:04.000Z";
+
+    const projection = projectRunForDisplay(run, {
+      implement: {
+        stage: "verify",
+        message:
+          "Starting local verification via python outputs/demo/experiment/run_experiment.py --metrics-path .autolabos/runs/run-1/metrics.json.",
+        attempt: 1,
+        maxAttempts: 3,
+        progressCount: 6,
+        verificationCommand:
+          "python outputs/demo/experiment/run_experiment.py --metrics-path .autolabos/runs/run-1/metrics.json"
+      }
+    });
+
+    expect(projection.headline).toBe(
+      "Starting local verification via python outputs/demo/experiment/run_experiment.py --metrics-path .autolabos/runs/run-1/metrics.json."
+    );
+    expect(projection.detail).toBe(
+      "Attempt 1/3. 6 persisted progress update(s). Verification: python outputs/demo/experiment/run_experiment.py --metrics-path .autolabos/runs/run-1/metrics.json."
+    );
+  });
+
   it("resolves the actual failed node from the latest failed state", () => {
     const run = makeRun({
       status: "failed",
@@ -328,7 +362,27 @@ describe("runProjection", () => {
     expect(projection.usageLimitBlocked).toBe(true);
     expect(projection.noArtifactProgress).toBe(true);
     expect(projection.headline).toContain("paused after retry 1/3");
-    expect(projection.detail).toContain("LLM rerank fell back to deterministic order");
+    expect(projection.detail).toContain("LLM rerank failed before a top-N shortlist was accepted");
+  });
+
+  it("suppresses stale collect-summary detail during a same-session handoff into running analyze_papers", () => {
+    const run = makeRun({
+      status: "running",
+      currentNode: "analyze_papers",
+      latestSummary: 'Semantic Scholar stored 200 papers for "topic". Deferred enrichment scheduled in background for 171 paper(s).'
+    });
+    run.graph.currentNode = "analyze_papers";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.collect_papers.updatedAt = "2026-03-12T12:37:36.434Z";
+    run.graph.nodeStates.collect_papers.note = run.latestSummary;
+    run.graph.nodeStates.analyze_papers.status = "running";
+    run.graph.nodeStates.analyze_papers.updatedAt = "2026-03-12T12:37:37.000Z";
+
+    const projection = projectRunForDisplay(run);
+
+    expect(projection.staleLatestSummary).toBe(true);
+    expect(projection.headline).toBeUndefined();
+    expect(projection.detail).toBeUndefined();
   });
 
   it("redirects actionable recovery to the upstream node when a downstream step lacks evidence", () => {

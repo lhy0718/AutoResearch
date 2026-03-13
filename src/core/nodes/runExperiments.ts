@@ -33,9 +33,11 @@ interface ManagedSupplementalProfile {
   profile: SupplementalProfileName;
   command: string;
   metricsPath: string;
+  workingDir: string;
 }
 
 interface ManagedSupplementalPlan {
+  kind: "managed_bundle" | "legacy_python_runner";
   publicDir: string;
   profiles: [ManagedSupplementalProfile, ManagedSupplementalProfile];
 }
@@ -50,6 +52,12 @@ interface SupplementalRunRecord {
   exit_code?: number;
   log_file?: string;
   objective_evaluation?: ObjectiveMetricEvaluation;
+}
+
+interface SupplementalExpectationArtifact {
+  applicable: boolean;
+  profiles: string[];
+  reason?: string;
 }
 
 export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHandler {
@@ -648,10 +656,16 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
       await runContext.put("objective_metric.last_evaluation", objectiveEvaluation);
       await runContext.put("run_experiments.supplemental_runs", supplementalRuns.records);
       await runContext.put("run_experiments.supplemental_summary", supplementalRuns.summary || null);
+      await runContext.put("run_experiments.supplemental_expectation", supplementalRuns.expectation || null);
       await writeRunArtifact(
         run,
         "run_experiments_supplemental_runs.json",
         JSON.stringify(supplementalRuns.records, null, 2)
+      );
+      await writeRunArtifact(
+        run,
+        "run_experiments_supplemental_expectation.json",
+        JSON.stringify(supplementalRuns.expectation || null, null, 2)
       );
       const publicOutputs = await publishRunExperimentOutputs({
         workspaceRoot: process.cwd(),
@@ -712,34 +726,170 @@ async function resolveManagedSupplementalPlan(
 
   const publicDir = resolveMaybeRelative(await runContext.get<string>("implement_experiments.public_dir"), workspaceRoot);
   const scriptPath = resolveMaybeRelative(await runContext.get<string>("implement_experiments.script"), workspaceRoot);
+  const primaryWorkingDir =
+    resolveMaybeRelative(await runContext.get<string>("implement_experiments.cwd"), workspaceRoot) || workspaceRoot;
+  const explicitCommand = await runContext.get<string>("implement_experiments.run_command");
   if (!publicDir || !scriptPath) {
     return undefined;
   }
 
   const manifestPath = path.join(publicDir, "artifact_manifest.json");
-  if (!(await fileExists(manifestPath)) || !(await fileExists(scriptPath))) {
+  if (await fileExists(manifestPath) && (await fileExists(scriptPath))) {
+    return {
+      kind: "managed_bundle",
+      publicDir,
+      profiles: [
+        {
+          profile: "quick_check",
+          command: `python3 -B ${JSON.stringify(scriptPath)} --quick-check --metrics-out ${JSON.stringify(
+            path.join(publicDir, "quick_check_metrics.json")
+          )}`,
+          metricsPath: path.join(publicDir, "quick_check_metrics.json"),
+          workingDir: publicDir
+        },
+        {
+          profile: "confirmatory",
+          command: `python3 -B ${JSON.stringify(scriptPath)} --profile confirmatory --metrics-out ${JSON.stringify(
+            path.join(publicDir, "confirmatory_metrics.json")
+          )}`,
+          metricsPath: path.join(publicDir, "confirmatory_metrics.json"),
+          workingDir: publicDir
+        }
+      ]
+    };
+  }
+
+  if (!(await fileExists(scriptPath)) || !explicitCommand) {
+    return undefined;
+  }
+
+  const quickCheckMetricsPath = path.join(publicDir, "quick_check_metrics.json");
+  const confirmatoryMetricsPath = path.join(publicDir, "confirmatory_metrics.json");
+  const quickCheckCommand = deriveLegacySupplementalCommand({
+    primaryCommand: explicitCommand,
+    metricsPath: quickCheckMetricsPath,
+    profile: "quick_check",
+    primaryWorkingDir,
+    scriptPath
+  });
+  const confirmatoryCommand = deriveLegacySupplementalCommand({
+    primaryCommand: explicitCommand,
+    metricsPath: confirmatoryMetricsPath,
+    profile: "confirmatory",
+    primaryWorkingDir,
+    scriptPath
+  });
+  if (!quickCheckCommand || !confirmatoryCommand) {
     return undefined;
   }
 
   return {
+    kind: "legacy_python_runner",
     publicDir,
     profiles: [
       {
         profile: "quick_check",
-        command: `python3 -B ${JSON.stringify(scriptPath)} --quick-check --metrics-out ${JSON.stringify(
-          path.join(publicDir, "quick_check_metrics.json")
-        )}`,
-        metricsPath: path.join(publicDir, "quick_check_metrics.json")
+        command: quickCheckCommand,
+        metricsPath: quickCheckMetricsPath,
+        workingDir: primaryWorkingDir
       },
       {
         profile: "confirmatory",
-        command: `python3 -B ${JSON.stringify(scriptPath)} --profile confirmatory --metrics-out ${JSON.stringify(
-          path.join(publicDir, "confirmatory_metrics.json")
-        )}`,
-        metricsPath: path.join(publicDir, "confirmatory_metrics.json")
+        command: confirmatoryCommand,
+        metricsPath: confirmatoryMetricsPath,
+        workingDir: primaryWorkingDir
       }
     ]
   };
+}
+
+function deriveLegacySupplementalCommand(input: {
+  primaryCommand: string;
+  metricsPath: string;
+  profile: SupplementalProfileName;
+  primaryWorkingDir: string;
+  scriptPath: string;
+}): string | undefined {
+  const normalized = input.primaryCommand.trim();
+  if (!/run_experiment\.py/u.test(normalized)) {
+    return undefined;
+  }
+  if (/--profile\s+\w+/u.test(normalized) || /--quick-check/u.test(normalized)) {
+    return undefined;
+  }
+
+  let command = rewriteFlagValue(normalized, "--metrics-path", input.metricsPath);
+  let metricsFlag = "--metrics-path";
+  if (command === normalized) {
+    command = rewriteFlagValue(normalized, "--metrics-out", input.metricsPath);
+    metricsFlag = "--metrics-out";
+  }
+  if (command === normalized && !new RegExp(`${escapeRegExp(metricsFlag)}(?:\\s|=)`, "u").test(normalized)) {
+    if (/--metrics-path/u.test(normalized) || /--metrics-out/u.test(normalized)) {
+      return undefined;
+    }
+    command = `${normalized} ${metricsFlag} ${JSON.stringify(input.metricsPath)}`;
+  }
+
+  const repeats = input.profile === "quick_check" ? "2" : "8";
+  const seedBase = input.profile === "quick_check" ? "700" : "900";
+  command = rewriteFlagValue(command, "--repeats", repeats, true);
+  command = rewriteFlagValue(command, "--seed-base", seedBase, true);
+  return absolutizeLegacySupplementalCommand(command, input.primaryWorkingDir, input.scriptPath);
+}
+
+function rewriteFlagValue(command: string, flag: string, value: string, appendIfMissing = false): string {
+  const quotedValue = JSON.stringify(value);
+  const inlinePattern = new RegExp(`(${escapeRegExp(flag)}=)(\"[^\"]*\"|'[^']*'|\\S+)`, "u");
+  if (inlinePattern.test(command)) {
+    return command.replace(inlinePattern, `$1${quotedValue}`);
+  }
+
+  const spacedPattern = new RegExp(`(${escapeRegExp(flag)}\\s+)(\"[^\"]*\"|'[^']*'|\\S+)`, "u");
+  if (spacedPattern.test(command)) {
+    return command.replace(spacedPattern, `$1${quotedValue}`);
+  }
+
+  if (appendIfMissing) {
+    return `${command} ${flag} ${quotedValue}`;
+  }
+  return command;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function absolutizeLegacySupplementalCommand(
+  command: string,
+  primaryWorkingDir: string,
+  scriptPath: string
+): string {
+  let tokenIndex = 0;
+  return command.replace(/"[^"]+"|'[^']+'|\S+/g, (rawToken) => {
+    const token = unquoteShellToken(rawToken);
+    let replacement: string | undefined;
+
+    if (tokenIndex === 0 && token.includes("/") && !path.isAbsolute(token)) {
+      replacement = path.resolve(primaryWorkingDir, token);
+    } else if (/run_experiment\.py$/u.test(token) && !path.isAbsolute(token)) {
+      replacement = scriptPath;
+    }
+
+    tokenIndex += 1;
+    return replacement ? JSON.stringify(replacement) : rawToken;
+  });
+}
+
+function unquoteShellToken(token: string): string {
+  if (token.length >= 2) {
+    const first = token[0];
+    const last = token[token.length - 1];
+    if ((first === "\"" && last === "\"") || (first === "'" && last === "'")) {
+      return token.slice(1, -1);
+    }
+  }
+  return token;
 }
 
 async function clearManagedSupplementalOutputs(
@@ -769,6 +919,7 @@ async function maybeRunManagedSupplementalProfiles(input: {
   records: SupplementalRunRecord[];
   summary?: string;
   toolCallsUsed: number;
+  expectation?: SupplementalExpectationArtifact;
 }> {
   if (!input.plan) {
     return {
@@ -777,7 +928,7 @@ async function maybeRunManagedSupplementalProfiles(input: {
     };
   }
 
-  if (!isManagedStandardRunCommand(input.primaryCommand)) {
+  if (input.plan.kind === "managed_bundle" && !isManagedStandardRunCommand(input.primaryCommand)) {
     const records = input.plan.profiles.map((profile) => ({
       profile: profile.profile,
       status: "skipped" as const,
@@ -789,7 +940,12 @@ async function maybeRunManagedSupplementalProfiles(input: {
     return {
       records,
       summary,
-      toolCallsUsed: 0
+      toolCallsUsed: 0,
+      expectation: {
+        applicable: true,
+        profiles: input.plan.profiles.map((profile) => profile.profile),
+        reason: summary
+      }
     };
   }
 
@@ -805,7 +961,12 @@ async function maybeRunManagedSupplementalProfiles(input: {
     return {
       records,
       summary,
-      toolCallsUsed: 0
+      toolCallsUsed: 0,
+      expectation: {
+        applicable: true,
+        profiles: input.plan.profiles.map((profile) => profile.profile),
+        reason: summary
+      }
     };
   }
 
@@ -816,6 +977,29 @@ async function maybeRunManagedSupplementalProfiles(input: {
     profile: input.plan.profiles[0]
   });
   toolCallsUsed += 1;
+  if (input.plan.kind === "legacy_python_runner" && isLegacySupplementalUnsupported(quickCheck.summary)) {
+    const summary =
+      "Supplemental quick_check and confirmatory profiles are not supported by this legacy experiment runner; the repeated standard run is the complete executed design.";
+    const records: SupplementalRunRecord[] = input.plan.profiles.map((profile) => ({
+      profile: profile.profile,
+      status: "skipped",
+      command: profile.command,
+      cwd: profile.workingDir,
+      metrics_path: profile.metricsPath,
+      summary
+    }));
+    emitSupplementalObservation(input, summary);
+    return {
+      records,
+      summary,
+      toolCallsUsed,
+      expectation: {
+        applicable: false,
+        profiles: [],
+        reason: summary
+      }
+    };
+  }
   records.push(quickCheck);
 
   if (quickCheck.status !== "pass") {
@@ -840,7 +1024,12 @@ async function maybeRunManagedSupplementalProfiles(input: {
   return {
     records,
     summary: summarizeSupplementalRuns(records),
-    toolCallsUsed
+    toolCallsUsed,
+    expectation: {
+      applicable: true,
+      profiles: input.plan.profiles.map((profile) => profile.profile),
+      reason: summarizeSupplementalRuns(records)
+    }
   };
 }
 
@@ -858,12 +1047,12 @@ async function runManagedSupplementalProfile(input: {
     agentRole: "runner",
     payload: {
       command: input.profile.command,
-      cwd: path.dirname(input.profile.metricsPath),
+      cwd: input.profile.workingDir,
       source: `supplemental_${input.profile.profile}`
     }
   });
 
-  const cwd = path.dirname(input.profile.metricsPath);
+  const cwd = input.profile.workingDir;
   const obs = await input.deps.aci.runCommand(input.profile.command, cwd, input.abortSignal);
   const logFile = await writeRunArtifact(
     input.run,
@@ -957,6 +1146,17 @@ function summarizeSupplementalRuns(records: SupplementalRunRecord[]): string | u
   return `Supplemental runs: ${records
     .map((record) => `${record.profile} ${record.status}`)
     .join(", ")}.`;
+}
+
+function isLegacySupplementalUnsupported(summary: string | undefined): boolean {
+  const normalized = (summary || "").toLowerCase();
+  return (
+    normalized.includes("unrecognized arguments:") &&
+    (normalized.includes("--repeats") ||
+      normalized.includes("--seed-base") ||
+      normalized.includes("--quick-check") ||
+      normalized.includes("--profile"))
+  );
 }
 
 function emitSupplementalObservation(

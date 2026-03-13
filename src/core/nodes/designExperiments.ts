@@ -145,13 +145,14 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         candidateCount: 3,
         onProgress: emitLog
       });
+      const normalizedCandidates = design.candidates.map(normalizeCandidateProtocolGuardrails);
       const managedBundleSupported = supportsRealExecutionBundle({
         topic: run.topic,
         objectiveMetric: run.objectiveMetric,
         constraints: run.constraints
       });
       const panelResult = runDesignExperimentsPanel({
-        candidates: design.candidates,
+        candidates: normalizedCandidates,
         objectiveProfile: objectiveMetricProfile,
         managedBundleSupported
       });
@@ -161,7 +162,7 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         hypotheses: filtered.kept,
         droppedHypotheses: filtered.dropped,
         selected: panelResult.selected,
-        candidates: design.candidates,
+        candidates: normalizedCandidates,
         constraintProfile,
         objectiveProfile: objectiveMetricProfile,
         source: design.source
@@ -172,7 +173,7 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
       await writeRunArtifact(
         run,
         "design_experiments_panel/candidates.json",
-        `${JSON.stringify(design.candidates, null, 2)}\n`
+        `${JSON.stringify(normalizedCandidates, null, 2)}\n`
       );
       await writeRunArtifact(
         run,
@@ -208,7 +209,7 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         runId: run.id,
         node: "design_experiments",
         payload: {
-          candidateCount: design.candidates.length,
+          candidateCount: normalizedCandidates.length,
           selectedId: panelResult.selected.id,
           source: design.source,
           fallbackReason: design.fallbackReason
@@ -216,7 +217,7 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
       });
 
       emitLog(
-        `Selected design "${panelResult.selected.title}" from ${design.candidates.length} candidate(s) using ${design.source} with ${panelResult.selection.mode}.`
+        `Selected design "${panelResult.selected.title}" from ${normalizedCandidates.length} candidate(s) using ${design.source} with ${panelResult.selection.mode}.`
       );
       emitLog(`Public experiment outputs are available at ${publicOutputs.sectionDirRelative}.`);
 
@@ -262,6 +263,74 @@ function parseHypotheses(raw: string): DesignInputHypothesis[] {
       }
     });
   return items.filter((item): item is DesignInputHypothesis => item !== undefined && Boolean(item.text));
+}
+
+function normalizeCandidateProtocolGuardrails(candidate: ExperimentDesignCandidate): ExperimentDesignCandidate {
+  const thresholdPercent = detectPracticalThresholdPercent(candidate);
+  if (thresholdPercent === undefined) {
+    return candidate;
+  }
+
+  const normalizedSummary = normalizePracticalThresholdLanguage(candidate.plan_summary, thresholdPercent);
+  const normalizedEvaluationSteps = uniqueStrings(
+    candidate.evaluation_steps.map((item) => normalizePracticalThresholdLanguage(item, thresholdPercent))
+  );
+  const normalizedRisks = uniqueStrings(
+    candidate.risks.filter((item) => !isMissingPracticalThresholdRisk(item))
+  );
+  const normalizedResourceNotes = uniqueStrings([
+    ...candidate.resource_notes,
+    `Pre-registered runtime and memory guardrail: no more than ${thresholdPercent}% above the matched baseline.`
+  ]);
+
+  return {
+    ...candidate,
+    plan_summary: normalizedSummary,
+    evaluation_steps: normalizedEvaluationSteps,
+    risks: normalizedRisks,
+    resource_notes: normalizedResourceNotes
+  };
+}
+
+function detectPracticalThresholdPercent(candidate: ExperimentDesignCandidate): number | undefined {
+  const sources = [candidate.plan_summary, ...candidate.evaluation_steps, ...candidate.risks, ...candidate.resource_notes];
+  for (const source of sources) {
+    const explicitMatch = source.match(/predefined practical threshold(?: such as)?\s+(\d+(?:\.\d+)?)\s*percent/iu);
+    if (explicitMatch) {
+      return Number(explicitMatch[1]);
+    }
+    const numericGuardrail = source.match(/runtime(?: or memory)? by more than\s+(\d+(?:\.\d+)?)\s*percent/iu);
+    if (numericGuardrail) {
+      return Number(numericGuardrail[1]);
+    }
+  }
+  return undefined;
+}
+
+function normalizePracticalThresholdLanguage(text: string, thresholdPercent: number): string {
+  return text
+    .replace(
+      /by more than a predefined practical threshold such as \d+(?:\.\d+)? percent/giu,
+      `by more than ${thresholdPercent}% relative to the matched baseline`
+    )
+    .replace(
+      /by more than a predefined practical threshold/giu,
+      `by more than ${thresholdPercent}% relative to the matched baseline`
+    )
+    .replace(
+      /predefined practical threshold such as \d+(?:\.\d+)? percent/giu,
+      `${thresholdPercent}% relative to the matched baseline`
+    )
+    .replace(
+      /predefined practical threshold/giu,
+      `${thresholdPercent}% relative to the matched baseline`
+    );
+}
+
+function isMissingPracticalThresholdRisk(text: string): boolean {
+  return /practical threshold on runtime increase must be specified before analysis to avoid post hoc interpretation/iu.test(
+    text
+  );
 }
 
 function buildPlanYaml(args: {

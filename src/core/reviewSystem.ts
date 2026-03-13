@@ -1,4 +1,5 @@
 import { EventStream } from "./events.js";
+import { parseStructuredModelJsonObject } from "./analysis/modelJson.js";
 import { LLMClient } from "./llm/client.js";
 import { AnalysisFailureCategory, AnalysisPaperClaim, AnalysisReport } from "./resultAnalysis.js";
 import { RunRecord, GraphNodeId } from "../types.js";
@@ -201,6 +202,8 @@ const REVIEWER_SPECS: ReviewerSpec[] = [
   }
 ];
 
+const DEFAULT_REVIEW_REFINEMENT_TIMEOUT_MS = 20_000;
+
 export async function runReviewPanel(args: ReviewPanelArgs): Promise<ReviewPanelResult> {
   const reviewers: SpecialistReviewResult[] = [];
   let llmCallsUsed = 0;
@@ -253,19 +256,37 @@ async function refineReviewerWithLlm(
   spec: ReviewerSpec,
   fallback: SpecialistReviewResult
 ): Promise<{ result: SpecialistReviewResult; usedLlm: boolean; costUsd?: number }> {
+  const timeoutMs = resolveReviewRefinementTimeoutMs();
   try {
-    const completion = await args.llm.complete(buildReviewerPrompt(args.run, args.report, args.presence, spec, fallback), {
-      systemPrompt: buildReviewerSystemPrompt(spec),
-      abortSignal: args.abortSignal
-    });
+    const completion = await runWithAbortableTimeout(
+      timeoutMs,
+      args.abortSignal,
+      (abortSignal) =>
+        args.llm.complete(buildReviewerPrompt(args.run, args.report, args.presence, spec, fallback), {
+          systemPrompt: buildReviewerSystemPrompt(spec),
+          abortSignal
+        }),
+      `review_refinement_timeout_after_${timeoutMs}ms`
+    );
     const parsed = parseReviewerResponse(completion.text, spec, fallback);
+    if (parsed.repaired) {
+      args.eventStream?.emit({
+        type: "OBS_RECEIVED",
+        runId: args.run.id,
+        node: args.node,
+        agentRole: "reviewer",
+        payload: {
+          text: `Review panel repaired truncated JSON for ${spec.reviewer_label.toLowerCase()} before parsing.`
+        }
+      });
+    }
     return {
-      result: mergeReviewerResults(fallback, parsed),
+      result: mergeReviewerResults(fallback, parsed.result),
       usedLlm: true,
       costUsd: completion.usage?.costUsd
     };
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
+    const reason = describeReviewRefinementFallbackReason(error);
     args.eventStream?.emit({
       type: "OBS_RECEIVED",
       runId: args.run.id,
@@ -411,34 +432,28 @@ function parseReviewerResponse(
   raw: string,
   spec: ReviewerSpec,
   fallback: SpecialistReviewResult
-): SpecialistReviewResult {
-  const jsonText = extractJsonObject(raw);
-  if (!jsonText) {
-    throw new Error("Reviewer LLM returned no JSON object.");
-  }
+): { result: SpecialistReviewResult; repaired: boolean } {
+  const parsed = parseStructuredModelJsonObject<RawReviewerResponse>(raw, {
+    emptyError: "Reviewer LLM returned an empty response.",
+    notFoundError: "Reviewer LLM returned no JSON object.",
+    incompleteError: "Reviewer JSON object looks truncated.",
+    invalidError: "Reviewer JSON must decode to an object."
+  });
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(jsonText);
-  } catch (error) {
-    throw new Error(`Reviewer JSON parse failed: ${error instanceof Error ? error.message : String(error)}`);
-  }
-
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("Reviewer JSON must decode to an object.");
-  }
-
-  const record = parsed as RawReviewerResponse;
+  const record = parsed.value;
   return {
-    reviewer_id: spec.reviewer_id,
-    reviewer_label: spec.reviewer_label,
-    dimension: spec.dimension,
-    score_1_to_5: clampScore(asNumber(record.score_1_to_5) ?? fallback.score_1_to_5),
-    confidence: clampConfidence(asNumber(record.confidence) ?? fallback.confidence),
-    recommendation: normalizeRecommendation(record.recommendation) ?? fallback.recommendation,
-    summary: cleanString(record.summary) || fallback.summary,
-    findings: normalizeReviewerFindings(record.findings, spec, fallback.reviewer_label),
-    source: "llm+heuristic"
+    repaired: parsed.repaired,
+    result: {
+      reviewer_id: spec.reviewer_id,
+      reviewer_label: spec.reviewer_label,
+      dimension: spec.dimension,
+      score_1_to_5: clampScore(asNumber(record.score_1_to_5) ?? fallback.score_1_to_5),
+      confidence: clampConfidence(asNumber(record.confidence) ?? fallback.confidence),
+      recommendation: normalizeRecommendation(record.recommendation) ?? fallback.recommendation,
+      summary: cleanString(record.summary) || fallback.summary,
+      findings: normalizeReviewerFindings(record.findings, spec, fallback.reviewer_label),
+      source: "llm+heuristic"
+    }
   };
 }
 
@@ -1239,17 +1254,6 @@ function clampConfidence(value: number): number {
   return roundTwo(Math.max(0, Math.min(1, value)));
 }
 
-function extractJsonObject(raw: string): string | undefined {
-  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/iu);
-  const candidate = fenced?.[1] || raw;
-  const start = candidate.indexOf("{");
-  const end = candidate.lastIndexOf("}");
-  if (start < 0 || end <= start) {
-    return undefined;
-  }
-  return candidate.slice(start, end + 1);
-}
-
 function normalizeStringArray(value: unknown, limit: number): string[] {
   if (!Array.isArray(value)) {
     return [];
@@ -1285,4 +1289,65 @@ function slugify(value: string): string {
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "")
     .slice(0, 48);
+}
+
+function resolveReviewRefinementTimeoutMs(): number {
+  const raw = process.env.AUTOLABOS_REVIEW_REFINEMENT_TIMEOUT_MS?.trim();
+  if (!raw) {
+    return DEFAULT_REVIEW_REFINEMENT_TIMEOUT_MS;
+  }
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_REVIEW_REFINEMENT_TIMEOUT_MS;
+}
+
+function describeReviewRefinementFallbackReason(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const timeoutMs = resolveReviewRefinementTimeoutMs();
+  if (message === `review_refinement_timeout_after_${timeoutMs}ms`) {
+    return `reviewer exceeded the ${timeoutMs}ms timeout`;
+  }
+  return message;
+}
+
+async function runWithAbortableTimeout<T>(
+  timeoutMs: number,
+  outerAbortSignal: AbortSignal | undefined,
+  operation: (abortSignal: AbortSignal | undefined) => Promise<T>,
+  timeoutErrorMessage: string
+): Promise<T> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return operation(outerAbortSignal);
+  }
+
+  const controller = new AbortController();
+  let timedOut = false;
+  let timeoutHandle: NodeJS.Timeout | undefined;
+
+  const abortFromOuterSignal = () => controller.abort();
+  if (outerAbortSignal) {
+    if (outerAbortSignal.aborted) {
+      controller.abort();
+    } else {
+      outerAbortSignal.addEventListener("abort", abortFromOuterSignal, { once: true });
+    }
+  }
+
+  timeoutHandle = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  try {
+    return await operation(controller.signal);
+  } catch (error) {
+    if (timedOut) {
+      throw new Error(timeoutErrorMessage);
+    }
+    throw error;
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+    outerAbortSignal?.removeEventListener("abort", abortFromOuterSignal);
+  }
 }

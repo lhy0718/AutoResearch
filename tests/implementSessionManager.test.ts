@@ -23,6 +23,24 @@ afterEach(() => {
   }
 });
 
+async function waitForText(
+  filePath: string,
+  predicate: (text: string) => boolean,
+  timeoutMs = 4000
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (existsSync(filePath)) {
+      const text = readFileSync(filePath, "utf8");
+      if (predicate(text)) {
+        return text;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Timed out waiting for ${filePath}`);
+}
+
 function createTestConfig() {
   return {
     version: 1,
@@ -218,7 +236,91 @@ describe("ImplementSessionManager", () => {
     expect(publicManifest.generated_files).toContain("experiment/workspace_changed_files.json");
     expect(publicManifest.sections?.experiment?.generated_files).toContain("experiment/experiment.py");
     expect(publicManifest.workspace_changed_files).toEqual([]);
+    const implementStatus = JSON.parse(
+      readFileSync(path.join(runDir, "implement_experiments", "status.json"), "utf8")
+    ) as { status: string; stage: string; verificationCommand?: string };
+    const implementProgress = readFileSync(path.join(runDir, "implement_experiments", "progress.jsonl"), "utf8");
+    expect(implementStatus.status).toBe("completed");
+    expect(implementStatus.stage).toBe("completed");
+    expect(implementStatus.verificationCommand).toContain("py_compile");
+    expect(implementProgress).toContain('"stage":"attempt"');
+    expect(implementProgress).toContain('"stage":"verify"');
     expect(eventStream.history().some((event) => event.type === "PATCH_APPLIED")).toBe(true);
+  });
+
+  it("writes running implement progress artifacts before the final result is persisted", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-progress-"));
+    tempDirs.push(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Implementation Progress Run",
+      topic: "agent reasoning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const scriptPath = path.join(runDir, "experiment.py");
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    let releaseCodexTurn: (() => void) | undefined;
+    const codexTurnGate = new Promise<void>((resolve) => {
+      releaseCodexTurn = resolve;
+    });
+    const codex = {
+      runTurnStream: async ({ onEvent }: { onEvent?: (event: Record<string, unknown>) => void }) => {
+        onEvent?.({ type: "response.output_text.delta", delta: "Inspecting experiment plan." });
+        await codexTurnGate;
+        writeFileSync(scriptPath, "print('ok')\n", "utf8");
+        onEvent?.({ type: "file.changed", path: scriptPath });
+        return {
+          threadId: "thread-impl-progress",
+          finalText: JSON.stringify({
+            summary: "Implemented a runnable experiment script.",
+            run_command: `python3 ${JSON.stringify(scriptPath)}`,
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: path.join(runDir, "metrics.json"),
+            experiment_mode: "real_execution"
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexCliClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const runPromise = manager.run(run);
+    const statusPath = path.join(runDir, "implement_experiments", "status.json");
+    const progressPath = path.join(runDir, "implement_experiments", "progress.jsonl");
+
+    expect(await waitForText(path.join(runDir, "implement_task_spec.json"), (text) => text.includes('"goal"'))).toContain(
+      "Implement a runnable experiment"
+    );
+    expect(await waitForText(statusPath, (text) => text.includes('"status": "running"'))).toContain('"status": "running"');
+    expect(await waitForText(progressPath, (text) => text.includes("Inspecting experiment plan."))).toContain(
+      "Inspecting experiment plan."
+    );
+
+    releaseCodexTurn?.();
+    await runPromise;
+
+    const finalStatus = JSON.parse(readFileSync(statusPath, "utf8")) as { status: string; stage: string };
+    expect(finalStatus.status).toBe("completed");
+    expect(finalStatus.stage).toBe("completed");
   });
 
   it("records workspace-root code edits in workspace_changed_files.json without copying them into outputs", async () => {
@@ -481,6 +583,84 @@ describe("ImplementSessionManager", () => {
     expect(publicManifest.generated_files).not.toContain("experiment/run_tabular_baselines.py");
     expect(publicManifest.workspace_changed_files).toEqual([]);
     expect(eventStream.history().some((event) => event.type === "PATCH_APPLIED")).toBe(false);
+  });
+
+  it("fails early when a declared supplemental artifact was never materialized even if local verification would pass", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-missing-supplemental-"));
+    tempDirs.push(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Missing Supplemental Artifact Run",
+      topic: "agent reasoning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const privateScriptPath = path.join(runDir, "run_tabular_baselines.py");
+    const missingConfigPath = path.join(runDir, "baseline_config.json");
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "run_tabular_baselines.py");
+    const eventStream = new InMemoryEventStream();
+    const codex = {
+      runTurnStream: async ({ onEvent }: { onEvent?: (event: Record<string, unknown>) => void }) => {
+        writeFileSync(privateScriptPath, "print('ok')\n", "utf8");
+        onEvent?.({ type: "file.changed", path: privateScriptPath });
+        return {
+          threadId: "thread-impl-missing-supplemental",
+          finalText: JSON.stringify({
+            summary: "Implemented the script but forgot to materialize the declared config artifact.",
+            run_command: `python3 ${JSON.stringify(publicScriptPath)} --config ${JSON.stringify(missingConfigPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+            changed_files: [privateScriptPath],
+            artifacts: [privateScriptPath, missingConfigPath],
+            public_artifacts: [publicScriptPath],
+            script_path: publicScriptPath,
+            metrics_path: path.join(runDir, "metrics.json"),
+            experiment_mode: "real_execution"
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexCliClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream,
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await expect(manager.run(run)).rejects.toThrow("Implementer referenced artifact(s) that were not materialized");
+
+    const verifyReport = await memory.get<{ status: string; failure_type: string; summary: string }>(
+      "implement_experiments.verify_report"
+    );
+
+    expect(verifyReport).toMatchObject({
+      status: "fail",
+      failure_type: "spec"
+    });
+    expect(verifyReport?.summary).toContain("baseline_config.json");
+    expect(verifyReport?.summary).not.toContain("py_compile");
+    expect(existsSync(publicScriptPath)).toBe(true);
+    expect(
+      eventStream.history().some(
+        (event) =>
+          event.type === "TOOL_CALLED" &&
+          event.node === "implement_experiments" &&
+          (event.payload as { source?: string } | undefined)?.source === "local_verification"
+      )
+    ).toBe(false);
   });
 
   it("emits coalesced intermediate Codex output", async () => {

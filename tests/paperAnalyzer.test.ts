@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   analyzePaperWithLlm,
@@ -24,6 +24,77 @@ class SequenceLLM extends MockLLMClient {
   }
 }
 
+class HangingReviewerLLM extends MockLLMClient {
+  override async complete(prompt: string, opts?: { systemPrompt?: string; abortSignal?: AbortSignal }): Promise<{ text: string }> {
+    if (opts?.systemPrompt?.includes("planning agent")) {
+      return {
+        text: JSON.stringify({
+          focus_sections: ["method", "results"],
+          target_claims: ["main result"],
+          extraction_priorities: ["prefer explicit metrics"],
+          verification_checks: ["drop unsupported claims"],
+          risk_flags: []
+        })
+      };
+    }
+    if (opts?.systemPrompt?.includes("verification agent")) {
+      return await new Promise<{ text: string }>((_resolve, reject) => {
+        if (opts.abortSignal?.aborted) {
+          reject(new Error("Operation aborted by user"));
+          return;
+        }
+        opts.abortSignal?.addEventListener(
+          "abort",
+          () => reject(new Error("Operation aborted by user")),
+          { once: true }
+        );
+      });
+    }
+    return {
+      text: JSON.stringify({
+        summary: "Extractor summary",
+        key_findings: ["Extractor finding"],
+        limitations: [],
+        datasets: ["Extractor dataset"],
+        metrics: ["Extractor metric"],
+        novelty: "Extractor novelty",
+        reproducibility_notes: [],
+        evidence_items: [{ claim: "Extractor claim", confidence: 0.8 }]
+      })
+    };
+  }
+}
+
+class HangingExtractorLLM extends MockLLMClient {
+  override async complete(_prompt: string, opts?: { systemPrompt?: string; abortSignal?: AbortSignal }): Promise<{ text: string }> {
+    if (opts?.systemPrompt?.includes("planning agent")) {
+      return {
+        text: JSON.stringify({
+          focus_sections: ["method", "results"],
+          target_claims: ["main result"],
+          extraction_priorities: ["prefer explicit metrics"],
+          verification_checks: ["drop unsupported claims"],
+          risk_flags: []
+        })
+      };
+    }
+    if (opts?.systemPrompt?.includes("scientific literature analyst")) {
+      return await new Promise<{ text: string }>((_resolve, reject) => {
+        if (opts.abortSignal?.aborted) {
+          reject(new Error("Operation aborted by user"));
+          return;
+        }
+        opts.abortSignal?.addEventListener(
+          "abort",
+          () => reject(new Error("Operation aborted by user")),
+          { once: true }
+        );
+      });
+    }
+    throw new Error("reviewer should not run");
+  }
+}
+
 const paper: AnalysisCorpusRow = {
   paper_id: "paper-1",
   title: "Agentic Workflows for Science",
@@ -41,10 +112,39 @@ const source: ResolvedPaperSource = {
   fallbackReason: "no_pdf_url"
 };
 
+const originalReviewTimeout = process.env.AUTOLABOS_ANALYSIS_REVIEW_TIMEOUT_MS;
+const originalPlannerTimeout = process.env.AUTOLABOS_ANALYSIS_PLANNER_TIMEOUT_MS;
+const originalExtractTimeout = process.env.AUTOLABOS_ANALYSIS_EXTRACT_TIMEOUT_MS;
+
+afterEach(() => {
+  if (originalPlannerTimeout === undefined) {
+    delete process.env.AUTOLABOS_ANALYSIS_PLANNER_TIMEOUT_MS;
+  } else {
+    process.env.AUTOLABOS_ANALYSIS_PLANNER_TIMEOUT_MS = originalPlannerTimeout;
+  }
+  if (originalExtractTimeout === undefined) {
+    delete process.env.AUTOLABOS_ANALYSIS_EXTRACT_TIMEOUT_MS;
+  } else {
+    process.env.AUTOLABOS_ANALYSIS_EXTRACT_TIMEOUT_MS = originalExtractTimeout;
+  }
+  if (originalReviewTimeout === undefined) {
+    delete process.env.AUTOLABOS_ANALYSIS_REVIEW_TIMEOUT_MS;
+  } else {
+    process.env.AUTOLABOS_ANALYSIS_REVIEW_TIMEOUT_MS = originalReviewTimeout;
+  }
+});
+
 describe("paperAnalyzer", () => {
   it("parses fenced JSON responses", () => {
     const parsed = parsePaperAnalysisJson('```json\n{"summary":"ok","evidence_items":[]}\n```');
     expect(parsed.summary).toBe("ok");
+  });
+
+  it("repairs truncated analysis JSON when only closing delimiters are missing", () => {
+    const parsed = parsePaperAnalysisJson('{"summary":"ok","key_findings":["finding"],"evidence_items":[{"claim":"c"}]');
+    expect(parsed.summary).toBe("ok");
+    expect(parsed.key_findings).toEqual(["finding"]);
+    expect(Array.isArray(parsed.evidence_items)).toBe(true);
   });
 
   it("normalizes structured output into summary and evidence rows", () => {
@@ -157,6 +257,50 @@ describe("paperAnalyzer", () => {
     expect(result.evidenceRows[0].confidence_reason).toBe("Only the abstract supports this claim.");
   });
 
+  it("stays on the first attempt when the extractor JSON is truncated but repairable", async () => {
+    const progress: string[] = [];
+    const llm = new SequenceLLM([
+      JSON.stringify({
+        focus_sections: ["method", "results"],
+        target_claims: ["main result"],
+        extraction_priorities: ["prefer explicit metrics"],
+        verification_checks: ["drop unsupported claims"],
+        risk_flags: []
+      }),
+      '{"summary":"Recovered from truncation","key_findings":["Recovered finding"],"limitations":[],"datasets":["Recovered dataset"],"metrics":["Recovered metric"],"novelty":"Recovered novelty","reproducibility_notes":[],"evidence_items":[{"claim":"Recovered claim","evidence_span":"Abstract: This paper studies agentic workflows and reports strong results.","confidence":0.7}]',
+      "not-json"
+    ]);
+
+    const result = await analyzePaperWithLlm({
+      llm,
+      paper,
+      source,
+      maxAttempts: 2,
+      onProgress: (message) => progress.push(message)
+    });
+
+    expect(result.attempts).toBe(1);
+    expect(result.summaryRow.summary).toBe("Recovered from truncation");
+    expect(result.evidenceRows[0].claim).toBe("Recovered claim");
+    expect(progress.some((message) => message.includes("Extractor JSON looked truncated; repaired"))).toBe(true);
+  });
+
+  it("repairs structured JSON that is truncated in the middle of a later property name", () => {
+    const truncated = [
+      '{"summary":"Recovered from mid-key truncation","key_findings":["Recovered finding"],',
+      '"limitations":[],"datasets":["Recovered dataset"],"metrics":["Recovered metric"],',
+      '"novelty":"Recovered novelty","reproducibility_notes":[],"evi'
+    ].join("");
+
+    expect(parsePaperAnalysisJson(truncated)).toMatchObject({
+      summary: "Recovered from mid-key truncation",
+      key_findings: ["Recovered finding"],
+      datasets: ["Recovered dataset"],
+      metrics: ["Recovered metric"],
+      novelty: "Recovered novelty"
+    });
+  });
+
   it("logs reviewer confidence reductions with claim-level reasons", async () => {
     const progress: string[] = [];
     const llm = new SequenceLLM([
@@ -217,6 +361,48 @@ describe("paperAnalyzer", () => {
       progress.some((message) =>
         message.includes('Reviewer lowered confidence for "Claim A"')
         && message.includes("abstract-level description")
+      )
+    ).toBe(true);
+  });
+
+  it("falls back to the extractor draft when the reviewer exceeds the timeout", async () => {
+    process.env.AUTOLABOS_ANALYSIS_REVIEW_TIMEOUT_MS = "10";
+    const progress: string[] = [];
+
+    const result = await analyzePaperWithLlm({
+      llm: new HangingReviewerLLM(),
+      paper,
+      source,
+      maxAttempts: 1,
+      onProgress: (message) => progress.push(message)
+    });
+
+    expect(result.summaryRow.summary).toBe("Extractor summary");
+    expect(result.evidenceRows[0].claim).toBe("Extractor claim");
+    expect(
+      progress.some((message) =>
+        message.includes("Reviewer unavailable, using extractor draft as-is: reviewer exceeded the 10ms timeout")
+      )
+    ).toBe(true);
+  });
+
+  it("fails the attempt when the extractor exceeds the timeout", async () => {
+    process.env.AUTOLABOS_ANALYSIS_EXTRACT_TIMEOUT_MS = "10";
+    const progress: string[] = [];
+
+    await expect(
+      analyzePaperWithLlm({
+        llm: new HangingExtractorLLM(),
+        paper,
+        source,
+        maxAttempts: 1,
+        onProgress: (message) => progress.push(message)
+      })
+    ).rejects.toThrow("paper_analysis_extractor_timeout_after_10ms");
+
+    expect(
+      progress.some((message) =>
+        message.includes("Analysis attempt 1/1 failed: extractor exceeded the 10ms timeout")
       )
     ).toBe(true);
   });

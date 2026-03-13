@@ -25,6 +25,79 @@ import { CollectEnrichmentLogEntry, StoredCorpusRow } from "../collection/types.
 
 const ENRICHMENT_CONCURRENCY = 6;
 const ENRICHMENT_PROGRESS_INTERVAL = 10;
+const LIGHTWEIGHT_TAIL_MIN_ROWS = 6;
+const LIGHTWEIGHT_TAIL_MAX_ROWS = 12;
+
+const COLLECT_STOPWORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "as",
+  "at",
+  "based",
+  "by",
+  "for",
+  "from",
+  "in",
+  "into",
+  "is",
+  "of",
+  "on",
+  "or",
+  "study",
+  "the",
+  "to",
+  "using",
+  "with"
+]);
+
+const LIGHTWEIGHT_TABULAR_SCOPE_TOKENS = new Set([
+  "baseline",
+  "baselines",
+  "benchmark",
+  "benchmarks",
+  "classification",
+  "classifier",
+  "classifiers",
+  "cpu",
+  "dataset",
+  "datasets",
+  "lightweight",
+  "logistic",
+  "public",
+  "regression",
+  "resource",
+  "small"
+]);
+
+const LIGHTWEIGHT_TABULAR_REQUIRED_TOKENS = new Set(["tabular", "structured"]);
+const LIGHTWEIGHT_TABULAR_SUPPORT_TOKENS = new Set([
+  "baseline",
+  "baselines",
+  "benchmark",
+  "benchmarks",
+  "classification",
+  "classifier",
+  "classifiers",
+  "dataset",
+  "datasets",
+  "forest",
+  "forests",
+  "gradient",
+  "lightgbm",
+  "logistic",
+  "public",
+  "random",
+  "regression",
+  "small",
+  "structured",
+  "svm",
+  "tabular",
+  "tree",
+  "trees",
+  "xgboost"
+]);
 
 interface CollectPapersNodeRequest {
   query?: string;
@@ -142,10 +215,12 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       });
       const requestFromContext = await runContextMemory.get<CollectPapersNodeRequest>("collect_papers.request");
       const rawBrief = await runContextMemory.get<string>("run_brief.raw");
+      const extractedBrief = await runContextMemory.get<{ topic?: string }>("run_brief.extracted");
       const normalizedRequest = normalizeCollectRequest({
         request: requestFromContext,
         topic: run.topic,
         rawBrief,
+        extractedBriefTopic: extractedBrief?.topic,
         constraintProfile,
         configuredLimit: deps.config.papers.max_results
       });
@@ -336,6 +411,29 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         await runContextMemory.put("collect_papers.request", null);
       }
 
+      const removedTailPaperIds = pruneLightweightOffTopicTail({
+        runTopic: run.topic,
+        requestedQuery: normalizedRequest.requestedQuery,
+        effectiveQuery: effectiveRequest.query,
+        sortField: effectiveRequest.sort?.field,
+        mode,
+        storedRows
+      });
+      if (removedTailPaperIds.length > 0) {
+        for (const paperId of removedTailPaperIds) {
+          newPaperIds.delete(paperId);
+        }
+        storedCount = storedRows.size;
+        deps.eventStream.emit({
+          type: "OBS_RECEIVED",
+          runId: run.id,
+          node: "collect_papers",
+          payload: {
+            text: `Lightweight corpus quality guard removed ${removedTailPaperIds.length} off-topic tail paper(s) before selection.`
+          }
+        });
+      }
+
       const bibtexMode = normalizeBibtexMode(requestFromContext?.bibtexMode);
       const zeroResultFailure =
         !fetchError && mode === "replace" && storedRows.size === 0
@@ -503,6 +601,7 @@ function normalizeCollectRequest(input: {
   request?: CollectPapersNodeRequest;
   topic: string;
   rawBrief?: string;
+  extractedBriefTopic?: string;
   constraintProfile: { collect: CollectPapersNodeRequest["filters"] };
   configuredLimit: number;
 }): PreparedCollectRequestPlan {
@@ -525,6 +624,7 @@ function normalizeCollectRequest(input: {
   const queryCandidates = buildLiteratureQueryCandidates({
     requestedQuery,
     runTopic: input.topic,
+    extractedBriefTopic: input.extractedBriefTopic,
     briefTopic
   });
   const mergedFilters = buildSemanticScholarFilters(
@@ -725,6 +825,76 @@ function shouldEnrichStoredRow(row: StoredCorpusRow | undefined, bibtexMode: Bib
     return true;
   }
   return scoreBibtexRichness(currentBibtex) < 10 && Boolean(row.doi || row.arxiv_id || row.landing_url);
+}
+
+function pruneLightweightOffTopicTail(input: {
+  runTopic: string;
+  requestedQuery?: string;
+  effectiveQuery: string;
+  sortField?: "relevance" | "citationCount" | "publicationDate" | "paperId";
+  mode: "replace" | "additional";
+  storedRows: Map<string, StoredCorpusRow>;
+}): string[] {
+  if (input.mode !== "replace" || input.sortField !== "relevance") {
+    return [];
+  }
+
+  const rows = Array.from(input.storedRows.values());
+  if (rows.length < LIGHTWEIGHT_TAIL_MIN_ROWS || rows.length > LIGHTWEIGHT_TAIL_MAX_ROWS) {
+    return [];
+  }
+
+  if (!isLightweightTabularCollectTopic([input.runTopic, input.requestedQuery, input.effectiveQuery].filter(Boolean).join(" "))) {
+    return [];
+  }
+
+  const keptRows = rows.filter((row) => isStrongLightweightTabularMatch(row));
+  if (keptRows.length < 3 || keptRows.length === rows.length) {
+    return [];
+  }
+
+  const keptIds = new Set(keptRows.map((row) => row.paper_id));
+  const removedPaperIds: string[] = [];
+  for (const row of rows) {
+    if (keptIds.has(row.paper_id)) {
+      continue;
+    }
+    input.storedRows.delete(row.paper_id);
+    removedPaperIds.push(row.paper_id);
+  }
+  return removedPaperIds;
+}
+
+function isLightweightTabularCollectTopic(text: string): boolean {
+  const tokenSet = new Set(tokenizeCollectText(text));
+  if (!hasAnyToken(tokenSet, LIGHTWEIGHT_TABULAR_REQUIRED_TOKENS)) {
+    return false;
+  }
+  return hasAnyToken(tokenSet, LIGHTWEIGHT_TABULAR_SCOPE_TOKENS);
+}
+
+function isStrongLightweightTabularMatch(row: StoredCorpusRow): boolean {
+  const tokenSet = new Set(tokenizeCollectText(`${row.title} ${row.abstract || ""}`));
+  const hasRequiredAnchor = hasAnyToken(tokenSet, LIGHTWEIGHT_TABULAR_REQUIRED_TOKENS);
+  const hasSupportAnchor = hasAnyToken(tokenSet, LIGHTWEIGHT_TABULAR_SUPPORT_TOKENS);
+  return hasRequiredAnchor && hasSupportAnchor;
+}
+
+function hasAnyToken(tokenSet: Set<string>, candidates: Set<string>): boolean {
+  for (const token of candidates) {
+    if (tokenSet.has(token)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function tokenizeCollectText(text: string): string[] {
+  const matches = text.toLowerCase().match(/[a-z0-9]+/g);
+  if (!matches) {
+    return [];
+  }
+  return matches.filter((token) => token.length > 1 && !COLLECT_STOPWORDS.has(token));
 }
 
 async function runEnrichmentPass(input: {

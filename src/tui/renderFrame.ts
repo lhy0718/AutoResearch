@@ -1,6 +1,6 @@
 import { RunInsightCard, RunRecord, SuggestionItem } from "../types.js";
 import { ContextualGuidance } from "./contextualGuidance.js";
-import { PaintStyle, paint, reset, stripAnsi, TUI_THEME } from "./theme.js";
+import { PaintColor, PaintStyle, paint, reset, stripAnsi, TUI_THEME } from "./theme.js";
 import { getDisplayWidth } from "./displayWidth.js";
 
 const COMPOSER_PROMPT = "› ";
@@ -33,6 +33,7 @@ export interface RenderFrameInput {
     options: SelectionMenuOption[];
     selectedIndex: number;
   };
+  showWelcomeBanner?: boolean;
 }
 
 export interface SelectionMenuOption {
@@ -46,6 +47,7 @@ export interface RenderFrameOutput {
   inputLineIndex: number;
   inputColumn: number;
   thinkingLineIndex?: number;
+  transcriptViewportLineCount: number;
   totalTranscriptLines: number;
   maxTranscriptScrollOffset: number;
   transcriptHiddenLineCountAbove: number;
@@ -95,6 +97,7 @@ export function buildFrame(input: RenderFrameInput): RenderFrameOutput {
     inputLineIndex,
     inputColumn: bottomCore.inputColumn,
     thinkingLineIndex,
+    transcriptViewportLineCount: viewport.lines.length,
     totalTranscriptLines: transcriptLines.length,
     maxTranscriptScrollOffset: viewport.maxScrollOffset,
     transcriptHiddenLineCountAbove: viewport.hiddenLineCountAbove,
@@ -120,6 +123,10 @@ interface TranscriptViewport {
 
 function buildTranscriptLines(input: RenderFrameInput, wrapWidth: number): string[] {
   const rawLines: string[] = [];
+
+  if (input.showWelcomeBanner !== false) {
+    rawLines.push(...renderWelcomeBannerCard(input, wrapWidth));
+  }
 
   if (input.runInsight?.lines.length) {
     if (rawLines.length > 0) {
@@ -210,9 +217,8 @@ function buildBottomPanelLines(input: RenderFrameInput, wrapWidth: number): stri
   }
 
   if (input.suggestions.length > 0) {
-    return renderMenuSurface(
+    return renderSuggestionPopupLines(
       renderSuggestionRows(input.suggestions, input.selectedSuggestion, input.colorEnabled, wrapWidth),
-      input.colorEnabled,
       wrapWidth
     );
   }
@@ -221,12 +227,33 @@ function buildBottomPanelLines(input: RenderFrameInput, wrapWidth: number): stri
 }
 
 function renderMenuSurface(rows: string[], colorEnabled: boolean, terminalWidth: number): string[] {
+  const insetWidth = 2;
+  const contentWidth = Math.max(1, terminalWidth - insetWidth);
+  const lines: string[] = [];
+
+  for (const row of rows) {
+    for (const wrapped of wrapAnsiLine(row, contentWidth)) {
+      const fillWidth = Math.max(0, contentWidth - getDisplayWidth(stripAnsi(wrapped)));
+      lines.push(
+        `${paint(" ".repeat(insetWidth), { bg: TUI_THEME.panelBg }, colorEnabled)}${wrapped}${paint(
+          " ".repeat(fillWidth),
+          { bg: TUI_THEME.panelBg },
+          colorEnabled
+        )}`
+      );
+    }
+  }
+
+  return lines;
+}
+
+function renderSuggestionPopupLines(rows: string[], terminalWidth: number): string[] {
   const contentWidth = Math.max(1, terminalWidth - 2);
   const lines: string[] = [];
 
   for (const row of rows) {
     for (const wrapped of wrapAnsiLine(row, contentWidth)) {
-      lines.push(`${paint("  ", { bg: TUI_THEME.panelBg }, colorEnabled)}${wrapped}`);
+      lines.push(`  ${wrapped}`);
     }
   }
 
@@ -527,7 +554,7 @@ function renderComposerBody(input: RenderFrameInput, contentWidth: number): Comp
   const textStyle = { fg: TUI_THEME.text, bg: TUI_THEME.composerBg };
   const placeholderStyle = { fg: TUI_THEME.muted, bg: TUI_THEME.composerBg, dim: true };
   const busyPlaceholder =
-    input.busy && input.activityLabel?.startsWith("Starting research")
+    input.busy && input.activityLabel?.startsWith("Starting research") && !input.run
       ? "Creating a new research run. Wait for the first node update."
       : "Add steering to redirect the current run.";
 
@@ -680,6 +707,72 @@ function renderComposerSurfaceLine(args: {
   return `${paint(args.prefix, args.prefixStyle, args.colorEnabled)}${paint(args.content, args.contentStyle, args.colorEnabled)}${paint(" ".repeat(fillWidth), args.fillStyle, args.colorEnabled)}`;
 }
 
+function renderWelcomeBannerCard(input: RenderFrameInput, terminalWidth: number): string[] {
+  const innerWidth = Math.max(16, Math.min(45, terminalWidth - 4));
+  const colorEnabled = input.colorEnabled;
+  const borderStyle = { fg: TUI_THEME.muted, dim: true };
+  const mutedStyle = { fg: TUI_THEME.muted, dim: true };
+  const textStyle = { fg: TUI_THEME.text };
+  const labelWidth = "directory:".length;
+  const modelPrefix = `${"model:".padEnd(labelWidth)} `;
+  const dirPrefix = `${"directory:".padEnd(labelWidth)} `;
+  const versionLabel = normalizeFooterVersion(input.appVersion);
+  const title = `${paint(">_ ", mutedStyle, colorEnabled)}${paint("AutoLabOS", { fg: TUI_THEME.text, bold: true }, colorEnabled)}${paint(
+    ` (${versionLabel})`,
+    mutedStyle,
+    colorEnabled
+  )}`;
+  const modelHint = `${paint("/model", { fg: TUI_THEME.accent }, colorEnabled)}${paint(" to change", mutedStyle, colorEnabled)}`;
+  const modelHintWidth = getDisplayWidth("/model to change");
+  const modelWidth = Math.max(8, innerWidth - getDisplayWidth(modelPrefix) - modelHintWidth - 3);
+  const modelLabel = truncatePlainText(input.modelLabel?.trim() || "loading", modelWidth);
+  const directory = truncatePlainText(
+    formatBannerDirectory(input.workspaceLabel),
+    Math.max(8, innerWidth - getDisplayWidth(dirPrefix))
+  );
+  const topBorder = paint(`╭${"─".repeat(innerWidth + 2)}╮`, borderStyle, colorEnabled);
+  const bottomBorder = paint(`╰${"─".repeat(innerWidth + 2)}╯`, borderStyle, colorEnabled);
+  const emptyRow = `${paint("│", borderStyle, colorEnabled)} ${" ".repeat(innerWidth)} ${paint("│", borderStyle, colorEnabled)}`;
+
+  return [
+    topBorder,
+    renderBannerCardRow(title, innerWidth, colorEnabled),
+    emptyRow,
+    renderBannerCardRow(
+      `${paint(modelPrefix, mutedStyle, colorEnabled)}${paint(modelLabel, textStyle, colorEnabled)}${paint("   ", mutedStyle, colorEnabled)}${modelHint}`,
+      innerWidth,
+      colorEnabled
+    ),
+    renderBannerCardRow(
+      `${paint(dirPrefix, mutedStyle, colorEnabled)}${paint(directory, textStyle, colorEnabled)}`,
+      innerWidth,
+      colorEnabled
+    ),
+    bottomBorder
+  ];
+}
+
+function renderBannerCardRow(content: string, innerWidth: number, colorEnabled: boolean): string {
+  const border = paint("│", { fg: TUI_THEME.muted, dim: true }, colorEnabled);
+  return `${border} ${padAnsiRight(content, innerWidth)} ${border}`;
+}
+
+function formatBannerDirectory(workspaceLabel: string | undefined): string {
+  const workspace = workspaceLabel?.trim();
+  if (!workspace) {
+    return "~";
+  }
+
+  const home = process.env.HOME;
+  if (home && workspace === home) {
+    return "~";
+  }
+  if (home && workspace.startsWith(`${home}/`)) {
+    return `~/${workspace.slice(home.length + 1)}`;
+  }
+  return workspace;
+}
+
 function takeHeadByWidth(chars: string[], maxWidth: number): string[] {
   const out: string[] = [];
   let width = 0;
@@ -753,7 +846,8 @@ function renderSuggestionRow(args: SuggestionRowArgs): string {
     description: args.suggestion.description,
     selected: args.selected,
     colorEnabled: args.colorEnabled,
-    descriptionColumn: args.descriptionColumn
+    descriptionColumn: args.descriptionColumn,
+    backgroundCode: undefined
   });
 }
 
@@ -770,7 +864,8 @@ function renderSelectionRow(args: SelectionRowArgs): string {
     description: args.option.description,
     selected: args.selected,
     colorEnabled: args.colorEnabled,
-    descriptionColumn: args.descriptionColumn
+    descriptionColumn: args.descriptionColumn,
+    backgroundCode: TUI_THEME.panelBg
   });
 }
 
@@ -836,18 +931,25 @@ function renderPopupMenuRow(args: {
   selected: boolean;
   colorEnabled: boolean;
   descriptionColumn?: number;
+  backgroundCode?: PaintColor;
 }): string {
-  const labelStyle = args.selected ? { fg: TUI_THEME.accent, bold: true } : { fg: TUI_THEME.text };
+  const labelStyle = args.selected
+    ? { fg: TUI_THEME.accent, bold: true, bg: args.backgroundCode }
+    : { fg: TUI_THEME.text, bg: args.backgroundCode };
   const descriptionStyle = args.selected
-    ? { fg: TUI_THEME.accent, bold: true }
-    : { fg: TUI_THEME.muted, dim: true };
+    ? { fg: TUI_THEME.accent, bold: true, bg: args.backgroundCode }
+    : { fg: TUI_THEME.muted, dim: true, bg: args.backgroundCode };
   const label = paint(args.label, labelStyle, args.colorEnabled);
   if (!args.description || args.descriptionColumn === undefined) {
     return label;
   }
 
   const gap = Math.max(2, args.descriptionColumn - getDisplayWidth(args.label));
-  return `${label}${" ".repeat(gap)}${paint(args.description, descriptionStyle, args.colorEnabled)}`;
+  const gapText =
+    args.backgroundCode === undefined
+      ? " ".repeat(gap)
+      : paint(" ".repeat(gap), { bg: args.backgroundCode }, args.colorEnabled);
+  return `${label}${gapText}${paint(args.description, descriptionStyle, args.colorEnabled)}`;
 }
 
 function renderInsightLine(line: string, colorEnabled: boolean): string {

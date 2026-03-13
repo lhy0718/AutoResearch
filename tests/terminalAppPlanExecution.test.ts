@@ -584,6 +584,113 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(app.continueSupervisedRun).toHaveBeenCalledWith(run.id, undefined);
   });
 
+  it("auto-continues after /agent collect recovery advances past collect_papers", async () => {
+    const app = makeApp();
+    const run = makeRun("run-collect-recovery");
+    run.status = "paused";
+    run.currentNode = "collect_papers";
+    run.graph.currentNode = "collect_papers";
+    run.graph.nodeStates.collect_papers.status = "pending";
+
+    const advancedRun = {
+      ...run,
+      status: "running",
+      currentNode: "analyze_papers",
+      graph: {
+        ...run.graph,
+        currentNode: "analyze_papers",
+        nodeStates: {
+          ...run.graph.nodeStates,
+          collect_papers: {
+            ...run.graph.nodeStates.collect_papers,
+            status: "completed",
+            note: "Semantic Scholar stored 20 papers."
+          },
+          analyze_papers: {
+            ...run.graph.nodeStates.analyze_papers,
+            status: "pending"
+          }
+        }
+      }
+    };
+
+    app.resolveTargetRun = vi.fn().mockResolvedValue(run);
+    app.readCorpusCount = vi.fn().mockResolvedValue(12);
+    app.setActiveRunId = vi.fn();
+    app.refreshRunIndex = vi.fn();
+    app.continueSupervisedRun = vi.fn().mockResolvedValue(advancedRun);
+    app.runStore = {
+      getRun: vi.fn().mockResolvedValue(advancedRun)
+    } as any;
+    app.orchestrator = {
+      jumpToNode: vi.fn().mockResolvedValue(undefined),
+      runAgentWithOptions: vi.fn().mockResolvedValue({
+        run,
+        result: {
+          status: "success",
+          summary: "Semantic Scholar stored 20 papers."
+        }
+      })
+    };
+
+    const result = await app.handleAgent(["collect", "--limit", "20", "--run", run.id]);
+
+    expect(result).toEqual({ ok: true });
+    expect(app.runStore.getRun).toHaveBeenCalledWith(run.id);
+    expect(app.continueSupervisedRun).toHaveBeenCalledWith(run.id, undefined);
+  });
+
+  it("does not auto-continue after /agent collect when the run remains on collect_papers", async () => {
+    const app = makeApp();
+    const run = makeRun("run-collect-stays-put");
+    run.status = "paused";
+    run.currentNode = "collect_papers";
+    run.graph.currentNode = "collect_papers";
+    run.graph.nodeStates.collect_papers.status = "pending";
+
+    const refreshedRun = {
+      ...run,
+      status: "paused",
+      currentNode: "collect_papers",
+      graph: {
+        ...run.graph,
+        currentNode: "collect_papers",
+        nodeStates: {
+          ...run.graph.nodeStates,
+          collect_papers: {
+            ...run.graph.nodeStates.collect_papers,
+            status: "needs_approval",
+            note: "Review collected corpus before continuing."
+          }
+        }
+      }
+    };
+
+    app.resolveTargetRun = vi.fn().mockResolvedValue(run);
+    app.readCorpusCount = vi.fn().mockResolvedValue(12);
+    app.setActiveRunId = vi.fn();
+    app.refreshRunIndex = vi.fn();
+    app.continueSupervisedRun = vi.fn();
+    app.runStore = {
+      getRun: vi.fn().mockResolvedValue(refreshedRun)
+    } as any;
+    app.orchestrator = {
+      jumpToNode: vi.fn().mockResolvedValue(undefined),
+      runAgentWithOptions: vi.fn().mockResolvedValue({
+        run,
+        result: {
+          status: "success",
+          summary: "Semantic Scholar stored 20 papers."
+        }
+      })
+    };
+
+    const result = await app.handleAgent(["collect", "--limit", "20", "--run", run.id]);
+
+    expect(result).toEqual({ ok: true });
+    expect(app.continueSupervisedRun).not.toHaveBeenCalled();
+  });
+
   it("summarizes an existing review packet through /agent review", async () => {
     const app = makeApp();
     const run = makeRun("run-review-command");
@@ -738,6 +845,33 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(app.logs.some((line: string) => line.includes("Running queued input: /approve"))).toBe(false);
   });
 
+  it("removes the bottom composer pane before quitting", async () => {
+    const app = makeApp();
+    app.onQuit = vi.fn();
+    app.detachKeyboard = vi.fn();
+    app.lastRenderedFrame = {
+      lines: ["• ready", "", "› draft", "", "idle · gpt-5.3-codex"],
+      inputLineIndex: 3,
+      inputColumn: 3,
+      transcriptViewportLineCount: 1,
+      totalTranscriptLines: 1,
+      maxTranscriptScrollOffset: 0,
+      transcriptHiddenLineCountAbove: 0,
+      transcriptHiddenLineCountBelow: 0,
+      appliedTranscriptScrollOffset: 0
+    };
+
+    const writeSpy = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+
+    await app.shutdown();
+
+    const rendered = writeSpy.mock.calls.map(([chunk]) => String(chunk)).join("");
+    expect(rendered).toContain("\x1b[2J\x1b[H");
+    expect(rendered).toContain("• ready");
+    expect(rendered).not.toContain("› draft");
+    expect(rendered).not.toContain("idle · gpt-5.3-codex");
+  });
+
   it("queues slash commands instead of treating them as steering while a natural request is active", async () => {
     const app = makeApp();
     app.busy = true;
@@ -825,6 +959,44 @@ describe("TerminalApp pending natural plan execution", () => {
 
     expect(app.getActiveIndexedRun()).toBeUndefined();
     expect(app.getRenderableRun()).toBeUndefined();
+  });
+
+  it("shows the newly created active run while brief startup work is still finishing", () => {
+    const app = makeApp();
+    const createdRun = makeRun("run-new");
+    app.runIndex = [createdRun, makeRun("run-old")];
+    app.activeRunId = createdRun.id;
+    app.creatingRunFromBrief = true;
+    app.creatingRunTargetId = createdRun.id;
+    app.busy = true;
+    app.activeBusyLabel = "Starting research...";
+
+    expect(app.getRenderableRun()?.id).toBe(createdRun.id);
+    expect(app.buildFooterItems(createdRun)).toEqual(expect.arrayContaining(["running", "creating run"]));
+  });
+
+  it("does not surface background run logs as if they belonged to the active run", async () => {
+    const app = makeApp();
+    const activeRun = makeRun("run-active");
+    const backgroundRun = makeRun("run-background");
+    app.runIndex = [activeRun, backgroundRun];
+    app.activeRunId = activeRun.id;
+    app.runStore = {
+      getRun: vi.fn(async (runId: string) => (runId === backgroundRun.id ? backgroundRun : activeRun))
+    };
+
+    await app.handleStreamEvent({
+      type: "OBS_RECEIVED",
+      runId: backgroundRun.id,
+      node: "analyze_papers",
+      payload: {
+        text: 'Persisted analysis outputs for "Paper 1" (1 summary row, 4 evidence row(s)).'
+      }
+    });
+
+    expect(
+      app.logs.some((line: string) => line.includes('Persisted analysis outputs for "Paper 1"'))
+    ).toBe(false);
   });
 
   it("inserts a newline on shift+enter instead of submitting", async () => {
@@ -928,6 +1100,7 @@ describe("TerminalApp pending natural plan execution", () => {
       lines: [],
       inputLineIndex: 1,
       inputColumn: 1,
+      transcriptViewportLineCount: 0,
       totalTranscriptLines: 80,
       maxTranscriptScrollOffset: 60,
       transcriptHiddenLineCountAbove: 20,
@@ -1381,9 +1554,38 @@ describe("TerminalApp pending natural plan execution", () => {
 
     expect(lines[0]).toBe("Status: analyze_papers is paused after retry 1/3 because a model usage limit blocked progress.");
     expect(lines[1]).toContain("Selected 1/200 paper(s) for analysis.");
-    expect(lines[1]).toContain("LLM rerank fell back to deterministic order.");
+    expect(lines[1]).toContain("LLM rerank failed before a top-N shortlist was accepted.");
     expect(lines[1]).toContain("GPT-5.3-Codex-Spark usage limit");
     expect(lines[1]).toContain("Ignoring stale top-level summary");
+  });
+
+  it("does not flash stale collect-summary detail during same-session handoff into analyze_papers", () => {
+    const app = makeApp();
+    const run = makeRun("run-handoff-flash");
+    run.status = "running";
+    run.currentNode = "collect_papers";
+    run.graph.currentNode = "collect_papers";
+    run.updatedAt = "2026-03-12T12:37:36.434Z";
+    run.latestSummary =
+      'Semantic Scholar stored 200 papers for "topic". Deferred enrichment scheduled in background for 171 paper(s).';
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.collect_papers.updatedAt = "2026-03-12T12:37:36.434Z";
+    run.graph.nodeStates.collect_papers.note = run.latestSummary;
+
+    app.runIndex = [run];
+
+    app.applyProjectedRunEvent({
+      id: "evt-handoff-analyze",
+      type: "NODE_STARTED",
+      timestamp: "2026-03-12T12:37:37.000Z",
+      runId: run.id,
+      node: "analyze_papers",
+      payload: {}
+    } as any);
+
+    expect(app.runIndex[0].currentNode).toBe("analyze_papers");
+    expect(app.getRenderableLogs(app.runIndex[0]).join(" ")).not.toContain("Ignoring stale top-level summary");
+    expect(app.getRenderableLogs(app.runIndex[0]).join(" ")).not.toContain("Semantic Scholar stored 200 papers");
   });
 
   it("refreshes a live run from the store so stale top-level summaries disappear after persisted analyze progress", async () => {
@@ -1771,6 +1973,153 @@ describe("TerminalApp pending natural plan execution", () => {
       expect(app.logs.some((line: string) => line.includes("Auto-starting research"))).toBe(true);
       const runContext = new RunContextMemory(path.join(cwd, run!.memoryRefs.runContextPath));
       expect(await runContext.get("run_brief.source_path")).toBe(await realpath(briefPath));
+    } finally {
+      process.chdir(originalCwd);
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("hides the previous active run in the footer while /brief start is still creating a new run", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "autolabos-brief-busy-footer-"));
+    const originalCwd = process.cwd();
+    process.chdir(cwd);
+    try {
+      const paths = resolveAppPaths(cwd);
+      await ensureScaffold(paths);
+      const runStore = new RunStore(paths);
+      const existingRun = await runStore.createRun({
+        title: "Existing run",
+        topic: "topic",
+        constraints: [],
+        objectiveMetric: "metric"
+      });
+      existingRun.status = "paused";
+      existingRun.currentNode = "analyze_papers";
+      existingRun.graph.currentNode = "analyze_papers";
+      existingRun.graph.nodeStates.analyze_papers.status = "pending";
+      await runStore.updateRun(existingRun);
+
+      const briefDir = path.join(cwd, ".autolabos", "briefs");
+      await mkdir(briefDir, { recursive: true });
+      await writeFile(
+        path.join(briefDir, "20260313-191500-agent-study.md"),
+        [
+          "# Research Brief",
+          "",
+          "## Topic",
+          "",
+          "Multi-agent code repair on SWE-bench",
+          "",
+          "## Objective Metric",
+          "",
+          "pass@1 >= 0.4",
+          "",
+          "## Constraints",
+          "",
+          "- recent papers",
+          "- 6 hour time limit",
+          "",
+          "## Plan",
+          "",
+          "Run baseline, ablation, and confirmatory evaluations."
+        ].join("\n"),
+        "utf8"
+      );
+
+      let resolveTitle: ((value: string) => void) | undefined;
+      const titlePromise = new Promise<string>((resolve) => {
+        resolveTitle = resolve;
+      });
+
+      const app = new TerminalApp({
+        config: {
+          papers: { max_results: 100 },
+          providers: {
+            llm_mode: "codex_chatgpt_only",
+            codex: {
+              model: "gpt-5.3-codex",
+              chat_model: "gpt-5.3-codex",
+              reasoning_effort: "medium",
+              chat_reasoning_effort: "medium",
+              fast_mode: false,
+              chat_fast_mode: false
+            },
+            openai: { model: "gpt-5.4", reasoning_effort: "medium" }
+          },
+          analysis: {
+            pdf_mode: "codex_text_image_hybrid",
+            responses_model: "gpt-5.4"
+          },
+          research: {
+            default_topic: "Multi-agent collaboration",
+            default_constraints: ["recent papers"],
+            default_objective_metric: "reproducibility"
+          }
+        } as any,
+        runStore,
+        titleGenerator: {
+          generateTitle: vi.fn().mockImplementation(() => titlePromise)
+        } as any,
+        codex: {
+          runTurnStream: vi.fn(async () => {
+            throw new Error("llm unavailable");
+          })
+        } as any,
+        eventStream: { subscribe: () => () => {} } as any,
+        orchestrator: {
+          runCurrentAgentWithOptions: vi.fn(async (runId: string) => {
+            const run = await runStore.getRun(runId);
+            if (!run) {
+              throw new Error("expected run to exist");
+            }
+            run.status = "paused";
+            run.latestSummary = "collect_papers started";
+            run.graph.nodeStates.collect_papers = {
+              status: "running",
+              updatedAt: new Date().toISOString(),
+              note: "Collecting papers."
+            };
+            await runStore.updateRun(run);
+            return {
+              run,
+              result: {
+                status: "success" as const,
+                summary: "collect_papers started"
+              }
+            };
+          })
+        } as any,
+        semanticScholarApiKeyConfigured: false,
+        onQuit: () => {},
+        saveConfig: async () => {}
+      }) as any;
+      app.render = () => {};
+      app.updateSuggestions = () => {};
+      app.drainQueuedInputs = async () => {};
+
+      await app.refreshRunIndex();
+      await app.setActiveRunId(existingRun.id);
+
+      const pending = app.submitInputText("/brief start --latest");
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        if (app.buildFooterItems(existingRun).includes("creating run")) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
+      expect(app.activeRunId).toBe(existingRun.id);
+      expect(app.getRenderableRun()).toBeUndefined();
+      expect(app.buildFooterItems(existingRun)).toEqual(expect.arrayContaining(["running", "creating run"]));
+      expect(app.buildFooterItems(existingRun)).not.toContain("analyze_papers pending");
+
+      resolveTitle?.("Brief-driven run");
+      await pending;
+
+      const runs = await runStore.listRuns();
+      expect(runs).toHaveLength(2);
+      const createdRun = runs.find((candidate) => candidate.id !== existingRun.id);
+      expect(app.activeRunId).toBe(createdRun?.id);
     } finally {
       process.chdir(originalCwd);
       await rm(cwd, { recursive: true, force: true });

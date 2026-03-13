@@ -974,6 +974,17 @@ export class InteractionSession {
     return run.status === "paused" && state.status === "pending" && state.note === "Canceled by user";
   }
 
+  private shouldAutoContinueAfterCollectRecovery(run: RunRecord): boolean {
+    if (AGENT_ORDER.indexOf(run.currentNode) <= AGENT_ORDER.indexOf("collect_papers")) {
+      return false;
+    }
+    if (run.status === "completed" || run.status === "failed") {
+      return false;
+    }
+    const currentState = run.graph.nodeStates[run.currentNode];
+    return currentState.status === "pending" || currentState.status === "running";
+  }
+
   private applySteeringInput(instruction: string): void {
     if (!this.activeNaturalRequest) {
       return;
@@ -1042,7 +1053,9 @@ export class InteractionSession {
     const checks = await runDoctor(this.codex, {
       llmMode: this.config.providers.llm_mode,
       pdfAnalysisMode: this.config.analysis.pdf_mode,
-      openAiApiKeyConfigured: await resolveOpenAiApiKey(this.workspaceRoot).then(Boolean)
+      openAiApiKeyConfigured: await resolveOpenAiApiKey(this.workspaceRoot).then(Boolean),
+      codexResearchModel: this.config.providers.codex.model,
+      codexPdfModel: this.config.providers.codex.pdf_model || this.config.providers.codex.model
     });
     for (const check of checks) {
       this.pushLog(`[${check.ok ? "OK" : "FAIL"}] ${check.name}: ${check.detail}`);
@@ -1478,6 +1491,18 @@ export class InteractionSession {
       return { ok: false, reason: response.result.error || "collect_papers failed" };
     }
     this.pushLog(`collect_papers finished: ${oneLine(response.result.summary)}`);
+    const refreshedRun = (await this.runStore.getRun(run.id)) ?? response.run;
+    if (this.shouldAutoContinueAfterCollectRecovery(refreshedRun)) {
+      const continued = await this.orchestrator.runCurrentAgentWithOptions(run.id, { abortSignal });
+      await this.refreshRunIndex();
+      await this.setActiveRunId(continued.run.id);
+      if (continued.result.status === "failure") {
+        const failure = continued.result.error || continued.result.summary || "run failed";
+        this.pushLog(`Research stopped: ${oneLine(failure)}`);
+        return { ok: false, reason: failure };
+      }
+      this.pushLog(`Research continued: ${oneLine(continued.result.summary)}`);
+    }
     return { ok: true };
   }
 

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -193,5 +193,201 @@ describe("StateGraphRuntime", () => {
     const latestCheckpoint = await checkpointStore.latest(run.id);
     expect(latestCheckpoint?.seq).toBe(4);
     expect(latestCheckpoint?.runSnapshot.currentNode).toBe("design_experiments");
+  });
+
+  it("preserves a successful generate_hypotheses result when abort arrives after artifacts are written", async () => {
+    const controller = new AbortController();
+    let pathsRef!: ReturnType<typeof resolveAppPaths>;
+    const registry = new Registry({
+      generate_hypotheses: {
+        id: "generate_hypotheses",
+        execute: async ({ run }) => {
+          const runRoot = path.join(pathsRef.runsDir, run.id);
+          await fs.mkdir(path.join(runRoot, "hypothesis_generation"), { recursive: true });
+          await fs.mkdir(path.join(runRoot, "drafts"), { recursive: true });
+          await fs.mkdir(path.join(runRoot, "reviews"), { recursive: true });
+          await fs.mkdir(path.join(runRoot, "evidence_axes"), { recursive: true });
+          await fs.writeFile(
+            path.join(runRoot, "hypotheses.jsonl"),
+            `${JSON.stringify({ hypothesis: "Use gradient-boosted trees on tabular baselines." })}\n`,
+            "utf8"
+          );
+          await fs.writeFile(
+            path.join(runRoot, "hypothesis_generation", "status.json"),
+            `${JSON.stringify({ status: "completed" })}\n`,
+            "utf8"
+          );
+          controller.abort();
+          return {
+            status: "success",
+            summary: "Generated hypotheses from the analyzed evidence.",
+            needsApproval: true,
+            toolCallsUsed: 1
+          };
+        }
+      }
+    });
+    const { paths, store, checkpointStore, runtime } = await setup(registry);
+    pathsRef = paths;
+
+    const run = await store.createRun({
+      title: "Hypotheses Abort Ordering",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "generate_hypotheses";
+    run.graph.currentNode = "generate_hypotheses";
+    run.status = "running";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    await store.updateRun(run);
+
+    const updated = await runtime.step(run.id, controller.signal);
+
+    expect(updated.currentNode).toBe("generate_hypotheses");
+    expect(updated.status).toBe("paused");
+    expect(updated.graph.nodeStates.generate_hypotheses.status).toBe("needs_approval");
+    expect(updated.graph.nodeStates.generate_hypotheses.note).toBe(
+      "Generated hypotheses from the analyzed evidence."
+    );
+    expect(updated.latestSummary).toBe("Generated hypotheses from the analyzed evidence.");
+
+    const persisted = await store.getRun(run.id);
+    expect(persisted?.graph.nodeStates.generate_hypotheses.status).toBe("needs_approval");
+    expect(persisted?.graph.nodeStates.generate_hypotheses.note).toBe(
+      "Generated hypotheses from the analyzed evidence."
+    );
+
+    await expect(fs.readFile(path.join(paths.runsDir, run.id, "hypotheses.jsonl"), "utf8")).resolves.toContain(
+      "gradient-boosted trees"
+    );
+    await expect(
+      readJsonFile<{ status?: string }>(path.join(paths.runsDir, run.id, "hypothesis_generation", "status.json"))
+    ).resolves.toMatchObject({ status: "completed" });
+
+    const latestCheckpoint = await checkpointStore.latest(run.id);
+    expect(latestCheckpoint?.phase).toBe("after");
+    expect(latestCheckpoint?.runSnapshot.graph.nodeStates.generate_hypotheses.status).toBe("needs_approval");
+  });
+
+  it("pauses at generate_hypotheses approval instead of auto-advancing when abort arrives after node success", async () => {
+    const controller = new AbortController();
+    const registry = new Registry({
+      generate_hypotheses: {
+        id: "generate_hypotheses",
+        execute: async () => {
+          controller.abort();
+          return {
+            status: "success",
+            summary: "Generated hypotheses from the analyzed evidence.",
+            needsApproval: true,
+            toolCallsUsed: 1
+          };
+        }
+      }
+    });
+    const { store, runtime } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Abort Before Auto Approval",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "generate_hypotheses";
+    run.graph.currentNode = "generate_hypotheses";
+    run.status = "running";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    await store.updateRun(run);
+
+    const updated = await runtime.runUntilPause(run.id, { abortSignal: controller.signal });
+
+    expect(updated.currentNode).toBe("generate_hypotheses");
+    expect(updated.status).toBe("paused");
+    expect(updated.graph.nodeStates.generate_hypotheses.status).toBe("needs_approval");
+    expect(updated.graph.nodeStates.design_experiments.status).toBe("pending");
+
+    const persisted = await store.getRun(run.id);
+    expect(persisted?.currentNode).toBe("generate_hypotheses");
+    expect(persisted?.status).toBe("paused");
+    expect(persisted?.graph.nodeStates.generate_hypotheses.status).toBe("needs_approval");
+    expect(persisted?.graph.nodeStates.design_experiments.status).toBe("pending");
+  });
+
+  it("clears stale lastError when a node later succeeds", async () => {
+    const registry = new Registry({
+      generate_hypotheses: {
+        id: "generate_hypotheses",
+        execute: async () => ({
+          status: "success",
+          summary: "Generated hypotheses from the analyzed evidence.",
+          needsApproval: true,
+          toolCallsUsed: 1
+        })
+      }
+    });
+    const { store, runtime } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Clear Success Error",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "generate_hypotheses";
+    run.graph.currentNode = "generate_hypotheses";
+    run.status = "running";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "running";
+    run.graph.nodeStates.generate_hypotheses.lastError = "Unexpected end of JSON input";
+    await store.updateRun(run);
+
+    const updated = await runtime.step(run.id);
+    expect(updated.graph.nodeStates.generate_hypotheses.lastError).toBeUndefined();
+
+    const persisted = await store.getRun(run.id);
+    expect(persisted?.graph.nodeStates.generate_hypotheses.lastError).toBeUndefined();
+  });
+
+  it("clears downstream stale lastError values when backward jump resets later nodes", async () => {
+    const { store, runtime } = await setup(new Registry({}));
+
+    const run = await store.createRun({
+      title: "Clear Jump Errors",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "review";
+    run.graph.currentNode = "review";
+    run.status = "paused";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    run.graph.nodeStates.implement_experiments.status = "completed";
+    run.graph.nodeStates.implement_experiments.lastError = "Policy blocked command";
+    run.graph.nodeStates.run_experiments.status = "needs_approval";
+    run.graph.nodeStates.run_experiments.lastError = "Policy blocked command";
+    run.graph.nodeStates.analyze_results.status = "completed";
+    run.graph.nodeStates.analyze_results.lastError = "invalid metrics";
+    await store.updateRun(run);
+
+    const jumped = await runtime.jumpToNode(run.id, "design_experiments", "force", "manual backtrack");
+    expect(jumped.graph.nodeStates.implement_experiments.lastError).toBeUndefined();
+    expect(jumped.graph.nodeStates.run_experiments.lastError).toBeUndefined();
+    expect(jumped.graph.nodeStates.analyze_results.lastError).toBeUndefined();
+
+    const persisted = await store.getRun(run.id);
+    expect(persisted?.graph.nodeStates.implement_experiments.lastError).toBeUndefined();
+    expect(persisted?.graph.nodeStates.run_experiments.lastError).toBeUndefined();
+    expect(persisted?.graph.nodeStates.analyze_results.lastError).toBeUndefined();
   });
 });

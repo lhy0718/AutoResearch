@@ -29,6 +29,8 @@ import { createPaperWriterRole } from "./roles/paperWriter.js";
 import { createReviewerRole } from "./roles/reviewer.js";
 import { writeRunArtifact } from "../nodes/helpers.js";
 
+const DEFAULT_PAPER_WRITER_STAGE_TIMEOUT_MS = 90_000;
+
 interface PaperWriterOutline {
   title: string;
   abstract_focus: string[];
@@ -540,7 +542,11 @@ export class PaperWriterSessionManager {
     this.emit(input.run, `Paper writer stage "${input.stage}" started.`);
 
     if (input.mode === "codex_session") {
-      const result = await this.deps.codex.runTurnStream({
+      const timeoutMs = resolvePaperWriterStageTimeoutMs();
+      const controller = new AbortController();
+      const cleanupAbort = forwardAbort(input.abortSignal, controller);
+      let timedOut = false;
+      const runPromise = this.deps.codex.runTurnStream({
         prompt: input.prompt,
         threadId: input.threadId,
         agentId: `${input.agentRole}:${input.run.id}`,
@@ -548,7 +554,7 @@ export class PaperWriterSessionManager {
         sandboxMode: "read-only",
         approvalPolicy: "never",
         workingDirectory: this.deps.workspaceRoot,
-        abortSignal: input.abortSignal,
+        abortSignal: controller.signal,
         onEvent: (event) => {
           const mapped = mapCodexEventToAutoLabOSEvents({
             event,
@@ -562,21 +568,57 @@ export class PaperWriterSessionManager {
           }
         }
       });
-      const completedAt = new Date().toISOString();
-      input.trace?.push({
-        stage: input.stage,
-        mode: input.mode,
-        threadId: result.threadId || input.threadId,
-        fallbackUsed: false,
-        startedAt,
-        completedAt,
-        preview: previewText(result.finalText)
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        const timer = setTimeout(() => {
+          timedOut = true;
+          const message = `Paper writer stage "${input.stage}" exceeded the ${timeoutMs}ms timeout`;
+          controller.abort(new Error(message));
+          reject(new Error(message));
+        }, timeoutMs);
+        controller.signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
       });
-      this.emit(input.run, `Paper writer stage "${input.stage}" completed.`);
-      return {
-        text: result.finalText,
-        threadId: result.threadId || input.threadId
-      };
+      try {
+        const result = await Promise.race([runPromise, timeoutPromise]);
+        const completedAt = new Date().toISOString();
+        input.trace?.push({
+          stage: input.stage,
+          mode: input.mode,
+          threadId: result.threadId || input.threadId,
+          fallbackUsed: false,
+          startedAt,
+          completedAt,
+          preview: previewText(result.finalText)
+        });
+        this.emit(input.run, `Paper writer stage "${input.stage}" completed.`);
+        return {
+          text: result.finalText,
+          threadId: result.threadId || input.threadId
+        };
+      } catch (error) {
+        if (timedOut && !input.abortSignal?.aborted) {
+          const message = error instanceof Error ? error.message : String(error);
+          const completedAt = new Date().toISOString();
+          input.trace?.push({
+            stage: input.stage,
+            mode: input.mode,
+            threadId: input.threadId,
+            fallbackUsed: true,
+            startedAt,
+            completedAt,
+            preview: "",
+            error: message
+          });
+          this.emit(input.run, `${message}. Falling back to staged defaults for this stage.`);
+          void runPromise.catch(() => {});
+          return {
+            text: "",
+            threadId: input.threadId
+          };
+        }
+        throw error;
+      } finally {
+        cleanupAbort();
+      }
     }
 
     const completion = await this.deps.llm.complete(input.prompt, {
@@ -664,6 +706,27 @@ export class PaperWriterSessionManager {
       payload: { text }
     });
   }
+}
+
+function resolvePaperWriterStageTimeoutMs(): number {
+  const raw = Number.parseInt(process.env.AUTOLABOS_PAPER_WRITER_STAGE_TIMEOUT_MS || "", 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_PAPER_WRITER_STAGE_TIMEOUT_MS;
+}
+
+function forwardAbort(
+  source: AbortSignal | undefined,
+  controller: AbortController
+): () => void {
+  if (!source) {
+    return () => {};
+  }
+  if (source.aborted) {
+    controller.abort(source.reason);
+    return () => {};
+  }
+  const onAbort = () => controller.abort(source.reason);
+  source.addEventListener("abort", onAbort, { once: true });
+  return () => source.removeEventListener("abort", onAbort);
 }
 
 function buildRoleSystemPrompt(

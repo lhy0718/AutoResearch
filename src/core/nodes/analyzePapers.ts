@@ -31,7 +31,8 @@ import {
   selectPapersForAnalysis
 } from "../analysis/paperSelection.js";
 import { CollectEnrichmentLogEntry } from "../collection/types.js";
-import { TransitionRecommendation } from "../../types.js";
+import { DoctorCheck, TransitionRecommendation } from "../../types.js";
+import { RECOMMENDED_CODEX_MODEL } from "../../integrations/codex/modelCatalog.js";
 
 interface AnalysisManifest {
   version: 2 | 3;
@@ -92,7 +93,9 @@ const ABSTRACT_ONLY_EXHAUSTION_MAX_SELECTED = 12;
 const ZERO_OUTPUT_EARLY_PAUSE_MIN_SELECTED = 12;
 const ZERO_OUTPUT_EARLY_PAUSE_SAMPLE = 2;
 const ZERO_OUTPUT_RETRY_PAUSE_SAMPLE = 1;
+const SMALL_SELECTION_SERIAL_WARM_START_MAX = 4;
 const COLLECT_ENRICHMENT_SELECTED_WAIT_MS = 5_000;
+const COLLECT_ENRICHMENT_EXTENDED_WAIT_MS = 15_000;
 const COLLECT_ENRICHMENT_POLL_INTERVAL_MS = 250;
 
 const SELECTION_QUALITY_STOPWORDS = new Set([
@@ -236,6 +239,36 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         responsesReasoningEffort: deps.config.analysis.responses_reasoning_effort,
         includePageImages
       });
+      const codexPreflightFailures = await runAnalyzeCodexPreflight({
+        codex: deps.codex,
+        llmMode: deps.config.providers?.llm_mode,
+        analysisMode,
+        researchModel: deps.config.providers?.codex?.model,
+        pdfModel: deps.config.providers?.codex?.pdf_model || deps.config.providers?.codex?.model
+      });
+      if (codexPreflightFailures.length > 0) {
+        for (const check of codexPreflightFailures) {
+          emitLog(`Codex preflight failed [${check.name}]: ${check.detail}`);
+        }
+        const modelBlocked = codexPreflightFailures.some((check) => isCodexModelCheck(check.name));
+        return {
+          status: "success",
+          summary: modelBlocked
+            ? "analyze_papers paused before starting because the configured Codex research model is not approved for long-running rerank or paper analysis."
+            : "analyze_papers paused before starting because the Codex CLI environment is not writable or ready for rerank/paper analysis.",
+          needsApproval: true,
+          toolCallsUsed: 0,
+          transitionRecommendation: createAnalyzePapersManualReviewRecommendation({
+            runId: run.id,
+            reason: modelBlocked
+              ? "analyze_papers requires a non-Spark Codex research model for long-running rerank and paper analysis work, so the current model selection must be changed before continuing."
+              : "analyze_papers is blocked by the current Codex CLI environment, so rerank and paper analysis should not start until /doctor passes.",
+            confidence: 0.98,
+            evidence: codexPreflightFailures.map((check) => `${check.name}: ${check.detail}`),
+            suggestedCommands: ["/doctor", "/model", `/agent run analyze_papers ${run.id}`]
+          })
+        };
+      }
       let autoExpansionCount = 0;
       let autoExpansionReason: string | undefined;
       const startedWithExistingManifest = Boolean(initialManifest);
@@ -288,6 +321,36 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         if (selectionGuard.applied && selectionGuard.reason) {
           emitLog(selectionGuard.reason);
         }
+        if (
+          selection.request.selectionMode === "top_n" &&
+          selection.request.topN &&
+          selection.selectedPaperIds.length === 0 &&
+          selection.rerankFallbackReason
+        ) {
+          const rerankFailure = cleanFailureMessage(selection.rerankFallbackReason);
+          emitLog(
+            `LLM rerank failed. Top ${selection.request.topN} selection requires a successful model rerank (${rerankFailure}).`
+          );
+          return {
+            status: "success",
+            summary: `analyze_papers paused because LLM rerank for top ${selection.request.topN} failed before a shortlist was accepted.`,
+            needsApproval: true,
+            toolCallsUsed: 0,
+            transitionRecommendation: createAnalyzePapersManualReviewRecommendation({
+              runId: run.id,
+              reason:
+                `analyze_papers requires a successful LLM rerank to choose the top ${selection.request.topN} papers, ` +
+                `but rerank failed before any shortlist was accepted.`,
+              confidence: 0.97,
+              evidence: [
+                `Rerank failure: ${rerankFailure}.`,
+                `Top-N request: ${selection.request.topN} from ${selection.totalCandidates} candidate(s).`,
+                "Deterministic pre-rank completed, but no deterministic fallback shortlist was accepted."
+              ],
+              suggestedCommands: [`/agent retry analyze_papers ${run.id}`, "/model"]
+            })
+          };
+        }
         if (rawSelection.selectedPaperIds.length > 0 && selection.selectedPaperIds.length === 0) {
           emitLog(
             `Selection quality safeguard removed all ${rawSelection.selectedPaperIds.length} initially selected paper(s); pausing for manual review instead of analyzing an off-topic set.`
@@ -328,9 +391,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           }
         });
 
-        if (selection.rerankFallbackReason) {
-          emitLog(`LLM rerank unavailable, falling back to deterministic order (${selection.rerankFallbackReason}).`);
-        } else if (selection.rerankApplied) {
+        if (selection.rerankApplied) {
           emitLog(`Hybrid rerank selected ${selection.selectedPaperIds.length} paper(s) from ${selection.totalCandidates} candidate(s).`);
         }
         if (selection.deterministicRankingPreview.length > 0) {
@@ -353,7 +414,11 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             "Collect enrichment is still pending for selected papers without PDFs. Waiting briefly for recovered PDF metadata before source resolution."
           );
         }
-        const refreshedSelectedRows = await refreshSelectedRowsFromLatestArtifacts(run.id, selectedRows);
+        const refreshedSelectedRows = await refreshSelectedRowsFromLatestArtifacts(run.id, selectedRows, {
+          selectionMode: request.selectionMode,
+          selectedCount: selection.selectedPaperIds.length,
+          totalCandidates: selection.totalCandidates
+        });
         const upgradedPdfRows = refreshedSelectedRows.filter(
           (row, index) => !resolvePaperPdfUrl(selectedRows[index]) && Boolean(resolvePaperPdfUrl(row))
         ).length;
@@ -552,14 +617,15 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         const warmStartSerial =
           startingProgress.summaryRows.length === 0 &&
           startingProgress.evidenceRows.length === 0 &&
-          selection.selectedPaperIds.length >= ZERO_OUTPUT_EARLY_PAUSE_MIN_SELECTED;
+          (selection.selectedPaperIds.length >= ZERO_OUTPUT_EARLY_PAUSE_MIN_SELECTED ||
+            (analysisMode === "codex_text_image_hybrid" &&
+              request.selectionMode === "all" &&
+              selection.selectedPaperIds.length <= SMALL_SELECTION_SERIAL_WARM_START_MAX));
         const analysisConcurrency = warmStartSerial ? 1 : getAnalysisConcurrency(analysisMode);
         if (pendingRows.length > 0) {
           emitLog(`Analyzing ${pendingRows.length} paper(s) with concurrency ${analysisConcurrency}.`);
           if (warmStartSerial) {
-            emitLog(
-              `Large zero-output-sensitive analysis is starting in serial mode until the first persisted outputs arrive.`
-            );
+            emitLog(`Serial warm-start is enabled until the first persisted outputs arrive.`);
           }
         }
         let failedCount = 0;
@@ -567,18 +633,27 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         let zeroOutputPauseDecision: ZeroOutputPauseDecision | undefined;
         const persistQueue = createAsyncQueue();
 
-        await runWithConcurrency(
-          pendingRows,
-          analysisConcurrency,
-          async (initialRow, index) => {
+        try {
+          await runWithConcurrency(
+            pendingRows,
+            analysisConcurrency,
+            async (initialRow, index) => {
             attemptedRows += 1;
-            let row = await refreshCorpusRowFromLatestArtifacts(run.id, initialRow);
+            let row = await refreshCorpusRowForSourceResolution(run.id, initialRow, {
+              selectionMode: request.selectionMode,
+              selectedCount: selection.selectedPaperIds.length,
+              totalCandidates: selection.totalCandidates
+            });
             if (!resolvePaperPdfUrl(initialRow) && resolvePaperPdfUrl(row)) {
               emitLog(`[${row.paper_id}] Reusing refreshed corpus metadata with a recovered PDF URL.`);
             }
             emitLog(`Analyzing paper ${index + 1}/${pendingRows.length}: "${row.title}".`);
             emitLog(`Resolving analysis source ${index + 1}/${pendingRows.length} for "${row.title}".`);
-            const latestRowBeforeSource = await refreshCorpusRowFromLatestArtifacts(run.id, row);
+            const latestRowBeforeSource = await refreshCorpusRowForSourceResolution(run.id, row, {
+              selectionMode: request.selectionMode,
+              selectedCount: selection.selectedPaperIds.length,
+              totalCandidates: selection.totalCandidates
+            });
             if (!resolvePaperPdfUrl(row) && resolvePaperPdfUrl(latestRowBeforeSource)) {
               emitLog(`[${latestRowBeforeSource.paper_id}] Reusing refreshed corpus metadata with a recovered PDF URL.`);
             }
@@ -614,6 +689,21 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             let analysisModeUsed: "responses_api_pdf" | "codex_text_image_hybrid" = useResponsesPdf
               ? "responses_api_pdf"
               : "codex_text_image_hybrid";
+            if (!useResponsesPdf) {
+              const retriedSource = await retryResolvedSourceAfterLatePdfRecovery({
+                runId: run.id,
+                paper: row,
+                source,
+                includePageImages,
+                selectionMode: request.selectionMode,
+                selectedCount: selection.selectedPaperIds.length,
+                totalCandidates: selection.totalCandidates,
+                abortSignal,
+                onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
+              });
+              row = retriedSource.paper;
+              source = retriedSource.source;
+            }
             let analysisAttempts = 0;
             let quarantineRecord: AnalysisQuarantineRow | undefined;
 
@@ -767,21 +857,28 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                   totalCandidates: selection.totalCandidates,
                   selectionFingerprint: selection.selectionFingerprint
                 });
-                await syncAnalyzeRunRecord({
-                  runStore: deps.runStore,
-                  runId: run.id,
-                  summary: buildAnalyzeProgressSummary({
-                    request,
-                    selectedCount: selection.selectedPaperIds.length,
-                    totalCandidates: selection.totalCandidates,
-                    progress: buildAnalysisProgress(nextSummaryRowsState, nextEvidenceRowsState),
-                    failedCount,
-                    analysisMode
-                  })
-                });
                 manifestState = nextManifest;
                 summaryRowsState = nextSummaryRowsState;
                 evidenceRowsState = nextEvidenceRowsState;
+                try {
+                  await syncAnalyzeRunRecord({
+                    runStore: deps.runStore,
+                    runId: run.id,
+                    summary: buildAnalyzeProgressSummary({
+                      request,
+                      selectedCount: selection.selectedPaperIds.length,
+                      totalCandidates: selection.totalCandidates,
+                      progress: buildAnalysisProgress(nextSummaryRowsState, nextEvidenceRowsState),
+                      failedCount,
+                      analysisMode
+                    })
+                  });
+                } catch (error) {
+                  const message = error instanceof Error ? error.message : String(error);
+                  emitLog(
+                    `Post-persist run summary refresh failed after writing artifacts for "${row.title}": ${message}`
+                  );
+                }
                 emitLog(
                   `Persisted analysis outputs for "${row.title}" (1 summary row, ${analysis.evidenceRows.length} evidence row(s)).`
                 );
@@ -861,9 +958,15 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                 );
               }
             }
-          },
-          () => Boolean(zeroOutputPauseDecision)
-        );
+            },
+            () => Boolean(zeroOutputPauseDecision)
+          );
+        } catch (error) {
+          if (isAbortError(error)) {
+            await persistQueue.onIdle();
+          }
+          throw error;
+        }
 
         await persistQueue.onIdle();
 
@@ -969,22 +1072,26 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             };
           }
 
-          if (
-            zeroProgress &&
-            allSelectedFailed &&
-            failureSummary.environmentBlockedEntries.length === failureSummary.failedEntries.length &&
-            failureSummary.environmentBlockedEntries.length > 0
-          ) {
+          if (failureSummary.environmentBlockedEntries.length > 0) {
+            const blockedCount = failureSummary.environmentBlockedEntries.length;
             const sampleMessage = failureSummary.cleanedMessages[0] || "Environment blocked paper analysis.";
             emitLog(
-              "All selected papers failed with environment or permission errors before any summaries/evidence were produced. Pausing instead of auto-retrying the same blocked analysis pass."
+              `Detected environment or permission failure for ${blockedCount} selected paper(s). Pausing analyze_papers instead of auto-retrying while the same Codex environment remains blocked.`
             );
             return {
               status: "success",
               summary:
-                request.selectionMode === "top_n" && request.topN
-                  ? `analyze_papers paused because all top ${selection.selectedPaperIds.length} selected paper(s) failed with environment or permission errors before any summaries or evidence were produced.`
-                  : "analyze_papers paused because all selected papers failed with environment or permission errors before any summaries or evidence were produced.",
+                progress.evidenceRows.length > 0
+                  ? request.selectionMode === "top_n" && request.topN
+                    ? `Preserved partial analysis for top ${selection.selectedPaperIds.length}/${selection.totalCandidates} ranked papers after ${blockedCount} paper(s) hit environment or permission errors.`
+                    : `Preserved partial analysis (${progress.summaryRows.length} summaries, ${progress.evidenceRows.length} evidence item(s)) after ${blockedCount} paper(s) hit environment or permission errors.`
+                  : request.selectionMode === "top_n" && request.topN
+                    ? allSelectedFailed
+                      ? `analyze_papers paused because all top ${selection.selectedPaperIds.length} selected paper(s) failed with environment or permission errors before any summaries or evidence were produced.`
+                      : `analyze_papers paused because ${blockedCount}/${selection.selectedPaperIds.length} selected paper(s) failed with environment or permission errors before any summaries or evidence were produced.`
+                    : allSelectedFailed
+                      ? "analyze_papers paused because all selected papers failed with environment or permission errors before any summaries or evidence were produced."
+                      : `analyze_papers paused because ${blockedCount} selected paper(s) failed with environment or permission errors before any summaries or evidence were produced.`,
               needsApproval: true,
               toolCallsUsed: analysisToolCallsUsed,
               transitionRecommendation: createAnalyzePapersManualReviewRecommendation({
@@ -992,12 +1099,18 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                 reason:
                   "analyze_papers is blocked by environment or permission errors, so another automatic retry would likely fail the same way.",
                 confidence: 0.96,
+                targetNode: progress.evidenceRows.length > 0 ? "generate_hypotheses" : undefined,
                 evidence: [
-                  `${failureSummary.environmentBlockedEntries.length} selected paper(s) failed with environment or permission errors.`,
-                  "No summaries or evidence were persisted in this pass.",
+                  `${blockedCount} selected paper(s) failed with environment or permission errors.`,
+                  progress.evidenceRows.length > 0
+                    ? `${progress.summaryRows.length} summary row(s) and ${progress.evidenceRows.length} evidence item(s) are already persisted.`
+                    : "No summaries or evidence were persisted in this pass.",
                   sampleMessage
                 ],
-                suggestedCommands: ["/doctor", "/model", `/agent run analyze_papers ${run.id}`]
+                suggestedCommands:
+                  progress.evidenceRows.length > 0
+                    ? [`/agent run generate_hypotheses ${run.id}`, "/doctor", "/model", `/agent run analyze_papers ${run.id}`]
+                    : ["/doctor", "/model", `/agent run analyze_papers ${run.id}`]
               })
             };
           }
@@ -1039,13 +1152,15 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             currentFailedPaperIds: failedPaperIds,
             priorRetryCount: run.graph.retryCounters.analyze_papers ?? 0
           });
-          if (stalledFailures && progress.evidenceRows.length > 0) {
+          if (progress.summaryRows.length > 0 || progress.evidenceRows.length > 0) {
             const summary =
               request.selectionMode === "top_n" && request.topN
-                ? `Preserved partial analysis for top ${selection.selectedPaperIds.length}/${selection.totalCandidates} ranked papers (${progress.summaryRows.length} summaries, ${progress.evidenceRows.length} evidence item(s)) after ${failedPaperIds.size} repeated paper failure(s) stopped shrinking across retries.`
-                : `Preserved partial analysis (${progress.summaryRows.length} summaries, ${progress.evidenceRows.length} evidence item(s)) after ${failedPaperIds.size} repeated paper failure(s) stopped shrinking across retries.`;
+                ? `Preserved partial analysis for top ${selection.selectedPaperIds.length}/${selection.totalCandidates} ranked papers (${progress.summaryRows.length} summaries, ${progress.evidenceRows.length} evidence item(s)) after ${failedCount} paper(s) failed.`
+                : `Preserved partial analysis (${progress.summaryRows.length} summaries, ${progress.evidenceRows.length} evidence item(s)) after ${failedCount} paper(s) failed.`;
             emitLog(
-              `Repeated analyze_papers retry would not reduce the failed subset (${failedPaperIds.size} paper(s) still failing). Preserving partial artifacts and pausing for manual review instead of triggering another destructive reset path.`
+              stalledFailures
+                ? `Repeated analyze_papers retry would not reduce the failed subset (${failedPaperIds.size} paper(s) still failing). Preserving partial artifacts and pausing for manual review instead of triggering another destructive reset path.`
+                : `analyze_papers preserved partial artifacts after ${failedCount} paper failure(s). Pausing for manual review instead of spending more automatic retries on an already usable evidence set.`
             );
             return {
               status: "success",
@@ -1055,15 +1170,22 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
               transitionRecommendation: createAnalyzePapersManualReviewRecommendation({
                 runId: run.id,
                 reason:
-                  "analyze_papers preserved partial evidence because retrying again did not shrink the failed-paper subset.",
+                  stalledFailures
+                    ? "analyze_papers preserved partial evidence because retrying again did not shrink the failed-paper subset."
+                    : "analyze_papers preserved partial evidence after some selected papers failed, so the workflow paused instead of auto-retrying away a usable evidence set.",
                 confidence: 0.92,
                 targetNode: "generate_hypotheses",
                 evidence: [
                   `${progress.summaryRows.length} summary row(s) and ${progress.evidenceRows.length} evidence item(s) are already persisted.`,
-                  `${failedPaperIds.size} paper(s) remain failed after repeated retries.`,
-                  previousFailedPaperIds.size > 0
-                    ? `The failed subset stayed at ${previousFailedPaperIds.size} -> ${failedPaperIds.size} paper(s).`
-                    : `Retry counter before this pass was ${run.graph.retryCounters.analyze_papers ?? 0}.`
+                  stalledFailures
+                    ? `${failedPaperIds.size} paper(s) remain failed after repeated retries.`
+                    : `${failedCount} selected paper(s) still failed validation or extraction in this pass.`,
+                  stalledFailures
+                    ? previousFailedPaperIds.size > 0
+                      ? `The failed subset stayed at ${previousFailedPaperIds.size} -> ${failedPaperIds.size} paper(s).`
+                      : `Retry counter before this pass was ${run.graph.retryCounters.analyze_papers ?? 0}.`
+                    : failureSummary.cleanedMessages[0] ||
+                      `Retry counter before this pass was ${run.graph.retryCounters.analyze_papers ?? 0}.`
                 ]
               })
             };
@@ -1288,10 +1410,12 @@ async function runWithConcurrency<T>(
 ): Promise<void> {
   const normalizedConcurrency = Math.max(1, Math.min(concurrency, items.length || 1));
   let nextIndex = 0;
+  let firstError: unknown;
+  let stop = false;
 
   const runners = Array.from({ length: normalizedConcurrency }, async () => {
     while (true) {
-      if (shouldStop?.()) {
+      if (stop || shouldStop?.()) {
         return;
       }
       const index = nextIndex;
@@ -1299,11 +1423,22 @@ async function runWithConcurrency<T>(
       if (index >= items.length) {
         return;
       }
-      await worker(items[index], index);
+      try {
+        await worker(items[index], index);
+      } catch (error) {
+        if (firstError === undefined) {
+          firstError = error;
+        }
+        stop = true;
+        return;
+      }
     }
   });
 
   await Promise.all(runners);
+  if (firstError !== undefined) {
+    throw firstError;
+  }
 }
 
 function isAbortError(error: unknown): boolean {
@@ -1441,7 +1576,12 @@ function countRowsWithoutPdf(rows: AnalysisCorpusRow[]): number {
 
 async function refreshSelectedRowsFromLatestArtifacts(
   runId: string,
-  rows: AnalysisCorpusRow[]
+  rows: AnalysisCorpusRow[],
+  options?: {
+    selectionMode?: AnalysisSelectionRequest["selectionMode"];
+    selectedCount?: number;
+    totalCandidates?: number;
+  }
 ): Promise<AnalysisCorpusRow[]> {
   if (rows.length === 0) {
     return rows;
@@ -1451,7 +1591,7 @@ async function refreshSelectedRowsFromLatestArtifacts(
     return refreshed;
   }
 
-  const deadline = Date.now() + COLLECT_ENRICHMENT_SELECTED_WAIT_MS;
+  const deadline = Date.now() + getCollectEnrichmentWaitMs(options);
   while (Date.now() < deadline) {
     await sleep(COLLECT_ENRICHMENT_POLL_INTERVAL_MS);
     const next = mergeSelectedRows(rows, await readLatestArtifactBackedCorpusRows(runId));
@@ -1478,6 +1618,93 @@ async function refreshCorpusRowFromLatestArtifacts(runId: string, row: AnalysisC
   }
   const latest = (await readLatestArtifactBackedCorpusRows(runId)).get(row.paper_id);
   return latest ? mergeCorpusRow(row, latest) : row;
+}
+
+async function refreshCorpusRowForSourceResolution(
+  runId: string,
+  row: AnalysisCorpusRow,
+  options?: {
+    selectionMode?: AnalysisSelectionRequest["selectionMode"];
+    selectedCount?: number;
+    totalCandidates?: number;
+  }
+): Promise<AnalysisCorpusRow> {
+  let refreshed = await refreshCorpusRowFromLatestArtifacts(runId, row);
+  if (resolvePaperPdfUrl(refreshed) || !(await isCollectEnrichmentPending(runId))) {
+    return refreshed;
+  }
+
+  const deadline = Date.now() + getCollectEnrichmentWaitMs(options);
+  while (Date.now() < deadline) {
+    await sleep(COLLECT_ENRICHMENT_POLL_INTERVAL_MS);
+    const next = await refreshCorpusRowFromLatestArtifacts(runId, row);
+    if (resolvePaperPdfUrl(next)) {
+      return next;
+    }
+    refreshed = next;
+    if (!(await isCollectEnrichmentPending(runId))) {
+      break;
+    }
+  }
+  return refreshed;
+}
+
+export async function retryResolvedSourceAfterLatePdfRecovery(args: {
+  runId: string;
+  paper: AnalysisCorpusRow;
+  source: ResolvedPaperSource;
+  includePageImages?: boolean;
+  selectionMode?: AnalysisSelectionRequest["selectionMode"];
+  selectedCount?: number;
+  totalCandidates?: number;
+  abortSignal?: AbortSignal;
+  onProgress?: (message: string) => void;
+}): Promise<{ paper: AnalysisCorpusRow; source: ResolvedPaperSource }> {
+  if (args.source.sourceType !== "abstract" || args.source.fallbackReason !== "no_pdf_url") {
+    return {
+      paper: args.paper,
+      source: args.source
+    };
+  }
+
+  const refreshedPaper = await refreshCorpusRowForSourceResolution(args.runId, args.paper, {
+    selectionMode: args.selectionMode,
+    selectedCount: args.selectedCount,
+    totalCandidates: args.totalCandidates
+  });
+  if (!resolvePaperPdfUrl(args.paper) && resolvePaperPdfUrl(refreshedPaper)) {
+    args.onProgress?.("Detected late recovered PDF metadata after the initial abstract fallback. Retrying source resolution.");
+    return {
+      paper: refreshedPaper,
+      source: await resolvePaperTextSource({
+        runId: args.runId,
+        paper: refreshedPaper,
+        includePageImages: args.includePageImages,
+        abortSignal: args.abortSignal,
+        onProgress: args.onProgress
+      })
+    };
+  }
+
+  return {
+    paper: refreshedPaper,
+    source: args.source
+  };
+}
+
+function getCollectEnrichmentWaitMs(options?: {
+  selectionMode?: AnalysisSelectionRequest["selectionMode"];
+  selectedCount?: number;
+  totalCandidates?: number;
+}): number {
+  const selectedCount = options?.selectedCount ?? 0;
+  const totalCandidates = options?.totalCandidates ?? selectedCount;
+  const smallSelectedSet = selectedCount > 0 && selectedCount <= 8;
+  const exhaustedSmallCorpus = totalCandidates > 0 && totalCandidates <= 8;
+  if (options?.selectionMode === "all" || smallSelectedSet || exhaustedSmallCorpus) {
+    return COLLECT_ENRICHMENT_EXTENDED_WAIT_MS;
+  }
+  return COLLECT_ENRICHMENT_SELECTED_WAIT_MS;
 }
 
 async function isCollectEnrichmentPending(runId: string): Promise<boolean> {
@@ -1593,6 +1820,14 @@ function canReuseManifestSelection(
     return false;
   }
   if (manifest.request.selectionMode !== request.selectionMode || manifest.request.topN !== request.topN) {
+    return false;
+  }
+  if (
+    manifest.request.selectionMode === "top_n" &&
+    manifest.request.topN &&
+    manifest.selectedPaperIds.length < manifest.totalCandidates &&
+    manifest.rerankApplied === false
+  ) {
     return false;
   }
 
@@ -2410,6 +2645,62 @@ async function upsertRunContextValues(runContextPath: string, updates: Record<st
     version: 1,
     items
   });
+}
+
+async function runAnalyzeCodexPreflight(input: {
+  codex: NodeExecutionDeps["codex"];
+  llmMode: NodeExecutionDeps["config"]["providers"]["llm_mode"] | undefined;
+  analysisMode: NodeExecutionDeps["config"]["analysis"]["pdf_mode"];
+  researchModel: string | undefined;
+  pdfModel: string | undefined;
+}): Promise<DoctorCheck[]> {
+  if (input.llmMode !== "codex_chatgpt_only") {
+    return [];
+  }
+
+  const checks: DoctorCheck[] = [];
+  const cli = await input.codex.checkCliAvailable();
+  checks.push({ name: "codex-cli", ok: cli.ok, detail: cli.detail });
+  const login = await input.codex.checkLoginStatus();
+  checks.push({ name: "codex-login", ok: login.ok, detail: login.detail });
+  if (typeof input.codex.checkEnvironmentReadiness === "function") {
+    checks.push(
+      ...(await input.codex.checkEnvironmentReadiness()).map((check) => ({
+        name: check.name,
+        ok: check.ok,
+        detail: check.detail
+      }))
+    );
+  }
+  if (input.researchModel) {
+    checks.push(buildAnalyzeCodexModelCheck("codex-research-model", "research", input.researchModel));
+  }
+  if (input.analysisMode === "codex_text_image_hybrid" && input.pdfModel) {
+    checks.push(buildAnalyzeCodexModelCheck("codex-pdf-model", "PDF analysis", input.pdfModel));
+  }
+  return checks.filter((check) => !check.ok);
+}
+
+function isCodexModelCheck(name: string): boolean {
+  return name === "codex-research-model" || name === "codex-pdf-model";
+}
+
+function buildAnalyzeCodexModelCheck(name: string, label: string, model: string): DoctorCheck {
+  const normalized = model.trim();
+  if (normalized.toLowerCase().includes("spark")) {
+    return {
+      name,
+      ok: false,
+      detail:
+        `Configured Codex ${label} model ${normalized} is a short-run Spark profile. ` +
+        `Switch ${label} work to ${RECOMMENDED_CODEX_MODEL} before rerank or paper analysis.`
+    };
+  }
+  return {
+    name,
+    ok: true,
+    detail: `Configured Codex ${label} model ${normalized} is suitable for rerank and paper analysis.`
+  };
 }
 
 function summarizeSelectedFailures(

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { LLMClient } from "../llm/client.js";
+import { parseStructuredModelJsonObject } from "./modelJson.js";
 import { AnalysisCorpusRow, resolvePaperPdfUrl } from "./paperText.js";
 
 export interface AnalysisSelectionRequest {
@@ -206,12 +207,34 @@ export async function selectPapersForAnalysis(args: {
     args.onProgress,
     args.abortSignal
   );
+  if (!rerank.applied) {
+    args.onProgress?.(
+      `LLM rerank failed. Top ${args.request.topN} selection requires a successful model rerank (${rerank.fallbackReason}).`
+    );
+    return {
+      request: args.request,
+      totalCandidates,
+      candidatePoolSize,
+      deterministicRankingPreview: ranked.slice(0, 10).map(toPreviewRow),
+      rerankedPaperIds: [],
+      selectedPaperIds: [],
+      selectionFingerprint: buildSelectionFingerprint(args.request, args.runTitle, args.runTopic, []),
+      rerankApplied: false,
+      rerankFallbackReason: rerank.fallbackReason,
+      rankedCandidates: ranked.map((candidate) => ({
+        ...candidate,
+        selectionScore: candidate.deterministicScore,
+        selected: false,
+        rank: undefined,
+        rerankPosition: undefined
+      }))
+    };
+  }
+
   const rerankedIds = rerank.orderedPaperIds;
   const rerankOrder = new Map<string, number>(rerankedIds.map((paperId, index) => [paperId, index]));
   args.onProgress?.(
-    rerank.applied
-      ? `LLM rerank completed. Top selection preview: ${rerankedIds.slice(0, Math.min(args.request.topN, 5)).join(", ")}`
-      : `LLM rerank fallback activated. Using deterministic order (${rerank.fallbackReason}).`
+    `LLM rerank completed. Top selection preview: ${rerankedIds.slice(0, Math.min(args.request.topN, 5)).join(", ")}`
   );
 
   const selectedPaperIds = rerankedIds.slice(0, args.request.topN);
@@ -245,7 +268,6 @@ export async function selectPapersForAnalysis(args: {
     selectedPaperIds,
     selectionFingerprint: buildSelectionFingerprint(args.request, args.runTitle, args.runTopic, selectedPaperIds),
     rerankApplied: rerank.applied,
-    rerankFallbackReason: rerank.fallbackReason,
     rankedCandidates
   };
 }
@@ -359,7 +381,7 @@ async function rerankCandidates(
   candidates: RankedPaperCandidate[],
   onProgress?: (message: string) => void,
   abortSignal?: AbortSignal
-): Promise<{ orderedPaperIds: string[]; applied: boolean; fallbackReason?: string }> {
+): Promise<{ orderedPaperIds: string[]; applied: true } | { applied: false; fallbackReason: string }> {
   for (let attempt = 1; attempt <= RERANK_MAX_ATTEMPTS; attempt += 1) {
     try {
       if (attempt > 1) {
@@ -383,7 +405,10 @@ async function rerankCandidates(
       });
       onProgress?.("Rerank progress: 3/4 (75%) parsing model ordering.");
       onProgress?.("Received rerank response. Parsing JSON ordering.");
-      const parsed = parseRerankJson(response.text);
+      const { value: parsed, repaired } = parseRerankJson(response.text);
+      if (repaired) {
+        onProgress?.("Rerank JSON looked truncated; repaired the ordering payload before parsing.");
+      }
       const seen = new Set<string>();
       const orderedPaperIds = normalizeStringArray(parsed.ordered_paper_ids)
         .filter((paperId) => candidates.some((candidate) => candidate.paper.paper_id === paperId))
@@ -416,7 +441,6 @@ async function rerankCandidates(
       }
       onProgress?.(`Rerank request failed: ${failure.cleanedMessage}`);
       return {
-        orderedPaperIds: candidates.map((candidate) => candidate.paper.paper_id),
         applied: false,
         fallbackReason: failure.cleanedMessage
       };
@@ -424,7 +448,6 @@ async function rerankCandidates(
   }
 
   return {
-    orderedPaperIds: candidates.map((candidate) => candidate.paper.paper_id),
     applied: false,
     fallbackReason: "rerank_failed_without_output"
   };
@@ -473,56 +496,13 @@ function buildRerankPrompt(
   return lines.join("\n");
 }
 
-function parseRerankJson(text: string): RerankJson {
-  const trimmed = text.trim();
-  if (!trimmed) {
-    throw new Error("empty_rerank_output");
-  }
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]+?)```/i)?.[1]?.trim();
-  const candidate = fenced || extractFirstJsonObject(trimmed);
-  const parsed = JSON.parse(candidate) as RerankJson;
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("invalid_rerank_json");
-  }
-  return parsed;
-}
-
-function extractFirstJsonObject(text: string): string {
-  const firstBrace = text.indexOf("{");
-  if (firstBrace < 0) {
-    throw new Error("no_json_object_found");
-  }
-
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let idx = firstBrace; idx < text.length; idx += 1) {
-    const char = text[idx];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (char === "\\") {
-      escaped = true;
-      continue;
-    }
-    if (char === '"') {
-      inString = !inString;
-      continue;
-    }
-    if (inString) {
-      continue;
-    }
-    if (char === "{") {
-      depth += 1;
-    } else if (char === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        return text.slice(firstBrace, idx + 1);
-      }
-    }
-  }
-  throw new Error("unterminated_json_object");
+function parseRerankJson(text: string): { value: RerankJson; repaired: boolean } {
+  return parseStructuredModelJsonObject<RerankJson>(text, {
+    emptyError: "empty_rerank_output",
+    notFoundError: "no_json_object_found",
+    incompleteError: "unterminated_json_object",
+    invalidError: "invalid_rerank_json"
+  });
 }
 
 function normalizeStringArray(value: unknown): string[] {
@@ -782,7 +762,8 @@ function classifyRerankFailure(message: string): { cleanedMessage: string; benig
   );
   if (substantiveLines.length === 0) {
     return {
-      cleanedMessage: "rerank emitted only benign Codex cleanup warnings and no usable output",
+      cleanedMessage:
+        "Codex shell snapshot cleanup produced no usable rerank output. Ensure ~/.codex is writable, then rerun /doctor or switch to a healthier environment.",
       benignOnly: true
     };
   }

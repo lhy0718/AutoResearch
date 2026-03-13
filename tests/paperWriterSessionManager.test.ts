@@ -19,6 +19,7 @@ afterEach(() => {
   delete process.env.AUTOLABOS_FAKE_CODEX_RESPONSE;
   delete process.env.AUTOLABOS_FAKE_CODEX_RESPONSE_SEQUENCE;
   delete process.env.AUTOLABOS_FAKE_CODEX_THREAD_ID;
+  delete process.env.AUTOLABOS_PAPER_WRITER_STAGE_TIMEOUT_MS;
 });
 
 function makeRun(runId: string): RunRecord {
@@ -297,5 +298,171 @@ describe("PaperWriterSessionManager", () => {
     expect(traceRaw).toContain('"stage": "outline"');
     expect(traceRaw).toContain('"stage": "polish"');
     expect(traceRaw).toContain('"threadId": "fake-thread"');
+  });
+
+  it("falls back when a codex-backed stage exceeds the paper-writer timeout", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-session-timeout-"));
+    process.chdir(root);
+
+    const runId = "run-paper-session-timeout";
+    const run = makeRun(runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    process.env.AUTOLABOS_PAPER_WRITER_STAGE_TIMEOUT_MS = "20";
+
+    let callCount = 0;
+    const timeoutCodex = {
+      async runTurnStream(args: { abortSignal?: AbortSignal }) {
+        callCount += 1;
+        if (callCount === 1) {
+          return {
+            finalText: JSON.stringify({
+              title: "Timeout-safe Paper Writer",
+              abstract_focus: ["agent collaboration"],
+              section_headings: ["Introduction", "Method", "Results", "Conclusion"],
+              key_claim_themes: ["Fallbacks keep the pipeline moving."],
+              citation_plan: ["paper_1"]
+            }),
+            threadId: "timeout-thread"
+          };
+        }
+        return await new Promise<never>((_, reject) => {
+          args.abortSignal?.addEventListener(
+            "abort",
+            () => reject(args.abortSignal?.reason ?? new Error("aborted")),
+            { once: true }
+          );
+        });
+      }
+    } satisfies Pick<CodexCliClient, "runTurnStream">;
+
+    const manager = new PaperWriterSessionManager({
+      config: {
+        providers: {
+          llm_mode: "codex_chatgpt_only"
+        }
+      } as any,
+      codex: timeoutCodex as CodexCliClient,
+      llm: new MockLLMClient(),
+      eventStream: new InMemoryEventStream(),
+      runStore: {
+        async getRun() {
+          return run;
+        },
+        async updateRun() {}
+      } as any,
+      workspaceRoot: root
+    });
+
+    const result = await manager.run({
+      run,
+      bundle: {
+        runTitle: run.title,
+        topic: run.topic,
+        objectiveMetric: run.objectiveMetric,
+        constraints: run.constraints,
+        paperSummaries: [
+          {
+            paper_id: "paper_1",
+            title: "Schema Bench",
+            source_type: "full_text",
+            summary: "Schema-backed coordination improves reproducibility.",
+            key_findings: ["Structured coordination improves reproducibility."],
+            limitations: [],
+            datasets: ["AgentBench-mini"],
+            metrics: ["reproducibility_score"],
+            novelty: "Persistent coordination state",
+            reproducibility_notes: ["Repeated trials are reported."]
+          }
+        ],
+        evidenceRows: [
+          {
+            evidence_id: "ev_1",
+            paper_id: "paper_1",
+            claim: "Structured coordination improves reproducibility.",
+            method_slot: "shared state schema",
+            result_slot: "higher reproducibility_score",
+            limitation_slot: "small benchmark",
+            dataset_slot: "AgentBench-mini",
+            metric_slot: "reproducibility_score",
+            evidence_span: "Repeated trials improved reproducibility_score.",
+            source_type: "full_text",
+            confidence: 0.9
+          }
+        ],
+        hypotheses: [
+          {
+            hypothesis_id: "h_1",
+            text: "Persistent coordination improves reproducibility.",
+            evidence_links: ["ev_1"]
+          }
+        ],
+        corpus: [
+          {
+            paper_id: "paper_1",
+            title: "Schema Bench",
+            abstract: "Schema-backed coordination improves reproducibility.",
+            authors: ["Alice Doe"],
+            year: 2025,
+            venue: "ACL"
+          }
+        ],
+        experimentPlan: {
+          selectedTitle: "Schema benchmark",
+          selectedSummary: "Compare persistent schemas with a baseline.",
+          rawText: ""
+        },
+        resultAnalysis: {
+          objective_metric: {
+            evaluation: {
+              summary: "Objective metric met: reproducibility_score=0.88 >= 0.8."
+            }
+          }
+        }
+      },
+      constraintProfile: {
+        source: "heuristic_fallback",
+        collect: {
+          dateRange: null,
+          year: null,
+          lastYears: null,
+          fieldsOfStudy: [],
+          venues: [],
+          publicationTypes: [],
+          minCitationCount: null,
+          openAccessPdf: null
+        },
+        writing: {
+          targetVenue: "ACL",
+          toneHint: "formal academic",
+          lengthHint: "short paper"
+        },
+        experiment: {
+          designNotes: [],
+          implementationNotes: [],
+          evaluationNotes: []
+        },
+        assumptions: []
+      },
+      objectiveMetricProfile: {
+        source: "heuristic_fallback",
+        raw: run.objectiveMetric,
+        primaryMetric: "reproducibility_score",
+        preferredMetricKeys: ["reproducibility_score"],
+        direction: "maximize",
+        comparator: ">=",
+        targetValue: 0.8,
+        targetDescription: ">= 0.8",
+        analysisFocus: ["Center the results analysis on reproducibility_score."],
+        paperEmphasis: ["Highlight reproducibility improvements."],
+        assumptions: []
+      }
+    });
+
+    expect(result.stageFallbacks).toBeGreaterThanOrEqual(1);
+    expect(result.trace.some((entry) => entry.stage === "draft" && entry.error?.includes("exceeded the 20ms timeout"))).toBe(true);
+    expect(result.manuscript.title).toBeTruthy();
+    expect(await readFile(path.join(runDir, "paper", "draft.json"), "utf8")).toContain('"sections"');
   });
 });

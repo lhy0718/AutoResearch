@@ -37,9 +37,25 @@ export interface CheckpointProjectionHints {
   snapshot?: RunRecord;
 }
 
+export interface ImplementProjectionHints {
+  status?: string;
+  stage?: string;
+  message?: string;
+  attempt?: number;
+  maxAttempts?: number;
+  progressCount?: number;
+  scriptPath?: string;
+  publicDir?: string;
+  runCommand?: string;
+  testCommand?: string;
+  verificationCommand?: string;
+  verifyStatus?: string;
+}
+
 export interface RunProjectionHints {
   collect?: CollectProjectionHints;
   analyze?: AnalyzeProjectionHints;
+  implement?: ImplementProjectionHints;
   checkpoint?: CheckpointProjectionHints;
 }
 
@@ -175,6 +191,7 @@ export function projectRunForDisplay(run: RunRecord, hints?: RunProjectionHints)
   const blockedByUpstream = actionableNode !== normalized.currentNode;
   const pausedRetry = (normalized.status === "paused" || normalized.status === "failed") && retryCount > 0;
   const staleLatestSummary = isLatestSummaryStale(normalized, hints);
+  const suppressStaleLatestSummaryDetail = shouldSuppressStaleLatestSummaryDetail(normalized, hints);
   const usageLimitDetail = resolveUsageLimitDetail([
     hints?.analyze?.selectedPaperLastError,
     hints?.analyze?.rerankFallbackReason,
@@ -203,6 +220,8 @@ export function projectRunForDisplay(run: RunRecord, hints?: RunProjectionHints)
     headline = `${actionableNode} is paused after retry ${retryCount}/${retryLimit}.`;
   } else if (noArtifactProgress) {
     headline = `${actionableNode} has started but no summaries or evidence are persisted yet.`;
+  } else if (actionableNode === "implement_experiments" && hints?.implement?.message) {
+    headline = toOneLine(hints.implement.message);
   } else if (actionableState?.lastError) {
     headline = `${actionableNode} error: ${toOneLine(actionableState.lastError)}`;
   } else if (actionableState?.note && !staleLatestSummary) {
@@ -221,7 +240,7 @@ export function projectRunForDisplay(run: RunRecord, hints?: RunProjectionHints)
       detailParts.push(`Latest ${actionableNode} issue: ${toOneLine(upstreamIssue)}.`);
     }
   }
-  if (staleLatestSummary && normalized.latestSummary) {
+  if (staleLatestSummary && normalized.latestSummary && !suppressStaleLatestSummaryDetail) {
     detailParts.push(`Ignoring stale top-level summary: ${toOneLine(normalized.latestSummary)}.`);
   }
   const analyzeSelectionDetail =
@@ -231,8 +250,15 @@ export function projectRunForDisplay(run: RunRecord, hints?: RunProjectionHints)
   if (analyzeSelectionDetail) {
     detailParts.push(analyzeSelectionDetail);
   }
+  const implementProgressDetail =
+    actionableNode === "implement_experiments" || normalized.currentNode === "implement_experiments"
+      ? buildImplementProgressDetail(hints?.implement)
+      : undefined;
+  if (implementProgressDetail) {
+    detailParts.push(implementProgressDetail);
+  }
   if (rerankFallback) {
-    detailParts.push("LLM rerank fell back to deterministic order.");
+    detailParts.push("LLM rerank failed before a top-N shortlist was accepted.");
   }
   if (usageLimitDetail) {
     detailParts.push(`${usageLimitDetail}; switch models or wait for quota reset before retrying.`);
@@ -454,6 +480,30 @@ function isLatestSummaryStale(run: RunRecord, hints?: RunProjectionHints): boole
   return false;
 }
 
+function shouldSuppressStaleLatestSummaryDetail(run: RunRecord, hints?: RunProjectionHints): boolean {
+  const summary = run.latestSummary?.trim();
+  if (!summary || run.currentNode !== "analyze_papers") {
+    return false;
+  }
+  if (!COLLECT_SUMMARY_PREFIXES.some((prefix) => summary.startsWith(prefix))) {
+    return false;
+  }
+
+  const analyzeState = run.graph.nodeStates.analyze_papers;
+  const collectState = run.graph.nodeStates.collect_papers;
+  if (analyzeState?.status !== "running" || analyzeState.note || analyzeState.lastError) {
+    return false;
+  }
+
+  const summaryCount = hints?.analyze?.summaryCount;
+  const evidenceCount = hints?.analyze?.evidenceCount;
+  if ((typeof summaryCount === "number" && summaryCount > 0) || (typeof evidenceCount === "number" && evidenceCount > 0)) {
+    return false;
+  }
+
+  return updatedAtMs(analyzeState.updatedAt) > updatedAtMs(collectState?.updatedAt);
+}
+
 function buildAnalyzeSelectionDetail(hints?: AnalyzeProjectionHints): string | undefined {
   if (!hints) {
     return undefined;
@@ -465,6 +515,26 @@ function buildAnalyzeSelectionDetail(hints?: AnalyzeProjectionHints): string | u
   }
   if (typeof hints.summaryCount === "number" && typeof hints.evidenceCount === "number") {
     parts.push(`Persisted ${hints.summaryCount} summary row(s) and ${hints.evidenceCount} evidence row(s).`);
+  }
+  return parts.join(" ");
+}
+
+function buildImplementProgressDetail(hints?: ImplementProjectionHints): string | undefined {
+  if (!hints) {
+    return undefined;
+  }
+
+  const parts: string[] = [];
+  if (typeof hints.attempt === "number" && typeof hints.maxAttempts === "number") {
+    parts.push(`Attempt ${hints.attempt}/${hints.maxAttempts}.`);
+  }
+  if (typeof hints.progressCount === "number" && hints.progressCount > 0) {
+    parts.push(`${hints.progressCount} persisted progress update(s).`);
+  }
+  if (hints.verificationCommand) {
+    parts.push(`Verification: ${toOneLine(hints.verificationCommand)}.`);
+  } else if (hints.scriptPath) {
+    parts.push(`Current script: ${displayPathTail(hints.scriptPath)}.`);
   }
   return parts.join(" ");
 }
@@ -491,6 +561,12 @@ function resolveUsageLimitDetail(values: Array<string | undefined>): string | un
     }
   }
   return undefined;
+}
+
+function displayPathTail(value: string): string {
+  const normalized = value.replace(/\\/g, "/");
+  const segments = normalized.split("/").filter(Boolean);
+  return segments[segments.length - 1] || normalized;
 }
 
 function extractUsageLimitDetail(value: string | undefined): string | undefined {

@@ -1,5 +1,6 @@
 import path from "node:path";
 import { tmpdir } from "node:os";
+import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { access, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 
@@ -22,6 +23,28 @@ class QueueJsonLLMClient extends MockLLMClient {
   override async complete(_prompt: string): Promise<{ text: string }> {
     const output = this.outputs[Math.min(this.index, this.outputs.length - 1)] ?? "";
     this.index += 1;
+    return { text: output };
+  }
+}
+
+class BlockingQueueJsonLLMClient extends MockLLMClient {
+  private index = 0;
+
+  constructor(
+    private readonly outputs: string[],
+    private readonly blockedCallIndex: number,
+    private readonly gate: Promise<void>
+  ) {
+    super();
+  }
+
+  override async complete(_prompt: string): Promise<{ text: string }> {
+    const currentIndex = this.index;
+    const output = this.outputs[Math.min(currentIndex, this.outputs.length - 1)] ?? "";
+    this.index += 1;
+    if (currentIndex === this.blockedCallIndex) {
+      await this.gate;
+    }
     return { text: output };
   }
 }
@@ -51,6 +74,161 @@ function makeRun(runId: string): RunRecord {
       episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
     }
   };
+}
+
+function stagedHypothesisOutputs(): string[] {
+  return [
+    JSON.stringify({
+      summary: "Mapped evidence into two axes.",
+      axes: [
+        {
+          id: "ax_1",
+          label: "Structured communication",
+          mechanism: "Schemas reduce ambiguous message interpretation.",
+          intervention: "Constrain inter-agent messages to typed fields.",
+          boundary_condition: "Smaller gains when interfaces are already deterministic.",
+          evaluation_hint: "Measure variance across repeated runs.",
+          evidence_links: ["ev_1"]
+        },
+        {
+          id: "ax_2",
+          label: "Execution feedback",
+          mechanism: "Validator-backed correction reduces error cascades.",
+          intervention: "Add bounded execute-test-repair loops.",
+          boundary_condition: "Less useful when validation is expensive.",
+          evaluation_hint: "Measure failure mode stability.",
+          evidence_links: ["ev_2"]
+        }
+      ]
+    }),
+    JSON.stringify({
+      summary: "Generated mechanism drafts.",
+      candidates: [
+        {
+          id: "cand_1",
+          text: "Typed message schemas will reduce run-to-run variance relative to free-form chat on code-generation benchmarks.",
+          novelty: 4,
+          feasibility: 4,
+          testability: 5,
+          cost: 2,
+          expected_gain: 5,
+          evidence_links: ["ev_1"],
+          axis_ids: ["ax_1"],
+          rationale: "Direct intervention against ambiguous coordination."
+        }
+      ]
+    }),
+    JSON.stringify({
+      summary: "Generated contradiction drafts.",
+      candidates: [
+        {
+          id: "cand_2",
+          text: "Role decomposition only improves reproducibility on tasks with stable task boundaries.",
+          novelty: 4,
+          feasibility: 3,
+          testability: 3,
+          cost: 2,
+          expected_gain: 3,
+          evidence_links: ["ev_1"],
+          axis_ids: ["ax_1"],
+          rationale: "Task structure likely moderates benefit."
+        }
+      ]
+    }),
+    JSON.stringify({
+      summary: "Generated intervention drafts.",
+      candidates: [
+        {
+          id: "cand_3",
+          text: "Bounded execute-test-repair loops will improve reproducibility more than extra peer discussion.",
+          novelty: 4,
+          feasibility: 5,
+          testability: 5,
+          cost: 2,
+          expected_gain: 5,
+          evidence_links: ["ev_2"],
+          axis_ids: ["ax_2"],
+          rationale: "Execution-backed correction is directly testable."
+        }
+      ]
+    }),
+    JSON.stringify({
+      summary: "Selected the strongest drafts.",
+      reviews: [
+        {
+          candidate_id: "mechanism_1",
+          keep: true,
+          groundedness: 5,
+          causal_clarity: 5,
+          falsifiability: 5,
+          experimentability: 5,
+          reproducibility_specificity: 5,
+          reproducibility_signals: ["run_to_run_variance"],
+          measurement_hint: "Measure run-to-run variance across repeated seeded runs.",
+          limitation_reflection: 4,
+          measurement_readiness: 5,
+          strengths: ["Clear baseline and intervention."],
+          weaknesses: ["Benchmark-specific."],
+          critique_summary: "Strong."
+        },
+        {
+          candidate_id: "contradiction_1",
+          keep: false,
+          groundedness: 3,
+          causal_clarity: 3,
+          falsifiability: 2,
+          experimentability: 2,
+          reproducibility_specificity: 2,
+          reproducibility_signals: [],
+          limitation_reflection: 2,
+          measurement_readiness: 1,
+          strengths: ["Interesting boundary condition."],
+          weaknesses: ["Still underspecified."],
+          critique_summary: "Needs more operational detail."
+        },
+        {
+          candidate_id: "intervention_1",
+          keep: true,
+          groundedness: 5,
+          causal_clarity: 5,
+          falsifiability: 5,
+          experimentability: 5,
+          reproducibility_specificity: 5,
+          reproducibility_signals: ["failure_mode_stability", "run_to_run_variance"],
+          measurement_hint: "Track failure-mode stability and repeated-run variance.",
+          limitation_reflection: 4,
+          measurement_readiness: 5,
+          strengths: ["Directly implementable."],
+          weaknesses: ["Adds execution cost."],
+          critique_summary: "Excellent."
+        }
+      ]
+    })
+  ];
+}
+
+function createDeferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve = () => {};
+  const promise = new Promise<void>((innerResolve) => {
+    resolve = innerResolve;
+  });
+  return { promise, resolve };
+}
+
+async function waitForText(filePath: string, predicate: (text: string) => boolean): Promise<string> {
+  let lastText = "";
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    try {
+      lastText = await readFile(filePath, "utf8");
+      if (predicate(lastText)) {
+        return lastText;
+      }
+    } catch {
+      // wait for the artifact to appear
+    }
+    await sleep(10);
+  }
+  throw new Error(`Timed out waiting for ${filePath}. Last text: ${lastText}`);
 }
 
 
@@ -113,134 +291,7 @@ describe("normalizeGenerateHypothesesRequest", () => {
       "utf8"
     );
 
-    const llm = new QueueJsonLLMClient([
-      JSON.stringify({
-        summary: "Mapped evidence into two axes.",
-        axes: [
-          {
-            id: "ax_1",
-            label: "Structured communication",
-            mechanism: "Schemas reduce ambiguous message interpretation.",
-            intervention: "Constrain inter-agent messages to typed fields.",
-            boundary_condition: "Smaller gains when interfaces are already deterministic.",
-            evaluation_hint: "Measure variance across repeated runs.",
-            evidence_links: ["ev_1"]
-          },
-          {
-            id: "ax_2",
-            label: "Execution feedback",
-            mechanism: "Validator-backed correction reduces error cascades.",
-            intervention: "Add bounded execute-test-repair loops.",
-            boundary_condition: "Less useful when validation is expensive.",
-            evaluation_hint: "Measure failure mode stability.",
-            evidence_links: ["ev_2"]
-          }
-        ]
-      }),
-      JSON.stringify({
-        summary: "Generated mechanism drafts.",
-        candidates: [
-          {
-            id: "cand_1",
-            text: "Typed message schemas will reduce run-to-run variance relative to free-form chat on code-generation benchmarks.",
-            novelty: 4,
-            feasibility: 4,
-            testability: 5,
-            cost: 2,
-            expected_gain: 5,
-            evidence_links: ["ev_1"],
-            axis_ids: ["ax_1"],
-            rationale: "Direct intervention against ambiguous coordination."
-          }
-        ]
-      }),
-      JSON.stringify({
-        summary: "Generated contradiction drafts.",
-        candidates: [
-          {
-            id: "cand_2",
-            text: "Role decomposition only improves reproducibility on tasks with stable task boundaries.",
-            novelty: 4,
-            feasibility: 3,
-            testability: 3,
-            cost: 2,
-            expected_gain: 3,
-            evidence_links: ["ev_1"],
-            axis_ids: ["ax_1"],
-            rationale: "Task structure likely moderates benefit."
-          }
-        ]
-      }),
-      JSON.stringify({
-        summary: "Generated intervention drafts.",
-        candidates: [
-          {
-            id: "cand_3",
-            text: "Bounded execute-test-repair loops will improve reproducibility more than extra peer discussion.",
-            novelty: 4,
-            feasibility: 5,
-            testability: 5,
-            cost: 2,
-            expected_gain: 5,
-            evidence_links: ["ev_2"],
-            axis_ids: ["ax_2"],
-            rationale: "Execution-backed correction is directly testable."
-          }
-        ]
-      }),
-      JSON.stringify({
-        summary: "Selected the strongest drafts.",
-        reviews: [
-          {
-            candidate_id: "mechanism_1",
-            keep: true,
-            groundedness: 5,
-            causal_clarity: 5,
-            falsifiability: 5,
-            experimentability: 5,
-            reproducibility_specificity: 5,
-            reproducibility_signals: ["run_to_run_variance"],
-            measurement_hint: "Measure run-to-run variance across repeated seeded runs.",
-            limitation_reflection: 4,
-            measurement_readiness: 5,
-            strengths: ["Clear baseline and intervention."],
-            weaknesses: ["Benchmark-specific."],
-            critique_summary: "Strong."
-          },
-          {
-            candidate_id: "contradiction_1",
-            keep: false,
-            groundedness: 3,
-            causal_clarity: 3,
-            falsifiability: 2,
-            experimentability: 2,
-            reproducibility_specificity: 2,
-            reproducibility_signals: [],
-            limitation_reflection: 2,
-            measurement_readiness: 1,
-            strengths: ["Interesting boundary condition."],
-            weaknesses: ["Still underspecified."],
-            critique_summary: "Needs more operational detail."
-          },
-          {
-            candidate_id: "intervention_1",
-            keep: true,
-            groundedness: 5,
-            causal_clarity: 5,
-            falsifiability: 5,
-            experimentability: 5,
-            reproducibility_specificity: 5,
-            reproducibility_signals: ["failure_mode_stability", "run_to_run_variance"],
-            measurement_hint: "Track failure-mode stability and repeated-run variance.",
-            limitation_reflection: 4,
-            measurement_readiness: 5,
-            strengths: ["Directly implementable."],
-            weaknesses: ["Adds execution cost."],
-            critique_summary: "Excellent."
-          }
-        ]
-      })
-    ]);
+    const llm = new QueueJsonLLMClient(stagedHypothesisOutputs());
 
     const node = createGenerateHypothesesNode({
       config: {} as any,
@@ -264,10 +315,13 @@ describe("normalizeGenerateHypothesesRequest", () => {
     const drafts = await readFile(path.join(runDir, "hypothesis_generation", "drafts.jsonl"), "utf8");
     const reviews = await readFile(path.join(runDir, "hypothesis_generation", "reviews.jsonl"), "utf8");
     const llmTrace = await readFile(path.join(runDir, "hypothesis_generation", "llm_trace.json"), "utf8");
+    const progress = await readFile(path.join(runDir, "hypothesis_generation", "progress.jsonl"), "utf8");
+    const status = await readFile(path.join(runDir, "hypothesis_generation", "status.json"), "utf8");
     const selection = await readFile(path.join(runDir, "hypothesis_generation", "selection.json"), "utf8");
     const selectionJson = JSON.parse(selection) as {
       scores?: Array<{ implementation_bonus?: number; bundling_penalty?: number }>;
     };
+    const statusJson = JSON.parse(status) as { status?: string; stage?: string; selectedCount?: number };
 
     expect(hypotheses).toContain('"candidate_id":"intervention_1"');
     expect(hypotheses).toContain('"candidate_id":"mechanism_1"');
@@ -281,9 +335,94 @@ describe("normalizeGenerateHypothesesRequest", () => {
     expect(llmTrace).toContain('"review"');
     expect(llmTrace).toContain('"prompt"');
     expect(llmTrace).toContain('"completion"');
+    expect(progress).toContain('"stage":"axes"');
+    expect(progress).toContain('"stage":"review"');
+    expect(statusJson.status).toBe("completed");
+    expect(statusJson.stage).toBe("completed");
+    expect(statusJson.selectedCount).toBe(2);
     expect(selection).toContain('"selected_ids"');
     expect(selectionJson.scores?.[0]?.implementation_bonus).toBeTypeOf("number");
     expect(selectionJson.scores?.[0]?.bundling_penalty).toBeTypeOf("number");
+  });
+
+  it("persists generate_hypotheses progress artifacts before final completion", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-hypothesis-progress-"));
+    process.chdir(root);
+
+    const runId = "run-hypothesis-progress";
+    const run = makeRun(runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "evidence_store.jsonl"),
+      [
+        JSON.stringify({
+          evidence_id: "ev_1",
+          paper_id: "paper_1",
+          claim: "Structured communication reduces ambiguity.",
+          evidence_span: "Structured communication reduces ambiguity by forcing typed handoffs.",
+          limitation_slot: "Not isolated against routing alone.",
+          dataset_slot: "HumanEval",
+          metric_slot: "pass@1 variance",
+          confidence: 0.95
+        }),
+        JSON.stringify({
+          evidence_id: "ev_2",
+          paper_id: "paper_2",
+          claim: "Execution feedback improves iterative correction.",
+          evidence_span: "Execution feedback improves iterative correction through repeated test-repair loops.",
+          limitation_slot: "Adds validator cost.",
+          dataset_slot: "MBPP",
+          metric_slot: "executability",
+          confidence: 0.94
+        })
+      ].join("\n") + "\n",
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "corpus.jsonl"),
+      [
+        JSON.stringify({ paper_id: "paper_1", title: "Paper One" }),
+        JSON.stringify({ paper_id: "paper_2", title: "Paper Two" })
+      ].join("\n") + "\n",
+      "utf8"
+    );
+
+    const gate = createDeferred();
+    const llm = new BlockingQueueJsonLLMClient(stagedHypothesisOutputs(), 0, gate.promise);
+    const node = createGenerateHypothesesNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm,
+      pdfTextLlm: llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const execution = node.execute({ run, graph: run.graph });
+    const statusPath = path.join(runDir, "hypothesis_generation", "status.json");
+    const progressPath = path.join(runDir, "hypothesis_generation", "progress.jsonl");
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+
+    const liveStatusText = await waitForText(
+      statusPath,
+      (text) => text.includes('"status": "running"') && text.includes('"stage": "axes"')
+    );
+    const liveProgressText = await waitForText(progressPath, (text) => text.includes('"stage":"axes"'));
+
+    expect(liveStatusText).toContain("Synthesizing evidence axes");
+    expect(liveProgressText).toContain("Synthesizing evidence axes");
+    await expect(runContext.get("generate_hypotheses.progress_stage")).resolves.toBe("axes");
+    await expect(runContext.get("generate_hypotheses.status")).resolves.toBe("running");
+
+    gate.resolve();
+    const result = await execution;
+
+    expect(result.status).toBe("success");
   });
 
   it("down-weights abstract-only or caveated evidence during hypothesis selection", async () => {

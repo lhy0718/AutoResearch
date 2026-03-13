@@ -2,6 +2,7 @@ import { LLMClient, LLMProgressEvent } from "../llm/client.js";
 import { runTreeOfThoughts } from "../agents/runtime/tot.js";
 import { ConstraintProfile } from "../runConstraints.js";
 import { ObjectiveMetricProfile } from "../objectiveMetric.js";
+import { parseStructuredModelJsonObject } from "./modelJson.js";
 
 export interface HypothesisEvidenceSeed {
   evidence_id?: string;
@@ -975,39 +976,39 @@ function buildDesignPrompt(
 }
 
 function parseHypothesisJson(text: string): RawHypothesisJson {
-  const candidate = extractFirstJsonObject(text);
-  const parsed = JSON.parse(candidate) as RawHypothesisJson;
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("invalid_hypothesis_json");
-  }
-  return parsed;
+  return parseStructuredModelJsonObject<RawHypothesisJson>(text, {
+    emptyError: "empty_json_output",
+    notFoundError: "no_json_object_found",
+    incompleteError: "unterminated_json_object",
+    invalidError: "invalid_hypothesis_json"
+  }).value;
 }
 
 function parseHypothesisAxisJson(text: string): RawHypothesisAxisJson {
-  const candidate = extractFirstJsonObject(text);
-  const parsed = JSON.parse(candidate) as RawHypothesisAxisJson;
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("invalid_hypothesis_axis_json");
-  }
-  return parsed;
+  return parseStructuredModelJsonObject<RawHypothesisAxisJson>(text, {
+    emptyError: "empty_json_output",
+    notFoundError: "no_json_object_found",
+    incompleteError: "unterminated_json_object",
+    invalidError: "invalid_hypothesis_axis_json"
+  }).value;
 }
 
 function parseHypothesisReviewJson(text: string): RawHypothesisReviewJson {
-  const candidate = extractFirstJsonObject(text);
-  const parsed = JSON.parse(candidate) as RawHypothesisReviewJson;
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("invalid_hypothesis_review_json");
-  }
-  return parsed;
+  return parseStructuredModelJsonObject<RawHypothesisReviewJson>(text, {
+    emptyError: "empty_json_output",
+    notFoundError: "no_json_object_found",
+    incompleteError: "unterminated_json_object",
+    invalidError: "invalid_hypothesis_review_json"
+  }).value;
 }
 
 function parseDesignJson(text: string): RawDesignJson {
-  const candidate = extractFirstJsonObject(text);
-  const parsed = JSON.parse(candidate) as RawDesignJson;
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("invalid_design_json");
-  }
-  return parsed;
+  return parseStructuredModelJsonObject<RawDesignJson>(text, {
+    emptyError: "empty_json_output",
+    notFoundError: "no_json_object_found",
+    incompleteError: "unterminated_json_object",
+    invalidError: "invalid_design_json"
+  }).value;
 }
 
 function normalizeHypothesisCandidates(
@@ -2105,48 +2106,6 @@ function emitProgress(
   onProgress?.(event.type === "delta" ? `${label}> ${text}` : text);
 }
 
-function extractFirstJsonObject(text: string): string {
-  const trimmed = text.trim();
-  if (!trimmed) {
-    throw new Error("empty_json_output");
-  }
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]+?)```/i)?.[1]?.trim();
-  const candidate = fenced || trimmed;
-  const firstBrace = candidate.indexOf("{");
-  if (firstBrace < 0) {
-    throw new Error("no_json_object_found");
-  }
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let idx = firstBrace; idx < candidate.length; idx += 1) {
-    const char = candidate[idx];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (char === "\\") {
-      escaped = true;
-      continue;
-    }
-    if (char === '"') {
-      inString = !inString;
-      continue;
-    }
-    if (inString) {
-      continue;
-    }
-    if (char === "{") {
-      depth += 1;
-    } else if (char === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        return candidate.slice(firstBrace, idx + 1);
-      }
-    }
-  }
-  throw new Error("unterminated_json_object");
-}
 
 function normalizeStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) {

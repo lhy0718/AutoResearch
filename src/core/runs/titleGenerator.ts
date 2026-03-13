@@ -8,8 +8,15 @@ interface TitleGenerationClient {
   }): Promise<string>;
 }
 
+const DEFAULT_TITLE_GENERATION_TIMEOUT_MS = 8000;
+
 export class TitleGenerator {
-  constructor(private readonly resolveClient: () => TitleGenerationClient) {}
+  constructor(
+    private readonly resolveClient: () => TitleGenerationClient,
+    private readonly options: {
+      timeoutMs?: number;
+    } = {}
+  ) {}
 
   async generateTitle(topic: string, constraints: string[], objectiveMetric: string): Promise<string> {
     const prompt = [
@@ -25,15 +32,31 @@ export class TitleGenerator {
       `Objective metric: ${objectiveMetric || "none"}`
     ].join("\n");
 
+    const abortController = new AbortController();
+    const timeoutMs = Math.max(1, this.options.timeoutMs ?? DEFAULT_TITLE_GENERATION_TIMEOUT_MS);
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
     try {
-      const response = await this.resolveClient().runForText({
-        prompt,
-        sandboxMode: "read-only",
-        approvalPolicy: "never"
-      });
+      const response = await Promise.race([
+        this.resolveClient().runForText({
+          prompt,
+          sandboxMode: "read-only",
+          approvalPolicy: "never",
+          abortSignal: abortController.signal
+        }),
+        new Promise<string>((_, reject) => {
+          timeoutId = setTimeout(() => {
+            abortController.abort();
+            reject(new Error("Title generation timed out"));
+          }, timeoutMs);
+        })
+      ]);
       return sanitizeTitle(response, topic);
     } catch {
       return fallbackTitle(topic);
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
     }
   }
 }

@@ -158,6 +158,37 @@ describe("AgentOrchestrator (state graph)", () => {
 
     const approved = await orchestrator.approveCurrent(run.id);
     expect(approved.currentNode).toBe("analyze_papers");
+    expect(approved.graph.nodeStates.collect_papers.status).toBe("completed");
+    expect(approved.graph.nodeStates.analyze_papers.status).toBe("needs_approval");
+    expect(approved.graph.nodeStates.analyze_papers.note).toBe("analyze_papers ok");
+  });
+
+  it("continues into generate_hypotheses after approving analyze_papers in manual mode", async () => {
+    const { store, orchestrator } = await setup(new DeterministicRegistry({}), {
+      approvalMode: "manual"
+    });
+
+    const run = await store.createRun({
+      title: "Run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "analyze_papers";
+    run.graph.currentNode = "analyze_papers";
+    run.status = "paused";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "needs_approval";
+    run.graph.nodeStates.analyze_papers.note = "analysis ready for approval";
+    await store.updateRun(run);
+
+    const approved = await orchestrator.approveCurrent(run.id);
+
+    expect(approved.graph.nodeStates.analyze_papers.status).toBe("completed");
+    expect(approved.currentNode).toBe("generate_hypotheses");
+    expect(approved.graph.nodeStates.generate_hypotheses.status).toBe("needs_approval");
+    expect(approved.graph.nodeStates.generate_hypotheses.note).toBe("generate_hypotheses ok");
   });
 
   it("auto advances from implement_experiments to run_experiments when approval is not required", async () => {

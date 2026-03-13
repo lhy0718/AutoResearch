@@ -109,7 +109,7 @@ export class AgentOrchestrator {
   }
 
   async approveCurrent(runId: string): Promise<RunRecord> {
-    await this.runtime.approveCurrent(runId);
+    await this.runtime.approveCurrent(runId, { continueAfterApprove: true });
     return this.getPersistedRunOrThrow(runId);
   }
 

@@ -41,6 +41,7 @@ export interface AnalysisSelectedDesign {
   evaluation_steps: string[];
   risks: string[];
   resource_notes: string[];
+  runtime_guardrail_pct?: number;
 }
 
 export interface AnalysisPlanContext {
@@ -195,6 +196,11 @@ export interface AnalysisReport {
   figure_specs: AnalysisFigureSpec[];
   verifier_feedback?: AnalysisVerifierFeedback;
   supplemental_runs: AnalysisSupplementalRun[];
+  supplemental_expectation?: {
+    applicable: boolean;
+    profiles: string[];
+    reason?: string;
+  };
   external_comparisons: AnalysisExternalComparison[];
   statistical_summary: AnalysisStatisticalSummary;
   failure_taxonomy: AnalysisFailureCategory[];
@@ -225,6 +231,11 @@ interface BuildAnalysisReportArgs {
     path?: string;
     metrics: Record<string, unknown>;
   }>;
+  supplementalExpectation?: {
+    applicable: boolean;
+    profiles: string[];
+    reason?: string;
+  };
   recentPaperComparison?: Record<string, unknown>;
   recentPaperComparisonPath?: string;
 }
@@ -248,7 +259,8 @@ export function buildAnalysisReport(args: BuildAnalysisReportArgs): AnalysisRepo
     planContext,
     inputWarnings: args.inputWarnings || [],
     verifierFeedback: args.runVerifierReport,
-    supplementalRuns: args.supplementalMetrics || []
+    supplementalRuns: args.supplementalMetrics || [],
+    supplementalExpectation: args.supplementalExpectation
   });
   const limitations = buildLimitations(planContext, warnings);
   const topMetric = metricTable[0];
@@ -269,7 +281,8 @@ export function buildAnalysisReport(args: BuildAnalysisReportArgs): AnalysisRepo
     objectiveEvaluation: args.objectiveEvaluation,
     objectiveProfile: args.objectiveProfile,
     conditionComparisons,
-    supplementalMetrics: args.supplementalMetrics || []
+    supplementalMetrics: args.supplementalMetrics || [],
+    supplementalExpectation: args.supplementalExpectation
   });
   const executionRuns =
     typeof statisticalSummary.executed_trials === "number"
@@ -282,7 +295,8 @@ export function buildAnalysisReport(args: BuildAnalysisReportArgs): AnalysisRepo
     warnings,
     verifierFeedback,
     supplementalRuns,
-    statisticalSummary
+    statisticalSummary,
+    supplementalExpectation: args.supplementalExpectation
   });
   const figureSpecs = buildFigureSpecs(
     metricTable,
@@ -343,6 +357,7 @@ export function buildAnalysisReport(args: BuildAnalysisReportArgs): AnalysisRepo
     figure_specs: figureSpecs,
     verifier_feedback: verifierFeedback,
     supplemental_runs: supplementalRuns,
+    supplemental_expectation: args.supplementalExpectation,
     external_comparisons: externalComparisons,
     statistical_summary: statisticalSummary,
     failure_taxonomy: failureTaxonomy
@@ -449,14 +464,18 @@ function parseExperimentPlan(raw: string): AnalysisPlanContext {
             ...asStringList(selectedDesignRaw.evaluation_steps),
             ...asStringList(confirmatory.evaluation_steps)
           ]),
-          risks: uniqueStrings([
+          risks: filterResolvedRuntimeThresholdRisks(
+            uniqueStrings([
             ...asStringList(selectedDesignRaw.risks),
             ...asStringList(confirmatory.risks)
-          ]),
+            ]),
+            extractRuntimeGuardrailPct(selectedDesignRaw, confirmatory)
+          ),
           resource_notes: uniqueStrings([
             ...asStringList(selectedDesignRaw.resource_notes),
             ...asStringList(confirmatory.resource_notes)
-          ])
+          ]),
+          runtime_guardrail_pct: extractRuntimeGuardrailPct(selectedDesignRaw, confirmatory)
         }
       : undefined;
 
@@ -593,6 +612,11 @@ function buildWarnings(args: {
   inputWarnings: string[];
   verifierFeedback?: RunVerifierReport;
   supplementalRuns: Array<{ profile: string; metrics: Record<string, unknown> }>;
+  supplementalExpectation?: {
+    applicable: boolean;
+    profiles: string[];
+    reason?: string;
+  };
 }): string[] {
   const warnings: string[] = [...args.inputWarnings];
   if (args.metricTable.length === 0) {
@@ -613,7 +637,7 @@ function buildWarnings(args: {
   if (args.verifierFeedback?.status === "fail") {
     warnings.push(`Run verifier reported failure at ${args.verifierFeedback.stage}: ${args.verifierFeedback.summary}`);
   }
-  if (args.supplementalRuns.length === 0) {
+  if (args.supplementalRuns.length === 0 && args.supplementalExpectation?.applicable !== false) {
     warnings.push("No supplemental quick_check or confirmatory metrics were available for deeper comparison.");
   }
   return warnings;
@@ -659,6 +683,14 @@ function buildPrimaryFindings(args: {
             ? ` with ${args.executionSummary.observation_count} recorded runner observation(s).`
             : "."
       }`
+    );
+  }
+
+  if (typeof args.planContext.selected_design?.runtime_guardrail_pct === "number") {
+    findings.push(
+      `The selected design preset a practical runtime-increase guardrail of ${formatMetricValue(
+        args.planContext.selected_design.runtime_guardrail_pct
+      )}% before analysis.`
     );
   }
 
@@ -906,6 +938,11 @@ function buildStatisticalSummary(args: {
   objectiveProfile: ObjectiveMetricProfile;
   conditionComparisons: AnalysisConditionComparison[];
   supplementalMetrics: Array<{ profile: string; path?: string; metrics: Record<string, unknown> }>;
+  supplementalExpectation?: {
+    applicable: boolean;
+    profiles: string[];
+    reason?: string;
+  };
 }): AnalysisStatisticalSummary {
   const sampling = asRecord(args.metrics.sampling_profile);
   const totalTrials = asNumber(sampling.total_trials);
@@ -942,7 +979,8 @@ function buildStatisticalSummary(args: {
     cachedTrials,
     confidenceIntervals,
     stabilityMetrics,
-    effectEstimates
+    effectEstimates,
+    supplementalExpectation: args.supplementalExpectation
   });
 
   return {
@@ -964,6 +1002,11 @@ function buildFailureTaxonomy(args: {
   verifierFeedback?: AnalysisVerifierFeedback;
   supplementalRuns: AnalysisSupplementalRun[];
   statisticalSummary: AnalysisStatisticalSummary;
+  supplementalExpectation?: {
+    applicable: boolean;
+    profiles: string[];
+    reason?: string;
+  };
 }): AnalysisFailureCategory[] {
   const categories: AnalysisFailureCategory[] = [];
 
@@ -1003,7 +1046,7 @@ function buildFailureTaxonomy(args: {
     });
   }
 
-  if (args.supplementalRuns.length === 0) {
+  if (args.supplementalRuns.length === 0 && args.supplementalExpectation?.applicable !== false) {
     categories.push({
       id: "supplemental_coverage_gap",
       category: "evidence_gap",
@@ -1048,6 +1091,35 @@ function buildFailureTaxonomy(args: {
   }
 
   return categories.slice(0, 6);
+}
+
+function extractRuntimeGuardrailPct(
+  selectedDesignRaw: Record<string, unknown>,
+  confirmatory: Record<string, unknown>
+): number | undefined {
+  const searchSpace = [
+    ...asStringList(selectedDesignRaw.evaluation_steps),
+    ...asStringList(selectedDesignRaw.risks),
+    ...asStringList(confirmatory.evaluation_steps),
+    ...asStringList(confirmatory.risks)
+  ];
+  for (const line of searchSpace) {
+    const match = /(?:threshold|guardrail)[^0-9]{0,40}(\d{1,3})\s*percent/iu.exec(line);
+    if (match) {
+      const value = Number(match[1]);
+      if (Number.isFinite(value) && value > 0) {
+        return value;
+      }
+    }
+  }
+  return undefined;
+}
+
+function filterResolvedRuntimeThresholdRisks(risks: string[], runtimeGuardrailPct?: number): string[] {
+  if (typeof runtimeGuardrailPct !== "number") {
+    return risks;
+  }
+  return risks.filter((risk) => !/threshold .*specified before analysis|runtime increase .*specified before analysis/iu.test(risk));
 }
 
 function extractConfidenceIntervals(args: {
@@ -1127,6 +1199,11 @@ function pickStabilityMetrics(metrics: Record<string, unknown>): AnalysisMetricE
     "cross_run_variance",
     "run_to_run_variance",
     "seed_stability",
+    "rank_stability",
+    "mean_nested_rank_stability",
+    "pairwise_ranking_agreement",
+    "winner_consistency",
+    "sign_consistency_vs_logreg",
     "prompt_paraphrase_sensitivity",
     "paraphrase_stability",
     "replication_success_rate",
@@ -1180,6 +1257,11 @@ function buildStatisticalNotes(args: {
   confidenceIntervals: AnalysisConfidenceInterval[];
   stabilityMetrics: AnalysisMetricEntry[];
   effectEstimates: AnalysisStatisticalEffect[];
+  supplementalExpectation?: {
+    applicable: boolean;
+    profiles: string[];
+    reason?: string;
+  };
 }): string[] {
   const notes: string[] = [];
 
@@ -1204,6 +1286,10 @@ function buildStatisticalNotes(args: {
 
   if (args.effectEstimates[0]) {
     notes.push(args.effectEstimates[0].summary);
+  }
+
+  if (args.supplementalExpectation?.applicable === false && args.supplementalExpectation.reason) {
+    notes.push(args.supplementalExpectation.reason);
   }
 
   if (args.confidenceIntervals.length === 0 && args.stabilityMetrics.length === 0) {

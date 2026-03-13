@@ -1328,6 +1328,107 @@ describe("collectPapers bibtex", () => {
     await waitForCollectEnrichmentJob(runId);
   });
 
+  it("prefers the extracted broad brief topic over a narrowed run topic for unlabeled auto-start briefs", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-extracted-brief-topic-"));
+    process.chdir(root);
+
+    const runId = "run-collect-extracted-brief-topic";
+    const run: RunRecord = {
+      version: 3,
+      workflowVersion: 3,
+      id: runId,
+      title: "Tabular Baselines",
+      topic: "Resource-aware baselines for tabular classification on small public datasets",
+      constraints: [],
+      objectiveMetric: "metric",
+      status: "running",
+      currentNode: "collect_papers",
+      latestSummary: undefined,
+      nodeThreads: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      graph: createDefaultGraphState(),
+      memoryRefs: {
+        runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
+      }
+    };
+
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "run_brief.raw",
+            value: [
+              "Start a new research run on classical machine learning baselines for tabular classification.",
+              "Objective: improve macro-F1 over a logistic regression baseline while preserving reproducible local runtime and memory efficiency.",
+              "Constraints: CPU-only execution, lightweight Python dependencies."
+            ].join("\n"),
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "run_brief.extracted",
+            value: {
+              topic: "classical machine learning baselines for tabular classification.",
+              objectiveMetric: "macro-F1 over logistic regression",
+              constraints: ["CPU-only execution"]
+            },
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const streamSearchPapers = vi.fn(() =>
+      batchStream([
+        {
+          paperId: "paper-1",
+          title: "Classical tabular baseline survey",
+          authors: ["Alice Kim"]
+        }
+      ])
+    );
+
+    const node = createCollectPapersNode({
+      config: {
+        papers: {
+          max_results: 200
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {
+        streamSearchPapers,
+        getLastSearchDiagnostics: vi.fn(() => ({
+          attemptCount: 1,
+          lastStatus: 200,
+          attempts: [{ attempt: 1, ok: true, status: 200, endpoint: "search" }]
+        }))
+      } as any
+    });
+
+    const result = await node.execute({
+      run,
+      graph: run.graph
+    });
+
+    expect(result.status).toBe("success");
+    expect(streamSearchPapers).toHaveBeenCalledTimes(1);
+    expect(streamSearchPapers.mock.calls[0]?.[0]).toMatchObject({
+      query: "classical machine learning baselines for tabular classification"
+    });
+    await waitForCollectEnrichmentJob(runId);
+  });
+
   it("falls back from a narrow requested query to the broader brief topic after zero results", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-query-fallback-"));
     process.chdir(root);
@@ -1466,6 +1567,282 @@ describe("collectPapers bibtex", () => {
     });
 
     await waitForCollectEnrichmentJob(runId);
+  });
+
+  it("filters obvious off-topic tail papers from a lightweight tabular raw corpus before selection", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-lightweight-tail-"));
+    process.chdir(root);
+
+    const runId = "run-collect-lightweight-tail";
+    const run: RunRecord = {
+      version: 3,
+      workflowVersion: 3,
+      id: runId,
+      title: "Tabular Baselines",
+      topic: "Classical machine learning baselines for tabular classification on small public datasets",
+      constraints: [],
+      objectiveMetric: "macro_f1",
+      status: "running",
+      currentNode: "collect_papers",
+      latestSummary: undefined,
+      nodeThreads: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      graph: createDefaultGraphState(),
+      memoryRefs: {
+        runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
+      }
+    };
+
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "collect_papers.request",
+            value: {
+              query: "Classical machine learning baselines for tabular classification on small public datasets",
+              limit: 8,
+              sort: { field: "relevance", order: "desc" },
+              bibtexMode: "generated"
+            },
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const eventStream = new InMemoryEventStream();
+    const node = createCollectPapersNode({
+      config: {
+        papers: {
+          max_results: 200
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream,
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {
+        streamSearchPapers: vi.fn(() =>
+          batchStream([
+            {
+              paperId: "relevant_svm",
+              title:
+                "Cross-Dataset Evaluation of Support Vector Machines: A Reproducible, Calibration-Aware Baseline for Tabular Classification",
+              abstract:
+                "A calibration-aware benchmark compares SVM, logistic regression, decision tree, and random forest on small tabular datasets.",
+              authors: ["Alice Kim"],
+              openAccessPdfUrl: "https://example.org/relevant_svm.pdf"
+            },
+            {
+              paperId: "relevant_benchmark",
+              title: "Benchmarking classical baselines on structured datasets",
+              abstract:
+                "We compare logistic regression, random forests, and gradient boosting for tabular classification across small public benchmarks.",
+              authors: ["Bob Lee"],
+              openAccessPdfUrl: "https://example.org/relevant_benchmark.pdf"
+            },
+            {
+              paperId: "relevant_pmlb",
+              title: "PMLBmini: A Tabular Classification Benchmark Suite for Data-Scarce Applications",
+              abstract:
+                "A benchmark suite for small tabular classification tasks compares classical linear baselines, AutoML, and tabular deep learning.",
+              authors: ["Cara Park"],
+              openAccessPdfUrl: "https://example.org/relevant_pmlb.pdf"
+            },
+            {
+              paperId: "relevant_clinical",
+              title: "Resource-Efficient Small-Model Pipeline for Congestive Heart Failure Prediction",
+              abstract:
+                "We evaluate structured tabular clinical features on a public dataset and compare lightweight classification baselines.",
+              authors: ["Daniel Choi"],
+              openAccessPdfUrl: "https://example.org/relevant_clinical.pdf"
+            },
+            {
+              paperId: "off_topic_secret",
+              title: "Secret Breach Prevention in Software Issue Reports",
+              abstract:
+                "We evaluate entropy heuristics, classical machine learning, deep learning, and LLM-based methods for secret detection.",
+              authors: ["Eve Han"],
+              openAccessPdfUrl: "https://example.org/off_topic_secret.pdf"
+            },
+            {
+              paperId: "off_topic_music",
+              title: "Emotional response to music: the Emotify + dataset",
+              abstract: "Abstract unavailable.",
+              authors: ["Finn Seo"],
+              openAccessPdfUrl: "https://example.org/off_topic_music.pdf"
+            },
+            {
+              paperId: "off_topic_sentiment",
+              title: "Application of Sentiment Analysis to Labeling Characters as Good or Evil",
+              abstract: "Abstract unavailable.",
+              authors: ["Grace Lim"],
+              openAccessPdfUrl: "https://example.org/off_topic_sentiment.pdf"
+            },
+            {
+              paperId: "off_topic_raman",
+              title:
+                "DeepRaman: Implementing surface-enhanced Raman scattering together with machine learning for bacterial endotoxin classification",
+              abstract:
+                "A classification pipeline for bacterial endotoxin differentiation using Raman scattering and machine learning.",
+              authors: ["Henry Jung"],
+              openAccessPdfUrl: "https://example.org/off_topic_raman.pdf"
+            }
+          ])
+        ),
+        getLastSearchDiagnostics: vi.fn(() => ({
+          attemptCount: 1,
+          lastStatus: 200,
+          attempts: [{ attempt: 1, ok: true, status: 200, endpoint: "search" }]
+        }))
+      } as any
+    });
+
+    const result = await node.execute({
+      run,
+      graph: run.graph
+    });
+
+    expect(result.status).toBe("success");
+
+    const corpusRaw = await readFile(path.join(root, ".autolabos", "runs", runId, "corpus.jsonl"), "utf8");
+    const corpusPaperIds = corpusRaw
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { paper_id: string })
+      .map((row) => row.paper_id);
+    expect(new Set(corpusPaperIds)).toEqual(
+      new Set(["relevant_svm", "relevant_benchmark", "relevant_pmlb", "relevant_clinical"])
+    );
+
+    const lastResult = (await readRunContextValue(root, runId, "collect_papers.last_result")) as {
+      stored?: number;
+      fetched?: number;
+    } | null;
+    expect(lastResult?.fetched).toBe(8);
+    expect(lastResult?.stored).toBe(4);
+
+    expect(
+      eventStream
+        .history()
+        .filter((event) => event.type === "OBS_RECEIVED")
+        .some((event) =>
+          String(event.payload?.text ?? "").includes(
+            "Lightweight corpus quality guard removed 4 off-topic tail paper(s) before selection."
+          )
+        )
+    ).toBe(true);
+  });
+
+  it("does not trim broader tabular collections when the raw corpus is larger than the lightweight tail window", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-broad-tabular-"));
+    process.chdir(root);
+
+    const runId = "run-collect-broad-tabular";
+    const run: RunRecord = {
+      version: 3,
+      workflowVersion: 3,
+      id: runId,
+      title: "Tabular Baselines",
+      topic: "Classical machine learning baselines for tabular classification on small public datasets",
+      constraints: [],
+      objectiveMetric: "macro_f1",
+      status: "running",
+      currentNode: "collect_papers",
+      latestSummary: undefined,
+      nodeThreads: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      graph: createDefaultGraphState(),
+      memoryRefs: {
+        runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
+      }
+    };
+
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "collect_papers.request",
+            value: {
+              query: "Classical machine learning baselines for tabular classification on small public datasets",
+              limit: 13,
+              sort: { field: "relevance", order: "desc" },
+              bibtexMode: "generated"
+            },
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const eventStream = new InMemoryEventStream();
+    const papers = Array.from({ length: 13 }, (_, index) => ({
+      paperId: `paper-${index + 1}`,
+      title: index < 9 ? `Tabular baseline paper ${index + 1}` : `Off-topic paper ${index + 1}`,
+      abstract:
+        index < 9
+          ? "Tabular classification benchmark comparing lightweight baselines on small public datasets."
+          : "This abstract is unrelated to tabular classification and only exists to fill the broader corpus tail.",
+      authors: [`Author ${index + 1}`],
+      openAccessPdfUrl: `https://example.org/paper-${index + 1}.pdf`
+    }));
+    const node = createCollectPapersNode({
+      config: {
+        papers: {
+          max_results: 200
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream,
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {
+        streamSearchPapers: vi.fn(() => batchStream(papers)),
+        getLastSearchDiagnostics: vi.fn(() => ({
+          attemptCount: 1,
+          lastStatus: 200,
+          attempts: [{ attempt: 1, ok: true, status: 200, endpoint: "search" }]
+        }))
+      } as any
+    });
+
+    const result = await node.execute({
+      run,
+      graph: run.graph
+    });
+
+    expect(result.status).toBe("success");
+
+    const lastResult = (await readRunContextValue(root, runId, "collect_papers.last_result")) as {
+      stored?: number;
+      fetched?: number;
+    } | null;
+    expect(lastResult?.fetched).toBe(13);
+    expect(lastResult?.stored).toBe(13);
+    expect(
+      eventStream
+        .history()
+        .filter((event) => event.type === "OBS_RECEIVED")
+        .some((event) => String(event.payload?.text ?? "").includes("Lightweight corpus quality guard removed"))
+    ).toBe(false);
   });
 
   it("updates the stored collect summary after deferred enrichment completes when the latest summary is still stale", async () => {

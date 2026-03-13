@@ -234,7 +234,10 @@ class AutoLabOSWebController {
         const checks = await runDoctor(this.runtime.codex, {
           llmMode: this.runtime.config.providers.llm_mode,
           pdfAnalysisMode: this.runtime.config.analysis.pdf_mode,
-          openAiApiKeyConfigured: await hasOpenAiApiKey(this.cwd)
+          openAiApiKeyConfigured: await hasOpenAiApiKey(this.cwd),
+          codexResearchModel: this.runtime.config.providers.codex.model,
+          codexPdfModel:
+            this.runtime.config.providers.codex.pdf_model || this.runtime.config.providers.codex.model
         });
         return jsonResponse(res, 200, { configured: true, checks } satisfies DoctorResponse);
       }

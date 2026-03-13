@@ -28,7 +28,7 @@ export interface AnalyzeProgressState {
   startedAtMs: number;
   lastUpdatedAtMs: number;
   samples: AnalyzeProgressSample[];
-  phase: "ranking" | "rerank" | "rerank_fallback" | "analyzing";
+  phase: "ranking" | "rerank" | "rerank_failed" | "analyzing";
   candidatePoolSize?: number;
   rerankStage?: number;
   rerankStageTotal?: number;
@@ -454,16 +454,18 @@ export function updateAnalyzeProgressFromLog(
     }
   }
 
-  const rerankFallbackMatch = line.match(/LLM rerank (?:fallback activated\. Using|unavailable, falling back to) deterministic order(?: \((.+)\))?\./u);
-  if (rerankFallbackMatch) {
-    const reason = rerankFallbackMatch[1]?.trim();
+  const rerankFailureMatch =
+    line.match(/LLM rerank failed\. Top \d+ selection requires a successful model rerank \((.+)\)\./u) ||
+    line.match(/LLM rerank (?:fallback activated\. Using|unavailable, falling back to) deterministic order(?: \((.+)\))?\./u);
+  if (rerankFailureMatch) {
+    const reason = rerankFailureMatch[1]?.trim();
     return {
       total: current?.total ?? 0,
       current: current?.current ?? 0,
       startedAtMs: current?.startedAtMs ?? nowMs,
       lastUpdatedAtMs: nowMs,
       samples: current?.samples ? [...current.samples] : [],
-      phase: "rerank_fallback",
+      phase: "rerank_failed",
       candidatePoolSize: current?.candidatePoolSize,
       rerankStage: current?.rerankStage,
       rerankStageTotal: current?.rerankStageTotal,
@@ -543,6 +545,7 @@ export function isAnalyzeProgressLog(line: string): boolean {
     /Deterministic pre-rank completed for \d+ candidate\(s\)\./u.test(line) ||
     /Preparing LLM rerank for \d+ candidate\(s\) to choose top \d+\./u.test(line) ||
     /Rerank progress: \d+\/\d+ \(\d+%\) .+\./u.test(line) ||
+    /LLM rerank failed\. Top \d+ selection requires a successful model rerank \(.+\)\./u.test(line) ||
     /LLM rerank (?:fallback activated\. Using|unavailable, falling back to) deterministic order(?: \(.+\))?\./u.test(line) ||
     /Analyzing paper \d+\/\d+: /u.test(line)
   );
@@ -584,11 +587,11 @@ export function formatAnalyzeProgressLogLine(
     return base;
   }
 
-  if (state.phase === "rerank_fallback") {
+  if (state.phase === "rerank_failed") {
     const base =
       state.total > 0
-        ? `Analyzing... rerank unavailable, using deterministic order for top ${state.total}`
-        : "Analyzing... rerank unavailable, using deterministic order";
+        ? `Analyzing... rerank failed for top ${state.total}`
+        : "Analyzing... rerank failed";
     return state.rerankLabel ? `${base} (${state.rerankLabel})` : base;
   }
 

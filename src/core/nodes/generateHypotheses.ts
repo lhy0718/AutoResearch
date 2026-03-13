@@ -1,9 +1,10 @@
 import path from "node:path";
 
 import { GraphNodeHandler } from "../stateGraph/types.js";
-import { appendJsonl, safeRead, writeRunArtifact } from "./helpers.js";
+import { appendJsonl, appendJsonlItems, safeRead, writeRunArtifact } from "./helpers.js";
 import { NodeExecutionDeps } from "./types.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
+import { RunRecord } from "../../types.js";
 import {
   generateHypothesesFromEvidence,
   HypothesisCandidate,
@@ -21,6 +22,8 @@ interface EvidenceRow extends HypothesisEvidenceSeed {
 
 const DEFAULT_TOP_K = 2;
 const DEFAULT_BRANCH_COUNT = 6;
+const HYPOTHESIS_PROGRESS_STATUS_ARTIFACT = "hypothesis_generation/status.json";
+const HYPOTHESIS_PROGRESS_LOG_ARTIFACT = "hypothesis_generation/progress.jsonl";
 
 export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
@@ -35,6 +38,54 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
         await runContextMemory.get<{ topK?: unknown; branchCount?: unknown }>("generate_hypotheses.request")
       );
       await runContextMemory.put("generate_hypotheses.request", request);
+      const weakEvidenceCount = evidenceRows.filter((item) => isWeakEvidenceSeed(item)).length;
+      const startedAt = new Date().toISOString();
+      let progressCount = 0;
+      let progressQueue: Promise<void> = Promise.resolve();
+
+      await writeHypothesisProgressStatus(run, runContextMemory, {
+        status: "running",
+        stage: "preflight",
+        message: `Loaded ${evidenceRows.length} evidence item(s) for hypothesis generation.`,
+        startedAt,
+        updatedAt: startedAt,
+        evidenceCount: evidenceRows.length,
+        weakEvidenceCount,
+        request,
+        progressCount
+      });
+
+      const queueProgressUpdate = (text: string) => {
+        const updatedAt = new Date().toISOString();
+        const stage = classifyHypothesisProgressStage(text);
+        const currentCount = progressCount + 1;
+        progressCount = currentCount;
+        progressQueue = progressQueue.then(async () => {
+          await appendJsonlItems(run, HYPOTHESIS_PROGRESS_LOG_ARTIFACT, [
+            {
+              index: currentCount,
+              timestamp: updatedAt,
+              stage,
+              message: text
+            }
+          ]);
+          await writeHypothesisProgressStatus(run, runContextMemory, {
+            status: "running",
+            stage,
+            message: text,
+            startedAt,
+            updatedAt,
+            evidenceCount: evidenceRows.length,
+            weakEvidenceCount,
+            request,
+            progressCount: currentCount
+          });
+        });
+      };
+
+      const flushProgressUpdates = async () => {
+        await progressQueue;
+      };
 
       const emitLog = (text: string) => {
         deps.eventStream.emit({
@@ -43,17 +94,31 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
           node: "generate_hypotheses",
           payload: { text }
         });
+        queueProgressUpdate(text);
       };
 
       if (evidenceRows.length === 0) {
         const message =
           "No evidence is available for hypothesis generation. Run analyze_papers first and confirm evidence_store.jsonl contains evidence items.";
         emitLog(message);
+        await flushProgressUpdates();
         await runContextMemory.put("generate_hypotheses.top_k", 0);
         await runContextMemory.put("generate_hypotheses.candidate_count", 0);
         await runContextMemory.put("generate_hypotheses.source", "missing_evidence");
         await runContextMemory.put("generate_hypotheses.pipeline", "missing_evidence");
         await runContextMemory.put("generate_hypotheses.summary", message);
+        await writeHypothesisProgressStatus(run, runContextMemory, {
+          status: "failed",
+          stage: "missing_evidence",
+          message,
+          startedAt,
+          updatedAt: new Date().toISOString(),
+          evidenceCount: 0,
+          weakEvidenceCount: 0,
+          request,
+          progressCount,
+          pipeline: "missing_evidence"
+        });
         return {
           status: "failure",
           summary: message,
@@ -62,7 +127,6 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
         };
       }
 
-      const weakEvidenceCount = evidenceRows.filter((item) => isWeakEvidenceSeed(item)).length;
       if (weakEvidenceCount > 0) {
         emitLog(
           `Evidence-quality guardrail: ${weakEvidenceCount}/${evidenceRows.length} evidence item(s) are abstract-only or caveated, so hypothesis selection will down-weight them.`
@@ -82,6 +146,7 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
         topK: request.topK,
         onProgress: emitLog
       });
+      await flushProgressUpdates();
 
       const selectionScores = new Map(
         planning.artifacts.selection.scores.map((item) => [item.candidate_id, item] as const)
@@ -179,12 +244,37 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
       emitLog(
         `Selected ${hypotheses.length} hypothesis/hypotheses from ${planning.candidates.length} candidate(s) using ${planning.source}.`
       );
+      await flushProgressUpdates();
+      const finalSummary = planning.fallbackReason
+        ? `${planning.summary} Falling back after: ${planning.fallbackReason}`
+        : planning.summary;
+      await writeHypothesisProgressStatus(run, runContextMemory, {
+        status: "completed",
+        stage: "completed",
+        message: finalSummary,
+        startedAt,
+        updatedAt: new Date().toISOString(),
+        evidenceCount: evidenceRows.length,
+        weakEvidenceCount,
+        request,
+        progressCount,
+        pipeline: planning.artifacts.pipeline,
+        source: planning.source,
+        fallbackReason: planning.fallbackReason,
+        candidateCount: planning.candidates.length,
+        selectedCount: hypotheses.length,
+        artifactPaths: [
+          "hypotheses.jsonl",
+          HYPOTHESIS_PROGRESS_STATUS_ARTIFACT,
+          HYPOTHESIS_PROGRESS_LOG_ARTIFACT,
+          "hypothesis_generation/selection.json",
+          "hypothesis_generation/llm_trace.json"
+        ]
+      });
 
       return {
         status: "success",
-        summary: planning.fallbackReason
-          ? `${planning.summary} Falling back after: ${planning.fallbackReason}`
-          : planning.summary,
+        summary: finalSummary,
         needsApproval: true,
         toolCallsUsed: Math.max(1, planning.toolCallsUsed)
       };
@@ -205,6 +295,86 @@ export function normalizeGenerateHypothesesRequest(
 
 function normalizePositiveInt(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
+
+type HypothesisProgressStage =
+  | "preflight"
+  | "evidence_quality"
+  | "axes"
+  | "mechanism_drafts"
+  | "contradiction_drafts"
+  | "intervention_drafts"
+  | "review"
+  | "gating"
+  | "single_pass"
+  | "fallback"
+  | "selection"
+  | "completed"
+  | "missing_evidence"
+  | "progress";
+
+interface HypothesisProgressStatus {
+  status: "running" | "completed" | "failed";
+  stage: HypothesisProgressStage;
+  message: string;
+  startedAt: string;
+  updatedAt: string;
+  evidenceCount: number;
+  weakEvidenceCount: number;
+  request: GenerateHypothesesRequest;
+  progressCount: number;
+  pipeline?: "staged" | "single_pass" | "fallback" | "missing_evidence";
+  source?: "llm" | "fallback";
+  fallbackReason?: string;
+  candidateCount?: number;
+  selectedCount?: number;
+  artifactPaths?: string[];
+}
+
+async function writeHypothesisProgressStatus(
+  run: RunRecord,
+  runContextMemory: RunContextMemory,
+  status: HypothesisProgressStatus
+): Promise<void> {
+  await writeRunArtifact(run, HYPOTHESIS_PROGRESS_STATUS_ARTIFACT, JSON.stringify(status, null, 2));
+  await runContextMemory.put("generate_hypotheses.status", status.status);
+  await runContextMemory.put("generate_hypotheses.progress_stage", status.stage);
+  await runContextMemory.put("generate_hypotheses.last_progress", status.message);
+  await runContextMemory.put("generate_hypotheses.progress", status);
+}
+
+function classifyHypothesisProgressStage(message: string): HypothesisProgressStage {
+  if (message.includes("Evidence-quality guardrail")) {
+    return "evidence_quality";
+  }
+  if (message.includes("Synthesizing evidence axes") || message.includes("Hypothesis axes")) {
+    return "axes";
+  }
+  if (message.includes("Generating mechanism")) {
+    return "mechanism_drafts";
+  }
+  if (message.includes("Generating contradiction")) {
+    return "contradiction_drafts";
+  }
+  if (message.includes("Generating intervention")) {
+    return "intervention_drafts";
+  }
+  if (message.includes("Reviewing ") || message.includes("Hypothesis review")) {
+    return "review";
+  }
+  if (message.includes("Hard-gated")) {
+    return "gating";
+  }
+  if (message.includes("single-pass")) {
+    return "single_pass";
+  }
+  if (message.includes("fallback")) {
+    return "fallback";
+  }
+  if (message.includes("Selected ") && message.includes("hypothesis/hypotheses")) {
+    return "selection";
+  }
+  return "progress";
 }
 
 function parseEvidenceSeeds(raw: string): EvidenceRow[] {

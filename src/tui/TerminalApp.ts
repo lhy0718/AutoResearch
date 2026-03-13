@@ -81,7 +81,7 @@ import {
 } from "../core/resultAnalysisPresentation.js";
 import { getAppVersion } from "./version.js";
 import { buildAnimatedStatusText, buildFrame, buildThinkingText, RenderFrameOutput, SelectionMenuOption } from "./renderFrame.js";
-import { supportsColor } from "./theme.js";
+import { applyCodexSurfaceTheme, parseTerminalBackgroundResponse, supportsColor, type RgbColor } from "./theme.js";
 import { OpenAiResponsesTextClient } from "../integrations/openai/responsesTextClient.js";
 import { buildContextualGuidance, detectGuidanceLanguageFromText, GuidanceLanguage } from "./contextualGuidance.js";
 import {
@@ -246,6 +246,8 @@ export class TerminalApp {
   private steeringBufferDuringThinking: string[] = [];
   private activeBusyAbortController?: AbortController;
   private activeBusyLabel?: string;
+  private creatingRunFromBrief = false;
+  private creatingRunTargetId?: string;
   private collectProgress?: CollectProgressState;
   private analyzeProgress?: AnalyzeProgressState;
   private readonly runProjectionHints = new Map<string, RunProjectionHints>();
@@ -291,23 +293,9 @@ export class TerminalApp {
       await this.loadHistoryForRun(this.activeRunId);
     }
     this.unsubscribeEvents = this.eventStream.subscribe((event) => {
-      this.applyProjectedRunEvent(event);
-      void this.refreshRunFromStore(event.runId)
-        .then(() => this.refreshRunProjectionHints(event.runId))
-        .then(() => {
-          if (this.activeRunId === event.runId) {
-            this.render();
-          }
-        })
-        .catch(() => undefined);
-      const line = formatEventLog(event);
-      if (!line) {
-        return;
-      }
-      this.pushLog(line);
-      this.render();
+      void this.handleStreamEvent(event);
     });
-    this.attachKeyboard();
+    await this.attachKeyboard();
     this.render();
 
     await new Promise<void>((resolve) => {
@@ -315,16 +303,19 @@ export class TerminalApp {
     });
   }
 
-  private attachKeyboard(): void {
-    readline.emitKeypressEvents(process.stdin);
+  private async attachKeyboard(): Promise<void> {
     process.stdin.resume();
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(true);
     }
+
     if (process.stdout.isTTY) {
+      applyCodexSurfaceTheme(await resolveTerminalBackground(process.stdin, process.stdout));
       process.stdout.write(ENABLE_KEYBOARD_ENHANCEMENT);
       process.stdout.write(ENABLE_MODIFY_OTHER_KEYS);
     }
+
+    readline.emitKeypressEvents(process.stdin);
     process.stdin.prependListener("data", this.rawInputHandler);
     process.stdin.on("keypress", this.keypressHandler);
   }
@@ -1616,6 +1607,17 @@ export class TerminalApp {
     return run.status === "paused" && state.status === "pending" && state.note === "Canceled by user";
   }
 
+  private shouldAutoContinueAfterCollectRecovery(run: RunRecord): boolean {
+    if (AGENT_ORDER.indexOf(run.currentNode) <= AGENT_ORDER.indexOf("collect_papers")) {
+      return false;
+    }
+    if (run.status === "completed" || run.status === "failed") {
+      return false;
+    }
+    const currentState = run.graph.nodeStates[run.currentNode];
+    return currentState.status === "pending" || currentState.status === "running";
+  }
+
   private applySteeringInput(instruction: string): void {
     if (!this.activeNaturalRequest) {
       return;
@@ -1729,59 +1731,70 @@ export class TerminalApp {
     abortSignal?: AbortSignal;
     sourcePath?: string;
   }): Promise<RunRecord> {
-    const extracted = await extractRunBrief({
-      brief: input.brief,
-      defaults: {
-        topic: input.topic?.trim() || this.config.research.default_topic,
-        constraints: input.constraints?.length ? input.constraints : this.config.research.default_constraints,
-        objectiveMetric: input.objectiveMetric?.trim() || this.config.research.default_objective_metric
-      },
-      llm: this.getCommandIntentClient(),
-      abortSignal: input.abortSignal
-    });
-    for (const line of summarizeRunBrief(extracted)) {
-      this.pushLog(line);
-    }
-    this.pushLog(`Generating run title with ${this.describePrimaryLlmProvider(this.config.providers.llm_mode)}...`);
+    this.creatingRunFromBrief = true;
+    this.creatingRunTargetId = undefined;
     this.render();
+    try {
+      const extracted = await extractRunBrief({
+        brief: input.brief,
+        defaults: {
+          topic: input.topic?.trim() || this.config.research.default_topic,
+          constraints: input.constraints?.length ? input.constraints : this.config.research.default_constraints,
+          objectiveMetric: input.objectiveMetric?.trim() || this.config.research.default_objective_metric
+        },
+        llm: this.getCommandIntentClient(),
+        abortSignal: input.abortSignal
+      });
+      for (const line of summarizeRunBrief(extracted)) {
+        this.pushLog(line);
+      }
+      this.pushLog(`Generating run title with ${this.describePrimaryLlmProvider(this.config.providers.llm_mode)}...`);
+      this.render();
 
-    const title = await this.titleGenerator.generateTitle(
-      extracted.topic,
-      extracted.constraints,
-      extracted.objectiveMetric
-    );
-    const run = await this.runStore.createRun({
-      title,
-      topic: extracted.topic,
-      constraints: extracted.constraints,
-      objectiveMetric: extracted.objectiveMetric
-    });
-    const runContext = new RunContextMemory(this.resolveWorkspacePath(run.memoryRefs.runContextPath));
-    await runContext.put("run_brief.raw", input.brief);
-    await runContext.put("run_brief.extracted", extracted);
-    await runContext.put("run_brief.plan_summary", extracted.planSummary || null);
-    if (input.sourcePath) {
-      const resolvedSourcePath = path.isAbsolute(input.sourcePath)
-        ? input.sourcePath
-        : path.join(process.cwd(), input.sourcePath);
-      const snapshotPath = await snapshotResearchBriefToRun(process.cwd(), run.id, resolvedSourcePath);
-      await runContext.put("run_brief.source_path", resolvedSourcePath);
-      await runContext.put(
-        "run_brief.snapshot_path",
-        path.relative(process.cwd(), snapshotPath).replace(/\\/g, "/")
+      const title = await this.titleGenerator.generateTitle(
+        extracted.topic,
+        extracted.constraints,
+        extracted.objectiveMetric
       );
-    }
+      const run = await this.runStore.createRun({
+        title,
+        topic: extracted.topic,
+        constraints: extracted.constraints,
+        objectiveMetric: extracted.objectiveMetric
+      });
+      this.creatingRunTargetId = run.id;
+      await this.refreshRunIndex();
+      await this.setActiveRunId(run.id);
+      this.render();
 
-    await this.refreshRunIndex();
-    await this.setActiveRunId(run.id);
-    this.pushLog(`Created run ${run.id}`);
-    this.pushLog(`Title: ${run.title}`);
-    this.updateSuggestions();
-    this.render();
-    if (input.autoStart) {
-      await this.startRun(run.id, input.abortSignal);
+      const runContext = new RunContextMemory(this.resolveWorkspacePath(run.memoryRefs.runContextPath));
+      await runContext.put("run_brief.raw", input.brief);
+      await runContext.put("run_brief.extracted", extracted);
+      await runContext.put("run_brief.plan_summary", extracted.planSummary || null);
+      if (input.sourcePath) {
+        const resolvedSourcePath = path.isAbsolute(input.sourcePath)
+          ? input.sourcePath
+          : path.join(process.cwd(), input.sourcePath);
+        const snapshotPath = await snapshotResearchBriefToRun(process.cwd(), run.id, resolvedSourcePath);
+        await runContext.put("run_brief.source_path", resolvedSourcePath);
+        await runContext.put(
+          "run_brief.snapshot_path",
+          path.relative(process.cwd(), snapshotPath).replace(/\\/g, "/")
+        );
+      }
+      this.creatingRunFromBrief = false;
+      this.pushLog(`Created run ${run.id}`);
+      this.pushLog(`Title: ${run.title}`);
+      this.updateSuggestions();
+      this.render();
+      if (input.autoStart) {
+        await this.startRun(run.id, input.abortSignal);
+      }
+      return run;
+    } finally {
+      this.creatingRunFromBrief = false;
+      this.creatingRunTargetId = undefined;
     }
-    return run;
   }
 
   private async startRun(runId: string, abortSignal?: AbortSignal): Promise<RunRecord> {
@@ -1963,7 +1976,9 @@ export class TerminalApp {
     const checks = await runDoctor(this.codex, {
       llmMode: this.config.providers.llm_mode,
       pdfAnalysisMode: this.config.analysis.pdf_mode,
-      openAiApiKeyConfigured: await resolveOpenAiApiKey(process.cwd()).then(Boolean)
+      openAiApiKeyConfigured: await resolveOpenAiApiKey(process.cwd()).then(Boolean),
+      codexResearchModel: this.config.providers.codex.model,
+      codexPdfModel: this.config.providers.codex.pdf_model || this.config.providers.codex.model
     });
     for (const check of checks) {
       const mark = check.ok ? "OK" : "FAIL";
@@ -2493,6 +2508,16 @@ export class TerminalApp {
     }
 
     this.pushLog(`collect_papers finished: ${oneLine(response.result.summary, 480)}`);
+    const refreshedRun = (await this.runStore.getRun(run.id)) ?? response.run;
+    if (this.shouldAutoContinueAfterCollectRecovery(refreshedRun)) {
+      const updatedRun = await this.continueSupervisedRun(run.id, abortSignal);
+      if (updatedRun.status === "failed") {
+        return {
+          ok: false,
+          reason: updatedRun.latestSummary || updatedRun.graph.nodeStates[updatedRun.currentNode].lastError || "run failed"
+        };
+      }
+    }
     return { ok: true };
   }
 
@@ -3563,8 +3588,13 @@ export class TerminalApp {
   }
 
   private getRenderableRun(): RunRecord | undefined {
-    const run = this.getActiveIndexedRun();
-    return run ? normalizeRunForDisplay(run, this.getRunProjectionHints(run)) : undefined;
+    const active = this.getActiveIndexedRun();
+    if (this.creatingRunFromBrief) {
+      if (!active || !this.creatingRunTargetId || active.id !== this.creatingRunTargetId) {
+        return undefined;
+      }
+    }
+    return active ? normalizeRunForDisplay(active, this.getRunProjectionHints(active)) : undefined;
   }
 
   private getRunProjectionHints(run?: RunRecord): RunProjectionHints | undefined {
@@ -3635,6 +3665,33 @@ export class TerminalApp {
     } else {
       this.runProjectionHints.delete(run.id);
     }
+  }
+
+  private shouldLogStreamEvent(event: AutoLabOSEvent): boolean {
+    if (this.creatingRunFromBrief) {
+      return false;
+    }
+    return !this.activeRunId || event.runId === this.activeRunId;
+  }
+
+  private async handleStreamEvent(event: AutoLabOSEvent): Promise<void> {
+    this.applyProjectedRunEvent(event);
+    try {
+      await this.refreshRunFromStore(event.runId);
+      await this.refreshRunProjectionHints(event.runId);
+      if (this.activeRunId === event.runId) {
+        this.render();
+      }
+    } catch {
+      // Ignore transient projection refresh errors.
+    }
+
+    const line = formatEventLog(event);
+    if (!line || !this.shouldLogStreamEvent(event)) {
+      return;
+    }
+    this.pushLog(line);
+    this.render();
   }
 
   private applyProjectedRunEvent(event: AutoLabOSEvent): void {
@@ -4037,7 +4094,9 @@ export class TerminalApp {
   private buildFooterItems(run?: RunRecord): string[] {
     const items: string[] = [];
 
-    if (run) {
+    if (this.isCreatingRunFromBrief()) {
+      items.push("creating run");
+    } else if (run) {
       const nodeStatus = run.graph.nodeStates[run.currentNode]?.status || run.status;
       items.push(`${run.currentNode} ${nodeStatus}`);
     } else {
@@ -4054,6 +4113,10 @@ export class TerminalApp {
       items.unshift("running");
     }
     return items;
+  }
+
+  private isCreatingRunFromBrief(): boolean {
+    return this.creatingRunFromBrief && this.busy && this.activeBusyLabel?.startsWith("Starting research") === true;
   }
 
   private getActivityLabel(run?: RunRecord): string | undefined {
@@ -4449,10 +4512,20 @@ export class TerminalApp {
     this.unsubscribeEvents?.();
     this.unsubscribeEvents = undefined;
     this.stopThinking();
+    this.renderExitTranscript();
     this.detachKeyboard();
     process.stdin.pause();
     this.onQuit();
     this.resolver?.();
+  }
+
+  private renderExitTranscript(): void {
+    const transcriptLines = this.lastRenderedFrame?.lines.slice(0, this.lastRenderedFrame.transcriptViewportLineCount) ?? [];
+    process.stdout.write("\x1b[2J\x1b[H");
+    if (transcriptLines.length > 0) {
+      process.stdout.write(transcriptLines.join("\n"));
+    }
+    process.stdout.write(`\x1b[${transcriptLines.length + 1};1H`);
   }
 
   private startThinking(): void {
@@ -4594,6 +4667,145 @@ function retainRawKeyboardSequenceSuffix(input: string): string {
   }
 
   return "";
+}
+
+async function resolveTerminalBackground(
+  stdin: NodeJS.ReadStream,
+  stdout: NodeJS.WriteStream
+): Promise<RgbColor | undefined> {
+  const queried = await queryTerminalBackground(stdin, stdout);
+  if (queried) {
+    return queried;
+  }
+
+  return inferTerminalBackgroundFromEnv();
+}
+
+async function queryTerminalBackground(
+  stdin: NodeJS.ReadStream,
+  stdout: NodeJS.WriteStream,
+  timeoutMs = 140
+): Promise<RgbColor | undefined> {
+  if (!stdin.isTTY || !stdout.isTTY) {
+    return undefined;
+  }
+
+  for (const query of buildTerminalBackgroundQueries()) {
+    const value = await queryTerminalBackgroundOnce(stdin, stdout, query, timeoutMs);
+    if (value) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+async function queryTerminalBackgroundOnce(
+  stdin: NodeJS.ReadStream,
+  stdout: NodeJS.WriteStream,
+  query: string,
+  timeoutMs: number
+): Promise<RgbColor | undefined> {
+  return await new Promise<RgbColor | undefined>((resolve) => {
+    let settled = false;
+    let responseBuffer = "";
+
+    const cleanup = () => {
+      stdin.off("data", onData);
+      clearTimeout(timer);
+    };
+
+    const finish = (value: RgbColor | undefined) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+
+    const onData = (chunk: Buffer) => {
+      responseBuffer = `${responseBuffer}${chunk.toString("utf8")}`.slice(-512);
+      const parsed = parseTerminalBackgroundResponse(responseBuffer);
+      if (parsed) {
+        finish(parsed);
+      }
+    };
+
+    const timer = setTimeout(() => finish(undefined), timeoutMs);
+    stdin.prependListener("data", onData);
+    stdout.write(query);
+  });
+}
+
+function buildTerminalBackgroundQueries(): string[] {
+  const queries = ["\x1b]11;?\x1b\\", "\x1b]11;?\x07"];
+  if (process.env.TMUX) {
+    queries.push("\x1bPtmux;\x1b\x1b]11;?\x1b\x1b\\\x1b\\", "\x1bPtmux;\x1b\x1b]11;?\x07\x1b\\");
+  }
+  return queries;
+}
+
+function inferTerminalBackgroundFromEnv(): RgbColor | undefined {
+  const colorFgBg = process.env.COLORFGBG?.trim();
+  if (colorFgBg) {
+    const parsed = parseColorFgBgBackground(colorFgBg);
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  const termProgram = (process.env.TERM_PROGRAM ?? "").toLowerCase();
+  const term = (process.env.TERM ?? "").toLowerCase();
+  const colorTerm = (process.env.COLORTERM ?? "").toLowerCase();
+
+  if (
+    process.env.TMUX ||
+    term.startsWith("screen") ||
+    term.includes("256color") ||
+    colorTerm === "truecolor" ||
+    termProgram.includes("tmux") ||
+    termProgram.includes("iterm") ||
+    termProgram.includes("wezterm") ||
+    termProgram.includes("ghostty")
+  ) {
+    return [30, 30, 30];
+  }
+
+  return undefined;
+}
+
+function parseColorFgBgBackground(value: string): RgbColor | undefined {
+  const raw = value.split(";").at(-1);
+  if (!raw) {
+    return undefined;
+  }
+
+  const index = Number.parseInt(raw, 10);
+  if (!Number.isFinite(index)) {
+    return undefined;
+  }
+
+  const systemPalette: RgbColor[] = [
+    [0, 0, 0],
+    [128, 0, 0],
+    [0, 128, 0],
+    [128, 128, 0],
+    [0, 0, 128],
+    [128, 0, 128],
+    [0, 128, 128],
+    [192, 192, 192],
+    [128, 128, 128],
+    [255, 0, 0],
+    [0, 255, 0],
+    [255, 255, 0],
+    [0, 0, 255],
+    [255, 0, 255],
+    [0, 255, 255],
+    [255, 255, 255]
+  ];
+
+  return systemPalette[index] ?? undefined;
 }
 
 function detectLikelyEnhancedNewlineSupport(): boolean {
@@ -5464,15 +5676,17 @@ async function readAnalyzeSelectionCount(manifestPath: string): Promise<{ select
 
 async function readRunProjectionHints(workspaceRoot: string, run: RunRecord): Promise<RunProjectionHints | undefined> {
   const runDir = path.join(workspaceRoot, ".autolabos", "runs", run.id);
-  const [runContextRaw, analyzeManifestRaw, checkpointHints] = await Promise.all([
+  const [runContextRaw, analyzeManifestRaw, implementStatusRaw, checkpointHints] = await Promise.all([
     safeRead(path.join(workspaceRoot, run.memoryRefs.runContextPath)),
     safeRead(path.join(runDir, "analysis_manifest.json")),
+    safeRead(path.join(runDir, "implement_experiments", "status.json")),
     readCheckpointProjectionHints(runDir)
   ]);
 
   const hints: RunProjectionHints = {};
   const runContextHints = parseRunContextProjectionHints(runContextRaw);
   const analyzeManifestHints = parseAnalyzeManifestProjectionHints(analyzeManifestRaw);
+  const implementStatusHints = parseImplementStatusProjectionHints(implementStatusRaw);
 
   if (runContextHints.collect || analyzeManifestHints?.collect) {
     hints.collect = {
@@ -5486,11 +5700,14 @@ async function readRunProjectionHints(workspaceRoot: string, run: RunRecord): Pr
       ...analyzeManifestHints?.analyze
     };
   }
+  if (implementStatusHints?.implement) {
+    hints.implement = implementStatusHints.implement;
+  }
   if (checkpointHints) {
     hints.checkpoint = checkpointHints;
   }
 
-  return hints.collect || hints.analyze || hints.checkpoint ? hints : undefined;
+  return hints.collect || hints.analyze || hints.implement || hints.checkpoint ? hints : undefined;
 }
 
 async function readCheckpointProjectionHints(runDir: string): Promise<RunProjectionHints["checkpoint"] | undefined> {
@@ -5638,6 +5855,41 @@ function parseAnalyzeManifestProjectionHints(raw: string): RunProjectionHints | 
               selectedFailedCount
             }
           : undefined
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function parseImplementStatusProjectionHints(raw: string): RunProjectionHints | undefined {
+  if (!raw.trim()) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const message = readString(parsed.message);
+    const stage = readString(parsed.stage);
+    const status = readString(parsed.status);
+    if (!message && !stage && !status) {
+      return undefined;
+    }
+
+    return {
+      implement: {
+        status,
+        stage,
+        message,
+        attempt: readNumber(parsed.attempt),
+        maxAttempts: readNumber(parsed.maxAttempts),
+        progressCount: readNumber(parsed.progressCount),
+        scriptPath: readString(parsed.scriptPath),
+        publicDir: readString(parsed.publicDir),
+        runCommand: readString(parsed.runCommand),
+        testCommand: readString(parsed.testCommand),
+        verificationCommand: readString(parsed.verificationCommand),
+        verifyStatus: readString(parsed.verifyStatus)
+      }
     };
   } catch {
     return undefined;

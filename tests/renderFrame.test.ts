@@ -1,9 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { buildFrame } from "../src/tui/renderFrame.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { RunRecord, SuggestionItem } from "../src/types.js";
-import { stripAnsi } from "../src/tui/theme.js";
+import { applyCodexSurfaceTheme, stripAnsi } from "../src/tui/theme.js";
 
 function makeRun(overrides: Partial<RunRecord> = {}): RunRecord {
   const now = new Date().toISOString();
@@ -48,6 +48,10 @@ const suggestions: SuggestionItem[] = [
 ];
 
 describe("buildFrame", () => {
+  afterEach(() => {
+    applyCodexSurfaceTheme(undefined);
+  });
+
   it("applies distinct colors for help sections, warnings, successes, and errors", () => {
     const frame = buildFrame({
       appVersion: "1.0.0",
@@ -96,7 +100,7 @@ describe("buildFrame", () => {
     expect(titleLine).toMatch(/\x1b\[[0-9;]*38;5;255m/);
   });
 
-  it("renders an empty transcript without the old boxed header", () => {
+  it("renders a Codex-style startup banner above the composer", () => {
     const frame = buildFrame({
       appVersion: "1.0.0",
       busy: false,
@@ -112,8 +116,9 @@ describe("buildFrame", () => {
     });
 
     const plain = frame.lines.map((line) => stripAnsi(line));
-    expect(plain.some((line) => line.includes("AutoLabOS"))).toBe(false);
-    expect(plain.some((line) => line.includes("model:"))).toBe(false);
+    expect(plain.some((line) => line.includes("AutoLabOS"))).toBe(true);
+    expect(plain.some((line) => line.includes("model:"))).toBe(true);
+    expect(plain.some((line) => line.includes("To get started"))).toBe(false);
     expect(plain[frame.inputLineIndex - 1]).toContain("› ");
   });
 
@@ -290,7 +295,7 @@ describe("buildFrame", () => {
     expect(plain).toContain("• Collecting... 199/300 (ETA ~2m 40s)");
   });
 
-  it("renders a run-creation placeholder while /brief is starting research", () => {
+  it("keeps the composer actionable once the new run already exists during /brief startup", () => {
     const graph = createDefaultGraphState();
     graph.currentNode = "collect_papers";
     graph.nodeStates.collect_papers.status = "pending";
@@ -313,7 +318,7 @@ describe("buildFrame", () => {
     const plain = frame.lines.map((line) => stripAnsi(line));
     const promptIndex = frame.inputLineIndex - 1;
     expect(plain).toContain("• Starting research...");
-    expect(plain[promptIndex]).toContain("Creating a new research run. Wait for the first node update.");
+    expect(plain[promptIndex]).toContain("Add steering to redirect the current run.");
   });
 
   it("renders suggestions in a Codex-style surface below the input line", () => {
@@ -501,7 +506,7 @@ describe("buildFrame", () => {
     expect(frame.transcriptHiddenLineCountBelow).toBe(4);
   });
 
-  it("renders the composer with a grey background instead of a box", () => {
+  it("does not force a composer surface color when the terminal background is unknown", () => {
     const frame = buildFrame({
       appVersion: "1.0.0",
       busy: false,
@@ -518,8 +523,29 @@ describe("buildFrame", () => {
 
     const inputLine = frame.lines[frame.inputLineIndex - 1] ?? "";
     expect(stripAnsi(inputLine)).toContain("› steer this run");
-    expect(inputLine).toContain("48;5;236");
+    expect(inputLine).not.toContain("48;");
     expect(stripAnsi(inputLine)).not.toContain("│");
+  });
+
+  it("renders the composer on a Codex-style surface once the terminal background is known", () => {
+    applyCodexSurfaceTheme([30, 30, 30]);
+
+    const frame = buildFrame({
+      appVersion: "1.0.0",
+      busy: false,
+      thinking: false,
+      thinkingFrame: 0,
+      run: makeRun(),
+      logs: [],
+      input: "steer this run",
+      inputCursor: 4,
+      suggestions: [],
+      selectedSuggestion: 0,
+      colorEnabled: true
+    });
+
+    const inputLine = frame.lines[frame.inputLineIndex - 1] ?? "";
+    expect(inputLine).toMatch(/\x1b\[[0-9;]*48;/);
   });
 
   it("keeps a single-line draft vertically centered inside the three-row composer", () => {
@@ -561,7 +587,7 @@ describe("buildFrame", () => {
     const selectedRow = frame.lines.find((line) => stripAnsi(line).includes("/doctor  Run environment checks")) || "";
     expect(selectedRow).toContain("\x1b[");
     expect(selectedRow).toContain("38;5;110");
-    expect(selectedRow).toContain("48;5;236");
+    expect(selectedRow).not.toContain("48;5;");
   });
 
   it("renders selection menu rows when active", () => {
@@ -600,7 +626,7 @@ describe("buildFrame", () => {
     expect(plain.some((line) => line.includes("gpt-5.2-codex"))).toBe(true);
   });
 
-  it("highlights selected selection menu row with the Codex accent color on the same surface", () => {
+  it("highlights selected selection menu row with the Codex accent color", () => {
     const frame = buildFrame({
       appVersion: "1.0.0",
       busy: true,
@@ -627,7 +653,7 @@ describe("buildFrame", () => {
     const selected = frame.lines.find((line) => stripAnsi(line).includes("high")) || "";
     expect(selected).toContain("\x1b[");
     expect(selected).toContain("38;5;110");
-    expect(selected).toContain("48;5;236");
+    expect(selected).not.toContain("48;");
   });
 
   it("renders moving monochrome gradient on Thinking text", () => {

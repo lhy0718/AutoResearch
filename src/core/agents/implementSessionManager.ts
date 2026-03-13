@@ -85,6 +85,8 @@ interface CachedConstraintProfile {
 
 const MAX_IMPLEMENT_ATTEMPTS = 3;
 const SEARCH_BRANCH_FOCUS_LIMIT = 1;
+const IMPLEMENT_PROGRESS_STATUS_ARTIFACT = path.join("implement_experiments", "status.json");
+const IMPLEMENT_PROGRESS_LOG_ARTIFACT = path.join("implement_experiments", "progress.jsonl");
 
 type ImplementFailureType =
   | "implementation"
@@ -138,6 +140,26 @@ interface VerifyReport {
   stdout_excerpt?: string;
   stderr_excerpt?: string;
   summary: string;
+}
+
+type ImplementProgressStage = "preflight" | "attempt" | "localize" | "codex" | "verify" | "publish" | "completed" | "failed";
+
+interface ImplementProgressStatus {
+  status: "running" | "completed" | "failed";
+  stage: ImplementProgressStage;
+  message: string;
+  startedAt: string;
+  updatedAt: string;
+  progressCount: number;
+  attempt?: number;
+  maxAttempts: number;
+  threadId?: string;
+  publicDir?: string;
+  scriptPath?: string;
+  runCommand?: string;
+  testCommand?: string;
+  verificationCommand?: string;
+  verifyStatus?: VerifyReport["status"];
 }
 
 interface AttemptRecord {
@@ -221,7 +243,11 @@ export class ImplementSessionManager {
     const artifacts = new Set<string>();
     const publicArtifacts = new Set<string>();
     const rawEvents: CodexEvent[] = [];
+    const startedAt = new Date().toISOString();
+    let progressCount = 0;
+    let progressQueue: Promise<void> = Promise.resolve();
     await ensureDir(defaultPublicDir);
+    await ensureDir(path.join(runDir, "implement_experiments"));
     const longTermMemory = await loadImplementationLongTermMemory(longTermStore, run);
     const taskSpec = await this.buildTaskSpec(
       run,
@@ -231,6 +257,75 @@ export class ImplementSessionManager {
       runContext,
       longTermMemory
     );
+    await writeJsonFile(path.join(runDir, "implement_task_spec.json"), taskSpec);
+
+    const queueProgressUpdate = (
+      stage: ImplementProgressStage,
+      message: string,
+      extras: Partial<Omit<ImplementProgressStatus, "status" | "stage" | "message" | "startedAt" | "updatedAt" | "progressCount" | "maxAttempts">> = {}
+    ) => {
+      const updatedAt = new Date().toISOString();
+      progressCount += 1;
+      const nextStatus: ImplementProgressStatus = {
+        status: "running",
+        stage,
+        message,
+        startedAt,
+        updatedAt,
+        progressCount,
+        maxAttempts: MAX_IMPLEMENT_ATTEMPTS,
+        threadId: extras.threadId,
+        attempt: extras.attempt,
+        publicDir: extras.publicDir,
+        scriptPath: extras.scriptPath,
+        runCommand: extras.runCommand,
+        testCommand: extras.testCommand,
+        verificationCommand: extras.verificationCommand,
+        verifyStatus: extras.verifyStatus
+      };
+      progressQueue = progressQueue.then(async () => {
+        await appendImplementProgressItem(runDir, {
+          index: nextStatus.progressCount,
+          timestamp: updatedAt,
+          stage,
+          message,
+          attempt: nextStatus.attempt,
+          threadId: nextStatus.threadId,
+          verifyStatus: nextStatus.verifyStatus
+        });
+        await writeImplementProgressStatus(runDir, nextStatus);
+      });
+    };
+    const flushProgressUpdates = async () => {
+      await progressQueue;
+    };
+    const emitImplementObservation = (
+      stage: ImplementProgressStage,
+      text: string,
+      extras: Partial<Omit<ImplementProgressStatus, "status" | "stage" | "message" | "startedAt" | "updatedAt" | "progressCount" | "maxAttempts">> = {}
+    ) => {
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId: run.id,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text
+        }
+      });
+      queueProgressUpdate(stage, text, extras);
+    };
+
+    await writeImplementProgressStatus(runDir, {
+      status: "running",
+      stage: "preflight",
+      message: "Implementation task spec prepared.",
+      startedAt,
+      updatedAt: startedAt,
+      progressCount,
+      maxAttempts: MAX_IMPLEMENT_ATTEMPTS,
+      publicDir: defaultPublicDir
+    });
 
     this.deps.eventStream.emit({
       type: "PLAN_CREATED",
@@ -243,26 +338,18 @@ export class ImplementSessionManager {
       }
     });
     if (longTermMemory.retrieved.length > 0) {
-      this.deps.eventStream.emit({
-        type: "OBS_RECEIVED",
-        runId: run.id,
-        node: "implement_experiments",
-        agentRole: "implementer",
-        payload: {
-          text: `Loaded ${longTermMemory.retrieved.length} long-term implementation hint(s).`
-        }
-      });
+      emitImplementObservation(
+        "preflight",
+        `Loaded ${longTermMemory.retrieved.length} long-term implementation hint(s).`,
+        { publicDir: defaultPublicDir }
+      );
     }
     if (taskSpec.context.runner_feedback) {
-      this.deps.eventStream.emit({
-        type: "OBS_RECEIVED",
-        runId: run.id,
-        node: "implement_experiments",
-        agentRole: "implementer",
-        payload: {
-          text: `Loaded runner feedback from run_experiments: ${taskSpec.context.runner_feedback.summary}`
-        }
-      });
+      emitImplementObservation(
+        "preflight",
+        `Loaded runner feedback from run_experiments: ${taskSpec.context.runner_feedback.summary}`,
+        { publicDir: defaultPublicDir }
+      );
     }
 
     let activeThreadId = currentThreadId;
@@ -272,50 +359,39 @@ export class ImplementSessionManager {
     let recentReflections = await episodeMemory.recent(run.id, "implement_experiments", 3);
 
     for (let attempt = 1; attempt <= MAX_IMPLEMENT_ATTEMPTS; attempt += 1) {
-      this.deps.eventStream.emit({
-        type: "OBS_RECEIVED",
-        runId: run.id,
-        node: "implement_experiments",
-        agentRole: "implementer",
-        payload: {
-          text: `Implementation attempt ${attempt}/${MAX_IMPLEMENT_ATTEMPTS} started.`
-        }
+      emitImplementObservation("attempt", `Implementation attempt ${attempt}/${MAX_IMPLEMENT_ATTEMPTS} started.`, {
+        attempt,
+        threadId: activeThreadId,
+        publicDir: defaultPublicDir
       });
 
       const searchLocalization = await this.localizer.localize(
         this.buildLocalizerInput(taskSpec, attemptRecords.at(-1), [...changedFiles])
       );
       latestSearchLocalization = searchLocalization;
+      await writeJsonFile(path.join(runDir, "localization_search_result.json"), latestSearchLocalization || {});
       const branchPlan = chooseBranchPlan(searchLocalization, attemptRecords, [...changedFiles]);
 
-      this.deps.eventStream.emit({
-        type: "OBS_RECEIVED",
-        runId: run.id,
-        node: "implement_experiments",
-        agentRole: "implementer",
-        payload: {
-          text: `Search-backed localization: ${formatLocalizationSummary(searchLocalization)}`
-        }
+      emitImplementObservation("localize", `Search-backed localization: ${formatLocalizationSummary(searchLocalization)}`, {
+        attempt,
+        threadId: activeThreadId,
+        publicDir: defaultPublicDir
       });
-      this.deps.eventStream.emit({
-        type: "OBS_RECEIVED",
-        runId: run.id,
-        node: "implement_experiments",
-        agentRole: "implementer",
-        payload: {
-          text: `Branch focus ${branchPlan.branch_id}: ${branchPlan.focus_files.join(", ") || "(no explicit file focus)"}`
+      emitImplementObservation(
+        "localize",
+        `Branch focus ${branchPlan.branch_id}: ${branchPlan.focus_files.join(", ") || "(no explicit file focus)"}`,
+        {
+          attempt,
+          threadId: activeThreadId,
+          publicDir: defaultPublicDir
         }
-      });
+      );
 
       const streamProgress = createCodexProgressEmitter((text) => {
-        this.deps.eventStream.emit({
-          type: "OBS_RECEIVED",
-          runId: run.id,
-          node: "implement_experiments",
-          agentRole: "implementer",
-          payload: {
-            text
-          }
+        emitImplementObservation("codex", text, {
+          attempt,
+          threadId: activeThreadId,
+          publicDir: defaultPublicDir
         });
       });
 
@@ -362,6 +438,11 @@ export class ImplementSessionManager {
       streamProgress.flush();
 
       activeThreadId = result.threadId || activeThreadId;
+      queueProgressUpdate("codex", "Codex implementation turn completed.", {
+        attempt,
+        threadId: activeThreadId,
+        publicDir: defaultPublicDir
+      });
       const prepared = await this.prepareAttemptResult({
         run,
         runDir,
@@ -384,17 +465,26 @@ export class ImplementSessionManager {
         })
       );
 
-      this.deps.eventStream.emit({
-        type: "OBS_RECEIVED",
-        runId: run.id,
-        node: "implement_experiments",
-        agentRole: "implementer",
-        payload: {
-          text: formatLocalizationSummary(prepared.localization)
-        }
+      emitImplementObservation("localize", formatLocalizationSummary(prepared.localization), {
+        attempt,
+        threadId: activeThreadId,
+        publicDir: prepared.publicDir,
+        scriptPath: prepared.scriptPath,
+        runCommand: prepared.runCommand,
+        testCommand: prepared.testCommand
       });
 
-      const verifyReport = await this.verifyAttempt(prepared, abortSignal, run.id, attempt);
+      const verifyReport = await this.verifyAttempt(prepared, abortSignal, run.id, attempt, (text, extras) => {
+        queueProgressUpdate("verify", text, {
+          attempt,
+          threadId: activeThreadId,
+          publicDir: prepared.publicDir,
+          scriptPath: prepared.scriptPath,
+          runCommand: prepared.runCommand,
+          testCommand: prepared.testCommand,
+          ...extras
+        });
+      });
       prepared.verifyReport = verifyReport;
       finalAttempt = prepared;
       attemptRecords.push({
@@ -421,6 +511,10 @@ export class ImplementSessionManager {
         artifacts: prepared.artifacts,
         public_artifacts: prepared.publicArtifacts,
         raw_response: prepared.rawResponse
+      });
+      await writeJsonFile(path.join(runDir, "verify_report.json"), verifyReport);
+      await writeJsonFile(path.join(runDir, "implement_attempts.json"), {
+        attempts: attemptRecords
       });
       recentReflections = await episodeMemory.recent(run.id, "implement_experiments", 3);
 
@@ -525,14 +619,12 @@ export class ImplementSessionManager {
       saved: savedLongTermMemory
     };
     if (savedLongTermMemory) {
-      this.deps.eventStream.emit({
-        type: "OBS_RECEIVED",
-        runId: run.id,
-        node: "implement_experiments",
-        agentRole: "implementer",
-        payload: {
-          text: `Saved long-term implementation lesson ${savedLongTermMemory.id}.`
-        }
+      emitImplementObservation("publish", `Saved long-term implementation lesson ${savedLongTermMemory.id}.`, {
+        threadId: activeThreadId,
+        publicDir: finalAttempt.publicDir,
+        scriptPath: publishedScriptPath,
+        runCommand: rewrittenRunCommand,
+        testCommand: rewrittenTestCommand
       });
     }
 
@@ -622,14 +714,32 @@ export class ImplementSessionManager {
       })),
       workspaceChangedFiles
     });
-    this.deps.eventStream.emit({
-      type: "OBS_RECEIVED",
-      runId: run.id,
-      node: "implement_experiments",
-      agentRole: "implementer",
-      payload: {
-        text: `Public experiment outputs are available at ${publicOutputs.sectionDirRelative}.`
-      }
+    emitImplementObservation("publish", `Public experiment outputs are available at ${publicOutputs.sectionDirRelative}.`, {
+      threadId: activeThreadId,
+      publicDir: finalAttempt.publicDir,
+      scriptPath: publishedScriptPath,
+      runCommand: rewrittenRunCommand,
+      testCommand: rewrittenTestCommand,
+      verificationCommand: finalVerifyReport.command,
+      verifyStatus: finalVerifyReport.status
+    });
+
+    await flushProgressUpdates();
+    await writeImplementProgressStatus(runDir, {
+      status: finalVerifyReport.status === "fail" ? "failed" : "completed",
+      stage: finalVerifyReport.status === "fail" ? "failed" : "completed",
+      message: finalVerifyReport.status === "fail" ? finalVerifyReport.summary : summary,
+      startedAt,
+      updatedAt: new Date().toISOString(),
+      progressCount,
+      maxAttempts: MAX_IMPLEMENT_ATTEMPTS,
+      threadId: activeThreadId,
+      publicDir: finalAttempt.publicDir,
+      scriptPath: publishedScriptPath,
+      runCommand: rewrittenRunCommand,
+      testCommand: rewrittenTestCommand,
+      verificationCommand: finalVerifyReport.command,
+      verifyStatus: finalVerifyReport.status
     });
 
     if (finalVerifyReport.status === "fail") {
@@ -1008,8 +1118,25 @@ export class ImplementSessionManager {
         rewriteCommandScriptPath(testCommand || "", originalScriptPath, normalizedScriptPath),
         this.deps.workspaceRoot
       ) || undefined;
+    const verificationCommand = testCommand || deriveFallbackTestCommand(normalizedScriptPath);
+    const verificationArtifactCandidates = new Set(
+      dedupeStrings([
+        ...(normalizedScriptPath ? [normalizedScriptPath] : []),
+        ...(verificationCommand
+          ? extractWorkspacePathsFromCommand(verificationCommand, normalizedWorkingDir, this.deps.workspaceRoot)
+          : [])
+      ])
+    );
+    const missingSupplementalArtifacts = materialized.missingArtifacts.filter(
+      (filePath) => !verificationArtifactCandidates.has(filePath)
+    );
     const verifyReport = !hasRunnableArtifact
       ? buildMissingArtifactVerifyReport(parsedResponse.isStructured)
+      : missingSupplementalArtifacts.length > 0
+        ? buildMissingArtifactVerifyReport(parsedResponse.isStructured, {
+            missingArtifacts: missingSupplementalArtifacts,
+            workspaceRoot: this.deps.workspaceRoot
+          })
       : {
           status: "not_run" as const,
           next_action: "handoff_to_run_experiments" as const,
@@ -1089,7 +1216,13 @@ export class ImplementSessionManager {
     attempt: PreparedImplementAttempt,
     abortSignal: AbortSignal | undefined,
     runId: string,
-    attemptNumber: number
+    attemptNumber: number,
+    onProgress?: (
+      text: string,
+      extras?: Partial<
+        Omit<ImplementProgressStatus, "status" | "stage" | "message" | "startedAt" | "updatedAt" | "progressCount" | "maxAttempts">
+      >
+    ) => void
   ): Promise<VerifyReport> {
     if (attempt.verifyReport.status === "fail") {
       this.deps.eventStream.emit({
@@ -1101,16 +1234,19 @@ export class ImplementSessionManager {
           text: attempt.verifyReport.summary
         }
       });
+      onProgress?.(attempt.verifyReport.summary, { verifyStatus: "fail" });
       return attempt.verifyReport;
     }
 
     const command = attempt.testCommand?.trim() || deriveFallbackTestCommand(attempt.scriptPath);
     if (!command) {
-      return {
+      const report: VerifyReport = {
         status: "not_run",
         next_action: "handoff_to_run_experiments",
         summary: "No lightweight local verification command was available."
       };
+      onProgress?.(report.summary, { verifyStatus: report.status });
+      return report;
     }
 
     const missingArtifacts = await collectMissingVerificationArtifacts({
@@ -1134,9 +1270,16 @@ export class ImplementSessionManager {
           text: report.summary
         }
       });
+      onProgress?.(report.summary, {
+        verificationCommand: command,
+        verifyStatus: report.status
+      });
       return report;
     }
 
+    onProgress?.(`Starting local verification via ${command}.`, {
+      verificationCommand: command
+    });
     this.deps.eventStream.emit({
       type: "TOOL_CALLED",
       runId,
@@ -1167,6 +1310,10 @@ export class ImplementSessionManager {
           attempt: attemptNumber
         }
       });
+      onProgress?.(baseReport.summary, {
+        verificationCommand: command,
+        verifyStatus: baseReport.status
+      });
       return baseReport;
     }
 
@@ -1179,8 +1326,33 @@ export class ImplementSessionManager {
         text: baseReport.summary
       }
     });
+    onProgress?.(baseReport.summary, {
+      verificationCommand: command,
+      verifyStatus: baseReport.status
+    });
     return baseReport;
   }
+}
+
+async function writeImplementProgressStatus(runDir: string, status: ImplementProgressStatus): Promise<void> {
+  await writeJsonFile(path.join(runDir, IMPLEMENT_PROGRESS_STATUS_ARTIFACT), status);
+}
+
+async function appendImplementProgressItem(
+  runDir: string,
+  item: {
+    index: number;
+    timestamp: string;
+    stage: ImplementProgressStage;
+    message: string;
+    attempt?: number;
+    threadId?: string;
+    verifyStatus?: VerifyReport["status"];
+  }
+): Promise<void> {
+  const filePath = path.join(runDir, IMPLEMENT_PROGRESS_LOG_ARTIFACT);
+  await ensureDir(path.dirname(filePath));
+  await fs.appendFile(filePath, `${JSON.stringify(item)}\n`, "utf8");
 }
 
 function createCodexProgressEmitter(onText: (text: string) => void): {
@@ -1652,6 +1824,7 @@ async function materializeDeclaredArtifacts(params: {
   changedFiles: string[];
   artifacts: string[];
   publicArtifacts: string[];
+  missingArtifacts: string[];
   scriptPath?: string;
 }> {
   const publishedArtifacts = await publishReusableArtifacts({
@@ -1689,11 +1862,19 @@ async function materializeDeclaredArtifacts(params: {
     ...(scriptPath ? [scriptPath] : [])
   ]);
   const existingPublicArtifacts = await filterExistingFiles(publicArtifactCandidates);
+  const missingArtifacts = await filterMissingFiles(
+    dedupeStrings([
+      ...params.artifacts,
+      ...params.explicitPublicArtifacts,
+      ...(params.scriptPath ? [params.scriptPath] : [])
+    ])
+  );
 
   return {
     changedFiles: existingChangedFiles,
     artifacts: existingArtifacts,
     publicArtifacts: existingPublicArtifacts,
+    missingArtifacts,
     scriptPath: scriptPath && (await fileExists(scriptPath)) ? scriptPath : undefined
   };
 }
@@ -1767,6 +1948,16 @@ async function filterExistingFiles(filePaths: string[]): Promise<string[]> {
     }
   }
   return existing;
+}
+
+async function filterMissingFiles(filePaths: string[]): Promise<string[]> {
+  const missing: string[] = [];
+  for (const filePath of dedupeStrings(filePaths)) {
+    if (filePath && !(await fileExists(filePath))) {
+      missing.push(filePath);
+    }
+  }
+  return missing;
 }
 
 function collectWorkspaceChangedFiles(params: {

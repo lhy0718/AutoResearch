@@ -108,7 +108,8 @@ export class StateGraphRuntime {
         graph: run.graph,
         abortSignal
       });
-      this.throwIfAborted(abortSignal);
+      // Once a node returns, its result becomes the source of truth even if a
+      // late Ctrl-C arrives before runtime persistence finishes.
       run = await this.getRunOrThrow(run.id);
       void started;
       void result.toolCallsUsed;
@@ -124,7 +125,8 @@ export class StateGraphRuntime {
         ...run.graph.nodeStates[node],
         status: result.needsApproval ? "needs_approval" : "completed",
         updatedAt: new Date().toISOString(),
-        note: result.summary
+        note: result.summary,
+        lastError: undefined
       };
       run.status = result.needsApproval ? "paused" : "running";
 
@@ -214,10 +216,11 @@ export class StateGraphRuntime {
         if (["completed", "failed"].includes(run.status)) {
           return run;
         }
+        this.throwIfAborted(opts?.abortSignal);
 
         if (run.status === "paused" && run.graph.nodeStates[run.currentNode].status === "needs_approval") {
           const approvalNode = run.currentNode;
-          run = await this.resolveApprovalGate(run);
+          run = await this.resolveApprovalGate(run, opts?.abortSignal);
           run = await this.pauseIfRegressedBelowFloor(run, opts?.floorNode);
           if (["completed", "failed"].includes(run.status)) {
             return run;
@@ -257,8 +260,9 @@ export class StateGraphRuntime {
     }
   }
 
-  private async resolveApprovalGate(run: RunRecord): Promise<RunRecord> {
+  private async resolveApprovalGate(run: RunRecord, abortSignal?: AbortSignal): Promise<RunRecord> {
     while (run.status === "paused" && run.graph.nodeStates[run.currentNode].status === "needs_approval") {
+      this.throwIfAborted(abortSignal);
       const action = this.selectApprovalResolution(run);
       if (action === "pause") {
         return run;
@@ -286,7 +290,7 @@ export class StateGraphRuntime {
           text: `Minimal approval mode auto-approved ${run.currentNode}.`
         }
       });
-      run = await this.approveCurrent(run.id);
+      run = await this.approveCurrent(run.id, { continueAfterApprove: false, abortSignal });
     }
 
     return run;
@@ -309,7 +313,10 @@ export class StateGraphRuntime {
     return "apply_transition";
   }
 
-  async approveCurrent(runId: string): Promise<RunRecord> {
+  async approveCurrent(
+    runId: string,
+    opts?: { continueAfterApprove?: boolean; abortSignal?: AbortSignal }
+  ): Promise<RunRecord> {
     const run = await this.getRunOrThrow(runId);
     const node = run.currentNode;
     const state = run.graph.nodeStates[node];
@@ -346,7 +353,14 @@ export class StateGraphRuntime {
 
     this.syncLatestSummary(run, node);
     await this.saveCheckpointAndPersist(run, "after", "approved");
-    return this.getRunOrThrow(runId);
+    if (!next || !opts?.continueAfterApprove) {
+      return this.getRunOrThrow(runId);
+    }
+
+    return this.runUntilPause(runId, {
+      abortSignal: opts.abortSignal,
+      floorNode: next
+    });
   }
 
   async applyPendingTransition(runId: string): Promise<RunRecord> {
@@ -387,7 +401,7 @@ export class StateGraphRuntime {
     });
 
     if (recommendation.action === "advance") {
-      return this.approveCurrent(run.id);
+      return this.approveCurrent(run.id, { continueAfterApprove: false });
     }
 
     if (recommendation.action === "pause_for_human" || !recommendation.targetNode) {
@@ -462,7 +476,8 @@ export class StateGraphRuntime {
           ...run.graph.nodeStates[node],
           status: "pending",
           updatedAt: new Date().toISOString(),
-          note: `Reset by backward jump (cycle ${run.graph.researchCycle})`
+          note: `Reset by backward jump (cycle ${run.graph.researchCycle})`,
+          lastError: undefined
         };
       }
     }

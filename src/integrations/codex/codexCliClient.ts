@@ -1,6 +1,8 @@
 import path from "node:path";
+import os from "node:os";
 import { spawn } from "node:child_process";
 import readline from "node:readline";
+import { constants as fsConstants, promises as fs } from "node:fs";
 
 export type CodexSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 export type CodexApprovalPolicy = "never" | "on-request" | "on-failure" | "untrusted";
@@ -44,6 +46,11 @@ export interface CliCheckResult {
   detail: string;
 }
 
+export interface CodexEnvironmentCheck extends CliCheckResult {
+  name: "codex-home" | "codex-shell-snapshots" | "codex-model-capacity";
+  blocking: boolean;
+}
+
 const SANDBOX_PATH_ALIAS_PREFIXES = [
   ["/private/tmp", "/tmp"],
   ["/private/var/folders", "/var/folders"]
@@ -81,6 +88,25 @@ export function normalizeCodexWorkspacePath(filePath: string | undefined, worksp
   }
 
   return undefined;
+}
+
+export function selectPreferredCodexFinalText(options: {
+  completedText?: string;
+  deltaText?: string;
+  fallbackText?: string;
+}): string {
+  const candidates = [
+    options.completedText?.trim() || "",
+    options.deltaText?.trim() || "",
+    options.fallbackText?.trim() || ""
+  ].filter(Boolean);
+  if (candidates.length === 0) {
+    return "";
+  }
+
+  const uniqueCandidates = [...new Set(candidates)];
+  uniqueCandidates.sort((left, right) => scoreCodexFinalText(right) - scoreCodexFinalText(left));
+  return uniqueCandidates[0] || "";
 }
 
 export class CodexCliClient {
@@ -124,6 +150,52 @@ export class CodexCliClient {
       ok,
       detail: result.stdout.trim() || "login status checked"
     };
+  }
+
+  async checkEnvironmentReadiness(opts?: {
+    models?: string[];
+    includeModelCapacity?: boolean;
+  }): Promise<CodexEnvironmentCheck[]> {
+    const checks: CodexEnvironmentCheck[] = [];
+    const codexHome = this.resolveCodexHomePath();
+    checks.push(
+      await this.checkWritableDirectory(
+        "codex-home",
+        codexHome,
+        "Codex home directory is writable."
+      )
+    );
+    checks.push(
+      await this.checkWritableDirectory(
+        "codex-shell-snapshots",
+        path.join(codexHome, "shell_snapshots"),
+        "Codex shell snapshot directory is writable."
+      )
+    );
+
+    if (opts?.includeModelCapacity) {
+      const riskyModels = Array.from(
+        new Set(
+          (opts.models || [])
+            .map((model) => model.trim())
+            .filter(Boolean)
+            .filter((model) => /gpt-5\.3-codex-spark/i.test(model))
+        )
+      );
+      checks.push({
+        name: "codex-model-capacity",
+        ok: riskyModels.length === 0,
+        blocking: false,
+        detail:
+          riskyModels.length === 0
+            ? "Configured Codex analysis models avoid the known Spark long-run usage-limit risk."
+            : `Configured Codex analysis model(s) ${riskyModels.join(
+                ", "
+              )} are prone to usage-limit stalls during long rerank/analyze passes; prefer /model -> gpt-5.4 before large literature runs.`
+      });
+    }
+
+    return checks;
   }
 
   async runForText(opts: {
@@ -179,6 +251,8 @@ export class CodexCliClient {
     let finalText = "";
     let deltaBuffer = "";
     let aborted = false;
+
+    await this.ensureRuntimeDirectories();
 
     const workingDirectory = presentCodexPath(opts.workingDirectory || this.defaultWorkingDirectory);
     const args = [
@@ -308,19 +382,71 @@ export class CodexCliClient {
       throw new Error(stderr.trim() || `codex exec failed (exit ${exitCode})`);
     }
 
-    if (!finalText) {
-      finalText = deltaBuffer.trim();
-    }
-
-    if (!finalText) {
-      finalText = extractFallbackText(events);
-    }
+    finalText = selectPreferredCodexFinalText({
+      completedText: finalText,
+      deltaText: deltaBuffer,
+      fallbackText: extractFallbackText(events)
+    });
 
     return {
       threadId: discoveredThreadId,
       finalText,
       events
     };
+  }
+
+  private resolveCodexHomePath(): string {
+    const configured = process.env.CODEX_HOME?.trim();
+    if (configured) {
+      return path.isAbsolute(configured)
+        ? configured
+        : path.resolve(this.defaultWorkingDirectory, configured);
+    }
+    return path.join(os.homedir(), ".codex");
+  }
+
+  private async ensureRuntimeDirectories(): Promise<void> {
+    const checks = await this.checkEnvironmentReadiness();
+    const blockingFailures = checks.filter((check) => !check.ok && check.blocking);
+    if (blockingFailures.length === 0) {
+      return;
+    }
+    throw new Error(
+      blockingFailures.map((check) => `${check.name}: ${check.detail}`).join("\n")
+    );
+  }
+
+  private async checkWritableDirectory(
+    name: CodexEnvironmentCheck["name"],
+    dirPath: string,
+    successDetail: string
+  ): Promise<CodexEnvironmentCheck> {
+    try {
+      const existing = await fs.stat(dirPath).catch(() => undefined);
+      if (existing && !existing.isDirectory()) {
+        return {
+          name,
+          ok: false,
+          blocking: true,
+          detail: `${dirPath} exists but is not a directory.`
+        };
+      }
+      await fs.mkdir(dirPath, { recursive: true });
+      await fs.access(dirPath, fsConstants.R_OK | fsConstants.W_OK);
+      return {
+        name,
+        ok: true,
+        blocking: true,
+        detail: `${successDetail} (${dirPath})`
+      };
+    } catch (error) {
+      return {
+        name,
+        ok: false,
+        blocking: true,
+        detail: `${dirPath}: ${error instanceof Error ? error.message : String(error)}`
+      };
+    }
   }
 
   private async runCommand(args: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
@@ -551,6 +677,17 @@ function extractAnyText(event: CodexEvent): string | undefined {
   }
 
   return undefined;
+}
+
+function scoreCodexFinalText(text: string): number {
+  let score = text.length;
+  if (text.startsWith("{") || text.startsWith("[")) {
+    score += 2_000;
+  }
+  if (/[}\]]\s*$/u.test(text)) {
+    score += 1_000;
+  }
+  return score;
 }
 
 function asString(value: unknown): string | undefined {

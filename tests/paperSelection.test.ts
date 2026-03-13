@@ -122,7 +122,7 @@ describe("paperSelection", () => {
 
   it("treats PDF-like URLs in paper.url as PDF-available for ranking", async () => {
     const selection = await selectPapersForAnalysis({
-      llm: new FixedResponseLlm("not-json"),
+      llm: new FixedResponseLlm('{"ordered_paper_ids":["p1","p2"]}'),
       runTitle: "Multi-agent collaboration reproducibility",
       runTopic: "Multi-agent collaboration reproducibility",
       request: normalizeAnalysisSelectionRequest(1),
@@ -205,7 +205,7 @@ describe("paperSelection", () => {
     expect(logs.some((message) => message.includes("LLM rerank completed. Top selection preview"))).toBe(true);
   });
 
-  it("falls back to deterministic order when rerank JSON is invalid", async () => {
+  it("pauses top-n selection when rerank JSON is invalid", async () => {
     const selection = await selectPapersForAnalysis({
       llm: new FixedResponseLlm("not-json"),
       runTitle: "Multi-agent collaboration",
@@ -220,7 +220,26 @@ describe("paperSelection", () => {
 
     expect(selection.rerankApplied).toBe(false);
     expect(selection.rerankFallbackReason).toBeDefined();
-    expect(selection.selectedPaperIds).toEqual(["p1", "p2"]);
+    expect(selection.selectedPaperIds).toEqual([]);
+  });
+
+  it("repairs truncated rerank JSON when only the closing delimiter is missing", async () => {
+    const logs: string[] = [];
+    const selection = await selectPapersForAnalysis({
+      llm: new FixedResponseLlm('{"ordered_paper_ids":["p2","p1"]'),
+      runTitle: "Multi-agent collaboration",
+      runTopic: "Multi-agent collaboration",
+      request: normalizeAnalysisSelectionRequest(1),
+      corpusRows: [
+        { paper_id: "p1", title: "Multi-agent collaboration", abstract: "A", authors: [], citation_count: 10, year: 2025 },
+        { paper_id: "p2", title: "Other collaboration paper", abstract: "B", authors: [], citation_count: 9, year: 2025 }
+      ],
+      onProgress: (message) => logs.push(message)
+    });
+
+    expect(selection.rerankApplied).toBe(true);
+    expect(selection.selectedPaperIds).toEqual(["p2"]);
+    expect(logs.some((message) => message.includes("Rerank JSON looked truncated; repaired"))).toBe(true);
   });
 
   it("retries rerank once when Codex only emits benign shell-snapshot cleanup warnings", async () => {
@@ -265,11 +284,12 @@ describe("paperSelection", () => {
     expect(selection.rerankApplied).toBe(false);
     expect(selection.rerankFallbackReason).toContain("usage limit");
     expect(selection.rerankFallbackReason).not.toContain("shell_snapshot");
+    expect(selection.selectedPaperIds).toEqual([]);
   });
 
   it("keeps topic-specific tabular baseline papers ahead of generic ML classification titles", async () => {
     const selection = await selectPapersForAnalysis({
-      llm: new FixedResponseLlm("not-json"),
+      llm: new FixedResponseLlm('{"ordered_paper_ids":["relevant","off_topic"]}'),
       runTitle: "Classical machine learning baselines for tabular classification",
       runTopic: "Classical machine learning baselines for tabular classification",
       request: normalizeAnalysisSelectionRequest(1),
@@ -301,7 +321,7 @@ describe("paperSelection", () => {
 
   it("keeps multi-paper tabular baseline selections ahead of high-citation off-topic classification papers", async () => {
     const selection = await selectPapersForAnalysis({
-      llm: new FixedResponseLlm("not-json"),
+      llm: new FixedResponseLlm('{"ordered_paper_ids":["relevant_title","relevant_abstract","off_topic_quantum","off_topic_music"]}'),
       runTitle: "Classical machine learning baselines for tabular classification",
       runTopic: "Classical machine learning baselines for tabular classification",
       request: normalizeAnalysisSelectionRequest(2),
@@ -352,7 +372,9 @@ describe("paperSelection", () => {
 
   it("pushes secret, music, and sentiment papers below stronger tabular-baseline candidates in a tiny pool", async () => {
     const selection = await selectPapersForAnalysis({
-      llm: new FixedResponseLlm("not-json"),
+      llm: new FixedResponseLlm(
+        '{"ordered_paper_ids":["relevant_svm","relevant_pmlb","relevant_benchmark","off_topic_secret","off_topic_music","off_topic_sentiment"]}'
+      ),
       runTitle: "Classical machine learning baselines for tabular classification on small public datasets",
       runTopic: "Classical machine learning baselines for tabular classification on small public datasets",
       request: normalizeAnalysisSelectionRequest(3),

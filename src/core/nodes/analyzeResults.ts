@@ -40,6 +40,11 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
     async execute({ run }) {
       const longTermStore = new LongTermStore(run.memoryRefs.longTermPath);
       const runContextMemory = new RunContextMemory(run.memoryRefs.runContextPath);
+      const publicDir =
+        resolveMaybeRelative(
+          await runContextMemory.get<string>("implement_experiments.public_dir"),
+          process.cwd()
+        ) || undefined;
       const metricsPath =
         resolveMaybeRelative(
           await runContextMemory.get<string>("implement_experiments.metrics_path"),
@@ -68,6 +73,7 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
           payload: { text: metricsLoadError }
         });
       }
+      metrics = await hydrateDetailedExperimentMetrics(metrics, publicDir, inputWarnings);
 
       const manualObjectiveClarification =
         (await runContextMemory.get<string>("analyze_results.objective_clarification"))?.trim() || undefined;
@@ -129,12 +135,8 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         inputWarnings,
         "run_experiments_verify_report.json"
       );
-      const publicDir =
-        resolveMaybeRelative(
-          await runContextMemory.get<string>("implement_experiments.public_dir"),
-          process.cwd()
-        ) || undefined;
       const supplementalMetrics = await loadSupplementalMetrics(publicDir, inputWarnings);
+      const supplementalExpectation = await loadSupplementalExpectation(run.id, inputWarnings);
       const recentPaperComparisonPath =
         resolveMaybeRelative(asString(metrics.recent_paper_reproducibility_path), publicDir || process.cwd()) ||
         (publicDir ? path.join(publicDir, "recent_paper_reproducibility.json") : undefined);
@@ -156,6 +158,7 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         inputWarnings,
         runVerifierReport,
         supplementalMetrics,
+        supplementalExpectation,
         recentPaperComparison,
         recentPaperComparisonPath
       });
@@ -416,6 +419,66 @@ async function loadSupplementalMetrics(publicDir: string | undefined, warnings: 
   return results;
 }
 
+async function loadSupplementalExpectation(
+  runId: string,
+  warnings: string[]
+): Promise<
+  | {
+      applicable: boolean;
+      profiles: string[];
+      reason?: string;
+    }
+  | undefined
+> {
+  const explicitExpectation = await readJsonObject<{
+    applicable?: boolean;
+    profiles?: string[];
+    reason?: string;
+  }>(
+    path.join(".autolabos", "runs", runId, "run_experiments_supplemental_expectation.json"),
+    warnings,
+    "run_experiments_supplemental_expectation.json"
+  );
+  if (explicitExpectation) {
+    return {
+      applicable: explicitExpectation.applicable !== false,
+      profiles: asArray(explicitExpectation.profiles)
+        .map((item) => asString(item))
+        .filter((item): item is string => Boolean(item)),
+      reason: asString(explicitExpectation.reason)
+    };
+  }
+
+  const executionPlan = await readJsonObject<Record<string, unknown>>(
+    path.join(".autolabos", "runs", runId, "run_experiments_panel", "execution_plan.json"),
+    warnings,
+    "execution_plan.json"
+  );
+  if (!executionPlan) {
+    return undefined;
+  }
+
+  const managedProfiles = asArray(executionPlan.managed_supplemental_profiles)
+    .map((item) => asRecord(item))
+    .map((item) => asString(item.profile))
+    .filter((item): item is string => Boolean(item));
+
+  if (managedProfiles.length > 0) {
+    return {
+      applicable: true,
+      profiles: managedProfiles,
+      reason: `Managed supplemental profiles were configured for this runner: ${managedProfiles.join(", ")}.`
+    };
+  }
+
+  return {
+    applicable: false,
+    profiles: [],
+    reason:
+      "Managed quick_check and confirmatory profiles were not configured for this experiment runner, so the repeated standard trials are the complete executed design."
+  };
+}
+
 async function readJsonObject<T extends object>(
   filePath: string,
   warnings: string[],
@@ -435,6 +498,602 @@ async function readJsonObject<T extends object>(
     }
     return undefined;
   }
+}
+
+async function hydrateDetailedExperimentMetrics(
+  metrics: Record<string, unknown>,
+  publicDir: string | undefined,
+  warnings: string[]
+): Promise<Record<string, unknown>> {
+  if (Object.keys(metrics).length === 0) {
+    return metrics;
+  }
+
+  const resultsPath = resolveDetailedResultsPath(metrics, publicDir);
+  if (!resultsPath) {
+    return aliasCompactMetrics(metrics);
+  }
+
+  const detailedResults = await readJsonObject<Record<string, unknown>>(
+    resultsPath,
+    warnings,
+    path.basename(resultsPath) || "latest_results.json"
+  );
+  if (!detailedResults) {
+    return aliasCompactMetrics(metrics);
+  }
+
+  return enrichMetricsWithDetailedResults(aliasCompactMetrics(metrics), detailedResults);
+}
+
+function resolveDetailedResultsPath(
+  metrics: Record<string, unknown>,
+  publicDir: string | undefined
+): string | undefined {
+  const explicit = resolveMaybeRelative(asString(metrics.results_path), publicDir || process.cwd());
+  if (explicit) {
+    return explicit;
+  }
+  if (!publicDir) {
+    return undefined;
+  }
+  return path.join(publicDir, "latest_results.json");
+}
+
+function aliasCompactMetrics(metrics: Record<string, unknown>): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...metrics };
+  const metricAlias = asString(metrics.metric);
+  const metricValue = asNumber(metrics.value);
+  if (metricAlias && typeof metricValue === "number" && next[metricAlias] === undefined) {
+    next[metricAlias] = metricValue;
+  }
+  if (typeof metricValue === "number" && next.macro_f1_delta_vs_logreg === undefined) {
+    if (metricAlias === "macro_f1_improvement_over_logreg" || metricAlias === "macro_f1_delta_vs_logreg") {
+      next.macro_f1_delta_vs_logreg = metricValue;
+    }
+  }
+  const logregBaseline = asNumber(metrics.mean_logreg_nested_test_macro_f1);
+  if (typeof logregBaseline === "number" && next.logreg_test_macro_f1 === undefined) {
+    next.logreg_test_macro_f1 = logregBaseline;
+  }
+  const rankStability = asNumber(metrics.mean_nested_rank_stability);
+  if (typeof rankStability === "number" && next.rank_stability === undefined) {
+    next.rank_stability = rankStability;
+  }
+  return next;
+}
+
+function enrichMetricsWithDetailedResults(
+  metrics: Record<string, unknown>,
+  detailedResults: Record<string, unknown>
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...metrics };
+  const globalMetrics = asRecord(detailedResults.global_metrics);
+  const protocol = asRecord(detailedResults.protocol);
+  for (const [key, value] of Object.entries(globalMetrics)) {
+    if (isScalarJsonValue(value) && next[key] === undefined) {
+      next[key] = value;
+    }
+  }
+  if (typeof protocol.cpu_only === "boolean" && next.cpu_only === undefined) {
+    next.cpu_only = protocol.cpu_only;
+  }
+
+  const meanImprovement = asNumber(globalMetrics.mean_macro_f1_improvement_over_logreg);
+  if (typeof meanImprovement === "number") {
+    if (next.mean_macro_f1_improvement_over_logreg === undefined) {
+      next.mean_macro_f1_improvement_over_logreg = meanImprovement;
+    }
+    if (next.macro_f1_delta_vs_logreg === undefined) {
+      next.macro_f1_delta_vs_logreg = meanImprovement;
+    }
+  }
+
+  const logregBaseline = asNumber(globalMetrics.mean_logreg_nested_test_macro_f1);
+  if (typeof logregBaseline === "number" && next.logreg_test_macro_f1 === undefined) {
+    next.logreg_test_macro_f1 = logregBaseline;
+  }
+
+  const rankStability = asNumber(globalMetrics.mean_nested_rank_stability);
+  if (typeof rankStability === "number" && next.rank_stability === undefined) {
+    next.rank_stability = rankStability;
+  }
+
+  const derived = deriveWorkflowAnalysisMetrics(detailedResults);
+  if (Object.keys(derived.conditionMetrics).length > 0) {
+    next.condition_metrics = {
+      ...asRecord(next.condition_metrics),
+      ...derived.conditionMetrics
+    };
+  }
+  if (Object.keys(derived.samplingProfile).length > 0) {
+    next.sampling_profile = {
+      ...asRecord(next.sampling_profile),
+      ...derived.samplingProfile
+    };
+  }
+  if (derived.primaryCondition && !asString(next.primary_condition)) {
+    next.primary_condition = derived.primaryCondition;
+  }
+  if (derived.baselineCondition && !asString(next.baseline_condition)) {
+    next.baseline_condition = derived.baselineCondition;
+  }
+  if (next.reproducible === undefined && typeof asNumber(asRecord(next.sampling_profile).executed_trials) === "number") {
+    next.reproducible = asNumber(asRecord(next.sampling_profile).executed_trials)! > 1;
+  }
+
+  return next;
+}
+
+function deriveWorkflowAnalysisMetrics(detailedResults: Record<string, unknown>): {
+  samplingProfile: Record<string, unknown>;
+  conditionMetrics: Record<string, Record<string, unknown>>;
+  primaryCondition?: string;
+  baselineCondition?: string;
+} {
+  const protocol = asRecord(detailedResults.protocol);
+  const datasetSummaries = asArray(detailedResults.dataset_summaries).map((item) => asRecord(item));
+  const repeatRecords = asArray(detailedResults.repeat_records).map((item) => asRecord(item));
+  const workflowsFromProtocol = asStringArray(protocol.workflows);
+  const workflowNames = workflowsFromProtocol.length > 0
+    ? workflowsFromProtocol
+    : uniqueStrings(
+        datasetSummaries.flatMap((entry) => Object.keys(asRecord(entry.workflows)))
+      );
+
+  if (workflowNames.length === 0) {
+    return deriveModelConditionAnalysisMetrics(detailedResults, datasetSummaries, protocol);
+  }
+
+  const conditionMetrics: Record<string, Record<string, unknown>> = {};
+  const perRepeatByWorkflow = new Map<string, Array<Record<string, number>>>();
+  for (const workflow of workflowNames) {
+    const aggregate = aggregateWorkflowDatasetSummaries(datasetSummaries, workflow);
+    if (Object.keys(aggregate).length > 0) {
+      conditionMetrics[workflow] = aggregate;
+    }
+    const perRepeat = aggregateWorkflowRepeatRecords(repeatRecords, workflow);
+    if (perRepeat.length > 0) {
+      perRepeatByWorkflow.set(workflow, perRepeat);
+      const target = conditionMetrics[workflow] || {};
+      applyRepeatConfidenceIntervals(target, perRepeat, [
+        "best_mean_test_macro_f1",
+        "macro_f1_delta_vs_logreg",
+        "mean_selection_optimism"
+      ]);
+      conditionMetrics[workflow] = target;
+    }
+  }
+
+  const totalTrials = asNumber(protocol.repeats) ?? (repeatRecords.length > 0 ? repeatRecords.length : undefined);
+  const executedTrials = repeatRecords.length > 0 ? repeatRecords.length : undefined;
+  const samplingProfile: Record<string, unknown> = {};
+  if (typeof totalTrials === "number") {
+    samplingProfile.total_trials = totalTrials;
+    samplingProfile.name = "standard";
+  }
+  if (typeof executedTrials === "number") {
+    samplingProfile.executed_trials = executedTrials;
+  }
+  if (typeof totalTrials === "number" && typeof executedTrials === "number") {
+    samplingProfile.cached_trials = Math.max(0, totalTrials - executedTrials);
+  }
+
+  const primaryCondition =
+    asString(asRecord(detailedResults.global_metrics).best_workflow) ||
+    pickBestWorkflow(conditionMetrics);
+  const baselineCondition =
+    workflowNames.find((workflow) => workflow !== primaryCondition) ||
+    undefined;
+
+  return {
+    samplingProfile,
+    conditionMetrics,
+    primaryCondition,
+    baselineCondition
+  };
+}
+
+function deriveModelConditionAnalysisMetrics(
+  detailedResults: Record<string, unknown>,
+  datasetSummaries: Array<Record<string, unknown>>,
+  protocol: Record<string, unknown>
+): {
+  samplingProfile: Record<string, unknown>;
+  conditionMetrics: Record<string, Record<string, unknown>>;
+  primaryCondition?: string;
+  baselineCondition?: string;
+} {
+  const modelNames = uniqueStrings(
+    datasetSummaries.flatMap((entry) => Object.keys(asRecord(entry.models)))
+  );
+  const conditionMetrics: Record<string, Record<string, unknown>> = {};
+
+  for (const model of modelNames) {
+    const aggregate = aggregateModelDatasetSummaries(datasetSummaries, model);
+    if (Object.keys(aggregate).length > 0) {
+      conditionMetrics[model] = aggregate;
+    }
+    const perSeed = aggregateModelSeedRecords(datasetSummaries, model);
+    if (perSeed.length > 0) {
+      const target = conditionMetrics[model] || {};
+      applyRepeatConfidenceIntervals(target, perSeed, [
+        "best_mean_test_macro_f1",
+        "macro_f1_delta_vs_logreg",
+        "runtime_seconds_mean"
+      ]);
+      conditionMetrics[model] = target;
+    }
+  }
+
+  const maxSeedCount = datasetSummaries.reduce((max, entry) => {
+    const count = asArray(entry.seed_records).length;
+    return count > max ? count : max;
+  }, 0);
+  const totalTrials = asNumber(protocol.repeats) ?? (maxSeedCount > 0 ? maxSeedCount : undefined);
+  const executedTrials = maxSeedCount > 0 ? maxSeedCount : undefined;
+  const samplingProfile: Record<string, unknown> = {};
+  if (typeof totalTrials === "number") {
+    samplingProfile.total_trials = totalTrials;
+    samplingProfile.name = "standard";
+  }
+  if (typeof executedTrials === "number") {
+    samplingProfile.executed_trials = executedTrials;
+  }
+  if (typeof totalTrials === "number" && typeof executedTrials === "number") {
+    samplingProfile.cached_trials = Math.max(0, totalTrials - executedTrials);
+  }
+
+  const globalMetrics = asRecord(detailedResults.global_metrics);
+  const primaryCondition = asString(globalMetrics.best_model) || pickBestWorkflow(conditionMetrics);
+  const baselineCondition =
+    modelNames.find((name) => /logreg|logistic/iu.test(name) && name !== primaryCondition) ||
+    modelNames.find((name) => name !== primaryCondition) ||
+    undefined;
+
+  return {
+    samplingProfile,
+    conditionMetrics,
+    primaryCondition,
+    baselineCondition
+  };
+}
+
+function aggregateWorkflowDatasetSummaries(
+  datasetSummaries: Array<Record<string, unknown>>,
+  workflow: string
+): Record<string, unknown> {
+  const bestScores: number[] = [];
+  const deltas: number[] = [];
+  const optimisms: number[] = [];
+  const agreements: number[] = [];
+  const winnerConsistency: number[] = [];
+  const signConsistency: number[] = [];
+  const runtimes: number[] = [];
+  const memories: number[] = [];
+
+  for (const datasetEntry of datasetSummaries) {
+    const workflowEntry = asRecord(asRecord(datasetEntry.workflows)[workflow]);
+    if (Object.keys(workflowEntry).length === 0) {
+      continue;
+    }
+    const modelSummary = summarizeWorkflowModelAggregate(asRecord(workflowEntry.models), "mean_test_macro_f1");
+    if (typeof modelSummary.bestScore === "number") {
+      bestScores.push(modelSummary.bestScore);
+    }
+    if (typeof modelSummary.deltaVsLogreg === "number") {
+      deltas.push(modelSummary.deltaVsLogreg);
+    }
+    if (typeof modelSummary.selectionOptimism === "number") {
+      optimisms.push(modelSummary.selectionOptimism);
+    }
+    if (typeof modelSummary.signConsistencyVsLogreg === "number") {
+      signConsistency.push(modelSummary.signConsistencyVsLogreg);
+    }
+    pushNumber(agreements, workflowEntry.pairwise_ranking_agreement);
+    pushNumber(winnerConsistency, workflowEntry.winner_consistency);
+    pushNumber(runtimes, workflowEntry.runtime_seconds_mean);
+    pushNumber(memories, workflowEntry.peak_memory_mb_mean);
+  }
+
+  return compactRecord({
+    best_mean_test_macro_f1: mean(bestScores),
+    mean_test_macro_f1: mean(bestScores),
+    macro_f1_delta_vs_logreg: mean(deltas),
+    mean_macro_f1_improvement_over_logreg: mean(deltas),
+    mean_selection_optimism: mean(optimisms),
+    pairwise_ranking_agreement: mean(agreements),
+    winner_consistency: mean(winnerConsistency),
+    sign_consistency_vs_logreg: mean(signConsistency),
+    runtime_seconds_mean: mean(runtimes),
+    peak_memory_mb_mean: mean(memories)
+  });
+}
+
+function aggregateWorkflowRepeatRecords(
+  repeatRecords: Array<Record<string, unknown>>,
+  workflow: string
+): Array<Record<string, number>> {
+  return repeatRecords
+    .map((entry) => {
+      const datasets = asArray(entry.datasets).map((item) => asRecord(item));
+      const bestScores: number[] = [];
+      const deltas: number[] = [];
+      const optimisms: number[] = [];
+
+      for (const dataset of datasets) {
+        const workflowEntry = asRecord(asRecord(dataset.workflows)[workflow]);
+        if (Object.keys(workflowEntry).length === 0) {
+          continue;
+        }
+        const modelSummary = summarizeWorkflowModelAggregate(asRecord(workflowEntry.models), "test_macro_f1");
+        if (typeof modelSummary.bestScore === "number") {
+          bestScores.push(modelSummary.bestScore);
+        }
+        if (typeof modelSummary.deltaVsLogreg === "number") {
+          deltas.push(modelSummary.deltaVsLogreg);
+        }
+        if (typeof modelSummary.selectionOptimism === "number") {
+          optimisms.push(modelSummary.selectionOptimism);
+        }
+      }
+
+      return compactNumericRecord({
+        best_mean_test_macro_f1: mean(bestScores),
+        macro_f1_delta_vs_logreg: mean(deltas),
+        mean_selection_optimism: mean(optimisms)
+      });
+    })
+    .filter((entry) => Object.keys(entry).length > 0);
+}
+
+function aggregateModelDatasetSummaries(
+  datasetSummaries: Array<Record<string, unknown>>,
+  model: string
+): Record<string, unknown> {
+  const scores: number[] = [];
+  const deltas: number[] = [];
+  const runtimes: number[] = [];
+  const memories: number[] = [];
+  const variances: number[] = [];
+  const stabilities: number[] = [];
+  const sensitivities: number[] = [];
+
+  for (const datasetEntry of datasetSummaries) {
+    const modelEntry = asRecord(asRecord(datasetEntry.models)[model]);
+    if (Object.keys(modelEntry).length === 0) {
+      continue;
+    }
+    pushNumber(scores, modelEntry.macro_f1);
+    pushNumber(deltas, modelEntry.macro_f1_delta_vs_logreg);
+    pushNumber(runtimes, modelEntry.runtime_seconds);
+    pushNumber(memories, modelEntry.peak_memory_mb);
+    pushNumber(variances, modelEntry.run_to_run_variance);
+    pushNumber(stabilities, modelEntry.fold_to_fold_stability);
+    pushNumber(sensitivities, modelEntry.seed_sensitivity);
+  }
+
+  return compactRecord({
+    best_mean_test_macro_f1: mean(scores),
+    mean_test_macro_f1: mean(scores),
+    macro_f1_delta_vs_logreg: mean(deltas),
+    mean_macro_f1_improvement_over_logreg: mean(deltas),
+    runtime_seconds_mean: mean(runtimes),
+    peak_memory_mb_mean: mean(memories),
+    run_to_run_variance: mean(variances),
+    fold_to_fold_stability: mean(stabilities),
+    seed_sensitivity: mean(sensitivities)
+  });
+}
+
+function aggregateModelSeedRecords(
+  datasetSummaries: Array<Record<string, unknown>>,
+  model: string
+): Array<Record<string, number>> {
+  const bySeedIndex = new Map<number, {
+    scores: number[];
+    deltas: number[];
+    runtimes: number[];
+  }>();
+
+  for (const datasetEntry of datasetSummaries) {
+    const seedRecords = asArray(datasetEntry.seed_records).map((item) => asRecord(item));
+    for (const [index, seedRecord] of seedRecords.entries()) {
+      const modelEntry = resolveSeedModelSummary(seedRecord, model);
+      if (Object.keys(modelEntry).length === 0) {
+        continue;
+      }
+      const bucket = bySeedIndex.get(index) || { scores: [], deltas: [], runtimes: [] };
+      pushNumber(bucket.scores, modelEntry.macro_f1);
+      pushNumber(bucket.scores, modelEntry.mean_test_macro_f1);
+      pushNumber(bucket.deltas, modelEntry.macro_f1_delta_vs_logreg);
+      pushNumber(bucket.deltas, modelEntry.mean_delta_vs_logreg);
+      pushNumber(bucket.runtimes, modelEntry.runtime_seconds);
+      pushNumber(bucket.runtimes, modelEntry.mean_runtime_seconds);
+      bySeedIndex.set(index, bucket);
+    }
+  }
+
+  return [...bySeedIndex.entries()]
+    .sort((left, right) => left[0] - right[0])
+    .map(([, bucket]) =>
+      compactNumericRecord({
+        best_mean_test_macro_f1: mean(bucket.scores),
+        mean_test_macro_f1: mean(bucket.scores),
+        macro_f1_delta_vs_logreg: mean(bucket.deltas),
+        runtime_seconds_mean: mean(bucket.runtimes)
+      })
+    )
+    .filter((entry) => Object.keys(entry).length > 0);
+}
+
+function resolveSeedModelSummary(
+  seedRecord: Record<string, unknown>,
+  model: string
+): Record<string, unknown> {
+  const direct = asRecord(asRecord(seedRecord.models)[model]);
+  if (Object.keys(direct).length > 0) {
+    return direct;
+  }
+  return asRecord(asRecord(seedRecord.model_summaries)[model]);
+}
+
+function summarizeWorkflowModelAggregate(
+  models: Record<string, unknown>,
+  scoreKey: "mean_test_macro_f1" | "test_macro_f1"
+): {
+  bestScore?: number;
+  deltaVsLogreg?: number;
+  selectionOptimism?: number;
+  signConsistencyVsLogreg?: number;
+} {
+  const modelEntries = Object.entries(models)
+    .map(([name, value]) => ({ name, value: asRecord(value) }))
+    .filter((entry) => Object.keys(entry.value).length > 0);
+  if (modelEntries.length === 0) {
+    return {};
+  }
+
+  const best = modelEntries
+    .map((entry) => ({
+      ...entry,
+      score: asNumber(entry.value[scoreKey])
+    }))
+    .filter((entry): entry is typeof entry & { score: number } => typeof entry.score === "number")
+    .sort((left, right) => right.score - left.score)[0];
+  const logreg = modelEntries.find((entry) => entry.name === "logreg")?.value;
+
+  const bestScore = best?.score;
+  const bestDelta =
+    best && typeof asNumber(best.value.mean_delta_vs_logreg) === "number"
+      ? asNumber(best.value.mean_delta_vs_logreg)
+      : best && logreg
+        ? difference(asNumber(best.value[scoreKey]), asNumber(logreg[scoreKey]))
+        : undefined;
+
+  return compactNumericRecord({
+    bestScore,
+    deltaVsLogreg: bestDelta,
+    selectionOptimism: best ? asNumber(best.value.mean_selection_optimism) ?? asNumber(best.value.selection_optimism) : undefined,
+    signConsistencyVsLogreg: best ? asNumber(best.value.sign_consistency_vs_logreg) : undefined
+  });
+}
+
+function applyRepeatConfidenceIntervals(
+  target: Record<string, unknown>,
+  perRepeat: Array<Record<string, number>>,
+  metricKeys: string[]
+): void {
+  for (const metricKey of metricKeys) {
+    const values = perRepeat
+      .map((entry) => entry[metricKey])
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+    const ci = computeNormalApproxCi95(values);
+    if (ci) {
+      target[`ci95_${metricKey}`] = ci;
+    }
+  }
+}
+
+function pickBestWorkflow(conditionMetrics: Record<string, Record<string, unknown>>): string | undefined {
+  return Object.entries(conditionMetrics)
+    .map(([workflow, metrics]) => ({
+      workflow,
+      score: asNumber(metrics.macro_f1_delta_vs_logreg) ?? asNumber(metrics.best_mean_test_macro_f1)
+    }))
+    .filter((entry): entry is { workflow: string; score: number } => typeof entry.score === "number")
+    .sort((left, right) => right.score - left.score)[0]?.workflow;
+}
+
+function computeNormalApproxCi95(values: number[]): [number, number] | undefined {
+  if (values.length < 2) {
+    return undefined;
+  }
+  const meanValue = mean(values);
+  const sd = sampleStandardDeviation(values);
+  if (typeof meanValue !== "number" || typeof sd !== "number") {
+    return undefined;
+  }
+  const halfWidth = 1.96 * (sd / Math.sqrt(values.length));
+  return [
+    roundMetric(meanValue - halfWidth),
+    roundMetric(meanValue + halfWidth)
+  ];
+}
+
+function sampleStandardDeviation(values: number[]): number | undefined {
+  if (values.length < 2) {
+    return undefined;
+  }
+  const meanValue = mean(values);
+  if (typeof meanValue !== "number") {
+    return undefined;
+  }
+  const variance =
+    values.reduce((total, value) => total + (value - meanValue) ** 2, 0) / (values.length - 1);
+  return Number.isFinite(variance) ? Math.sqrt(variance) : undefined;
+}
+
+function mean(values: number[]): number | undefined {
+  if (values.length === 0) {
+    return undefined;
+  }
+  const total = values.reduce((sum, value) => sum + value, 0);
+  return roundMetric(total / values.length);
+}
+
+function difference(left: number | undefined, right: number | undefined): number | undefined {
+  if (typeof left !== "number" || typeof right !== "number") {
+    return undefined;
+  }
+  return roundMetric(left - right);
+}
+
+function roundMetric(value: number): number {
+  return Number(value.toFixed(6));
+}
+
+function pushNumber(values: number[], raw: unknown): void {
+  const parsed = asNumber(raw);
+  if (typeof parsed === "number") {
+    values.push(parsed);
+  }
+}
+
+function compactRecord<T extends Record<string, unknown>>(value: T): T {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
+}
+
+function compactNumericRecord(value: Record<string, number | undefined>): Record<string, number> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => typeof entry === "number" && Number.isFinite(entry))
+  ) as Record<string, number>;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function asStringArray(value: unknown): string[] {
+  return asArray(value)
+    .map((item) => asString(item))
+    .filter((item): item is string => Boolean(item));
+}
+
+function asNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+function isScalarJsonValue(value: unknown): value is string | number | boolean | null {
+  return value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean";
 }
 
 function resolveMaybeRelative(value: string | undefined, workspaceRoot: string): string | undefined {
