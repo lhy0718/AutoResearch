@@ -42,6 +42,8 @@ Run harness quality validation (issue log + checked-in run artifact structure):
 npm run validate:harness
 ```
 
+This script is an internal/CI quality gate. User-facing diagnostics stay on `/doctor` (TUI) and the web Doctor tab.
+
 Start the TUI:
 
 ```bash

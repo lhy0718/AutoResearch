@@ -26,7 +26,7 @@ import {
   resolveAppPaths,
   runNonInteractiveSetup
 } from "../config.js";
-import { runDoctor } from "../core/doctor.js";
+import { runDoctorReport } from "../core/doctor.js";
 import { bootstrapAutoLabOSRuntime, AutoLabOSRuntime } from "../runtime/createRuntime.js";
 import { GraphNodeId, PendingPlan, RunRecord, WebSessionState } from "../types.js";
 import { InteractionSession } from "../interaction/InteractionSession.js";
@@ -229,17 +229,24 @@ class AutoLabOSWebController {
 
       if (pathname === "/api/doctor" && method === "GET") {
         if (!this.runtime) {
-          return jsonResponse(res, 200, { configured: false, checks: [] } satisfies DoctorResponse);
+          return jsonResponse(res, 200, { configured: false, checks: [], harness: undefined } satisfies DoctorResponse);
         }
-        const checks = await runDoctor(this.runtime.codex, {
+        const report = await runDoctorReport(this.runtime.codex, {
           llmMode: this.runtime.config.providers.llm_mode,
           pdfAnalysisMode: this.runtime.config.analysis.pdf_mode,
           openAiApiKeyConfigured: await hasOpenAiApiKey(this.cwd),
           codexResearchModel: this.runtime.config.providers.codex.model,
-          codexPdfModel:
-            this.runtime.config.providers.codex.pdf_model || this.runtime.config.providers.codex.model
+          codexPdfModel: this.runtime.config.providers.codex.pdf_model || this.runtime.config.providers.codex.model,
+          workspaceRoot: this.cwd,
+          includeHarnessValidation: true,
+          includeHarnessTestRecords: false,
+          maxHarnessFindings: 40
         });
-        return jsonResponse(res, 200, { configured: true, checks } satisfies DoctorResponse);
+        return jsonResponse(
+          res,
+          200,
+          { configured: true, checks: report.checks, harness: report.harness } satisfies DoctorResponse
+        );
       }
 
       if (pathname === "/api/runs" && method === "GET") {

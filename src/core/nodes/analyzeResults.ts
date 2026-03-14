@@ -1252,6 +1252,24 @@ function buildTransitionRecommendation(summary: AnalysisReport): TransitionRecom
   }
 
   if (summary.overview.objective_status === "not_met") {
+    if (isDeferredFullCycleObjective(summary)) {
+      const objectiveMetrics = asRecord(summary.metrics.metrics);
+      const objectiveNotes = asRecord(objectiveMetrics.notes);
+      return createRecommendation({
+        action: "advance",
+        targetNode: "review",
+        reason:
+          "The objective metric is lifecycle-terminal and still provisional at analyze_results, so the run should continue into review/write_paper before deciding another implementation loop.",
+        confidence: 0.74,
+        autoExecutable: true,
+        evidence: collectEvidence(
+          summary,
+          summary.overview.objective_summary,
+          asString(objectiveNotes.full_cycle_completed),
+          summary.synthesis?.follow_up_actions?.[0]
+        )
+      });
+    }
     const supportedComparison = summary.condition_comparisons.some((item) => item.hypothesis_supported === true);
     const unsupportedComparison = summary.condition_comparisons.some((item) => item.hypothesis_supported === false);
     const evidenceGap = findFailure(summary.failure_taxonomy, "evidence_gap", ["observed", "risk"]);
@@ -1327,6 +1345,14 @@ function applyGovernanceTransitionOverride(
     return recommendation;
   }
 
+  if (
+    isDeferredFullCycleObjective(summary) &&
+    decision.transitionOverride.targetNode === "implement_experiments" &&
+    comparisonContract?.comparison_mode === "baseline_first_locked"
+  ) {
+    return recommendation;
+  }
+
   const targetNode = decision.transitionOverride.targetNode;
   return createRecommendation({
     action: targetNode === "design_experiments" ? "backtrack_to_design" : "backtrack_to_implement",
@@ -1370,6 +1396,36 @@ function createRecommendation(input: {
     suggestedCommands,
     generatedAt: new Date().toISOString()
   };
+}
+
+function isDeferredFullCycleObjective(summary: AnalysisReport): boolean {
+  if (summary.overview.objective_status !== "not_met") {
+    return false;
+  }
+  const matchedMetricKey = (summary.overview.matched_metric_key || "").toLowerCase();
+  const profilePrimaryMetric = (summary.objective_metric.profile.primary_metric || "").toLowerCase();
+  const rawObjectiveMetric = summary.objective_metric.raw.toLowerCase();
+  const fullCycleMetricMatched =
+    matchedMetricKey.endsWith("tui_full_cycle_consistent_success_count") ||
+    profilePrimaryMetric === "tui_full_cycle_consistent_success_count" ||
+    (rawObjectiveMetric.includes("full tui cycle") && rawObjectiveMetric.includes("artifact/state consistency"));
+  if (!fullCycleMetricMatched) {
+    return false;
+  }
+  const objectiveMetrics = asRecord(summary.metrics.metrics);
+  if (objectiveMetrics.full_cycle_completed !== false) {
+    return false;
+  }
+  const pendingNodes = asStringArray(objectiveMetrics.pending_nodes);
+  const objectiveNotes = asRecord(objectiveMetrics.notes);
+  const fullCycleNote = asString(objectiveNotes.full_cycle_completed) || "";
+  const pendingLifecycleNodes = pendingNodes.some((node) =>
+    node === "run_experiments" || node === "analyze_results" || node === "review" || node === "write_paper"
+  );
+  const selfReferentialNote =
+    /run remains at implement_experiments/i.test(fullCycleNote) ||
+    /never entered run_experiments\/analyze_results\/review\/write_paper/i.test(fullCycleNote);
+  return pendingLifecycleNodes || selfReferentialNote;
 }
 
 function collectEvidence(summary: AnalysisReport, ...items: Array<string | undefined>): string[] {

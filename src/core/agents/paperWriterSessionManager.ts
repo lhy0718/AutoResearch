@@ -29,7 +29,7 @@ import { createPaperWriterRole } from "./roles/paperWriter.js";
 import { createReviewerRole } from "./roles/reviewer.js";
 import { writeRunArtifact } from "../nodes/helpers.js";
 
-const DEFAULT_PAPER_WRITER_STAGE_TIMEOUT_MS = 90_000;
+const DEFAULT_PAPER_WRITER_STAGE_TIMEOUT_MS = 0;
 
 interface PaperWriterOutline {
   title: string;
@@ -574,17 +574,19 @@ export class PaperWriterSessionManager {
           }
         }
       });
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        const timer = setTimeout(() => {
-          timedOut = true;
-          const message = `Paper writer stage "${input.stage}" exceeded the ${timeoutMs}ms timeout`;
-          controller.abort(new Error(message));
-          reject(new Error(message));
-        }, timeoutMs);
-        controller.signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
-      });
+      const timeoutPromise = timeoutMs > 0
+        ? new Promise<never>((_, reject) => {
+            const timer = setTimeout(() => {
+              timedOut = true;
+              const message = `Paper writer stage "${input.stage}" exceeded the ${timeoutMs}ms timeout`;
+              controller.abort(new Error(message));
+              reject(new Error(message));
+            }, timeoutMs);
+            controller.signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
+          })
+        : undefined;
       try {
-        const result = await Promise.race([runPromise, timeoutPromise]);
+        const result = timeoutPromise ? await Promise.race([runPromise, timeoutPromise]) : await runPromise;
         const completedAt = new Date().toISOString();
         input.trace?.push({
           stage: input.stage,

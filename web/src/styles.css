@@ -1033,6 +1033,30 @@ button:disabled,
   margin-bottom: 4px;
 }
 
+.doctor-harness-findings {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.doctor-harness-finding {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-muted);
+  display: grid;
+  gap: 4px;
+}
+
+.doctor-harness-meta {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.doctor-harness-remediation {
+  font-size: 0.85rem;
+}
+
 .inline-empty {
   padding: 16px;
   border: 1px dashed var(--line-strong);

@@ -157,6 +157,52 @@ export interface DoctorCheck {
   detail: string;
 }
 
+export type HarnessIssueKind =
+  | "missing_artifact"
+  | "malformed_issue"
+  | "broken_evidence_link"
+  | "status_artifact_mismatch"
+  | "paper_result_mismatch";
+
+export type HarnessValidationScope = "issue_log" | "workspace" | "test_records";
+
+export interface HarnessValidationFinding {
+  code: string;
+  message: string;
+  filePath?: string;
+  runId?: string;
+  kind: HarnessIssueKind;
+  remediation: string;
+  scope: HarnessValidationScope;
+  runStorePath?: string;
+}
+
+export interface HarnessValidationTargetSummary {
+  scope: "workspace" | "test_records";
+  runStoreCount: number;
+  runCount: number;
+  findingCount: number;
+}
+
+export interface HarnessValidationReport {
+  generatedAt: string;
+  workspaceRoot: string;
+  issueLogPath: string;
+  issueEntryCount: number;
+  runStoresChecked: number;
+  runsChecked: number;
+  findings: HarnessValidationFinding[];
+  countsByKind: Record<HarnessIssueKind, number>;
+  targets: HarnessValidationTargetSummary[];
+  status: "ok" | "fail";
+}
+
+export interface DoctorResponse {
+  configured: boolean;
+  checks: DoctorCheck[];
+  harness?: HarnessValidationReport;
+}
+
 export interface BootstrapResponse {
   configured: boolean;
   setupDefaults: {

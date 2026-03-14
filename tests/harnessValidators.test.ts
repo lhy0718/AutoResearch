@@ -145,6 +145,67 @@ describe("harness validators", () => {
     expect(codes).toContain("analyze_results_transition_missing");
   });
 
+  it("reports missing source artifact paths in paper evidence links", async () => {
+    const runDir = createTempRunDir("autolabos-harness-validator-linkage-");
+    await mkdir(path.join(runDir, "paper"), { recursive: true });
+    await writeFile(path.join(runDir, "paper", "main.tex"), "\\section{Results}\n", "utf8");
+    await writeFile(path.join(runDir, "paper", "references.bib"), "@article{key, title={A}}\n", "utf8");
+    await writeJson(path.join(runDir, "paper", "evidence_links.json"), {
+      claims: [
+        {
+          claim_id: "c1",
+          statement: "Claim with stale links.",
+          evidence_ids: ["artifacts/missing.json"],
+          citation_paper_ids: ["paper_kept"],
+          source_artifacts: ["paper/not-found.json"]
+        }
+      ]
+    });
+
+    const result = await validateRunArtifactStructure({
+      runId: "run-link-missing",
+      runDir,
+      nodeStates: makeNodeStates({
+        write_paper: "completed"
+      })
+    });
+
+    const codes = result.issues.map((item) => item.code);
+    expect(codes).toContain("paper_claim_source_path_missing");
+  });
+
+  it("flags review and final artifact status mismatches", async () => {
+    const runDir = createTempRunDir("autolabos-harness-validator-review-consistency-");
+    await mkdir(path.join(runDir, "review"), { recursive: true });
+    await mkdir(path.join(runDir, "paper"), { recursive: true });
+    await writeJson(path.join(runDir, "review", "decision.json"), { outcome: "revise_in_place" });
+    await writeFile(path.join(runDir, "paper", "main.tex"), "\\section{Results}\\naccuracy improved by 3.1%.", "utf8");
+    await writeFile(path.join(runDir, "paper", "references.bib"), "@article{key, title={A}}", "utf8");
+    await writeJson(path.join(runDir, "paper", "evidence_links.json"), {
+      claims: [
+        {
+          claim_id: "c1",
+          statement: "Accuracy improved.",
+          evidence_ids: ["ev_1"],
+          citation_paper_ids: []
+        }
+      ]
+    });
+
+    const result = await validateRunArtifactStructure({
+      runId: "run-review-mismatch",
+      runDir,
+      runStatus: "completed",
+      nodeStates: makeNodeStates({
+        write_paper: "completed"
+      })
+    });
+
+    const codes = result.issues.map((item) => item.code);
+    expect(codes).not.toContain("review_requires_revision_but_run_completed");
+    expect(codes).toContain("paper_result_artifacts_missing_for_claims");
+  });
+
   it("validates required live-validation issue fields", () => {
     const validMarkdown = `
 ## Issue: LV-OK

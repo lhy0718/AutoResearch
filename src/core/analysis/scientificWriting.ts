@@ -788,11 +788,51 @@ export function figureSelectorAndCaptionWriter(context: ExperimentArtifactContex
     return [];
   }
 
-  const caption =
-    context.results.figure_captions[0] ||
-    "Dataset-level outcome summary with uncertainty-aware interpretation retained in the main paper.";
+  const caption = sanitizeVisualCaption(
+    context.results.figure_captions[0],
+    "Dataset-level outcome summary with uncertainty-aware interpretation retained in the main paper."
+  );
 
   return [{ caption, bars }];
+}
+
+function hasInternalCaptionToken(caption: string): boolean {
+  return (
+    /[a-z0-9]+_[a-z0-9_]+/u.test(caption) ||
+    /\.(json|svg|txt|log)\b/iu.test(caption) ||
+    /\bstderr\b|\bstdout\b|\bmetric_table\b/iu.test(caption)
+  );
+}
+
+function sanitizeVisualCaption(caption: string | undefined, fallback: string): string {
+  const normalized = cleanString(caption);
+  if (!normalized || hasInternalCaptionToken(normalized)) {
+    return fallback;
+  }
+  return normalized;
+}
+
+function sanitizeCandidateTables(tables: PaperManuscriptTable[] | undefined): PaperManuscriptTable[] | undefined {
+  if (!tables || tables.length === 0) {
+    return tables;
+  }
+  return tables.map((table) => ({
+    ...table,
+    caption: sanitizeVisualCaption(table.caption, "Main-table summary retained for reproducible reporting.")
+  }));
+}
+
+function sanitizeCandidateFigures(figures: PaperManuscriptFigure[] | undefined): PaperManuscriptFigure[] | undefined {
+  if (!figures || figures.length === 0) {
+    return figures;
+  }
+  return figures.map((figure) => ({
+    ...figure,
+    caption: sanitizeVisualCaption(
+      figure.caption,
+      "Dataset-level outcome summary with uncertainty-aware interpretation retained in the main paper."
+    )
+  }));
 }
 
 export function pageBudgetManager(input: {
@@ -1079,7 +1119,7 @@ export function manuscriptConsistencyLinter(input: {
     ...((input.manuscript.appendix_tables as PaperManuscriptTable[] | undefined) || []).map((item) => item.caption),
     ...((input.manuscript.appendix_figures as PaperManuscriptFigure[] | undefined) || []).map((item) => item.caption)
   ]) {
-    if (/[a-z0-9]+_[a-z0-9_]+/u.test(caption) || /\.(json|svg|txt|log)\b/iu.test(caption) || /\bstderr\b|\bstdout\b|\bmetric_table\b/iu.test(caption)) {
+    if (hasInternalCaptionToken(caption)) {
       issues.push({
         kind: "caption_internal_name",
         severity: "error",
@@ -3149,28 +3189,35 @@ export function materializeScientificManuscript(input: {
     };
   });
 
-  const tables = datasetResultTableBuilder(context).length > 0
-    ? datasetResultTableBuilder(context).map((table) => ({
+  const mainTables = datasetResultTableBuilder(context);
+  const tables = mainTables.length > 0
+    ? mainTables.map((table) => ({
         ...table,
         source_refs: buildArtifactSourceRefs(["result_analysis.metric_table", "latest_results.dataset_summaries"])
       }))
-    : input.candidate.tables;
-  const figures = figureSelectorAndCaptionWriter(context).length > 0
-    ? figureSelectorAndCaptionWriter(context).map((figure) => ({
+    : sanitizeCandidateTables(input.candidate.tables);
+  const mainFigures = figureSelectorAndCaptionWriter(context);
+  const figures = mainFigures.length > 0
+    ? mainFigures.map((figure) => ({
         ...figure,
         source_refs: buildArtifactSourceRefs(["result_analysis.figure_specs", "latest_results.dataset_summaries"])
       }))
-    : input.candidate.figures;
+    : sanitizeCandidateFigures(input.candidate.figures);
   const appendixSections = input.appendixPlan.sections.map((section) => ({
     ...section,
     source_refs: buildArtifactSourceRefs([`appendix:${section.heading}`, "latest_results", "result_analysis"])
   }));
   const appendixTables = input.appendixPlan.tables.map((table) => ({
     ...table,
+    caption: sanitizeVisualCaption(table.caption, "Extended dataset-level outcomes retained outside the main paper."),
     source_refs: buildArtifactSourceRefs(["appendix:dataset_tables", "latest_results.dataset_summaries"])
   }));
   const appendixFigures = input.appendixPlan.figures.map((figure) => ({
     ...figure,
+    caption: sanitizeVisualCaption(
+      figure.caption,
+      "Extended dataset-level outcomes retained outside the main paper."
+    ),
     source_refs: buildArtifactSourceRefs(["appendix:figures", "result_analysis.figure_specs"])
   }));
 

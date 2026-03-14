@@ -15,6 +15,7 @@ export interface RunArtifactValidationInput {
   runId: string;
   runDir: string;
   nodeStates?: Partial<Record<GraphNodeId, { status?: string }>>;
+  runStatus?: string;
 }
 
 export interface RunArtifactValidationResult {
@@ -58,11 +59,17 @@ export async function validateRunArtifactStructure(
 ): Promise<RunArtifactValidationResult> {
   const issues: HarnessValidationIssue[] = [];
   const checked = new Set<string>();
-  const { runId, runDir, nodeStates } = input;
+  const { runId, runDir, nodeStates, runStatus } = input;
+  const metricsPath = path.join(runDir, "metrics.json");
+  const objectiveEvaluationPath = path.join(runDir, "objective_evaluation.json");
+  const resultAnalysisPath = path.join(runDir, "result_analysis.json");
+  const transitionPath = path.join(runDir, "transition_recommendation.json");
+  const reviewDecisionPath = path.join(runDir, "review", "decision.json");
 
   const reviewPacketPath = path.join(runDir, "review", "review_packet.json");
   const reviewCompleted = isNodeCompleted(nodeStates, "review");
   const reviewPacketPresent = await fileExists(reviewPacketPath);
+  const reviewDecision = await readJsonObjectIfPresent(reviewDecisionPath, runId, issues);
   if (reviewCompleted || reviewPacketPresent) {
     checked.add("review_packet");
     const reviewPacket = await requireJsonObject({
@@ -77,7 +84,7 @@ export async function validateRunArtifactStructure(
       const decisionExpected = reviewCompleted || isRecord(reviewPacket.decision);
       if (decisionExpected) {
         await requireJsonObject({
-          filePath: path.join(runDir, "review", "decision.json"),
+          filePath: reviewDecisionPath,
           missingCode: "review_decision_missing",
           malformedCode: "review_decision_malformed",
           runId,
@@ -97,7 +104,7 @@ export async function validateRunArtifactStructure(
   const writePaperCompleted = isNodeCompleted(nodeStates, "write_paper");
   const mainTexPath = path.join(runDir, "paper", "main.tex");
   const mainTexPresent = await fileExists(mainTexPath);
-  if (writePaperCompleted || mainTexPresent) {
+  if (writePaperCompleted || mainTexPresent || runStatus === "completed") {
     checked.add("paper_artifacts");
     await requireNonEmptyText({
       filePath: mainTexPath,
@@ -121,8 +128,24 @@ export async function validateRunArtifactStructure(
       issues
     });
     if (evidenceLinks) {
-      validateEvidenceLinksPayload(evidenceLinks, runId, path.join(runDir, "paper", "evidence_links.json"), issues);
+      await validateEvidenceLinksPayload(
+        evidenceLinks,
+        runId,
+        path.join(runDir, "paper", "evidence_links.json"),
+        issues,
+        {
+          runDir
+        }
+      );
     }
+    await validatePaperResultConsistency({
+      runId,
+      runDir,
+      mainTexPath,
+      metricsPath,
+      objectiveEvaluationPath,
+      issues
+    });
   }
 
   const runVerifier = await readJsonObjectIfPresent(path.join(runDir, "run_experiments_verify_report.json"), runId, issues);
@@ -131,7 +154,7 @@ export async function validateRunArtifactStructure(
   if (runExperimentsCompleted || runVerifierPass) {
     checked.add("run_experiments");
     const metrics = await requireJsonObject({
-      filePath: path.join(runDir, "metrics.json"),
+      filePath: metricsPath,
       missingCode: "run_metrics_missing",
       malformedCode: "run_metrics_malformed",
       runId,
@@ -141,14 +164,13 @@ export async function validateRunArtifactStructure(
       issues.push({
         code: "run_metrics_empty",
         message: "metrics.json must not be an empty object after successful experiment execution.",
-        filePath: path.join(runDir, "metrics.json"),
+        filePath: metricsPath,
         runId
       });
     }
   }
 
   const analyzeResultsCompleted = isNodeCompleted(nodeStates, "analyze_results");
-  const resultAnalysisPath = path.join(runDir, "result_analysis.json");
   const resultAnalysisPresent = await fileExists(resultAnalysisPath);
   if (analyzeResultsCompleted || resultAnalysisPresent) {
     checked.add("analyze_results");
@@ -160,20 +182,38 @@ export async function validateRunArtifactStructure(
       issues
     });
     await requireJsonObject({
-      filePath: path.join(runDir, "objective_evaluation.json"),
+      filePath: objectiveEvaluationPath,
       missingCode: "analyze_results_objective_evaluation_missing",
       malformedCode: "analyze_results_objective_evaluation_malformed",
       runId,
       issues
     });
     await requireJsonObject({
-      filePath: path.join(runDir, "transition_recommendation.json"),
+      filePath: transitionPath,
       missingCode: "analyze_results_transition_missing",
       malformedCode: "analyze_results_transition_malformed",
       runId,
       issues
     });
   }
+
+  await validateReviewAndPaperConsistency({
+    runId,
+    runStatus,
+    runDir,
+    writePaperCompleted,
+    mainTexPresent,
+    reviewDecision,
+    issues
+  });
+  validateRunStatusConsistency({
+    runId,
+    runStatus,
+    runDir,
+    mainTexPresent,
+    writePaperCompleted,
+    issues
+  });
 
   return {
     runId,
@@ -190,6 +230,9 @@ export function validateLiveValidationIssueMarkdown(
   const entries = collectIssueEntries(markdown);
 
   if (entries.length === 0) {
+    if (hasExplicitNoActiveIssues(markdown)) {
+      return { issueCount: 0, issues };
+    }
     issues.push({
       code: "issue_entry_missing",
       message: "No `Issue:` entries were found in ISSUES.md.",
@@ -232,6 +275,11 @@ export function validateLiveValidationIssueMarkdown(
     issueCount: entries.length,
     issues
   };
+}
+
+function hasExplicitNoActiveIssues(markdown: string): boolean {
+  const activeSection = markdown.match(/##\s*Active issues[\s\S]*?(?=\n##\s+|$)/iu)?.[0] || "";
+  return /\bnone\b/i.test(activeSection);
 }
 
 export async function validateLiveValidationIssueFile(filePath: string): Promise<IssueLogValidationResult> {
@@ -289,12 +337,15 @@ function validateReviewPacketPayload(
   }
 }
 
-function validateEvidenceLinksPayload(
+async function validateEvidenceLinksPayload(
   payload: Record<string, unknown>,
   runId: string,
   filePath: string,
-  issues: HarnessValidationIssue[]
-): void {
+  issues: HarnessValidationIssue[],
+  context?: {
+    runDir: string;
+  }
+): Promise<void> {
   const claims = Array.isArray(payload.claims) ? payload.claims : [];
   if (claims.length === 0) {
     issues.push({
@@ -306,7 +357,9 @@ function validateEvidenceLinksPayload(
     return;
   }
 
-  claims.forEach((item, index) => {
+  let claimsWithConcreteLinks = 0;
+  for (let index = 0; index < claims.length; index += 1) {
+    const item = claims[index];
     const claim = isRecord(item) ? item : undefined;
     if (!claim) {
       issues.push({
@@ -315,7 +368,7 @@ function validateEvidenceLinksPayload(
         filePath,
         runId
       });
-      return;
+      continue;
     }
 
     const claimId = asString(claim.claim_id);
@@ -323,6 +376,7 @@ function validateEvidenceLinksPayload(
     const evidenceIds = asStringArray(claim.evidence_ids);
     const citationPaperIds = asStringArray(claim.citation_paper_ids);
     const linkageIds = [...evidenceIds, ...citationPaperIds];
+    const sourceArtifacts = asStringArray(claim.source_artifacts);
 
     if (isPlaceholder(claimId)) {
       issues.push({
@@ -359,8 +413,174 @@ function validateEvidenceLinksPayload(
         runId
       });
     }
-  });
+
+    if (linkageIds.length > 0 && !linkageIds.some((value) => isPlaceholder(value))) {
+      claimsWithConcreteLinks += 1;
+    }
+
+    if (!context) {
+      continue;
+    }
+
+    for (const evidenceId of evidenceIds) {
+      if (isPlaceholder(evidenceId)) {
+        continue;
+      }
+      if (looksLikePath(evidenceId) && !(await fileExists(path.join(context.runDir, evidenceId)))) {
+        issues.push({
+          code: "paper_claim_source_path_missing",
+          message: `Claim ${claimId || `#${index + 1}`} references missing artifact path: ${evidenceId}.`,
+          filePath,
+          runId
+        });
+      }
+    }
+
+    for (const sourceArtifact of sourceArtifacts) {
+      if (!sourceArtifact || isPlaceholder(sourceArtifact)) {
+        issues.push({
+          code: "paper_claim_source_path_placeholder",
+          message: `Claim ${claimId || `#${index + 1}`} uses an empty or placeholder source artifact mapping.`,
+          filePath,
+          runId
+        });
+        continue;
+      }
+      const absolute = path.isAbsolute(sourceArtifact)
+        ? sourceArtifact
+        : path.join(context.runDir, sourceArtifact);
+      if (!(await fileExists(absolute))) {
+        issues.push({
+          code: "paper_claim_source_path_missing",
+          message: `Claim ${claimId || `#${index + 1}`} references missing source artifact: ${sourceArtifact}.`,
+          filePath,
+          runId
+        });
+      }
+    }
+  }
+
+  if (claims.length >= 4 && claimsWithConcreteLinks / claims.length < 0.5) {
+    issues.push({
+      code: "paper_claim_linkage_imbalance",
+      message: `Only ${claimsWithConcreteLinks}/${claims.length} claims have concrete evidence/citation linkage.`,
+      filePath,
+      runId
+    });
+  }
 }
+
+async function validatePaperResultConsistency(input: {
+  runId: string;
+  runDir: string;
+  mainTexPath: string;
+  metricsPath: string;
+  objectiveEvaluationPath: string;
+  issues: HarnessValidationIssue[];
+}): Promise<void> {
+  const tex = await readFileIfExists(input.mainTexPath);
+  if (!tex || !looksLikeResultNarrative(tex)) {
+    return;
+  }
+  const metricsPresent = await fileExists(input.metricsPath);
+  const objectivePresent = await fileExists(input.objectiveEvaluationPath);
+  if (!metricsPresent && !objectivePresent) {
+    input.issues.push({
+      code: "paper_result_artifacts_missing_for_claims",
+      message:
+        "paper/main.tex appears to describe quantitative/core results, but metrics.json and objective_evaluation.json are both missing.",
+      filePath: input.mainTexPath,
+      runId: input.runId
+    });
+  }
+}
+
+async function validateReviewAndPaperConsistency(input: {
+  runId: string;
+  runStatus?: string;
+  runDir: string;
+  writePaperCompleted: boolean;
+  mainTexPresent: boolean;
+  reviewDecision?: Record<string, unknown>;
+  issues: HarnessValidationIssue[];
+}): Promise<void> {
+  if (!input.reviewDecision) {
+    return;
+  }
+  const outcome = asString(input.reviewDecision.outcome).toLowerCase();
+  if (!outcome) {
+    return;
+  }
+  const referencesPresent = path.join(input.runDir, "paper", "references.bib");
+  const evidenceLinksPresent = path.join(input.runDir, "paper", "evidence_links.json");
+  const paperArtifactsMissing = !input.mainTexPresent;
+  const expectsFinalPaper = outcome === "advance" && (input.writePaperCompleted || input.runStatus === "completed");
+
+  if (expectsFinalPaper && paperArtifactsMissing) {
+    input.issues.push({
+      code: "review_accepted_without_paper_artifacts",
+      message: "Review outcome is advance/finalized, but paper/main.tex is missing.",
+      filePath: path.join(input.runDir, "review", "decision.json"),
+      runId: input.runId
+    });
+  }
+
+  if (outcome === "advance" && input.mainTexPresent) {
+    const referencesExists = await fileExists(referencesPresent);
+    const evidenceExists = await fileExists(evidenceLinksPresent);
+    if (!referencesExists || !evidenceExists) {
+      input.issues.push({
+        code: "review_paper_artifact_set_incomplete",
+        message:
+          "Review advanced to paper completion, but references.bib or evidence_links.json is missing in paper artifacts.",
+        filePath: path.join(input.runDir, "review", "decision.json"),
+        runId: input.runId
+      });
+    }
+  }
+}
+
+function validateRunStatusConsistency(input: {
+  runId: string;
+  runStatus?: string;
+  runDir: string;
+  mainTexPresent: boolean;
+  writePaperCompleted: boolean;
+  issues: HarnessValidationIssue[];
+}): void {
+  if (input.runStatus === "completed" && !input.mainTexPresent) {
+    input.issues.push({
+      code: "run_state_completed_without_paper",
+      message: "Run status is completed, but paper/main.tex is missing.",
+      filePath: path.join(input.runDir, "paper", "main.tex"),
+      runId: input.runId
+    });
+  }
+
+  if (input.mainTexPresent && !input.writePaperCompleted && input.runStatus !== "completed") {
+    input.issues.push({
+      code: "status_artifact_mismatch_write_paper_state",
+      message:
+        "paper/main.tex exists while write_paper node is not marked completed. Verify resume/retry state projection.",
+      filePath: path.join(input.runDir, "paper", "main.tex"),
+      runId: input.runId
+    });
+  }
+}
+
+function looksLikeResultNarrative(tex: string): boolean {
+  const normalized = tex.toLowerCase();
+  const metricWord = /\b(accuracy|f1|auc|precision|recall|objective|metric|improv(ed|ement)|outperform)\b/u.test(
+    normalized
+  );
+  const numericSignal = /\b\d+(?:\.\d+)?%?\b/u.test(normalized);
+  return metricWord && numericSignal;
+}
+
+function looksLikePath(value: string): boolean {
+  return value.includes("/") || /\.(json|jsonl|yaml|yml|tex|bib|md|csv|tsv|txt)$/iu.test(value);
+}
+
 
 async function requireJsonObject(input: {
   filePath: string;

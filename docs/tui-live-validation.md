@@ -50,6 +50,14 @@ Always check both:
 
 If behavior diverges, call it out explicitly in the issue entry.
 
+## 4.5) `/doctor` as the first diagnostics surface
+
+Use `/doctor` in TUI or the web Doctor tab first when triaging live issues.
+
+- Environment checks show tool/runtime readiness.
+- Harness diagnostics summarize issue-log integrity and run artifact consistency for the current workspace.
+- Findings include a problem class and a short remediation hint so triage can move directly to reproduction/fix.
+
 ## 5) Live bug -> regression test workflow
 
 When a live bug is confirmed:

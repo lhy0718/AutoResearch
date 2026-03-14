@@ -19,7 +19,7 @@ import {
   isStructuredActionTimeoutError,
   looksLikeStructuredActionRequest
 } from "../core/commands/naturalActionIntent.js";
-import { runDoctor } from "../core/doctor.js";
+import { runDoctorReport } from "../core/doctor.js";
 import { resolveRunByQuery } from "../core/runs/runResolver.js";
 import { RunContextMemory } from "../core/memory/runContextMemory.js";
 import { parseSlashCommand } from "../core/commands/parseSlash.js";
@@ -1050,15 +1050,33 @@ export class InteractionSession {
   }
 
   private async handleDoctor(): Promise<void> {
-    const checks = await runDoctor(this.codex, {
+    const report = await runDoctorReport(this.codex, {
       llmMode: this.config.providers.llm_mode,
       pdfAnalysisMode: this.config.analysis.pdf_mode,
       openAiApiKeyConfigured: await resolveOpenAiApiKey(this.workspaceRoot).then(Boolean),
       codexResearchModel: this.config.providers.codex.model,
-      codexPdfModel: this.config.providers.codex.pdf_model || this.config.providers.codex.model
+      codexPdfModel: this.config.providers.codex.pdf_model || this.config.providers.codex.model,
+      workspaceRoot: this.workspaceRoot,
+      includeHarnessValidation: true,
+      includeHarnessTestRecords: false,
+      maxHarnessFindings: 30
     });
-    for (const check of checks) {
+    for (const check of report.checks) {
       this.pushLog(`[${check.ok ? "OK" : "FAIL"}] ${check.name}: ${check.detail}`);
+    }
+    if (report.harness) {
+      this.pushLog(
+        `[${report.harness.status === "ok" ? "OK" : "FAIL"}] harness-validation: `
+          + `${report.harness.findings.length} issue(s), ${report.harness.runsChecked} run(s) checked`
+      );
+      for (const finding of report.harness.findings.slice(0, 5)) {
+        const runTag = finding.runId ? ` [run:${finding.runId}]` : "";
+        this.pushLog(`  - (${finding.kind}) ${finding.code}${runTag}: ${finding.message}`);
+        this.pushLog(`    remediation: ${finding.remediation}`);
+      }
+      if (report.harness.findings.length > 5) {
+        this.pushLog(`  ... ${report.harness.findings.length - 5} more harness finding(s)`);
+      }
     }
   }
 

@@ -1211,4 +1211,172 @@ describe("experiment governance", () => {
       )
     ).toBe(true);
   });
+
+  it("advances to review when full-cycle objective remains lifecycle-provisional under baseline-first lock", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-experiment-governance-full-cycle-"));
+    process.chdir(root);
+
+    const run = makeRun(
+      "run-governance-full-cycle",
+      "analyze_results",
+      "Complete one full TUI cycle with artifact/state consistency and high-quality intermediate outputs"
+    );
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    const memoryDir = path.join(runDir, "memory");
+    const publicDir = path.join(root, "public-experiment");
+    await mkdir(memoryDir, { recursive: true });
+    await mkdir(publicDir, { recursive: true });
+    await writeFile(path.join(publicDir, "run_validation.py"), "print('ok')\n", "utf8");
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "implement_experiments.metrics_path",
+            value: `.autolabos/runs/${run.id}/metrics.json`,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.public_dir",
+            value: publicDir,
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          generated_at: "2026-03-14T14:38:58Z",
+          experiment_mode: "hybrid_validation",
+          run_id: run.id,
+          baseline_candidate_id:
+            "plan_2:baseline:unmodified_system_with_current_end_state_only_validation_and_no_per_transition_gating",
+          comparison_mode: "baseline_first_locked",
+          plan_id: "plan_2",
+          metrics: {
+            run_id: run.id,
+            baseline_candidate_id:
+              "plan_2:baseline:unmodified_system_with_current_end_state_only_validation_and_no_per_transition_gating",
+            comparison_mode: "baseline_first_locked",
+            budget_profile: {
+              mode: "single_run_locked",
+              locked: true,
+              timeout_sec: 1800
+            },
+            selected_plan_id: "plan_2",
+            full_cycle_completed: false,
+            completed_nodes: [
+              "collect_papers",
+              "analyze_papers",
+              "generate_hypotheses",
+              "design_experiments",
+              "implement_experiments"
+            ],
+            pending_nodes: ["run_experiments", "analyze_results", "review", "write_paper"],
+            checked_transition_count: 20,
+            mismatch_count: 2,
+            mismatch_counter: {
+              persisted_state_bug: 1,
+              refresh_render_bug: 1
+            },
+            per_transition_mismatch_rate: 0.1,
+            zero_violation_completion: false,
+            zero_violation_completion_rate: 0,
+            artifact_state_consistency_pass: false,
+            fresh_session_replay_agreement: null,
+            repeated_run_mismatch_variance: null,
+            tui_full_cycle_consistent_success_count: 0,
+            intermediate_output_quality_score: 4.95,
+            intermediate_output_groundedness_score: 1,
+            collection_breadth_score: 1,
+            recent_foundational_balance_score: 1,
+            dedup_before_ranking_pass: true,
+            quality_gate_pass: true,
+            groundedness_gate_pass: true,
+            collection_gate_pass: true,
+            observed_violation_labels: ["persisted_state_bug", "refresh_render_bug"],
+            notes: {
+              full_cycle_completed:
+                "False because the run remains at implement_experiments and never entered run_experiments/analyze_results/review/write_paper."
+            },
+            sampling_profile: {
+              name: "single_run_locked",
+              total_trials: 1,
+              executed_trials: 1
+            }
+          },
+          quality_artifact_scores: {
+            collect_result: 5
+          },
+          groundedness_detail: {
+            intermediate_output_groundedness_score: 1
+          },
+          collection_detail: {
+            collection_breadth_score: 1,
+            recent_foundational_balance_score: 1,
+            dedup_before_ranking_pass: true
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(path.join(runDir, "experiment_plan.yaml"), 'selected_design:\n  id: "plan_2"\n', "utf8");
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    const contract = buildExperimentComparisonContract({
+      run,
+      selectedDesign: {
+        id: "plan_2",
+        hypothesis_ids: ["h_2"],
+        baselines: ["unmodified_system_with_current_end_state_only_validation_and_no_per_transition_gating"]
+      },
+      objectiveProfile: {
+        ...buildHeuristicObjectiveMetricProfile(run.objectiveMetric),
+        primaryMetric: "tui_full_cycle_consistent_success_count",
+        preferredMetricKeys: [
+          "metrics.tui_full_cycle_consistent_success_count",
+          "tui_full_cycle_consistent_success_count",
+          "full_cycle_completed"
+        ],
+        direction: "maximize",
+        comparator: ">=",
+        targetValue: 1
+      },
+      managedBundleSupported: true
+    });
+    const implementationContext = buildExperimentImplementationContext({
+      contract,
+      branchPlan: {
+        branch_id: "search_primary",
+        focus_files: [path.join(publicDir, "run_validation.py")]
+      },
+      changedFiles: [path.join(publicDir, "run_validation.py")],
+      scriptPath: path.join(publicDir, "run_validation.py"),
+      runCommand: `python3 ${JSON.stringify(path.join(publicDir, "run_validation.py"))}`,
+      workingDir: publicDir
+    });
+    await storeExperimentGovernanceDecision(run, memory, {
+      contract,
+      implementationContext,
+      entries: []
+    });
+
+    const analyzeNode = createAnalyzeResultsNode(buildNodeDeps());
+    const result = await analyzeNode.execute({ run });
+
+    expect(result.status).toBe("success");
+    expect(result.transitionRecommendation).toMatchObject({
+      action: "advance",
+      targetNode: "review"
+    });
+    const transitionRaw = await readFile(path.join(runDir, "transition_recommendation.json"), "utf8");
+    expect(transitionRaw).toContain('"action": "advance"');
+    expect(transitionRaw).toContain('"targetNode": "review"');
+  });
 });

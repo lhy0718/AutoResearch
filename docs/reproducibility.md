@@ -29,3 +29,10 @@ Before marking work complete:
 1. Re-run the relevant flow or tests.
 2. Confirm expected artifacts are present and parseable.
 3. Record limitations and unresolved uncertainty.
+
+## 5) Validation surfaces
+
+- Runtime diagnostics: `/doctor` in TUI and web Doctor tab (environment + workspace harness checks).
+- CI/internal gate: `npm run validate:harness` (issue log format + workspace/test run artifact structure).
+
+No separate end-user command is required beyond `/doctor`.

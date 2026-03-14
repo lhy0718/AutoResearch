@@ -3,17 +3,32 @@ import { spawn } from "node:child_process";
 import { DoctorCheck } from "../types.js";
 import { CodexCliClient } from "../integrations/codex/codexCliClient.js";
 import { RECOMMENDED_CODEX_MODEL } from "../integrations/codex/modelCatalog.js";
+import {
+  HarnessValidationReport,
+  runHarnessValidation
+} from "./validation/harnessValidationService.js";
 
-export async function runDoctor(
+export interface DoctorRunOptions {
+  llmMode?: "codex_chatgpt_only" | "openai_api";
+  pdfAnalysisMode?: "codex_text_image_hybrid" | "responses_api_pdf";
+  openAiApiKeyConfigured?: boolean;
+  codexResearchModel?: string;
+  codexPdfModel?: string;
+  workspaceRoot?: string;
+  includeHarnessValidation?: boolean;
+  includeHarnessTestRecords?: boolean;
+  maxHarnessFindings?: number;
+}
+
+export interface DoctorReport {
+  checks: DoctorCheck[];
+  harness?: HarnessValidationReport;
+}
+
+export async function runDoctorReport(
   codex: CodexCliClient,
-  opts?: {
-    llmMode?: "codex_chatgpt_only" | "openai_api";
-    pdfAnalysisMode?: "codex_text_image_hybrid" | "responses_api_pdf";
-    openAiApiKeyConfigured?: boolean;
-    codexResearchModel?: string;
-    codexPdfModel?: string;
-  }
-): Promise<DoctorCheck[]> {
+  opts?: DoctorRunOptions
+): Promise<DoctorReport> {
   const checks: DoctorCheck[] = [];
 
   const cli = await codex.checkCliAvailable();
@@ -61,7 +76,25 @@ export async function runDoctor(
     });
   }
 
-  return checks;
+  const includeHarnessValidation = opts?.includeHarnessValidation !== false;
+  const harness = includeHarnessValidation
+    ? await runHarnessValidation({
+        workspaceRoot: opts?.workspaceRoot || process.cwd(),
+        includeWorkspaceRuns: true,
+        includeTestRunStores: opts?.includeHarnessTestRecords === true,
+        maxFindings: opts?.maxHarnessFindings || 60
+      })
+    : undefined;
+
+  return { checks, harness };
+}
+
+export async function runDoctor(
+  codex: CodexCliClient,
+  opts?: DoctorRunOptions
+): Promise<DoctorCheck[]> {
+  const report = await runDoctorReport(codex, opts);
+  return report.checks;
 }
 
 function buildCodexModelCheck(name: string, label: string, model: string): DoctorCheck {

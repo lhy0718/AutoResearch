@@ -830,4 +830,47 @@ describe("scientificWriting", () => {
       )
     ).toBe(true);
   });
+
+  it("sanitizes internal-token captions before consistency linting", () => {
+    const bundle = makeRichBundle();
+    bundle.latestResults = {} as any;
+    bundle.resultAnalysis = {
+      ...(bundle.resultAnalysis as any),
+      metric_table: [],
+      figure_specs: []
+    };
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle,
+      profile: PAPER_PROFILE
+    });
+    const candidate: PaperManuscript = {
+      title: "Repeated Tabular Benchmark",
+      abstract: "A short abstract.",
+      keywords: ["tabular"],
+      sections: scientific.draft.sections.map((section) => ({
+        heading: section.heading,
+        paragraphs: section.paragraphs.map((paragraph) => paragraph.text)
+      })),
+      figures: [
+        {
+          caption: "Objective metric not met: metrics.tui_full_cycle_consistent_success_count=0 does not satisfy >= 1.",
+          bars: [{ label: "breast_cancer", value: 0 }]
+        }
+      ]
+    };
+    const manuscript = materializeScientificManuscript({
+      candidate,
+      draft: scientific.draft,
+      bundle,
+      profile: PAPER_PROFILE,
+      appendixPlan: scientific.appendix_plan,
+      pageBudget: scientific.page_budget
+    });
+
+    expect(manuscript.manuscript.figures?.[0]?.caption).toBe(
+      "Dataset-level outcome summary with uncertainty-aware interpretation retained in the main paper."
+    );
+    expect(manuscript.consistency_lint.issues.some((issue) => issue.kind === "caption_internal_name")).toBe(false);
+  });
 });

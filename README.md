@@ -132,7 +132,7 @@ The web server listens on `http://127.0.0.1:4317` by default. Use `autolabos` in
 `autolabos web` starts a local single-user browser UI on top of the same runtime used by the TUI.
 
 - Onboarding uses the same non-interactive setup helper, so web setup writes the same `.autolabos/config.yaml` and `.env` values as the TUI wizard.
-- The dashboard includes run search and selection, the 9-node workflow view, node actions, live logs, checkpoints, artifacts, metadata, and `/doctor` summaries.
+- The dashboard includes run search and selection, the 9-node workflow view, node actions, live logs, checkpoints, artifacts, metadata, and `/doctor` summaries (environment + workspace harness diagnostics).
 - The bottom composer accepts both slash commands and supported natural-language requests.
 - New runs can start from either the structured form fields or a single natural-language research brief. The brief parser extracts topic, objective metric, constraints, and a short plan hint, then can auto-start the run from `collect_papers`.
 - Multi-step natural-language plans use browser buttons instead of `y/a/n`: `Run next`, `Run all`, and `Cancel`.
@@ -518,7 +518,7 @@ Key source areas:
 | `/agent jump <node> [run] [--force]` | Jump between nodes |
 | `/model` | Open model and reasoning selector |
 | `/settings` | Edit provider, model, and PDF settings |
-| `/doctor` | Run environment checks |
+| `/doctor` | Run environment checks plus workspace harness diagnostics |
 
 Common collection options:
 
@@ -581,7 +581,7 @@ Implementation references:
 | `/help` | Show command list |
 | `/new` | Create a research brief file |
 | `/brief start <path|--latest>` | Start research from a brief file |
-| `/doctor` | Environment checks |
+| `/doctor` | Environment checks plus workspace harness diagnostics |
 | `/runs [query]` | List or search runs |
 | `/run <run>` | Select run |
 | `/resume <run>` | Resume run |

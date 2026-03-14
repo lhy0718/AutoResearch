@@ -6,6 +6,8 @@ import {
   CheckpointEntry,
   ConfigSummary,
   DoctorCheck,
+  DoctorResponse,
+  HarnessValidationReport,
   RunRecord,
   RunInsightCard,
   WebConfigFormData,
@@ -86,6 +88,7 @@ export function App() {
   const [expandedInsightReferenceKey, setExpandedInsightReferenceKey] = useState<string | null>(null);
   const [checkpoints, setCheckpoints] = useState<CheckpointEntry[]>([]);
   const [doctorChecks, setDoctorChecks] = useState<DoctorCheck[]>([]);
+  const [doctorHarness, setDoctorHarness] = useState<HarnessValidationReport | null>(null);
   const [commandInput, setCommandInput] = useState("");
   const [runSearch, setRunSearch] = useState("");
   const [activeTab, setActiveTab] = useState<TabId>("logs");
@@ -224,8 +227,9 @@ export function App() {
   }
 
   async function refreshDoctor() {
-    const response = await api<{ configured: boolean; checks: DoctorCheck[] }>("/api/doctor");
+    const response = await api<DoctorResponse>("/api/doctor");
     setDoctorChecks(response.checks);
+    setDoctorHarness(response.harness || null);
   }
 
   async function loadArtifactPreview(runId: string, artifact: ArtifactEntry) {
@@ -1122,6 +1126,43 @@ export function App() {
                   </article>
                 ))
               )}
+              {doctorHarness ? (
+                <article className={`doctor-item ${doctorHarness.status === "ok" ? "ok" : "fail"}`}>
+                  <span
+                    className={`status-pill ${doctorHarness.status === "ok" ? "is-success" : "is-danger"}`}
+                  >
+                    {doctorHarness.status === "ok" ? "OK" : "FAIL"}
+                  </span>
+                  <div>
+                    <h4>harness-validation</h4>
+                    <p>
+                      {doctorHarness.findings.length} issue(s), {doctorHarness.runsChecked} run(s),
+                      {" "}
+                      {doctorHarness.runStoresChecked} run store(s) checked
+                    </p>
+                    {doctorHarness.findings.length > 0 ? (
+                      <div className="doctor-harness-findings">
+                        {doctorHarness.findings.slice(0, 5).map((finding, index) => (
+                          <article key={`${finding.code}-${finding.runId || "na"}-${index}`} className="doctor-harness-finding">
+                            <strong>{finding.kind}</strong>
+                            <p>{finding.message}</p>
+                            <p className="doctor-harness-meta">
+                              {finding.runId ? `run: ${finding.runId}` : "run: n/a"}
+                              {finding.filePath ? ` | file: ${finding.filePath}` : ""}
+                            </p>
+                            <p className="doctor-harness-remediation">Fix: {finding.remediation}</p>
+                          </article>
+                        ))}
+                        {doctorHarness.findings.length > 5 ? (
+                          <p className="doctor-harness-meta">
+                            ... {doctorHarness.findings.length - 5} more harness finding(s)
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                </article>
+              ) : null}
             </div>
           ) : null}
         </div>
