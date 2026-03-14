@@ -213,7 +213,23 @@ function buildConfigFromWizardAnswers(answers: {
     paper: {
       template: "acl",
       build_pdf: true,
-      latex_engine: "auto_install"
+      latex_engine: "auto_install",
+      validation_mode: "default"
+    },
+    paper_profile: {
+      venue_style: "acl_long",
+      main_page_limit: 8,
+      references_counted: false,
+      appendix_allowed: true,
+      appendix_format: "double_column",
+      prefer_appendix_for: [
+        "hyperparameter_grids",
+        "per_fold_results",
+        "prompt_templates",
+        "environment_dump",
+        "extended_error_analysis"
+      ],
+      estimated_words_per_page: 420
     },
     paths: {
       runs_dir: ".autolabos/runs",
@@ -595,6 +611,7 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
     wizard_enabled: true,
     approval_mode: normalizeWorkflowApprovalMode(config.workflow.approval_mode)
   };
+  config.paper_profile = normalizePaperProfileConfig(config.paper_profile);
   return config;
 }
 
@@ -708,6 +725,40 @@ function normalizePrimaryLlmMode(value: unknown): "codex_chatgpt_only" | "openai
 
 function normalizeWorkflowApprovalMode(value: unknown): WorkflowApprovalMode {
   return value === "manual" ? "manual" : "minimal";
+}
+
+function normalizePaperProfileConfig(value: AppConfig["paper_profile"] | undefined): AppConfig["paper_profile"] {
+  const preferAppendixFor = Array.isArray(value?.prefer_appendix_for)
+    ? value?.prefer_appendix_for
+        .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+        .map((item) => item.trim())
+    : [];
+  const estimatedWordsPerPage =
+    typeof value?.estimated_words_per_page === "number" && Number.isFinite(value.estimated_words_per_page)
+      ? Math.max(250, Math.round(value.estimated_words_per_page))
+      : 420;
+
+  return {
+    venue_style: value?.venue_style?.trim() || "acl_long",
+    main_page_limit:
+      typeof value?.main_page_limit === "number" && Number.isFinite(value.main_page_limit)
+        ? Math.max(1, Math.round(value.main_page_limit))
+        : 8,
+    references_counted: Boolean(value?.references_counted),
+    appendix_allowed: value?.appendix_allowed !== false,
+    appendix_format: value?.appendix_format === "single_column" ? "single_column" : "double_column",
+    prefer_appendix_for:
+      preferAppendixFor.length > 0
+        ? preferAppendixFor
+        : [
+            "hyperparameter_grids",
+            "per_fold_results",
+            "prompt_templates",
+            "environment_dump",
+            "extended_error_analysis"
+          ],
+    estimated_words_per_page: estimatedWordsPerPage
+  };
 }
 
 async function askPrimaryLlmMode(

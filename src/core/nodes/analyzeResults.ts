@@ -33,6 +33,16 @@ import {
   readPendingHumanInterventionRequest,
   writeHumanInterventionRequest
 } from "../humanIntervention.js";
+import {
+  deriveGovernedAnalysisDecision,
+  ExperimentComparisonContract,
+  getGovernedObjectiveProfile,
+  loadExperimentComparisonContract,
+  loadExperimentImplementationContext,
+  loadExperimentManagedBundleLock,
+  storeExperimentGovernanceDecision,
+  validateManagedBundleLock
+} from "../experimentGovernance.js";
 
 export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
@@ -40,6 +50,9 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
     async execute({ run }) {
       const longTermStore = new LongTermStore(run.memoryRefs.longTermPath);
       const runContextMemory = new RunContextMemory(run.memoryRefs.runContextPath);
+      const comparisonContract = await loadExperimentComparisonContract(run, runContextMemory);
+      const implementationContext = await loadExperimentImplementationContext(run, runContextMemory);
+      const managedBundleLock = await loadExperimentManagedBundleLock(run, runContextMemory);
       const publicDir =
         resolveMaybeRelative(
           await runContextMemory.get<string>("implement_experiments.public_dir"),
@@ -74,32 +87,51 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         });
       }
       metrics = await hydrateDetailedExperimentMetrics(metrics, publicDir, inputWarnings);
+      const managedBundleValidation = await validateManagedBundleLock({
+        contract: comparisonContract,
+        managedBundleLock,
+        metrics,
+        publicDir
+      });
+      if (managedBundleValidation && !managedBundleValidation.ok) {
+        inputWarnings.push(managedBundleValidation.rationale);
+      }
 
       const manualObjectiveClarification =
         (await runContextMemory.get<string>("analyze_results.objective_clarification"))?.trim() || undefined;
-      const effectiveObjectiveMetric = manualObjectiveClarification || run.objectiveMetric;
-      const objectiveProfileBase = await resolveObjectiveMetricProfile({
-        run: {
-          ...run,
-          objectiveMetric: effectiveObjectiveMetric
-        },
-        runContextMemory,
-        llm: deps.llm,
-        eventStream: deps.eventStream,
-        node: "analyze_results"
-      });
-      const objectiveProfile = manualObjectiveClarification
-        ? normalizeObjectiveMetricProfile(
-            {
-              ...objectiveProfileBase,
-              assumptions: [
-                `Human clarification: ${manualObjectiveClarification}`,
-                ...objectiveProfileBase.assumptions
-              ]
-            },
-            effectiveObjectiveMetric
-          )
-        : objectiveProfileBase;
+      const lockedObjectiveProfile = getGovernedObjectiveProfile(comparisonContract, run.objectiveMetric);
+      if (lockedObjectiveProfile && manualObjectiveClarification) {
+        inputWarnings.push(
+          "Ignored analyze_results.objective_clarification because a locked experiment evaluator contract is active."
+        );
+      }
+      const effectiveObjectiveMetric =
+        lockedObjectiveProfile ? run.objectiveMetric : manualObjectiveClarification || run.objectiveMetric;
+      const objectiveProfileBase =
+        lockedObjectiveProfile ||
+        (await resolveObjectiveMetricProfile({
+          run: {
+            ...run,
+            objectiveMetric: effectiveObjectiveMetric
+          },
+          runContextMemory,
+          llm: deps.llm,
+          eventStream: deps.eventStream,
+          node: "analyze_results"
+        }));
+      const objectiveProfile =
+        !lockedObjectiveProfile && manualObjectiveClarification
+          ? normalizeObjectiveMetricProfile(
+              {
+                ...objectiveProfileBase,
+                assumptions: [
+                  `Human clarification: ${manualObjectiveClarification}`,
+                  ...objectiveProfileBase.assumptions
+                ]
+              },
+              effectiveObjectiveMetric
+            )
+          : objectiveProfileBase;
       const cachedEvaluation =
         await runContextMemory.get<ObjectiveMetricEvaluation>("objective_metric.last_evaluation");
       const shouldRefreshObjectiveEvaluation =
@@ -172,7 +204,28 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
           node: "analyze_results"
         });
       }
-      const baselineTransitionRecommendation = buildTransitionRecommendation(summary);
+      const governanceDecision =
+        comparisonContract &&
+        deriveGovernedAnalysisDecision({
+          report: summary,
+          contract: comparisonContract,
+          implementationContext,
+          managedBundleValidation
+        });
+      if (governanceDecision) {
+        await storeExperimentGovernanceDecision(run, runContextMemory, {
+          baselineSnapshot: governanceDecision.baselineSnapshot,
+          entries: governanceDecision.baselineEntry
+            ? [governanceDecision.baselineEntry, governanceDecision.candidateEntry]
+            : [governanceDecision.candidateEntry]
+        });
+      }
+      const baselineTransitionRecommendation = applyGovernanceTransitionOverride(
+        buildTransitionRecommendation(summary),
+        governanceDecision,
+        summary,
+        comparisonContract
+      );
       const panelResult = runAnalyzeResultsPanel({
         report: summary,
         baselineRecommendation: baselineTransitionRecommendation
@@ -494,7 +547,7 @@ async function readJsonObject<T extends object>(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (!/ENOENT/u.test(message)) {
-      warnings.push(`Failed to parse ${label} at ${filePath}: ${message}`);
+      warnings.push(`Failed to parse ${label}: ${message}`);
     }
     return undefined;
   }
@@ -1248,6 +1301,34 @@ function buildTransitionRecommendation(summary: AnalysisReport): TransitionRecom
       summary.overview.objective_summary,
       summary.synthesis?.confidence_statement,
       summary.synthesis?.discussion_points?.[0]
+    )
+  });
+}
+
+function applyGovernanceTransitionOverride(
+  recommendation: TransitionRecommendation,
+  decision: ReturnType<typeof deriveGovernedAnalysisDecision> | undefined,
+  summary: AnalysisReport,
+  comparisonContract: ExperimentComparisonContract | undefined
+): TransitionRecommendation {
+  if (!decision?.transitionOverride) {
+    return recommendation;
+  }
+
+  const targetNode = decision.transitionOverride.targetNode;
+  return createRecommendation({
+    action: targetNode === "design_experiments" ? "backtrack_to_design" : "backtrack_to_implement",
+    targetNode,
+    reason: decision.transitionOverride.rationale,
+    confidence: targetNode === "design_experiments" ? 0.86 : 0.9,
+    autoExecutable: true,
+    evidence: collectEvidence(
+      summary,
+      decision.transitionOverride.rationale,
+      decision.candidateEntry.rationale,
+      comparisonContract?.comparison_mode
+        ? `Comparison mode: ${comparisonContract.comparison_mode}.`
+        : undefined
     )
   });
 }

@@ -6,11 +6,16 @@ import path from "node:path";
 import { ensureScaffold, resolveAppPaths } from "../src/config.js";
 import { InMemoryEventStream } from "../src/core/events.js";
 import { ImplementSessionManager } from "../src/core/agents/implementSessionManager.js";
+import {
+  buildExperimentComparisonContract,
+  storeExperimentGovernanceDecision
+} from "../src/core/experimentGovernance.js";
 import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 import { RunStore } from "../src/core/runs/runStore.js";
 import { buildPublicExperimentDir, buildPublicRunManifestPath } from "../src/core/publicArtifacts.js";
 import { CodexCliClient } from "../src/integrations/codex/codexCliClient.js";
 import { LocalAciAdapter } from "../src/tools/aciLocalAdapter.js";
+import { buildHeuristicObjectiveMetricProfile } from "../src/core/objectiveMetric.js";
 
 const tempDirs: string[] = [];
 
@@ -136,6 +141,21 @@ describe("ImplementSessionManager", () => {
     } as unknown as CodexCliClient;
 
     const eventStream = new InMemoryEventStream();
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    const contract = buildExperimentComparisonContract({
+      run,
+      selectedDesign: {
+        id: "plan_impl",
+        hypothesis_ids: ["h_1"],
+        baselines: ["baseline_runner"]
+      },
+      objectiveProfile: buildHeuristicObjectiveMetricProfile(run.objectiveMetric),
+      managedBundleSupported: false
+    });
+    await storeExperimentGovernanceDecision(run, memory, {
+      contract,
+      entries: []
+    });
     const manager = new ImplementSessionManager({
       config: {
         version: 1,
@@ -196,7 +216,6 @@ describe("ImplementSessionManager", () => {
 
     const result = await manager.run(run);
     const updatedRun = await runStore.getRun(run.id);
-    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
 
     expect(result.threadId).toBe("thread-impl-1");
     expect(result.runCommand).toContain("python3");
@@ -218,6 +237,9 @@ describe("ImplementSessionManager", () => {
     expect(await memory.get("implement_experiments.mode")).toBe("real_execution");
     expect(await memory.get<{ status: string }>("implement_experiments.verify_report")).toMatchObject({
       status: "pass"
+    });
+    expect(await memory.get<{ candidate_id: string; code_state_ref?: { branch_id?: string } }>("experiment_governance.implementation_context")).toMatchObject({
+      candidate_id: expect.stringContaining(":primary")
     });
     const workspaceChangedManifest = JSON.parse(
       readFileSync(path.join(publicDir, "workspace_changed_files.json"), "utf8")
@@ -1429,6 +1451,7 @@ describe("ImplementSessionManager", () => {
     expect(prompts[1]).toContain("Previous local verification:");
     expect(prompts[0]).toContain("Branch focus:");
     expect(prompts[1]).toContain("Recent failure reflections:");
+    expect(prompts[1]).toContain("Files touched in previous attempts (now restored unless reintroduced):");
     expect(result.scriptPath).toBe(path.join(publicDir, "fixed_experiment.py"));
     expect(await memory.get("implement_experiments.attempt_count")).toBe(2);
     expect(await memory.get<{ status: string }>("implement_experiments.verify_report")).toMatchObject({
@@ -1441,6 +1464,7 @@ describe("ImplementSessionManager", () => {
     expect(branchSearch.branches[0]?.branch_plan.branch_id).toBe("branch_primary");
     expect(branchSearch.recent_reflections.length).toBeGreaterThan(0);
     expect(episodeLog).toContain("next_try_instruction");
+    expect(existsSync(firstScriptPath)).toBe(false);
     expect(eventStream.history().some((event) => event.type === "TEST_FAILED")).toBe(true);
     expect(eventStream.history().some((event) => event.type === "REFLECTION_SAVED")).toBe(true);
   }, 15000);
@@ -1581,6 +1605,7 @@ describe("ImplementSessionManager", () => {
     expect(prompts[0]).toContain('"branch_id": "branch_primary"');
     expect(prompts[1]).toContain('"branch_id": "branch_alternate_2"');
     expect(prompts[1]).toContain(path.basename(alternateCandidate));
+    expect(readFileSync(primaryCandidate, "utf8")).toBe("def accuracy_primary():\n    return 0\n");
   }, 15000);
 
   it("requires approval when local verification is deferred to run_experiments", async () => {

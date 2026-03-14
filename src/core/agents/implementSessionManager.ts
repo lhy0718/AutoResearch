@@ -18,6 +18,12 @@ import { supportsRealExecutionBundle, writeRealExecutionBundle } from "../experi
 import { RunVerifierReport } from "../experiments/runVerifierFeedback.js";
 import { AgentComputerInterface, AciObservation } from "../../tools/aci.js";
 import {
+  buildExperimentImplementationContext,
+  EXPERIMENT_GOVERNANCE_IMPLEMENTATION_CONTEXT_KEY,
+  loadExperimentComparisonContract,
+  storeExperimentGovernanceDecision
+} from "../experimentGovernance.js";
+import {
   ImplementationLocalizer,
   LocalizationCandidate,
   LocalizationResult,
@@ -87,6 +93,16 @@ const MAX_IMPLEMENT_ATTEMPTS = 3;
 const SEARCH_BRANCH_FOCUS_LIMIT = 1;
 const IMPLEMENT_PROGRESS_STATUS_ARTIFACT = path.join("implement_experiments", "status.json");
 const IMPLEMENT_PROGRESS_LOG_ARTIFACT = path.join("implement_experiments", "progress.jsonl");
+const NON_RESTORABLE_RUN_DIR_ENTRIES = new Set([
+  "implement_experiments",
+  "memory",
+  "implement_attempts.json",
+  "verify_report.json",
+  "branch_search_result.json",
+  "localization_search_result.json",
+  "implement_task_spec.json",
+  "long_term_memory_result.json"
+]);
 
 type ImplementFailureType =
   | "implementation"
@@ -119,6 +135,18 @@ interface ImplementTaskSpec {
     long_term_memory: LongTermMemorySnapshot;
     runner_feedback?: RunVerifierReport;
     resolved_constraint_profile?: CachedConstraintProfile["profile"];
+    comparison_contract?: {
+      plan_id: string;
+      comparison_mode: "baseline_first_locked" | "objective_only";
+      baseline_first_required: boolean;
+      baseline_candidate_ids: string[];
+      budget_profile: {
+        mode: string;
+        timeout_sec: number;
+        total_trials?: number;
+      };
+      evaluator_contract_id: string;
+    };
   };
 }
 
@@ -174,6 +202,8 @@ interface AttemptRecord {
   artifacts: string[];
   public_artifacts: string[];
   raw_response: string;
+  restored_after_failure?: boolean;
+  restored_paths?: string[];
 }
 
 interface PreparedImplementAttempt {
@@ -195,6 +225,13 @@ interface PreparedImplementAttempt {
   localization: LocalizationResult;
   assumptions: string[];
   verifyReport: VerifyReport;
+}
+
+interface ImplementAttemptSnapshot {
+  capturePaths(paths: Array<string | undefined>): Promise<void>;
+  markCreatedPaths(paths: Array<string | undefined>): void;
+  restore(): Promise<{ restoredPaths: string[] }>;
+  cleanup(): Promise<void>;
 }
 
 interface BranchPlan {
@@ -242,6 +279,7 @@ export class ImplementSessionManager {
     const changedFiles = new Set<string>();
     const artifacts = new Set<string>();
     const publicArtifacts = new Set<string>();
+    const historicalChangedFiles = new Set<string>();
     const rawEvents: CodexEvent[] = [];
     const startedAt = new Date().toISOString();
     let progressCount = 0;
@@ -357,6 +395,7 @@ export class ImplementSessionManager {
     const attemptRecords: AttemptRecord[] = [];
     let latestSearchLocalization: LocalizationResult | undefined;
     let recentReflections = await episodeMemory.recent(run.id, "implement_experiments", 3);
+    let restoredAttemptCount = 0;
 
     for (let attempt = 1; attempt <= MAX_IMPLEMENT_ATTEMPTS; attempt += 1) {
       emitImplementObservation("attempt", `Implementation attempt ${attempt}/${MAX_IMPLEMENT_ATTEMPTS} started.`, {
@@ -365,12 +404,31 @@ export class ImplementSessionManager {
         publicDir: defaultPublicDir
       });
 
+      const branchContextFiles = dedupeStrings([...changedFiles, ...historicalChangedFiles]);
       const searchLocalization = await this.localizer.localize(
-        this.buildLocalizerInput(taskSpec, attemptRecords.at(-1), [...changedFiles])
+        this.buildLocalizerInput(taskSpec, attemptRecords.at(-1), branchContextFiles)
       );
       latestSearchLocalization = searchLocalization;
       await writeJsonFile(path.join(runDir, "localization_search_result.json"), latestSearchLocalization || {});
-      const branchPlan = chooseBranchPlan(searchLocalization, attemptRecords, [...changedFiles]);
+      const branchPlan = chooseBranchPlan(searchLocalization, attemptRecords, branchContextFiles);
+      const attemptSnapshot = await createImplementAttemptSnapshot({
+        workspaceRoot: this.deps.workspaceRoot,
+        runDir,
+        attempt
+      });
+      await attemptSnapshot.capturePaths([
+        defaultPublicDir,
+        metricsPath,
+        ...(await listRestorableRunDirEntries(runDir)),
+        ...branchContextFiles,
+        ...branchPlan.focus_files,
+        ...branchPlan.candidate_pool,
+        ...searchLocalization.selected_files,
+        ...searchLocalization.candidates.map((candidate) => candidate.path)
+      ]);
+      const attemptChangedFiles = new Set<string>(changedFiles);
+      const attemptArtifacts = new Set<string>(artifacts);
+      const attemptPublicArtifacts = new Set<string>(publicArtifacts);
 
       emitImplementObservation("localize", `Search-backed localization: ${formatLocalizationSummary(searchLocalization)}`, {
         attempt,
@@ -403,7 +461,8 @@ export class ImplementSessionManager {
           recentReflections,
           attempt,
           previousAttempt: attemptRecords.at(-1),
-          existingChangedFiles: [...changedFiles]
+          existingChangedFiles: [...changedFiles],
+          historicalChangedFiles: [...historicalChangedFiles]
         }),
         threadId: activeThreadId,
         agentId: `implementer:${run.id}`,
@@ -429,8 +488,8 @@ export class ImplementSessionManager {
             this.deps.eventStream.emit(item);
             const fileValue = typeof item.payload.file === "string" ? item.payload.file : undefined;
             if (fileValue && item.type === "PATCH_APPLIED") {
-              changedFiles.add(fileValue);
-              artifacts.add(fileValue);
+              attemptChangedFiles.add(fileValue);
+              attemptArtifacts.add(fileValue);
             }
           }
         }
@@ -450,9 +509,10 @@ export class ImplementSessionManager {
         metricsPath,
         branchPlan,
         result,
-        changedFiles,
-        artifacts,
-        publicArtifacts,
+        changedFiles: attemptChangedFiles,
+        artifacts: attemptArtifacts,
+        publicArtifacts: attemptPublicArtifacts,
+        attemptSnapshot,
         experimentLlmProfile
       });
       prepared.localization = mergeLocalizationResults(
@@ -510,21 +570,73 @@ export class ImplementSessionManager {
         changed_files: prepared.changedFiles,
         artifacts: prepared.artifacts,
         public_artifacts: prepared.publicArtifacts,
-        raw_response: prepared.rawResponse
+        raw_response: prepared.rawResponse,
+        restored_after_failure: false,
+        restored_paths: []
       });
       await writeJsonFile(path.join(runDir, "verify_report.json"), verifyReport);
       await writeJsonFile(path.join(runDir, "implement_attempts.json"), {
         attempts: attemptRecords
       });
       recentReflections = await episodeMemory.recent(run.id, "implement_experiments", 3);
+      attemptSnapshot.markCreatedPaths([
+        prepared.scriptPath,
+        prepared.metricsPath,
+        prepared.publicDir,
+        ...prepared.changedFiles,
+        ...prepared.artifacts,
+        ...prepared.publicArtifacts
+      ]);
 
       if (verifyReport.status !== "fail") {
+        replaceSetContents(changedFiles, prepared.changedFiles);
+        replaceSetContents(artifacts, prepared.artifacts);
+        replaceSetContents(publicArtifacts, prepared.publicArtifacts);
+        await attemptSnapshot.cleanup();
         break;
       }
 
       if (verifyReport.next_action === "stop_for_environment" || verifyReport.next_action === "stop_for_policy") {
+        replaceSetContents(changedFiles, prepared.changedFiles);
+        replaceSetContents(artifacts, prepared.artifacts);
+        replaceSetContents(publicArtifacts, prepared.publicArtifacts);
+        await attemptSnapshot.cleanup();
         break;
       }
+      if (attempt >= MAX_IMPLEMENT_ATTEMPTS) {
+        replaceSetContents(changedFiles, prepared.changedFiles);
+        replaceSetContents(artifacts, prepared.artifacts);
+        replaceSetContents(publicArtifacts, prepared.publicArtifacts);
+        await attemptSnapshot.cleanup();
+        break;
+      }
+
+      for (const filePath of prepared.changedFiles) {
+        historicalChangedFiles.add(filePath);
+      }
+      const restoreResult = await attemptSnapshot.restore();
+      restoredAttemptCount += 1;
+      const lastAttempt = attemptRecords.at(-1);
+      if (lastAttempt) {
+        lastAttempt.restored_after_failure = true;
+        lastAttempt.restored_paths = restoreResult.restoredPaths;
+      }
+      await writeJsonFile(path.join(runDir, "implement_attempts.json"), {
+        attempts: attemptRecords
+      });
+      replaceSetContents(changedFiles, []);
+      replaceSetContents(artifacts, []);
+      replaceSetContents(publicArtifacts, []);
+      emitImplementObservation(
+        "attempt",
+        `Restored ${restoreResult.restoredPaths.length} path(s) before retrying the next candidate branch.`,
+        {
+          attempt,
+          threadId: activeThreadId,
+          publicDir: defaultPublicDir
+        }
+      );
+      await attemptSnapshot.cleanup();
     }
 
     if (!finalAttempt) {
@@ -659,6 +771,28 @@ export class ImplementSessionManager {
     await runContext.put("implement_experiments.last_summary", summary);
     await runContext.put("implement_experiments.raw_response", finalAttempt.rawResponse);
     await runContext.put("implement_experiments.assumptions", finalAttempt.assumptions);
+    const comparisonContract = await loadExperimentComparisonContract(run, runContext);
+    const implementationContext = comparisonContract
+      ? buildExperimentImplementationContext({
+          contract: comparisonContract,
+          branchPlan: finalAttempt.branchPlan,
+          changedFiles: [...changedFiles],
+          scriptPath: publishedScriptPath,
+          runCommand: rewrittenRunCommand,
+          testCommand: rewrittenTestCommand,
+          workingDir: finalAttempt.workingDir,
+          threadId: activeThreadId,
+          candidateIsolationStrategy: "attempt_snapshot_restore",
+          restoredAttempts: restoredAttemptCount
+        })
+      : undefined;
+    if (implementationContext) {
+      await storeExperimentGovernanceDecision(run, runContext, {
+        implementationContext,
+        entries: []
+      });
+      await runContext.put(EXPERIMENT_GOVERNANCE_IMPLEMENTATION_CONTEXT_KEY, implementationContext);
+    }
 
     await ensureDir(runDir);
     await writeJsonFile(path.join(runDir, "implement_task_spec.json"), taskSpec);
@@ -814,6 +948,7 @@ export class ImplementSessionManager {
       (await runContext.get<RunVerifierReport>("implement_experiments.runner_feedback")) ||
       (await runContext.get<RunVerifierReport>("run_experiments.feedback_for_implementer"));
     const cachedConstraintProfile = await runContext.get<CachedConstraintProfile>("constraints.profile");
+    const comparisonContract = await loadExperimentComparisonContract(run, runContext);
     const repoListing = await topLevelWorkspaceListing(this.deps.workspaceRoot);
     const sandboxWorkspaceRoot = toSandboxFriendlyWorkspaceRoot(this.deps.workspaceRoot);
     const sandboxRunDir = rewriteWorkspacePathsForSandbox(runDir, this.deps.workspaceRoot);
@@ -854,7 +989,20 @@ export class ImplementSessionManager {
         previous_script: rewriteWorkspacePathsForSandbox(previousScript, this.deps.workspaceRoot),
         long_term_memory: rewriteWorkspacePathsForSandbox(longTermMemory, this.deps.workspaceRoot),
         runner_feedback: rewriteWorkspacePathsForSandbox(runnerFeedback, this.deps.workspaceRoot),
-        resolved_constraint_profile: rewriteWorkspacePathsForSandbox(cachedConstraintProfile?.profile, this.deps.workspaceRoot)
+        resolved_constraint_profile: rewriteWorkspacePathsForSandbox(cachedConstraintProfile?.profile, this.deps.workspaceRoot),
+        comparison_contract: comparisonContract
+          ? rewriteWorkspacePathsForSandbox(
+              {
+                plan_id: comparisonContract.plan_id,
+                comparison_mode: comparisonContract.comparison_mode,
+                baseline_first_required: comparisonContract.baseline_first_required,
+                baseline_candidate_ids: comparisonContract.baseline_candidate_ids,
+                budget_profile: comparisonContract.budget_profile,
+                evaluator_contract_id: comparisonContract.evaluator_contract_id
+              },
+              this.deps.workspaceRoot
+            )
+          : undefined
       }
     };
   }
@@ -867,6 +1015,7 @@ export class ImplementSessionManager {
     attempt: number;
     previousAttempt?: AttemptRecord;
     existingChangedFiles: string[];
+    historicalChangedFiles: string[];
   }): string {
     const sandboxTaskSpec = rewriteWorkspacePathsForSandbox(params.taskSpec, this.deps.workspaceRoot);
     const sandboxSearchLocalization = rewriteWorkspacePathsForSandbox(params.searchLocalization, this.deps.workspaceRoot);
@@ -882,6 +1031,10 @@ export class ImplementSessionManager {
     );
     const sandboxExistingChangedFiles = rewriteWorkspacePathsForSandbox(
       params.existingChangedFiles,
+      this.deps.workspaceRoot
+    );
+    const sandboxHistoricalChangedFiles = rewriteWorkspacePathsForSandbox(
+      params.historicalChangedFiles,
       this.deps.workspaceRoot
     );
     const sandboxPreviousAttempt = params.previousAttempt
@@ -929,6 +1082,15 @@ export class ImplementSessionManager {
         JSON.stringify(sandboxTaskSpec.context.runner_feedback, null, 2)
       );
     }
+    if (sandboxTaskSpec.context.comparison_contract) {
+      lines.push(
+        "",
+        "Locked experiment comparison contract:",
+        JSON.stringify(sandboxTaskSpec.context.comparison_contract, null, 2),
+        "",
+        "Do not silently change the comparison metric, baseline binding, or locked budget profile."
+      );
+    }
 
     if (params.recentReflections.length > 0) {
       lines.push("", "Recent failure reflections:", JSON.stringify(sandboxRecentReflections, null, 2));
@@ -936,6 +1098,13 @@ export class ImplementSessionManager {
 
     if (sandboxExistingChangedFiles.length > 0) {
       lines.push("", "Files already changed in this workspace:", sandboxExistingChangedFiles.join("\n"));
+    }
+    if (sandboxHistoricalChangedFiles.length > 0) {
+      lines.push(
+        "",
+        "Files touched in previous attempts (now restored unless reintroduced):",
+        sandboxHistoricalChangedFiles.join("\n")
+      );
     }
 
     if (sandboxPreviousAttempt) {
@@ -1004,6 +1173,7 @@ export class ImplementSessionManager {
     changedFiles: Set<string>;
     artifacts: Set<string>;
     publicArtifacts: Set<string>;
+    attemptSnapshot: ImplementAttemptSnapshot;
     experimentLlmProfile: ReturnType<typeof resolveExperimentLlmProfile>;
   }): Promise<PreparedImplementAttempt> {
     const parsedResponse = parseStructuredResponse(params.result.finalText);
@@ -1019,6 +1189,11 @@ export class ImplementSessionManager {
       (await inferScriptPath(params.runDir, normalizedPublicDir, this.deps.workspaceRoot, parsed.run_command));
     let normalizedScriptPath = originalScriptPath;
     let experimentMode = normalizeExperimentMode(parsed.experiment_mode, parsed.summary);
+
+    await params.attemptSnapshot.capturePaths([
+      normalizedPublicDir,
+      normalizedMetricsPath
+    ]);
 
     for (const filePath of parsed.changed_files || []) {
       const normalized = normalizeStoredPath(filePath, this.deps.workspaceRoot);
@@ -1975,6 +2150,147 @@ function collectWorkspaceChangedFiles(params: {
     .filter((filePath) => !isPathInsideOrEqual(filePath, params.publicDir))
     .map((filePath) => path.relative(params.workspaceRoot, filePath).replace(/\\/g, "/"))
     .sort();
+}
+
+async function createImplementAttemptSnapshot(params: {
+  workspaceRoot: string;
+  runDir: string;
+  attempt: number;
+}): Promise<ImplementAttemptSnapshot> {
+  const snapshotRoot = path.join(
+    params.runDir,
+    "implement_experiments",
+    "attempt_snapshots",
+    `attempt_${params.attempt}`
+  );
+  await fs.rm(snapshotRoot, { recursive: true, force: true });
+  await ensureDir(snapshotRoot);
+  const captured = new Map<
+    string,
+    {
+      targetPath: string;
+      kind: "file" | "directory" | "missing";
+      snapshotPath?: string;
+    }
+  >();
+  const createdPaths = new Set<string>();
+  const protectedDir = path.join(params.runDir, "implement_experiments");
+
+  const capturePath = async (filePath: string | undefined) => {
+    const normalized = normalizeStoredPath(filePath, params.workspaceRoot);
+    if (!normalized || !isPathInsideOrEqual(normalized, params.workspaceRoot)) {
+      return;
+    }
+    if (isPathInsideOrEqual(normalized, protectedDir)) {
+      return;
+    }
+    for (const existingPath of [...captured.keys()]) {
+      if (existingPath === normalized || isPathInsideOrEqual(normalized, existingPath)) {
+        return;
+      }
+      if (isPathInsideOrEqual(existingPath, normalized)) {
+        captured.delete(existingPath);
+      }
+    }
+
+    const relativeSnapshotPath = path.join("captured", String(captured.size + 1));
+    const snapshotPath = path.join(snapshotRoot, relativeSnapshotPath);
+    try {
+      const stat = await fs.stat(normalized);
+      if (stat.isDirectory()) {
+        await ensureDir(path.dirname(snapshotPath));
+        await fs.cp(normalized, snapshotPath, { recursive: true });
+        captured.set(normalized, {
+          targetPath: normalized,
+          kind: "directory",
+          snapshotPath
+        });
+        return;
+      }
+      if (stat.isFile()) {
+        await ensureDir(path.dirname(snapshotPath));
+        await fs.copyFile(normalized, snapshotPath);
+        captured.set(normalized, {
+          targetPath: normalized,
+          kind: "file",
+          snapshotPath
+        });
+        return;
+      }
+    } catch {
+      captured.set(normalized, {
+        targetPath: normalized,
+        kind: "missing"
+      });
+      return;
+    }
+  };
+
+  return {
+    async capturePaths(paths) {
+      for (const filePath of dedupeStrings(
+        paths.filter((item): item is string => typeof item === "string")
+      )) {
+        await capturePath(filePath);
+      }
+    },
+    markCreatedPaths(paths) {
+      for (const filePath of dedupeStrings(paths.filter((item): item is string => typeof item === "string"))) {
+        const normalized = normalizeStoredPath(filePath, params.workspaceRoot);
+        if (!normalized || isPathInsideOrEqual(normalized, protectedDir)) {
+          continue;
+        }
+        if (!isPathInsideOrEqual(normalized, params.workspaceRoot)) {
+          continue;
+        }
+        createdPaths.add(normalized);
+      }
+    },
+    async restore() {
+      const restoredPaths = [...captured.values()]
+        .map((entry) => entry.targetPath)
+        .sort((left, right) => right.length - left.length);
+      for (const filePath of [...createdPaths].sort((left, right) => right.length - left.length)) {
+        if (captured.has(filePath)) {
+          continue;
+        }
+        await fs.rm(filePath, { recursive: true, force: true });
+      }
+      for (const entry of [...captured.values()].sort((left, right) => right.targetPath.length - left.targetPath.length)) {
+        if (entry.kind === "missing") {
+          await fs.rm(entry.targetPath, { recursive: true, force: true });
+          continue;
+        }
+        await fs.rm(entry.targetPath, { recursive: true, force: true });
+        if (entry.snapshotPath) {
+          if (entry.kind === "directory") {
+            await ensureDir(path.dirname(entry.targetPath));
+            await fs.cp(entry.snapshotPath, entry.targetPath, { recursive: true });
+          } else {
+            await ensureDir(path.dirname(entry.targetPath));
+            await fs.copyFile(entry.snapshotPath, entry.targetPath);
+          }
+        }
+      }
+      return {
+        restoredPaths
+      };
+    },
+    async cleanup() {
+      await fs.rm(snapshotRoot, { recursive: true, force: true });
+    }
+  };
+}
+
+async function listRestorableRunDirEntries(runDir: string): Promise<string[]> {
+  try {
+    const entries = await fs.readdir(runDir);
+    return entries
+      .filter((entry) => !NON_RESTORABLE_RUN_DIR_ENTRIES.has(entry))
+      .map((entry) => path.join(runDir, entry));
+  } catch {
+    return [];
+  }
 }
 
 function isSubpath(filePath: string, parentDir: string): boolean {

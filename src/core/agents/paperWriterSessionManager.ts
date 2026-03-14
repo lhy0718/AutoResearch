@@ -1,4 +1,4 @@
-import { AppConfig, RunRecord } from "../../types.js";
+import { AppConfig, PaperProfileConfig, RunRecord } from "../../types.js";
 import { EventStream } from "../events.js";
 import { LLMClient } from "../llm/client.js";
 import { RunStore } from "../runs/runStore.js";
@@ -92,6 +92,7 @@ interface PaperWriterSessionInput {
   run: RunRecord;
   bundle: PaperWritingBundle;
   constraintProfile: ConstraintProfile;
+  paperProfile?: PaperProfileConfig;
   objectiveMetricProfile: ObjectiveMetricProfile;
   objectiveEvaluation?: ObjectiveMetricEvaluation;
   abortSignal?: AbortSignal;
@@ -136,7 +137,7 @@ export class PaperWriterSessionManager {
       mode,
       threadId: activeThreadId,
       systemPrompt: buildRoleSystemPrompt("paper_writer", this.writerRole.sop),
-      prompt: buildOutlinePrompt(input.bundle),
+      prompt: buildOutlinePrompt(input.bundle, input.paperProfile),
       agentRole: "paper_writer",
       abortSignal: input.abortSignal,
       trace
@@ -167,6 +168,7 @@ export class PaperWriterSessionManager {
       prompt: buildDraftPrompt({
         bundle: input.bundle,
         constraintProfile: input.constraintProfile,
+        paperProfile: input.paperProfile,
         objectiveMetricProfile: input.objectiveMetricProfile,
         objectiveEvaluation: input.objectiveEvaluation,
         outline
@@ -236,6 +238,7 @@ export class PaperWriterSessionManager {
       prompt: buildRevisionPrompt({
         bundle: input.bundle,
         constraintProfile: input.constraintProfile,
+        paperProfile: input.paperProfile,
         objectiveMetricProfile: input.objectiveMetricProfile,
         objectiveEvaluation: input.objectiveEvaluation,
         outline,
@@ -282,6 +285,7 @@ export class PaperWriterSessionManager {
         bundle: input.bundle,
         draft: finalDraft,
         constraintProfile: input.constraintProfile,
+        paperProfile: input.paperProfile,
         objectiveMetricProfile: input.objectiveMetricProfile,
         objectiveEvaluation: input.objectiveEvaluation
       }),
@@ -431,6 +435,7 @@ export class PaperWriterSessionManager {
     run: RunRecord;
     bundle: PaperWritingBundle;
     constraintProfile: ConstraintProfile;
+    paperProfile?: PaperProfileConfig;
     objectiveMetricProfile: ObjectiveMetricProfile;
     objectiveEvaluation?: ObjectiveMetricEvaluation;
     outline: PaperWriterOutline;
@@ -475,6 +480,7 @@ export class PaperWriterSessionManager {
         prompt: buildRevisionPrompt({
           bundle: input.bundle,
           constraintProfile: input.constraintProfile,
+          paperProfile: input.paperProfile,
           objectiveMetricProfile: input.objectiveMetricProfile,
           objectiveEvaluation: input.objectiveEvaluation,
           outline: input.outline,
@@ -753,14 +759,14 @@ function buildLatexRepairSystemPrompt(sop: string[]): string {
   ].join("\n");
 }
 
-function buildOutlinePrompt(bundle: PaperWritingBundle): string {
+function buildOutlinePrompt(bundle: PaperWritingBundle, paperProfile?: PaperProfileConfig): string {
   const fallbackDraft = buildFallbackPaperDraft(bundle);
   return [
     "Return one JSON object with this shape:",
     "{",
     '  "title": "string",',
     '  "abstract_focus": ["string"],',
-    '  "section_headings": ["Introduction", "Related Work", "Method", "Results", "Conclusion"],',
+    '  "section_headings": ["Introduction", "Related Work", "Method", "Results", "Discussion", "Limitations", "Conclusion"],',
     '  "key_claim_themes": ["string"],',
     '  "citation_plan": ["string"]',
     "}",
@@ -772,7 +778,17 @@ function buildOutlinePrompt(bundle: PaperWritingBundle): string {
     `Constraints: ${bundle.constraints.join(", ") || "none"}`,
     `Related-work scout papers: ${bundle.relatedWorkScout?.papers.length || 0}`,
     `Suggested paper title: ${buildSuggestedPaperTitle(bundle)}`,
-    `Fallback section order: ${fallbackDraft.sections.map((item) => item.heading).join(", ")}`
+    `Fallback section order: ${fallbackDraft.sections.map((item) => item.heading).join(", ")}`,
+    ...(paperProfile
+      ? [
+          `Venue style: ${paperProfile.venue_style}`,
+          `Main page limit: ${paperProfile.main_page_limit}`,
+          `Appendix allowed: ${paperProfile.appendix_allowed}`,
+          `Appendix preferences: ${paperProfile.prefer_appendix_for.join(", ") || "none"}`
+        ]
+      : []),
+    "Prefer an outline that preserves the main paper's core logic while reserving only supporting detail for the appendix.",
+    "Do not return a short-manuscript outline that skips Discussion or Limitations."
   ].join("\n");
 }
 
@@ -792,6 +808,7 @@ function buildLatexRepairPrompt(tex: string, buildLog: string): string {
 function buildDraftPrompt(input: {
   bundle: PaperWritingBundle;
   constraintProfile: ConstraintProfile;
+  paperProfile?: PaperProfileConfig;
   objectiveMetricProfile: ObjectiveMetricProfile;
   objectiveEvaluation?: ObjectiveMetricEvaluation;
   outline: PaperWriterOutline;
@@ -807,6 +824,14 @@ function buildDraftPrompt(input: {
     "Outline JSON:",
     JSON.stringify(input.outline, null, 2),
     "",
+    ...(input.paperProfile
+      ? [
+          "Paper profile JSON:",
+          JSON.stringify(input.paperProfile, null, 2),
+          ""
+        ]
+      : []),
+    "Do not optimize for brevity alone. The main paper should read like a complete scientific manuscript within the venue budget.",
     "Write the first complete structured paper draft JSON."
   ].join("\n");
 }
@@ -828,6 +853,7 @@ function buildReviewPrompt(input: {
     "}",
     "",
     "Flag any section that relies on log-speak, repeated template phrasing, inline evidence IDs, internal paths, or debug-style headings.",
+    "Flag manuscripts that are too short for a scientific paper, especially if Method, Results, Discussion, or Limitations are summary-like.",
     "Flag Related Work when it lists paper titles without comparing strands, baselines, or gaps.",
     "The final manuscript should not use the headings Research Context, Writing Constraints, Results Overview, or Claim Trace.",
     "",
@@ -847,6 +873,7 @@ function buildReviewPrompt(input: {
 function buildRevisionPrompt(input: {
   bundle: PaperWritingBundle;
   constraintProfile: ConstraintProfile;
+  paperProfile?: PaperProfileConfig;
   objectiveMetricProfile: ObjectiveMetricProfile;
   objectiveEvaluation?: ObjectiveMetricEvaluation;
   outline: PaperWriterOutline;
@@ -868,6 +895,13 @@ function buildRevisionPrompt(input: {
     "Current draft JSON:",
     JSON.stringify(input.draft, null, 2),
     "",
+    ...(input.paperProfile
+      ? [
+          "Paper profile JSON:",
+          JSON.stringify(input.paperProfile, null, 2),
+          ""
+        ]
+      : []),
     "Reviewer JSON:",
     JSON.stringify(input.review, null, 2),
     "",
@@ -884,6 +918,7 @@ function buildRevisionPrompt(input: {
       : []),
     "Revise toward human-readable academic prose.",
     "Do not introduce log-speak, repeated template language, inline evidence IDs, internal paths, or the headings Research Context, Writing Constraints, Results Overview, or Claim Trace.",
+    "Strengthen density and completeness in Method, Results, Discussion, and Limitations without overstating claims.",
     "Return the revised final structured paper draft JSON."
   ].join("\n");
 }

@@ -108,6 +108,7 @@ export interface PaperWritingBundle {
   corpus: StoredCorpusRow[];
   experimentPlan?: ExperimentPlanArtifact;
   resultAnalysis?: ResultAnalysisArtifact;
+  latestResults?: Record<string, unknown>;
   relatedWorkScout?: RelatedWorkScoutArtifact;
   relatedWorkNotes?: RelatedWorkNoteArtifact[];
   reviewContext?: {
@@ -194,12 +195,12 @@ interface RawPaperDraftClaim {
 
 export const PAPER_WRITER_SYSTEM_PROMPT = [
   "You are the AutoLabOS paper writing agent.",
-  "Write a concise, evidence-grounded research paper draft from structured workflow artifacts.",
+  "Write an evidence-grounded scientific paper draft from structured workflow artifacts.",
   "Return JSON only.",
   "Do not invent evidence IDs, paper IDs, metrics, venues, or experiment outcomes.",
   "Use only the provided evidence IDs and paper IDs.",
   "If evidence is weak or incomplete, write cautiously and say so.",
-  "Keep each section publication-ready but concise."
+  "Cautious claim strength does not justify summary-like sections; keep each core section information-dense."
 ].join("\n");
 
 export function parsePaperDraftJson(text: string): RawPaperDraft {
@@ -264,6 +265,62 @@ export function buildPaperWriterPrompt(input: {
       excerpt: truncateText(input.bundle.experimentPlan?.rawText || "", 1400)
     },
     result_analysis: input.bundle.resultAnalysis || undefined,
+    detailed_results:
+      input.bundle.latestResults && typeof input.bundle.latestResults === "object"
+        ? {
+            protocol: (() => {
+              const protocol = (input.bundle.latestResults as Record<string, unknown>).protocol;
+              if (!protocol || typeof protocol !== "object" || Array.isArray(protocol)) {
+                return undefined;
+              }
+              const protocolRecord = protocol as Record<string, unknown>;
+              return {
+                datasets: Array.isArray(protocolRecord.datasets)
+                  ? (protocolRecord.datasets as unknown[])
+                      .map((item) => cleanString(item))
+                      .filter(Boolean)
+                      .slice(0, 6)
+                  : undefined,
+                models: Array.isArray(protocolRecord.models)
+                  ? (protocolRecord.models as unknown[])
+                      .map((item) => cleanString(item))
+                      .filter(Boolean)
+                      .slice(0, 6)
+                  : undefined,
+                workflows: Array.isArray(protocolRecord.workflows)
+                  ? (protocolRecord.workflows as unknown[])
+                      .map((item) => cleanString(item))
+                      .filter(Boolean)
+                      .slice(0, 4)
+                  : undefined,
+                repeats:
+                  typeof protocolRecord.repeats === "number" && Number.isFinite(protocolRecord.repeats)
+                    ? protocolRecord.repeats
+                    : undefined
+              };
+            })(),
+            repeat_record_count: Array.isArray((input.bundle.latestResults as Record<string, unknown>).repeat_records)
+              ? ((input.bundle.latestResults as Record<string, unknown>).repeat_records as unknown[]).length
+              : undefined,
+            dataset_summaries: Array.isArray((input.bundle.latestResults as Record<string, unknown>).dataset_summaries)
+              ? ((input.bundle.latestResults as Record<string, unknown>).dataset_summaries as Array<Record<string, unknown>>)
+                  .slice(0, 4)
+                  .map((item) => ({
+                    dataset: cleanString(item.dataset),
+                    workflows: Object.keys(
+                      item.workflows && typeof item.workflows === "object" && !Array.isArray(item.workflows)
+                        ? (item.workflows as Record<string, unknown>)
+                        : {}
+                    ),
+                    models: Object.keys(
+                      item.models && typeof item.models === "object" && !Array.isArray(item.models)
+                        ? (item.models as Record<string, unknown>)
+                        : {}
+                    )
+                  }))
+              : undefined
+          }
+        : undefined,
     review_context: input.bundle.reviewContext
       ? {
           outcome: input.bundle.reviewContext.outcome,
@@ -380,11 +437,14 @@ export function buildPaperWriterPrompt(input: {
     "- Choose a paper title that reads like an academic methods, benchmark, or empirical study title.",
     "- Do not copy the workflow run title verbatim or with only cosmetic edits.",
     "- Prefer a title centered on the selected design, method, comparison, or study framing when available.",
-    "- Write 4 to 6 sections in this general order: Introduction, Related Work, Method, Results, Conclusion.",
-    "- Each section should have 1 to 2 concise paragraphs.",
+    "- Write 6 to 7 sections in this general order: Introduction, Related Work, Method, Results, Discussion, Limitations, Conclusion.",
+    "- Introduction, Related Work, Method, Results, and Discussion must not collapse into one-liners.",
+    "- Target at least 2 paragraphs for Introduction, Related Work, and Discussion; at least 3 paragraphs for Method; at least 4 paragraphs for Results when the payload supports it.",
     "- Each paragraph must carry the evidence_ids and/or citation_paper_ids that support that paragraph.",
     "- Section-level evidence_ids and citation_paper_ids should summarize the union of the paragraph-level grounding.",
-    "- Results must mention the objective metric and the observed outcome when available.",
+    "- Results must mention the objective metric, the observed outcome when available, dataset-level analysis, uncertainty or CI if available, and runtime or memory discussion when available.",
+    "- Method must describe datasets, protocol, metrics, and reproducibility-relevant setup when those details exist in the payload.",
+    "- If evidence is weak, weaken the claim language instead of shortening the section.",
     "- Use only provided paper_ids and evidence_ids.",
     "- When related_work_brief has at least 3 notes, write Related Work as two paragraphs: one taxonomy/comparison paragraph and one positioning paragraph.",
     "- Use the related_work_brief comparison axes to compare strands of prior work instead of listing paper titles one by one.",
@@ -392,6 +452,7 @@ export function buildPaperWriterPrompt(input: {
     "- The last Related Work paragraph should explicitly position the current study against the closest prior work or gaps.",
     "- Related-work scout papers may be cited conservatively for broad literature framing, especially in Related Work.",
     "- Do not treat related-work scout papers as direct experimental evidence unless they also appear in analyzed_papers or the evidence bank.",
+    "- Keep core logic in the main paper; reserve only supporting detail such as repeat-level raw metrics, search-space grids, or environment dumps for appendix-style routing handled downstream.",
     "- Keep claims aligned with cited papers and evidence IDs.",
     "- If a section has no direct evidence, keep it conservative and omit unsupported claims.",
     "",
@@ -478,7 +539,7 @@ export function buildFallbackPaperDraft(bundle: PaperWritingBundle): PaperDraft 
       : ""
   ].filter(Boolean).join(" ");
   const resultsParagraph = [
-    `Primary objective: ${bundle.objectiveMetric}.`,
+    `Primary objective: ${describeObjectiveMetricForNarrative(bundle.objectiveMetric)}.`,
     bundle.resultAnalysis?.objective_metric?.evaluation?.summary ||
       "Results are summarized from the latest experiment outputs.",
     typeof bundle.resultAnalysis?.mean_score === "number"
@@ -557,7 +618,7 @@ export function buildFallbackPaperDraft(bundle: PaperWritingBundle): PaperDraft 
     title: buildSuggestedPaperTitle(bundle),
     abstract: [
       `We study ${bundle.topic}.`,
-      `The draft integrates literature analysis, hypothesis generation, experiment design, and experimental results around the objective metric ${bundle.objectiveMetric}.`,
+      `The draft integrates literature analysis, hypothesis generation, experiment design, and experimental results around the objective metric ${describeObjectiveMetricForNarrative(bundle.objectiveMetric)}.`,
       bundle.resultAnalysis?.objective_metric?.evaluation?.summary || ""
     ].filter(Boolean).join(" "),
     keywords: uniqueStrings([
@@ -595,7 +656,7 @@ export function validatePaperDraft(input: {
     const normalizedSectionCitations = uniqueStrings([...sectionExplicitCitations, ...sectionInferredCitations]).slice(0, 6);
 
     const paragraphs = section.paragraphs
-      .slice(0, 3)
+      .slice(0, 6)
       .map((paragraph, index) => {
         let evidenceIds = uniqueStrings(paragraph.evidence_ids.filter((item) => evidenceById.has(item))).slice(0, 4);
         let citationPaperIds = uniqueStrings(
@@ -1074,7 +1135,7 @@ function applyRelatedWorkQualityControls(input: {
     }
 
     if (index === paragraphs.length - 1 && !hasPositioningLanguage(text)) {
-      text = `${stripTrailingPunctuation(text)}. The current study uses these baselines to position ${cleanString(input.bundle.topic) || "the present study"} around ${cleanString(input.bundle.objectiveMetric) || "its stated objective"}.`;
+      text = `${stripTrailingPunctuation(text)}. The current study uses these baselines to position ${cleanString(input.bundle.topic) || "the present study"} around ${describeObjectiveMetricForNarrative(input.bundle.objectiveMetric)}.`;
       input.issues.push({
         kind: "paragraph",
         severity: "warning",
@@ -1172,7 +1233,7 @@ function buildFallbackRelatedWorkSection(
       caveats.length > 0
         ? `However, the available literature still leaves open ${joinHumanList(caveats)}.`
         : "However, the surrounding literature still leaves open coverage and evaluation gaps.",
-      `The current study therefore positions itself around ${cleanString(bundle.topic) || "the present topic"} with emphasis on ${cleanString(bundle.objectiveMetric) || "its stated evaluation objective"}.`
+      `The current study therefore positions itself around ${cleanString(bundle.topic) || "the present topic"} with emphasis on ${describeObjectiveMetricForNarrative(bundle.objectiveMetric)}.`
     ].join(" ");
     paragraphs.push(
       buildDraftParagraph(
@@ -1695,7 +1756,7 @@ function normalizeParagraphs(
       normalizeParagraph(paragraph, defaults, evidenceIds, paperIds, evidenceToPaper)
     )
     .filter((item): item is PaperDraftParagraph => Boolean(item))
-    .slice(0, 3);
+    .slice(0, 6);
 }
 
 function normalizeParagraph(
@@ -1791,7 +1852,7 @@ function normalizeSections(
       };
     })
     .filter((item): item is PaperDraftSection => Boolean(item))
-    .slice(0, 6);
+    .slice(0, 8);
 }
 
 function normalizeClaims(
@@ -2255,6 +2316,16 @@ function cleanString(value: unknown): string {
     return "";
   }
   return value.replace(/\s+/g, " ").trim();
+}
+
+function describeObjectiveMetricForNarrative(value: unknown): string {
+  const cleaned = cleanString(value)
+    .replace(/\bstate[- ]of[- ]the[- ]art\b/giu, "")
+    .replace(/\bsignificant(?:ly)?\b/giu, "")
+    .replace(/\bsubstantial\b/giu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned || "the stated evaluation objective";
 }
 
 export function buildSuggestedPaperTitle(bundle: PaperWritingBundle): string {

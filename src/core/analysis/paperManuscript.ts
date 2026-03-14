@@ -1,5 +1,6 @@
 import { ObjectiveMetricEvaluation, ObjectiveMetricProfile } from "../objectiveMetric.js";
 import { ConstraintProfile } from "../runConstraints.js";
+import type { PaperProfileConfig } from "../../types.js";
 import {
   buildSuggestedPaperTitle,
   choosePaperTitle,
@@ -16,6 +17,7 @@ const STANDARD_SECTION_HEADINGS = [
   "Method",
   "Results",
   "Discussion",
+  "Limitations",
   "Conclusion"
 ] as const;
 
@@ -36,6 +38,7 @@ const INTERNAL_ARTIFACT_FILENAMES = [
 export interface PaperManuscriptSection {
   heading: string;
   paragraphs: string[];
+  source_refs?: PaperSourceRef[];
 }
 
 export interface PaperManuscriptVisualRow {
@@ -46,11 +49,19 @@ export interface PaperManuscriptVisualRow {
 export interface PaperManuscriptTable {
   caption: string;
   rows: PaperManuscriptVisualRow[];
+  source_refs?: PaperSourceRef[];
 }
 
 export interface PaperManuscriptFigure {
   caption: string;
   bars: PaperManuscriptVisualRow[];
+  source_refs?: PaperSourceRef[];
+}
+
+export interface PaperSourceRef {
+  kind: "evidence" | "claim" | "citation" | "artifact";
+  id: string;
+  label?: string;
 }
 
 export interface PaperManuscript {
@@ -60,6 +71,9 @@ export interface PaperManuscript {
   sections: PaperManuscriptSection[];
   tables?: PaperManuscriptTable[];
   figures?: PaperManuscriptFigure[];
+  appendix_sections?: PaperManuscriptSection[];
+  appendix_tables?: PaperManuscriptTable[];
+  appendix_figures?: PaperManuscriptFigure[];
 }
 
 export interface PaperTraceabilityEntry {
@@ -69,6 +83,7 @@ export interface PaperTraceabilityEntry {
   evidence_ids: string[];
   citation_paper_ids: string[];
   claim_ids?: string[];
+  source_refs?: PaperSourceRef[];
 }
 
 export interface PaperTraceabilityReport {
@@ -156,6 +171,7 @@ export function buildPaperPolishPrompt(input: {
   bundle: PaperWritingBundle;
   draft: PaperDraft;
   constraintProfile: ConstraintProfile;
+  paperProfile?: PaperProfileConfig;
   objectiveMetricProfile: ObjectiveMetricProfile;
   objectiveEvaluation?: ObjectiveMetricEvaluation;
 }): string {
@@ -195,6 +211,7 @@ export function buildPaperPolishPrompt(input: {
       tone_hint: input.constraintProfile.writing.toneHint,
       length_hint: input.constraintProfile.writing.lengthHint
     },
+    paper_profile: input.paperProfile,
     objective_profile: {
       primary_metric: input.objectiveMetricProfile.primaryMetric,
       target_description: input.objectiveMetricProfile.targetDescription,
@@ -214,7 +231,7 @@ export function buildPaperPolishPrompt(input: {
     '  "keywords": ["string"],',
     '  "sections": [',
     "    {",
-    '      "heading": "Introduction | Related Work | Method | Results | Discussion | Conclusion",',
+    '      "heading": "Introduction | Related Work | Method | Results | Discussion | Limitations | Conclusion",',
     '      "paragraphs": ["string"]',
     "    }",
     "  ],",
@@ -227,11 +244,15 @@ export function buildPaperPolishPrompt(input: {
     "- Do not copy the workflow run title verbatim or with only cosmetic edits.",
     "- Write plain academic prose that reads like a human-authored submission draft.",
     "- Preserve the grounded draft's claims conservatively; do not add new results.",
+    "- Evidence-first does not mean short-by-default: maintain enough detail in Method, Results, Discussion, and Limitations to read like a full scientific paper rather than a summary.",
+    "- Keep cautious claim strength and explanatory density separate: weaken overstated claims, but do not collapse sections into one-liners.",
+    "- Keep the problem framing, related-work positioning, method, main results, and core limitations in the main paper.",
+    "- Downstream routing will move supporting detail such as repeat-level raw metrics, search-space grids, or environment notes into the appendix.",
     "- Do not include evidence IDs, claim IDs, paper IDs, file paths, JSON field names, or internal artifact names in the prose.",
     "- Do not use the headings Research Context, Writing Constraints, Results Overview, or Claim Trace.",
     "- Keep section headings academic and conventional.",
     "- Avoid log-speak, checklist phrasing, and repeated template language.",
-    "- Omit tables or figures unless they clearly help the reader.",
+    "- Include at least one informative result table or figure when the payload supports it.",
     "",
     "Context JSON:",
     JSON.stringify(promptPayload, null, 2)
@@ -351,18 +372,26 @@ export function buildPaperTraceability(input: {
       return section.paragraphs.map((_, paragraphIndex) => {
         const sourceParagraph =
           sourceSection?.paragraphs[Math.min(paragraphIndex, Math.max(0, (sourceSection?.paragraphs.length || 1) - 1))];
+        const evidenceIds = uniqueStrings(
+          sourceParagraph?.evidence_ids?.length ? sourceParagraph.evidence_ids : sourceSection?.evidence_ids || []
+        );
+        const citationPaperIds = uniqueStrings(
+          sourceParagraph?.citation_paper_ids?.length
+            ? sourceParagraph.citation_paper_ids
+            : sourceSection?.citation_paper_ids || []
+        );
+        const sourceRefs = buildParagraphSourceRefs({
+          evidenceIds,
+          citationPaperIds,
+          claimIds
+        });
         return {
           manuscript_section: section.heading,
           paragraph_index: paragraphIndex,
           source_draft_section: sourceSection?.heading || "",
-          evidence_ids: uniqueStrings(
-            sourceParagraph?.evidence_ids?.length ? sourceParagraph.evidence_ids : sourceSection?.evidence_ids || []
-          ),
-          citation_paper_ids: uniqueStrings(
-            sourceParagraph?.citation_paper_ids?.length
-              ? sourceParagraph.citation_paper_ids
-              : sourceSection?.citation_paper_ids || []
-          ),
+          evidence_ids: evidenceIds,
+          citation_paper_ids: citationPaperIds,
+          ...(sourceRefs ? { source_refs: sourceRefs } : {}),
           ...(claimIds.length > 0 ? { claim_ids: claimIds } : {})
         };
       });
@@ -404,6 +433,15 @@ export function buildPaperSubmissionValidation(input: {
       validateSubmissionChunk(
         section.paragraphs[index],
         `manuscript.sections.${section.heading}.paragraphs.${index}`,
+        issues
+      );
+    }
+  }
+  for (const section of input.manuscript.appendix_sections || []) {
+    for (let index = 0; index < section.paragraphs.length; index += 1) {
+      validateSubmissionChunk(
+        section.paragraphs[index],
+        `manuscript.appendix_sections.${section.heading}.paragraphs.${index}`,
         issues
       );
     }
@@ -484,6 +522,27 @@ export function renderSubmissionPaperTex(input: {
 
   lines.push("\\bibliographystyle{plain}");
   lines.push("\\bibliography{references}");
+  if (
+    (input.manuscript.appendix_sections || []).length > 0 ||
+    (input.manuscript.appendix_tables || []).length > 0 ||
+    (input.manuscript.appendix_figures || []).length > 0
+  ) {
+    lines.push("\\appendix");
+    lines.push("");
+    for (const section of input.manuscript.appendix_sections || []) {
+      lines.push(`\\section{${latexEscape(section.heading)}}`);
+      for (const paragraph of section.paragraphs) {
+        lines.push(latexEscape(paragraph));
+        lines.push("");
+      }
+    }
+    lines.push(
+      ...renderVisualCollection(
+        input.manuscript.appendix_tables || [],
+        input.manuscript.appendix_figures || []
+      )
+    );
+  }
   lines.push("\\end{document}");
   return lines.join("\n");
 }
@@ -535,7 +594,7 @@ function normalizeManuscriptSections(
       };
     })
     .filter((section): section is PaperManuscriptSection => Boolean(section))
-    .slice(0, 6);
+    .slice(0, 10);
 }
 
 function normalizeManuscriptParagraphs(value: unknown): string[] {
@@ -554,7 +613,7 @@ function normalizeManuscriptParagraphs(value: unknown): string[] {
       return cleanString((paragraph as RawPaperManuscriptParagraph).text);
     })
     .filter(Boolean)
-    .slice(0, 3);
+    .slice(0, 6);
 }
 
 function normalizeManuscriptTables(
@@ -850,8 +909,15 @@ function renderSubmissionParagraph(
 }
 
 function renderSubmissionVisuals(manuscript: PaperManuscript): string[] {
+  return renderVisualCollection(manuscript.tables || [], manuscript.figures || []);
+}
+
+function renderVisualCollection(
+  tables: PaperManuscriptTable[],
+  figures: PaperManuscriptFigure[]
+): string[] {
   const lines: string[] = [];
-  for (const table of manuscript.tables || []) {
+  for (const table of tables) {
     lines.push("\\begin{table}[t]");
     lines.push("\\centering");
     lines.push("\\begin{tabular}{lr}");
@@ -868,7 +934,7 @@ function renderSubmissionVisuals(manuscript: PaperManuscript): string[] {
     lines.push("");
   }
 
-  for (const figure of manuscript.figures || []) {
+  for (const figure of figures) {
     const maxValue = Math.max(...figure.bars.map((row) => Math.abs(row.value)), 1);
     lines.push("\\begin{figure}[t]");
     lines.push("\\centering");
@@ -981,6 +1047,19 @@ function buildTraceabilityKey(sectionHeading: string, paragraphIndex: number): s
 
 function takeSafeStrings(values: string[], limit: number): string[] {
   return uniqueStrings(values.map((item) => cleanString(item)).filter(isSafeSubmissionText)).slice(0, limit);
+}
+
+function buildParagraphSourceRefs(input: {
+  evidenceIds: string[];
+  citationPaperIds: string[];
+  claimIds: string[];
+}): PaperSourceRef[] | undefined {
+  const refs = [
+    ...input.evidenceIds.map((id) => ({ kind: "evidence" as const, id })),
+    ...input.claimIds.map((id) => ({ kind: "claim" as const, id })),
+    ...input.citationPaperIds.map((id) => ({ kind: "citation" as const, id }))
+  ];
+  return refs.length > 0 ? refs : undefined;
 }
 
 function isSafeSubmissionText(text: string): boolean {

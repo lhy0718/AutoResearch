@@ -1,10 +1,9 @@
 <div align="center">
   <h1>AutoLabOS</h1>
-  <p><strong>AI-agent-driven research automation with a slash-first TUI and local web ops UI.</strong></p>
+  <p><strong>The AI research workflow that actually ships papers.</strong></p>
   <p>
-    Move from paper collection and evidence analysis to experiment execution and
-    paper drafting with a checkpointed, inspectable workflow that stays local to
-    your workspace.
+    Collect papers, analyze evidence, run experiments, and draft manuscripts in
+    a checkpointed local workflow.
   </p>
   <p>
     <a href="./README.md"><strong>English</strong></a>

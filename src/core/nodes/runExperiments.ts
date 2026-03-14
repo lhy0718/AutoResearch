@@ -13,6 +13,15 @@ import {
   ObjectiveMetricEvaluation,
   resolveObjectiveMetricProfile
 } from "../objectiveMetric.js";
+import {
+  buildCrashLedgerEntry,
+  EXPERIMENT_GOVERNANCE_CONTRACT_KEY,
+  freezeManagedBundleLock,
+  getGovernedObjectiveProfile,
+  loadExperimentComparisonContract,
+  loadExperimentImplementationContext,
+  storeExperimentGovernanceDecision
+} from "../experimentGovernance.js";
 import { RunVerifierReport, RunVerifierTrigger } from "../experiments/runVerifierFeedback.js";
 import {
   buildRunExperimentsExecutionPlan,
@@ -65,6 +74,8 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
     id: "run_experiments",
     async execute({ run, abortSignal }) {
       const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+      const comparisonContract = await loadExperimentComparisonContract(run, runContext);
+      const implementationContext = await loadExperimentImplementationContext(run, runContext);
       const pendingHandoff =
         (await runContext.get<boolean>("implement_experiments.pending_handoff_to_run_experiments")) === true;
       const handoffReason = await runContext.get<string>("implement_experiments.handoff_reason");
@@ -172,6 +183,17 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         await persistRunFailureState(runContext, {
           error: message
         });
+        await persistGovernanceCrash({
+          run,
+          runContext,
+          comparisonContract,
+          implementationContext,
+          objectiveMetricName: run.objectiveMetric,
+          rationale: report.summary,
+          resourceUsage: {
+            stage: "resolve"
+          }
+        });
         return {
           status: "failure",
           error: message,
@@ -185,6 +207,10 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         cwd: resolved.cwd,
         metricsPath: resolved.metricsPath,
         source: resolved.source,
+        comparisonMode: comparisonContract?.comparison_mode,
+        budgetProfile: comparisonContract?.budget_profile,
+        evaluatorContractId: comparisonContract?.evaluator_contract_id,
+        baselineCandidateIds: comparisonContract?.baseline_candidate_ids,
         testCommand: resolved.testCommand,
         testCwd: resolved.testCwd,
         supplementalProfiles: managedSupplementalPlan?.profiles.map((profile) => ({
@@ -269,6 +295,20 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             cwd: resolved.testCwd || resolved.cwd,
             exitCode: testObs.exit_code ?? 1,
             error: testObs.stderr || "preflight tests failed"
+          });
+          await persistGovernanceCrash({
+            run,
+            runContext,
+            comparisonContract,
+            implementationContext,
+            objectiveMetricName: run.objectiveMetric,
+            rationale: report.summary,
+            resourceUsage: {
+              stage: "preflight",
+              command: resolved.testCommand,
+              cwd: resolved.testCwd || resolved.cwd,
+              exit_code: testObs.exit_code ?? 1
+            }
           });
           return {
             status: "failure",
@@ -422,6 +462,21 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             exitCode: obs.exit_code ?? 1,
             error: obs.stderr || "Experiment command failed"
           });
+          await persistGovernanceCrash({
+            run,
+            runContext,
+            comparisonContract,
+            implementationContext,
+            objectiveMetricName: run.objectiveMetric,
+            rationale: report.summary,
+            resourceUsage: {
+              stage: "command",
+              command: primaryCommand,
+              cwd: resolved.cwd,
+              exit_code: obs.exit_code ?? 1,
+              log_file: logFile
+            }
+          });
           return {
             status: "failure",
             error: obs.stderr || "Experiment command failed",
@@ -482,6 +537,22 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             logFile,
             exitCode: obs.exit_code ?? 0,
             error: missingMessage
+          });
+          await persistGovernanceCrash({
+            run,
+            runContext,
+            comparisonContract,
+            implementationContext,
+            objectiveMetricName: run.objectiveMetric,
+            rationale: report.summary,
+            resourceUsage: {
+              stage: "metrics",
+              command: primaryCommand,
+              cwd: resolved.cwd,
+              exit_code: obs.exit_code ?? 0,
+              log_file: logFile,
+              metrics_path: resolved.metricsPath
+            }
           });
           return {
             status: "failure",
@@ -575,6 +646,22 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             exitCode: obs.exit_code ?? 0,
             error: metricsError
           });
+          await persistGovernanceCrash({
+            run,
+            runContext,
+            comparisonContract,
+            implementationContext,
+            objectiveMetricName: run.objectiveMetric,
+            rationale: report.summary,
+            resourceUsage: {
+              stage: "metrics",
+              command: primaryCommand,
+              cwd: resolved.cwd,
+              exit_code: obs.exit_code ?? 0,
+              log_file: logFile,
+              metrics_path: resolved.metricsPath
+            }
+          });
           return {
             status: "failure",
             error: metricsError,
@@ -583,13 +670,15 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         }
       }
 
-      const objectiveProfile = await resolveObjectiveMetricProfile({
-        run,
-        runContextMemory: runContext,
-        llm: deps.llm,
-        eventStream: deps.eventStream,
-        node: "run_experiments"
-      });
+      const objectiveProfile =
+        getGovernedObjectiveProfile(comparisonContract, run.objectiveMetric) ||
+        (await resolveObjectiveMetricProfile({
+          run,
+          runContextMemory: runContext,
+          llm: deps.llm,
+          eventStream: deps.eventStream,
+          node: "run_experiments"
+        }));
       const objectiveEvaluation = evaluateObjectiveMetric(
         parsedMetrics,
         objectiveProfile,
@@ -597,6 +686,31 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
       );
       objectiveEvaluationSummary = objectiveEvaluation.summary;
       await writeRunArtifact(run, "objective_evaluation.json", JSON.stringify(objectiveEvaluation, null, 2));
+      if (comparisonContract) {
+        const managedBundleLock = await freezeManagedBundleLock({
+          contract: comparisonContract,
+          publicDir:
+            managedSupplementalPlan?.publicDir ||
+            resolveMaybeRelative(await runContext.get<string>("implement_experiments.public_dir"), process.cwd()) ||
+            undefined
+        });
+        if (managedBundleLock) {
+          await storeExperimentGovernanceDecision(run, runContext, {
+            managedBundleLock,
+            entries: []
+          });
+        } else if (comparisonContract.budget_profile.mode === "managed_standard") {
+          deps.eventStream.emit({
+            type: "OBS_RECEIVED",
+            runId: run.id,
+            node: "run_experiments",
+            agentRole: "runner",
+            payload: {
+              text: "Managed standard run completed without a frozen evaluator/environment lock; analyze_results will treat the candidate as non-comparable until the bundle artifacts are restored."
+            }
+          });
+        }
+      }
       await persistRunVerifierReport(
         run,
         runContext,
@@ -653,6 +767,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
       await runContext.put("run_experiments.last_log_file", logFile);
       await runContext.put("run_experiments.exit_code", obs?.exit_code ?? 0);
       await runContext.put("run_experiments.last_error", undefined);
+      await runContext.put(EXPERIMENT_GOVERNANCE_CONTRACT_KEY, comparisonContract || null);
       await runContext.put("objective_metric.last_evaluation", objectiveEvaluation);
       await runContext.put("run_experiments.supplemental_runs", supplementalRuns.records);
       await runContext.put("run_experiments.supplemental_summary", supplementalRuns.summary || null);
@@ -1354,6 +1469,27 @@ async function persistRunFailureState(
   await runContext.put("run_experiments.last_log_file", input.logFile);
   await runContext.put("run_experiments.exit_code", input.exitCode);
   await runContext.put("run_experiments.last_error", input.error);
+}
+
+async function persistGovernanceCrash(input: {
+  run: Parameters<typeof writeRunArtifact>[0];
+  runContext: RunContextMemory;
+  comparisonContract?: Awaited<ReturnType<typeof loadExperimentComparisonContract>>;
+  implementationContext?: Awaited<ReturnType<typeof loadExperimentImplementationContext>>;
+  objectiveMetricName: string;
+  rationale: string;
+  resourceUsage: Record<string, unknown>;
+}): Promise<void> {
+  const entry = buildCrashLedgerEntry({
+    contract: input.comparisonContract,
+    implementationContext: input.implementationContext,
+    objectiveMetricName: input.objectiveMetricName,
+    rationale: input.rationale,
+    resourceUsage: input.resourceUsage
+  });
+  await storeExperimentGovernanceDecision(input.run, input.runContext, {
+    entries: [entry]
+  });
 }
 
 async function publishRunExperimentOutputs(input: {

@@ -109,6 +109,16 @@ export interface RunGraphState {
 
 export type RunStatus = "pending" | "running" | "paused" | "completed" | "failed";
 
+export interface PaperProfileConfig {
+  venue_style: string;
+  main_page_limit: number;
+  references_counted: boolean;
+  appendix_allowed: boolean;
+  appendix_format: "double_column" | "single_column";
+  prefer_appendix_for: string[];
+  estimated_words_per_page?: number;
+}
+
 export interface RunRecord {
   version: 3;
   workflowVersion: 3;
@@ -198,7 +208,9 @@ export interface AppConfig {
     template: "acl";
     build_pdf: boolean;
     latex_engine: "auto_install";
+    validation_mode?: "default" | "strict_paper";
   };
+  paper_profile: PaperProfileConfig;
   paths: {
     runs_dir: string;
     logs_dir: string;

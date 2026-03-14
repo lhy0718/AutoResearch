@@ -1,3 +1,5 @@
+import { ExperimentBudgetProfile } from "./experimentGovernance.js";
+
 type ExecutionStage = "resolve" | "preflight" | "command" | "metrics" | "supplemental";
 
 export type RunExperimentsFailureCategory =
@@ -15,6 +17,10 @@ export interface RunExperimentsExecutionPlan {
   cwd: string;
   metrics_path: string;
   source: string;
+  comparison_mode?: "baseline_first_locked" | "objective_only";
+  budget_profile?: ExperimentBudgetProfile;
+  evaluator_contract_id?: string;
+  baseline_candidate_ids?: string[];
   preflight_command?: string;
   preflight_cwd?: string;
   managed_supplemental_profiles: Array<{
@@ -71,6 +77,10 @@ export function buildRunExperimentsExecutionPlan(input: {
   cwd: string;
   metricsPath: string;
   source: string;
+  comparisonMode?: "baseline_first_locked" | "objective_only";
+  budgetProfile?: ExperimentBudgetProfile;
+  evaluatorContractId?: string;
+  baselineCandidateIds?: string[];
   testCommand?: string;
   testCwd?: string;
   supplementalProfiles?: Array<{
@@ -85,6 +95,10 @@ export function buildRunExperimentsExecutionPlan(input: {
     cwd: input.cwd,
     metrics_path: input.metricsPath,
     source: input.source,
+    comparison_mode: input.comparisonMode,
+    budget_profile: input.budgetProfile,
+    evaluator_contract_id: input.evaluatorContractId,
+    baseline_candidate_ids: input.baselineCandidateIds,
     preflight_command: input.testCommand,
     preflight_cwd: input.testCwd,
     managed_supplemental_profiles: (input.supplementalProfiles || []).map((profile) => ({

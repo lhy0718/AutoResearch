@@ -8,7 +8,7 @@ import { InMemoryEventStream } from "../src/core/events.js";
 import { LLMClient, LLMCompleteOptions, MockLLMClient } from "../src/core/llm/client.js";
 import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 import { createWritePaperNode } from "../src/core/nodes/writePaper.js";
-import { buildPublicPaperDir, buildPublicRunManifestPath } from "../src/core/publicArtifacts.js";
+import { buildPublicAnalysisDir, buildPublicPaperDir, buildPublicRunManifestPath } from "../src/core/publicArtifacts.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { RunRecord } from "../src/types.js";
 
@@ -414,6 +414,572 @@ function buildSubmissionValidationFailureResponses(): string[] {
     ]
   });
   return [...buildSessionResponses(), manuscript];
+}
+
+async function overwriteRunArtifacts(run: RunRecord, files: Record<string, string>): Promise<void> {
+  const runDir = path.join(process.cwd(), ".autolabos", "runs", run.id);
+  for (const [relativePath, contents] of Object.entries(files)) {
+    const filePath = path.join(runDir, relativePath);
+    await mkdir(path.dirname(filePath), { recursive: true });
+    await writeFile(filePath, contents, "utf8");
+  }
+}
+
+async function writeLatestResults(run: RunRecord, payload: Record<string, unknown>): Promise<void> {
+  const analysisDir = buildPublicAnalysisDir(process.cwd(), run);
+  await mkdir(analysisDir, { recursive: true });
+  await writeFile(path.join(analysisDir, "latest_results.json"), `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+}
+
+function buildWeakScientificResponses(): string[] {
+  const outline = JSON.stringify({
+    title: "Weak Benchmark Note",
+    abstract_focus: ["weak evidence", "cautious benchmark framing"],
+    section_headings: ["Introduction", "Method", "Results", "Conclusion"],
+    key_claim_themes: ["The benchmark suggests a small positive delta."],
+    citation_plan: ["paper_1"]
+  });
+  const draft = JSON.stringify({
+    title: "Weak Benchmark Note",
+    abstract: "A short benchmark note.",
+    keywords: ["benchmark"],
+    sections: [
+      {
+        heading: "Introduction",
+        paragraphs: ["We study a small benchmark run."],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_1"]
+      },
+      {
+        heading: "Method",
+        paragraphs: ["We compare two workflows on one public dataset."],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_1"]
+      },
+      {
+        heading: "Results",
+        paragraphs: ["The method demonstrates significant improvement."],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_1"]
+      },
+      {
+        heading: "Conclusion",
+        paragraphs: ["The benchmark is promising."],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_1"]
+      }
+    ],
+    claims: [
+      {
+        claim_id: "c1",
+        statement: "The method demonstrates significant improvement.",
+        section_heading: "Results",
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_1"]
+      }
+    ]
+  });
+  const review = JSON.stringify({
+    summary: "The draft is cautious but still terse.",
+    revision_notes: ["Keep the benchmark framing explicit."],
+    unsupported_claims: [],
+    missing_sections: [],
+    missing_citations: []
+  });
+  const manuscript = JSON.stringify({
+    title: "Weak Benchmark Note",
+    abstract: "This study demonstrates significant improvement on the benchmark.",
+    keywords: ["benchmark"],
+    sections: [
+      {
+        heading: "Introduction",
+        paragraphs: ["We study a small benchmark run."]
+      },
+      {
+        heading: "Method",
+        paragraphs: ["We compare two workflows on one public dataset."]
+      },
+      {
+        heading: "Results",
+        paragraphs: ["The benchmark suggests a positive delta under this benchmark."]
+      },
+      {
+        heading: "Conclusion",
+        paragraphs: ["The evidence remains limited but encouraging."]
+      }
+    ]
+  });
+  return [outline, draft, review, manuscript];
+}
+
+function buildMediumScientificResponses(): string[] {
+  const outline = JSON.stringify({
+    title: "Repeated Tabular Benchmark",
+    abstract_focus: ["nested evaluation", "resource-aware results", "appendix-aware paper"],
+    section_headings: ["Introduction", "Related Work", "Method", "Results", "Discussion", "Limitations", "Conclusion"],
+    key_claim_themes: ["The benchmark suggests small positive deltas under repeated evaluation."],
+    citation_plan: ["paper_1", "paper_2", "paper_3"]
+  });
+  const sharedParagraph =
+    "The manuscript keeps claims scoped to the available repeated-evaluation artifacts while still describing protocol choices, resource measurements, and dataset-specific behavior in enough detail for a full paper.";
+  const draft = JSON.stringify({
+    title: "Repeated Tabular Benchmark",
+    abstract: "A richer benchmark manuscript with appendix-aware reporting.",
+    keywords: ["benchmark", "tabular", "reproducibility"],
+    sections: [
+      {
+        heading: "Introduction",
+        paragraphs: [
+          "We study repeated tabular benchmarking under constrained compute settings.",
+          sharedParagraph
+        ],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_1", "paper_2"]
+      },
+      {
+        heading: "Related Work",
+        paragraphs: [
+          "Prior work spans nested validation, CPU-only tree baselines, and reproducibility notes for repeated evaluation.",
+          "The closest prior work reports smaller empirical scopes, while the present study emphasizes cautious positioning rather than broad novelty."
+        ],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_1", "paper_2", "paper_3"]
+      },
+      {
+        heading: "Method",
+        paragraphs: [
+          "We evaluate breast_cancer and iris with explicit preprocessing, nested cross-validation, and fixed seeds.",
+          "The protocol fits preprocessing within each fold and records runtime and peak memory for the compared workflows.",
+          sharedParagraph
+        ],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_1", "paper_2"]
+      },
+      {
+        heading: "Results",
+        paragraphs: [
+          "The strongest workflow yields a small positive macro-F1 delta over logistic regression.",
+          "Dataset-level behavior varies, so the study reports uncertainty, runtime, and memory together with the main score.",
+          sharedParagraph
+        ],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_1", "paper_3"]
+      },
+      {
+        heading: "Discussion",
+        paragraphs: [
+          "The outcome is best framed as a benchmark note with bounded empirical scope.",
+          sharedParagraph
+        ],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_3"]
+      },
+      {
+        heading: "Limitations",
+        paragraphs: ["The dataset scope is narrow and repeated CV does not justify broad inferential language."],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_3"]
+      },
+      {
+        heading: "Conclusion",
+        paragraphs: ["The paper keeps its central logic in the main body while routing detailed repeat-level artifacts to the appendix."],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_1", "paper_2", "paper_3"]
+      }
+    ],
+    claims: [
+      {
+        claim_id: "c1",
+        statement: "The strongest workflow suggests a small positive delta under repeated evaluation.",
+        section_heading: "Results",
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_1", "paper_3"]
+      }
+    ]
+  });
+  const review = JSON.stringify({
+    summary: "The draft is grounded and uses the appendix appropriately.",
+    revision_notes: ["Keep the discussion cautious and preserve the main-body result table."],
+    unsupported_claims: [],
+    missing_sections: [],
+    missing_citations: []
+  });
+  const manuscript = JSON.stringify({
+    title: "Repeated Tabular Benchmark",
+    abstract: "A richer benchmark manuscript with appendix-aware reporting.",
+    keywords: ["benchmark", "tabular", "reproducibility"],
+    sections: [
+      {
+        heading: "Introduction",
+        paragraphs: [
+          "We study repeated tabular benchmarking under constrained compute settings.",
+          sharedParagraph
+        ]
+      },
+      {
+        heading: "Related Work",
+        paragraphs: [
+          "Prior work spans nested validation, CPU-only tree baselines, and reproducibility notes for repeated evaluation.",
+          "The closest prior work reports smaller empirical scopes, while the present study emphasizes cautious positioning rather than broad novelty."
+        ]
+      },
+      {
+        heading: "Method",
+        paragraphs: [
+          "We evaluate breast_cancer and iris with explicit preprocessing, nested cross-validation, and fixed seeds.",
+          "The protocol fits preprocessing within each fold and records runtime and peak memory for the compared workflows.",
+          sharedParagraph
+        ]
+      },
+      {
+        heading: "Results",
+        paragraphs: [
+          "The strongest workflow yields a small positive macro-F1 delta over logistic regression.",
+          "Dataset-level behavior varies, so the study reports uncertainty, runtime, and memory together with the main score.",
+          sharedParagraph
+        ]
+      },
+      {
+        heading: "Discussion",
+        paragraphs: [
+          "The outcome is best framed as a benchmark note with bounded empirical scope.",
+          sharedParagraph
+        ]
+      },
+      {
+        heading: "Limitations",
+        paragraphs: ["The dataset scope is narrow and repeated CV does not justify broad inferential language."]
+      },
+      {
+        heading: "Conclusion",
+        paragraphs: ["The paper keeps its central logic in the main body while routing detailed repeat-level artifacts to the appendix."]
+      }
+    ]
+  });
+  return [outline, draft, review, manuscript];
+}
+
+function buildInconsistentScientificResponses(): string[] {
+  const base = buildMediumScientificResponses();
+  const inconsistentManuscript = JSON.stringify({
+    title: "Repeated Tabular Benchmark",
+    abstract: "We improve macro-F1 by 0.2 across 8 datasets.",
+    keywords: ["benchmark", "tabular", "reproducibility"],
+    sections: [
+      {
+        heading: "Introduction",
+        paragraphs: ["We study repeated tabular benchmarking under constrained compute settings."]
+      },
+      {
+        heading: "Method",
+        paragraphs: ["We evaluate 2 datasets with outer 5-fold CV, inner 3-fold tuning, and 3 repeats."]
+      },
+      {
+        heading: "Results",
+        paragraphs: ["The strongest workflow yields a macro-F1 delta of 0.026 across 2 datasets."]
+      },
+      {
+        heading: "Conclusion",
+        paragraphs: ["The study shows significant improvement across 8 datasets."]
+      }
+    ]
+  });
+  return [...base.slice(0, 3), inconsistentManuscript];
+}
+
+function buildMediumResultAnalysis(): Record<string, unknown> {
+  return {
+    objective_metric: {
+      evaluation: {
+        summary: "Observed a small positive macro-F1 delta over logistic regression on the strongest workflow."
+      },
+      profile: {
+        preferred_metric_keys: ["macro_f1_delta_vs_logreg"]
+      }
+    },
+    metric_table: [
+      { key: "macro_f1_delta_vs_logreg", value: 0.026 },
+      { key: "pairwise_ranking_agreement", value: 0.885 },
+      { key: "runtime_seconds_mean", value: 1.05 },
+      { key: "peak_memory_mb_mean", value: 149 }
+    ],
+    primary_findings: [
+      "The strongest workflow suggests a small positive macro-F1 delta over logistic regression.",
+      "Runtime and memory remain close across the compared workflows."
+    ],
+    limitations: [
+      "The delta is small and varies by dataset.",
+      "Repeated CV does not justify strong inferential language."
+    ],
+    statistical_summary: {
+      notes: [
+        "Dispersion across repeated runs is moderate rather than negligible.",
+        "Heterogeneity remains visible across datasets."
+      ],
+      confidence_intervals: [
+        {
+          metric_key: "macro_f1_delta_vs_logreg",
+          label: "Macro-F1 delta",
+          lower: 0.015,
+          upper: 0.036,
+          level: 0.95,
+          source: "metrics",
+          summary: "The 95% interval for the macro-F1 delta spans 0.015 to 0.036."
+        }
+      ],
+      effect_estimates: [
+        {
+          comparison_id: "non_nested_vs_nested",
+          metric_key: "macro_f1_delta_vs_logreg",
+          delta: 0.026,
+          direction: "positive",
+          summary: "The estimated macro-F1 delta remains positive but modest."
+        }
+      ]
+    },
+    figure_specs: [
+      {
+        id: "delta_overview",
+        title: "Dataset-level macro-F1 deltas",
+        path: "figures/delta.svg",
+        metric_keys: ["macro_f1_delta_vs_logreg"],
+        summary: "Dataset-level macro-F1 deltas with uncertainty-aware interpretation."
+      }
+    ],
+    synthesis: {
+      source: "fallback",
+      discussion_points: [
+        "The observed gain is consistent with a benchmark note rather than a broad method claim."
+      ],
+      failure_analysis: [],
+      follow_up_actions: [],
+      confidence_statement: "Confidence is moderate because repeated evaluations exist, but dataset scope remains narrow."
+    }
+  };
+}
+
+function buildMediumLatestResults(): Record<string, unknown> {
+  return {
+    protocol: {
+      dataset_source: "OpenML",
+      datasets: ["breast_cancer", "iris"],
+      models: ["logreg", "extra_trees"],
+      workflows: ["nested", "non_nested"],
+      repeats: 3,
+      seed_schedule: [100, 101, 102],
+      n_samples: 569,
+      n_features: 30,
+      n_classes: 2
+    },
+    dataset_summaries: [
+      {
+        dataset: "breast_cancer",
+        workflows: {
+          non_nested: {
+            models: {
+              logreg: { mean_test_macro_f1: 0.91 },
+              extra_trees: { mean_test_macro_f1: 0.944, mean_delta_vs_logreg: 0.034 }
+            },
+            pairwise_ranking_agreement: 0.9,
+            winner_consistency: 1,
+            runtime_seconds_mean: 0.95,
+            peak_memory_mb_mean: 151
+          }
+        }
+      },
+      {
+        dataset: "iris",
+        workflows: {
+          non_nested: {
+            models: {
+              logreg: { mean_test_macro_f1: 0.89 },
+              extra_trees: { mean_test_macro_f1: 0.918, mean_delta_vs_logreg: 0.028 }
+            },
+            pairwise_ranking_agreement: 0.88,
+            winner_consistency: 1,
+            runtime_seconds_mean: 0.82,
+            peak_memory_mb_mean: 150
+          }
+        }
+      }
+    ],
+    repeat_records: [
+      {
+        repeat_index: 0,
+        datasets: [
+          {
+            dataset: "breast_cancer",
+            workflows: {
+              non_nested: {
+                models: {
+                  logreg: { test_macro_f1: 0.91 },
+                  extra_trees: { test_macro_f1: 0.945 }
+                }
+              }
+            }
+          },
+          {
+            dataset: "iris",
+            workflows: {
+              non_nested: {
+                models: {
+                  logreg: { test_macro_f1: 0.89 },
+                  extra_trees: { test_macro_f1: 0.919 }
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        repeat_index: 1,
+        datasets: [
+          {
+            dataset: "breast_cancer",
+            workflows: {
+              non_nested: {
+                models: {
+                  logreg: { test_macro_f1: 0.91 },
+                  extra_trees: { test_macro_f1: 0.944 }
+                }
+              }
+            }
+          },
+          {
+            dataset: "iris",
+            workflows: {
+              non_nested: {
+                models: {
+                  logreg: { test_macro_f1: 0.89 },
+                  extra_trees: { test_macro_f1: 0.918 }
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        repeat_index: 2,
+        datasets: [
+          {
+            dataset: "breast_cancer",
+            workflows: {
+              non_nested: {
+                models: {
+                  logreg: { test_macro_f1: 0.91 },
+                  extra_trees: { test_macro_f1: 0.943 }
+                }
+              }
+            }
+          },
+          {
+            dataset: "iris",
+            workflows: {
+              non_nested: {
+                models: {
+                  logreg: { test_macro_f1: 0.89 },
+                  extra_trees: { test_macro_f1: 0.917 }
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  };
+}
+
+async function seedMediumScientificRun(run: RunRecord): Promise<void> {
+  await overwriteRunArtifacts(run, {
+    "paper_summaries.jsonl": [
+      {
+        paper_id: "paper_1",
+        title: "Nested Validation for Tabular Baselines",
+        source_type: "full_text",
+        summary: "Nested validation stabilizes model selection in small tabular benchmarks.",
+        key_findings: ["Nested validation reduces selection optimism."],
+        limitations: ["Compute cost rises with repeated evaluation."],
+        datasets: ["breast_cancer", "iris"],
+        metrics: ["macro_f1"],
+        novelty: "Evaluation and benchmarking for small tabular datasets",
+        reproducibility_notes: ["Explicit seeds and folds are reported."]
+      },
+      {
+        paper_id: "paper_2",
+        title: "CPU-Only Tree Baselines",
+        source_type: "full_text",
+        summary: "Tree ensembles offer small gains over logistic regression on public datasets.",
+        key_findings: ["Extra trees produce small positive deltas on some datasets."],
+        limitations: ["Gains vary by dataset."],
+        datasets: ["breast_cancer", "iris"],
+        metrics: ["macro_f1_delta_vs_logreg"],
+        novelty: "Classical model comparison under CPU-only constraints",
+        reproducibility_notes: ["OpenML datasets and seed schedules are listed."]
+      },
+      {
+        paper_id: "paper_3",
+        title: "Reproducibility Notes for Repeated CV",
+        source_type: "full_text",
+        summary: "Repeated CV supports cautious, not universal, claims about ranking stability.",
+        key_findings: ["Repeated evaluation exposes heterogeneity."],
+        limitations: ["Repeated CV does not justify strong inferential language."],
+        datasets: ["OpenML tabular suites"],
+        metrics: ["pairwise_ranking_agreement"],
+        novelty: "Reproducibility framing for repeated evaluation",
+        reproducibility_notes: ["Intervals and heterogeneity are emphasized."]
+      }
+    ].map((row) => JSON.stringify(row)).join("\n") + "\n",
+    "corpus.jsonl": [
+      {
+        paper_id: "paper_1",
+        title: "Nested Validation for Tabular Baselines",
+        abstract: "Nested validation stabilizes model selection in small tabular benchmarks.",
+        authors: ["Alice Doe"],
+        year: 2025,
+        venue: "ACL Findings"
+      },
+      {
+        paper_id: "paper_2",
+        title: "CPU-Only Tree Baselines",
+        abstract: "Tree ensembles offer small gains over logistic regression on public datasets.",
+        authors: ["Bob Doe"],
+        year: 2024,
+        venue: "EMNLP"
+      },
+      {
+        paper_id: "paper_3",
+        title: "Reproducibility Notes for Repeated CV",
+        abstract: "Repeated CV supports cautious, not universal, claims about ranking stability.",
+        authors: ["Cara Doe"],
+        year: 2024,
+        venue: "TMLR"
+      }
+    ].map((row) => JSON.stringify(row)).join("\n") + "\n",
+    "experiment_plan.yaml": [
+      "selected_design:",
+      '  title: "Repeated CPU-only tabular baseline comparison"',
+      "  datasets:",
+      '    - "breast_cancer"',
+      '    - "iris"',
+      "  metrics:",
+      '    - "macro_f1_delta_vs_logreg"',
+      '    - "pairwise_ranking_agreement"',
+      "  baselines:",
+      '    - "logistic regression"',
+      '    - "extra trees"',
+      "  implementation_notes:",
+      '    - "OpenML datasets with 569 samples, 30 features, and 2 classes are used."',
+      '    - "Standardize numeric columns, impute missing values, and fit preprocessing within each fold."',
+      '    - "Class imbalance is tracked explicitly."',
+      "  evaluation_steps:",
+      '    - "Run outer 5-fold CV with inner 3-fold tuning."',
+      '    - "Use stratified splits and repeat each workflow across fixed random seeds."',
+      "  resource_notes:",
+      '    - "Hyperparameter grid includes max_depth, n_estimators, and C."'
+    ].join("\n"),
+    "result_analysis.json": `${JSON.stringify(buildMediumResultAnalysis(), null, 2)}\n`
+  });
+  await writeLatestResults(run, buildMediumLatestResults());
 }
 
 function createPdfBuildAci(options?: { failFirstCompile?: boolean; failAllCompiles?: boolean }) {
@@ -1009,5 +1575,260 @@ describe("writePaper PDF build", () => {
 
     expect(eventStream.history().some((event) => event.type === "NODE_COMPLETED")).toBe(false);
     expect(eventStream.history().some((event) => event.type === "TEST_FAILED")).toBe(true);
+  });
+
+  it("surfaces weak scientific results as a warning in default mode and rewrites strong claims", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-weak-default-"));
+    process.chdir(root);
+
+    const run = makeRun("run-paper-weak-default");
+    const runDir = await seedRun(root, run);
+    await overwriteRunArtifacts(run, {
+      "experiment_plan.yaml": [
+        "selected_design:",
+        '  title: "Small benchmark note"',
+        "  datasets:",
+        '    - "AgentBench-mini"'
+      ].join("\n"),
+      "result_analysis.json": JSON.stringify(
+        {
+          objective_metric: {
+            evaluation: {
+              summary: "Observed a small positive delta on a single benchmark artifact."
+            }
+          },
+          metric_table: [{ key: "macro_f1_delta_vs_logreg", value: 0.01 }],
+          statistical_summary: {
+            notes: ["Only a single weak artifact is available."]
+          }
+        },
+        null,
+        2
+      ) + "\n"
+    });
+    await writeLatestResults(run, {
+      protocol: {
+        datasets: ["AgentBench-mini"],
+        models: ["baseline", "method"]
+      },
+      dataset_summaries: [
+        {
+          dataset: "AgentBench-mini",
+          models: {
+            baseline: { macro_f1: 0.71 },
+            method: { macro_f1: 0.72, macro_f1_delta_vs_logreg: 0.01 }
+          }
+        }
+      ]
+    });
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false,
+          validation_mode: "default"
+        },
+        paper_profile: {
+          venue_style: "acl_long",
+          main_page_limit: 8,
+          references_counted: false,
+          appendix_allowed: true,
+          appendix_format: "double_column",
+          prefer_appendix_for: ["per_fold_results", "environment_dump"],
+          estimated_words_per_page: 420
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient(buildWeakScientificResponses()),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(result.summary).toContain("Scientific gate: warn");
+    const gateDecision = JSON.parse(await readFile(path.join(runDir, "paper", "gate_decision.json"), "utf8")) as {
+      status: string;
+      issues: Array<{ code: string; message: string }>;
+    };
+    expect(gateDecision.status).toBe("warn");
+    expect(gateDecision.issues.some((issue) => issue.code.includes("page_budget"))).toBe(true);
+    const scientificValidation = JSON.parse(
+      await readFile(path.join(runDir, "paper", "scientific_validation.json"), "utf8")
+    ) as {
+      auto_repairs: { claim_rewrite_count: number };
+    };
+    expect(scientificValidation.auto_repairs.claim_rewrite_count).toBeGreaterThanOrEqual(0);
+    const manuscript = JSON.parse(await readFile(path.join(runDir, "paper", "manuscript.json"), "utf8")) as {
+      abstract: string;
+      sections: Array<{ heading: string; paragraphs: string[] }>;
+    };
+    expect(manuscript.abstract).not.toMatch(/significant improvement/i);
+    expect(manuscript.sections.find((section) => section.heading === "Results")?.paragraphs.join(" ")).not.toMatch(/significant improvement/i);
+  });
+
+  it("fails weak scientific results in strict-paper mode while preserving artifacts", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-weak-strict-"));
+    process.chdir(root);
+
+    const run = makeRun("run-paper-weak-strict");
+    const runDir = await seedRun(root, run);
+    await overwriteRunArtifacts(run, {
+      "experiment_plan.yaml": [
+        "selected_design:",
+        '  title: "Small benchmark note"',
+        "  datasets:",
+        '    - "AgentBench-mini"'
+      ].join("\n")
+    });
+    await writeLatestResults(run, {
+      protocol: {
+        datasets: ["AgentBench-mini"],
+        models: ["baseline", "method"]
+      },
+      dataset_summaries: []
+    });
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false,
+          validation_mode: "strict_paper"
+        },
+        paper_profile: {
+          venue_style: "acl_long",
+          main_page_limit: 8,
+          references_counted: false,
+          appendix_allowed: true,
+          appendix_format: "double_column",
+          prefer_appendix_for: ["per_fold_results", "environment_dump"],
+          estimated_words_per_page: 420
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient(buildWeakScientificResponses()),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("scientific quality gate failed");
+    const gateDecision = JSON.parse(await readFile(path.join(runDir, "paper", "gate_decision.json"), "utf8")) as {
+      mode: string;
+      status: string;
+      failure_reasons: string[];
+    };
+    expect(gateDecision.mode).toBe("strict_paper");
+    expect(gateDecision.status).toBe("fail");
+    expect(gateDecision.failure_reasons.length).toBeGreaterThan(0);
+    expect(await exists(path.join(runDir, "paper", "manuscript.json"))).toBe(true);
+  });
+
+  it("routes medium-quality runs through main paper plus appendix without failing the default gate", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-medium-quality-"));
+    process.chdir(root);
+
+    const run = makeRun("run-paper-medium-quality");
+    const runDir = await seedRun(root, run);
+    await seedMediumScientificRun(run);
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false,
+          validation_mode: "default"
+        },
+        paper_profile: {
+          venue_style: "acl_long",
+          main_page_limit: 8,
+          references_counted: false,
+          appendix_allowed: true,
+          appendix_format: "double_column",
+          prefer_appendix_for: ["hyperparameter_grids", "per_fold_results", "environment_dump", "extended_error_analysis"],
+          estimated_words_per_page: 420
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient(buildMediumScientificResponses()),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const gateDecision = JSON.parse(await readFile(path.join(runDir, "paper", "gate_decision.json"), "utf8")) as {
+      status: string;
+    };
+    expect(gateDecision.status).not.toBe("fail");
+    const manuscript = JSON.parse(await readFile(path.join(runDir, "paper", "manuscript.json"), "utf8")) as {
+      sections: Array<{ heading: string; paragraphs: string[] }>;
+      appendix_sections?: Array<{ heading: string }>;
+    };
+    expect(manuscript.sections.find((section) => section.heading === "Method")?.paragraphs.length).toBeGreaterThanOrEqual(3);
+    expect(manuscript.sections.find((section) => section.heading === "Results")?.paragraphs.length).toBeGreaterThanOrEqual(4);
+    expect((manuscript.appendix_sections || []).length).toBeGreaterThan(0);
+    const traceability = JSON.parse(await readFile(path.join(runDir, "paper", "traceability.json"), "utf8")) as {
+      paragraphs: Array<{ source_refs?: Array<{ kind: string; id: string }> }>;
+    };
+    expect(traceability.paragraphs.some((paragraph) => (paragraph.source_refs || []).length > 0)).toBe(true);
+  });
+
+  it("hard-fails inconsistent manuscripts when abstract/results/conclusion numbers diverge", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-inconsistent-"));
+    process.chdir(root);
+
+    const run = makeRun("run-paper-inconsistent");
+    const runDir = await seedRun(root, run);
+    await seedMediumScientificRun(run);
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false,
+          validation_mode: "default"
+        },
+        paper_profile: {
+          venue_style: "acl_long",
+          main_page_limit: 8,
+          references_counted: false,
+          appendix_allowed: true,
+          appendix_format: "double_column",
+          prefer_appendix_for: ["hyperparameter_grids", "per_fold_results", "environment_dump", "extended_error_analysis"],
+          estimated_words_per_page: 420
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient(buildInconsistentScientificResponses()),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("scientific quality gate failed");
+    const gateDecision = JSON.parse(await readFile(path.join(runDir, "paper", "gate_decision.json"), "utf8")) as {
+      status: string;
+      failure_reasons: string[];
+    };
+    expect(gateDecision.status).toBe("fail");
+    expect(gateDecision.failure_reasons.some((message) => /structured results|datasets|significant improvement/i.test(message))).toBe(true);
+    const consistency = JSON.parse(await readFile(path.join(runDir, "paper", "consistency_lint.json"), "utf8")) as {
+      manuscript: { issues: Array<{ kind: string }> };
+    };
+    expect(consistency.manuscript.issues.some((issue) => issue.kind === "numeric_inconsistency")).toBe(true);
+    expect(consistency.manuscript.issues.some((issue) => issue.kind === "count_inconsistency")).toBe(true);
   });
 });

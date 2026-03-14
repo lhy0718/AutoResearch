@@ -16,6 +16,10 @@ import {
 } from "../analysis/researchPlanning.js";
 import { supportsRealExecutionBundle } from "../experiments/realExecutionBundle.js";
 import { runDesignExperimentsPanel } from "../designExperimentsPanel.js";
+import {
+  buildExperimentComparisonContract,
+  storeExperimentGovernanceDecision
+} from "../experimentGovernance.js";
 
 interface FilteredHypothesis {
   hypothesis_id: string;
@@ -185,6 +189,16 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         "design_experiments_panel/selection.json",
         `${JSON.stringify(panelResult.selection, null, 2)}\n`
       );
+      const comparisonContract = buildExperimentComparisonContract({
+        run,
+        selectedDesign: panelResult.selected,
+        objectiveProfile: objectiveMetricProfile,
+        managedBundleSupported
+      });
+      await storeExperimentGovernanceDecision(run, runContextMemory, {
+        contract: comparisonContract,
+        entries: []
+      });
       await runContextMemory.put("design_experiments.primary", panelResult.selected.title);
       await runContextMemory.put("design_experiments.source", design.source);
       await runContextMemory.put("design_experiments.summary", design.summary);

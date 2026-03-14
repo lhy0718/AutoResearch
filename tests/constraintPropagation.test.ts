@@ -1127,6 +1127,7 @@ describe("constraint propagation", () => {
 
     const validation = await readFile(path.join(runDir, "paper", "validation.json"), "utf8");
     expect(validation).toContain('"claim_id": "c2"');
-    expect(validation).toContain("no direct supporting evidence remained after validation");
+    expect(validation).toContain('"issues": []');
+    expect(validation).not.toContain("no direct supporting evidence remained after validation");
   });
 });

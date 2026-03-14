@@ -8,7 +8,7 @@ import { RunContextMemory } from "../memory/runContextMemory.js";
 import { publishPublicRunOutputs } from "../publicOutputPublisher.js";
 import { resolveConstraintProfile } from "../constraintProfile.js";
 import { ensureDir, fileExists } from "../../utils/fs.js";
-import { buildPublicPaperDir } from "../publicArtifacts.js";
+import { buildPublicAnalysisDir, buildPublicPaperDir } from "../publicArtifacts.js";
 import {
   ObjectiveMetricEvaluation,
   resolveObjectiveMetricProfile
@@ -34,6 +34,12 @@ import {
   buildPaperTraceability,
   renderSubmissionPaperTex
 } from "../analysis/paperManuscript.js";
+import {
+  applyScientificWritingPolicy,
+  buildScientificValidationArtifact,
+  buildWritePaperGateDecision,
+  materializeScientificManuscript
+} from "../analysis/scientificWriting.js";
 import { PaperWriterSessionManager } from "../agents/paperWriterSessionManager.js";
 import { maybeEnrichRelatedWorkScout } from "../writePaperRelatedWorkEnrichment.js";
 import { maybeRunRelatedWorkScout } from "../writePaperRelatedWorkScout.js";
@@ -157,6 +163,9 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       });
       const objectiveEvaluation = await loadObjectiveEvaluation(runContextMemory, run.id);
       const bundle = bundleResult.bundle;
+      const paperProfile = deps.config.paper_profile;
+      const validationMode = resolvePaperValidationMode(deps.config.paper?.validation_mode);
+      bundle.latestResults = await loadLatestResultsArtifact(run);
       const relatedWorkScout = await maybeRunRelatedWorkScout({
         run,
         bundle,
@@ -246,6 +255,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         run,
         bundle,
         constraintProfile,
+        paperProfile,
         objectiveMetricProfile,
         objectiveEvaluation,
         abortSignal
@@ -276,6 +286,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
           run,
           bundle,
           constraintProfile,
+          paperProfile,
           objectiveMetricProfile,
           objectiveEvaluation,
           outline: sessionResult.outline,
@@ -313,9 +324,47 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         }
       }
 
+      const scientificDraft = applyScientificWritingPolicy({
+        draft: paperDraft,
+        bundle,
+        profile: paperProfile,
+        objectiveEvaluation,
+        objectiveMetricProfile
+      });
+      const scientificValidationArtifact = buildScientificValidationArtifact(scientificDraft);
+      paperDraft = scientificDraft.draft;
+      validation = validatePaperDraft({
+        draft: paperDraft,
+        bundle
+      });
+      await writeRunArtifact(
+        run,
+        "paper/scientific_validation.json",
+        `${JSON.stringify(scientificValidationArtifact, null, 2)}\n`
+      );
+      await runContextMemory.put("write_paper.scientific_validation", {
+        mode: validationMode,
+        page_budget_status: scientificDraft.page_budget.status,
+        method_status: scientificDraft.method_completeness.status,
+        results_status: scientificDraft.results_richness.status,
+        related_work_status: scientificDraft.related_work_richness.status,
+        discussion_status: scientificDraft.discussion_richness.status,
+        appendix_reference_count: scientificDraft.appendix_plan.cross_references.length,
+        claim_rewrite_count: scientificDraft.claim_rewrite_report.rewrites.length,
+        issue_count: scientificValidationArtifact.issues.length
+      });
+      if (scientificDraft.page_budget.warnings.length > 0) {
+        emitLog(`Scientific page-budget warnings: ${scientificDraft.page_budget.warnings.join(" ")}`);
+      }
+      if (scientificDraft.claim_rewrite_report.rewrites.length > 0) {
+        emitLog(
+          `Claim-strength rewriting softened ${scientificDraft.claim_rewrite_report.rewrites.length} over-strong phrase(s).`
+        );
+      }
+
       const citedPaperIds = collectPaperCitationIds(paperDraft, bundle);
       const bibtex = buildPaperBibtex(bundle.corpus, citedPaperIds);
-      const manuscript = validationRepair.applied
+      const manuscriptCandidate = validationRepair.applied
         ? buildFallbackPaperManuscript({
             draft: paperDraft,
             resultAnalysis: bundle.resultAnalysis,
@@ -324,6 +373,23 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
             experimentPlan: bundle.experimentPlan
           })
         : sessionResult.manuscript;
+      const scientificManuscript = materializeScientificManuscript({
+        candidate: manuscriptCandidate,
+        draft: paperDraft,
+        bundle,
+        profile: paperProfile,
+        objectiveEvaluation,
+        objectiveMetricProfile,
+        appendixPlan: scientificDraft.appendix_plan,
+        pageBudget: scientificDraft.page_budget
+      });
+      const gateDecision = buildWritePaperGateDecision({
+        mode: validationMode,
+        scientificValidation: scientificValidationArtifact,
+        consistencyLint: scientificManuscript.consistency_lint,
+        appendixLint: scientificManuscript.appendix_lint
+      });
+      const manuscript = scientificManuscript.manuscript;
       const traceability = buildPaperTraceability({
         draft: paperDraft,
         manuscript
@@ -354,6 +420,23 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await writeRunArtifact(run, "paper/validation.json", `${JSON.stringify(validation, null, 2)}\n`);
       await writeRunArtifact(
         run,
+        "paper/consistency_lint.json",
+        `${JSON.stringify(
+          {
+            manuscript: scientificManuscript.consistency_lint,
+            appendix: scientificManuscript.appendix_lint
+          },
+          null,
+          2
+        )}\n`
+      );
+      await writeRunArtifact(
+        run,
+        "paper/gate_decision.json",
+        `${JSON.stringify(gateDecision, null, 2)}\n`
+      );
+      await writeRunArtifact(
+        run,
         "paper/submission_validation.json",
         `${JSON.stringify(submissionValidation, null, 2)}\n`
       );
@@ -370,6 +453,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await fs.writeFile(path.join(publicPaperDir, "manuscript.json"), manuscriptJson, "utf8");
       await fs.writeFile(path.join(publicPaperDir, "traceability.json"), traceabilityJson, "utf8");
       await fs.writeFile(path.join(publicPaperDir, "evidence_links.json"), evidenceMap, "utf8");
+      await fs.writeFile(path.join(publicPaperDir, "gate_decision.json"), `${JSON.stringify(gateDecision, null, 2)}\n`, "utf8");
 
       const preCompileToolCallsUsed = Math.max(1, 4 - sessionResult.stageFallbacks) + (validationRepair.attempted ? 1 : 0);
       await runContextMemory.put("write_paper.public_dir", publicPaperDir);
@@ -380,8 +464,30 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await runContextMemory.put("write_paper.last_manuscript", manuscript);
       await runContextMemory.put("write_paper.traceability", traceability);
       await runContextMemory.put("write_paper.validation", validation);
+      await runContextMemory.put("write_paper.consistency_lint", {
+        manuscript: scientificManuscript.consistency_lint,
+        appendix: scientificManuscript.appendix_lint
+      });
+      await runContextMemory.put("write_paper.gate_decision", gateDecision);
       await runContextMemory.put("write_paper.submission_validation", submissionValidation);
       await runContextMemory.put("write_paper.validation_repair", validationRepair);
+      if (gateDecision.status === "warn") {
+        emitLog(`Scientific quality gate warnings (${validationMode} mode): ${gateDecision.summary.slice(1).join(" ")}`);
+      }
+      if (gateDecision.status === "fail") {
+        const gateError = buildScientificGateFailureError(gateDecision);
+        emitLog(gateError);
+        await runContextMemory.put("write_paper.last_error", gateError);
+        await runContextMemory.put("write_paper.compile_status", null);
+        await runContextMemory.put("write_paper.compile_report", null);
+        await runContextMemory.put("write_paper.pdf_path", null);
+        return {
+          status: "failure",
+          error: gateError,
+          summary: gateError,
+          toolCallsUsed: preCompileToolCallsUsed
+        };
+      }
       if (!submissionValidation.ok) {
         const submissionError = buildSubmissionValidationError(submissionValidation);
         emitLog(submissionError);
@@ -427,6 +533,10 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
           {
             sourcePath: path.join(runPaperDir, "traceability.json"),
             targetRelativePath: "traceability.json"
+          },
+          {
+            sourcePath: path.join(runPaperDir, "gate_decision.json"),
+            targetRelativePath: "gate_decision.json"
           },
           {
             sourcePath: path.join(runPaperDir, "evidence_links.json"),
@@ -482,8 +592,8 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         status: "success",
         summary:
           sessionResult.source === "fallback"
-            ? `Paper draft generated in LaTeX using staged fallbacks. Validation warnings: ${validation.issues.length}${describeValidationRepair(validationRepair)}. PDF: ${describeCompileStatus(compileResult)}. Public outputs: ${publicOutputs.outputRootRelative}.`
-            : `Paper draft generated in LaTeX from ${paperDraft.sections.length} structured section(s) via ${sessionResult.source} with ${validation.issues.length} validation warning(s)${describeValidationRepair(validationRepair)}. PDF: ${describeCompileStatus(compileResult)}. Public outputs: ${publicOutputs.outputRootRelative}.`,
+            ? `Paper draft generated in LaTeX using staged fallbacks. Validation warnings: ${validation.issues.length}${describeValidationRepair(validationRepair)}. Scientific gate: ${describeScientificGateStatus(gateDecision)}. PDF: ${describeCompileStatus(compileResult)}. Public outputs: ${publicOutputs.outputRootRelative}.`
+            : `Paper draft generated in LaTeX from ${paperDraft.sections.length} structured section(s) via ${sessionResult.source} with ${validation.issues.length} validation warning(s)${describeValidationRepair(validationRepair)}. Scientific gate: ${describeScientificGateStatus(gateDecision)}. PDF: ${describeCompileStatus(compileResult)}. Public outputs: ${publicOutputs.outputRootRelative}.`,
         needsApproval: true,
         toolCallsUsed
       };
@@ -744,6 +854,21 @@ async function loadObjectiveEvaluation(
   try {
     const raw = await safeRead(`.autolabos/runs/${runId}/objective_evaluation.json`);
     return raw ? (JSON.parse(raw) as ObjectiveMetricEvaluation) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function loadLatestResultsArtifact(
+  run: Pick<Parameters<GraphNodeHandler["execute"]>[0]["run"], "id" | "title">
+): Promise<Record<string, unknown> | undefined> {
+  const filePath = path.join(buildPublicAnalysisDir(process.cwd(), run), "latest_results.json");
+  try {
+    const raw = await fs.readFile(filePath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
   } catch {
     return undefined;
   }
@@ -1069,6 +1194,20 @@ function describeCompileStatus(result: PaperCompileResult): string {
   }
 }
 
+function describeScientificGateStatus(result: {
+  status: "pass" | "warn" | "fail";
+  blocking_issue_count: number;
+  warning_count: number;
+}): string {
+  if (result.status === "pass") {
+    return "pass";
+  }
+  if (result.status === "fail") {
+    return `fail (${result.blocking_issue_count} blocking issue${result.blocking_issue_count === 1 ? "" : "s"})`;
+  }
+  return `warn (${result.warning_count} issue${result.warning_count === 1 ? "" : "s"})`;
+}
+
 function buildSubmissionValidationError(
   report: {
     issues: Array<{ message: string; value?: string }>;
@@ -1092,6 +1231,19 @@ function buildCompileFailureError(result: PaperCompileResult): string {
   const normalizedDetail = /[.!?]$/.test(detail) ? detail : `${detail}.`;
   const buildLogHint = result.build_log_path ? ` See ${result.build_log_path}.` : "";
   return `write_paper generated LaTeX artifacts but the configured PDF build failed: ${normalizedDetail}${buildLogHint}`;
+}
+
+function buildScientificGateFailureError(report: {
+  mode: "default" | "strict_paper";
+  failure_reasons: string[];
+}): string {
+  const leadDetail = report.failure_reasons[0] || "scientific quality gate failed";
+  const qualifier = report.mode === "strict_paper" ? "strict-paper mode" : "default mode";
+  return `write_paper generated manuscript artifacts but stopped before PDF build because the scientific quality gate failed in ${qualifier}: ${leadDetail}`;
+}
+
+function resolvePaperValidationMode(value: unknown): "default" | "strict_paper" {
+  return value === "strict_paper" ? "strict_paper" : "default";
 }
 
 function isMissingBinaryObservation(obs: { stderr?: string; exit_code?: number }): boolean {
