@@ -1,24 +1,10 @@
 import { launchTerminalApp } from "./tui/TerminalApp.js";
 import { bootstrapAutoLabOSRuntime } from "./runtime/createRuntime.js";
-import {
-  configExists,
-  resolveAppPaths,
-  resolveOpenAiApiKey,
-  resolveSemanticScholarApiKey,
-  runNonInteractiveSetup
-} from "./config.js";
 
 export async function runAutoLabOSApp(): Promise<void> {
-  const paths = resolveAppPaths(process.cwd());
-  if (!(await configExists(paths))) {
-    await runNonInteractiveSetup(paths, {
-      semanticScholarApiKey: (await resolveSemanticScholarApiKey(paths.cwd)) ?? "",
-      openAiApiKey: await resolveOpenAiApiKey(paths.cwd)
-    });
-  }
   const bootstrap = await bootstrapAutoLabOSRuntime({
     cwd: process.cwd(),
-    allowInteractiveSetup: false
+    allowInteractiveSetup: true
   });
   if (!bootstrap.runtime || !bootstrap.config) {
     throw new Error("AutoLabOS runtime could not be initialized.");
