@@ -614,6 +614,58 @@ describe("scientificWriting", () => {
     ).toBe(false);
   });
 
+  it("maps mixed delta metrics to their own keys instead of attributing all values to accuracy", () => {
+    const bundle = makeRichBundle();
+    bundle.resultAnalysis = {
+      ...(bundle.resultAnalysis as any),
+      metric_table: [
+        { key: "accuracy_delta", value: 0.07 },
+        { key: "f1_delta", value: 0.09 },
+        { key: "reproducibility_delta", value: 0.16 }
+      ]
+    } as any;
+
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle,
+      profile: PAPER_PROFILE
+    });
+    const candidate: PaperManuscript = {
+      title: "Repeated Tabular Benchmark",
+      abstract: "A short abstract.",
+      keywords: ["tabular"],
+      sections: [
+        {
+          heading: "Introduction",
+          paragraphs: ["This benchmark studies repeated tabular evaluation."]
+        },
+        {
+          heading: "Method",
+          paragraphs: ["We evaluate repeated treatment and baseline runs with the reported metrics."]
+        },
+        {
+          heading: "Results",
+          paragraphs: ["Shared state vs free form: accuracy_delta=0.07, f1_delta=0.09, reproducibility_delta=0.16."]
+        },
+        {
+          heading: "Conclusion",
+          paragraphs: ["The aggregate result remains modest."]
+        }
+      ]
+    };
+
+    const manuscript = materializeScientificManuscript({
+      candidate,
+      draft: scientific.draft,
+      bundle,
+      profile: PAPER_PROFILE,
+      appendixPlan: scientific.appendix_plan,
+      pageBudget: scientific.page_budget
+    });
+
+    expect(manuscript.consistency_lint.issues.some((issue) => issue.kind === "numeric_inconsistency")).toBe(false);
+  });
+
   it("distinguishes aggregate metrics from per-dataset values when checking numeric consistency", () => {
     const bundle = makeRichBundle();
     const scientific = applyScientificWritingPolicy({

@@ -2075,6 +2075,18 @@ function extractMetricFactsFromText(input: {
           ? paragraphDatasetScope
           : fragmentDatasetScope;
     const aggregationLevel = inferAggregationLevel(fragment, datasetScope);
+    const assignedFacts = extractAssignedMetricFacts({
+      fragment,
+      source: input.source,
+      location: input.location,
+      datasetScope,
+      aggregationLevel,
+      sourceRefs: input.sourceRefs
+    });
+    if (assignedFacts.length > 0) {
+      facts.push(...assignedFacts);
+      continue;
+    }
     const numberMatches = collectNumericLiteralMatches(fragment);
     const retainedMatches = numberMatches.filter((match) => !shouldSkipMetricToken(fragment, match.raw, match.index));
     if (retainedMatches.length === 0) {
@@ -2576,6 +2588,9 @@ function normalizeMetricIdentifier(value: string): string | undefined {
   if (/\btop[- ]?1 accuracy\b/iu.test(cleaned)) {
     return "top1_accuracy";
   }
+  if (/\breproducibility(?: score)?\b/iu.test(cleaned)) {
+    return "reproducibility";
+  }
   if (/\baccuracy\b/iu.test(cleaned)) {
     return "accuracy";
   }
@@ -2685,6 +2700,9 @@ function normalizeMetricKeyForUnit(metricKey: string | undefined, unit: NumericF
   if (metricKey === "f1") {
     return "f1_delta";
   }
+  if (metricKey === "reproducibility" || metricKey === "reproducibility_score") {
+    return "reproducibility_delta";
+  }
   if (metricKey === "accuracy") {
     return "accuracy_delta";
   }
@@ -2692,6 +2710,54 @@ function normalizeMetricKeyForUnit(metricKey: string | undefined, unit: NumericF
     return "top1_accuracy_delta";
   }
   return metricKey;
+}
+
+function extractAssignedMetricFacts(input: {
+  fragment: string;
+  source: NumericFactSource;
+  location: string;
+  datasetScope: string | "aggregate" | "unknown";
+  aggregationLevel: NumericFactAggregation;
+  sourceRefs?: PaperSourceRef[];
+}): NormalizedNumericFact[] {
+  const facts: NormalizedNumericFact[] = [];
+  for (const segment of input.fragment.split(/[;,]/u)) {
+    const [rawMetricToken, rawAssignedValue] = segment.split("=");
+    if (!rawMetricToken || !rawAssignedValue) {
+      continue;
+    }
+    const metricToken = cleanString(rawMetricToken.split(":").at(-1));
+    const rawValue = cleanString(rawAssignedValue);
+    const value = Number(rawValue);
+    if (!metricToken || !Number.isFinite(value)) {
+      continue;
+    }
+    const metricKey = normalizeMetricIdentifier(metricToken);
+    const unit = inferMetricUnit(metricToken, metricKey, 0, 1);
+    const normalizedMetricKey = normalizeMetricKeyForUnit(
+      metricKey || normalizeMetricIdentifierForUnit(unit || "score"),
+      unit || "score"
+    );
+    if (!normalizedMetricKey || !unit) {
+      continue;
+    }
+    facts.push(
+      buildStructuredNumericFact({
+        factKind: "metric",
+        source: input.source,
+        location: input.location,
+        rawText: `${metricToken}=${rawValue}`,
+        value,
+        metricKey: normalizedMetricKey,
+        metricLabel: metricToken,
+        datasetScope: input.datasetScope,
+        aggregationLevel: input.aggregationLevel,
+        unit,
+        sourceRefs: input.sourceRefs
+      })
+    );
+  }
+  return dedupeNumericFacts(facts);
 }
 
 function shouldSkipMetricToken(fragment: string, rawToken: string, index: number): boolean {
