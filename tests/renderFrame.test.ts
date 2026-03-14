@@ -321,6 +321,31 @@ describe("buildFrame", () => {
     expect(plain[promptIndex]).toContain("Add steering to redirect the current run.");
   });
 
+  it("shows a retry hint when the run is paused without an approval boundary", () => {
+    const graph = createDefaultGraphState();
+    graph.currentNode = "analyze_papers";
+    graph.nodeStates.analyze_papers.status = "pending";
+    graph.nodeStates.analyze_papers.note = "Canceled by user";
+
+    const frame = buildFrame({
+      appVersion: "1.0.0",
+      busy: false,
+      thinking: false,
+      thinkingFrame: 0,
+      run: makeRun({ status: "paused", graph, currentNode: "analyze_papers" }),
+      logs: [],
+      input: "",
+      inputCursor: 0,
+      suggestions: [],
+      selectedSuggestion: 0,
+      colorEnabled: false
+    });
+
+    const plain = frame.lines.map((line) => stripAnsi(line));
+    const promptIndex = frame.inputLineIndex - 1;
+    expect(plain[promptIndex]).toContain("No pending approval. Use /retry");
+  });
+
   it("renders suggestions in a Codex-style surface below the input line", () => {
     const frame = buildFrame({
       appVersion: "1.0.0",

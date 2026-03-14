@@ -250,6 +250,47 @@ class ImagePayloadTimeoutLLM extends MockLLMClient {
   }
 }
 
+class TimeoutOnlyExtractorLLM extends MockLLMClient {
+  callCount = 0;
+
+  override async complete(_prompt: string, opts?: LLMCompleteOptions): Promise<{ text: string }> {
+    this.callCount += 1;
+    if (opts?.systemPrompt?.includes("planning agent")) {
+      return {
+        text: JSON.stringify({
+          focus_sections: ["methods"],
+          target_claims: ["claim"],
+          extraction_priorities: ["metrics"],
+          verification_checks: ["source-grounded"],
+          risk_flags: []
+        })
+      };
+    }
+    if (opts?.systemPrompt?.includes("verification agent")) {
+      return {
+        text: jsonOutput("reviewed summary", "reviewed claim")
+      };
+    }
+    if (opts?.systemPrompt?.includes("scientific literature analyst")) {
+      return await new Promise<{ text: string }>((_resolve, reject) => {
+        if (opts.abortSignal?.aborted) {
+          reject(new Error("Operation aborted by user"));
+          return;
+        }
+        opts.abortSignal?.addEventListener(
+          "abort",
+          () => reject(new Error("Operation aborted by user")),
+          { once: true }
+        );
+      });
+    }
+    return {
+      text: jsonOutput("summary", "claim")
+    };
+  }
+}
+
+
 function makeRun(runId: string): RunRecord {
   return {
     version: 3,
@@ -1099,6 +1140,56 @@ describe("analyzePapers node", () => {
     const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
     expect(loggedTexts.some((text) => text.includes("Pausing instead of spending the rest of the selection"))).toBe(true);
   });
+
+  it("uses a larger early zero-output sample when all failures are timeout-only", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-timeout-zero-output-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    process.env.AUTOLABOS_ANALYSIS_EXTRACT_TIMEOUT_MS = "5";
+
+    const runId = "run-analyze-timeout-zero-output";
+    const run = makeRun(runId);
+    await writeCorpus(
+      runId,
+      Array.from({ length: 15 }, (_, index) => ({
+        paper_id: `p${index + 1}`,
+        title: `Paper ${index + 1}`,
+        abstract: `Abstract ${index + 1}`,
+        authors: [`Author ${index + 1}`]
+      }))
+    );
+
+    const llm = new TimeoutOnlyExtractorLLM();
+    const eventStream = new InMemoryEventStream();
+    const node = createAnalyzePapersNode({
+      config: {
+        analysis: {
+          pdf_mode: "codex_text_image_hybrid",
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream,
+      llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+    expect(result.needsApproval).toBe(true);
+    expect(result.transitionRecommendation?.action).toBe("pause_for_human");
+    expect(result.summary).toContain("first 3 attempted paper(s) all failed");
+    expect(result.toolCallsUsed).toBe(3);
+    expect(llm.callCount).toBeLessThan(30);
+
+    const evidence = result.transitionRecommendation?.evidence ?? [];
+    expect(evidence.some((line) => line.includes("after 3 attempted paper analyses"))).toBe(true);
+  });
+
 
   it("retries once without supplemental page images when the full-text extractor times out", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-image-timeout-fallback-"));

@@ -607,6 +607,67 @@ describe("InteractionSession", () => {
     expect(snapshot.activeRunInsight?.lines.some((line) => line.includes("Review readiness: blocking"))).toBe(true);
   });
 
+  it("blocks /approve on analyze_papers when no evidence has been persisted yet", async () => {
+    const run = await runStore.createRun({
+      title: "Approve guard run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    const current = await runStore.getRun(run.id);
+    if (!current) {
+      throw new Error("expected run");
+    }
+    current.status = "paused";
+    current.currentNode = "analyze_papers";
+    current.graph.currentNode = "analyze_papers";
+    current.graph.nodeStates.analyze_papers = {
+      status: "needs_approval",
+      updatedAt: new Date().toISOString(),
+      note: "Paused for manual review."
+    };
+    await runStore.updateRun(current);
+
+    const approveCurrent = vi.fn();
+    const session = new InteractionSession({
+      workspaceRoot: cwd,
+      config: {
+        research: {
+          defaultTopic: "topic",
+          defaultConstraints: ["recent papers"],
+          default_objective_metric: "metric"
+        },
+        providers: {
+          llm_mode: "codex_chatgpt_only",
+          codex: { model: "gpt-5.3-codex", reasoning_effort: "xhigh", fast_mode: false },
+          openai: { model: "gpt-5.4", reasoning_effort: "medium" }
+        },
+        analysis: {
+          pdf_mode: "codex_text_image_hybrid",
+          responses_model: "gpt-5.4"
+        },
+        papers: { max_results: 100 }
+      } as any,
+      runStore,
+      titleGenerator: {} as any,
+      codex: {} as any,
+      openAiTextClient: undefined,
+      eventStream: new InMemoryEventStream(),
+      orchestrator: {
+        approveCurrent
+      } as any,
+      semanticScholarApiKeyConfigured: true
+    });
+    await session.start();
+    await session.selectRun(run.id);
+
+    const result = await session.submitInput("/approve");
+
+    expect(result.logs.some((line) => line.includes("no persisted evidence"))).toBe(true);
+    expect(result.logs.some((line) => line.includes("/retry"))).toBe(true);
+    expect(approveCurrent).not.toHaveBeenCalled();
+  });
+
   it("preserves an existing analyze_papers request when /agent run analyze_papers omits --top-n", async () => {
     const run = await runStore.createRun({
       title: "Analyze preserve run",

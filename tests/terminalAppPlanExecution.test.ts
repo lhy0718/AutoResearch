@@ -1640,6 +1640,52 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(app.continueSupervisedRun).toHaveBeenCalledWith(run.id);
   });
 
+  it("rejects /approve when the paused node has no pending approval boundary", async () => {
+    const app = makeApp();
+    const run = makeRun("run-approve-noop");
+    run.status = "paused";
+    run.currentNode = "analyze_papers";
+    run.graph.currentNode = "analyze_papers";
+    run.graph.nodeStates.analyze_papers.status = "pending";
+    run.graph.nodeStates.analyze_papers.note = "Canceled by user";
+    app.resolveTargetRun = vi.fn().mockResolvedValue(run);
+    app.refreshRunIndex = vi.fn();
+    app.orchestrator = {
+      approveCurrent: vi.fn()
+    };
+
+    const result = await (app as any).handleApprove();
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("no pending approval");
+    expect(app.orchestrator.approveCurrent).not.toHaveBeenCalled();
+    expect(app.logs.some((line: string) => line.includes("No pending approval"))).toBe(true);
+    expect(app.logs.some((line: string) => line.includes("/retry"))).toBe(true);
+  });
+
+  it("blocks /approve on analyze_papers when no evidence has been persisted yet", async () => {
+    const app = makeApp();
+    const run = makeRun("run-approve-no-evidence");
+    run.status = "paused";
+    run.currentNode = "analyze_papers";
+    run.graph.currentNode = "analyze_papers";
+    run.graph.nodeStates.analyze_papers.status = "needs_approval";
+    run.graph.nodeStates.analyze_papers.note = "Paused for manual review.";
+    app.resolveTargetRun = vi.fn().mockResolvedValue(run);
+    app.refreshRunIndex = vi.fn();
+    app.orchestrator = {
+      approveCurrent: vi.fn()
+    };
+
+    const result = await (app as any).handleApprove();
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("analyze evidence missing");
+    expect(app.orchestrator.approveCurrent).not.toHaveBeenCalled();
+    expect(app.logs.some((line: string) => line.includes("no persisted evidence"))).toBe(true);
+    expect(app.logs.some((line: string) => line.includes("/retry"))).toBe(true);
+  });
+
   it("does not trim successful node summaries at the old 220-character limit", async () => {
     const app = makeApp();
     const run = makeRun("run-long-summary");

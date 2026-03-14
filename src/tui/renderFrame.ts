@@ -553,6 +553,7 @@ function renderComposerBody(input: RenderFrameInput, contentWidth: number): Comp
   const promptStyle = { fg: TUI_THEME.text, bg: TUI_THEME.composerBg, bold: true };
   const textStyle = { fg: TUI_THEME.text, bg: TUI_THEME.composerBg };
   const placeholderStyle = { fg: TUI_THEME.muted, bg: TUI_THEME.composerBg, dim: true };
+  const runNodeStatus = input.run ? input.run.graph.nodeStates[input.run.currentNode]?.status : undefined;
   const busyPlaceholder =
     input.busy && input.activityLabel?.startsWith("Starting research") && !input.run
       ? "Creating a new research run. Wait for the first node update."
@@ -568,7 +569,9 @@ function renderComposerBody(input: RenderFrameInput, contentWidth: number): Comp
           input.busy
             ? busyPlaceholder
             : input.run
-              ? "Add steering, or wait for the next run or approval."
+              ? input.run.status === "paused" && runNodeStatus !== "needs_approval"
+                ? "No pending approval. Use /retry to rerun the current node, or add steering."
+                : "Add steering, or wait for the next run or approval."
               : "Start with /new to create a Research Brief.",
           availableWidth
         ),

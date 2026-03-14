@@ -1531,6 +1531,28 @@ export class InteractionSession {
     if (!run) {
       return { ok: false, reason: "target run not found" };
     }
+    const state = run.graph.nodeStates[run.currentNode];
+    if (state.status !== "needs_approval") {
+      if (run.status === "paused") {
+        this.pushLog("No pending approval. Use /retry to rerun the current node, or add steering to revise the next move.");
+      } else {
+        this.pushLog(`No pending approval for ${run.currentNode}.`);
+      }
+      await this.refreshRunIndex();
+      return { ok: false, reason: "no pending approval" };
+    }
+    if (run.currentNode === "analyze_papers") {
+      const runContext = new RunContextMemory(this.resolveWorkspacePath(run.memoryRefs.runContextPath));
+      const summaryCount = toFiniteNumber(await runContext.get("analyze_papers.summary_count")) ?? 0;
+      const evidenceCount = toFiniteNumber(await runContext.get("analyze_papers.evidence_count")) ?? 0;
+      if (evidenceCount <= 0) {
+        this.pushLog(
+          `analyze_papers has no persisted evidence yet (summaries=${summaryCount}, evidence=${evidenceCount}). Use /retry to rerun analysis before approving.`
+        );
+        await this.refreshRunIndex();
+        return { ok: false, reason: "analyze evidence missing" };
+      }
+    }
     const updated = await this.orchestrator.approveCurrent(run.id);
     if (
       run.currentNode === "review" &&

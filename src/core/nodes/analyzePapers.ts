@@ -94,7 +94,9 @@ const ABSTRACT_ONLY_EXHAUSTION_MIN_SUMMARIES = 4;
 const ABSTRACT_ONLY_EXHAUSTION_MAX_SELECTED = 12;
 const ZERO_OUTPUT_EARLY_PAUSE_MIN_SELECTED = 12;
 const ZERO_OUTPUT_EARLY_PAUSE_SAMPLE = 2;
+const ZERO_OUTPUT_TIMEOUT_EARLY_PAUSE_SAMPLE = 3;
 const ZERO_OUTPUT_RETRY_PAUSE_SAMPLE = 1;
+const ZERO_OUTPUT_TIMEOUT_RETRY_PAUSE_SAMPLE = 2;
 const SMALL_SELECTION_SERIAL_WARM_START_MAX = 4;
 const COLLECT_ENRICHMENT_SELECTED_WAIT_MS = 5_000;
 const COLLECT_ENRICHMENT_EXTENDED_WAIT_MS = 15_000;
@@ -712,6 +714,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         const pendingRows = selectedRows.filter((row) => manifestState.papers[row.paper_id]?.status !== "completed");
         const previousFailedPaperIds = getSelectedFailedPaperIds(manifestState);
         const startingProgress = buildAnalysisProgress(summaryRowsState, evidenceRowsState);
+        const priorRetryCount = run.graph.retryCounters.analyze_papers ?? 0;
         const warmStartSerial =
           startingProgress.summaryRows.length === 0 &&
           startingProgress.evidenceRows.length === 0 &&
@@ -727,6 +730,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           }
         }
         let failedCount = 0;
+        let timeoutFailureCount = 0;
         let attemptedRows = 0;
         let zeroOutputPauseDecision: ZeroOutputPauseDecision | undefined;
         const persistQueue = createAsyncQueue();
@@ -991,6 +995,9 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
               }
               failedCount += 1;
               const message = error instanceof Error ? error.message : String(error);
+              if (isAnalysisTimeoutError(message)) {
+                timeoutFailureCount += 1;
+              }
               await persistQueue.run(async () => {
                 if (quarantineRecord) {
                   await appendJsonlItems(run, "analysis_quarantine.jsonl", [quarantineRecord]);
@@ -1048,7 +1055,8 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                 selectedCount: selection.selectedPaperIds.length,
                 attemptedCount: attemptedRows,
                 failedCount,
-                priorRetryCount: run.graph.retryCounters.analyze_papers ?? 0,
+                timeoutFailureCount,
+                priorRetryCount,
                 progress
               });
               if (zeroOutputPause && !zeroOutputPauseDecision) {
@@ -1216,7 +1224,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           }
 
           if (zeroProgress && zeroOutputPauseDecision) {
-            const retryCount = run.graph.retryCounters.analyze_papers ?? 0;
+            const retryCount = priorRetryCount;
             const sampleMessage =
               failureSummary.cleanedMessages[0] ||
               `The first ${zeroOutputPauseDecision.attemptedCount} attempted papers all failed before any persisted outputs were produced.`;
@@ -2468,6 +2476,7 @@ function shouldPauseForZeroOutputStall(input: {
   selectedCount: number;
   attemptedCount: number;
   failedCount: number;
+  timeoutFailureCount: number;
   priorRetryCount: number;
   progress: ReturnType<typeof buildAnalysisProgress>;
 }): ZeroOutputPauseDecision | undefined {
@@ -2478,11 +2487,18 @@ function shouldPauseForZeroOutputStall(input: {
     return undefined;
   }
 
+  const timeoutOnlyFailures = input.timeoutFailureCount === input.failedCount && input.failedCount > 0;
   const threshold =
-    input.priorRetryCount >= 1 && input.selectedCount >= ZERO_OUTPUT_RETRY_PAUSE_SAMPLE
-      ? Math.min(input.selectedCount, ZERO_OUTPUT_RETRY_PAUSE_SAMPLE)
+    input.priorRetryCount >= 1
+      ? timeoutOnlyFailures && input.selectedCount >= ZERO_OUTPUT_TIMEOUT_RETRY_PAUSE_SAMPLE
+        ? Math.min(input.selectedCount, ZERO_OUTPUT_TIMEOUT_RETRY_PAUSE_SAMPLE)
+        : input.selectedCount >= ZERO_OUTPUT_RETRY_PAUSE_SAMPLE
+          ? Math.min(input.selectedCount, ZERO_OUTPUT_RETRY_PAUSE_SAMPLE)
+          : 0
       : input.selectedCount >= ZERO_OUTPUT_EARLY_PAUSE_MIN_SELECTED
-        ? Math.min(input.selectedCount, ZERO_OUTPUT_EARLY_PAUSE_SAMPLE)
+        ? timeoutOnlyFailures
+          ? Math.min(input.selectedCount, ZERO_OUTPUT_TIMEOUT_EARLY_PAUSE_SAMPLE)
+          : Math.min(input.selectedCount, ZERO_OUTPUT_EARLY_PAUSE_SAMPLE)
         : 0;
 
   if (threshold === 0 || input.attemptedCount < threshold) {
@@ -2493,6 +2509,14 @@ function shouldPauseForZeroOutputStall(input: {
     attemptedCount: input.attemptedCount,
     threshold
   };
+}
+
+function isAnalysisTimeoutError(message: string): boolean {
+  return (
+    /^paper_analysis_planner_timeout_after_\d+ms$/u.test(message) ||
+    /^paper_analysis_extractor_timeout_after_\d+ms$/u.test(message) ||
+    /^paper_analysis_reviewer_timeout_after_\d+ms$/u.test(message)
+  );
 }
 
 function shouldPreservePartialArtifactsOnSelectionRegression(input: {
