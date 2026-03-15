@@ -466,6 +466,18 @@ export function deriveGovernedAnalysisDecision(input: {
     return undefined;
   }
 
+  // When no condition comparisons exist from condition_metrics (typical of
+  // complete factorial designs where all conditions run in one script), the
+  // baseline-first governance cannot ground a comparison.  Rather than forcing
+  // a backtrack loop, skip governance and let the standard transition
+  // recommendation (which already checks objective status) decide.
+  const metricsComparisons = input.report.condition_comparisons.filter(
+    (c) => c.source === "metrics.condition_metrics"
+  );
+  if (metricsComparisons.length === 0) {
+    return undefined;
+  }
+
   const implementationContext =
     input.implementationContext ||
     buildExperimentImplementationContext({

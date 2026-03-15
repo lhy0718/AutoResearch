@@ -2024,6 +2024,12 @@ function buildObservedFactDriftIssues(
     if (fact.fact_kind === "metric" && isObjectiveThresholdFact(fact)) {
       continue;
     }
+    // CI bounds are inherently paired (lower ≠ upper); grouping them by a
+    // single comparable key produces false contradictions when the same
+    // interval is reported consistently across sections.
+    if (fact.unit === "ci_lower" || fact.unit === "ci_upper") {
+      continue;
+    }
     if (!fact.metric_key && !fact.count_kind) {
       continue;
     }

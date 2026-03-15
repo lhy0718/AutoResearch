@@ -8,6 +8,7 @@ import { InMemoryEventStream } from "../src/core/events.js";
 import {
   buildExperimentComparisonContract,
   buildExperimentImplementationContext,
+  deriveGovernedAnalysisDecision,
   EXPERIMENT_GOVERNANCE_BASELINE_SNAPSHOT_ARTIFACT,
   EXPERIMENT_GOVERNANCE_DRIFT_REPORT_ARTIFACT,
   EXPERIMENT_GOVERNANCE_LEDGER_ARTIFACT,
@@ -1378,5 +1379,96 @@ describe("experiment governance", () => {
     const transitionRaw = await readFile(path.join(runDir, "transition_recommendation.json"), "utf8");
     expect(transitionRaw).toContain('"action": "advance"');
     expect(transitionRaw).toContain('"targetNode": "review"');
+  });
+
+  it("skips governance backtrack for factorial designs with empty condition_comparisons", () => {
+    const report = {
+      analysis_version: 1 as const,
+      generated_at: new Date().toISOString(),
+      mean_score: 134,
+      metrics: { metrics: {} },
+      objective_metric: {
+        raw: "macro_f1",
+        evaluation: {
+          status: "observed" as const,
+          matchedMetricKey: "best_configuration_overall.macro_f1_mean",
+          observedValue: 0.79
+        },
+        profile: {
+          source: "brief_explicit" as const,
+          primary_metric: "macro_f1",
+          preferred_metric_keys: ["macro_f1"],
+          analysis_focus: [],
+          paper_emphasis: [],
+          assumptions: []
+        }
+      },
+      overview: {
+        objective_status: "observed" as const,
+        objective_summary: "macro_f1 observed at 0.79",
+        matched_metric_key: "best_configuration_overall.macro_f1_mean",
+        observed_value: 0.79,
+        execution_runs: 1
+      },
+      plan_context: { plans: [], selectedPlanId: undefined, linkedHypothesisIds: [] },
+      metric_table: [],
+      condition_comparisons: [],
+      execution_summary: {
+        success: true,
+        runCount: 1,
+        observations: [],
+        publicExperimentDir: undefined
+      },
+      primary_findings: [],
+      limitations: [],
+      warnings: [],
+      paper_claims: [],
+      figure_specs: [],
+      supplemental_runs: [],
+      external_comparisons: [],
+      statistical_summary: {
+        total_metrics: 18,
+        numeric_metrics: 18,
+        string_metrics: 0,
+        unique_metric_keys: 18,
+        primary_metric_variants: [],
+        executed_trials: 1
+      },
+      failure_taxonomy: []
+    };
+
+    const contract = {
+      version: 1 as const,
+      run_id: "test-run",
+      plan_id: "plan_1",
+      hypothesis_id: "h1",
+      selected_hypothesis_ids: ["h1"],
+      objective_metric_name: "macro_f1",
+      baseline_first_required: true,
+      baseline_candidate_ids: ["plan_1:baseline:logistic_regression_raw"],
+      comparison_mode: "baseline_first_locked" as const,
+      budget_profile: {
+        mode: "single_run_locked" as const,
+        locked: true,
+        timeout_sec: 1800,
+        total_trials: 1
+      },
+      objective_profile: {
+        primary_metric: "macro_f1",
+        direction: "maximize" as const,
+        threshold: undefined
+      },
+      evaluator_contract_id: "eval-1",
+      created_at: new Date().toISOString()
+    };
+
+    // When condition_comparisons is empty (factorial design), governance should
+    // return undefined (skip override) even with baseline_first_required=true
+    const result = deriveGovernedAnalysisDecision({
+      report: report as any,
+      contract
+    });
+
+    expect(result).toBeUndefined();
   });
 });

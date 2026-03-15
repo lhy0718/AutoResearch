@@ -87,6 +87,7 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         });
       }
       metrics = await hydrateDetailedExperimentMetrics(metrics, publicDir, inputWarnings);
+      const latestResultsPath = await buildLatestResultsFromCsvArtifact(metrics, run.id, inputWarnings);
       const managedBundleValidation = await validateManagedBundleLock({
         contract: comparisonContract,
         managedBundleLock,
@@ -287,7 +288,7 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
       if (figureSvg) {
         performanceFigurePath = await writeRunArtifact(run, "figures/performance.svg", figureSvg);
       }
-      const publicOutputs = await publishPublicRunOutputs({
+       const publicOutputs = await publishPublicRunOutputs({
         workspaceRoot: process.cwd(),
         run,
         runContext: runContextMemory,
@@ -310,7 +311,15 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
             sourcePath: performanceFigurePath || path.join(process.cwd(), ".autolabos", "runs", run.id, "figures", "performance.svg"),
             targetRelativePath: "figures/performance.svg",
             optional: true
-          }
+          },
+          ...(latestResultsPath
+            ? [
+                {
+                  sourcePath: latestResultsPath,
+                  targetRelativePath: "latest_results.json"
+                }
+              ]
+            : [])
         ]
       });
       deps.eventStream.emit({
@@ -1469,12 +1478,15 @@ function applyGovernanceTransitionOverride(
   }
 
   const targetNode = decision.transitionOverride.targetNode;
+  // When governance overrides an "advance" recommendation to a backtrack,
+  // require human approval instead of auto-executing to prevent loops.
+  const overridingAdvance = recommendation.action === "advance";
   return createRecommendation({
     action: targetNode === "design_experiments" ? "backtrack_to_design" : "backtrack_to_implement",
     targetNode,
     reason: decision.transitionOverride.rationale,
     confidence: targetNode === "design_experiments" ? 0.86 : 0.9,
-    autoExecutable: true,
+    autoExecutable: overridingAdvance ? false : true,
     evidence: collectEvidence(
       summary,
       decision.transitionOverride.rationale,
@@ -1569,4 +1581,216 @@ function firstUnsupportedComparison(
   comparisons: AnalysisConditionComparison[]
 ): AnalysisConditionComparison | undefined {
   return comparisons.find((item) => item.hypothesis_supported === false);
+}
+
+/**
+ * Parse a dataset_summary CSV string into the dataset_summaries JSON structure
+ * expected by write_paper / scientificWriting.
+ *
+ * Pure function (no I/O) for testability.
+ */
+export function parseDatasetSummaryCsv(csv: string): Array<Record<string, unknown>> | undefined {
+  const lines = csv.trim().split("\n");
+  if (lines.length < 2) {
+    return undefined;
+  }
+
+  const headers = lines[0].split(",").map((h) => h.trim());
+  const rows = lines.slice(1).map((line) => {
+    const values = line.split(",");
+    const obj: Record<string, string> = {};
+    headers.forEach((h, i) => {
+      obj[h] = values[i]?.trim() ?? "";
+    });
+    return obj;
+  });
+
+  const byDataset = new Map<string, Array<Record<string, string>>>();
+  for (const row of rows) {
+    const ds = row.dataset || "unknown";
+    if (!byDataset.has(ds)) {
+      byDataset.set(ds, []);
+    }
+    byDataset.get(ds)!.push(row);
+  }
+
+  const datasetSummaries: Array<Record<string, unknown>> = [];
+  for (const [dataset, datasetRows] of byDataset) {
+    const models: Record<string, Record<string, number>> = {};
+    for (const row of datasetRows) {
+      const modelFamily = row.model_family || row.model || "unknown_model";
+      const calibration = row.calibration || "raw";
+      const threshold = row.threshold_protocol;
+      const conditionKey = threshold
+        ? `${modelFamily}_${calibration}_${threshold}`
+        : `${modelFamily}_${calibration}`;
+      const model: Record<string, number> = {};
+      const skipKeys = new Set([
+        "dataset", "model_family", "model", "calibration",
+        "threshold_protocol", "n_outer_evaluations"
+      ]);
+      for (const [key, val] of Object.entries(row)) {
+        if (skipKeys.has(key)) {
+          continue;
+        }
+        const num = parseFloat(val);
+        if (!isNaN(num)) {
+          model[key] = num;
+        }
+      }
+      // Provide aliases expected by collectDatasetResultSummaries
+      if (model.macro_f1_mean !== undefined && model.macro_f1 === undefined) {
+        model.macro_f1 = model.macro_f1_mean;
+      }
+      if (model.runtime_seconds_mean !== undefined && model.runtime_seconds === undefined) {
+        model.runtime_seconds = model.runtime_seconds_mean;
+      }
+      if (model.peak_memory_mb_mean !== undefined && model.peak_memory_mb === undefined) {
+        model.peak_memory_mb = model.peak_memory_mb_mean;
+      }
+      if (model.brier_score_mean !== undefined && model.brier_score === undefined) {
+        model.brier_score = model.brier_score_mean;
+      }
+      if (model.auroc_mean !== undefined && model.auroc === undefined) {
+        model.auroc = model.auroc_mean;
+      }
+      models[conditionKey] = model;
+    }
+
+    // Compute delta vs logistic_regression_raw baseline for each model
+    const baselineKey = Object.keys(models).find(
+      (k) => k.includes("logistic_regression") && k.includes("raw")
+    );
+    const baselineF1 = baselineKey ? models[baselineKey]?.macro_f1 : undefined;
+    if (typeof baselineF1 === "number") {
+      for (const [key, model] of Object.entries(models)) {
+        if (typeof model.macro_f1 === "number" && model.macro_f1_delta_vs_logreg === undefined) {
+          model.macro_f1_delta_vs_logreg = model.macro_f1 - baselineF1;
+        }
+      }
+    }
+
+    datasetSummaries.push({ dataset, models });
+  }
+
+  return datasetSummaries.length > 0 ? datasetSummaries : undefined;
+}
+
+/**
+ * Build latest_results.json from artifact_paths.dataset_summary_csv when
+ * run_experiments produced a per-dataset CSV but did not create the JSON file
+ * that write_paper expects.
+ *
+ * Returns the path to the written file, or undefined if not applicable.
+ */
+async function buildLatestResultsFromCsvArtifact(
+  metrics: Record<string, unknown>,
+  runId: string,
+  warnings: string[]
+): Promise<string | undefined> {
+  // Resolve CSV path: try multiple locations since experiment runners
+  // may store artifact paths under different keys.
+  // Priority: aggregate_results_csv (per-condition results) over
+  // dataset_summary_csv (which may be just dataset descriptors).
+  const artifactPaths = asRecord(metrics.artifact_paths);
+  const artifacts = asRecord(metrics.artifacts);
+  const csvPath =
+    asString(artifactPaths.aggregate_results_csv) ||
+    asString(artifacts.aggregate_results_csv) ||
+    asString(artifactPaths.dataset_summary_csv) ||
+    asString(artifacts.dataset_summary_csv);
+  if (!csvPath) {
+    return undefined;
+  }
+
+  let csv: string;
+  try {
+    csv = await fs.readFile(csvPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  const datasetSummaries = parseDatasetSummaryCsv(csv);
+  if (!datasetSummaries) {
+    return undefined;
+  }
+
+  // Derive protocol metadata from the outer-fold CSV when available.
+  // This gives the scientific writing layer accurate repeat/fold/seed
+  // counts instead of relying on heuristic extraction from plan text.
+  const outerCsvPath =
+    asString(artifacts.outer_fold_results_csv) ||
+    asString(artifactPaths.outer_fold_results_csv);
+  const protocol = await deriveProtocolFromOuterFoldCsv(outerCsvPath);
+
+  const latestResults: Record<string, unknown> = { dataset_summaries: datasetSummaries };
+  if (protocol) {
+    latestResults.protocol = protocol;
+  }
+  const outPath = path.join(".autolabos", "runs", runId, "latest_results.json");
+  try {
+    await fs.writeFile(outPath, JSON.stringify(latestResults, null, 2));
+  } catch (error) {
+    warnings.push(`Failed to write latest_results.json: ${error instanceof Error ? error.message : String(error)}`);
+    return undefined;
+  }
+  return outPath;
+}
+
+/** Derive protocol metadata (repeats, outer folds, seeds, datasets, models)
+ *  from the outer-fold-level CSV so the scientific writing layer has accurate
+ *  counts for consistency checks. */
+async function deriveProtocolFromOuterFoldCsv(
+  csvPath: string | undefined
+): Promise<Record<string, unknown> | undefined> {
+  if (!csvPath) {
+    return undefined;
+  }
+  let raw: string;
+  try {
+    raw = await fs.readFile(csvPath, "utf8");
+  } catch {
+    return undefined;
+  }
+  return parseOuterFoldProtocol(raw);
+}
+
+/** Pure-function protocol parser, exported for unit testing. */
+export function parseOuterFoldProtocol(csv: string): Record<string, unknown> | undefined {
+  const lines = csv.split("\n").filter(Boolean);
+  if (lines.length < 2) {
+    return undefined;
+  }
+  const header = lines[0].split(",").map((h) => h.trim());
+  const repeatIdx = header.indexOf("repeat_index");
+  const foldIdx = header.indexOf("outer_fold");
+  const seedIdx = header.indexOf("outer_seed");
+  const datasetIdx = header.indexOf("dataset");
+  const modelIdx = header.indexOf("model");
+  if (repeatIdx < 0 && foldIdx < 0) {
+    return undefined;
+  }
+  const repeats = new Set<string>();
+  const folds = new Set<string>();
+  const seeds = new Set<number>();
+  const datasets = new Set<string>();
+  const models = new Set<string>();
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(",");
+    if (repeatIdx >= 0 && cols[repeatIdx]) repeats.add(cols[repeatIdx].trim());
+    if (foldIdx >= 0 && cols[foldIdx]) folds.add(cols[foldIdx].trim());
+    if (seedIdx >= 0 && cols[seedIdx]) {
+      const n = Number(cols[seedIdx].trim());
+      if (Number.isFinite(n)) seeds.add(n);
+    }
+    if (datasetIdx >= 0 && cols[datasetIdx]) datasets.add(cols[datasetIdx].trim());
+    if (modelIdx >= 0 && cols[modelIdx]) models.add(cols[modelIdx].trim());
+  }
+  const protocol: Record<string, unknown> = {};
+  if (repeats.size > 0) protocol.repeats = repeats.size;
+  if (folds.size > 0) protocol.outer_folds = folds.size;
+  if (seeds.size > 0) protocol.seed_schedule = [...seeds].sort((a, b) => a - b);
+  if (datasets.size > 0) protocol.datasets = [...datasets].sort();
+  if (models.size > 0) protocol.models = [...models].sort();
+  return Object.keys(protocol).length > 0 ? protocol : undefined;
 }

@@ -929,4 +929,57 @@ describe("scientificWriting", () => {
       }
     }
   });
+
+  it("does not flag CI bounds reported consistently across sections as a contradiction", () => {
+    const bundle = makeRichBundle();
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle,
+      profile: PAPER_PROFILE
+    });
+    // Simulate the real false-positive scenario: Abstract and Results both
+    // report the same mean and CI interval, but the drift checker was
+    // treating the CI lower and upper bounds as two distinct "conflicting"
+    // values for the same metric key.
+    const candidate: PaperManuscript = {
+      title: "Calibration Benchmark",
+      abstract:
+        "The best overall configuration achieves mean macro-F1 0.790455 " +
+        "with a 95% confidence interval from 0.757351 to 0.819898.",
+      keywords: ["calibration"],
+      sections: [
+        { heading: "Introduction", paragraphs: ["We study calibration effects on tabular classification."] },
+        { heading: "Method", paragraphs: ["We evaluate 5 datasets with repeated nested 5x3 CV."] },
+        {
+          heading: "Results",
+          paragraphs: [
+            "The best aggregate configuration is sigmoid-calibrated RBF-SVM. " +
+            "Its mean macro-F1 is 0.790455, and the benchmark summary reports " +
+            "a 95% interval from 0.757351 to 0.819898 for that configuration."
+          ]
+        },
+        { heading: "Conclusion", paragraphs: ["Calibration consistently improves ranking stability."] }
+      ]
+    };
+    const manuscript = materializeScientificManuscript({
+      candidate,
+      draft: scientific.draft,
+      bundle,
+      profile: PAPER_PROFILE,
+      appendixPlan: scientific.appendix_plan,
+      pageBudget: scientific.page_budget
+    });
+
+    // CI bound values (0.757351, 0.819898) must NOT produce a blocking error
+    // when the same interval appears identically in Abstract and Results.
+    const blockingErrors = manuscript.consistency_lint.issues.filter(
+      (issue) =>
+        issue.kind === "numeric_inconsistency" &&
+        issue.severity === "error" &&
+        (issue.normalized_facts || []).some(
+          (f) => f.unit === "ci_lower" || f.unit === "ci_upper"
+        )
+    );
+    expect(blockingErrors).toHaveLength(0);
+  });
 });

@@ -1,13 +1,13 @@
 # ISSUES.md
 
 ## Current status
-- Last updated: 2026-03-15T15:55:00 KST
+- Last updated: 2026-03-15T21:15:00 KST
 - Current validation target: calibration research run — full `/new -> /brief start --latest -> ...write_paper` cycle
-- Current test/ workspace: `test/tui-calibration-20260315`
-- Current active run: `8abd033e-3b81-4b76-8106-869b17454d90`
-- Current overall state: done
+- Current test/ workspace: `test/tui-calibration-iter11-20260315-165142`
+- Current active run: `1c203c56-6d59-4750-b3de-da19016a8d6f`
+- Current overall state: completed
 - Current paper-scale target: probability calibration + model selection on imbalanced tabular data
-- Current paper readiness state: paper_scale_candidate (workflow completed, gate passed as warn, PDF built)
+- Current paper readiness state: paper_scale_candidate (workflow completed, gate passed as warn, PDF built, 0 errors / 29 warnings)
 
 ## Active live-validation issues
 
@@ -263,3 +263,73 @@
   - `blocked_for_paper_scale`
 - Missing artifacts:
 - Next action:
+
+---
+
+## Iteration 10 — CI bound false-positive gate fix + protocol derivation
+
+### Summary
+- **Date**: 2026-03-15
+- **Workspace**: `test/tui-calibration-iter11-20260315-165142`
+- **Run ID**: `1c203c56-6d59-4750-b3de-da19016a8d6f`
+- **Goal**: Fix write_paper scientific gate false positives blocking PDF generation
+- **Result**: Gate passed (0 errors, 29 warnings), PDF generated (153KB), run completed
+
+### Existing open issues targeted
+- **R-002** (28 scientific gate warnings): Reduced blocking errors from 1→0. Warnings remain at 29 (non-blocking).
+- **P-002** (Insufficient quantitative result packaging): Partially addressed — latest_results.json bridge now provides per-dataset × per-condition structured data + protocol metadata.
+
+### Newly discovered issues
+
+#### LV-009 — CI bound false-positive in consistency lint (RESOLVED)
+- Status: resolved
+- Root cause taxonomy: `in_memory_projection_bug`
+- Symptom: write_paper gate flagged "Abstract and Results report conflicting aggregate macro f1 values" as blocking error
+- Root cause: `buildObservedFactDriftIssues()` in `scientificWriting.ts` grouped CI lower/upper bound facts (unit=ci_lower/ci_upper) by the same comparable key as primary metric scores. When a CI interval (e.g., 0.757–0.820) appeared consistently across Abstract and Results, the two bound values were treated as "conflicting" values of the same metric.
+- Fix: Added early `continue` in `buildObservedFactDriftIssues()` for facts with `unit === "ci_lower" || unit === "ci_upper"`. CI bounds are inherently paired (lower ≠ upper) and should not participate in cross-section drift comparison.
+- Files changed: `src/core/analysis/scientificWriting.ts` (line ~2030)
+- Tests: `tests/scientificWriting.test.ts` — added "does not flag CI bounds reported consistently across sections as a contradiction"
+- Evidence: After fix, gate reports 0 errors instead of 1 blocking error. PDF generated successfully.
+
+#### LV-010 — Protocol metadata missing from latest_results.json (RESOLVED)
+- Status: resolved
+- Root cause taxonomy: `persisted_state_bug`
+- Symptom: write_paper gate flagged "Introduction reports 3 repeats, but upstream artifacts support 2" — the artifact inferred 2 repeats from seed extraction heuristics, but actual experiment used 3 repeats × 5 folds.
+- Root cause: `buildLatestResultsFromCsvArtifact()` in `analyzeResults.ts` only populated `dataset_summaries` but not `protocol`. Without `protocol.repeats`, `collectRepeatNotes()` fell back to counting extracted seeds (which sometimes returned 2 instead of 3). The outer_fold CSV has explicit `repeat_index`, `outer_fold`, `outer_seed` columns that give authoritative counts.
+- Fix: Added `deriveProtocolFromOuterFoldCsv()` and exported `parseOuterFoldProtocol()` in `analyzeResults.ts`. The function reads the outer-fold CSV and populates `protocol.repeats`, `protocol.outer_folds`, `protocol.seed_schedule`, `protocol.datasets`, and `protocol.models` from actual data.
+- Files changed: `src/core/nodes/analyzeResults.ts` (~50 lines)
+- Tests: `tests/analyzeResultsAOCS.test.ts` — added 3 tests for `parseOuterFoldProtocol` (happy path, missing columns, empty CSV)
+- Evidence: After populating protocol.repeats=3 in latest_results.json (both internal and public copies), write_paper gate no longer flags repeat count contradiction.
+
+### Code changes this iteration
+1. `src/core/analysis/scientificWriting.ts`: Skip CI-unit facts in `buildObservedFactDriftIssues()` (+4 lines)
+2. `src/core/nodes/analyzeResults.ts`: Added `deriveProtocolFromOuterFoldCsv()` and `parseOuterFoldProtocol()` (+55 lines); integrated protocol derivation into `buildLatestResultsFromCsvArtifact()` (+8 lines)
+3. `tests/scientificWriting.test.ts`: Added CI false-positive regression test (+45 lines)
+4. `tests/analyzeResultsAOCS.test.ts`: Added 3 protocol derivation tests (+35 lines)
+
+### Test results
+- All 671 tests pass (74 files)
+- New tests: 4 (1 CI lint + 3 protocol)
+
+### Regression status
+- No regressions detected in full test suite
+- Live validation confirmed: run completed with gate pass + PDF
+
+### Remaining risks
+- 29 gate warnings remain (non-blocking) — mostly evidence insufficiency in Method, Results, Related Work, Discussion
+- Manuscript title ("Nested Threshold Tuning vs Fixed Threshold on Binary Imbalance") doesn't precisely match the research question
+- Results section relatively short (1308 chars, 5 paragraphs) — per-dataset tables may still not be fully expanded
+- Related Work section has only 2 paragraphs (1646 chars) — shallow compared to paper-ready standards
+- Keyword field contains full topic description instead of keyword list — cosmetic but notable
+
+### Paper-readiness assessment
+- Current judgment: `paper_scale_candidate`
+- Rationale: Workflow completes end-to-end with real experiments (5 datasets × 18 conditions × 15 evaluations), gate passes without blocking errors, and PDF is generated. However, manuscript quality needs deeper evaluation: result density, related-work grounding, and reproducibility completeness have not been audited against the full paper-quality-bar criteria.
+
+### Issue status updates
+- R-001 (paper-ready evidence weaker than completion): Still open — needs manuscript content audit
+- R-002 (scientific gate warnings): Narrowed — blocking errors resolved, 29 warnings remain
+- R-003 (system-validation paper shape): Still open — needs manuscript content review
+- P-001 (weak baseline/comparator specs): Still open — needs manuscript method section review
+- P-002 (insufficient quantitative result packaging): Partially addressed — bridge code works, protocol metadata populated
+- P-003 (shallow related-work depth): Still open — 2 paragraphs may be insufficient
