@@ -390,4 +390,43 @@ describe("StateGraphRuntime", () => {
     expect(persisted?.graph.nodeStates.run_experiments.lastError).toBeUndefined();
     expect(persisted?.graph.nodeStates.analyze_results.lastError).toBeUndefined();
   });
+
+  it("runUntilPause returns immediately when run status is already failed", async () => {
+    const registry = new Registry({
+      implement_experiments: {
+        id: "implement_experiments",
+        execute: async () => ({
+          status: "success",
+          summary: "Implemented.",
+          needsApproval: false,
+          toolCallsUsed: 1
+        })
+      }
+    });
+    const { store, runtime } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Exhausted Retries",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    run.status = "failed";
+    run.graph.retryCounters.implement_experiments = 3;
+    run.graph.rollbackCounters.implement_experiments = 2;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    await store.updateRun(run);
+
+    const updated = await runtime.runUntilPause(run.id);
+    expect(updated.status).toBe("failed");
+
+    const persisted = await store.getRun(run.id);
+    expect(persisted?.status).toBe("failed");
+  });
 });

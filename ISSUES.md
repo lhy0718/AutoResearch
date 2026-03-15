@@ -1,15 +1,44 @@
 # ISSUES.md
 
 ## Current status
-- Last updated: 2026-03-15T21:15:00 KST
-- Current validation target: calibration research run — full `/new -> /brief start --latest -> ...write_paper` cycle
-- Current test/ workspace: `test/tui-calibration-iter11-20260315-165142`
-- Current active run: `1c203c56-6d59-4750-b3de-da19016a8d6f`
-- Current overall state: completed
-- Current paper-scale target: probability calibration + model selection on imbalanced tabular data
-- Current paper readiness state: paper_scale_candidate (workflow completed, gate passed as warn, PDF built, 0 errors / 29 warnings)
+- Last updated: 2026-03-16T03:45:00 KST
+- Current validation target: adaptive test-time compute experiment — full `/brief start --latest` cycle
+- Current test/ workspace: `test/tui-adaptive-ttc-20260316-000530`
+- Current active run: `93b5d617-8950-4394-87c4-ef14c642afc1`
+- Current overall state: paused at design_experiments (blocked by ChatGPT usage limit)
+- Current paper-scale target: adaptive test-time compute for small reasoning LLMs
+- Current paper readiness state: blocked (cannot reach review/write_paper nodes due to API quota)
+- Previous validation target: calibration research run (completed, paper_scale_candidate)
 
 ## Active live-validation issues
+
+### LV-011 — runUntilPause ignores exhausted retry/rollback status (RESOLVED)
+- Status: resolved
+- Root cause taxonomy: `persisted_state_bug`
+- Symptom: When implement_experiments exhausted both retry (3/3) and rollback (2/2) limits, the run should stop with status="failed". Instead, it continued running in an infinite before→fail loop (345+ checkpoints in one session).
+- Root cause: `StateGraphRuntime.runUntilPause()` unconditionally sets `run.status = "running"` at entry (line 208), overriding the "failed" status set by `handleFailure()`. The `AutonomousRunController.runOvernight()` loop checks for "failed" status after calling `runCurrentAgentWithOptions()` which calls `runUntilPause()` — but by then the status has been reset to "running".
+- Fix: Added early-return guard in `runUntilPause()`: `if (run.status === "failed") { return run; }` before the `run.status = "running"` line.
+- Files changed: `src/core/stateGraph/runtime.ts`
+- Tests: `tests/stateGraphRuntime.test.ts` — added "runUntilPause returns immediately when run status is already failed" test
+- Evidence: New test passes. Previous TUI session showed 345 checkpoints in infinite loop; after fix, retry exhaustion correctly halts the run.
+- Regression check: All 710 tests pass.
+- Fresh vs existing session: Fresh session correctly auto-advances through generate_hypotheses/design_experiments with minimal approval mode; retry exhaustion now properly stops execution.
+
+### LV-012 — PDF text extraction null bytes crash Codex CLI (OPEN)
+- Status: open (pre-existing, not caused by critique system changes)
+- Root cause taxonomy: `in_memory_projection_bug`
+- Symptom: 16/30 papers failed analysis in analyze_papers with error: `The argument 'args[17]' must be a string without null bytes. Received 'You are a scientific literature analyst...'`
+- Root cause: PDF text extraction produces strings containing null bytes (common in poorly formatted PDFs). These are passed to Codex CLI as arguments, which rejects null-byte strings.
+- Impact: Reduced paper corpus (14/30 = 47% success rate). Enough to continue workflow, but coverage is reduced.
+- Suggested fix: Strip null bytes from extracted PDF text before passing to Codex CLI.
+- Files likely affected: `src/core/analysis/paperText.ts` or the codex client text preparation.
+
+### LV-013 — ChatGPT usage limit blocks implement_experiments (ENVIRONMENT)
+- Status: open (environment limitation, not a code bug)
+- Root cause taxonomy: N/A (external service quota)
+- Symptom: All implement_experiments attempts fail with "codex exec failed (exit 1)". Codex CLI reports "You've hit your usage limit."
+- Impact: Cannot progress past implement_experiments → cannot validate review/write_paper critique system in live TUI.
+- Mitigation: Wait for quota reset, or switch to API key auth. Not a code fix.
 
 ### LV-001 — analyze_results → implement_experiments backtrack loop (RESOLVED)
 - Status: resolved

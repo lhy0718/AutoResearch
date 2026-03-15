@@ -205,6 +205,9 @@ export class StateGraphRuntime {
     let continuedPastCollectRecovery = false;
     try {
       this.throwIfAborted(opts?.abortSignal);
+      if (run.status === "failed") {
+        return run;
+      }
       run.status = "running";
       this.syncLatestSummary(run);
       await this.runStore.updateRun(run);
