@@ -52,11 +52,21 @@ export interface ImplementProjectionHints {
   verifyStatus?: string;
 }
 
+export interface PaperCritiqueProjectionHints {
+  manuscriptType?: string;
+  targetVenueStyle?: string;
+  overallDecision?: string;
+  blockingIssuesCount?: number;
+  critiqueStage?: string;
+  paperReadinessState?: string;
+}
+
 export interface RunProjectionHints {
   collect?: CollectProjectionHints;
   analyze?: AnalyzeProjectionHints;
   implement?: ImplementProjectionHints;
   checkpoint?: CheckpointProjectionHints;
+  paperCritique?: PaperCritiqueProjectionHints;
 }
 
 export interface RunDisplayProjection {
@@ -72,6 +82,7 @@ export interface RunDisplayProjection {
   headline?: string;
   detail?: string;
   lastError?: string;
+  paperCritique?: PaperCritiqueProjectionHints;
 }
 
 export function applyEventToRunProjection(run: RunRecord, event: AutoLabOSEvent): RunRecord {
@@ -269,7 +280,15 @@ export function projectRunForDisplay(run: RunRecord, hints?: RunProjectionHints)
   if (!staleLatestSummary && !headline && normalized.latestSummary) {
     detailParts.push(toOneLine(normalized.latestSummary));
   }
-  const detail = detailParts.filter(Boolean).slice(0, 4).join(" ");
+  // Surface paper critique state when available
+  const critiqueHints = hints?.paperCritique;
+  if (critiqueHints?.manuscriptType && critiqueHints.manuscriptType !== "paper_ready") {
+    detailParts.push(`Manuscript: ${critiqueHints.manuscriptType}${critiqueHints.targetVenueStyle ? ` (${critiqueHints.targetVenueStyle})` : ""}.`);
+  }
+  if (critiqueHints?.blockingIssuesCount && critiqueHints.blockingIssuesCount > 0) {
+    detailParts.push(`${critiqueHints.blockingIssuesCount} blocking critique issue(s).`);
+  }
+  const detail = detailParts.filter(Boolean).slice(0, 5).join(" ");
 
   return {
     run: normalized,
@@ -283,7 +302,8 @@ export function projectRunForDisplay(run: RunRecord, hints?: RunProjectionHints)
     noArtifactProgress,
     headline,
     detail: detail || undefined,
-    lastError
+    lastError,
+    paperCritique: critiqueHints
   };
 }
 

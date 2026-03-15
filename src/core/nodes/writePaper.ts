@@ -6,6 +6,7 @@ import { safeRead, writeRunArtifact } from "./helpers.js";
 import { NodeExecutionDeps } from "./types.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { publishPublicRunOutputs } from "../publicOutputPublisher.js";
+import { TransitionRecommendation } from "../../types.js";
 import { resolveConstraintProfile } from "../constraintProfile.js";
 import { ensureDir, fileExists } from "../../utils/fs.js";
 import { buildPublicAnalysisDir, buildPublicPaperDir } from "../publicArtifacts.js";
@@ -43,6 +44,14 @@ import {
 import { PaperWriterSessionManager } from "../agents/paperWriterSessionManager.js";
 import { maybeEnrichRelatedWorkScout } from "../writePaperRelatedWorkEnrichment.js";
 import { maybeRunRelatedWorkScout } from "../writePaperRelatedWorkScout.js";
+import {
+  buildPostDraftCritique,
+  critiqueDecisionToTransitionAction,
+  critiqueDecisionToTargetNode,
+  resolveVenueStyle,
+  getVenueProfile,
+  type PaperCritique
+} from "../paperCritique.js";
 
 interface PaperCompileCommandResult {
   step: string;
@@ -511,6 +520,43 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         };
       }
 
+      // Build post-draft critique artifact
+      const venueStyle = resolveVenueStyle(deps.config.paper_profile?.target_venue_style);
+      const preDraftCritiqueRaw = await loadPreDraftCritique(run.id);
+      const postDraftCritique = buildPostDraftCritique({
+        venueStyle,
+        preDraftCritique: preDraftCritiqueRaw,
+        gateDecision,
+        scientificValidation: scientificValidationArtifact,
+        submissionValidation,
+        manuscriptSections: manuscript.sections.map((s: { heading: string }) => s.heading),
+        validationWarningCount: validation.issues.length,
+        claimRewriteCount: scientificDraft.claim_rewrite_report.rewrites.length,
+        evidenceDiagnostics: scientificDraft.evidence_diagnostics,
+        pageBudgetStatus: scientificDraft.page_budget.status,
+        methodStatus: scientificDraft.method_completeness.status,
+        resultsStatus: scientificDraft.results_richness.status,
+        relatedWorkStatus: scientificDraft.related_work_richness.status,
+        discussionStatus: scientificDraft.discussion_richness.status
+      });
+      await writeRunArtifact(
+        run,
+        "paper/paper_critique.json",
+        `${JSON.stringify(postDraftCritique, null, 2)}\n`
+      );
+      await runContextMemory.put("write_paper.paper_critique", postDraftCritique);
+      await runContextMemory.put("write_paper.manuscript_type", postDraftCritique.manuscript_type);
+      await runContextMemory.put("write_paper.target_venue_style", postDraftCritique.target_venue_style);
+      emitLog(
+        `Post-draft critique: manuscript_type=${postDraftCritique.manuscript_type}, ` +
+        `decision=${postDraftCritique.overall_decision}, ` +
+        `blocking=${postDraftCritique.blocking_issues_count}, ` +
+        `venue=${postDraftCritique.target_venue_style}.`
+      );
+
+      // If post-draft critique recommends upstream backtrack, emit transition
+      const postDraftTransition = buildPostDraftTransitionRecommendation(postDraftCritique);
+
       const compileResult = await maybeBuildPaperPdf({
         deps,
         sessions,
@@ -605,10 +651,11 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         status: "success",
         summary:
           sessionResult.source === "fallback"
-            ? `Paper draft generated in LaTeX using staged fallbacks. Validation warnings: ${validation.issues.length}${describeValidationRepair(validationRepair)}. Scientific gate: ${describeScientificGateStatus(gateDecision)}. PDF: ${describeCompileStatus(compileResult)}. Public outputs: ${publicOutputs.outputRootRelative}.`
-            : `Paper draft generated in LaTeX from ${paperDraft.sections.length} structured section(s) via ${sessionResult.source} with ${validation.issues.length} validation warning(s)${describeValidationRepair(validationRepair)}. Scientific gate: ${describeScientificGateStatus(gateDecision)}. PDF: ${describeCompileStatus(compileResult)}. Public outputs: ${publicOutputs.outputRootRelative}.`,
+            ? `Paper draft generated in LaTeX using staged fallbacks. Validation warnings: ${validation.issues.length}${describeValidationRepair(validationRepair)}. Scientific gate: ${describeScientificGateStatus(gateDecision)}. Manuscript: ${postDraftCritique.manuscript_type} (venue: ${postDraftCritique.target_venue_style}). PDF: ${describeCompileStatus(compileResult)}. Public outputs: ${publicOutputs.outputRootRelative}.`
+            : `Paper draft generated in LaTeX from ${paperDraft.sections.length} structured section(s) via ${sessionResult.source} with ${validation.issues.length} validation warning(s)${describeValidationRepair(validationRepair)}. Scientific gate: ${describeScientificGateStatus(gateDecision)}. Manuscript: ${postDraftCritique.manuscript_type} (venue: ${postDraftCritique.target_venue_style}). PDF: ${describeCompileStatus(compileResult)}. Public outputs: ${publicOutputs.outputRootRelative}.`,
         needsApproval: true,
-        toolCallsUsed
+        toolCallsUsed,
+        transitionRecommendation: postDraftTransition
       };
   }
 };
@@ -1275,4 +1322,44 @@ function isMissingBinaryObservation(obs: { stderr?: string; exit_code?: number }
 
 function isPolicyBlockedObservation(obs: { exit_code?: number; stderr?: string }): boolean {
   return obs.exit_code === 126 && `${obs.stderr || ""}`.includes("Policy blocked");
+}
+
+function buildPostDraftTransitionRecommendation(
+  critique: PaperCritique
+): TransitionRecommendation | undefined {
+  // If the critique says advance or repair_then_retry, no transition needed
+  if (critique.overall_decision === "advance" || critique.overall_decision === "repair_then_retry") {
+    return undefined;
+  }
+
+  const action = critiqueDecisionToTransitionAction(critique.overall_decision);
+  const targetNode = critiqueDecisionToTargetNode(critique.overall_decision);
+  const evidence = [
+    `Manuscript type: ${critique.manuscript_type}`,
+    `Blocking issues: ${critique.blocking_issues_count}`,
+    critique.manuscript_claim_risk_summary
+  ].filter(Boolean).slice(0, 4);
+
+  return {
+    action,
+    sourceNode: "write_paper",
+    targetNode,
+    reason: `Post-draft critique: ${critique.manuscript_claim_risk_summary}`,
+    confidence: critique.confidence,
+    autoExecutable: true,
+    evidence,
+    suggestedCommands: [],
+    generatedAt: new Date().toISOString()
+  };
+}
+
+async function loadPreDraftCritique(runId: string): Promise<PaperCritique | null> {
+  try {
+    const raw = await safeRead(path.join(".autolabos", "runs", runId, "review", "paper_critique.json"));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as PaperCritique;
+    return parsed && parsed.stage === "pre_draft_review" ? parsed : null;
+  } catch {
+    return null;
+  }
 }

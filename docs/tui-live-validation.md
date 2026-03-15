@@ -77,3 +77,40 @@ When a live bug is confirmed:
   - `tests/interactionSession.test.ts`
 
 This pattern is preferred over adding a separate heavy live-testing framework.
+
+## 6) Manuscript critique validation
+
+A TUI validation run must verify the following paper-readiness signals:
+
+### 6.1 Critique artifacts emitted
+- `review/paper_critique.json` (pre-draft, `stage=pre_draft_review`) is emitted after `review`.
+- `paper/paper_critique.json` (post-draft, `stage=post_draft_review`) is emitted after `write_paper`.
+- Both artifacts conform to the `PaperCritique` schema.
+
+### 6.2 Manuscript type classification
+- Weak evidence runs are classified as `system_validation_note` or `research_memo`, not `paper_ready`.
+- `write_paper completed` is visibly distinct from `paper_ready` in TUI/web summaries.
+- Healthy runs with strong evidence can still advance and be classified as `paper_ready`.
+
+### 6.3 Issue routing discipline
+- Writing/style-only issues (abstract wording, section ordering, title style) stay local to `write_paper` repair.
+- Upstream evidence deficits (missing baselines, unsupported claims, no result table, statistical insufficiency) trigger backtrack recommendations.
+- Venue-style mismatch alone does NOT cause upstream backtrack.
+
+### 6.4 Venue-style targeting
+- Selected `target_venue_style` persists in run state/config.
+- `target_venue_style` appears in critique artifacts and TUI summaries.
+- Manuscripts under different venue styles produce different rhetorical emphasis.
+- Style-fit critique is emitted separately from scientific adequacy critique.
+
+### 6.5 Transition correctness
+- Missing baseline/result table/claim-evidence support causes downgrade or backtrack.
+- Critique recommendations map to supported transition targets (`implement_experiments`, `design_experiments`, `generate_hypotheses`).
+- Pre-draft gate blocks weak evidence from reaching `write_paper`.
+- Post-draft critique can trigger bounded backtrack when draft reveals upstream deficits.
+
+### 6.6 TUI surfacing
+- Manuscript type (e.g., `paper_ready`, `blocked_for_paper_scale`) appears in run projection.
+- Selected venue style appears in run summaries.
+- Blocking issues are surfaceable in run detail view.
+- `workflow_completed` is visually distinct from `paper_ready`.

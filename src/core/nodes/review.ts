@@ -9,6 +9,13 @@ import { publishPublicRunOutputs } from "../publicOutputPublisher.js";
 import { safeRead, writeRunArtifact } from "./helpers.js";
 import { NodeExecutionDeps } from "./types.js";
 import { TransitionRecommendation } from "../../types.js";
+import {
+  buildPreDraftCritique,
+  critiqueDecisionToTransitionAction,
+  critiqueDecisionToTargetNode,
+  resolveVenueStyle,
+  type PaperCritique
+} from "../paperCritique.js";
 
 export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
@@ -37,7 +44,19 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         abortSignal
       });
       const packet = buildReviewPacket(report, presence, panel);
-      const transitionRecommendation = buildReviewTransitionRecommendation(panel, packet);
+
+      // Build structured pre-draft critique artifact
+      const venueStyle = resolveVenueStyle(deps.config.paper_profile?.target_venue_style);
+      const preDraftCritique = buildPreDraftCritique({
+        venueStyle,
+        scorecard: panel.scorecard,
+        decision: panel.decision,
+        findings: panel.findings,
+        presence
+      });
+
+      // Use critique to potentially strengthen transition recommendation
+      const transitionRecommendation = buildReviewTransitionRecommendation(panel, packet, preDraftCritique);
       const markdown = renderReviewChecklist(run, packet, panel);
 
       const findingsPath = await writeRunArtifact(run, "review/findings.jsonl", renderJsonl(panel.findings));
@@ -54,6 +73,11 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         `${JSON.stringify(panel.revision_plan, null, 2)}\n`
       );
       const decisionPath = await writeRunArtifact(run, "review/decision.json", `${JSON.stringify(panel.decision, null, 2)}\n`);
+      const critiquePath = await writeRunArtifact(
+        run,
+        "review/paper_critique.json",
+        `${JSON.stringify(preDraftCritique, null, 2)}\n`
+      );
       const reviewPacketPath = await writeRunArtifact(run, "review/review_packet.json", `${JSON.stringify(packet, null, 2)}\n`);
       const checklistPath = await writeRunArtifact(run, "review/checklist.md", markdown);
       const publicOutputs = await publishPublicRunOutputs({
@@ -77,6 +101,10 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
           {
             sourcePath: findingsPath,
             targetRelativePath: "findings.jsonl"
+          },
+          {
+            sourcePath: critiquePath,
+            targetRelativePath: "paper_critique.json"
           }
         ]
       });
@@ -86,13 +114,16 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       await runContextMemory.put("review.last_decision", panel.decision);
       await runContextMemory.put("review.last_findings_count", panel.findings.length);
       await runContextMemory.put("review.last_panel_agreement", panel.consistency.panel_agreement);
+      await runContextMemory.put("review.paper_critique", preDraftCritique);
+      await runContextMemory.put("review.manuscript_type", preDraftCritique.manuscript_type);
+      await runContextMemory.put("review.target_venue_style", preDraftCritique.target_venue_style);
 
       deps.eventStream.emit({
         type: "OBS_RECEIVED",
         runId: run.id,
         node: "review",
         payload: {
-          text: `Review panel completed with ${panel.reviewers.length} specialist reviewer(s), ${panel.findings.length} finding(s), and outcome ${panel.decision.outcome}.`
+          text: `Review panel completed with ${panel.reviewers.length} specialist reviewer(s), ${panel.findings.length} finding(s), and outcome ${panel.decision.outcome}. Manuscript type: ${preDraftCritique.manuscript_type}. Target venue: ${preDraftCritique.target_venue_style}.`
         }
       });
       deps.eventStream.emit({
@@ -107,14 +138,17 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       const blockers = packet.readiness.blocking_checks;
       const warnings = packet.readiness.warning_checks;
       const manual = packet.readiness.manual_checks;
+      const critiqueLabel = preDraftCritique.manuscript_type !== "paper_ready"
+        ? ` Manuscript classified as ${preDraftCritique.manuscript_type} (venue: ${preDraftCritique.target_venue_style}).`
+        : ` Manuscript classified as paper_ready (venue: ${preDraftCritique.target_venue_style}).`;
       return {
         status: "success",
         summary:
           blockers > 0
-            ? `Review panel prepared ${panel.findings.length} finding(s) with ${blockers} blocking issue(s), ${warnings} warning(s), and ${manual} manual review item(s). The runtime will take the conservative backtrack recommended by review before paper drafting. Public outputs: ${publicOutputs.outputRootRelative}.`
+            ? `Review panel prepared ${panel.findings.length} finding(s) with ${blockers} blocking issue(s), ${warnings} warning(s), and ${manual} manual review item(s). The runtime will take the conservative backtrack recommended by review before paper drafting.${critiqueLabel} Public outputs: ${publicOutputs.outputRootRelative}.`
             : warnings > 0 || manual > 0
-              ? `Review panel prepared ${panel.findings.length} finding(s) with ${warnings} warning(s) and ${manual} manual review item(s). The next stage will carry the attached revision checklist or follow the recommended backtrack automatically. Public outputs: ${publicOutputs.outputRootRelative}.`
-              : `Review panel completed with outcome ${panel.decision.outcome}. The runtime can continue automatically from the review recommendation. Public outputs: ${publicOutputs.outputRootRelative}.`,
+              ? `Review panel prepared ${panel.findings.length} finding(s) with ${warnings} warning(s) and ${manual} manual review item(s). The next stage will carry the attached revision checklist or follow the recommended backtrack automatically.${critiqueLabel} Public outputs: ${publicOutputs.outputRootRelative}.`
+              : `Review panel completed with outcome ${panel.decision.outcome}.${critiqueLabel} The runtime can continue automatically from the review recommendation. Public outputs: ${publicOutputs.outputRootRelative}.`,
         needsApproval: true,
         toolCallsUsed: Math.max(1, panel.llm_calls_used),
         costUsd: panel.llm_cost_usd,
@@ -126,7 +160,8 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
 
 function buildReviewTransitionRecommendation(
   panel: Awaited<ReturnType<typeof runReviewPanel>>,
-  packet: ReturnType<typeof buildReviewPacket>
+  packet: ReturnType<typeof buildReviewPacket>,
+  critique: PaperCritique
 ): TransitionRecommendation | undefined {
   const action = panel.decision.outcome;
   const confidence = Number(panel.decision.confidence.toFixed(2));
@@ -134,6 +169,30 @@ function buildReviewTransitionRecommendation(
     panel.decision.summary,
     ...panel.findings.slice(0, 3).map((finding) => finding.title)
   ].filter((value, index, items) => Boolean(value) && items.indexOf(value) === index);
+
+  // If the critique found the manuscript is blocked_for_paper_scale or system_validation_note
+  // with blocking issues, override the panel decision with a backtrack
+  if (
+    critique.overall_decision !== "advance" &&
+    critique.overall_decision !== "repair_then_retry" &&
+    (critique.manuscript_type === "blocked_for_paper_scale" || critique.manuscript_type === "system_validation_note")
+  ) {
+    const critiqueAction = critiqueDecisionToTransitionAction(critique.overall_decision);
+    const critiqueTarget = critiqueDecisionToTargetNode(critique.overall_decision);
+    return createReviewTransition({
+      action: critiqueAction,
+      targetNode: critiqueTarget,
+      reason: `Pre-draft critique classified manuscript as ${critique.manuscript_type}: ${critique.manuscript_claim_risk_summary}`,
+      confidence: Math.min(confidence, critique.confidence),
+      autoExecutable: true,
+      evidence: [
+        `Manuscript type: ${critique.manuscript_type}`,
+        `Blocking issues: ${critique.blocking_issues_count}`,
+        ...evidence.slice(0, 2)
+      ],
+      suggestedCommands: packet.suggested_actions
+    });
+  }
 
   if (action === "advance") {
     return createReviewTransition({

@@ -48,11 +48,21 @@ When `analyze_results` is completed:
 When `review` is completed:
 - `review/review_packet.json` must exist and contain core sections.
 - `review/decision.json` and `review/revision_plan.json` must exist when review packet decisioning is present.
+- `review/paper_critique.json` must exist as the pre-draft critique artifact (`stage=pre_draft_review`).
 - review output must explicitly state whether the evidence is:
   - `system_validation_only`
   - `toy_experiment_only`
   - `paper_scale_candidate`
   - `blocked_for_paper_scale`
+
+### D. Pre-draft critique as experiment evidence gate
+The pre-draft critique (`review/paper_critique.json`) evaluates whether experiment evidence is strong enough to justify manuscript drafting. It assesses:
+- Whether experiment results are more than smoke/workflow validation
+- Whether at least one baseline or comparator exists
+- Whether claims are supportable by the available evidence
+- Whether the selected venue style is realistic for the current evidence package
+
+If evidence is insufficient, `review` recommends backtrack to an upstream node rather than allowing progression to `write_paper`.
 
 ## 4) Paper-scale experiment minimum gate
 For an experiment result to count as paper-scale candidate evidence, all of the following must hold:

@@ -16,7 +16,50 @@ When `write_paper` succeeds:
 - `paper/references.bib` must exist.
 - `paper/evidence_links.json` must exist.
 - `paper/paper_readiness.json` should exist.
+- `paper/paper_critique.json` must exist (post-draft critique artifact).
 - `paper/claim_evidence_table.json` should exist when major claims are present.
+
+## 2) Critique artifact requirements
+The structured critique artifact (`paper_critique.json`) is emitted at two stages:
+- `review/paper_critique.json` at `stage=pre_draft_review` (before drafting)
+- `paper/paper_critique.json` at `stage=post_draft_review` (after drafting)
+
+Each critique artifact must include:
+- `manuscript_type`: one of `system_validation_note`, `research_memo`, `paper_scale_candidate`, `paper_ready`, `blocked_for_paper_scale`
+- `overall_decision`: one of `advance`, `repair_then_retry`, `backtrack_to_implement`, `backtrack_to_design`, `backtrack_to_hypotheses`, `pause_for_human`
+- `target_venue_style`: the selected venue style target
+- `blocking_issues` and `non_blocking_issues` arrays with actionable issue objects
+- Category scores for 11 quality dimensions
+- Upstream deficit flags: `needs_additional_experiments`, `needs_additional_statistics`, `needs_additional_related_work`, `needs_design_revision`
+- Venue-style fit assessment: `venue_style_notes`, `style_mismatches`, `style_repairable_locally`
+
+## 3) Two-stage gating discipline
+`write_paper completed` is NOT equivalent to `paper_ready`.
+
+### Pre-draft gate (review)
+`review` emits a pre-draft critique before allowing progression to `write_paper`.
+If the evidence package is insufficient, `review` recommends backtrack instead of advance.
+
+### Post-draft critique (write_paper)
+After drafting, `write_paper` emits a post-draft critique that can:
+- Confirm `paper_ready` status if the manuscript is strong
+- Recommend `repair_then_retry` for writing/style-only issues
+- Recommend upstream backtrack for evidence/design/experiment deficits
+
+## 4) Venue-style targeting
+Users can select a target venue style via `paper_profile.target_venue_style` in config.
+Supported venues: `acl`, `aaai`, `icml`, `neurips`, `iclr`, `generic_nlp_conference`, `generic_ml_conference`, `generic_cs_paper`.
+
+This affects:
+- Rhetorical structure and section emphasis
+- Abstract and title style
+- Result presentation and discussion emphasis
+- Critique venue-style fit assessment
+
+Venue-style targeting is about rhetorical organization, not exact publisher template compliance.
+
+**Critical rule**: Venue-style mismatch alone should almost never cause upstream backtrack.
+Style mismatch is treated as local repair. Upstream backtrack is reserved for evidence/design/experiment deficits.
 
 ## 2) Evidence linkage sanity
 `paper/evidence_links.json` must be structurally useful:

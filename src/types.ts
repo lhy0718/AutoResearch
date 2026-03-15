@@ -111,6 +111,8 @@ export type RunStatus = "pending" | "running" | "paused" | "completed" | "failed
 
 export interface PaperProfileConfig {
   venue_style: string;
+  /** Manuscript rhetoric/style target (e.g. "acl", "neurips", "generic_cs_paper"). */
+  target_venue_style?: string;
   main_page_limit: number;
   references_counted: boolean;
   appendix_allowed: boolean;
