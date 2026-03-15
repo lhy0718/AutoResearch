@@ -81,7 +81,7 @@ import {
 } from "../core/resultAnalysisPresentation.js";
 import { getAppVersion } from "./version.js";
 import { buildAnimatedStatusText, buildFrame, buildThinkingText, RenderFrameOutput, SelectionMenuOption } from "./renderFrame.js";
-import { applyCodexSurfaceTheme, parseTerminalBackgroundResponse, supportsColor, type RgbColor } from "./theme.js";
+import { applyCodexSurfaceTheme, parseTerminalBackgroundResponse, supportsColor, TUI_THEME, type RgbColor } from "./theme.js";
 import { OpenAiResponsesTextClient } from "../integrations/openai/responsesTextClient.js";
 import { buildContextualGuidance, detectGuidanceLanguageFromText, GuidanceLanguage } from "./contextualGuidance.js";
 import {
@@ -201,6 +201,10 @@ const ENABLE_KEYBOARD_ENHANCEMENT = "\x1b[>7u";
 const DISABLE_KEYBOARD_ENHANCEMENT = "\x1b[<u";
 const ENABLE_MODIFY_OTHER_KEYS = "\x1b[>4;1m";
 const DISABLE_MODIFY_OTHER_KEYS = "\x1b[>4;0m";
+const ENABLE_MOUSE_SGR = "\x1b[?1000h\x1b[?1006h";
+const DISABLE_MOUSE_SGR = "\x1b[?1006l\x1b[?1000l";
+const SGR_MOUSE_RE = /\x1b\[<(\d+);(\d+);(\d+)([Mm])/;
+const X10_MOUSE_RE = /\x1b\[M[\s\S]{3}/;
 const SHIFT_ENTER_SEQUENCES = new Set(["\x1b[13;2u", "\x1b[27;2;13~", "\x1b[27;13;2~"]);
 const SHIFT_ENTER_CODES = new Set(["[13;2u", "[27;2;13~", "[27;13;2~"]);
 const SHIFT_ENTER_SEQUENCE_LIST = [...SHIFT_ENTER_SEQUENCES];
@@ -231,6 +235,7 @@ export class TerminalApp {
   private historyDraft = "";
   private historyLoadedRunId?: string;
   private logs: string[] = [];
+  private transientLogs: string[] = [];
   private suggestions: SuggestionItem[] = [];
   private selectedSuggestion = 0;
   private transcriptScrollOffset = 0;
@@ -271,6 +276,8 @@ export class TerminalApp {
   private enhancedNewlineSupported = detectLikelyEnhancedNewlineSupport();
   private suppressEnhancedEnterUntil = 0;
   private rawKeyboardSequenceBuffer = "";
+  private commandModeDraft?: { input: string; cursor: number };
+  private suppressMouseKeypresses = false;
 
   private readonly keypressHandler = (str: string, key: readline.Key) => {
     void this.handleKeypress(str, key);
@@ -322,6 +329,7 @@ export class TerminalApp {
       applyCodexSurfaceTheme(await resolveTerminalBackground(process.stdin, process.stdout));
       process.stdout.write(ENABLE_KEYBOARD_ENHANCEMENT);
       process.stdout.write(ENABLE_MODIFY_OTHER_KEYS);
+      process.stdout.write(ENABLE_MOUSE_SGR);
     }
 
     readline.emitKeypressEvents(process.stdin);
@@ -333,6 +341,7 @@ export class TerminalApp {
     process.stdin.off("keypress", this.keypressHandler);
     process.stdin.off("data", this.rawInputHandler);
     if (process.stdout.isTTY) {
+      process.stdout.write(DISABLE_MOUSE_SGR);
       process.stdout.write(DISABLE_MODIFY_OTHER_KEYS);
       process.stdout.write(DISABLE_KEYBOARD_ENHANCEMENT);
     }
@@ -374,6 +383,34 @@ export class TerminalApp {
 
     const text = chunk.toString("utf8");
     if (!text) {
+      return;
+    }
+
+    // Handle SGR mouse events
+    const mouseMatch = SGR_MOUSE_RE.exec(text);
+    if (mouseMatch) {
+      // Suppress any keypress events readline emits from this mouse data
+      this.suppressMouseKeypresses = true;
+      process.nextTick(() => { this.suppressMouseKeypresses = false; });
+
+      const button = Number.parseInt(mouseMatch[1], 10);
+      // button 64 = scroll up, button 65 = scroll down
+      if (button === 64) {
+        this.scrollTranscriptBy(3);
+        return;
+      }
+      if (button === 65) {
+        this.scrollTranscriptBy(-3);
+        return;
+      }
+      // Ignore other mouse events (clicks, moves)
+      return;
+    }
+
+    // Handle X10/basic mouse events (fallback for terminals without SGR)
+    if (X10_MOUSE_RE.test(text)) {
+      this.suppressMouseKeypresses = true;
+      process.nextTick(() => { this.suppressMouseKeypresses = false; });
       return;
     }
 
@@ -445,11 +482,19 @@ export class TerminalApp {
   }
 
   private async submitInputText(text: string): Promise<void> {
+    const savedDraft = this.commandModeDraft;
+    const shouldPreserveDraft = savedDraft && isSlashPrefixed(text);
+    const parsedCmd = isSlashPrefixed(text) ? parseSlashCommand(text)?.command : undefined;
+    const cmdDef = parsedCmd ? SLASH_COMMANDS.find((c) => c.name === parsedCmd) : undefined;
+    const willRestore = shouldPreserveDraft && cmdDef?.preserveDraftOnRun;
+
+    this.commandModeDraft = undefined;
     this.transcriptScrollOffset = 0;
     this.input = "";
     this.cursorIndex = 0;
     this.suggestions = [];
     this.selectedSuggestion = 0;
+    this.clearTransientLogs();
     this.render();
 
     if (!text) {
@@ -478,10 +523,22 @@ export class TerminalApp {
     }
 
     await this.executeInput(text);
+
+    if (willRestore && savedDraft) {
+      this.input = savedDraft.input;
+      this.cursorIndex = savedDraft.cursor;
+      this.updateSuggestions();
+      this.render();
+    }
   }
 
   private async handleKeypress(str: string, key: readline.Key): Promise<void> {
     if (this.stopped) {
+      return;
+    }
+
+    // Suppress keypress events generated from mouse escape sequences
+    if (this.suppressMouseKeypresses) {
       return;
     }
 
@@ -511,6 +568,23 @@ export class TerminalApp {
         return;
       }
       return;
+    }
+
+    if (this.pendingHumanIntervention && this.input.length === 0 && !this.busy && str && !key.ctrl && !key.meta) {
+      const ch = str.toLowerCase();
+      if (ch === "y") {
+        await this.handlePendingHumanInterventionAnswer("y");
+        return;
+      }
+      if (ch === "n") {
+        await this.handlePendingHumanInterventionAnswer("n");
+        return;
+      }
+      if (ch === "?") {
+        this.announceHumanIntervention(this.pendingHumanIntervention.request);
+        this.render();
+        return;
+      }
     }
 
     if (key.ctrl && key.name === "c") {
@@ -654,6 +728,15 @@ export class TerminalApp {
     }
 
     if (key.name === "escape") {
+      if (this.commandModeDraft) {
+        this.input = this.commandModeDraft.input;
+        this.cursorIndex = this.commandModeDraft.cursor;
+        this.commandModeDraft = undefined;
+        this.suggestions = [];
+        this.selectedSuggestion = 0;
+        this.render();
+        return;
+      }
       if (this.busy) {
         this.cancelCurrentBusyOperation();
         return;
@@ -661,6 +744,17 @@ export class TerminalApp {
       this.suggestions = [];
       this.selectedSuggestion = 0;
       this.render();
+      return;
+    }
+
+    if (key.ctrl && key.name === "x") {
+      if (!this.commandModeDraft && this.input.length > 0 && !isSlashPrefixed(this.input)) {
+        this.commandModeDraft = { input: this.input, cursor: this.cursorIndex };
+        this.input = "/";
+        this.cursorIndex = 1;
+        this.updateSuggestions();
+        this.render();
+      }
       return;
     }
 
@@ -1686,6 +1780,27 @@ export class TerminalApp {
       case "model":
         await this.handleModel(args);
         return { ok: true };
+      case "clear":
+        this.handleClear();
+        return { ok: true };
+      case "queue":
+        this.handleQueue(args);
+        return { ok: true };
+      case "inspect":
+        this.handleInspect();
+        return { ok: true };
+      case "session":
+        this.handleSession();
+        return { ok: true };
+      case "stats":
+        this.handleStats();
+        return { ok: true };
+      case "terminal-setup":
+        this.handleTerminalSetup();
+        return { ok: true };
+      case "theme":
+        this.handleThemeInfo();
+        return { ok: true };
       case "quit":
         await this.shutdown();
         return { ok: true };
@@ -1711,6 +1826,113 @@ export class TerminalApp {
     this.pushLog("Notes:");
     this.pushLog("Create a Markdown Research Brief first. The UI then keeps the main loop to run, approve, and steering.");
     this.pushLog("Advanced slash commands still exist, but they are intentionally out of the main path.");
+  }
+
+  private handleClear(): void {
+    this.logs = [];
+    this.clearTransientLogs();
+    this.render();
+  }
+
+  private handleQueue(args: string[]): void {
+    const sub = args[0]?.toLowerCase();
+    if (sub === "clear") {
+      const count = this.queuedInputs.length;
+      this.queuedInputs = [];
+      this.pushTransientLog(`Cleared ${count} queued input(s).`);
+      this.render();
+      return;
+    }
+    if (sub === "drop" || sub === "delete") {
+      const idx = Number.parseInt(args[1] ?? "", 10);
+      if (Number.isFinite(idx) && idx >= 0 && idx < this.queuedInputs.length) {
+        const removed = this.queuedInputs.splice(idx, 1)[0];
+        this.pushTransientLog(`Removed queued item ${idx}: ${oneLine(removed ?? "")}`);
+      } else {
+        this.pushTransientLog(`Invalid queue index. Queue has ${this.queuedInputs.length} item(s).`);
+      }
+      this.render();
+      return;
+    }
+    if (this.queuedInputs.length === 0) {
+      this.pushTransientLog("Queue is empty.");
+    } else {
+      this.pushTransientLog(`Queued inputs (${this.queuedInputs.length}):`);
+      for (const [i, queued] of this.queuedInputs.entries()) {
+        this.pushTransientLog(`  ${i}: ${oneLine(queued)}`);
+      }
+    }
+    this.render();
+  }
+
+  private handleInspect(): void {
+    const run = this.getRenderableRun();
+    const termWidth = this.resolveTerminalWidth();
+    const termHeight = this.resolveTerminalHeight();
+    this.pushTransientLog("Session diagnostics:");
+    this.pushTransientLog(`  workspace: ${this.getWorkspaceLabel()}`);
+    this.pushTransientLog(`  active run: ${run ? `${run.id} (${run.title})` : "none"}`);
+    this.pushTransientLog(`  current node: ${run ? `${run.currentNode} ${run.graph.nodeStates[run.currentNode]?.status ?? ""}` : "n/a"}`);
+    this.pushTransientLog(`  pending approval: ${this.pendingHumanIntervention ? "yes" : "no"}`);
+    this.pushTransientLog(`  model: ${this.getCurrentSlotPreset("chat") || "default"}`);
+    this.pushTransientLog(`  queue: ${this.queuedInputs.length}`);
+    this.pushTransientLog(`  terminal: ${termWidth}×${termHeight}`);
+    this.pushTransientLog(`  tmux: ${process.env.TMUX ? "yes" : "no"}`);
+    this.pushTransientLog(`  multiline: ${this.enhancedNewlineSupported ? "Shift+Enter" : "Ctrl+J"}`);
+    this.render();
+  }
+
+  private handleSession(): void {
+    const run = this.getRenderableRun();
+    if (!run) {
+      this.pushTransientLog("No active run. Use /new to create a Research Brief.");
+      this.render();
+      return;
+    }
+    this.pushTransientLog("Active run:");
+    this.pushTransientLog(`  id: ${run.id}`);
+    this.pushTransientLog(`  title: ${run.title}`);
+    this.pushTransientLog(`  status: ${run.status}`);
+    this.pushTransientLog(`  node: ${run.currentNode}`);
+    this.pushTransientLog(`  topic: ${run.topic || "n/a"}`);
+    if (run.latestSummary) {
+      this.pushTransientLog(`  summary: ${oneLine(run.latestSummary)}`);
+    }
+    this.pushTransientLog(`  draft: ${this.input.length > 0 ? `${this.input.length} chars` : "empty"}`);
+    this.pushTransientLog(`  interaction: ${this.busy ? "busy" : this.thinking ? "thinking" : "idle"}`);
+    this.render();
+  }
+
+  private handleStats(): void {
+    this.pushTransientLog("Local session metrics:");
+    this.pushTransientLog(`  history entries: ${this.commandHistory.length}`);
+    this.pushTransientLog(`  queued inputs: ${this.queuedInputs.length}`);
+    this.pushTransientLog(`  transcript lines: ${this.logs.length}`);
+    this.pushTransientLog(`  runs loaded: ${this.runIndex.length}`);
+    this.render();
+  }
+
+  private handleTerminalSetup(): void {
+    const termWidth = this.resolveTerminalWidth();
+    const termHeight = this.resolveTerminalHeight();
+    this.pushTransientLog("Terminal setup:");
+    this.pushTransientLog(`  TMUX: ${process.env.TMUX ? "detected" : "not detected"}`);
+    this.pushTransientLog(`  TERM: ${process.env.TERM ?? "unset"}`);
+    this.pushTransientLog(`  COLORTERM: ${process.env.COLORTERM ?? "unset"}`);
+    this.pushTransientLog(`  color: ${this.colorEnabled ? "enabled" : "disabled"}`);
+    this.pushTransientLog(`  size: ${termWidth}×${termHeight}`);
+    this.pushTransientLog(`  multiline: ${this.enhancedNewlineSupported ? "Shift+Enter observed" : "Ctrl+J fallback"}`);
+    this.pushTransientLog(`  newline hint: ${this.resolveNewlineHintLabel()}`);
+    this.render();
+  }
+
+  private handleThemeInfo(): void {
+    this.pushTransientLog("Current theme info:");
+    this.pushTransientLog(`  color: ${this.colorEnabled ? "enabled" : "disabled"}`);
+    this.pushTransientLog(`  accent: ${TUI_THEME.accent}`);
+    this.pushTransientLog(`  composerBg: ${TUI_THEME.composerBg ?? "transparent"}`);
+    this.pushTransientLog(`  panelBg: ${TUI_THEME.panelBg ?? "transparent"}`);
+    this.render();
   }
 
   private async handleNewRun(): Promise<void> {
@@ -4094,6 +4316,14 @@ export class TerminalApp {
     }
   }
 
+  private pushTransientLog(line: string): void {
+    this.transientLogs.push(line);
+  }
+
+  private clearTransientLogs(): void {
+    this.transientLogs = [];
+  }
+
   private async refreshRunIndex(): Promise<void> {
     const previousRuns = new Map(this.runIndex.map((run) => [run.id, run]));
     this.runIndex = (await this.runStore.listRuns()).map((run) => mergeProjectedRunState(run, previousRuns.get(run.id)));
@@ -4134,6 +4364,7 @@ export class TerminalApp {
       modelLabel: this.getCurrentSlotPreset("chat"),
       workspaceLabel: this.getWorkspaceLabel(),
       footerItems: this.buildFooterItems(run),
+      queueLength: this.queuedInputs.length,
       run,
       runInsight: this.activeRunInsight,
       logs: this.getRenderableLogs(run),
@@ -4167,6 +4398,7 @@ export class TerminalApp {
         modelLabel: this.getCurrentSlotPreset("chat"),
         workspaceLabel: this.getWorkspaceLabel(),
         footerItems: this.buildFooterItems(run),
+        queueLength: this.queuedInputs.length,
         run,
         runInsight: this.activeRunInsight,
         logs: this.getRenderableLogs(run),
@@ -4300,16 +4532,20 @@ export class TerminalApp {
 
   private getRenderableLogs(run?: RunRecord): string[] {
     if (this.thinking) {
-      return this.logs;
+      if (this.transientLogs.length === 0) {
+        return this.logs;
+      }
+      return [...this.logs, ...this.transientLogs];
     }
 
     const progressLine = this.getTransientProgressLog(run);
     const statusLines = this.buildProjectedStatusLines(run);
-    if (!progressLine && statusLines.length === 0) {
-      return this.logs;
+    const extras = [...statusLines, ...(progressLine ? [progressLine] : [])];
+
+    if (this.transientLogs.length === 0 && extras.length === 0) {
+      return [...this.logs];
     }
-    const baseLogs = [...this.logs];
-    return [...baseLogs, ...statusLines, ...(progressLine ? [progressLine] : [])];
+    return [...this.logs, ...this.transientLogs, ...extras];
   }
 
   private buildProjectedStatusLines(run?: RunRecord): string[] {

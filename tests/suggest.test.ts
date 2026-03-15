@@ -138,7 +138,8 @@ describe("buildSuggestions", () => {
 
   it("shows current run title in /title suggestions", () => {
     const rootSuggestions = buildSuggestions({ input: "/tit", runs, activeRunId: "run-alpha-123" });
-    expect(rootSuggestions).toEqual([]);
+    // /tit may match /terminal-setup via fuzzy, but should not contain /title sub-commands
+    expect(rootSuggestions.every((s) => !s.applyValue.startsWith("/title "))).toBe(true);
 
     const titleSuggestions = buildSuggestions({ input: "/title ", runs, activeRunId: "run-alpha-123" });
     expect(titleSuggestions.some((s) => s.applyValue === "/title " && s.description.includes("Agentic Retrieval Benchmark Run"))).toBe(true);

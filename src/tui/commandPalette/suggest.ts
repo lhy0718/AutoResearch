@@ -48,35 +48,43 @@ export function buildSuggestions(ctx: SuggestionContext): SuggestionItem[] {
     return limitSuggestions(commandSuggestions(parsed.commandQuery, ctx));
   }
 
-  if (!knownCommand(parsed.commandName)) {
+  const resolved = resolveCommandName(parsed.commandName);
+  if (!resolved) {
     return limitSuggestions(commandSuggestions(parsed.commandQuery, ctx));
   }
 
-  if (parsed.commandName === "run" || parsed.commandName === "resume") {
-    return runSuggestions(parsed.commandName, parsed.argPartial, ctx.runs);
+  if (resolved === "run" || resolved === "resume") {
+    return runSuggestions(resolved, parsed.argPartial, ctx.runs);
   }
 
-  if (parsed.commandName === "agent") {
+  if (resolved === "agent") {
     return agentCommandSuggestions(parsed, ctx.runs);
   }
 
-  if (parsed.commandName === "model") {
+  if (resolved === "model") {
     return modelSuggestions(parsed);
   }
 
-  if (parsed.commandName === "title") {
+  if (resolved === "title") {
     return titleSuggestions(parsed, ctx);
   }
 
-  if (parsed.commandName === "brief") {
+  if (resolved === "brief") {
     return briefSuggestions(parsed);
   }
 
-  return commandSuggestions(parsed.commandName, ctx);
+  return commandSuggestions(resolved, ctx);
 }
 
 function knownCommand(name: string): boolean {
-  return SLASH_COMMANDS.some((cmd) => cmd.name === name);
+  return SLASH_COMMANDS.some((cmd) => cmd.name === name || cmd.aliases?.includes(name));
+}
+
+function resolveCommandName(name: string): string | undefined {
+  const direct = SLASH_COMMANDS.find((cmd) => cmd.name === name);
+  if (direct) return direct.name;
+  const alias = SLASH_COMMANDS.find((cmd) => cmd.aliases?.includes(name));
+  return alias?.name;
 }
 
 function commandSuggestions(query: string, ctx: SuggestionContext): SuggestionItem[] {
@@ -84,16 +92,21 @@ function commandSuggestions(query: string, ctx: SuggestionContext): SuggestionIt
   return SLASH_COMMANDS
     .filter((cmd) => cmd.visible)
     .map((cmd, index) => {
-      const score = fuzzyScore(query, cmd.name) ?? 0;
+      const nameScore = fuzzyScore(query, cmd.name) ?? -1;
+      const aliasScore = cmd.aliases
+        ? Math.max(...cmd.aliases.map((a) => fuzzyScore(query, a) ?? -1))
+        : -1;
+      const bestScore = Math.max(nameScore, aliasScore);
       const lowerName = cmd.name.toLowerCase();
+      const matchesAlias = cmd.aliases?.some((a) => a.toLowerCase().startsWith(normalizedQuery));
       const rank =
         normalizedQuery.length === 0
           ? 0
           : lowerName === normalizedQuery
             ? 0
-            : lowerName.startsWith(normalizedQuery)
+            : lowerName.startsWith(normalizedQuery) || matchesAlias
               ? 1
-              : fuzzyScore(query, cmd.name) === null
+              : bestScore < 0
                 ? null
                 : 2;
       if (rank === null) {
@@ -105,7 +118,7 @@ function commandSuggestions(query: string, ctx: SuggestionContext): SuggestionIt
         label: cmd.usage,
         description,
         applyValue: defaultApplyValueForCommand(cmd.name),
-        score,
+        score: Math.max(0, bestScore),
         rank,
         index
       };
@@ -123,7 +136,7 @@ function defaultApplyValueForCommand(name: string): string {
 }
 
 function limitSuggestions(items: SuggestionItem[]): SuggestionItem[] {
-  return items.slice(0, 8);
+  return items.slice(0, 12);
 }
 
 function briefSuggestions(parsed: ParsedInput): SuggestionItem[] {

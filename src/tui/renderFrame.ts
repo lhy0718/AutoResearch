@@ -17,6 +17,7 @@ export interface RenderFrameInput {
   modelLabel?: string;
   workspaceLabel?: string;
   footerItems?: string[];
+  queueLength?: number;
   run?: RunRecord;
   runInsight?: RunInsightCard;
   logs: string[];
@@ -411,6 +412,21 @@ function buildFooterMetaParts(input: RenderFrameInput): FooterPart[] {
     }
   }
 
+  if (input.queueLength && input.queueLength > 0) {
+    parts.push(createFooterPart(`queue:${input.queueLength}`, "state"));
+  }
+
+  const workspaceLabel = input.workspaceLabel?.trim();
+  if (workspaceLabel) {
+    const home = typeof process !== "undefined" ? process.env?.HOME : undefined;
+    let displayWorkspace = workspaceLabel;
+    if (home && workspaceLabel.startsWith(home)) {
+      displayWorkspace = workspaceLabel === home ? "~" : `~${workspaceLabel.slice(home.length)}`;
+    }
+    const basename = displayWorkspace.split("/").pop() || displayWorkspace;
+    parts.push(createFooterPart(basename, "state"));
+  }
+
   const modelLabel = input.modelLabel?.trim();
   if (modelLabel) {
     parts.push(createFooterPart(modelLabel, "model"));
@@ -522,10 +538,12 @@ interface ComposerBlockOutput {
   inputColumn: number;
 }
 
+const COMPOSER_MAX_VISIBLE_LINES = 6;
+
 function renderComposerBlock(input: RenderFrameInput, terminalWidth: number): ComposerBlockOutput {
   const contentWidth = Math.max(24, terminalWidth - 1);
   const spacerLine = renderComposerSurfaceLine({
-    prefix: " ".repeat(COMPOSER_PROMPT_WIDTH),
+    prefix: "",
     prefixStyle: { bg: TUI_THEME.composerBg },
     content: "",
     contentStyle: { bg: TUI_THEME.composerBg },
@@ -534,9 +552,26 @@ function renderComposerBlock(input: RenderFrameInput, terminalWidth: number): Co
     colorEnabled: input.colorEnabled
   });
   const body = renderComposerBody(input, contentWidth);
+
+  let visibleLines = body.lines;
+  let cursorLineIndex = body.cursorLineIndex;
+
+  if (visibleLines.length > COMPOSER_MAX_VISIBLE_LINES) {
+    const cursorLine = cursorLineIndex;
+    const half = Math.floor(COMPOSER_MAX_VISIBLE_LINES / 2);
+    let start = Math.max(0, cursorLine - half);
+    let end = start + COMPOSER_MAX_VISIBLE_LINES;
+    if (end > visibleLines.length) {
+      end = visibleLines.length;
+      start = Math.max(0, end - COMPOSER_MAX_VISIBLE_LINES);
+    }
+    visibleLines = visibleLines.slice(start, end);
+    cursorLineIndex = cursorLine - start;
+  }
+
   return {
-    lines: [spacerLine, ...body.lines, spacerLine],
-    inputLineIndex: body.cursorLineIndex + 2,
+    lines: [spacerLine, ...visibleLines, spacerLine],
+    inputLineIndex: cursorLineIndex + 2,
     inputColumn: 1 + body.cursorOffset
   };
 }
@@ -560,21 +595,19 @@ function renderComposerBody(input: RenderFrameInput, contentWidth: number): Comp
       : "Add steering to redirect the current run.";
 
   if (input.input.length === 0) {
+    const placeholder = input.busy
+      ? busyPlaceholder
+      : input.run
+        ? input.run.status === "paused" && runNodeStatus !== "needs_approval"
+          ? "Type a command or message… (/help for options)"
+          : "Add steering, or wait for the next approval."
+        : "Start with /new to create a Research Brief.";
     return {
       lines: [
       renderComposerSurfaceLine({
         prefix: COMPOSER_PROMPT,
         prefixStyle: promptStyle,
-        content: truncatePlainText(
-          input.busy
-            ? busyPlaceholder
-            : input.run
-              ? input.run.status === "paused" && runNodeStatus !== "needs_approval"
-                ? "No pending approval. Use /retry to rerun the current node, or add steering."
-                : "Add steering, or wait for the next run or approval."
-              : "Start with /new to create a Research Brief.",
-          availableWidth
-        ),
+        content: truncatePlainText(placeholder, availableWidth),
         contentStyle: placeholderStyle,
         contentWidth,
         fillStyle: backgroundStyle,

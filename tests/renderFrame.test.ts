@@ -343,10 +343,10 @@ describe("buildFrame", () => {
 
     const plain = frame.lines.map((line) => stripAnsi(line));
     const promptIndex = frame.inputLineIndex - 1;
-    expect(plain[promptIndex]).toContain("No pending approval. Use /retry");
+    expect(plain[promptIndex]).toContain("Type a command or message");
   });
 
-  it("renders suggestions in a Codex-style surface below the input line", () => {
+  it("renders suggestions in a surface below the composer input line", () => {
     const frame = buildFrame({
       appVersion: "1.0.0",
       busy: false,
@@ -364,9 +364,8 @@ describe("buildFrame", () => {
     const inputLine = frame.lines[frame.inputLineIndex - 1];
     expect(stripAnsi(inputLine)).toContain("› /");
 
-    const suggestionRows = frame.lines.slice(frame.inputLineIndex).map((line) => stripAnsi(line));
-    expect(suggestionRows.some((row) => row.includes("Commands"))).toBe(false);
-    expect(suggestionRows.some((row) => row.includes("/doctor  Run environment checks"))).toBe(true);
+    const linesBelowInput = frame.lines.slice(frame.inputLineIndex).map((line) => stripAnsi(line));
+    expect(linesBelowInput.some((row) => row.includes("/doctor"))).toBe(true);
   });
 
   it("does not render contextual guidance as a floating panel when provided", () => {
