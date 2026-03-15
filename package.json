@@ -1,6 +1,6 @@
 {
   "name": "autolabos",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Local TUI and web ops UI for AI-agent-driven research automation, from paper collection to experiment execution and paper drafting.",
   "type": "module",
   "license": "MIT",

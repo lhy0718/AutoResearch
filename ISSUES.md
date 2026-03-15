@@ -24,14 +24,14 @@
 - Regression check: All 710 tests pass.
 - Fresh vs existing session: Fresh session correctly auto-advances through generate_hypotheses/design_experiments with minimal approval mode; retry exhaustion now properly stops execution.
 
-### LV-012 — PDF text extraction null bytes crash Codex CLI (OPEN)
-- Status: open (pre-existing, not caused by critique system changes)
+### LV-012 — PDF text extraction null bytes crash Codex CLI (RESOLVED)
+- Status: resolved (commit b4aeab1)
 - Root cause taxonomy: `in_memory_projection_bug`
 - Symptom: 16/30 papers failed analysis in analyze_papers with error: `The argument 'args[17]' must be a string without null bytes. Received 'You are a scientific literature analyst...'`
-- Root cause: PDF text extraction produces strings containing null bytes (common in poorly formatted PDFs). These are passed to Codex CLI as arguments, which rejects null-byte strings.
-- Impact: Reduced paper corpus (14/30 = 47% success rate). Enough to continue workflow, but coverage is reduced.
-- Suggested fix: Strip null bytes from extracted PDF text before passing to Codex CLI.
-- Files likely affected: `src/core/analysis/paperText.ts` or the codex client text preparation.
+- Root cause: PDF text extraction via `pdftotext` produces strings containing null bytes (common in poorly formatted PDFs). These propagate through cache and prompts to Codex CLI, which rejects null-byte strings.
+- Fix: Added `\x00` stripping in `extractPdfPageTexts()` (before cache) and `normalizeWhitespace()` (defense-in-depth). Exported `sanitizePdfText()` for testing.
+- Files changed: `src/core/analysis/paperText.ts`
+- Tests: 6 new tests in `tests/paperText.test.ts` (null bytes, carriage returns, combined sanitization)
 
 ### LV-013 — ChatGPT usage limit blocks implement_experiments (ENVIRONMENT)
 - Status: open (environment limitation, not a code bug)
