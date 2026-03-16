@@ -93,6 +93,8 @@ export interface NodeState {
 export interface RetryPolicy {
   maxAttemptsPerNode: number;
   maxAutoRollbacksPerNode: number;
+  /** Maximum backward jumps the minimal-approval runtime may auto-apply before pausing for human review. */
+  maxAutoBackwardJumps?: number;
 }
 
 export interface RunGraphState {

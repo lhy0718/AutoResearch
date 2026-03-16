@@ -429,4 +429,63 @@ describe("StateGraphRuntime", () => {
     const persisted = await store.getRun(run.id);
     expect(persisted?.status).toBe("failed");
   });
+
+  it("pauses instead of auto-applying backward jump when maxAutoBackwardJumps is reached (LV-015)", async () => {
+    // Node that emits a backward-jump recommendation on analyze_results
+    const registry = new Registry({
+      analyze_results: {
+        id: "analyze_results",
+        execute: async () => ({
+          status: "success",
+          summary: "Analyzed results.",
+          needsApproval: true,
+          toolCallsUsed: 1,
+          transitionRecommendation: {
+            action: "backtrack_to_design",
+            targetNode: "design_experiments" as GraphNodeId,
+            reason: "Objective not met.",
+            confidence: 0.7,
+            autoExecutable: true
+          }
+        })
+      }
+    });
+
+    const { store, runtime } = await setup(registry);
+    const run = await store.createRun({
+      title: "Backward Jump Limit",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    // Set up: run is at analyze_results, earlier nodes completed
+    run.currentNode = "analyze_results";
+    run.graph.currentNode = "analyze_results";
+    run.status = "running";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    run.graph.nodeStates.implement_experiments.status = "completed";
+    run.graph.nodeStates.run_experiments.status = "completed";
+    run.graph.retryPolicy.maxAutoBackwardJumps = 2;
+
+    // Simulate 2 prior backward jumps in transition history
+    run.graph.transitionHistory = [
+      { action: "backtrack_to_design", fromNode: "analyze_results", toNode: "design_experiments", reason: "r1", confidence: 0.7, autoExecutable: true, appliedAt: new Date().toISOString() },
+      { action: "backtrack_to_design", fromNode: "analyze_results", toNode: "design_experiments", reason: "r2", confidence: 0.7, autoExecutable: true, appliedAt: new Date().toISOString() }
+    ];
+    await store.updateRun(run);
+
+    // Run should pause because we've hit the backward jump limit
+    const updated = await runtime.runUntilPause(run.id);
+
+    // Should be paused with the pending transition, NOT auto-applied
+    expect(updated.status).toBe("paused");
+    expect(updated.graph.pendingTransition).toBeDefined();
+    expect(updated.graph.pendingTransition?.targetNode).toBe("design_experiments");
+    // Should NOT have moved backward
+    expect(updated.currentNode).toBe("analyze_results");
+  });
 });

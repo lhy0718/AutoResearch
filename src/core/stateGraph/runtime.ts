@@ -313,6 +313,25 @@ export class StateGraphRuntime {
       return "pause";
     }
 
+    // Enforce backward-jump limit: if the transition is a backward jump
+    // and we have exceeded the configured limit, pause for human review.
+    const limit = run.graph.retryPolicy.maxAutoBackwardJumps;
+    if (limit != null && recommendation.targetNode) {
+      const targetIdx = GRAPH_NODE_ORDER.indexOf(recommendation.targetNode);
+      const currentIdx = GRAPH_NODE_ORDER.indexOf(run.currentNode);
+      if (targetIdx >= 0 && currentIdx >= 0 && targetIdx < currentIdx) {
+        const pastBackwardJumps = (run.graph.transitionHistory || []).filter((t) => {
+          if (!t.toNode || !t.fromNode) return false;
+          const tIdx = GRAPH_NODE_ORDER.indexOf(t.toNode);
+          const fIdx = GRAPH_NODE_ORDER.indexOf(t.fromNode);
+          return tIdx >= 0 && fIdx >= 0 && tIdx < fIdx;
+        }).length;
+        if (pastBackwardJumps >= limit) {
+          return "pause";
+        }
+      }
+    }
+
     return "apply_transition";
   }
 

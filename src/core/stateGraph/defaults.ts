@@ -25,7 +25,8 @@ export function createDefaultGraphState(): RunGraphState {
     checkpointSeq: 0,
     retryPolicy: {
       maxAttemptsPerNode: 3,
-      maxAutoRollbacksPerNode: 2
+      maxAutoRollbacksPerNode: 2,
+      maxAutoBackwardJumps: 4
     }
   };
 }

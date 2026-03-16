@@ -1,13 +1,13 @@
 # ISSUES.md
 
 ## Current status
-- Last updated: 2026-03-16T09:10:00 KST
+- Last updated: 2026-03-16T14:35:00 KST
 - Current validation target: adaptive test-time compute experiment — full `/brief start --latest` cycle
 - Current test/ workspace: `test/tui-adaptive-ttc-20260316-073416`
 - Current active run: `db7035d3-cc98-4dff-9303-214de6cdefd0`
-- Current overall state: paused at design_experiments (backtrack from analyze_results, rate-limited)
+- Current overall state: paused at run_experiments (overnight canceled after LV-015 fix; needs restart with backward-jump limit)
 - Current paper-scale target: adaptive test-time compute for small reasoning LLMs
-- Current paper readiness state: blocked (cannot reach review/write_paper due to rate limits; experiment ran but objective not met)
+- Current paper readiness state: blocked (experiment shows negative or zero adaptive gain with Qwen2.5-3B-Instruct; 9 backtrack cycles exhausted without improvement)
 - Previous validation target: calibration research run (completed, paper_scale_candidate)
 
 ## Active live-validation issues
@@ -133,6 +133,35 @@
 
 - Follow-up risks: warning-only scientific gate findings still need manuscript review before claiming paper-ready quality.
 - Evidence/artifacts: `paper/consistency_lint.json`, completed run checkpoint 179, output bundle `outputs/calibration-trade-offs-...`
+
+### LV-015 — Minimal approval mode ignores backward-jump limit (RESOLVED)
+- Status: resolved
+- Dominant root-cause class: `in_memory_projection_bug`
+- First observed: 2026-03-16T13:40:00 KST (this session)
+
+- Reproduction steps:
+  1. Start `/agent overnight` on a run where `design→implement→run→analyze` cycle fails to meet objective.
+  2. The `analyze_results` node emits `backtrack_to_design` with `autoExecutable: true`.
+  3. The runtime's `resolveApprovalGate()` (called from `runUntilPause()`) auto-applies the backward transition in minimal approval mode.
+  4. The overnight controller's `maxBackwardJumps: 4` guard is never consulted because the transition is already applied before the controller sees it.
+  5. The workflow loops indefinitely through design→implement→run→analyze→backtrack cycles (observed 9+ backward jumps).
+
+- Expected behavior: After 4 backward jumps, the runtime should pause for human review instead of auto-applying.
+- Actual behavior: The runtime auto-applied all backward jumps regardless of count. 9 backward jumps observed in a single overnight run with no improvement.
+
+- Root cause:
+  - `StateGraphRuntime.selectApprovalResolution()` (line ~302) checked only `approvalMode`, `autoExecutable`, and `pause_for_human` — it had no backward-jump counting.
+  - The overnight controller's `canApplyRecommendation()` (which enforces `maxBackwardJumps`) was bypassed because the runtime's `runUntilPause()` resolved approval gates internally.
+  - Two independent transition-approval paths existed: runtime-level (no limit) and overnight-controller-level (limited). Only the runtime path was used during `runUntilPause()`.
+
+- Fix:
+  1. Added `maxAutoBackwardJumps?: number` to `RetryPolicy` in `types.ts`.
+  2. Extended `selectApprovalResolution()` in `runtime.ts` to count backward jumps in `transitionHistory` and return `"pause"` when the limit is reached.
+  3. Set default `maxAutoBackwardJumps: 4` in `defaults.ts`.
+  4. Added regression test in `tests/stateGraphRuntime.test.ts`.
+
+- Regression test: `tests/stateGraphRuntime.test.ts` — "pauses instead of auto-applying backward jump when maxAutoBackwardJumps is reached (LV-015)"
+- Test result: 777 tests pass (77 files), including the new test.
 
 ## Research completion risks
 
