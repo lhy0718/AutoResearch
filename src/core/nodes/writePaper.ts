@@ -620,13 +620,21 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       if (compileResult.status === "failed") {
         const compileError = buildCompileFailureError(compileResult);
         emitLog(compileError);
-        await runContextMemory.put("write_paper.last_error", compileError);
-        return {
-          status: "failure",
-          error: compileError,
-          summary: compileError,
-          toolCallsUsed
-        };
+        // Treat missing-tool compile failures as non-fatal — the LaTeX source was generated
+        // successfully and the scientific quality gate already passed.
+        const isMissingTool = compileResult.attempts.some(
+          (a) => a.error && /not found|command not found|ENOENT/iu.test(a.error)
+        );
+        if (!isMissingTool) {
+          await runContextMemory.put("write_paper.last_error", compileError);
+          return {
+            status: "failure",
+            error: compileError,
+            summary: compileError,
+            toolCallsUsed
+          };
+        }
+        emitLog("PDF compilation tool is unavailable; continuing with LaTeX source only.");
       }
       await runContextMemory.put("write_paper.last_error", sessionResult.errors[0] || null);
 
