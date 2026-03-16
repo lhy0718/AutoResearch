@@ -70,6 +70,18 @@ describe("buildGateWarningLimitationSentences", () => {
     expect(sentences[0]).toContain("general");
   });
 
+  it("skips warnings with undefined or empty message", () => {
+    const warnings: GateWarningItem[] = [
+      { severity: "warning", category: "method_completeness", message: undefined as unknown as string },
+      { severity: "warning", category: "method_completeness", message: "Valid concern" },
+      { severity: "warning", category: "results_richness", message: "" },
+    ];
+    const sentences = buildGateWarningLimitationSentences(warnings);
+    expect(sentences).toHaveLength(1);
+    expect(sentences[0]).toContain("Valid concern");
+    expect(sentences[0]).not.toContain("undefined");
+  });
+
   it("replaces underscores with spaces in category label", () => {
     const warnings: GateWarningItem[] = [
       { severity: "warning", category: "related_work_richness", message: "Sparse citations" }

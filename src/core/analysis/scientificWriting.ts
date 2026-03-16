@@ -3861,12 +3861,15 @@ export function buildGateWarningLimitationSentences(gateWarnings: GateWarningIte
   for (const w of gateWarnings) {
     const cat = w.category || "general";
     const existing = warningsByCategory.get(cat) ?? [];
-    existing.push(w.message);
+    if (w.message) {
+      existing.push(w.message);
+    }
     warningsByCategory.set(cat, existing);
   }
 
   const sentences: string[] = [];
   for (const [category, messages] of warningsByCategory) {
+    if (messages.length === 0) continue;
     const label = category.replace(/_/g, " ");
     sentences.push(
       `The automated quality gate flagged ${label} concerns: ${messages[0]}.`
