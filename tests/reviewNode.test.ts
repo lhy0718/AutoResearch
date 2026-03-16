@@ -131,6 +131,21 @@ describe("review node", () => {
       "utf8"
     );
     await writeFile(
+      path.join(runDir, "baseline_summary.json"),
+      JSON.stringify({ baseline: "baseline_model", accuracy: 0.87 }),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "result_table.json"),
+      JSON.stringify({ rows: [{ method: "treatment", accuracy: 0.91 }, { method: "baseline", accuracy: 0.87 }] }),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "analyze_papers_richness_summary.json"),
+      JSON.stringify({ readiness: "adequate", paper_count: 5 }),
+      "utf8"
+    );
+    await writeFile(
       path.join(runDir, "result_analysis.json"),
       `${JSON.stringify(
         {

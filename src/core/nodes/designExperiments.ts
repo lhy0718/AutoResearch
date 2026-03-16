@@ -232,6 +232,20 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         emitLog(`Experiment contract notes: ${contractValidation.issues.join("; ")}`);
       }
       await writeExperimentContract(run, experimentContract);
+
+      // --- Baseline summary artifact (for review gate) ---
+      const baselineSummary = buildBaselineSummary({
+        selected: panelResult.selected,
+        comparisonContract,
+        experimentContract,
+        objectiveMetric: run.objectiveMetric
+      });
+      await writeRunArtifact(
+        run,
+        "baseline_summary.json",
+        `${JSON.stringify(baselineSummary, null, 2)}\n`
+      );
+
       await runContextMemory.put("design_experiments.experiment_contract", experimentContract);
 
       // --- Brief-vs-design consistency check (Target 2) ---
@@ -791,6 +805,44 @@ function explainHypothesisDrop(
 
 function isReproducibilityObjective(profile: ObjectiveMetricProfile): boolean {
   return /reproduc|재현/u.test(profile.raw) || /reproduc|재현/u.test(profile.primaryMetric || "");
+}
+
+export interface BaselineSummary {
+  baseline_conditions: Array<{ name: string; rationale: string }>;
+  treatment_conditions: Array<{ name: string; description: string }>;
+  comparison_metric: string;
+  justification: string;
+}
+
+export function buildBaselineSummary(input: {
+  selected: ExperimentDesignCandidate;
+  comparisonContract: ReturnType<typeof buildExperimentComparisonContract>;
+  experimentContract: ReturnType<typeof buildExperimentContract>;
+  objectiveMetric: string;
+}): BaselineSummary {
+  const baselines = input.selected.baselines ?? [];
+  const baselineConditions = baselines.length > 0
+    ? baselines.map((b) => ({
+        name: b,
+        rationale: `Baseline condition from selected design: ${input.selected.title}`
+      }))
+    : [{
+        name: "(no explicit baseline)",
+        rationale: "Design did not specify an explicit baseline condition."
+      }];
+
+  const treatmentConditions = [{
+    name: input.selected.title,
+    description: input.selected.plan_summary || input.selected.title
+  }];
+
+  return {
+    baseline_conditions: baselineConditions,
+    treatment_conditions: treatmentConditions,
+    comparison_metric: input.objectiveMetric,
+    justification: input.experimentContract.expected_metric_effect
+      || `Evaluate ${input.objectiveMetric} across baseline and treatment conditions.`
+  };
 }
 
 function hasStructuredHypothesisReview(hypothesis: DesignInputHypothesis): boolean {

@@ -276,6 +276,14 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
       );
       const resultAnalysisPath = await writeRunArtifact(run, "result_analysis.json", JSON.stringify(summary, null, 2));
 
+      // --- Standalone result table artifact (for review gate) ---
+      const resultTable = buildResultTable(summary);
+      await writeRunArtifact(
+        run,
+        "result_table.json",
+        `${JSON.stringify(resultTable, null, 2)}\n`
+      );
+
       // --- Attempt decision artifact (Target 4) ---
       const attemptNumber = (run.graph.retryCounters.analyze_results ?? 0) + 1;
       const objectiveStatus = summary.overview?.objective_status;
@@ -1831,4 +1839,89 @@ export function parseOuterFoldProtocol(csv: string): Record<string, unknown> | u
   if (datasets.size > 0) protocol.datasets = [...datasets].sort();
   if (models.size > 0) protocol.models = [...models].sort();
   return Object.keys(protocol).length > 0 ? protocol : undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Result table types & builder (standalone artifact for the review gate)
+// ---------------------------------------------------------------------------
+
+export interface ResultTableEntry {
+  name: string;
+  metrics: Record<string, number | string | null>;
+}
+
+export interface ResultTableComparison {
+  primary: string;
+  baseline: string;
+  metric: string;
+  delta: number | null;
+  hypothesis_supported: boolean | null;
+}
+
+export interface ResultTable {
+  conditions: ResultTableEntry[];
+  comparisons: ResultTableComparison[];
+  primary_metric: string;
+  summary: string;
+}
+
+export function buildResultTable(report: AnalysisReport): ResultTable {
+  const conditionNames = new Set<string>();
+  const conditionMetrics = new Map<string, Record<string, number | string | null>>();
+
+  for (const comparison of report.condition_comparisons) {
+    if (comparison.id && !conditionNames.has(comparison.id)) {
+      conditionNames.add(comparison.id);
+      const metrics: Record<string, number | string | null> = {};
+      for (const m of comparison.metrics ?? []) {
+        if (m.primary_value !== undefined && m.primary_value !== null) {
+          metrics[m.key] = m.primary_value;
+        }
+      }
+      conditionMetrics.set(comparison.id, metrics);
+    }
+  }
+
+  // Fallback: derive a single condition from metric_table
+  if (conditionNames.size === 0 && report.metric_table.length > 0) {
+    const defaultName = "primary";
+    conditionNames.add(defaultName);
+    const metrics: Record<string, number | string | null> = {};
+    for (const entry of report.metric_table) {
+      metrics[entry.key] = entry.value;
+    }
+    conditionMetrics.set(defaultName, metrics);
+  }
+
+  const conditions: ResultTableEntry[] = Array.from(conditionNames).map((name) => ({
+    name,
+    metrics: conditionMetrics.get(name) ?? {}
+  }));
+
+  const comparisons: ResultTableComparison[] = report.condition_comparisons.map((c) => {
+    const firstMetric = c.metrics?.[0];
+    const delta =
+      firstMetric?.primary_value != null && firstMetric?.baseline_value != null
+        ? firstMetric.primary_value - firstMetric.baseline_value
+        : null;
+    return {
+      primary: c.id || c.label || "primary",
+      baseline: c.source || "baseline",
+      metric: firstMetric?.key ?? report.overview?.matched_metric_key ?? "",
+      delta,
+      hypothesis_supported: c.hypothesis_supported ?? null
+    };
+  });
+
+  const primaryMetric =
+    report.overview?.matched_metric_key ?? report.metric_table[0]?.key ?? "";
+
+  const summaryText = report.overview?.objective_summary ?? "";
+
+  return {
+    conditions,
+    comparisons,
+    primary_metric: primaryMetric,
+    summary: summaryText
+  };
 }

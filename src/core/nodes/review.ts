@@ -303,6 +303,20 @@ async function resolveReviewArtifactPresence(
   runDir: string,
   report: AnalysisReport
 ): Promise<ReviewArtifactPresence> {
+  const baselineSummaryRaw = await safeRead(path.join(runDir, "baseline_summary.json"));
+  const resultTableRaw = await safeRead(path.join(runDir, "result_table.json"));
+  const richnessRaw = await safeRead(path.join(runDir, "analyze_papers_richness_summary.json"));
+
+  let richnessReadiness: ReviewArtifactPresence["richnessReadiness"] = "unknown";
+  if (richnessRaw) {
+    try {
+      const richness = JSON.parse(richnessRaw);
+      richnessReadiness = richness.readiness ?? "unknown";
+    } catch {
+      richnessReadiness = "unknown";
+    }
+  }
+
   return {
         corpusPresent: Boolean(await safeRead(path.join(runDir, "corpus.jsonl"))),
         paperSummariesPresent: Boolean(await safeRead(path.join(runDir, "paper_summaries.jsonl"))),
@@ -313,7 +327,11 @@ async function resolveReviewArtifactPresence(
         figurePresent: Boolean(await safeRead(path.join(runDir, "figures", "performance.svg"))),
         synthesisPresent:
           Boolean(report.synthesis?.discussion_points?.length) ||
-          Boolean(await safeRead(path.join(runDir, "result_analysis_synthesis.json")))
+          Boolean(await safeRead(path.join(runDir, "result_analysis_synthesis.json"))),
+        baselineSummaryPresent: Boolean(baselineSummaryRaw),
+        resultTablePresent: Boolean(resultTableRaw),
+        richnessSummaryPresent: Boolean(richnessRaw),
+        richnessReadiness
   };
 }
 

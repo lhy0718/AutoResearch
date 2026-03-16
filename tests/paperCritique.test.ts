@@ -96,6 +96,10 @@ function makePresence(overrides?: Partial<ReviewArtifactPresence>): ReviewArtifa
     metricsPresent: true,
     figurePresent: true,
     synthesisPresent: true,
+    baselineSummaryPresent: true,
+    resultTablePresent: true,
+    richnessSummaryPresent: true,
+    richnessReadiness: "adequate",
     ...overrides
   };
 }

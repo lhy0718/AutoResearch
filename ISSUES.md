@@ -3,7 +3,7 @@
 ## Current status
 - Last updated: 2026-03-17
 - All live-validation code bugs (LV-001 through LV-017) have been resolved.
-- Remaining items are research-quality and paper-readiness risks (not code bugs).
+- All research-quality and paper-readiness risks (R-001–R-003, P-001–P-003) have been addressed with artifact materialization, gate strengthening, and gate-warning surfacing.
 
 ## Active issues
 
@@ -12,95 +12,50 @@ None
 ## Research completion risks
 
 ### R-001 — Paper-ready evidence still weaker than workflow completion evidence
-- Status: open
-- Blocking for paper-ready: yes
-- Evidence:
-  - end-to-end workflow is completed
-  - `write_paper` completes
-  - PDF build succeeds
-  - but completion evidence is still stronger than experimental evidence
-- Missing artifact:
-  - stronger result table and clearer claim→evidence linkage
-- Owner node:
-  - `review`
-  - `write_paper`
-- Next action:
-  - run `paper-scale-research-loop`
-  - force paper-readiness downgrade unless experimental evidence improves
+- Status: ADDRESSED
+- Resolution:
+  - `design_experiments` now writes `baseline_summary.json` (comparator/baseline info)
+  - `analyze_results` now writes `result_table.json` (compact quantitative result table)
+  - `review` gate reads both artifacts; missing all 3 key artifacts → `blocked_for_paper_scale`
+  - This ensures paper-readiness cannot be claimed without materialized evidence artifacts
 
 ### R-002 — Scientific gate warnings remain non-blocking but unresolved
-- Status: open
-- Blocking for paper-ready: maybe
-- Evidence:
-  - scientific gate warns remain, even though they no longer block completion
-- Missing artifact:
-  - categorized warning summary
-  - explicit resolution or limitation text in manuscript
-- Owner node:
-  - `review`
-  - `write_paper`
-- Next action:
-  - select one representative warning
-  - determine whether it is a true paper-quality blocker or only a style issue
+- Status: ADDRESSED
+- Resolution:
+  - `write_paper` now populates `bundle.gateWarnings` from non-blocking gate issues
+  - `scientificWriting.ts` limitations section builder appends gate warning categories as explicit limitation sentences
+  - `applyGateWarningsToLimitations()` enriches the draft's limitations section post-hoc
+  - Gate warnings are now visible in the manuscript rather than silently dropped
 
 ### R-003 — Risk of system-validation paper shape instead of experiment paper
-- Status: open
-- Blocking for paper-ready: yes
-- Evidence:
-  - workflow validation artifacts are rich and easy to write around
-  - this can crowd out external-task experimental contribution
-- Missing artifact:
-  - explicit downgrade logic in review
-  - external-task experiment emphasis in manuscript plan
-- Owner node:
-  - `review`
-  - `write_paper`
-- Next action:
-  - enforce `blocked_for_paper_scale` when baseline/result-table/claim-evidence mapping are missing
+- Status: ADDRESSED
+- Resolution:
+  - `classifyManuscriptType` in `paperCritique.ts` now checks `baselineSummaryPresent`, `resultTablePresent`, `richnessSummaryPresent`
+  - All 3 missing → `blocked_for_paper_scale`
+  - ≥2 missing → capped at `research_memo`
+  - `richnessReadiness === "insufficient"` → capped at `research_memo`
+  - This structurally prevents a system-validation-only package from reaching `paper_ready`
 
 ## Paper readiness risks
 
 ### P-001 — Baseline/comparator may be too weak or under-specified
-- Status: open
-- Blocking for paper-ready: yes
-- Evidence:
-  - paper-ready state requires explicit comparator discipline
-- Missing artifact:
-  - reviewer-readable baseline summary
-- Owner node:
-  - `design_experiments`
-  - `run_experiments`
-  - `review`
-- Next action:
-  - make comparator list explicit in experiment and paper artifacts
+- Status: ADDRESSED
+- Resolution:
+  - `design_experiments` node now writes `baseline_summary.json` with `baseline_conditions`, `treatment_conditions`, `comparison_metric`, `justification`
+  - Review gate checks for this artifact and downgrades manuscript type when missing
 
 ### P-002 — Quantitative result packaging may be insufficient
-- Status: open
-- Blocking for paper-ready: yes
-- Evidence:
-  - completion evidence exists, but result-table discipline may still be weak
-- Missing artifact:
-  - compact result table
-  - numeric comparison summary
-- Owner node:
-  - `analyze_results`
-  - `write_paper`
-- Next action:
-  - force result-table materialization before `paper_ready=true`
+- Status: ADDRESSED
+- Resolution:
+  - `analyze_results` node now writes `result_table.json` with `conditions`, `comparisons`, `primary_metric`, `summary`
+  - Review gate checks for this artifact and downgrades manuscript type when missing
 
 ### P-003 — Related-work depth may still be shallower than needed
-- Status: open
-- Blocking for paper-ready: maybe
-- Evidence:
-  - workflow can complete with relatively shallow related-work positioning
-- Missing artifact:
-  - explicit full-text-grounded subset summary
-- Owner node:
-  - `collect_papers`
-  - `analyze_papers`
-  - `review`
-- Next action:
-  - separate shallow metadata coverage from paper-positioning-ready evidence
+- Status: ADDRESSED
+- Resolution:
+  - `analyze_papers` node now writes `analyze_papers_richness_summary.json` with `total_papers`, `full_text_count`, `abstract_fallback_count`, `fulltext_coverage_pct`, `readiness`
+  - Readiness classification: ≥5 full-text + ≥50% → adequate; ≥3 full-text → marginal; else insufficient
+  - Review gate reads `richnessReadiness` and caps at `research_memo` when insufficient
 
 ## Next paper-scale iteration template
 

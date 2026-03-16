@@ -36,6 +36,10 @@ export interface ReviewArtifactPresence {
   metricsPresent: boolean;
   figurePresent: boolean;
   synthesisPresent: boolean;
+  baselineSummaryPresent: boolean;
+  resultTablePresent: boolean;
+  richnessSummaryPresent: boolean;
+  richnessReadiness: "adequate" | "marginal" | "insufficient" | "unknown";
 }
 
 export interface ReviewFinding {

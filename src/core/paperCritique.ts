@@ -710,6 +710,18 @@ function classifyManuscriptType(
     return "system_validation_note";
   }
 
+  // Count missing key artifacts (baseline, result table, richness summary)
+  const artifactGaps = [
+    !presence.baselineSummaryPresent,
+    !presence.resultTablePresent,
+    !presence.richnessSummaryPresent
+  ].filter(Boolean).length;
+
+  // All three key artifacts missing → blocked
+  if (artifactGaps === 3) {
+    return "blocked_for_paper_scale";
+  }
+
   // High severity blockers = blocked
   if (blockingIssues.length >= 3) {
     return "blocked_for_paper_scale";
@@ -717,6 +729,16 @@ function classifyManuscriptType(
 
   // Missing core evidence = research memo at best
   if (!presence.evidenceStorePresent || !presence.hypothesesPresent) {
+    return "research_memo";
+  }
+
+  // Insufficient richness caps at research_memo
+  if (presence.richnessReadiness === "insufficient") {
+    return avgScore >= 2.0 ? "research_memo" : "system_validation_note";
+  }
+
+  // Two or more artifact gaps reduce effective score ceiling
+  if (artifactGaps >= 2 && avgScore >= 2.5) {
     return "research_memo";
   }
 
