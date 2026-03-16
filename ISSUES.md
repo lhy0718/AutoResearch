@@ -5,6 +5,10 @@
 - All live-validation code bugs (LV-001 through LV-017) have been resolved.
 - Remaining items are research-quality and paper-readiness risks (not code bugs).
 
+## Active issues
+
+None
+
 ## Research completion risks
 
 ### R-001 — Paper-ready evidence still weaker than workflow completion evidence
