@@ -41,14 +41,25 @@
 - Mitigation: Wait for quota reset, or switch to API key auth. Not a code fix.
 - Note: Quota did reset between sessions — run progressed through implement_experiments, run_experiments, and analyze_results before hitting limits again at design_experiments (backtrack iteration).
 
-### LV-014 — Objective evaluation misparses relative improvement target (OPEN)
-- Status: open
+### LV-014 — Objective evaluation misparses relative improvement target (RESOLVED)
+- Status: resolved
 - Root cause taxonomy: `in_memory_projection_bug`
 - Symptom: Objective metric string "at least +1.5 accuracy points over single-pass baseline" is parsed as `accuracy_pass_at_1 >= 1.5` (absolute), but accuracy is 0-1 scale. The target should be `best - baseline >= 0.015` (relative improvement). With this bug, no accuracy value can ever satisfy the threshold.
 - Impact: The backtrack from analyze_results to design_experiments is triggered correctly in spirit (experiment didn't improve over baseline), but the specific comparison is technically impossible to satisfy.
-- Root cause: `objective_evaluation.json` shows `targetValue: 1.5, observedValue: 0.22, comparator: ">="` — the LLM-based objective parsing extracted 1.5 as an absolute value instead of understanding it as a relative delta.
-- Files likely affected: wherever objective metric evaluation is built (probably in `src/core/nodes/analyzeResults.ts` or `resultAnalysis*.ts`)
-- Suggested fix: Allow objective targets to express relative comparisons (e.g., "improve by X over baseline") or clamp absolute targets to plausible ranges.
+- Root cause: Three-part failure in `src/core/objectiveMetric.ts`:
+  1. `inferRelativeBaselineObjective()` only handled accuracy+logreg patterns, not accuracy+any-baseline (like "over single-pass baseline"). General accuracy+baseline fell through.
+  2. `indicatesImprovement` pattern didn't match "+X.Y" or "X points over" patterns, only explicit improvement words.
+  3. In `buildHeuristicObjectiveMetricProfile()`, `parseThreshold()` took priority over `relativeBaseline`, so when the relative parser returned `undefined`, the absolute threshold 1.5 was used.
+- Fix (4-part):
+  1. Extended `inferRelativeBaselineObjective()` with general accuracy+any-baseline and macro-f1+any-baseline cases
+  2. Added `parseDeltaAmount()` to convert "X accuracy points" to 0-1 proportion (÷100)
+  3. Added `synthesizeRelativeMetrics()` to compute delta metrics from `conditions` array in metrics.json
+  4. Added plausibility guard in `buildObjectiveEvaluation()`: rescales impossible absolute targets when observed is on 0-1 scale
+  5. Reversed priority: relative baseline comparator/targetValue now takes precedence over raw threshold
+- Files changed: `src/core/objectiveMetric.ts`
+- Tests: 7 new tests in `tests/objectiveMetric.test.ts` (relative delta parsing, conditions-based delta synthesis, plausibility guard, LLM profile override)
+- Evidence: For "at least +1.5 accuracy points over single-pass baseline", profile now correctly sets `targetValue: 0.015, primaryMetric: "accuracy_delta_vs_baseline"`. Synthesized delta from conditions is compared against this threshold. All 77 test files (717+ tests) pass.
+- Regression check: All existing tests pass. No behavioral changes for absolute threshold objectives or logistic-regression baseline objectives.
 
 ### LV-001 — analyze_results → implement_experiments backtrack loop (RESOLVED)
 - Status: resolved

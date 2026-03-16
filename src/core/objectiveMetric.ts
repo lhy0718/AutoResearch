@@ -135,12 +135,17 @@ export function buildHeuristicObjectiveMetricProfile(rawObjectiveMetric: string)
   ]);
   const direction =
     relativeBaseline?.direction || metricDef?.direction || inferDirectionFromComparator(threshold?.comparator);
-  const comparator = threshold?.comparator || relativeBaseline?.comparator;
-  const targetValue = threshold?.targetValue ?? relativeBaseline?.targetValue;
+  // When a relative-baseline interpretation is available, its comparator and
+  // targetValue are semantically correct (delta comparison). The raw
+  // parseThreshold result would be an absolute number that makes no sense
+  // as a delta (e.g. 1.5 instead of 0.015).
+  const comparator = relativeBaseline?.comparator || threshold?.comparator;
+  const targetValue = relativeBaseline?.targetValue ?? threshold?.targetValue;
   const targetDescription =
-    typeof targetValue === "number" && comparator
+    relativeBaseline?.targetDescription ||
+    (typeof targetValue === "number" && comparator
       ? `${comparator} ${targetValue}`
-      : undefined;
+      : undefined);
 
   const analysisFocus: string[] = [];
   const paperEmphasis: string[] = [];
@@ -213,7 +218,8 @@ export function evaluateObjectiveMetric(
   profile: ObjectiveMetricProfile,
   rawObjectiveMetric: string
 ): ObjectiveMetricEvaluation {
-  const flattened = flattenNumericMetrics(metrics);
+  const enrichedMetrics = synthesizeRelativeMetrics(metrics);
+  const flattened = flattenNumericMetrics(enrichedMetrics);
   const preferredKeys = dedupe([
     ...profile.preferredMetricKeys,
     ...(profile.primaryMetric ? [profile.primaryMetric] : [])
@@ -261,6 +267,74 @@ export function evaluateObjectiveMetric(
     metrics,
     rawObjectiveMetric
   );
+}
+
+const BASELINE_PATTERN = /baseline|single.pass|control|reference|vanilla/iu;
+const SYNTHESIZE_METRIC_KEYS = [
+  "accuracy_pass_at_1",
+  "accuracy",
+  "acc",
+  "f1",
+  "macro_f1",
+  "exact_match",
+  "pass_at_1",
+  "bleu",
+  "rouge",
+  "rouge_l",
+  "success_rate"
+];
+
+/**
+ * Compute delta metrics from the `conditions` array in metrics.json.
+ * For each known metric, synthesize `<metric>_delta_vs_baseline` = best_non_baseline - baseline.
+ */
+export function synthesizeRelativeMetrics(
+  metrics: Record<string, unknown>
+): Record<string, unknown> {
+  const conditions = metrics.conditions;
+  if (!Array.isArray(conditions) || conditions.length < 2) {
+    return metrics;
+  }
+
+  const baseline = conditions.find(
+    (c: unknown): c is Record<string, unknown> =>
+      !!c &&
+      typeof c === "object" &&
+      typeof (c as Record<string, unknown>).name === "string" &&
+      BASELINE_PATTERN.test((c as Record<string, unknown>).name as string)
+  );
+  if (!baseline) {
+    return metrics;
+  }
+
+  const nonBaseline = conditions.filter((c: unknown) => c !== baseline);
+  const enriched: Record<string, unknown> = { ...metrics };
+
+  for (const metricKey of SYNTHESIZE_METRIC_KEYS) {
+    const baseVal = typeof baseline[metricKey] === "number" ? (baseline[metricKey] as number) : undefined;
+    if (baseVal === undefined) {
+      continue;
+    }
+
+    let bestDelta = -Infinity;
+    for (const cond of nonBaseline) {
+      if (!cond || typeof cond !== "object") continue;
+      const condRecord = cond as Record<string, unknown>;
+      const val = typeof condRecord[metricKey] === "number" ? (condRecord[metricKey] as number) : undefined;
+      if (val === undefined) continue;
+      const delta = val - baseVal;
+      if (delta > bestDelta) {
+        bestDelta = delta;
+      }
+    }
+
+    if (Number.isFinite(bestDelta)) {
+      enriched[`${metricKey}_delta_vs_baseline`] = bestDelta;
+      enriched[`${metricKey}_improvement_over_baseline`] = bestDelta;
+    }
+  }
+
+  return enriched;
 }
 
 function buildObjectiveMetricSystemPrompt(): string {
@@ -392,10 +466,23 @@ function buildObjectiveEvaluation(input: {
   summaryPrefix?: string;
 }): ObjectiveMetricEvaluation {
   if (input.profile.comparator && typeof input.profile.targetValue === "number") {
-    const met = compareObjectiveValue(input.matched.value, input.profile.comparator, input.profile.targetValue);
+    let effectiveTarget = input.profile.targetValue;
+
+    // Plausibility guard: if the target exceeds 1.0 but the observed metric
+    // is on a 0–1 scale, the target was likely specified in percentage-point
+    // units. Rescale it to match the observed proportion scale.
+    if (
+      effectiveTarget > 1 &&
+      Math.abs(input.matched.value) <= 1 &&
+      (input.profile.comparator === ">=" || input.profile.comparator === ">")
+    ) {
+      effectiveTarget = effectiveTarget / 100;
+    }
+
+    const met = compareObjectiveValue(input.matched.value, input.profile.comparator, effectiveTarget);
     const baseSummary = met
-      ? `Objective metric met: ${input.matched.key}=${input.matched.value} ${input.profile.comparator} ${input.profile.targetValue}.`
-      : `Objective metric not met: ${input.matched.key}=${input.matched.value} does not satisfy ${input.profile.comparator} ${input.profile.targetValue}.`;
+      ? `Objective metric met: ${input.matched.key}=${input.matched.value} ${input.profile.comparator} ${effectiveTarget}.`
+      : `Objective metric not met: ${input.matched.key}=${input.matched.value} does not satisfy ${input.profile.comparator} ${effectiveTarget}.`;
     return {
       rawObjectiveMetric: input.rawObjectiveMetric,
       profileSource: input.profile.source,
@@ -404,7 +491,7 @@ function buildObjectiveEvaluation(input: {
       matchedMetricKey: input.matched.key,
       direction: input.profile.direction,
       comparator: input.profile.comparator,
-      targetValue: input.profile.targetValue,
+      targetValue: effectiveTarget,
       observedValue: input.matched.value,
       status: met ? "met" : "not_met",
       summary: input.summaryPrefix ? `${input.summaryPrefix} ${baseSummary}` : baseSummary
@@ -601,7 +688,11 @@ function inferRelativeBaselineObjective(
 } | undefined {
   const indicatesImprovement =
     /\b(improv(?:e|ement|ing)?|outperform|beat|better|higher|exceed|gain)\b/iu.test(rawObjectiveMetric) ||
-    /\bimprov(?:e|ement|ing)?\b/iu.test(normalized);
+    /\bimprov(?:e|ement|ing)?\b/iu.test(normalized) ||
+    // "+X.Y" with a plus sign inherently indicates improvement
+    /\+\d+(?:\.\d+)?/.test(rawObjectiveMetric) ||
+    // "X points/pp over" inherently indicates a delta comparison
+    /\d+\s*(?:\w+\s+)?(?:points?|pp)\s+(?:over|above|beyond)\b/iu.test(rawObjectiveMetric);
   const indicatesBaselineComparison =
     /\b(over|vs\.?|versus|than|relative to|against)\b/iu.test(rawObjectiveMetric) ||
     /\bbaseline\b/iu.test(rawObjectiveMetric) ||
@@ -651,6 +742,70 @@ function inferRelativeBaselineObjective(
     };
   }
 
+  // General accuracy + any baseline (non-logreg)
+  if (mentionsAccuracy) {
+    const deltaAmount = parseDeltaAmount(rawObjectiveMetric);
+    const targetVal = deltaAmount ?? 0;
+    return {
+      primaryMetric: "accuracy_delta_vs_baseline",
+      preferredMetricKeys: [
+        "accuracy_delta_vs_baseline",
+        "accuracy_pass_at_1_delta_vs_baseline",
+        "accuracy_improvement_over_baseline",
+        "accuracy_pass_at_1_improvement_over_baseline",
+        "improvement_over_baseline",
+        "delta_vs_baseline",
+        "value"
+      ],
+      direction: "maximize",
+      comparator: deltaAmount !== undefined ? ">=" : ">",
+      targetValue: targetVal,
+      targetDescription:
+        deltaAmount !== undefined
+          ? `>= ${targetVal} improvement over baseline`
+          : "> 0 relative to baseline"
+    };
+  }
+
+  // General macro-F1 + any baseline (non-logreg)
+  if (mentionsMacroF1) {
+    const deltaAmount = parseDeltaAmount(rawObjectiveMetric);
+    const targetVal = deltaAmount ?? 0;
+    return {
+      primaryMetric: "macro_f1_delta_vs_baseline",
+      preferredMetricKeys: [
+        "macro_f1_delta_vs_baseline",
+        "f1_delta_vs_baseline",
+        "macro_f1_improvement_over_baseline",
+        "f1_improvement_over_baseline",
+        "improvement_over_baseline",
+        "delta_vs_baseline",
+        "value"
+      ],
+      direction: "maximize",
+      comparator: deltaAmount !== undefined ? ">=" : ">",
+      targetValue: targetVal,
+      targetDescription:
+        deltaAmount !== undefined
+          ? `>= ${targetVal} improvement over baseline`
+          : "> 0 relative to baseline"
+    };
+  }
+
+  return undefined;
+}
+
+/**
+ * Parse a delta amount from text like "+1.5 accuracy points", "1.5pp",
+ * "1.5 percentage points". Converts percentage-point notation to 0–1 proportion.
+ */
+function parseDeltaAmount(text: string): number | undefined {
+  const pointsMatch = text.match(
+    /([+-]?\d+(?:\.\d+)?)\s*(?:accuracy\s+)?(?:points?|pp|percentage\s+points?)\b/iu
+  );
+  if (pointsMatch) {
+    return Math.abs(Number(pointsMatch[1])) / 100;
+  }
   return undefined;
 }
 
