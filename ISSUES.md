@@ -2,12 +2,27 @@
 
 ## Current status
 - Last updated: 2026-03-17
-- All live-validation code bugs (LV-001 through LV-017) have been resolved.
+- All live-validation code bugs (LV-001 through LV-018) have been resolved.
 - All research-quality and paper-readiness risks (R-001–R-003, P-001–P-003) have been addressed with artifact materialization, gate strengthening, and gate-warning surfacing.
 
 ## Active issues
 
 None
+
+## Live-validation bugs
+
+### LV-018 — Objective evaluation matches wrong metric key
+- Status: FIXED
+- Root-cause class: `in_memory_projection_bug`
+- Validation target: analyze_results → objective_evaluation.json metric matching
+- Reproduction: Run with metrics.json using `baseline_metrics`/`routed_metrics` structure and `primary_metric` as nested object. The objective evaluation matched `secondary_metrics.mean_generated_tokens_delta_vs_baseline` (117.5) instead of `accuracy_delta_vs_baseline` (-0.243), producing a false "met" status.
+- Root cause: `findMatchingMetric` partial matching phase matched the generic preferred key `delta_vs_baseline` as a substring of `secondarymetricsmeangeneratedtokensdeltavsbaseline`. Also, `synthesizeRelativeMetrics` only handled `conditions` arrays, not `baseline_metrics`/`routed_metrics` structure, and `primary_metric` as a nested object was not promoted to a flat key.
+- Fix:
+  1. Added `promotePrimaryMetric()` to extract `primary_metric.value` as a top-level flat key
+  2. Extended `synthesizeRelativeMetrics()` to handle `baseline_metrics` + `*_metrics` structure
+  3. Tightened `findMatchingMetric` partial matching: requires ≥10 char target and ≥40% coverage of the matched key
+- Tests: 2 regression tests in `tests/objectiveMetric.test.ts` — 853 total tests passing
+- Regression: None observed
 
 ## Research completion risks
 

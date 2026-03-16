@@ -213,13 +213,39 @@ export function normalizeObjectiveMetricProfile(
   };
 }
 
+/**
+ * If metrics.primary_metric is a structured object with {name, value, met, target},
+ * promote it as a top-level numeric key so that findMatchingMetric can find it by name.
+ * This handles metrics blobs that use baseline_metrics/routed_metrics structure
+ * instead of a flat conditions array.
+ */
+function promotePrimaryMetric(metrics: Record<string, unknown>): Record<string, unknown> {
+  const pm = metrics.primary_metric;
+  if (!pm || typeof pm !== "object" || Array.isArray(pm)) {
+    return metrics;
+  }
+  const pmObj = pm as Record<string, unknown>;
+  const name = pmObj.name;
+  const value = pmObj.value;
+  if (typeof name !== "string" || typeof value !== "number" || !Number.isFinite(value)) {
+    return metrics;
+  }
+  const enriched: Record<string, unknown> = { ...metrics };
+  // Inject the primary metric value as a top-level key if it doesn't already exist
+  if (!(name in enriched) || typeof enriched[name] !== "number") {
+    enriched[name] = value;
+  }
+  return enriched;
+}
+
 export function evaluateObjectiveMetric(
   metrics: Record<string, unknown>,
   profile: ObjectiveMetricProfile,
   rawObjectiveMetric: string
 ): ObjectiveMetricEvaluation {
   const enrichedMetrics = synthesizeRelativeMetrics(metrics);
-  const flattened = flattenNumericMetrics(enrichedMetrics);
+  const withPrimary = promotePrimaryMetric(enrichedMetrics);
+  const flattened = flattenNumericMetrics(withPrimary);
   const preferredKeys = dedupe([
     ...profile.preferredMetricKeys,
     ...(profile.primaryMetric ? [profile.primaryMetric] : [])
@@ -287,54 +313,81 @@ const SYNTHESIZE_METRIC_KEYS = [
 /**
  * Compute delta metrics from the `conditions` array in metrics.json.
  * For each known metric, synthesize `<metric>_delta_vs_baseline` = best_non_baseline - baseline.
+ * Also handles the `baseline_metrics` + `routed_metrics` (or `*_metrics`) structure.
  */
 export function synthesizeRelativeMetrics(
   metrics: Record<string, unknown>
 ): Record<string, unknown> {
+  // Strategy 1: conditions array
   const conditions = metrics.conditions;
-  if (!Array.isArray(conditions) || conditions.length < 2) {
-    return metrics;
-  }
-
-  const baseline = conditions.find(
-    (c: unknown): c is Record<string, unknown> =>
-      !!c &&
-      typeof c === "object" &&
-      typeof (c as Record<string, unknown>).name === "string" &&
-      BASELINE_PATTERN.test((c as Record<string, unknown>).name as string)
-  );
-  if (!baseline) {
-    return metrics;
-  }
-
-  const nonBaseline = conditions.filter((c: unknown) => c !== baseline);
-  const enriched: Record<string, unknown> = { ...metrics };
-
-  for (const metricKey of SYNTHESIZE_METRIC_KEYS) {
-    const baseVal = typeof baseline[metricKey] === "number" ? (baseline[metricKey] as number) : undefined;
-    if (baseVal === undefined) {
-      continue;
-    }
-
-    let bestDelta = -Infinity;
-    for (const cond of nonBaseline) {
-      if (!cond || typeof cond !== "object") continue;
-      const condRecord = cond as Record<string, unknown>;
-      const val = typeof condRecord[metricKey] === "number" ? (condRecord[metricKey] as number) : undefined;
-      if (val === undefined) continue;
-      const delta = val - baseVal;
-      if (delta > bestDelta) {
-        bestDelta = delta;
+  if (Array.isArray(conditions) && conditions.length >= 2) {
+    const baseline = conditions.find(
+      (c: unknown): c is Record<string, unknown> =>
+        !!c &&
+        typeof c === "object" &&
+        typeof (c as Record<string, unknown>).name === "string" &&
+        BASELINE_PATTERN.test((c as Record<string, unknown>).name as string)
+    );
+    if (baseline) {
+      const nonBaseline = conditions.filter((c: unknown) => c !== baseline);
+      const enriched: Record<string, unknown> = { ...metrics };
+      for (const metricKey of SYNTHESIZE_METRIC_KEYS) {
+        const baseVal = typeof baseline[metricKey] === "number" ? (baseline[metricKey] as number) : undefined;
+        if (baseVal === undefined) continue;
+        let bestDelta = -Infinity;
+        for (const cond of nonBaseline) {
+          if (!cond || typeof cond !== "object") continue;
+          const condRecord = cond as Record<string, unknown>;
+          const val = typeof condRecord[metricKey] === "number" ? (condRecord[metricKey] as number) : undefined;
+          if (val === undefined) continue;
+          const delta = val - baseVal;
+          if (delta > bestDelta) bestDelta = delta;
+        }
+        if (Number.isFinite(bestDelta)) {
+          enriched[`${metricKey}_delta_vs_baseline`] = bestDelta;
+          enriched[`${metricKey}_improvement_over_baseline`] = bestDelta;
+        }
       }
-    }
-
-    if (Number.isFinite(bestDelta)) {
-      enriched[`${metricKey}_delta_vs_baseline`] = bestDelta;
-      enriched[`${metricKey}_improvement_over_baseline`] = bestDelta;
+      return enriched;
     }
   }
 
-  return enriched;
+  // Strategy 2: baseline_metrics + routed_metrics (or other *_metrics objects)
+  const baselineObj = metrics.baseline_metrics;
+  if (baselineObj && typeof baselineObj === "object" && !Array.isArray(baselineObj)) {
+    const baseMetrics = baselineObj as Record<string, unknown>;
+    // Find the first non-baseline *_metrics object
+    const treatmentKeys = Object.keys(metrics).filter(
+      (k) =>
+        k.endsWith("_metrics") &&
+        k !== "baseline_metrics" &&
+        metrics[k] &&
+        typeof metrics[k] === "object" &&
+        !Array.isArray(metrics[k])
+    );
+    if (treatmentKeys.length > 0) {
+      const enriched: Record<string, unknown> = { ...metrics };
+      for (const metricKey of SYNTHESIZE_METRIC_KEYS) {
+        const baseVal = typeof baseMetrics[metricKey] === "number" ? (baseMetrics[metricKey] as number) : undefined;
+        if (baseVal === undefined) continue;
+        let bestDelta = -Infinity;
+        for (const tk of treatmentKeys) {
+          const treatObj = metrics[tk] as Record<string, unknown>;
+          const val = typeof treatObj[metricKey] === "number" ? (treatObj[metricKey] as number) : undefined;
+          if (val === undefined) continue;
+          const delta = val - baseVal;
+          if (delta > bestDelta) bestDelta = delta;
+        }
+        if (Number.isFinite(bestDelta)) {
+          enriched[`${metricKey}_delta_vs_baseline`] = bestDelta;
+          enriched[`${metricKey}_improvement_over_baseline`] = bestDelta;
+        }
+      }
+      return enriched;
+    }
+  }
+
+  return metrics;
 }
 
 function buildObjectiveMetricSystemPrompt(): string {
@@ -443,14 +496,21 @@ function findMatchingMetric(
   preferredKeys: string[]
 ): { key: string; value: number } | undefined {
   const normalizedTargets = preferredKeys.map(normalizeMetricKey).filter(Boolean);
+  // Phase 1: exact match (after normalization)
   for (const target of normalizedTargets) {
     const exact = metrics.find((metric) => normalizeMetricKey(metric.key) === target);
     if (exact) {
       return exact;
     }
   }
+  // Phase 2: partial match — only if target is specific enough (>=10 chars)
+  // and the target covers a meaningful portion of the metric key
   for (const target of normalizedTargets) {
-    const partial = metrics.find((metric) => normalizeMetricKey(metric.key).includes(target));
+    if (target.length < 10) continue;
+    const partial = metrics.find((metric) => {
+      const normalized = normalizeMetricKey(metric.key);
+      return normalized.includes(target) && target.length >= normalized.length * 0.4;
+    });
     if (partial) {
       return partial;
     }

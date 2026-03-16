@@ -236,4 +236,49 @@ describe("objectiveMetric", () => {
     expect(profile.targetValue).toBe(0.015);
     expect(profile.preferredMetricKeys).toContain("accuracy_delta_vs_baseline");
   });
+
+  // ---------- LV-018 regression tests ----------
+
+  it("matches primary_metric nested object instead of unrelated secondary metric (LV-018)", () => {
+    const objective =
+      "Primary metric: accuracy (or pass@1) on reasoning benchmarks. Meaningful improvement: at least +2 accuracy points over the strongest fixed-budget baseline.";
+    const profile = buildHeuristicObjectiveMetricProfile(objective);
+
+    // Simulate the real metrics.json structure from the experiment
+    const evaluation = evaluateObjectiveMetric(
+      {
+        primary_metric: {
+          met: false,
+          name: "accuracy_delta_vs_baseline",
+          target: 0.02,
+          value: -0.24305555555555555
+        },
+        baseline_metrics: { accuracy: 0.4375, mean_generated_tokens: 221.0, mean_latency_ms: 2296 },
+        routed_metrics: { accuracy: 0.1944, mean_generated_tokens: 339.0, mean_latency_ms: 3518 },
+        secondary_metrics: {
+          budget_normalized_accuracy_delta: -0.0014,
+          latency_delta_ms: 1222.23,
+          mean_generated_tokens_delta_vs_baseline: 117.53
+        }
+      },
+      profile,
+      objective
+    );
+
+    // Must match accuracy_delta_vs_baseline (from primary_metric.value), NOT the token delta
+    expect(evaluation.matchedMetricKey).toBe("accuracy_delta_vs_baseline");
+    expect(evaluation.observedValue).toBeCloseTo(-0.243, 2);
+    expect(evaluation.status).toBe("not_met");
+    expect(evaluation.summary).toContain("not met");
+  });
+
+  it("synthesizes delta from baseline_metrics + routed_metrics structure", () => {
+    const enriched = synthesizeRelativeMetrics({
+      baseline_metrics: { accuracy: 0.4375, f1: 0.50 },
+      routed_metrics: { accuracy: 0.1944, f1: 0.30 }
+    });
+
+    expect(enriched.accuracy_delta_vs_baseline).toBeCloseTo(0.1944 - 0.4375, 10);
+    expect(enriched.f1_delta_vs_baseline).toBeCloseTo(0.30 - 0.50, 10);
+  });
 });
