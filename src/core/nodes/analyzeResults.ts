@@ -43,6 +43,11 @@ import {
   storeExperimentGovernanceDecision,
   validateManagedBundleLock
 } from "../experimentGovernance.js";
+import {
+  buildAttemptDecision,
+  writeAttemptDecision,
+  type AttemptDecisionVerdict
+} from "../experiments/attemptDecision.js";
 
 export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
@@ -270,6 +275,39 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         JSON.stringify(panelResult.decision, null, 2)
       );
       const resultAnalysisPath = await writeRunArtifact(run, "result_analysis.json", JSON.stringify(summary, null, 2));
+
+      // --- Attempt decision artifact (Target 4) ---
+      const attemptNumber = (run.graph.retryCounters.analyze_results ?? 0) + 1;
+      const objectiveStatus = summary.overview?.objective_status;
+      const metricImproved = objectiveStatus === "met";
+      const verdict: AttemptDecisionVerdict =
+        objectiveStatus === "met"
+          ? "keep"
+          : objectiveStatus === "not_met"
+            ? (summary.failure_taxonomy ?? []).some((f) => f.category === "evidence_gap" || f.category === "scope_limit")
+              ? "needs_design_revision"
+              : "discard"
+            : "needs_replication";
+      const attemptDecision = buildAttemptDecision({
+        runId: run.id,
+        attempt: attemptNumber,
+        verdict,
+        rationale: summary.overview?.objective_summary || "No objective summary available.",
+        evidenceRefs: [resultAnalysisPath],
+        metricName: run.objectiveMetric,
+        metricImproved,
+        discardReason: verdict === "discard"
+          ? `Objective metric ${run.objectiveMetric} not met: ${summary.overview?.objective_summary || "unknown"}.`
+          : undefined,
+        designRevisionNote: verdict === "needs_design_revision"
+          ? `Evidence or scope gaps detected: ${(summary.failure_taxonomy ?? []).map((f) => f.category).join(", ")}.`
+          : undefined,
+        replicationNote: verdict === "needs_replication"
+          ? "Objective status unknown; replication needed to confirm."
+          : undefined
+      });
+      await writeAttemptDecision(run, attemptDecision);
+
       let synthesisPath: string | undefined;
       if (summary.synthesis) {
         synthesisPath = await writeRunArtifact(

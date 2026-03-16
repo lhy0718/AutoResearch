@@ -20,6 +20,11 @@ import {
   buildExperimentComparisonContract,
   storeExperimentGovernanceDecision
 } from "../experimentGovernance.js";
+import {
+  buildExperimentContract,
+  writeExperimentContract,
+  validateExperimentContract
+} from "../experiments/experimentContract.js";
 
 interface FilteredHypothesis {
   hypothesis_id: string;
@@ -199,6 +204,33 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         contract: comparisonContract,
         entries: []
       });
+
+      // --- Experiment contract: causal discipline artifact (Target 1+2) ---
+      const selectedHypotheses = filtered.kept.filter(
+        (h) => panelResult.selected.hypothesis_ids.includes(h.hypothesis_id)
+      );
+      const hypothesisText = selectedHypotheses.map((h) => h.text).join("; ") || run.objectiveMetric;
+      const experimentContract = buildExperimentContract({
+        run,
+        hypothesis: hypothesisText,
+        causalMechanism: panelResult.selected.plan_summary,
+        singleChange: panelResult.selected.title,
+        additionalChanges: panelResult.selected.baselines.length > 1
+          ? panelResult.selected.baselines.slice(1).map((b) => `additional baseline: ${b}`)
+          : [],
+        expectedMetricEffect: `Improve ${run.objectiveMetric} relative to baseline(s): ${panelResult.selected.baselines.join(", ") || "none specified"}.`,
+        abortCondition: panelResult.selected.risks.length > 0
+          ? `Abort if: ${panelResult.selected.risks[0]}`
+          : "Abort if primary metric degrades significantly or execution fails repeatedly.",
+        keepOrDiscardRule: "Keep if objective metric improves over baseline; discard if no improvement or result is inconclusive."
+      });
+      const contractValidation = validateExperimentContract(experimentContract);
+      if (contractValidation.issues.length > 0) {
+        emitLog(`Experiment contract notes: ${contractValidation.issues.join("; ")}`);
+      }
+      await writeExperimentContract(run, experimentContract);
+      await runContextMemory.put("design_experiments.experiment_contract", experimentContract);
+
       await runContextMemory.put("design_experiments.primary", panelResult.selected.title);
       await runContextMemory.put("design_experiments.source", design.source);
       await runContextMemory.put("design_experiments.summary", design.summary);

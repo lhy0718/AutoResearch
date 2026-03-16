@@ -1,7 +1,7 @@
 import path from "node:path";
 
 import { GraphNodeHandler } from "../stateGraph/types.js";
-import { AnalysisReport } from "../resultAnalysis.js";
+import { AnalysisConditionComparison, AnalysisReport } from "../resultAnalysis.js";
 import { buildReviewPacket } from "../reviewPacket.js";
 import { ReviewArtifactPresence, runReviewPanel } from "../reviewSystem.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
@@ -16,6 +16,9 @@ import {
   resolveVenueStyle,
   type PaperCritique
 } from "../paperCritique.js";
+import { loadAttemptDecisions } from "../experiments/attemptDecision.js";
+import { loadExperimentContract } from "../experiments/experimentContract.js";
+import { FailureMemory } from "../experiments/failureMemory.js";
 
 export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
@@ -33,6 +36,27 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       }
 
       const runDir = path.join(".autolabos", "runs", run.id);
+
+      // --- Pre-review summary artifact (Target 6) ---
+      const experimentContract = await loadExperimentContract(run.id);
+      const attemptDecisions = await loadAttemptDecisions(run.id);
+      const failMem = FailureMemory.forRun(run.id);
+      const failureClusters = await failMem.failureClusters("run_experiments");
+      const preReviewSummary = buildPreReviewSummary({
+        report,
+        experimentContract: experimentContract ?? undefined,
+        attemptDecisions,
+        failureClusters,
+        objectiveMetric: run.objectiveMetric,
+        retryCounters: run.graph.retryCounters,
+        rollbackCounters: run.graph.rollbackCounters
+      });
+      await writeRunArtifact(
+        run,
+        "review/pre_review_summary.json",
+        `${JSON.stringify(preReviewSummary, null, 2)}\n`
+      );
+
       const presence = await resolveReviewArtifactPresence(runDir, report);
       const panel = await runReviewPanel({
         run,
@@ -400,4 +424,103 @@ function renderJsonl(items: unknown[]): string {
     return "";
   }
   return `${items.map((item) => JSON.stringify(item)).join("\n")}\n`;
+}
+
+// ---------------------------------------------------------------------------
+// Pre-review summary (Target 6)
+// ---------------------------------------------------------------------------
+
+interface PreReviewSummary {
+  generated_at: string;
+  objective_metric: string;
+  baseline: string;
+  attempts: number;
+  best_attempt: string;
+  discarded_attempts: string[];
+  failure_clusters: Array<{ fingerprint: string; count: number }>;
+  remaining_uncertainty: string[];
+  claim_ceiling: string;
+  experiment_contract?: {
+    hypothesis: string;
+    single_change: string;
+    confounded: boolean;
+    expected_metric_effect: string;
+    abort_condition: string;
+    keep_or_discard_rule: string;
+  };
+  retry_counters: Record<string, number>;
+  rollback_counters: Record<string, number>;
+}
+
+function buildPreReviewSummary(input: {
+  report: AnalysisReport;
+  experimentContract?: import("../experiments/experimentContract.js").ExperimentContract;
+  attemptDecisions: import("../experiments/attemptDecision.js").AttemptDecision[];
+  failureClusters: Array<[string, number]>;
+  objectiveMetric: string;
+  retryCounters: Record<string, number>;
+  rollbackCounters: Record<string, number>;
+}): PreReviewSummary {
+  const { report, experimentContract, attemptDecisions, failureClusters, objectiveMetric } = input;
+
+  const keptDecisions = attemptDecisions.filter((d) => d.verdict === "keep");
+  const discardedDecisions = attemptDecisions.filter((d) => d.verdict === "discard");
+  const bestAttempt = keptDecisions.length > 0
+    ? `Attempt ${keptDecisions[keptDecisions.length - 1].attempt} (${keptDecisions[keptDecisions.length - 1].verdict})`
+    : "No kept attempts";
+
+  const baselines = (report.condition_comparisons ?? [])
+    .filter((c: AnalysisConditionComparison) => c.label.toLowerCase().includes("baseline"))
+    .map((c: AnalysisConditionComparison) => c.label);
+
+  const uncertainties: string[] = [];
+  if (report.overview?.objective_status === "unknown") {
+    uncertainties.push("Objective metric status is unknown.");
+  }
+  if ((report.failure_taxonomy ?? []).length > 0) {
+    uncertainties.push(
+      `Failure categories detected: ${(report.failure_taxonomy ?? []).map((f) => f.category).join(", ")}.`
+    );
+  }
+  if (attemptDecisions.some((d) => d.verdict === "needs_replication")) {
+    uncertainties.push("At least one attempt needs replication to confirm.");
+  }
+
+  const claimCeiling = report.overview?.objective_status === "met"
+    ? experimentContract?.confounded
+      ? "Confounded experiment: claims limited to correlation, not causation."
+      : "Objective met; claims can reference metric improvement over baseline."
+    : report.overview?.objective_status === "not_met"
+      ? "Objective not met; claims must be limited to negative or null result."
+      : "Objective unknown; claims must be heavily qualified.";
+
+  return {
+    generated_at: new Date().toISOString(),
+    objective_metric: objectiveMetric,
+    baseline: baselines.length > 0 ? baselines.join(", ") : "(no explicit baseline identified)",
+    attempts: attemptDecisions.length || 1,
+    best_attempt: bestAttempt,
+    discarded_attempts: discardedDecisions.map(
+      (d) => `Attempt ${d.attempt}: ${d.discard_reason || d.rationale}`
+    ),
+    failure_clusters: failureClusters.map(([fp, count]) => ({ fingerprint: fp, count })),
+    remaining_uncertainty: uncertainties,
+    claim_ceiling: claimCeiling,
+    experiment_contract: experimentContract
+      ? {
+          hypothesis: experimentContract.hypothesis,
+          single_change: experimentContract.single_change,
+          confounded: experimentContract.confounded,
+          expected_metric_effect: experimentContract.expected_metric_effect,
+          abort_condition: experimentContract.abort_condition,
+          keep_or_discard_rule: experimentContract.keep_or_discard_rule
+        }
+      : undefined,
+    retry_counters: Object.fromEntries(
+      Object.entries(input.retryCounters).filter(([, v]) => v !== undefined)
+    ) as Record<string, number>,
+    rollback_counters: Object.fromEntries(
+      Object.entries(input.rollbackCounters).filter(([, v]) => v !== undefined)
+    ) as Record<string, number>
+  };
 }

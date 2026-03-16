@@ -1,6 +1,7 @@
 import { EventStream } from "../events.js";
 import { saveReflexion } from "../agents/runtime/reflexion.js";
 import { EpisodeMemory } from "../memory/episodeMemory.js";
+import { FailureMemory, buildErrorFingerprint } from "../experiments/failureMemory.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { RunStore } from "../runs/runStore.js";
 import {
@@ -560,6 +561,24 @@ export class StateGraphRuntime {
       episodeMemory: new EpisodeMemory(run.memoryRefs.episodePath),
       eventStream: this.eventStream
     });
+
+    // --- Equivalent-failure stopping rule (Target 5) ---
+    // If the same error fingerprint has been seen 3+ times for this node,
+    // skip remaining retries and proceed directly to rollback/failure.
+    const failMem = FailureMemory.forRun(run.id);
+    const fingerprint = buildErrorFingerprint(errorMessage);
+    const equivalentCount = await failMem.countEquivalentFailures(node, fingerprint);
+    if (equivalentCount >= 3 && nextRetry < maxAttempts) {
+      run.graph.retryCounters[node] = maxAttempts; // exhaust retries
+      this.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId: run.id,
+        node,
+        payload: {
+          text: `Stopping retries for ${node}: same failure pattern repeated ${equivalentCount} times. Escalating to rollback.`
+        }
+      });
+    }
 
     this.syncLatestSummary(run, node);
     const failCheckpoint = await this.saveCheckpointAndPersist(run, "fail", errorMessage);

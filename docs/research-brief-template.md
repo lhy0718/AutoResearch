@@ -88,6 +88,66 @@ Required:
 - split or validation discipline
 - known limitations
 
+## Target Comparison
+Specify the primary comparison the experiment should produce.
+
+Required:
+- proposed method or condition name
+- comparator or baseline name
+- comparison dimension (metric, setting, or resource)
+- direction of expected improvement
+
+Example:
+- Proposed: shared_state_schema condition
+- Comparator: free_form_chat baseline
+- Dimension: macro-F1 on tabular classification
+- Expected: +0.5 macro-F1 over baseline
+
+## Minimum Acceptable Evidence
+Define the threshold below which the result is not useful.
+
+Required:
+- minimum effect size or decision boundary
+- minimum number of runs or folds
+- what counts as "no signal" vs. "weak signal"
+
+Example:
+- At least 3 outer folds with consistent direction
+- At least +0.3 macro-F1 improvement to claim meaningful gain
+- If 95% CI crosses zero, classify as inconclusive
+
+## Disallowed Shortcuts
+List experimental shortcuts that would invalidate the result.
+
+Examples:
+- Do not use workflow smoke artifacts as experimental evidence.
+- Do not cherry-pick a single favorable dataset and omit others.
+- Do not fabricate or interpolate missing metric values.
+- Do not claim statistical significance without running the test.
+- Do not skip the baseline condition even if it seems obviously weaker.
+
+## Allowed Budgeted Passes
+Specify any additional analysis passes that are permitted within the compute budget.
+
+Examples:
+- One optional second-stage judging/reranking pass using a stronger model
+- One optional verifier pass that re-evaluates ambiguous outputs
+- No additional passes beyond the primary and confirmatory profiles
+
+Budget note: total experiment cost should not exceed the stated compute constraint.
+
+## Paper Ceiling If Evidence Remains Weak
+State the maximum paper classification if the evidence does not clear the minimum bar.
+
+Options:
+- `system_validation_note` — pipeline runs but no external task evidence
+- `research_memo` — some evidence but below paper-scale requirements
+- `blocked_for_paper_scale` — evidence exists but is structurally insufficient
+
+Example:
+If macro-F1 improvement is below +0.3 or only one dataset shows improvement,
+cap the output at `research_memo` and do not claim a paper-ready result.
+
 ## Minimum Experiment Plan
 Describe the minimum experiment package required before the run can be called paper-scale candidate.
 

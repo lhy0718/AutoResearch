@@ -23,6 +23,7 @@ import {
   storeExperimentGovernanceDecision
 } from "../experimentGovernance.js";
 import { RunVerifierReport, RunVerifierTrigger } from "../experiments/runVerifierFeedback.js";
+import { FailureMemory, buildErrorFingerprint } from "../experiments/failureMemory.js";
 import {
   buildRunExperimentsExecutionPlan,
   classifyRunExperimentsFailure,
@@ -90,6 +91,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
       await runContext.put("run_experiments.triage", null);
 
       const defaultMetricsPath = path.join(process.cwd(), ".autolabos", "runs", run.id, "metrics.json");
+      const failureMemory = FailureMemory.forRun(run.id);
       const triageAttempts: RunExperimentsTriageAttempt[] = [];
       let executionPlan: RunExperimentsExecutionPlan | undefined;
       let rerunDecision: RunExperimentsRerunDecision = {
@@ -107,6 +109,43 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           triageAttempts,
           watchdog,
           rerunDecision
+        });
+      };
+
+      // --- Failure memory: check for do-not-retry before starting ---
+      const priorDoNotRetry = await failureMemory.hasDoNotRetry("run_experiments");
+      if (priorDoNotRetry) {
+        deps.eventStream.emit({
+          type: "OBS_RECEIVED",
+          runId: run.id,
+          node: "run_experiments",
+          payload: {
+            text: "Failure memory contains a do-not-retry marker for run_experiments. This attempt will proceed but previous structural failures should be reviewed."
+          }
+        });
+      }
+
+      /** Record a failure to the run-scoped failure memory JSONL. */
+      const recordRunFailure = async (
+        errorMsg: string,
+        failureClass: "transient" | "structural" | "equivalent" | "resource" | "unknown"
+      ) => {
+        const fingerprint = buildErrorFingerprint(errorMsg);
+        const equivalentCount = await failureMemory.countEquivalentFailures("run_experiments", fingerprint);
+        const doNotRetry = failureClass === "structural" || equivalentCount >= 2;
+        await failureMemory.append({
+          run_id: run.id,
+          node_id: "run_experiments",
+          attempt: (run.graph.retryCounters.run_experiments ?? 0) + 1,
+          failure_class: equivalentCount >= 2 ? "equivalent" : failureClass,
+          error_fingerprint: fingerprint,
+          error_message: errorMsg.slice(0, 1200),
+          do_not_retry: doNotRetry,
+          do_not_retry_reason: doNotRetry
+            ? equivalentCount >= 2
+              ? `Same failure pattern repeated ${equivalentCount + 1} times without improvement.`
+              : "Structural failure unlikely to resolve without design change."
+            : undefined
         });
       };
 
@@ -477,6 +516,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
               log_file: logFile
             }
           });
+          await recordRunFailure(obs.stderr || "Experiment command failed", "structural");
           return {
             status: "failure",
             error: obs.stderr || "Experiment command failed",
@@ -554,6 +594,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
               metrics_path: resolved.metricsPath
             }
           });
+          await recordRunFailure(missingMessage, "structural");
           return {
             status: "failure",
             error: missingMessage,
@@ -662,6 +703,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
               metrics_path: resolved.metricsPath
             }
           });
+          await recordRunFailure(metricsError, "structural");
           return {
             status: "failure",
             error: metricsError,
