@@ -391,6 +391,39 @@ describe("StateGraphRuntime", () => {
     expect(persisted?.graph.nodeStates.analyze_results.lastError).toBeUndefined();
   });
 
+  it("backward jump resets the target node itself to pending (LV-019)", async () => {
+    const { store, runtime } = await setup(new Registry({}));
+
+    const run = await store.createRun({
+      title: "LV-019 backward jump target reset",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "analyze_results";
+    run.graph.currentNode = "analyze_results";
+    run.status = "paused";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "skipped";
+    run.graph.nodeStates.implement_experiments.status = "completed";
+    run.graph.nodeStates.run_experiments.status = "completed";
+    run.graph.nodeStates.analyze_results.status = "completed";
+    await store.updateRun(run);
+
+    const jumped = await runtime.jumpToNode(run.id, "design_experiments", "force", "objective not met");
+    // Target node itself must be reset to pending, not stay as skipped
+    expect(jumped.graph.nodeStates.design_experiments.status).toBe("pending");
+    expect(jumped.graph.nodeStates.implement_experiments.status).toBe("pending");
+    expect(jumped.graph.nodeStates.run_experiments.status).toBe("pending");
+    expect(jumped.graph.nodeStates.analyze_results.status).toBe("pending");
+
+    const persisted = await store.getRun(run.id);
+    expect(persisted?.graph.nodeStates.design_experiments.status).toBe("pending");
+  });
+
   it("runUntilPause returns immediately when run status is already failed", async () => {
     const registry = new Registry({
       implement_experiments: {

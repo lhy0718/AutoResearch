@@ -7,7 +7,15 @@
 
 ## Active issues
 
-None
+### LV-019 — Backward jump does not reset target node to pending
+- Status: FIXED
+- Root-cause class: `persisted_state_bug`
+- Validation target: analyze_results → backward jump to design_experiments
+- Reproduction: After analyze_results detects objective not met and recommends backward jump to design_experiments, the jump resets all nodes _after_ the target to "pending" but leaves the target node itself with its old status ("skipped"). This causes the pipeline to be stuck — design_experiments cannot be re-executed.
+- Root cause: In `StateGraphRuntime.jumpToNode()`, the backward-jump reset loop started at `targetIdx + 1` instead of `targetIdx`, so the target node was never reset.
+- Fix: Changed loop start from `targetIdx + 1` to `targetIdx` in `src/core/stateGraph/runtime.ts` line 496.
+- Tests: Added regression test "backward jump resets the target node itself to pending (LV-019)" in `tests/stateGraphRuntime.test.ts` — all 10 tests passing.
+- Regression: None observed.
 
 ## Live-validation bugs
 

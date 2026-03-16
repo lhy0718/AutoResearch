@@ -493,7 +493,8 @@ export class StateGraphRuntime {
 
     if (targetIdx < currentIdx) {
       run.graph.researchCycle = (run.graph.researchCycle || 0) + 1;
-      for (let idx = targetIdx + 1; idx < GRAPH_NODE_ORDER.length; idx += 1) {
+      // Reset the target node itself so it can be re-executed (LV-019 fix)
+      for (let idx = targetIdx; idx < GRAPH_NODE_ORDER.length; idx += 1) {
         const node = GRAPH_NODE_ORDER[idx];
         run.graph.nodeStates[node] = {
           ...run.graph.nodeStates[node],
