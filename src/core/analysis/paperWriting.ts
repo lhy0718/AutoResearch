@@ -117,6 +117,14 @@ export interface PaperWritingBundle {
     requiredActions: string[];
     topFindings: string[];
   };
+  gateWarnings?: GateWarningItem[];
+}
+
+export interface GateWarningItem {
+  severity: string;
+  category: string;
+  message: string;
+  outcome?: string;
 }
 
 export interface PaperDraftParagraph {

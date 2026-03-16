@@ -36,6 +36,7 @@ import {
   renderSubmissionPaperTex
 } from "../analysis/paperManuscript.js";
 import {
+  applyGateWarningsToLimitations,
   applyScientificWritingPolicy,
   buildScientificValidationArtifact,
   buildWritePaperGateDecision,
@@ -402,6 +403,19 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         consistencyLint: scientificManuscript.consistency_lint,
         appendixLint: scientificManuscript.appendix_lint
       });
+
+      // Surface non-blocking gate warnings as explicit limitations
+      const nonBlockingWarnings = gateDecision.issues.filter((i) => !i.blocking);
+      if (nonBlockingWarnings.length > 0) {
+        bundle.gateWarnings = nonBlockingWarnings.map((i) => ({
+          severity: i.severity,
+          category: i.category,
+          message: i.message,
+          outcome: i.outcome
+        }));
+        paperDraft = applyGateWarningsToLimitations(paperDraft, bundle.gateWarnings);
+      }
+
       const manuscript = scientificManuscript.manuscript;
       const traceability = buildPaperTraceability({
         draft: paperDraft,

@@ -4,6 +4,7 @@ import type { PaperProfileConfig } from "../../types.js";
 import type { ObjectiveMetricEvaluation, ObjectiveMetricProfile } from "../objectiveMetric.js";
 import type { ConstraintProfile } from "../runConstraints.js";
 import type {
+  GateWarningItem,
   PaperDraft,
   PaperDraftClaim,
   PaperDraftParagraph,
@@ -3819,18 +3820,26 @@ function buildSectionParagraphCandidates(
         inferSectionEvidenceIds(undefined, bundle),
         inferSectionCitationIds(undefined, bundle)
       );
-    case "limitations":
-      return buildParagraphsFromSentences(
+    case "limitations": {
+      const baseSentences: string[][] = [
         [
-          [
-            context.discussion.limitations[0] ||
-              "The current paper is limited by the granularity of upstream artifacts and the scope of the available evaluation traces.",
-            context.results.ci_unavailable_reason || ""
-          ]
-        ],
+          context.discussion.limitations[0] ||
+            "The current paper is limited by the granularity of upstream artifacts and the scope of the available evaluation traces.",
+          context.results.ci_unavailable_reason || ""
+        ]
+      ];
+
+      const gateWarnings = bundle.gateWarnings ?? [];
+      if (gateWarnings.length > 0) {
+        baseSentences.push(buildGateWarningLimitationSentences(gateWarnings));
+      }
+
+      return buildParagraphsFromSentences(
+        baseSentences,
         inferSectionEvidenceIds(undefined, bundle),
         inferSectionCitationIds(undefined, bundle)
       );
+    }
     case "conclusion":
       return buildParagraphsFromSentences(
         [
@@ -3845,6 +3854,53 @@ function buildSectionParagraphCandidates(
     default:
       return [];
   }
+}
+
+export function buildGateWarningLimitationSentences(gateWarnings: GateWarningItem[]): string[] {
+  const warningsByCategory = new Map<string, string[]>();
+  for (const w of gateWarnings) {
+    const cat = w.category || "general";
+    const existing = warningsByCategory.get(cat) ?? [];
+    existing.push(w.message);
+    warningsByCategory.set(cat, existing);
+  }
+
+  const sentences: string[] = [];
+  for (const [category, messages] of warningsByCategory) {
+    const label = category.replace(/_/g, " ");
+    sentences.push(
+      `The automated quality gate flagged ${label} concerns: ${messages[0]}.`
+    );
+  }
+  return sentences.slice(0, 3);
+}
+
+export function applyGateWarningsToLimitations(
+  draft: PaperDraft,
+  gateWarnings: GateWarningItem[]
+): PaperDraft {
+  if (gateWarnings.length === 0) {
+    return draft;
+  }
+  const sentences = buildGateWarningLimitationSentences(gateWarnings);
+  if (sentences.length === 0) {
+    return draft;
+  }
+  const warningParagraph: PaperDraftParagraph = {
+    text: cleanString(sentences.join(" ")),
+    evidence_ids: [],
+    citation_paper_ids: []
+  };
+  const sections = draft.sections.map((section) => {
+    if (normalizeHeading(section.heading) !== "limitations") {
+      return section;
+    }
+    return {
+      ...section,
+      paragraphs: [...section.paragraphs, warningParagraph]
+    };
+  });
+  return { ...draft, sections };
 }
 
 function buildPracticalImplications(
