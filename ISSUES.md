@@ -1,13 +1,13 @@
 # ISSUES.md
 
 ## Current status
-- Last updated: 2026-03-16T15:55:00 KST
-- Current validation target: adaptive test-time compute experiment — LV-017 fixed, need to re-run write_paper
+- Last updated: 2026-03-16T17:40:00 KST
+- Current validation target: adaptive test-time compute experiment — write_paper completed, evaluating quality
 - Current test/ workspace: `test/tui-adaptive-ttc-20260316-073416`
 - Current active run: `db7035d3-cc98-4dff-9303-214de6cdefd0`
-- Current overall state: LV-017 fixed (paper writer now uses staged_llm in ollama mode); run paused at review after write_paper exhausted retries; needs counter reset + re-run
+- Current overall state: write_paper completed (needs_approval), manuscript_type=research_memo, gate=warn(46), no blocking issues
 - Current paper-scale target: adaptive test-time compute for small reasoning LLMs
-- Current paper readiness state: blocked (LV-017 fixed; need to re-run write_paper with corrected LLM routing)
+- Current paper readiness state: research_memo — negative result (adaptive ≤ single-pass on GSM8K), not paper-ready
 - Previous validation target: calibration research run (completed, paper_scale_candidate)
 
 ## Active live-validation issues
@@ -205,6 +205,8 @@
 - Tests: `tests/paperWriterSessionManager.test.ts` — added "LV-017: uses staged_llm mode when llm_mode is ollama (not codex_session)"
 - Test result: 826 tests pass (80 files), including the new test.
 - Regression check: build passes, all tests pass.
+- Live validation: write_paper completed successfully with staged_llm mode, 14 sections, gate=warn(46), manuscript_type=research_memo.
+- Related fix: `src/core/nodes/writePaper.ts` — missing pdflatex treated as non-fatal warning (commit `0de2760`). Previously, the write_paper node returned `status: "failure"` when pdflatex was not installed, triggering infinite retries despite successful LaTeX source generation.
 
 ## Research completion risks
 
