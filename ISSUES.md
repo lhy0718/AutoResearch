@@ -1,13 +1,13 @@
 # ISSUES.md
 
 ## Current status
-- Last updated: 2026-03-16T14:35:00 KST
-- Current validation target: adaptive test-time compute experiment — full `/brief start --latest` cycle
+- Last updated: 2026-03-16T15:30:00 KST
+- Current validation target: adaptive test-time compute experiment — write_paper gate fix + re-run
 - Current test/ workspace: `test/tui-adaptive-ttc-20260316-073416`
 - Current active run: `db7035d3-cc98-4dff-9303-214de6cdefd0`
-- Current overall state: paused at run_experiments (overnight canceled after LV-015 fix; needs restart with backward-jump limit)
+- Current overall state: write_paper failed 3/3 attempts due to LV-016 (now fixed); rolled back to review; needs restart
 - Current paper-scale target: adaptive test-time compute for small reasoning LLMs
-- Current paper readiness state: blocked (experiment shows negative or zero adaptive gain with Qwen2.5-3B-Instruct; 9 backtrack cycles exhausted without improvement)
+- Current paper readiness state: blocked (LV-016 fixed; need to re-run write_paper with fixed consistency lint)
 - Previous validation target: calibration research run (completed, paper_scale_candidate)
 
 ## Active live-validation issues
@@ -162,6 +162,37 @@
 
 - Regression test: `tests/stateGraphRuntime.test.ts` — "pauses instead of auto-applying backward jump when maxAutoBackwardJumps is reached (LV-015)"
 - Test result: 777 tests pass (77 files), including the new test.
+
+### LV-016 — Comma-separated numbers split into phantom matches by consistency lint (RESOLVED)
+- Status: resolved
+- Dominant root-cause class: `in_memory_projection_bug`
+- First observed: 2026-03-16T15:10:00 KST (this session)
+
+- Reproduction steps:
+  1. Let `write_paper` produce a manuscript with comma-formatted numbers (e.g. "20,789 tokens").
+  2. The consistency lint's `collectNumericLiteralMatches()` regex `/-?\d+(?:\.\d+)?/` splits "20,789" into "20" and "789".
+  3. "789" is classified as `runtime_seconds` due to nearby "latency" keyword.
+  4. "789" is compared against structured `runtime_seconds` value 828.56 — relative delta 4.8% is under 15%, so it's treated as a "contradiction" (`severity: "error"`).
+  5. The gate blocks `write_paper` with `blocking_issue_count: 1`.
+  6. All 3 retry attempts fail with the same blocking error.
+
+- Expected behavior: "20,789" should be parsed as a single number 20789 (token count), not split into "20" and "789".
+- Actual behavior: "789" extracted as a phantom numeric fact with `metric_key: "runtime_seconds"`, causing a blocking gate error.
+
+- Root cause:
+  - `collectNumericLiteralMatches()` used regex `/-?\d+(?:\.\d+)?/gu` which doesn't handle comma-separated thousands groups.
+  - The comma in "20,789" acts as a break, producing two separate matches: "20" and "789".
+  - The `before` character filter (`!/[A-Za-z0-9]/`) passes for commas, so "789" is accepted as a valid match.
+
+- Fix:
+  1. Changed regex to `/-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?/gu` to match comma-separated thousands as a single token.
+  2. Added comma stripping (`rawValue.replace(/,/g, "")`) at the `Number()` conversion point in `extractMetricFactsFromText()`.
+  3. Kept original raw text (with commas) for position calculations in `shouldSkipMetricToken()`.
+
+- Files changed: `src/core/analysis/scientificWriting.ts`
+- Tests: `tests/scientificWriting.test.ts` — added "LV-016: comma-separated numbers are not split into phantom matches"
+- Test result: 801 tests pass (78 files), including the new test.
+- Regression check: build passes, all tests pass.
 
 ## Research completion risks
 

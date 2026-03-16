@@ -982,4 +982,59 @@ describe("scientificWriting", () => {
     );
     expect(blockingErrors).toHaveLength(0);
   });
+
+  it("LV-016: comma-separated numbers (e.g. 20,789) are not split into phantom matches", () => {
+    const bundle = makeRichBundle();
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle,
+      profile: PAPER_PROFILE
+    });
+    // Manuscript text mentions "20,789 tokens" — previously the regex split
+    // this into "20" and "789", and "789" was close enough to runtime_seconds
+    // (828.56) to produce a blocking "contradiction" error.
+    const candidate: PaperManuscript = {
+      title: "Token Count Study",
+      abstract: "The adaptive condition generated 20,789 tokens total.",
+      keywords: ["test-time compute"],
+      sections: [
+        { heading: "Introduction", paragraphs: ["We study adaptive inference."] },
+        { heading: "Method", paragraphs: ["We evaluate 2 datasets with outer 5-fold CV and inner 3-fold tuning."] },
+        {
+          heading: "Results",
+          paragraphs: [
+            "The adaptive condition generated 20,789 tokens in total, " +
+            "while the baseline generated 19,002 tokens. " +
+            "Average latency rose from 736.84 ms to 828.56 ms."
+          ]
+        },
+        { heading: "Conclusion", paragraphs: ["Token savings remain modest."] }
+      ]
+    };
+    const manuscript = materializeScientificManuscript({
+      candidate,
+      draft: scientific.draft,
+      bundle,
+      profile: PAPER_PROFILE,
+      appendixPlan: scientific.appendix_plan,
+      pageBudget: scientific.page_budget
+    });
+
+    // "789" must NOT appear as a standalone extracted numeric fact
+    const phantomFact = manuscript.consistency_lint.issues.find(
+      (issue) =>
+        issue.kind === "numeric_inconsistency" &&
+        (issue.normalized_facts || []).some((f) => f.value === 789)
+    );
+    expect(phantomFact).toBeUndefined();
+
+    // "20789" (the correct parsed value) should not produce a blocking error either
+    const blockingFromComma = manuscript.consistency_lint.issues.filter(
+      (issue) =>
+        issue.kind === "numeric_inconsistency" &&
+        issue.severity === "error" &&
+        (issue.normalized_facts || []).some((f) => f.value === 20789 || f.value === 19002)
+    );
+    expect(blockingFromComma).toHaveLength(0);
+  });
 });

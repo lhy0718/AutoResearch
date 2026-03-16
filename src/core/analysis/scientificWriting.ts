@@ -2171,7 +2171,7 @@ function extractMetricFactsFromText(input: {
     for (let index = 0; index < retainedMatches.length; index += 1) {
       const match = retainedMatches[index];
       const rawValue = match.raw;
-      const value = Number(rawValue);
+      const value = Number(rawValue.replace(/,/g, ""));
       if (!Number.isFinite(value)) {
         continue;
       }
@@ -2946,7 +2946,8 @@ function extractExpectedCountFromNotes(notes: string[], kind: CountFactKind): nu
 function collectNumericLiteralMatches(text: string): Array<{ raw: string; index: number }> {
   const cleaned = cleanString(text);
   const matches: Array<{ raw: string; index: number }> = [];
-  const pattern = /-?\d+(?:\.\d+)?/gu;
+  // Match comma-separated thousands groups (e.g. "20,789") as well as plain numbers.
+  const pattern = /-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?/gu;
   let match = pattern.exec(cleaned);
   while (match) {
     const raw = match[0] || "";
