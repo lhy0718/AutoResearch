@@ -120,6 +120,11 @@ export class OllamaLLMClient implements LLMClient {
     opts?.onProgress?.({ type: "status", text: `Submitting request to Ollama (${model}).` });
 
     const hasImages = opts?.inputImagePaths && opts.inputImagePaths.length > 0;
+
+    // Use streaming for text-only requests with a progress callback to provide live feedback.
+    // Image requests and calls without onProgress use non-streaming for stability.
+    const useStream = !hasImages && Boolean(opts?.onProgress);
+
     const result = hasImages
       ? await this.ollama.chatWithImages({
           model,
@@ -128,14 +133,24 @@ export class OllamaLLMClient implements LLMClient {
           imagePaths: opts!.inputImagePaths!,
           abortSignal: opts?.abortSignal
         })
-      : await this.ollama.chat({
-          model,
-          messages: [
-            ...(opts?.systemPrompt ? [{ role: "system" as const, content: opts.systemPrompt }] : []),
-            { role: "user" as const, content: prompt }
-          ],
-          abortSignal: opts?.abortSignal
-        });
+      : useStream
+        ? await this.ollama.chatStream({
+            model,
+            messages: [
+              ...(opts?.systemPrompt ? [{ role: "system" as const, content: opts.systemPrompt }] : []),
+              { role: "user" as const, content: prompt }
+            ],
+            abortSignal: opts?.abortSignal,
+            onToken: createOllamaStreamEmitter(opts?.onProgress)
+          })
+        : await this.ollama.chat({
+            model,
+            messages: [
+              ...(opts?.systemPrompt ? [{ role: "system" as const, content: opts.systemPrompt }] : []),
+              { role: "user" as const, content: prompt }
+            ],
+            abortSignal: opts?.abortSignal
+          });
 
     opts?.onProgress?.({ type: "status", text: "Received Ollama output." });
 
@@ -259,6 +274,30 @@ function extractTextFromUnknown(value: unknown): string {
     return direct;
   }
   return extractTextFromUnknown(record.content);
+}
+
+function createOllamaStreamEmitter(
+  onProgress?: (event: LLMProgressEvent) => void
+): ((token: string) => void) | undefined {
+  if (!onProgress) return undefined;
+  let buffer = "";
+  let lastEmitMs = 0;
+  return (token: string) => {
+    buffer += token;
+    const now = Date.now();
+    if (lastEmitMs === 0) lastEmitMs = now;
+    const hasBreak = /[\n\r]/u.test(buffer);
+    const longEnough = buffer.length >= 48;
+    const stale = now - lastEmitMs >= 500;
+    if (hasBreak || longEnough || stale) {
+      const text = buffer.replace(/\s+/g, " ").trim().slice(0, 220);
+      if (text) {
+        onProgress({ type: "delta", text });
+      }
+      buffer = "";
+      lastEmitMs = now;
+    }
+  };
 }
 
 function oneLine(text: string): string {

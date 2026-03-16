@@ -832,4 +832,101 @@ describe("OllamaClient", () => {
     expect(result.text).toBe("fake chat output");
     expect(result.model).toBe("test-model");
   });
+
+  it("chatStream returns fake response when env var is set", async () => {
+    process.env.AUTOLABOS_FAKE_OLLAMA_RESPONSE = "streamed fake output";
+    const client = new OllamaClient(DEFAULT_OLLAMA_BASE_URL);
+    const tokens: string[] = [];
+    const result = await client.chatStream({
+      model: "test-model",
+      messages: [{ role: "user", content: "hello" }],
+      onToken: (token) => tokens.push(token)
+    });
+    expect(result.text).toBe("streamed fake output");
+    expect(tokens).toEqual(["streamed fake output"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Doctor: pdftoppm check for ollama_vision
+// ---------------------------------------------------------------------------
+describe("Doctor pdftoppm for ollama_vision", () => {
+  it("includes pdftoppm check when pdfAnalysisMode is ollama_vision", async () => {
+    const fakeCodex = {
+      checkCliAvailable: vi.fn().mockResolvedValue({ ok: true, detail: "ok" }),
+      checkLoginStatus: vi.fn().mockResolvedValue({ ok: true, detail: "ok" }),
+      checkEnvironmentReadiness: vi.fn().mockResolvedValue([])
+    };
+
+    const report = await runDoctorReport(fakeCodex as any, {
+      llmMode: "ollama",
+      pdfAnalysisMode: "ollama_vision",
+      ollamaBaseUrl: DEFAULT_OLLAMA_BASE_URL,
+      includeHarnessValidation: false
+    });
+
+    const checkNames = report.checks.map((c) => c.name);
+    expect(checkNames).toContain("pdftoppm");
+    expect(checkNames).toContain("pdftotext");
+    expect(checkNames).toContain("pdfinfo");
+  });
+
+  it("does not include pdftoppm when pdfAnalysisMode is responses_api_pdf", async () => {
+    const fakeCodex = {
+      checkCliAvailable: vi.fn().mockResolvedValue({ ok: true, detail: "ok" }),
+      checkLoginStatus: vi.fn().mockResolvedValue({ ok: true, detail: "ok" }),
+      checkEnvironmentReadiness: vi.fn().mockResolvedValue([])
+    };
+
+    const report = await runDoctorReport(fakeCodex as any, {
+      llmMode: "openai_api",
+      pdfAnalysisMode: "responses_api_pdf",
+      openAiApiKeyConfigured: true,
+      includeHarnessValidation: false
+    });
+
+    const checkNames = report.checks.map((c) => c.name);
+    expect(checkNames).not.toContain("pdftoppm");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OllamaLLMClient streaming integration
+// ---------------------------------------------------------------------------
+describe("OllamaLLMClient streaming", () => {
+  it("emits delta progress events during streaming", async () => {
+    process.env.AUTOLABOS_FAKE_OLLAMA_RESPONSE = "A fairly long response that should trigger the buffer flush in the stream emitter because it exceeds 48 chars.";
+    const client = new OllamaClient(DEFAULT_OLLAMA_BASE_URL);
+    const llm = new OllamaLLMClient(client, { model: "test-model" });
+
+    const events: Array<{ type: string; text: string }> = [];
+    const result = await llm.complete("hello", {
+      onProgress: (event) => events.push(event)
+    });
+
+    expect(result.text).toBeTruthy();
+    // Should have at least one status event
+    expect(events.some((e) => e.type === "status")).toBe(true);
+  });
+
+  it("does not stream when images are provided", async () => {
+    process.env.AUTOLABOS_FAKE_OLLAMA_RESPONSE = "image response";
+    const client = new OllamaClient(DEFAULT_OLLAMA_BASE_URL);
+    const llm = new OllamaLLMClient(client, { model: "test-model" });
+
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "ollama-no-stream-"));
+    const imgPath = path.join(tmpDir, "test.png");
+    await fs.writeFile(imgPath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00]));
+
+    const events: Array<{ type: string; text: string }> = [];
+    const result = await llm.complete("describe", {
+      inputImagePaths: [imgPath],
+      onProgress: (event) => events.push(event)
+    });
+
+    expect(result.text).toBe("image response");
+    // Should have status events but no delta (images use non-streaming)
+    const deltas = events.filter((e) => e.type === "delta");
+    expect(deltas.length).toBe(0);
+  });
 });

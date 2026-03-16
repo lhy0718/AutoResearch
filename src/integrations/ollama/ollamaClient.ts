@@ -166,6 +166,130 @@ export class OllamaClient {
     }
   }
 
+  async chatStream(opts: {
+    model: string;
+    messages: OllamaMessage[];
+    options?: Record<string, unknown>;
+    abortSignal?: AbortSignal;
+    timeoutMs?: number;
+    onToken?: (token: string) => void;
+  }): Promise<OllamaCompletionResult> {
+    const fakeResponse = resolveFakeOllamaResponse();
+    if (typeof fakeResponse === "string" && fakeResponse.trim()) {
+      opts.onToken?.(fakeResponse);
+      return { text: fakeResponse, model: opts.model };
+    }
+
+    const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    if (opts.abortSignal) {
+      opts.abortSignal.addEventListener("abort", () => controller.abort(), { once: true });
+    }
+
+    try {
+      const body: Record<string, unknown> = {
+        model: opts.model,
+        messages: opts.messages,
+        stream: true,
+        ...(opts.options ? { options: opts.options } : {})
+      };
+
+      const response = await fetch(`${this.baseUrl}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal
+      });
+
+      if (!response.ok) {
+        const raw = await safeReadText(response);
+        throw new Error(`Ollama /api/chat stream failed: HTTP ${response.status}${raw ? ` — ${raw}` : ""}`);
+      }
+
+      if (!response.body) {
+        throw new Error("Ollama /api/chat stream returned no body.");
+      }
+
+      const chunks: string[] = [];
+      let finalModel: string | undefined;
+      let promptEvalCount: number | undefined;
+      let evalCount: number | undefined;
+      let totalDuration: number | undefined;
+      let partial = "";
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        partial += decoder.decode(value, { stream: true });
+        const lines = partial.split("\n");
+        partial = lines.pop() ?? "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try {
+            const parsed = JSON.parse(trimmed) as OllamaChatResponse;
+            if (parsed.error) {
+              throw new Error(`Ollama stream error: ${parsed.error}`);
+            }
+            const token = parsed.message?.content ?? "";
+            if (token) {
+              chunks.push(token);
+              opts.onToken?.(token);
+            }
+            if (parsed.done) {
+              finalModel = parsed.model;
+              promptEvalCount = parsed.prompt_eval_count;
+              evalCount = parsed.eval_count;
+              totalDuration = parsed.total_duration;
+            }
+          } catch (parseErr) {
+            if (parseErr instanceof Error && parseErr.message.startsWith("Ollama stream error:")) {
+              throw parseErr;
+            }
+            // Skip malformed NDJSON lines
+          }
+        }
+      }
+
+      // Process any remaining partial line
+      if (partial.trim()) {
+        try {
+          const parsed = JSON.parse(partial.trim()) as OllamaChatResponse;
+          const token = parsed.message?.content ?? "";
+          if (token) {
+            chunks.push(token);
+            opts.onToken?.(token);
+          }
+          if (parsed.done) {
+            finalModel = parsed.model;
+            promptEvalCount = parsed.prompt_eval_count;
+            evalCount = parsed.eval_count;
+            totalDuration = parsed.total_duration;
+          }
+        } catch {
+          // ignore trailing partial
+        }
+      }
+
+      return {
+        text: chunks.join(""),
+        model: finalModel || opts.model,
+        totalDuration,
+        promptEvalCount,
+        evalCount
+      };
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
   async chatWithImages(opts: {
     model: string;
     prompt: string;

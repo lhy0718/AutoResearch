@@ -30,6 +30,17 @@ import {
   normalizeOpenAiResponsesReasoningEffort,
   supportsOpenAiResponsesReasoning
 } from "../integrations/openai/modelCatalog.js";
+import {
+  DEFAULT_OLLAMA_BASE_URL,
+  DEFAULT_OLLAMA_CHAT_MODEL,
+  DEFAULT_OLLAMA_RESEARCH_MODEL,
+  DEFAULT_OLLAMA_EXPERIMENT_MODEL,
+  DEFAULT_OLLAMA_VISION_MODEL,
+  OLLAMA_CHAT_MODEL_OPTIONS,
+  OLLAMA_RESEARCH_MODEL_OPTIONS,
+  OLLAMA_EXPERIMENT_MODEL_OPTIONS,
+  OLLAMA_VISION_MODEL_OPTIONS
+} from "../integrations/ollama/modelCatalog.js";
 import { buildSuggestions } from "./commandPalette/suggest.js";
 import { SLASH_COMMANDS } from "./commandPalette/commands.js";
 import { parseSlashCommand, tokenizeShellLike } from "../core/commands/parseSlash.js";
@@ -2972,7 +2983,25 @@ export class TerminalApp {
       await upsertEnvVar(path.join(process.cwd(), ".env"), "OPENAI_API_KEY", openAiApiKey.trim());
     }
 
-    if (llmMode === "codex_chatgpt_only") {
+    if (llmMode === "ollama") {
+      this.ensureOllamaConfig();
+      const baseUrl = await this.askWithinTui(
+        "Ollama base URL",
+        this.config.providers.ollama?.base_url || DEFAULT_OLLAMA_BASE_URL
+      );
+      if (!baseUrl.trim()) {
+        this.pushLog("Settings update canceled.");
+        return;
+      }
+      this.config.providers.ollama!.base_url = baseUrl.trim();
+
+      const chatModel = await this.selectOllamaSlot("chat");
+      if (!chatModel) {
+        this.pushLog("Settings update canceled.");
+        return;
+      }
+      this.config.providers.ollama!.chat_model = chatModel;
+    } else if (llmMode === "codex_chatgpt_only") {
       const chatSlot = await this.selectCodexSlot(
         "general chat",
         this.getCurrentCodexSlotSelection("chat"),
@@ -3008,6 +3037,8 @@ export class TerminalApp {
         model: this.config.providers.openai.model,
         reasoningEffort: this.config.providers.openai.reasoning_effort
       });
+    } else if (this.config.providers.llm_mode === "ollama") {
+      // Ollama client picks model per-call from config; no runtime update needed.
     } else {
       this.codex?.updateDefaults?.({
         model: this.config.providers.codex.model,
@@ -3020,7 +3051,9 @@ export class TerminalApp {
     const analysisSummary =
       this.config.analysis.pdf_mode === "responses_api_pdf"
         ? `${this.describePdfAnalysisMode(this.config.analysis.pdf_mode)} (${this.config.analysis.responses_model})`
-        : this.describePdfAnalysisMode(this.config.analysis.pdf_mode);
+        : this.config.analysis.pdf_mode === "ollama_vision"
+          ? `${this.describePdfAnalysisMode(this.config.analysis.pdf_mode)} (${this.config.providers.ollama?.vision_model || DEFAULT_OLLAMA_VISION_MODEL})`
+          : this.describePdfAnalysisMode(this.config.analysis.pdf_mode);
     const approvalSummary = this.config.workflow?.approval_mode === "manual" ? "Manual" : "Minimal";
     this.pushLog(
       `Settings saved. Workflow mode: Agent approval. Approval mode: ${approvalSummary}. LLM provider: ${this.describePrimaryLlmProvider(this.config.providers.llm_mode)}. PDF analysis mode: ${analysisSummary}.`
@@ -3065,6 +3098,10 @@ export class TerminalApp {
       return;
     }
 
+    if (this.config.providers.llm_mode === "ollama") {
+      await this.handleOllamaModelSelection(slot as "chat" | "task" | "pdf");
+      return;
+    }
     if (this.config.providers.llm_mode === "openai_api") {
       await this.handleOpenAiApiModelSelection(slot as "chat" | "task" | "pdf");
       return;
@@ -3075,7 +3112,7 @@ export class TerminalApp {
   private async applyModelBackendSelection(
     llmMode: AppConfig["providers"]["llm_mode"]
   ): Promise<boolean> {
-    const nextMode = llmMode === "openai_api" ? "openai_api" : "codex_chatgpt_only";
+    const nextMode = llmMode;
     if (nextMode === "openai_api" && !(await resolveOpenAiApiKey(process.cwd()))) {
       const openAiApiKey = await this.askWithinTui("OpenAI API key", "");
       if (!openAiApiKey.trim()) {
@@ -3083,6 +3120,19 @@ export class TerminalApp {
         return false;
       }
       await upsertEnvVar(path.join(process.cwd(), ".env"), "OPENAI_API_KEY", openAiApiKey.trim());
+    }
+
+    if (nextMode === "ollama") {
+      this.ensureOllamaConfig();
+      const baseUrl = await this.askWithinTui(
+        "Ollama base URL",
+        this.config.providers.ollama?.base_url || DEFAULT_OLLAMA_BASE_URL
+      );
+      if (!baseUrl.trim()) {
+        this.pushLog("Ollama base URL is required.");
+        return false;
+      }
+      this.config.providers.ollama!.base_url = baseUrl.trim();
     }
 
     if (this.config.providers.llm_mode === nextMode) {
@@ -3179,7 +3229,7 @@ export class TerminalApp {
         model: this.config.providers.openai.model,
         reasoningEffort: this.config.providers.openai.reasoning_effort
       });
-    } else {
+    } else if (this.config.providers.llm_mode !== "ollama") {
       this.codex?.updateDefaults?.({
         model: this.config.providers.codex.model,
         reasoningEffort: this.config.providers.codex.reasoning_effort,
@@ -3195,7 +3245,29 @@ export class TerminalApp {
     llmMode: AppConfig["providers"]["llm_mode"],
     cancelMessage: string
   ): Promise<boolean> {
-    if (llmMode === "openai_api") {
+    if (llmMode === "ollama") {
+      this.ensureOllamaConfig();
+      const researchModel = await this.selectOllamaSlot("research");
+      if (!researchModel) {
+        this.pushLog(cancelMessage);
+        return false;
+      }
+      this.config.providers.ollama!.research_model = researchModel;
+
+      const experimentModel = await this.selectOllamaSlot("experiment");
+      if (!experimentModel) {
+        this.pushLog(cancelMessage);
+        return false;
+      }
+      this.config.providers.ollama!.experiment_model = experimentModel;
+
+      const visionModel = await this.selectOllamaSlot("vision");
+      if (!visionModel) {
+        this.pushLog(cancelMessage);
+        return false;
+      }
+      this.config.providers.ollama!.vision_model = visionModel;
+    } else if (llmMode === "openai_api") {
       const taskSlot = await this.selectOpenAiSlot(
         "research backend",
         this.config.providers.openai.model,
@@ -3294,6 +3366,11 @@ export class TerminalApp {
         value: "responses_api_pdf",
         label: "responses_api_pdf",
         description: "Fallback. Send PDF file input to Responses API (requires OPENAI_API_KEY)."
+      },
+      {
+        value: "ollama_vision",
+        label: "ollama_vision",
+        description: "Use local Ollama vision model for PDF page image analysis (requires pdftoppm)."
       }
     ];
   }
@@ -3321,6 +3398,11 @@ export class TerminalApp {
         value: "openai_api",
         label: "openai_api",
         description: "Use the OpenAI API backend (OPENAI_API_KEY required)."
+      },
+      {
+        value: "ollama",
+        label: "ollama",
+        description: "Use a local Ollama server (no API key required, runs on your hardware)."
       }
     ];
   }
@@ -3416,11 +3498,15 @@ export class TerminalApp {
   }
 
   private describePdfAnalysisMode(mode: AppConfig["analysis"]["pdf_mode"]): string {
-    return mode === "responses_api_pdf" ? "Responses API PDF input" : "Codex text + image hybrid";
+    if (mode === "responses_api_pdf") return "Responses API PDF input";
+    if (mode === "ollama_vision") return "Ollama vision";
+    return "Codex text + image hybrid";
   }
 
   private describePrimaryLlmProvider(mode: AppConfig["providers"]["llm_mode"]): string {
-    return mode === "openai_api" ? "OpenAI API" : "Codex CLI";
+    if (mode === "openai_api") return "OpenAI API";
+    if (mode === "ollama") return "Ollama";
+    return "Codex CLI";
   }
 
   private getNaturalAssistantClient(): {
@@ -3804,6 +3890,9 @@ export class TerminalApp {
   }
 
   private getCurrentSlotPreset(slot: "chat" | "task" | "pdf"): string {
+    if (this.config.providers.llm_mode === "ollama") {
+      return this.getCurrentOllamaSlotModel(slot);
+    }
     if (this.config.providers.llm_mode === "openai_api") {
       if (slot === "pdf" && this.config.analysis.pdf_mode === "responses_api_pdf") {
         return `${this.config.analysis.responses_model} + ${this.config.analysis.responses_reasoning_effort || "xhigh"}`;
@@ -3814,6 +3903,9 @@ export class TerminalApp {
   }
 
   private getRecommendedSlotPreset(slot: "chat" | "task" | "pdf"): string {
+    if (this.config.providers.llm_mode === "ollama") {
+      return this.getRecommendedOllamaModel(slot);
+    }
     if (this.config.providers.llm_mode === "openai_api") {
       if (slot === "pdf" && this.config.analysis.pdf_mode === "responses_api_pdf") {
         return `${this.getRecommendedResponsesPdfModel()} + xhigh`;
@@ -3835,16 +3927,113 @@ export class TerminalApp {
     return "gpt-5.4";
   }
 
+  private getCurrentOllamaSlotModel(slot: "chat" | "task" | "pdf"): string {
+    const ollama = this.config.providers.ollama;
+    if (!ollama) return "(not configured)";
+    if (slot === "chat") return ollama.chat_model || DEFAULT_OLLAMA_CHAT_MODEL;
+    if (slot === "pdf") return ollama.vision_model || DEFAULT_OLLAMA_VISION_MODEL;
+    return ollama.research_model || DEFAULT_OLLAMA_RESEARCH_MODEL;
+  }
+
+  private getRecommendedOllamaModel(slot: "chat" | "task" | "pdf"): string {
+    if (slot === "chat") return DEFAULT_OLLAMA_CHAT_MODEL;
+    if (slot === "pdf") return DEFAULT_OLLAMA_VISION_MODEL;
+    return DEFAULT_OLLAMA_RESEARCH_MODEL;
+  }
+
+  private ensureOllamaConfig(): void {
+    if (!this.config.providers.ollama) {
+      this.config.providers.ollama = {
+        base_url: DEFAULT_OLLAMA_BASE_URL,
+        chat_model: DEFAULT_OLLAMA_CHAT_MODEL,
+        research_model: DEFAULT_OLLAMA_RESEARCH_MODEL,
+        experiment_model: DEFAULT_OLLAMA_EXPERIMENT_MODEL,
+        vision_model: DEFAULT_OLLAMA_VISION_MODEL
+      };
+    }
+  }
+
+  private buildOllamaSlotOptions(
+    slotType: "chat" | "research" | "experiment" | "vision"
+  ): SelectionMenuOption[] {
+    const catalogMap = {
+      chat: OLLAMA_CHAT_MODEL_OPTIONS,
+      research: OLLAMA_RESEARCH_MODEL_OPTIONS,
+      experiment: OLLAMA_EXPERIMENT_MODEL_OPTIONS,
+      vision: OLLAMA_VISION_MODEL_OPTIONS
+    };
+    const defaultMap = {
+      chat: DEFAULT_OLLAMA_CHAT_MODEL,
+      research: DEFAULT_OLLAMA_RESEARCH_MODEL,
+      experiment: DEFAULT_OLLAMA_EXPERIMENT_MODEL,
+      vision: DEFAULT_OLLAMA_VISION_MODEL
+    };
+    const recommended = defaultMap[slotType];
+    return catalogMap[slotType].map((o) => ({
+      value: o.value,
+      label: o.label,
+      description: this.annotateRecommendedDescription(o.description, o.value === recommended)
+    }));
+  }
+
+  private async selectOllamaSlot(
+    slotType: "chat" | "research" | "experiment" | "vision"
+  ): Promise<string | undefined> {
+    this.ensureOllamaConfig();
+    const ollama = this.config.providers.ollama!;
+    const currentMap: Record<string, string> = {
+      chat: ollama.chat_model || DEFAULT_OLLAMA_CHAT_MODEL,
+      research: ollama.research_model || DEFAULT_OLLAMA_RESEARCH_MODEL,
+      experiment: ollama.experiment_model || DEFAULT_OLLAMA_EXPERIMENT_MODEL,
+      vision: ollama.vision_model || DEFAULT_OLLAMA_VISION_MODEL
+    };
+    const label = slotType === "chat" ? "general chat"
+      : slotType === "research" ? "research/analysis"
+      : slotType === "experiment" ? "experiment/code"
+      : "vision/PDF";
+    return this.openSelectionMenu(
+      `Select Ollama ${label} model`,
+      this.buildOllamaSlotOptions(slotType),
+      currentMap[slotType]
+    );
+  }
+
+  private async handleOllamaModelSelection(slot: "chat" | "task" | "pdf"): Promise<void> {
+    this.pushCurrentModelDefaults();
+    this.ensureOllamaConfig();
+    const slotType = slot === "chat" ? "chat" as const
+      : slot === "pdf" ? "vision" as const
+      : "research" as const;
+    const selected = await this.selectOllamaSlot(slotType);
+    if (!selected) {
+      this.pushLog("Model selection canceled.");
+      return;
+    }
+    const ollama = this.config.providers.ollama!;
+    if (slotType === "chat") ollama.chat_model = selected;
+    else if (slotType === "research") ollama.research_model = selected;
+    else ollama.vision_model = selected;
+
+    await this.saveConfigFn(this.config);
+    this.pushLog(`Ollama ${this.describeModelSlot(slot)} model updated.`);
+    this.pushCurrentModelDefaults();
+  }
+
   private getCurrentResearchBackendPreset(): string {
     const pdfMode = this.config.analysis?.pdf_mode || "codex_text_image_hybrid";
     const pdfSummary =
       pdfMode === "responses_api_pdf"
         ? `${this.describePdfAnalysisMode(pdfMode)} (${this.config.analysis?.responses_model || "gpt-5.4"} + ${this.config.analysis?.responses_reasoning_effort || "xhigh"})`
-        : this.describePdfAnalysisMode(pdfMode);
+        : pdfMode === "ollama_vision"
+          ? `${this.describePdfAnalysisMode(pdfMode)} (${this.config.providers.ollama?.vision_model || DEFAULT_OLLAMA_VISION_MODEL})`
+          : this.describePdfAnalysisMode(pdfMode);
     return `${this.getCurrentSlotPreset("task")} | ${pdfSummary}`;
   }
 
   private getRecommendedResearchBackendPreset(): string {
+    if (this.config.providers.llm_mode === "ollama") {
+      return `${this.getRecommendedSlotPreset("task")} | ${this.describePdfAnalysisMode("ollama_vision")}`;
+    }
     return `${this.getRecommendedSlotPreset("task")} | ${this.describePdfAnalysisMode("codex_text_image_hybrid")}`;
   }
 

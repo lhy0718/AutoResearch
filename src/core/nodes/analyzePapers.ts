@@ -8,13 +8,18 @@ import { NodeExecutionDeps } from "./types.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { readJsonFile, writeJsonFile } from "../../utils/fs.js";
 import {
+  ANALYSIS_SYSTEM_PROMPT,
   analyzePaperWithLlm,
   analyzePaperWithResponsesPdf,
+  buildPaperAnalysisPrompt,
+  normalizePaperAnalysis,
   PaperAnalysisResult,
   PaperEvidenceRow,
   PaperSummaryRow,
+  parsePaperAnalysisJson,
   shouldFallbackResponsesPdfToLocalText
 } from "../analysis/paperAnalyzer.js";
+import { OllamaPdfAnalysisClient } from "../../integrations/ollama/ollamaPdfAnalysisClient.js";
 import {
   AnalysisCorpusRow,
   ResolvedPaperSource,
@@ -323,7 +328,9 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           })
         };
       }
-      const includePageImages = deps.config.providers?.llm_mode === "codex_chatgpt_only";
+      const includePageImages =
+        deps.config.providers?.llm_mode === "codex_chatgpt_only" ||
+        analysisMode === "ollama_vision";
       const analysisFingerprint = buildAnalysisFingerprint({
         analysisMode,
         responsesModel: deps.config.analysis.responses_model,
@@ -891,6 +898,25 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                   analysis = localFallbackAnalysis.analysis;
                   source = localFallbackAnalysis.source;
                 }
+              } else if (
+                analysisModeUsed === "ollama_vision" &&
+                deps.ollamaPdfAnalysis &&
+                source.pageImagePaths &&
+                source.pageImagePaths.length > 0
+              ) {
+                emitLog(
+                  `[${row.paper_id}] Using Ollama vision batching (${source.pageImagePaths.length} page image(s)).`
+                );
+                const ollamaVisionResult = await analyzePaperWithOllamaVisionBatch({
+                  ollamaPdfAnalysis: deps.ollamaPdfAnalysis,
+                  llm: deps.pdfTextLlm,
+                  paper: row,
+                  source,
+                  abortSignal,
+                  onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
+                });
+                analysis = ollamaVisionResult.analysis;
+                source = ollamaVisionResult.source;
               } else {
                 const localFallbackAnalysis = await analyzePaperWithPageImageTimeoutFallback({
                   llm: source.sourceType === "full_text" ? deps.pdfTextLlm : deps.llm,
@@ -1406,6 +1432,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
 }
 
 function getAnalysisConcurrency(analysisMode: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision"): number {
+  if (analysisMode === "ollama_vision") return 2;
   return analysisMode === "responses_api_pdf" ? 2 : 3;
 }
 
@@ -2356,6 +2383,88 @@ async function analyzePaperWithPageImageTimeoutFallback(args: {
       }),
       source: downgradedSource
     };
+  }
+}
+
+async function analyzePaperWithOllamaVisionBatch(args: {
+  ollamaPdfAnalysis: OllamaPdfAnalysisClient;
+  llm: NodeExecutionDeps["llm"];
+  paper: AnalysisCorpusRow;
+  source: ResolvedPaperSource;
+  abortSignal?: AbortSignal;
+  onProgress?: (message: string) => void;
+}): Promise<{ analysis: PaperAnalysisResult; source: ResolvedPaperSource }> {
+  const pageImagePaths = args.source.pageImagePaths ?? [];
+  if (pageImagePaths.length === 0) {
+    return analyzePaperWithPageImageTimeoutFallback({
+      llm: args.llm,
+      paper: args.paper,
+      source: args.source,
+      abortSignal: args.abortSignal,
+      onProgress: args.onProgress
+    });
+  }
+
+  try {
+    const prompt = buildPaperAnalysisPrompt(args.paper, args.source);
+    args.onProgress?.(
+      `Sending ${pageImagePaths.length} page image(s) to Ollama vision model for batched analysis.`
+    );
+    const batchResult = await args.ollamaPdfAnalysis.analyzePdfPages({
+      imagePaths: pageImagePaths,
+      prompt,
+      systemPrompt: ANALYSIS_SYSTEM_PROMPT,
+      abortSignal: args.abortSignal
+    });
+
+    args.onProgress?.(
+      `Ollama vision batch complete: ${batchResult.pagesAnalyzed} page(s) analyzed${batchResult.model ? ` via ${batchResult.model}` : ""}.`
+    );
+
+    const visionText = batchResult.text.trim();
+    if (!visionText) {
+      args.onProgress?.("Ollama vision returned empty output. Falling back to text-based LLM analysis.");
+      return analyzePaperWithPageImageTimeoutFallback({
+        llm: args.llm,
+        paper: args.paper,
+        source: args.source,
+        abortSignal: args.abortSignal,
+        onProgress: args.onProgress
+      });
+    }
+
+    // Combine the vision output with any existing full text for richer context
+    const enrichedText = args.source.text
+      ? `${args.source.text}\n\n--- Ollama Vision Analysis (${batchResult.pagesAnalyzed} pages) ---\n${visionText}`
+      : visionText;
+    const enrichedSource: ResolvedPaperSource = {
+      ...args.source,
+      text: enrichedText,
+      pageImagePaths: undefined
+    };
+
+    const analysis = await analyzePaperWithLlm({
+      llm: args.llm,
+      paper: args.paper,
+      source: enrichedSource,
+      maxAttempts: 2,
+      abortSignal: args.abortSignal,
+      onProgress: args.onProgress
+    });
+
+    return { analysis, source: args.source };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    args.onProgress?.(
+      `Ollama vision batch failed (${reason}). Falling back to text-based LLM analysis.`
+    );
+    return analyzePaperWithPageImageTimeoutFallback({
+      llm: args.llm,
+      paper: args.paper,
+      source: args.source,
+      abortSignal: args.abortSignal,
+      onProgress: args.onProgress
+    });
   }
 }
 

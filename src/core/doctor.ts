@@ -63,7 +63,7 @@ export async function runDoctorReport(
   checks.push(await runBinaryCheck("python3", ["--version"], "python"));
   checks.push(await runBinaryCheck("pip3", ["--version"], "pip"));
   checks.push(await runBinaryCheck("pdflatex", ["--version"], "latex"));
-  if (opts?.pdfAnalysisMode === "codex_text_image_hybrid") {
+  if (opts?.pdfAnalysisMode === "codex_text_image_hybrid" || opts?.pdfAnalysisMode === "ollama_vision") {
     checks.push(await runBinaryCheck("pdftotext", ["-v"], "pdftotext"));
     checks.push(await runBinaryCheck("pdfinfo", ["-v"], "pdfinfo"));
     checks.push(await runBinaryCheck("pdftoppm", ["-v"], "pdftoppm"));
