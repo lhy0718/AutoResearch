@@ -121,7 +121,8 @@ export class PaperWriterSessionManager {
       (await runContext.get<string>("write_paper.thread_id"));
     const useCodexSession =
       typeof this.deps.codex?.runTurnStream === "function" &&
-      this.deps.config?.providers?.llm_mode !== "openai_api";
+      this.deps.config?.providers?.llm_mode !== "openai_api" &&
+      this.deps.config?.providers?.llm_mode !== "ollama";
     const mode: "codex_session" | "staged_llm" = useCodexSession ? "codex_session" : "staged_llm";
     const trace: SessionTraceEntry[] = [];
     const errors: string[] = [];
@@ -361,7 +362,8 @@ export class PaperWriterSessionManager {
       (await runContext.get<string>("write_paper.thread_id"));
     const useCodexSession =
       typeof this.deps.codex?.runTurnStream === "function" &&
-      this.deps.config?.providers?.llm_mode !== "openai_api";
+      this.deps.config?.providers?.llm_mode !== "openai_api" &&
+      this.deps.config?.providers?.llm_mode !== "ollama";
     const mode: "codex_session" | "staged_llm" = useCodexSession ? "codex_session" : "staged_llm";
 
     this.emit(input.run, `Paper writer LaTeX repair started in ${mode} mode.`);
@@ -450,7 +452,8 @@ export class PaperWriterSessionManager {
       (await runContext.get<string>("write_paper.thread_id"));
     const useCodexSession =
       typeof this.deps.codex?.runTurnStream === "function" &&
-      this.deps.config?.providers?.llm_mode !== "openai_api";
+      this.deps.config?.providers?.llm_mode !== "openai_api" &&
+      this.deps.config?.providers?.llm_mode !== "ollama";
     const mode: "codex_session" | "staged_llm" = useCodexSession ? "codex_session" : "staged_llm";
     const trace = (await runContext.get<SessionTraceEntry[]>("write_paper.session_trace")) || [];
 

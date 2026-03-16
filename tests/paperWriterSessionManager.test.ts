@@ -465,4 +465,107 @@ describe("PaperWriterSessionManager", () => {
     expect(result.manuscript.title).toBeTruthy();
     expect(await readFile(path.join(runDir, "paper", "draft.json"), "utf8")).toContain('"sections"');
   });
+
+  it("LV-017: uses staged_llm mode when llm_mode is ollama (not codex_session)", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-ollama-"));
+    process.chdir(root);
+
+    const runId = "run-ollama-mode";
+    const run = makeRun(runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(
+      path.join(runDir, "memory", "run_context.json"),
+      JSON.stringify({ version: 1, items: [] }),
+      "utf8"
+    );
+
+    const events: string[] = [];
+    const eventStream = new InMemoryEventStream();
+    eventStream.subscribe((evt: any) => {
+      if (typeof evt?.payload?.text === "string") events.push(evt.payload.text);
+    });
+
+    const manager = new PaperWriterSessionManager({
+      config: {
+        providers: {
+          llm_mode: "ollama"
+        }
+      } as any,
+      codex: new CodexCliClient(root),
+      llm: new MockLLMClient(),
+      eventStream,
+      runStore: {
+        async getRun(id: string) {
+          return id === run.id ? run : undefined;
+        },
+        async updateRun() {}
+      } as any,
+      workspaceRoot: root
+    });
+
+    // Use a very short timeout to make the test fast — we only care about mode selection
+    process.env.AUTOLABOS_PAPER_WRITER_STAGE_TIMEOUT_MS = "50";
+    process.env.AUTOLABOS_FAKE_CODEX_RESPONSE = JSON.stringify({
+      title: "Test",
+      sections: [],
+      claims: [],
+      abstract: "x",
+      keywords: []
+    });
+
+    try {
+      await manager.run({
+        run,
+        bundle: {
+          runTitle: run.title,
+          topic: run.topic,
+          objectiveMetric: run.objectiveMetric,
+          constraints: run.constraints,
+          paperSummaries: [],
+          experimentDesign: {
+            approach: "test",
+            protocol: "test",
+            conditions: [],
+            successCriteria: "test"
+          },
+          results: { raw: "none" },
+          analysisText: "none",
+          reviewNotes: [],
+          bibtex: "",
+          resultAnalysis: { summaryParagraph: "none" },
+          reviewPacket: undefined as any,
+          contextHints: {
+            researchQuestion: "test",
+            lengthHint: "short paper"
+          },
+          experiment: {
+            designNotes: [],
+            implementationNotes: [],
+            evaluationNotes: []
+          },
+          assumptions: []
+        },
+        objectiveMetricProfile: {
+          source: "heuristic_fallback",
+          raw: run.objectiveMetric,
+          primaryMetric: "reproducibility_score",
+          preferredMetricKeys: ["reproducibility_score"],
+          direction: "maximize",
+          comparator: ">=",
+          targetValue: 0.8,
+          targetDescription: ">= 0.8",
+          analysisFocus: [],
+          paperEmphasis: [],
+          assumptions: []
+        }
+      });
+    } catch {
+      // Stage failures are expected — we only test mode selection
+    }
+
+    const modeMsg = events.find((m) => m.includes("mode"));
+    expect(modeMsg).toContain("staged_llm");
+    expect(modeMsg).not.toContain("codex_session");
+  });
 });

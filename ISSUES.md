@@ -1,13 +1,13 @@
 # ISSUES.md
 
 ## Current status
-- Last updated: 2026-03-16T15:30:00 KST
-- Current validation target: adaptive test-time compute experiment — write_paper gate fix + re-run
+- Last updated: 2026-03-16T15:55:00 KST
+- Current validation target: adaptive test-time compute experiment — LV-017 fixed, need to re-run write_paper
 - Current test/ workspace: `test/tui-adaptive-ttc-20260316-073416`
 - Current active run: `db7035d3-cc98-4dff-9303-214de6cdefd0`
-- Current overall state: write_paper failed 3/3 attempts due to LV-016 (now fixed); rolled back to review; needs restart
+- Current overall state: LV-017 fixed (paper writer now uses staged_llm in ollama mode); run paused at review after write_paper exhausted retries; needs counter reset + re-run
 - Current paper-scale target: adaptive test-time compute for small reasoning LLMs
-- Current paper readiness state: blocked (LV-016 fixed; need to re-run write_paper with fixed consistency lint)
+- Current paper readiness state: blocked (LV-017 fixed; need to re-run write_paper with corrected LLM routing)
 - Previous validation target: calibration research run (completed, paper_scale_candidate)
 
 ## Active live-validation issues
@@ -192,6 +192,18 @@
 - Files changed: `src/core/analysis/scientificWriting.ts`
 - Tests: `tests/scientificWriting.test.ts` — added "LV-016: comma-separated numbers are not split into phantom matches"
 - Test result: 801 tests pass (78 files), including the new test.
+- Regression check: build passes, all tests pass.
+
+### LV-017 — Paper writer uses Codex CLI (codex_session) even when llm_mode is ollama, causing E2BIG spawn error (RESOLVED)
+- Status: resolved
+- Root cause taxonomy: `in_memory_projection_bug`
+- Symptom: `write_paper` node fails at finalize stage with `spawn E2BIG` error. The finalize prompt includes full draft JSON (~200–400KB), exceeding Linux ARG_MAX (~128KB) when passed as CLI argument to `codex` subprocess.
+- Root cause: `PaperWriterSessionManager` checks `useCodexSession = codex.runTurnStream exists && llm_mode !== "openai_api"`. When `llm_mode` is `"ollama"`, the condition evaluates to `true` (because `"ollama" !== "openai_api"`), so it routes to `codex_session` mode instead of `staged_llm`. The Codex CLI (`codexCliClient.ts`) passes the entire prompt as a command-line argument, which exceeds the OS limit for large prompts.
+- Expected: When `llm_mode` is `"ollama"`, paper writer should use `staged_llm` mode (which uses HTTP-based RoutedLLMClient via Ollama, no ARG_MAX limit).
+- Fix: Added `&& this.deps.config?.providers?.llm_mode !== "ollama"` to all three `useCodexSession` checks in `paperWriterSessionManager.ts` (lines 122–125, 362–366, 451–456). This ensures only `codex_chatgpt_only` mode triggers `codex_session`.
+- Files changed: `src/core/agents/paperWriterSessionManager.ts`
+- Tests: `tests/paperWriterSessionManager.test.ts` — added "LV-017: uses staged_llm mode when llm_mode is ollama (not codex_session)"
+- Test result: 826 tests pass (80 files), including the new test.
 - Regression check: build passes, all tests pass.
 
 ## Research completion risks
