@@ -1,179 +1,249 @@
 <div align="center">
-  <h1>AutoLabOS</h1>
-  <p><strong>The AI research workflow that actually ships papers.</strong></p>
+
+  <br/>
+
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/AutoLabOS-0F766E?style=for-the-badge&logoColor=white&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiPjxwYXRoIGQ9Ik0xMiAyTDIgN2wxMCA1IDEwLTV6Ii8+PHBhdGggZD0iTTIgMTdsMTAgNSAxMC01Ii8+PHBhdGggZD0iTTIgMTJsMTAgNSAxMC01Ii8+PC9zdmc+"/>
+    <img alt="AutoLabOS" src="https://img.shields.io/badge/AutoLabOS-0F766E?style=for-the-badge&logoColor=white&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiPjxwYXRoIGQ9Ik0xMiAyTDIgN2wxMCA1IDEwLTV6Ii8+PHBhdGggZD0iTTIgMTdsMTAgNSAxMC01Ii8+PHBhdGggZD0iTTIgMTJsMTAgNSAxMC01Ii8+PC9zdmc+"/>
+  </picture>
+
+  <h3>Autonomous Research Lab Operating System</h3>
+
   <p>
-    Collect papers, analyze evidence, run experiments, and draft manuscripts in
-    a checkpointed local workflow.
+    <em>Collect papers &rarr; Analyze evidence &rarr; Run real experiments &rarr; Draft manuscripts</em><br/>
+    <strong>A checkpointed, 9-node state graph that enforces experiment discipline from hypothesis to paper.</strong>
   </p>
+
   <p>
     <a href="./README.md"><strong>English</strong></a>
-    ·
+    &nbsp;&middot;&nbsp;
     <a href="./README.ko.md"><strong>한국어</strong></a>
   </p>
+
   <p>
     <a href="https://github.com/lhy0718/AutoLabOS/actions/workflows/smoke.yml">
-      <img alt="Smoke workflow" src="https://img.shields.io/github/actions/workflow/status/lhy0718/AutoLabOS/smoke.yml?branch=main&style=flat-square&label=smoke" />
+      <img alt="Smoke" src="https://img.shields.io/github/actions/workflow/status/lhy0718/AutoLabOS/smoke.yml?branch=main&style=flat-square&label=smoke&logo=github" />
     </a>
-    <img alt="Node 18+" src="https://img.shields.io/badge/node-%3E%3D18-339933?style=flat-square&logo=node.js&logoColor=white" />
+    <img alt="Tests" src="https://img.shields.io/badge/tests-825%20passed-22C55E?style=flat-square&logo=vitest&logoColor=white" />
+    <img alt="Node 18+" src="https://img.shields.io/badge/node-%E2%89%A518-339933?style=flat-square&logo=node.js&logoColor=white" />
     <img alt="TypeScript" src="https://img.shields.io/badge/typescript-5.x-3178C6?style=flat-square&logo=typescript&logoColor=white" />
-    <img alt="Codex and OpenAI supported" src="https://img.shields.io/badge/Codex%20%2B%20OpenAI-supported-412991?style=flat-square&logo=openai&logoColor=white" />
     <img alt="9-node workflow" src="https://img.shields.io/badge/workflow-9%20nodes-0F766E?style=flat-square" />
-    <img alt="Local Web Ops UI" src="https://img.shields.io/badge/web%20ops-local-0EA5E9?style=flat-square" />
-    <img alt="Checkpointed runs" src="https://img.shields.io/badge/checkpoints-built%20in-CA8A04?style=flat-square" />
   </p>
   <p>
-    <img alt="Semantic Scholar required" src="https://img.shields.io/badge/Semantic%20Scholar-required-1857B6?style=flat-square" />
+    <img alt="Codex + OpenAI" src="https://img.shields.io/badge/Codex%20%2B%20OpenAI-supported-412991?style=flat-square&logo=openai&logoColor=white" />
+    <img alt="Semantic Scholar" src="https://img.shields.io/badge/Semantic%20Scholar-required-1857B6?style=flat-square" />
+    <img alt="Checkpointed" src="https://img.shields.io/badge/checkpoints-built%20in-CA8A04?style=flat-square" />
+    <img alt="Web Ops UI" src="https://img.shields.io/badge/web%20ops-local-0EA5E9?style=flat-square" />
+    <img alt="Experiment Governance" src="https://img.shields.io/badge/experiment-governed-DC2626?style=flat-square" />
+  </p>
+  <p>
     <a href="https://github.com/lhy0718/AutoLabOS/stargazers">
-      <img alt="GitHub stars" src="https://img.shields.io/github/stars/lhy0718/AutoLabOS?style=flat-square" />
+      <img alt="Stars" src="https://img.shields.io/github/stars/lhy0718/AutoLabOS?style=flat-square" />
     </a>
     <a href="https://github.com/lhy0718/AutoLabOS/commits/main">
       <img alt="Last commit" src="https://img.shields.io/github/last-commit/lhy0718/AutoLabOS?style=flat-square" />
     </a>
   </p>
+
 </div>
+
+---
 
 ## Why AutoLabOS?
 
-- Turn the research loop into a fixed 9-node state graph from `collect_papers` to `write_paper`, with an explicit `review` stage before drafting.
-- Run the main workflow with either `codex` or `OpenAI API`, then switch PDF analysis independently.
-- Keep work local and inspectable with checkpoints, limits, retries, jumps, and run-scoped memory.
+Most AI research tools handle one piece of the pipeline. AutoLabOS is a **complete research operating system** that turns the full loop — from literature survey to paper draft — into a single checkpointed workflow.
+
+<table>
+<tr>
+<td width="50%">
+
+**🔬 The Problem**
+- Research involves dozens of manual handoffs
+- Experiment decisions are undocumented and unreproducible
+- Claims drift beyond what evidence supports
+- Failed approaches get retried without learning
+
+</td>
+<td width="50%">
+
+**🧪 The Solution**
+- Fixed 9-node graph with automatic transitions
+- Experiment contracts enforce causal discipline
+- Claim ceilings block unsupported assertions
+- Failure memory prevents repeating the same mistakes
+
+</td>
+</tr>
+</table>
 
 ## Highlights
 
-| Capability | What it gives you |
-| --- | --- |
-| Brief-first TUI | Create a brief with `/new`, launch it with `/brief start`, then steer the run with `/agent ...`, `/model`, `/settings`, and `/doctor` in a brief-driven terminal workflow. |
-| Local Web Ops UI | Run `autolabos web` for onboarding, dashboard controls, artifacts, checkpoints, and live session state in the browser |
-| Deterministic natural-language routing | Common intents map to local handlers or slash commands before LLM fallback |
-| Hybrid provider model | Default to Codex login for the primary flow, or move to OpenAI API models when you want explicit API-backed execution |
-| PDF analysis modes | Default to local extraction + Codex hybrid PDF analysis, or send PDFs directly to the Responses API when needed |
-| Research runtime patterns | ReAct, ReWOO, ToT, and Reflexion are used where they make sense |
-| Local ACI execution | `implement_experiments` and `run_experiments` execute through file, command, and test actions |
+| | Capability | Description |
+|---|---|---|
+| 📝 | **Brief-first workflow** | Create a Markdown brief → validate completeness → auto-extract topic, metric, constraints → launch |
+| 🌐 | **Dual UI** | Brief-first TUI + local Web Ops UI (`autolabos web` on port 4317) share the same runtime |
+| 🔄 | **9-node state graph** | `collect_papers` → `analyze_papers` → `generate_hypotheses` → `design_experiments` → `implement_experiments` → `run_experiments` → `analyze_results` → `review` → `write_paper` |
+| ⚖️ | **Experiment governance** | Experiment contracts, confounding detection, brief-design consistency checks, failure memory |
+| 📊 | **Claim ceiling enforcement** | Pre-review summary with strongest defensible claim, blocked claims, and evidence gaps |
+| 🔁 | **Failure memory** | JSONL-based error fingerprinting, equivalent-failure stopping, do-not-retry markers |
+| 🤖 | **Hybrid provider model** | Codex CLI or OpenAI API for primary flow; independent PDF analysis mode |
+| 🧠 | **Runtime patterns** | ReAct, ReWOO, ToT, and Reflexion used where they make sense |
+| 🛡️ | **5-specialist review panel** | Claim verifier, methodology reviewer, statistics reviewer, writing readiness, integrity reviewer |
 
-## Operational Quality Docs
-
-- `docs/architecture.md`
-- `docs/tui-live-validation.md`
-- `docs/experiment-quality-bar.md`
-- `docs/paper-quality-bar.md`
-- `docs/reproducibility.md`
-
-## Start Here
-
-- If this is your first time, start with `autolabos web`. It gives you guided onboarding, the dashboard, logs, checkpoints, and artifact browsing in one place.
-- Use `autolabos` when you prefer a terminal-first, brief-driven workflow.
-- Run either command from the research project directory you want AutoLabOS to manage. Workspace state lives under `.autolabos/`.
-
-## What You Need
-
-| Item | When it is needed | Notes |
-| --- | --- | --- |
-| `SEMANTIC_SCHOLAR_API_KEY` | Always | Required for paper discovery and metadata lookup |
-| `OPENAI_API_KEY` | Only when the primary provider or PDF mode is `api` | Used for OpenAI API model execution |
-| Codex CLI login | Only when the primary provider or PDF mode is `codex` | AutoLabOS uses your local Codex session |
+---
 
 ## Quick Start
 
-1. Install and build AutoLabOS.
-
 ```bash
-npm install
-npm run build
-npm link
-```
+# 1. Install and build
+npm install && npm run build && npm link
 
-2. Move into the research project directory you want to use as the workspace.
-
-```bash
+# 2. Move to your research workspace
 cd /path/to/your-research-project
+
+# 3. Launch (choose one)
+autolabos web    # Browser UI with onboarding, dashboard, artifacts
+autolabos        # Terminal-first brief-driven workflow
 ```
 
-3. Start the recommended browser workflow.
+> **First run?** Both UIs will guide you through onboarding if `.autolabos/config.yaml` doesn't exist yet.
+
+### Prerequisites
+
+| Item | When needed | Notes |
+|---|---|---|
+| `SEMANTIC_SCHOLAR_API_KEY` | Always | Paper discovery and metadata |
+| `OPENAI_API_KEY` | When provider or PDF mode is `api` | OpenAI API model execution |
+| Codex CLI login | When provider or PDF mode is `codex` | Uses your local Codex session |
+
+---
+
+## Research Brief System
+
+AutoLabOS is **brief-first**: every run starts from a structured Markdown document that defines the research scope.
+
+### Creating a Brief
 
 ```bash
-autolabos web
+/new                        # Creates .autolabos/briefs/<timestamp>-<slug>.md
+/brief start --latest       # Validates, snapshots, extracts, and launches
 ```
 
-The web server listens on `http://127.0.0.1:4317` by default. Use `autolabos` instead if you want to start in the TUI.
+### Brief Sections
 
-4. Finish onboarding. If `.autolabos/config.yaml` does not exist yet, the web app opens onboarding and the TUI opens the setup wizard. Both flows write the same workspace scaffold and config.
+The brief template includes **core** sections (required) and **governance** sections (recommended for paper-scale work):
 
-5. Confirm the first run worked. You should now have `.autolabos/config.yaml`, a configured workspace, and either the dashboard or the TUI home screen ready for a run.
+<table>
+<tr><th>Section</th><th>Status</th><th>Purpose</th></tr>
+<tr><td><code>## Topic</code></td><td>🔴 Required</td><td>Research question in 1–3 sentences</td></tr>
+<tr><td><code>## Objective Metric</code></td><td>🔴 Required</td><td>Primary success metric and what counts as improvement</td></tr>
+<tr><td><code>## Constraints</code></td><td>🟡 Recommended</td><td>Compute budget, dataset limits, reproducibility rules</td></tr>
+<tr><td><code>## Plan</code></td><td>🟡 Recommended</td><td>Step-by-step experiment plan</td></tr>
+<tr><td><code>## Target Comparison</code></td><td>🟡 Governance</td><td>Proposed method vs. explicit baseline on specific dimension</td></tr>
+<tr><td><code>## Minimum Acceptable Evidence</code></td><td>🟡 Governance</td><td>Minimum effect size, number of folds, decision boundary</td></tr>
+<tr><td><code>## Disallowed Shortcuts</code></td><td>🟡 Governance</td><td>Shortcuts that invalidate results (cherry-picking, fabrication)</td></tr>
+<tr><td><code>## Allowed Budgeted Passes</code></td><td>🟡 Governance</td><td>Extra analysis passes permitted within compute budget</td></tr>
+<tr><td><code>## Paper Ceiling If Evidence Remains Weak</code></td><td>🟡 Governance</td><td>Maximum paper classification if evidence is insufficient</td></tr>
+</table>
 
-6. In the TUI, create a Markdown brief with `/new`, then start it with `/brief start --latest`. In the web UI, you can still start from structured fields, a natural-language brief, or the workflow cards.
+### Brief Completeness Grading
 
-## What Happens On First Run
+At run creation, AutoLabOS generates a **machine-readable completeness artifact** grading the brief:
 
-- AutoLabOS stores workspace config in `.autolabos/config.yaml` and reads `SEMANTIC_SCHOLAR_API_KEY` and `OPENAI_API_KEY` from `process.env` or `.env`.
-- The TUI first-run wizard is model-focused: choose the primary provider, model slots, reasoning defaults, PDF mode, and an OpenAI API key only when `api` is involved.
-- The workspace folder name becomes `project_name` automatically in the TUI flow, and the TUI does not create a run until you explicitly start a research brief.
-- Choose the primary LLM provider: `codex` uses your local Codex session, while `api` uses OpenAI API models.
-- Choose the PDF analysis mode separately: `codex` keeps PDF extraction local before analysis, while `api` sends the PDF to the Responses API.
-- If the primary provider or PDF mode is `api`, onboarding and `/settings` let you choose the OpenAI model.
-- `/model` lets you switch the active backend first, then choose the slot and model later.
+| Grade | Meaning | Paper-scale ready? |
+|---|---|---|
+| `complete` | Core + 4+ governance sections substantive | ✅ Yes |
+| `partial` | Core complete + 2+ governance sections present | ⚠️ Proceed with warnings |
+| `minimal` | Only core sections or boilerplate | ❌ No |
 
-## TUI Brief-First Flow
+---
 
-- `/new` creates a Markdown template under `.autolabos/briefs/<timestamp>-<slug>.md`.
-- If `$EDITOR` or `$VISUAL` is set, AutoLabOS opens the brief there, validates the required sections, and asks once whether it should start the run now.
-- `/brief start <path>` or `/brief start --latest` snapshots the brief into `.autolabos/runs/<run_id>/brief/source_brief.md`, extracts `topic`, `objective metric`, `constraints`, and `plan`, then auto-starts from `collect_papers`.
-- The generated template uses these sections: `# Research Brief`, `## Topic`, `## Objective Metric`, `## Constraints`, `## Plan`, plus optional `## Notes` and `## Questions / Risks`.
-- Natural-language run creation still works, but the recommended TUI path is file-first so the research brief stays editable and inspectable outside the terminal.
+## Experiment Governance
 
-## Common First-Run Fixes
+AutoLabOS enforces experiment discipline through a system of structured artifacts that flow between nodes.
 
-- If a repository checkout says the installed web assets are missing, build them once from the AutoLabOS package root with `npm --prefix web run build`, then restart `autolabos web`.
-- If you do not want `npm link`, you can still run `node dist/cli/main.js` or `node dist/cli/main.js web` from the AutoLabOS repository root.
-- If you need a different bind address or port, run `autolabos web --host 0.0.0.0 --port 8080`.
-- For local development, use `npm run dev` and `npm run dev:web`.
+### Governance Artifact Flow
 
-## Web Ops UI
+```mermaid
+flowchart LR
+    Brief["Research Brief<br/>📝 completeness artifact"] --> Design["design_experiments"]
+    Design --> Contract["Experiment Contract<br/>⚖️ hypothesis, single change,<br/>confound check"]
+    Design --> Consistency["Brief-Design Consistency<br/>🔍 warnings artifact"]
+    Contract --> Run["run_experiments"]
+    Run --> Failures["Failure Memory<br/>🔁 fingerprinted JSONL"]
+    Run --> Analyze["analyze_results"]
+    Analyze --> Decision["Attempt Decision<br/>📊 keep/discard/replicate"]
+    Decision --> Review["review"]
+    Failures --> Review
+    Contract --> Review
+    Review --> Ceiling["Pre-Review Summary<br/>🛡️ claim ceiling detail"]
+    Ceiling --> Paper["write_paper"]
+```
 
-`autolabos web` starts a local single-user browser UI on top of the same runtime used by the TUI.
+### Experiment Contract
 
-- Onboarding uses the same non-interactive setup helper, so web setup writes the same `.autolabos/config.yaml` and `.env` values as the TUI wizard.
-- The dashboard includes run search and selection, the 9-node workflow view, node actions, live logs, checkpoints, artifacts, metadata, and `/doctor` summaries (environment + workspace harness diagnostics).
-- The bottom composer accepts both slash commands and supported natural-language requests.
-- New runs can start from either the structured form fields or a single natural-language research brief. The brief parser extracts topic, objective metric, constraints, and a short plan hint, then can auto-start the run from `collect_papers`.
-- Multi-step natural-language plans use browser buttons instead of `y/a/n`: `Run next`, `Run all`, and `Cancel`.
-- Artifact browsing is restricted to `.autolabos/runs/<run_id>` and previews common text files, images, and PDFs inline.
+Written by `design_experiments` as `experiment_contract.json`:
 
-Typical web flow:
+```json
+{
+  "version": 1,
+  "hypothesis": "Shared state schema improves multi-agent coordination",
+  "causal_mechanism": "Structured JSON handoff reduces information loss",
+  "single_change": "Replace free-form chat with shared_state_schema",
+  "confounded": false,
+  "expected_metric_effect": "Improve macro-F1 by at least +0.5 points",
+  "abort_condition": "Abort if F1 drops below baseline by more than 1 point",
+  "keep_or_discard_rule": "Keep if macro-F1 improves; discard if no improvement"
+}
+```
 
-1. Start the server with `autolabos web`.
-   Run this from the project directory you want to manage.
-   If you see a missing web assets message while using a repository checkout, build once from the AutoLabOS package root with `npm --prefix web run build`, then restart the server.
-2. Open `http://127.0.0.1:4317`.
-3. Complete onboarding if the workspace is not configured yet.
-4. Create or select a run, then use the workflow cards or composer to drive execution.
+**Enhanced confounding detection** goes beyond the structural `additional_changes` flag:
+- **Conjunction-split**: Detects `"Add batch normalization and switch optimizer from SGD to Adam"` as two distinct interventions
+- **List-form**: Detects numbered/bulleted lists inside `single_change`
+- **Mechanism-change mismatch**: Flags when `causal_mechanism` references interventions not captured in `single_change`
 
-## Node and Agent Structure
+### Failure Memory
 
-AutoLabOS has two layers that are easy to conflate:
+Run-scoped JSONL (`failure_memory.jsonl`) that records and deduplicates failure patterns:
 
-- Orchestration layer: `/agent ...` targets the 9 graph nodes. In code, `AgentId` is currently an alias of `GraphNodeId`.
-- Role layer: nodes emit or run exported `agentRole` identities such as `implementer`, `runner`, `paper_writer`, and `reviewer`.
-- Some nodes also fan out into node-internal personas or deterministic controllers. Prompt-heavy examples are the evidence synthesizer plus skeptical reviewer inside `generate_hypotheses` and the 5-specialist panel inside `review`; deterministic panel/controller examples now include `design_experiments`, `run_experiments`, and `analyze_results`.
+- **Error fingerprinting** strips timestamps, file paths, and numbers for stable clustering
+- **Equivalent-failure stopping**: 3+ identical fingerprints → exhausts retries immediately
+- **Do-not-retry markers**: Structural failures block re-execution until design changes
+- **Coverage**: All 5 failure paths in `run_experiments` (resolve, preflight, command, metrics missing, metrics invalid)
 
-### Node-to-Role Map
+### Claim Ceiling Enforcement
 
-- Read it top-down from the `Node` column. `/agent ...` always targets one of these 9 nodes.
-- `Exported role(s)` are the public `agentRole` identities you will see in prompts, events, and session managers.
-- `Internal helpers` are node-local personas or deterministic controllers, not extra top-level `/agent` targets.
+The `review` node generates `pre_review_summary.json` with a detailed `claim_ceiling_detail`:
 
-| Node | Exported role(s) | Internal helpers | What the extra layer does |
-| --- | --- | --- | --- |
-| `collect_papers` | `collector_curator` | None | Collects and curates the candidate paper set |
-| `analyze_papers` | `reader_evidence_extractor` | None | Extracts summaries and evidence from selected papers |
-| `generate_hypotheses` | `hypothesis_agent` | `evidence synthesizer`, `skeptical reviewer` | Synthesizes ideas, then pressure-tests them |
-| `design_experiments` | `experiment_designer` | `feasibility reviewer`, `statistical reviewer`, `ops-capacity planner` | Filters plans for practicality, statistical quality, and execution fit |
-| `implement_experiments` | `implementer` | None | Produces code and local workspace changes through ACI actions |
-| `run_experiments` | `runner` | `trial manager`, `failure triager`, `resource/log watchdog`, `rerun planner` | Drives execution, catches failures, and decides reruns |
-| `analyze_results` | `analyst_statistician` | `metric auditor`, `robustness reviewer`, `confounder detector`, `decision calibrator` | Checks whether results are reliable enough to act on |
-| `review` | `reviewer` | `claim verifier`, `methodology reviewer`, `statistics reviewer`, `writing readiness reviewer`, `integrity reviewer` | Runs the multi-specialist review gate before drafting |
-| `write_paper` | `paper_writer`, `reviewer` | None | Drafts the paper, then runs a reviewer critique pass |
+```json
+{
+  "strongest_defensible_claim": "macro-F1 improved over explicit baseline under controlled single-change conditions.",
+  "blocked_stronger_claims": [
+    { "claim": "Robust improvement across multiple attempts", "reason": "Only one kept attempt." }
+  ],
+  "additional_evidence_needed": [
+    "Additional successful attempt to strengthen robustness."
+  ]
+}
+```
 
-### Execution Graph
+### Brief-Design Consistency
+
+At design time, `brief_design_consistency.json` detects:
+
+| Code | Severity | Trigger |
+|---|---|---|
+| `MISSING_TARGET_COMPARISON` | error/warning | Brief lacks target comparison |
+| `MISSING_EVIDENCE_PLAN` | warning | No minimum evidence specification |
+| `DISALLOWED_SHORTCUT_DETECTED` | error | Design references a forbidden shortcut |
+| `POTENTIAL_CHERRY_PICK` | warning | Single metric when cherry-picking is disallowed |
+| `CLAIMS_EXCEED_CEILING` | warning | Design expectations exceed paper ceiling |
+| `CONFOUNDED_DESIGN` | warning | Multiple changes in single-change experiment |
+| `BRIEF_NOT_PAPER_SCALE` | warning | Brief completeness below `complete` grade |
+
+---
+
+## Execution Graph
 
 ```mermaid
 stateDiagram-v2
@@ -188,7 +258,6 @@ stateDiagram-v2
     analyze_results --> implement_experiments: auto_backtrack_to_implement
     analyze_results --> design_experiments: auto_backtrack_to_design
     analyze_results --> generate_hypotheses: auto_backtrack_to_hypotheses
-    analyze_results --> analyze_results: human_clarification_required
     review --> write_paper: auto_advance
     review --> implement_experiments: auto_backtrack_to_implement
     review --> design_experiments: auto_backtrack_to_design
@@ -196,46 +265,30 @@ stateDiagram-v2
     write_paper --> [*]: auto_complete
 ```
 
-The top-level workflow remains a fixed 9-node graph. Recent automation work lives inside bounded node-internal loops so we do not add extra top-level nodes for evidence-window expansion, supplemental experiment profiles, objective grounding retries, or paper-draft repair.
+The workflow is a **fixed 9-node graph**. All automation — evidence-window expansion, supplemental profiles, objective grounding retries, paper-draft repair — lives inside bounded node-internal loops.
 
-### Execution Controls
+---
 
-| Layer | Setting or command | Default | What it does | When a human steps in |
-| --- | --- | --- | --- | --- |
-| Workflow mode | `agent_approval` | Fixed | Runs the full 9-node research graph from collection to paper writing | Not a pause setting by itself |
-| Approval mode | `workflow.approval_mode: minimal` | Yes | Auto-approves ordinary completion gates and auto-applies safe transition recommendations, including review outcomes | Pauses when a recommendation is `pause_for_human` or `autoExecutable=false` |
-| Approval mode | `workflow.approval_mode: manual` | Optional | Pauses at every approval boundary instead of auto-resolving it | Use `/approve`, `/agent apply`, or `/agent jump` to continue |
-| Autonomy preset | `/agent overnight` | On demand | Runs the current run unattended with a conservative overnight policy layered on top of the workflow | Stops before `write_paper`, on low-confidence or disallowed backtracks, repeated recommendations, time limit, or manual-only recommendations |
-| TUI supervisor | Interactive run supervisor | Default in `autolabos` | Keeps a run moving in `minimal` mode, restores pending questions after restart, and only hands control back when a real human answer is needed | Captures the answer in the TUI, applies the configured resume action, then continues the run automatically |
+## Node Architecture
 
-### Human Intervention Triggers
+### Node-to-Role Map
 
-| Where | Condition | What happens |
-| --- | --- | --- |
-| `analyze_results` | The objective metric still cannot be grounded to a concrete numeric signal after best-effort rematching | The TUI asks which metric or success criterion to use, stores the answer, retries `analyze_results`, and then resumes automatic execution |
-| `analyze_results` | A hypothesis reset is recommended, but confidence is too low for `autoExecutable=true` | The TUI presents explicit next-step choices, applies the selected transition or jump, and then resumes automatic execution |
-| Any node in `manual` approval mode | The node reaches an approval boundary | The run waits for `/approve`, `/agent apply`, or another explicit operator choice |
-| `/agent overnight` | The run reaches `write_paper`, hits a low-confidence or disallowed recommendation, repeats the same recommendation too many times, or reaches the overnight time limit | Overnight stops and hands control back to the operator |
-
-In the default setup, review outcomes auto-apply into `write_paper` or one of the supported backtracks. Review is no longer a dedicated manual hold in `minimal` mode.
-
-### Bounded Automation and Internal Panels
-
-| Node | Internal automation | Trigger | Bound or output |
-| --- | --- | --- | --- |
-| `analyze_papers` | Expands a fresh `top_n` selection and reuses manifest-backed completed analyses | The initial selected window is too sparse to ground hypotheses well | At most 2 auto-expansions |
-| `design_experiments` | Scores generated candidates with a deterministic `designer / feasibility / statistical / ops-capacity` panel | Candidate designs are available from `designExperimentsFromHypotheses(...)` | Always runs once per design execution and emits internal `design_experiments_panel/*` artifacts |
-| `run_experiments` | Builds an execution plan, classifies failures, and applies a one-shot transient rerun policy | The primary run command has been resolved | Never retries policy blocks, missing metrics, or invalid metrics; retries only one transient command failure |
-| `run_experiments` | Chains managed `standard -> quick_check -> confirmatory` profiles | A managed `real_execution` bundle completes the standard run with an observed/met objective | Supplemental runs are best effort and do not overturn a successful primary run |
-| `analyze_results` | Re-tries objective grounding with best-effort metric rematching, then calibrates confidence with a deterministic result panel | Cached or fresh objective evaluation comes back `missing` or `unknown`, or a transition recommendation must be finalized | One bounded rematch before any human clarification pause, plus internal `analyze_results_panel/*` artifacts |
-| `write_paper` | Runs a bounded related-work scout with a small query planner and coverage auditor before drafting when literature coverage is thin | The validated writing bundle has too few analyzed papers/corpus entries, or review context flags citation gaps | Best-effort Semantic Scholar scout under `paper/related_work_scout/*`; planned queries stop early once coverage is good enough, and results are merged into the in-memory writing bundle only |
-| `write_paper` | Runs a validation-aware repair pass, then re-validates | Draft validation reports repairable borrowed grounding warnings | One extra repair pass, adopted only when warning count does not increase |
+| Node | Exported role(s) | Internal helpers | What the extra layer does |
+|---|---|---|---|
+| `collect_papers` | `collector_curator` | — | Collects and curates the candidate paper set |
+| `analyze_papers` | `reader_evidence_extractor` | — | Extracts summaries and evidence from selected papers |
+| `generate_hypotheses` | `hypothesis_agent` | evidence synthesizer, skeptical reviewer | Synthesizes ideas, then pressure-tests them |
+| `design_experiments` | `experiment_designer` | feasibility reviewer, statistical reviewer, ops-capacity planner | Filters plans for practicality + writes experiment contract + brief-design consistency check |
+| `implement_experiments` | `implementer` | — | Produces code and local workspace changes through ACI actions |
+| `run_experiments` | `runner` | trial manager, failure triager, resource watchdog, rerun planner | Drives execution, records failures to memory, decides reruns |
+| `analyze_results` | `analyst_statistician` | metric auditor, robustness reviewer, confounder detector, decision calibrator | Checks whether results are reliable enough + writes attempt decisions |
+| `review` | `reviewer` | claim verifier, methodology reviewer, statistics reviewer, writing readiness, integrity reviewer | Runs 5-specialist review + builds claim ceiling detail |
+| `write_paper` | `paper_writer`, `reviewer` | — | Drafts the paper, then runs a reviewer critique pass |
 
 ### Phase-by-Phase Connection Graphs
 
-The four focused graphs below cover the full 9-node pipeline and show which role or session manager is actually doing the work inside each phase.
-
-#### Discovery and Reading
+<details>
+<summary><strong>📚 Discovery and Reading</strong></summary>
 
 ```mermaid
 flowchart LR
@@ -254,7 +307,10 @@ flowchart LR
     ReviewLoop --> Evidence["paper_summaries.jsonl + evidence_store.jsonl"]
 ```
 
-#### Hypothesis and Experiment Design
+</details>
+
+<details>
+<summary><strong>💡 Hypothesis and Experiment Design</strong></summary>
 
 ```mermaid
 flowchart LR
@@ -273,6 +329,7 @@ flowchart LR
     Profiles --> Plans["design candidates"]
     Plans --> Panel["designer + feasibility + statistical + ops-capacity panel"]
     Panel --> Choice["panel selection"]
+    Choice --> Contract["experiment_contract.json + brief_design_consistency.json"]
     Choice --> Bundle{"supports managed real_execution bundle?"}
     Bundle -->|yes| Managed["bundle sections + runnable profiles"]
     Bundle -->|no| Plain["plain experiment plan"]
@@ -280,190 +337,326 @@ flowchart LR
     Plain --> PlanYaml
 ```
 
-#### Implementation, Execution, and Result Loop
+</details>
+
+<details>
+<summary><strong>⚙️ Implementation, Execution, and Result Loop</strong></summary>
 
 ```mermaid
 flowchart LR
     PlanYaml["experiment_plan.yaml"] --> IE["implement_experiments"]
     IE --> IM["ImplementSessionManager"]
     IM --> Impl["implementer"]
-    IM --> Localizer["ImplementationLocalizer + branch planning"]
     IM --> Codex["Codex CLI session"]
-    IM --> Memory["EpisodeMemory + LongTermStore"]
-    Codex --> VerifyPatch["local verification + verify reports"]
+    Codex --> VerifyPatch["local verification"]
     VerifyPatch --> Handoff{"auto handoff?"}
 
     Handoff -->|yes| RX["run_experiments"]
-    Handoff -->|no| Gate["approval boundary<br/>minimal auto-resolves"]
+    Handoff -->|no| Gate["approval boundary"]
     Gate --> RX
 
     RX --> Runner["runner"]
-    Runner --> Trial["trial manager"]
-    Trial --> ACI["Local ACI preflight/tests/command execution"]
+    Runner --> FailCheck["failure memory: check do-not-retry"]
+    FailCheck --> ACI["ACI preflight/tests/command"]
     ACI --> Triage["failure triager + rerun planner"]
     Triage -->|retry once if transient| ACI
-    ACI --> Watchdog["resource/log watchdog"]
-    Watchdog --> Profiles["managed standard -> quick_check -> confirmatory"]
-    Profiles --> Metrics["metrics.json + supplemental runs + run_verifier_feedback"]
-    Metrics -. runner feedback .-> IM
+    ACI --> FailRecord["record to failure_memory.jsonl"]
+    ACI --> Metrics["metrics.json + supplemental runs"]
     Metrics --> AR["analyze_results"]
-    AR --> Analyst["analyst_statistician"]
-    Analyst --> Ground["best-effort metric rematch"]
-    Ground --> ResultPanel["metric auditor + robustness reviewer + confounder detector + decision calibrator"]
-    ResultPanel --> Synth["objective evaluation + synthesis + transition recommendation"]
+    AR --> ResultPanel["metric auditor + robustness + confounder + calibrator"]
+    ResultPanel --> AttemptDec["attempt_decisions.jsonl"]
+    ResultPanel --> Synth["transition recommendation"]
 
     Synth -->|advance| RV["review"]
-    Synth -->|backtrack_to_implement| IE
-    Synth -->|backtrack_to_design| DE["design_experiments"]
-    Synth -->|backtrack_to_hypotheses| GH["generate_hypotheses"]
+    Synth -->|backtrack| IE
 ```
 
-#### Review, Writing, and Surfacing
+</details>
+
+<details>
+<summary><strong>📋 Review, Writing, and Surfacing</strong></summary>
 
 ```mermaid
 flowchart LR
-    Inputs["result_analysis + corpus + evidence + hypotheses + experiment_plan"] --> RV["review"]
-    RV --> Panel["runReviewPanel"]
-    Panel --> Claim["claim verifier"]
-    Panel --> Method["methodology reviewer"]
-    Panel --> Stats["statistics reviewer"]
-    Panel --> Ready["writing readiness reviewer"]
-    Panel --> Integrity["integrity reviewer"]
+    Inputs["result_analysis + contract + failures + decisions"] --> RV["review"]
+    RV --> PreReview["pre_review_summary.json<br/>+ claim_ceiling_detail"]
+    RV --> Panel["5-specialist review panel"]
     Panel --> Score["scorecard + consistency + bias"]
     Panel --> Decision["decision + revision_plan"]
     Score --> Packet["review_packet.json + checklist.md"]
     Decision --> Packet
-    Packet --> Insight["review insight + suggested actions"]
-    Insight --> Gate{"resolve review outcome"}
+    Decision --> Critique["paper_critique.json"]
 
+    Critique --> Gate{"resolve review outcome"}
     Gate -->|advance| WP["write_paper"]
-    Gate -->|backtrack_to_hypotheses| GH["generate_hypotheses"]
-    Gate -->|backtrack_to_design| DE["design_experiments"]
-    Gate -->|backtrack_to_implement| IE["implement_experiments"]
+    Gate -->|backtrack| Back["hypotheses / design / implement"]
 
-    WP --> PWM["PaperWriterSessionManager"]
-    PWM --> Mode["Codex session or staged LLM"]
-    Mode --> Writer["paper_writer"]
-    Mode --> Reviewer["reviewer"]
-    Writer --> Outline["outline"]
-    Outline --> Draft["draft"]
-    Draft --> Review["review critique"]
-    Review --> Final["finalize"]
-    Final --> Validate["draft validation"]
-    Validate --> Repair{"repairable borrowed warnings?"}
-    Repair -->|yes| Revise["validation-aware repair (1 pass max)"]
-    Revise --> Revalidate["re-validate"]
-    Repair -->|no| Tex["paper/main.tex + references.bib + evidence_links.json"]
-    Revalidate --> Tex
-    Tex --> Build{"PDF build enabled?"}
-    Build -->|yes| Latex["LaTeX compile + optional repair"]
-    Build -->|no| Done["LaTeX artifacts only"]
-    Latex --> Pdf["paper/main.pdf (optional)"]
+    WP --> Writer["paper_writer"]
+    Writer --> Draft["outline -> draft -> review -> finalize"]
+    Draft --> Validate["draft validation"]
+    Validate --> Repair{"repairable?"}
+    Repair -->|yes| Fix["validation-aware repair (1 pass)"]
+    Fix --> Tex["paper/main.tex + references.bib"]
+    Repair -->|no| Tex
 ```
 
-| Graph node | Primary role(s) | Current implementation shape |
-| --- | --- | --- |
-| `collect_papers` | `collector_curator` | Semantic Scholar search, de-duplication, enrichment, and BibTeX generation |
-| `analyze_papers` | `reader_evidence_extractor` | ranked paper selection plus resumable planner -> extractor -> reviewer analysis over local or Responses API PDF inputs, with bounded top-N auto-expansion when evidence is too thin |
-| `generate_hypotheses` | `hypothesis_agent` | evidence-axis synthesis, ToT branching, skeptical review, and diversity-aware top-k selection |
-| `design_experiments` | `experiment_designer` | candidate design generation plus deterministic `designer / feasibility / statistical / ops-capacity` panel selection before writing `experiment_plan.yaml` |
-| `implement_experiments` | `implementer` | `ImplementSessionManager`, localization, Codex patching, verification, and optional handoff |
-| `run_experiments` | `runner` | ACI preflight/tests/command execution, execution-plan + triage + watchdog control, one-shot transient rerun, managed supplemental profile chaining, and verifier feedback |
-| `analyze_results` | `analyst_statistician` | objective evaluation with best-effort metric rematching, deterministic result-panel calibration, result synthesis, and transition recommendation |
-| `review` | `reviewer` | `runReviewPanel`, 5 specialist reviewers, heuristic+LLM refinement, review packet generation, and transition recommendation |
-| `write_paper` | `paper_writer`, `reviewer` | `PaperWriterSessionManager`, bounded related-work scout, outline/draft/review/finalize stages, validation-aware repair, and optional LaTeX repair |
+</details>
 
-The role catalog is broader than the concrete runtime wiring. The deepest multi-turn session managers are still `implement_experiments` and `write_paper`, `review` remains the most LLM-panelized node, and `generate_hypotheses` still fans out into evidence-synthesis and skeptical-review prompts. The newer mid-pipeline reinforcements in `design_experiments`, `run_experiments`, and `analyze_results` are intentionally node-local deterministic panels/controllers that write internal artifacts without changing top-level graph roles or operator surfaces.
+---
 
-### Artifact Flow
+## Artifact Flow
 
 ```mermaid
 flowchart TB
-    A["collect_papers"] --> A1["collect_request.json<br/>collect_result.json<br/>collect_enrichment.jsonl<br/>corpus.jsonl<br/>bibtex.bib"]
+    A["collect_papers"] --> A1["collect_request.json<br/>corpus.jsonl<br/>bibtex.bib"]
     A1 --> B["analyze_papers"]
     B --> B1["analysis_manifest.json<br/>paper_summaries.jsonl<br/>evidence_store.jsonl"]
     B1 --> C["generate_hypotheses"]
-    C --> C1["hypotheses.jsonl<br/>hypothesis_generation/evidence_axes.json<br/>hypothesis_generation/selection.json<br/>hypothesis_generation/drafts.jsonl<br/>hypothesis_generation/reviews.jsonl"]
+    C --> C1["hypotheses.jsonl<br/>hypothesis_generation/*"]
     C1 --> D["design_experiments"]
-    D --> D1["experiment_plan.yaml<br/>design_experiments_panel/candidates.json<br/>design_experiments_panel/reviews.json<br/>design_experiments_panel/selection.json"]
+    D --> D1["experiment_plan.yaml<br/>experiment_contract.json<br/>brief_design_consistency.json<br/>design_experiments_panel/*"]
     D1 --> E["implement_experiments"]
     E --> F["run_experiments"]
-    F --> F1["exec_logs/run_experiments.txt<br/>exec_logs/observations.jsonl<br/>metrics.json<br/>objective_evaluation.json<br/>run_experiments_supplemental_runs.json (optional)<br/>run_experiments_verify_report.json<br/>run_experiments_panel/execution_plan.json<br/>run_experiments_panel/triage.json<br/>run_experiments_panel/rerun_decision.json"]
+    F --> F1["metrics.json<br/>failure_memory.jsonl<br/>objective_evaluation.json<br/>run_experiments_panel/*"]
     F1 --> G["analyze_results"]
-    G --> G1["result_analysis.json<br/>result_analysis_synthesis.json<br/>transition_recommendation.json<br/>figures/performance.svg<br/>analyze_results_panel/inputs.json<br/>analyze_results_panel/reviews.json<br/>analyze_results_panel/scorecard.json<br/>analyze_results_panel/decision.json"]
+    G --> G1["result_analysis.json<br/>attempt_decisions.jsonl<br/>transition_recommendation.json<br/>analyze_results_panel/*"]
     G1 --> H["review"]
-    H --> H1["review/findings.jsonl<br/>review/scorecard.json<br/>review/consistency_report.json<br/>review/bias_report.json<br/>review/revision_plan.json<br/>review/decision.json<br/>review/review_packet.json<br/>review/checklist.md"]
+    H --> H1["review/pre_review_summary.json<br/>review/review_packet.json<br/>review/paper_critique.json<br/>review/checklist.md"]
     H1 --> I["write_paper"]
-    I --> I1["paper/main.tex<br/>paper/references.bib<br/>paper/evidence_links.json<br/>paper/draft.json<br/>paper/validation.json<br/>paper/validation_repair_report.json<br/>paper/related_work_scout/* (optional)<br/>paper/main.pdf (optional)"]
+    I --> I1["paper/main.tex<br/>paper/references.bib<br/>paper/main.pdf (optional)"]
 ```
 
-All run artifacts live under `.autolabos/runs/<run_id>/`, which makes the pipeline inspectable from both the TUI and the local web UI.
+All run artifacts live under `.autolabos/runs/<run_id>/`. User-facing deliverables are mirrored to `outputs/<run-title>-<run_id_prefix>/`.
 
-User-facing deliverables are mirrored to `outputs/<sanitized-run-title>-<run_id_prefix>/` while `.autolabos` remains the internal source of truth for runtime state, memory, checkpoints, and panel internals. The public output root always includes `manifest.json`, which records the run id, title, output root, generated files per section, and any workspace files that were edited outside `.autolabos`.
+<details>
+<summary><strong>Public output sections</strong></summary>
 
-| Public section | Typical mirrored files |
-| --- | --- |
-| `experiment/` | `experiment_plan.yaml`, reusable experiment bundle files, `metrics.json`, `objective_evaluation.json`, `run_experiments_verify_report.json`, optional supplemental metrics, `workspace_changed_files.json` |
+| Section | Typical files |
+|---|---|
+| `experiment/` | `experiment_plan.yaml`, `metrics.json`, `objective_evaluation.json`, optional supplemental metrics |
 | `analysis/` | `result_analysis.json`, `result_analysis_synthesis.json`, `transition_recommendation.json`, optional `figures/performance.svg` |
-| `review/` | `review_packet.json`, `checklist.md`, `decision.json`, `findings.jsonl` |
-| `paper/` | `main.tex`, `references.bib`, `evidence_links.json`, optional `main.pdf`, optional `build.log` |
+| `review/` | `review_packet.json`, `checklist.md`, `decision.json`, `findings.jsonl`, `paper_critique.json` |
+| `paper/` | `main.tex`, `references.bib`, `evidence_links.json`, optional `main.pdf` |
 
-`analyze_papers` uses `analysis_manifest.json` to resume unfinished work. If the selected paper set changes, the analysis configuration changes, or `paper_summaries.jsonl` / `evidence_store.jsonl` drift out of sync with the manifest, AutoLabOS prunes stale rows and re-queues only the affected papers before downstream nodes continue.
+</details>
 
-The new mid-pipeline reinforcements are internal-only in v1: `design_experiments` writes `design_experiments_panel/*`, `run_experiments` writes `run_experiments_panel/*`, and `analyze_results` writes `analyze_results_panel/*`. The corresponding run-context memory keys are `design_experiments.panel_selection`, `run_experiments.triage`, and `analyze_results.panel_decision`.
+---
 
-Managed `run_experiments` runs may also emit `run_experiments_supplemental_runs.json` when the runtime automatically follows a successful standard run with `quick_check` and `confirmatory` profiles. `write_paper` may emit `paper/related_work_scout/*` when it performs a bounded related-work scout with planned query variants and a coverage audit, and it emits `validation_repair_report.json` plus `validation_repair.*` artifacts when the bounded repair loop actually runs.
+## Execution Controls
 
-When a run starts from the TUI brief flow, AutoLabOS snapshots the source Markdown brief to `.autolabos/runs/<run_id>/brief/source_brief.md` and records provenance in `run_brief.*` memory entries. If a human answer is required, the active request is mirrored to `.autolabos/runs/<run_id>/human_intervention/request.json` and tracked through `human_intervention.pending` and `human_intervention.history`.
+| Layer | Setting | Default | What it does |
+|---|---|---|---|
+| Approval mode | `minimal` | ✅ | Auto-approves safe transitions including review outcomes |
+| Approval mode | `manual` | Optional | Pauses at every approval boundary |
+| Autonomy | `/agent overnight` | On demand | Runs unattended with conservative policy |
+| Supervisor | Interactive TUI | Default | Keeps run moving, captures human answers when needed |
 
-### Control Surfaces
+### Bounded Automation
 
-```mermaid
-flowchart TB
-    TUI["Brief-first TUI<br/>/new + /brief start + /agent + /model + /doctor"] --> Session["Interaction session"]
-    Web["Local Web Ops UI<br/>onboarding + dashboard + composer + artifact browser"] --> Session
-    Natural["Natural-language routing<br/>deterministic first, LLM fallback second"] --> Session
+| Node | Internal automation | Bound |
+|---|---|---|
+| `analyze_papers` | Auto-expands evidence window when too sparse | ≤ 2 expansions |
+| `design_experiments` | Deterministic panel scoring + experiment contract + brief consistency | Runs once per design |
+| `run_experiments` | Failure triage + one-shot transient rerun + supplemental profiles | Never retries structural failures |
+| `run_experiments` | Failure memory: fingerprint → equivalent-failure stopping | ≥ 3 identical → exhausts retries |
+| `analyze_results` | Objective rematching + result panel calibration | One rematch before human pause |
+| `write_paper` | Related-work scout + validation-aware repair | Best-effort, 1 repair pass max |
 
-    Session --> Runtime["Shared runtime<br/>run store + checkpoint store + event stream + orchestrator"]
-    Runtime --> Nodes["9-node workflow execution"]
-    Runtime --> Artifacts["Run artifacts<br/>.autolabos/runs/<run_id>"]
-    Runtime --> State["Run state and memory<br/>context + episodes + long-term store"]
-    Runtime --> Insight["Analyze-results / review insight cards"]
+---
 
-    Artifacts --> Web
-    State --> TUI
-    Insight --> TUI
-    Insight --> Web
+## Common Commands
+
+| Command | Description |
+|---|---|
+| `/new` | Create a research brief file |
+| `/brief start <path\|--latest>` | Start research from a brief |
+| `/runs [query]` | List or search runs |
+| `/run <run>` | Select a run |
+| `/resume <run>` | Resume a run |
+| `/agent collect [query] [opts]` | Collect papers with filters |
+| `/agent run <node> [run]` | Execute from a graph node |
+| `/agent status [run]` | Show node statuses |
+| `/agent jump <node> [--force]` | Jump between nodes |
+| `/agent overnight [run]` | Run unattended overnight |
+| `/model` | Switch model and reasoning effort |
+| `/settings` | Edit provider, model, PDF settings |
+| `/doctor` | Environment + workspace diagnostics |
+
+<details>
+<summary><strong>Collection options</strong></summary>
+
+```
+--limit <n>          --last-years <n>      --year <spec>
+--date-range <s:e>   --sort <relevance|citationCount|publicationDate>
+--order <asc|desc>   --min-citations <n>   --open-access
+--field <csv>        --venue <csv>         --type <csv>
+--bibtex <generated|s2|hybrid>             --dry-run
+--additional <n>     --run <run_id>
 ```
 
-### Review Decision Loop
+Examples:
+```bash
+/agent collect --last-years 5 --sort relevance --limit 100
+/agent collect "agent planning" --sort citationCount --min-citations 100
+/agent collect --additional 200 --run <run_id>
+```
+
+</details>
+
+<details>
+<summary><strong>Natural-language examples</strong></summary>
+
+AutoLabOS routes common intents deterministically before LLM fallback:
+
+```
+create a new research run
+collect 100 papers from the last 5 years by relevance
+show current status
+jump back to collect_papers
+how many papers were collected?
+what should I do next?
+```
+
+Multi-step plans pause between steps: `y` (next), `a` (all), `n` (cancel).
+
+</details>
+
+<details>
+<summary><strong>Full slash command list</strong></summary>
+
+| Command | Description |
+|---|---|
+| `/help` | Show command list |
+| `/new` | Create a research brief file |
+| `/brief start <path\|--latest>` | Start research from a brief file |
+| `/doctor` | Environment + workspace diagnostics |
+| `/runs [query]` | List or search runs |
+| `/run <run>` | Select run |
+| `/resume <run>` | Resume run |
+| `/agent list` | List graph nodes |
+| `/agent run <node> [run]` | Execute from node |
+| `/agent status [run]` | Show node statuses |
+| `/agent collect [query] [options]` | Collect papers |
+| `/agent recollect <n> [run]` | Collect additional papers |
+| `/agent focus <node>` | Move focus with safe jump |
+| `/agent graph [run]` | Show graph state |
+| `/agent resume [run] [checkpoint]` | Resume from checkpoint |
+| `/agent retry [node] [run]` | Retry node |
+| `/agent jump <node> [run] [--force]` | Jump node |
+| `/agent overnight [run]` | Overnight autonomy |
+| `/model` | Model and reasoning selector |
+| `/approve` | Approve paused node |
+| `/retry` | Retry current node |
+| `/settings` | Provider and model settings |
+| `/quit` | Exit |
+
+</details>
+
+---
+
+## Web Ops UI
+
+`autolabos web` starts a local single-user browser UI at `http://127.0.0.1:4317`.
+
+- **Onboarding** — same setup as TUI, writes `.autolabos/config.yaml`
+- **Dashboard** — run search, 9-node workflow view, node actions, live logs
+- **Artifacts** — browse `.autolabos/runs/<run_id>`, preview text/images/PDFs inline
+- **Composer** — slash commands and natural-language, with `Run next` / `Run all` / `Cancel` for multi-step plans
+
+```bash
+autolabos web                              # Default port 4317
+autolabos web --host 0.0.0.0 --port 8080  # Custom bind
+```
+
+---
+
+## Operational Quality
+
+| Document | Coverage |
+|---|---|
+| `docs/architecture.md` | System architecture and design decisions |
+| `docs/tui-live-validation.md` | TUI validation and testing approach |
+| `docs/experiment-quality-bar.md` | Experiment execution standards |
+| `docs/paper-quality-bar.md` | Manuscript quality requirements |
+| `docs/reproducibility.md` | Reproducibility guarantees |
+| `docs/research-brief-template.md` | Full brief template with all governance sections |
+
+---
+
+## Development
+
+```bash
+npm install              # Install deps (also installs web sub-package)
+npm run build            # Build TypeScript + web UI
+npm test                 # Run all 825 unit tests
+npm run test:watch       # Watch mode
+
+# Single test file
+npx vitest run tests/<name>.test.ts
+
+# Smoke tests
+npm run test:smoke:all                      # Full local smoke bundle
+npm run test:smoke:natural-collect          # NL collect -> pending command
+npm run test:smoke:natural-collect-execute  # NL collect -> execute -> verify
+npm run test:smoke:ci                       # CI smoke selection
+```
+
+<details>
+<summary><strong>Smoke test environment variables</strong></summary>
+
+```bash
+AUTOLABOS_FAKE_CODEX_RESPONSE=1              # Avoid live Codex calls
+AUTOLABOS_FAKE_SEMANTIC_SCHOLAR_RESPONSE=1   # Avoid live S2 calls
+AUTOLABOS_SMOKE_VERBOSE=1                    # Print full PTY logs
+AUTOLABOS_SMOKE_MODE=<mode>                  # CI mode selection
+# Modes: pending, execute, composite, composite-all, llm-composite, llm-composite-all, llm-replan, all
+```
+
+</details>
+
+<details>
+<summary><strong>Runtime internals</strong></summary>
+
+### State Graph Policies
+
+- Checkpoints: `.autolabos/runs/<run_id>/checkpoints/` — phases: `before | after | fail | jump | retry`
+- Retry policy: `maxAttemptsPerNode = 3`
+- Auto rollback: `maxAutoRollbacksPerNode = 2`
+- Jump modes: `safe` (current or previous) / `force` (forward, skipped nodes recorded)
+
+### Agent Runtime Patterns
+
+- **ReAct** loop: `PLAN_CREATED → TOOL_CALLED → OBS_RECEIVED`
+- **ReWOO** split (planner/worker): used for high-cost nodes
+- **ToT** (Tree-of-Thoughts): used in hypothesis and design nodes
+- **Reflexion**: failure episodes stored and reused on retries
+
+### Memory Layers
+
+| Layer | Scope | Format |
+|---|---|---|
+| Run context memory | Per-run key/value | `run_context.jsonl` |
+| Long-term store | Cross-attempt | JSONL summary and index |
+| Episode memory | Reflexion | Failure lessons for retries |
+
+### ACI Actions
+
+`implement_experiments` and `run_experiments` execute through:
+`read_file` · `write_file` · `apply_patch` · `run_command` · `run_tests` · `tail_logs`
+
+</details>
+
+<details>
+<summary><strong>Concrete agent runtime diagram</strong></summary>
 
 ```mermaid
 flowchart LR
-    ReviewNode["review node"] --> Packet["review_packet.json"]
-    Packet --> Parse["parseReviewPacket"]
-    Parse --> Insight["buildReviewInsightCard<br/>formatReviewPacketLines"]
-    Insight --> TUI["TUI active run insight<br/>/agent review output"]
-    Insight --> Web["Web review preview<br/>suggested action buttons"]
-    TUI --> Approve["auto transition or /approve (if paused)"]
-    Web --> Approve
-    Approve --> Runtime["StateGraphRuntime.approveCurrent / auto gate resolver"]
-    Runtime -->|advance| Paper["write_paper"]
-    Runtime -->|safe backtrack| Backtrack["generate_hypotheses / design_experiments / implement_experiments"]
-```
-
-### Concrete Agent Runtime
-
-```mermaid
-flowchart LR
-    UI["CLI / TUI / Web UI"] --> Session["InteractionSession + web composer"]
+    UI["CLI / TUI / Web UI"] --> Session["InteractionSession"]
     Session --> Bootstrap["createAutoLabOSRuntime"]
     Bootstrap --> Orchestrator["AgentOrchestrator"]
-    Bootstrap --> Overnight["AutonomousRunController"]
     Bootstrap --> Runtime["StateGraphRuntime"]
-    Bootstrap --> Providers["RoutedLLMClient + CodexCliClient + SemanticScholarClient + ResponsesPdfAnalysisClient + LocalAciAdapter"]
+    Bootstrap --> Providers["RoutedLLMClient + CodexCliClient<br/>+ SemanticScholarClient + LocalAciAdapter"]
     Orchestrator --> Runtime
-    Overnight --> Orchestrator
     Runtime --> Registry["DefaultNodeRegistry"]
     Runtime --> Stores["RunStore + CheckpointStore + EventStream"]
     Providers --> Registry
@@ -477,269 +670,22 @@ flowchart LR
     Registry --> Results["analyze_results"]
     Registry --> Review["review"]
     Registry --> Paper["write_paper"]
-
-    Collect --> Scholar["Semantic Scholar + enrichment"]
-    Analyze --> AnalyzeStack["paperSelection + paperAnalyzer + analysis manifest"]
-    Hyp --> HypStack["researchPlanning.generateHypothesesFromEvidence + ToT"]
-    Design --> DesignStack["researchPlanning.designExperimentsFromHypotheses + designExperimentsPanel"]
-    Impl --> ImplStack["ImplementSessionManager + ImplementationLocalizer"]
-    Run --> RunStack["LocalAciAdapter + runExperimentsPanel + runVerifierFeedback"]
-    Results --> ResultStack["resultAnalysis + analyzeResultsPanel + synthesis + transition recommendation"]
-    Review --> ReviewStack["runReviewPanel + reviewPacket + transition recommendation"]
-    Paper --> PaperStack["PaperWriterSessionManager + paperWriting + LaTeX build"]
 ```
 
 Key source areas:
-
-- `src/runtime/createRuntime.ts`: wires config, providers, stores, runtime, orchestrator, and the shared execution dependencies
-- `src/interaction/*`: shared command/session layer used by the TUI and the web composer
-- `src/core/stateGraph/*`: node execution, retries, approvals, limits, jumps, and checkpoints
-- `src/core/nodes/*`: the 9 workflow handlers and their artifact-writing logic
-- `src/core/analysis/researchPlanning.ts`, `src/core/designExperimentsPanel.ts`, `src/core/runExperimentsPanel.ts`, `src/core/analyzeResultsPanel.ts`, `src/core/reviewSystem.ts`, and `src/core/reviewPacket.ts`: multi-stage hypothesis generation/design, deterministic mid-pipeline panels/controllers, the specialist review panel, packet building, and review surfacing
-- `src/core/agents/*`: session managers, exported roles, and search-backed implementation localization
-- `src/integrations/*` and `src/tools/*`: provider clients, Semantic Scholar access, Responses PDF analysis, and local execution adapters
-- `src/web/*`, `web/src/*`, `src/interaction/*`, and `src/tui/*`: local HTTP server, browser UI, and terminal surfaces that expose analysis/review insight cards
-
-## Most-Used Commands
-
-| Command | Description |
-| --- | --- |
-| `/new` | Create a research brief file |
-| `/brief start <path|--latest>` | Start research from a brief file |
-| `/runs [query]` | List or search runs |
-| `/run <run>` | Select a run |
-| `/resume <run>` | Resume a run |
-| `/agent collect [query] [options]` | Collect papers with filters, sort, and bibliographic options |
-| `/agent run <node> [run]` | Execute from a graph node |
-| `/agent status [run]` | Show node statuses |
-| `/agent graph [run]` | Show graph state |
-| `/agent resume [run] [checkpoint]` | Resume from the latest or a specific checkpoint |
-| `/agent retry [node] [run]` | Retry a node |
-| `/agent jump <node> [run] [--force]` | Jump between nodes |
-| `/model` | Open model and reasoning selector |
-| `/settings` | Edit provider, model, and PDF settings |
-| `/doctor` | Run environment checks plus workspace harness diagnostics |
-
-Common collection options:
-
-- `--run <run_id>`
-- `--limit <n>`
-- `--additional <n>`
-- `--last-years <n>`
-- `--year <spec>`
-- `--date-range <start:end>`
-- `--sort <relevance|citationCount|publicationDate|paperId>`
-- `--order <asc|desc>`
-- `--field <csv>`
-- `--venue <csv>`
-- `--type <csv>`
-- `--min-citations <n>`
-- `--open-access`
-- `--bibtex <generated|s2|hybrid>`
-- `--dry-run`
-
-Examples:
-
-- `/agent collect --last-years 5 --sort relevance --limit 100`
-- `/agent collect "agent planning" --sort citationCount --order desc --min-citations 100`
-- `/agent collect --additional 200 --run <run_id>`
-
-## Natural-Language Control
-
-AutoLabOS does not try to support every sentence with hard-coded rules. Instead, it defines deterministic intent families and routes those locally before falling back to the workspace-grounded LLM.
-
-Ask this inside the TUI to see the live supported list:
-
-- `what natural inputs are supported?`
-
-Typical examples:
-
-- `create a new research run`
-- `collect 100 papers from the last 5 years by relevance`
-- `show current status`
-- `jump back to collect_papers`
-- `how many papers were collected?`
-
-In the TUI, the recommended path is still `/new` plus `/brief start --latest`, because that leaves an editable brief file on disk. Natural-language run creation remains available for quick one-shot starts.
-
-Multi-step natural-language plans pause between steps:
-
-- `y`: run only the next step
-- `a`: run all remaining steps without pausing again
-- `n`: cancel the remaining plan
-
-Implementation references:
-
-- Deterministic routing: [src/core/commands/naturalDeterministic.ts](./src/core/commands/naturalDeterministic.ts)
-- Local status / next-step assistant: [src/core/commands/naturalAssistant.ts](./src/core/commands/naturalAssistant.ts)
-
-<details>
-<summary>Full slash command list</summary>
-
-| Command | Description |
-| --- | --- |
-| `/help` | Show command list |
-| `/new` | Create a research brief file |
-| `/brief start <path|--latest>` | Start research from a brief file |
-| `/doctor` | Environment checks plus workspace harness diagnostics |
-| `/runs [query]` | List or search runs |
-| `/run <run>` | Select run |
-| `/resume <run>` | Resume run |
-| `/agent list` | List graph nodes |
-| `/agent run <node> [run]` | Execute from node |
-| `/agent status [run]` | Show node statuses |
-| `/agent collect [query] [options]` | Collect papers with filters, sort, and options |
-| `/agent recollect <n> [run]` | Collect additional papers for the current run |
-| `/agent focus <node>` | Move focus to node with a safe jump |
-| `/agent graph [run]` | Show graph state |
-| `/agent resume [run] [checkpoint]` | Resume from latest or specific checkpoint |
-| `/agent retry [node] [run]` | Retry node |
-| `/agent jump <node> [run] [--force]` | Jump node |
-| `/agent overnight [run]` | Run the overnight autonomy preset with the default safe policy |
-| `/model` | Open arrow-key selector for model and reasoning effort |
-| `/approve` | Approve the current paused node |
-| `/retry` | Retry current node |
-| `/settings` | Edit provider, model, and PDF settings |
-| `/quit` | Exit |
+- `src/runtime/createRuntime.ts` — wires config, providers, stores, runtime, orchestrator
+- `src/interaction/*` — shared command/session layer for TUI and web
+- `src/core/stateGraph/*` — node execution, retries, approvals, checkpoints
+- `src/core/nodes/*` — the 9 workflow handlers
+- `src/core/experiments/*` — experiment contracts, failure memory, attempt decisions, brief-design consistency
+- `src/core/agents/*` — session managers, exported roles
+- `src/integrations/*` — provider clients (Codex, OpenAI, Semantic Scholar)
+- `src/web/*`, `web/src/*` — local HTTP server and browser UI
 
 </details>
 
-<details>
-<summary>Supported natural-language intent families</summary>
+---
 
-1. Help / settings / model / doctor / quit
-   - Examples: `show help`, `open model selector`, `run environment checks`
-2. Run lifecycle
-   - Examples: `create a new run`, `list runs`, `open run alpha`, `resume the previous run`
-   - Examples: `start a new research run: topic: multi-agent code repair, objective: pass@1, constraints: recent papers only`
-3. Run title changes
-   - Examples: `change the run title to Multi-agent collaboration`
-4. Workflow structure / status / next step
-   - Examples: `what should I do next?`, `show current status`, `show the workflow`
-5. Paper collection
-   - Examples: `collect 100 papers from the last 5 years by relevance`
-   - Examples: `collect 50 open-access review papers`
-   - Examples: `collect 200 more papers`
-   - Examples: `clear collected papers, then collect 100 new papers`
-6. Node control
-   - Examples: `jump back to collect_papers`, `retry the hypothesis node`, `focus on implement_experiments`
-7. Graph / approval
-   - Examples: `show graph`, `approve the current paused node`, `retry current node`
-8. Direct questions about collected papers
-   - Examples: `how many papers were collected?`
-   - Examples: `how many papers are missing PDF paths?`
-   - Examples: `what is the top-cited paper?`
-   - Examples: `show 3 paper titles`
-
-</details>
-
-<details>
-<summary>Runtime defaults, storage, and execution details</summary>
-
-### State Graph
-
-Fixed graph nodes:
-
-1. `collect_papers`
-2. `analyze_papers`
-3. `generate_hypotheses`
-4. `design_experiments`
-5. `implement_experiments`
-6. `run_experiments`
-7. `analyze_results`
-8. `review`
-9. `write_paper`
-
-### Runtime Policies
-
-- Checkpoints: `.autolabos/runs/<run_id>/checkpoints/`
-- Checkpoint phases: `before | after | fail | jump | retry`
-- Retry policy: `maxAttemptsPerNode=3`
-- Auto rollback policy: `maxAutoRollbacksPerNode=2`
-- Jump modes:
-  - `safe`: only current or previous node
-  - `force`: forward jumps allowed and skipped nodes are recorded
-### Agent Runtime Patterns
-
-- ReAct loop: `PLAN_CREATED -> TOOL_CALLED -> OBS_RECEIVED`
-- ReWOO split (planner/worker): used for high-cost nodes
-- ToT (Tree-of-Thoughts): used in hypothesis and design nodes
-- Reflexion: failure episodes are stored and reused on retries
-
-### Memory Layers
-
-- Run context memory: per-run short-term state
-- Long-term store: JSONL summary and index history
-- Episode memory: Reflexion failure lessons
-
-### ACI (Agent-Computer Interface)
-
-Standard actions:
-
-- `read_file`
-- `write_file`
-- `apply_patch`
-- `run_command`
-- `run_tests`
-- `tail_logs`
-
-`implement_experiments` and `run_experiments` are executed via ACI.
-
-### Command Palette
-
-- Type `/`: open command list
-- `Tab`: autocomplete
-- `Up/Down`: navigate candidates
-- `Enter`: execute
-- Run suggestions include `run_id + title + current_node + status + relative time`
-- When the input is empty, the TUI shows context-aware next actions with exact commands and natural-language examples
-- The next-actions panel now expands into a broader state-aware action catalog: run, status, graph, count, jump, and natural-language queries
-- Empty-input guidance follows the user's recent language or OS locale, and `Tab` fills the first suggested action
-
-### Run Metadata
-
-`runs.json` stores:
-
-- `version: 3`
-- `workflowVersion: 3`
-- `currentNode`
-- `graph` (`RunGraphState`)
-- `nodeThreads` (`Partial<Record<GraphNodeId, string>>`)
-- `memoryRefs` (`runContextPath`, `longTermPath`, `episodePath`)
-
-### Generated Paths
-
-- `.autolabos/config.yaml`
-- `.autolabos/runs/runs.json`
-- `.autolabos/runs/<run_id>/checkpoints/*`
-- `.autolabos/runs/<run_id>/memory/*`
-- `.autolabos/runs/<run_id>/paper/*`
-
-</details>
-
-## Development
-
-```bash
-npm run build
-npm test
-npm run test:smoke:all
-npm run test:smoke:natural-collect
-npm run test:smoke:natural-collect-execute
-npm run test:smoke:ci
-```
-
-Smoke test notes:
-
-- Smoke harness files live under `tests/smoke/`.
-- The manual example workspace stays under `/test`.
-- Smoke uses an isolated workspace under `/test/smoke-workspace` so it does not overwrite root `/test` example state.
-- `test:smoke:natural-collect` verifies natural-language collect request -> pending `/agent collect ...` command.
-- `test:smoke:natural-collect-execute` verifies natural-language collect request -> `y` execute -> collect artifacts created.
-- `test:smoke:all` runs the full local smoke bundle in `/test/smoke-workspace`.
-- Smoke uses `AUTOLABOS_FAKE_CODEX_RESPONSE` to avoid live Codex calls.
-- Execute smoke also uses `AUTOLABOS_FAKE_SEMANTIC_SCHOLAR_RESPONSE`.
-- `test:smoke:ci` runs CI-mode smoke selection.
-  - Default mode: `pending`
-  - Additional modes: `execute`, `composite`, `composite-all`, `llm-composite`, `llm-composite-all`, `llm-replan`
-  - Set `AUTOLABOS_SMOKE_MODE=<mode>` or `AUTOLABOS_SMOKE_MODE=all` to switch CI scenarios.
-- Smoke output is quiet by default. Set `AUTOLABOS_SMOKE_VERBOSE=1` to print full PTY logs.
+<div align="center">
+  <sub>Built for researchers who want their experiments governed and their claims defensible.</sub>
+</div>
