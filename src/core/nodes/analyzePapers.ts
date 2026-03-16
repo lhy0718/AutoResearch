@@ -3,7 +3,7 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 
 import { GraphNodeHandler } from "../stateGraph/types.js";
-import { appendJsonl, appendJsonlItems, runArtifactsDir, safeRead } from "./helpers.js";
+import { appendJsonl, appendJsonlItems, runArtifactsDir, safeRead, writeRunArtifact } from "./helpers.js";
 import { NodeExecutionDeps } from "./types.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { readJsonFile, writeJsonFile } from "../../utils/fs.js";
@@ -615,6 +615,11 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           emitLog(
             `Analysis totals: summaries=${progress.summaryRows.length}, evidence=${progress.evidenceRows.length}, full_text=${progress.fullTextCount}, abstract_fallback=${progress.abstractFallbackCount}.`
           );
+          await writeRunArtifact(
+            run,
+            "analyze_papers_richness_summary.json",
+            JSON.stringify(buildRichnessSummary(progress), null, 2)
+          );
           return {
             status: "success",
             summary: preservedSelectionRegression.summary,
@@ -1116,6 +1121,11 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         });
         emitLog(
           `Analysis totals: summaries=${progress.summaryRows.length}, evidence=${progress.evidenceRows.length}, full_text=${progress.fullTextCount}, abstract_fallback=${progress.abstractFallbackCount}.`
+        );
+        await writeRunArtifact(
+          run,
+          "analyze_papers_richness_summary.json",
+          JSON.stringify(buildRichnessSummary(progress), null, 2)
         );
 
         if (failedCount > 0) {
@@ -2293,6 +2303,39 @@ function buildAnalysisProgress(summaryRows: PaperSummaryRow[], evidenceRows: Pap
     evidenceRows,
     fullTextCount: summaryRows.filter((row) => row.source_type === "full_text").length,
     abstractFallbackCount: summaryRows.filter((row) => row.source_type === "abstract").length
+  };
+}
+
+export interface RichnessSummary {
+  total_papers: number;
+  full_text_count: number;
+  abstract_fallback_count: number;
+  fulltext_coverage_pct: number;
+  readiness: "adequate" | "marginal" | "insufficient";
+}
+
+export function buildRichnessSummary(progress: {
+  fullTextCount: number;
+  abstractFallbackCount: number;
+}): RichnessSummary {
+  const total = progress.fullTextCount + progress.abstractFallbackCount;
+  const pct = total > 0 ? progress.fullTextCount / total : 0;
+
+  let readiness: RichnessSummary["readiness"];
+  if (progress.fullTextCount >= 5 && pct >= 0.5) {
+    readiness = "adequate";
+  } else if (progress.fullTextCount >= 3) {
+    readiness = "marginal";
+  } else {
+    readiness = "insufficient";
+  }
+
+  return {
+    total_papers: total,
+    full_text_count: progress.fullTextCount,
+    abstract_fallback_count: progress.abstractFallbackCount,
+    fulltext_coverage_pct: Math.round(pct * 1000) / 1000,
+    readiness
   };
 }
 
