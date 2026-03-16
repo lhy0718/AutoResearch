@@ -430,6 +430,12 @@ function renderJsonl(items: unknown[]): string {
 // Pre-review summary (Target 6)
 // ---------------------------------------------------------------------------
 
+interface ClaimCeilingDetail {
+  strongest_defensible_claim: string;
+  blocked_stronger_claims: Array<{ claim: string; reason: string }>;
+  additional_evidence_needed: string[];
+}
+
 interface PreReviewSummary {
   generated_at: string;
   objective_metric: string;
@@ -440,6 +446,7 @@ interface PreReviewSummary {
   failure_clusters: Array<{ fingerprint: string; count: number }>;
   remaining_uncertainty: string[];
   claim_ceiling: string;
+  claim_ceiling_detail: ClaimCeilingDetail;
   experiment_contract?: {
     hypothesis: string;
     single_change: string;
@@ -486,13 +493,31 @@ function buildPreReviewSummary(input: {
     uncertainties.push("At least one attempt needs replication to confirm.");
   }
 
-  const claimCeiling = report.overview?.objective_status === "met"
-    ? experimentContract?.confounded
+  const objectiveStatus = report.overview?.objective_status;
+  const isConfounded = experimentContract?.confounded ?? false;
+  const hasBaseline = baselines.length > 0;
+  const hasReplication = attemptDecisions.some((d) => d.verdict === "needs_replication");
+  const hasMultipleKept = keptDecisions.length >= 2;
+
+  const claimCeiling = objectiveStatus === "met"
+    ? isConfounded
       ? "Confounded experiment: claims limited to correlation, not causation."
       : "Objective met; claims can reference metric improvement over baseline."
-    : report.overview?.objective_status === "not_met"
+    : objectiveStatus === "not_met"
       ? "Objective not met; claims must be limited to negative or null result."
       : "Objective unknown; claims must be heavily qualified.";
+
+  // --- Claim ceiling detail (Target 5) ---
+  const claimCeilingDetail = buildClaimCeilingDetail({
+    objectiveStatus,
+    isConfounded,
+    hasBaseline,
+    hasReplication,
+    hasMultipleKept,
+    failureClusters,
+    uncertainties,
+    objectiveMetric
+  });
 
   return {
     generated_at: new Date().toISOString(),
@@ -506,6 +531,7 @@ function buildPreReviewSummary(input: {
     failure_clusters: failureClusters.map(([fp, count]) => ({ fingerprint: fp, count })),
     remaining_uncertainty: uncertainties,
     claim_ceiling: claimCeiling,
+    claim_ceiling_detail: claimCeilingDetail,
     experiment_contract: experimentContract
       ? {
           hypothesis: experimentContract.hypothesis,
@@ -522,5 +548,85 @@ function buildPreReviewSummary(input: {
     rollback_counters: Object.fromEntries(
       Object.entries(input.rollbackCounters).filter(([, v]) => v !== undefined)
     ) as Record<string, number>
+  };
+}
+
+function buildClaimCeilingDetail(input: {
+  objectiveStatus?: string;
+  isConfounded: boolean;
+  hasBaseline: boolean;
+  hasReplication: boolean;
+  hasMultipleKept: boolean;
+  failureClusters: Array<[string, number]>;
+  uncertainties: string[];
+  objectiveMetric: string;
+}): ClaimCeilingDetail {
+  const { objectiveStatus, isConfounded, hasBaseline, hasReplication, hasMultipleKept, failureClusters, objectiveMetric } = input;
+
+  let strongestClaim: string;
+  const blocked: Array<{ claim: string; reason: string }> = [];
+  const evidenceNeeded: string[] = [];
+
+  if (objectiveStatus === "met" && hasBaseline && !isConfounded) {
+    strongestClaim = `${objectiveMetric} improved over explicit baseline under controlled single-change conditions.`;
+    if (!hasMultipleKept) {
+      blocked.push({
+        claim: "Robust improvement across multiple attempts",
+        reason: "Only one kept attempt — single data point insufficient for robustness claim."
+      });
+      evidenceNeeded.push("Additional successful attempt to strengthen robustness.");
+    }
+    if (hasReplication) {
+      blocked.push({
+        claim: "Confirmed improvement",
+        reason: "At least one attempt flagged as needs_replication."
+      });
+      evidenceNeeded.push("Replication attempt with consistent results.");
+    }
+  } else if (objectiveStatus === "met" && isConfounded) {
+    strongestClaim = `${objectiveMetric} improved, but experiment was confounded — correlation only.`;
+    blocked.push({
+      claim: "Causal improvement from the proposed change",
+      reason: "Multiple changes confounded; cannot isolate the independent variable."
+    });
+    evidenceNeeded.push("Repeat experiment with single isolated change.");
+  } else if (objectiveStatus === "met" && !hasBaseline) {
+    strongestClaim = `${objectiveMetric} reached target level, but no explicit baseline comparison.`;
+    blocked.push({
+      claim: "Improvement over prior work",
+      reason: "No baseline identified; improvement direction is unverifiable."
+    });
+    evidenceNeeded.push("Add explicit baseline for comparison.");
+  } else if (objectiveStatus === "not_met") {
+    strongestClaim = `Negative or null result: ${objectiveMetric} did not improve.`;
+    blocked.push({
+      claim: "Any positive improvement claim",
+      reason: "Objective metric was not met."
+    });
+    evidenceNeeded.push("Redesign experiment or revise hypothesis if pursuing positive result.");
+  } else {
+    strongestClaim = `Inconclusive: ${objectiveMetric} status unknown — claims must be heavily qualified.`;
+    blocked.push({
+      claim: "Any definitive claim about metric direction",
+      reason: "Objective status is unknown or not evaluated."
+    });
+    evidenceNeeded.push("Complete analysis to determine objective status.");
+  }
+
+  if (failureClusters.length > 0) {
+    const totalFailures = failureClusters.reduce((sum, [, c]) => sum + c, 0);
+    if (totalFailures >= 3) {
+      blocked.push({
+        claim: "Reliable execution",
+        reason: `${totalFailures} failures across ${failureClusters.length} pattern(s) during execution.`
+      });
+      evidenceNeeded.push("Address failure patterns before claiming reliable execution.");
+    }
+  }
+
+  return {
+    strongest_defensible_claim: strongestClaim,
+    blocked_stronger_claims: blocked,
+    additional_evidence_needed: evidenceNeeded
   };
 }

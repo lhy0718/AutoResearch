@@ -29,6 +29,7 @@ import {
   looksLikeRunBriefRequest,
   summarizeRunBrief
 } from "../core/runs/runBriefParser.js";
+import { buildBriefCompletenessArtifact } from "../core/runs/researchBriefFiles.js";
 import {
   buildReviewInsightCard,
   formatReviewPacketLines,
@@ -267,6 +268,13 @@ export class InteractionSession {
     await runContextMemory.put("run_brief.raw", input.brief);
     await runContextMemory.put("run_brief.extracted", extracted);
     await runContextMemory.put("run_brief.plan_summary", extracted.planSummary || null);
+    const briefCompleteness = buildBriefCompletenessArtifact(input.brief);
+    await runContextMemory.put("run_brief.completeness", briefCompleteness);
+    if (briefCompleteness.grade === "minimal") {
+      this.pushLog(`Brief completeness: ${briefCompleteness.grade} — missing: ${briefCompleteness.missing_sections.join(", ") || "none"}.`);
+    } else if (briefCompleteness.grade === "partial") {
+      this.pushLog(`Brief completeness: ${briefCompleteness.grade} — paper-scale sections partially filled.`);
+    }
     if (!input.autoStart) {
       return run;
     }

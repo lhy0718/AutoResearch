@@ -233,6 +233,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             stage: "resolve"
           }
         });
+        await recordRunFailure(message, "structural");
         return {
           status: "failure",
           error: message,
@@ -349,6 +350,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
               exit_code: testObs.exit_code ?? 1
             }
           });
+          await recordRunFailure(testObs.stderr || "Preflight tests failed", "transient");
           return {
             status: "failure",
             error: testObs.stderr || "Preflight tests failed",

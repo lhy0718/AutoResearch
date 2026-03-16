@@ -2,7 +2,7 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 
 import { ensureDir, fileExists } from "../../utils/fs.js";
-import { ExtractedRunBrief, parseMarkdownRunBriefSections } from "./runBriefParser.js";
+import { ExtractedRunBrief, MarkdownRunBriefSections, parseMarkdownRunBriefSections } from "./runBriefParser.js";
 
 export const RESEARCH_BRIEF_DIR = ".autolabos/briefs";
 
@@ -110,7 +110,130 @@ export function validateResearchBriefMarkdown(markdown: string): BriefValidation
   if (!sections?.plan) {
     warnings.push('The "## Plan" section is empty. Consider adding experiment intent before starting.');
   }
+  if (!sections?.targetComparison) {
+    warnings.push('The "## Target Comparison" section is missing. Paper-scale claims require an explicit comparison.');
+  }
+  if (!sections?.minimumAcceptableEvidence) {
+    warnings.push('The "## Minimum Acceptable Evidence" section is missing. Review will apply default thresholds.');
+  }
+  if (!sections?.disallowedShortcuts) {
+    warnings.push('The "## Disallowed Shortcuts" section is missing. No shortcut guardrails will be enforced.');
+  }
+  if (!sections?.allowedBudgetedPasses) {
+    warnings.push('The "## Allowed Budgeted Passes" section is missing. Budget enforcement will use defaults.');
+  }
+  if (!sections?.paperCeiling) {
+    warnings.push('The "## Paper Ceiling If Evidence Remains Weak" section is missing. Claim ceiling will be inferred at review time.');
+  }
   return { errors, warnings };
+}
+
+// ---------------------------------------------------------------------------
+// Brief completeness artifact
+// ---------------------------------------------------------------------------
+
+export type BriefCompletenessGrade = "complete" | "partial" | "minimal";
+
+export interface BriefSectionStatus {
+  present: boolean;
+  substantive: boolean;
+}
+
+export interface BriefCompletenessArtifact {
+  generated_at: string;
+  grade: BriefCompletenessGrade;
+  sections: {
+    topic: BriefSectionStatus;
+    objectiveMetric: BriefSectionStatus;
+    constraints: BriefSectionStatus;
+    plan: BriefSectionStatus;
+    targetComparison: BriefSectionStatus;
+    minimumAcceptableEvidence: BriefSectionStatus;
+    disallowedShortcuts: BriefSectionStatus;
+    allowedBudgetedPasses: BriefSectionStatus;
+    paperCeiling: BriefSectionStatus;
+  };
+  missing_sections: string[];
+  paper_scale_ready: boolean;
+}
+
+function sectionStatus(content: string | undefined): BriefSectionStatus {
+  if (!content) return { present: false, substantive: false };
+  const trimmed = content.trim();
+  if (!trimmed) return { present: false, substantive: false };
+  // A section is substantive if it has at least 10 characters of non-boilerplate content
+  const stripped = trimmed
+    .replace(/\(not specified\)/gi, "")
+    .replace(/TBD/gi, "")
+    .replace(/TODO/gi, "")
+    .replace(/N\/A/gi, "")
+    .trim();
+  return { present: true, substantive: stripped.length >= 10 };
+}
+
+export function buildBriefCompletenessArtifact(markdown: string): BriefCompletenessArtifact {
+  const sections = parseMarkdownRunBriefSections(markdown);
+
+  const sectionMap = {
+    topic: sectionStatus(sections?.topic),
+    objectiveMetric: sectionStatus(sections?.objectiveMetric),
+    constraints: sectionStatus(sections?.constraints),
+    plan: sectionStatus(sections?.plan),
+    targetComparison: sectionStatus(sections?.targetComparison),
+    minimumAcceptableEvidence: sectionStatus(sections?.minimumAcceptableEvidence),
+    disallowedShortcuts: sectionStatus(sections?.disallowedShortcuts),
+    allowedBudgetedPasses: sectionStatus(sections?.allowedBudgetedPasses),
+    paperCeiling: sectionStatus(sections?.paperCeiling)
+  };
+
+  const SECTION_LABELS: Record<string, string> = {
+    topic: "Topic",
+    objectiveMetric: "Objective Metric",
+    constraints: "Constraints",
+    plan: "Plan",
+    targetComparison: "Target Comparison",
+    minimumAcceptableEvidence: "Minimum Acceptable Evidence",
+    disallowedShortcuts: "Disallowed Shortcuts",
+    allowedBudgetedPasses: "Allowed Budgeted Passes",
+    paperCeiling: "Paper Ceiling If Evidence Remains Weak"
+  };
+
+  const missing: string[] = [];
+  for (const [key, status] of Object.entries(sectionMap)) {
+    if (!status.present) {
+      missing.push(SECTION_LABELS[key] ?? key);
+    }
+  }
+
+  const coreSections = [sectionMap.topic, sectionMap.objectiveMetric];
+  const extendedSections = [
+    sectionMap.targetComparison,
+    sectionMap.minimumAcceptableEvidence,
+    sectionMap.disallowedShortcuts,
+    sectionMap.allowedBudgetedPasses,
+    sectionMap.paperCeiling
+  ];
+
+  const coreComplete = coreSections.every((s) => s.present && s.substantive);
+  const extendedPresent = extendedSections.filter((s) => s.present).length;
+  const extendedSubstantive = extendedSections.filter((s) => s.substantive).length;
+
+  let grade: BriefCompletenessGrade;
+  if (coreComplete && extendedSubstantive >= 4) {
+    grade = "complete";
+  } else if (coreComplete && extendedPresent >= 2) {
+    grade = "partial";
+  } else {
+    grade = "minimal";
+  }
+
+  return {
+    generated_at: new Date().toISOString(),
+    grade,
+    sections: sectionMap,
+    missing_sections: missing,
+    paper_scale_ready: grade === "complete"
+  };
 }
 
 export async function snapshotResearchBriefToRun(workspaceRoot: string, runId: string, sourcePath: string): Promise<string> {

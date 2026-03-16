@@ -139,5 +139,80 @@ export function validateExperimentContract(contract: ExperimentContract): Experi
     issues.push("Missing expected metric effect.");
   }
 
+  // Enhanced confounding detection (Target 3): heuristic multi-change detection
+  const confoundingHints = detectConfoundingHints(contract);
+  for (const hint of confoundingHints) {
+    issues.push(hint);
+  }
+
   return { valid: issues.length === 0, issues };
+}
+
+// ---------------------------------------------------------------------------
+// Enhanced confounding detection (Target 3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Heuristic multi-change detection beyond the structural `additional_changes` flag.
+ * Conservative: returns hints only when strong textual signals indicate multiple
+ * independent changes in what is declared as a single_change.
+ */
+export function detectConfoundingHints(contract: ExperimentContract): string[] {
+  if (contract.confounded) return []; // already flagged structurally
+
+  const hints: string[] = [];
+  const change = contract.single_change.toLowerCase();
+
+  // 1. Conjunction-split heuristic: "X and Y" or "X + Y" suggesting two distinct changes
+  // Only split on strong conjunctions that separate independent clauses.
+  // Skip "and its", "and the", "and their" which connect a noun to its qualifier.
+  const conjunctionSplits = change.split(/\b(?:and|plus|\+|&|as well as|along with|together with|in addition to)\b(?!\s+(?:its|the|their|this|that|those|these)\b)/i);
+  const substantiveParts = conjunctionSplits
+    .map((s) => s.trim())
+    .filter((s) => s.length > 8);
+  if (substantiveParts.length >= 2) {
+    // Verify the parts are distinct enough to be separate interventions
+    const partTokens = substantiveParts.map((p) =>
+      new Set(p.split(/\s+/).filter((t) => t.length > 3).map((t) => t.toLowerCase()))
+    );
+    if (partTokens.length >= 2 && partTokens[0].size >= 2 && partTokens[1].size >= 2) {
+      const [first, second] = partTokens;
+      const overlap = [...first].filter((t) => second.has(t)).length;
+      const maxSize = Math.max(first.size, second.size);
+      // Require that overlap is less than 30% of the larger set — truly distinct interventions
+      const distinctEnough = overlap < maxSize * 0.3 && overlap < 2;
+      if (distinctEnough) {
+        hints.push(
+          `Potential confounding: single_change contains conjunction-separated parts that appear to be distinct interventions: "${substantiveParts.slice(0, 3).join('" + "')}".`
+        );
+      }
+    }
+  }
+
+  // 2. List-form heuristic: numbered or bulleted lists inside single_change
+  const listPattern = /(?:^|\n)\s*(?:\d+[.)]\s+|[-*]\s+)/;
+  if (listPattern.test(contract.single_change) && contract.single_change.split(listPattern).filter(Boolean).length >= 2) {
+    hints.push("Potential confounding: single_change appears to contain a list of multiple changes.");
+  }
+
+  // 3. Mechanism-change mismatch: if causal_mechanism mentions a different entity than single_change
+  // This is the most conservative check — only flag if mechanism talks about something not in the change
+  const mechanismWords = new Set(
+    contract.causal_mechanism.toLowerCase().split(/\s+/).filter((t) => t.length > 4)
+  );
+  const changeWords = new Set(
+    change.split(/\s+/).filter((t) => t.length > 4)
+  );
+  const mechanismOnly = [...mechanismWords].filter((t) => !changeWords.has(t));
+  // Look for action verbs in mechanism-only words that suggest an additional intervention
+  const additionalInterventionVerbs = mechanismOnly.filter((t) =>
+    /^(?:replace|add|remove|modify|change|introduce|eliminate|switch|restructur|refactor)/i.test(t)
+  );
+  if (additionalInterventionVerbs.length >= 2) {
+    hints.push(
+      `Potential confounding: causal_mechanism references additional interventions not captured in single_change: ${additionalInterventionVerbs.slice(0, 3).join(", ")}.`
+    );
+  }
+
+  return hints;
 }

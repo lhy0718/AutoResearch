@@ -25,6 +25,9 @@ import {
   writeExperimentContract,
   validateExperimentContract
 } from "../experiments/experimentContract.js";
+import { checkBriefDesignConsistency } from "../experiments/briefDesignConsistency.js";
+import { parseMarkdownRunBriefSections } from "../runs/runBriefParser.js";
+import { BriefCompletenessArtifact } from "../runs/researchBriefFiles.js";
 
 interface FilteredHypothesis {
   hypothesis_id: string;
@@ -230,6 +233,35 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
       }
       await writeExperimentContract(run, experimentContract);
       await runContextMemory.put("design_experiments.experiment_contract", experimentContract);
+
+      // --- Brief-vs-design consistency check (Target 2) ---
+      const rawBrief = await runContextMemory.get<string>("run_brief.raw");
+      const briefSections = rawBrief ? parseMarkdownRunBriefSections(rawBrief) : undefined;
+      const briefCompleteness = await runContextMemory.get<BriefCompletenessArtifact>("run_brief.completeness");
+      const consistencyResult = checkBriefDesignConsistency({
+        briefSections: briefSections ?? undefined,
+        briefCompleteness: briefCompleteness ?? undefined,
+        experimentContract,
+        designTitle: panelResult.selected.title,
+        designBaselines: panelResult.selected.baselines,
+        designMetrics: panelResult.selected.metrics
+      });
+      await writeRunArtifact(
+        run,
+        "design_experiments_panel/brief_design_consistency.json",
+        `${JSON.stringify(consistencyResult, null, 2)}\n`
+      );
+      await runContextMemory.put("design_experiments.brief_design_consistency", consistencyResult);
+      if (consistencyResult.warnings.length > 0) {
+        const errors = consistencyResult.warnings.filter((w) => w.severity === "error");
+        const warns = consistencyResult.warnings.filter((w) => w.severity === "warning");
+        if (errors.length > 0) {
+          emitLog(`Brief-design consistency: ${errors.length} error(s) — ${errors.map((e) => e.code).join(", ")}`);
+        }
+        if (warns.length > 0) {
+          emitLog(`Brief-design consistency: ${warns.length} warning(s) — ${warns.map((w) => w.code).join(", ")}`);
+        }
+      }
 
       await runContextMemory.put("design_experiments.primary", panelResult.selected.title);
       await runContextMemory.put("design_experiments.source", design.source);

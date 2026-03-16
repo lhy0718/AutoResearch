@@ -38,6 +38,11 @@ export interface MarkdownRunBriefSections {
   plan?: string;
   notes?: string;
   questionsRisks?: string;
+  targetComparison?: string;
+  minimumAcceptableEvidence?: string;
+  disallowedShortcuts?: string;
+  allowedBudgetedPasses?: string;
+  paperCeiling?: string;
 }
 
 const RUN_BRIEF_TIMEOUT_REASONING = "medium";
@@ -164,7 +169,12 @@ export function parseMarkdownRunBriefSections(markdown: string): MarkdownRunBrie
     constraints: collapseMarkdownSection(sections.constraints),
     plan: collapseMarkdownSection(sections.plan),
     notes: collapseMarkdownSection(sections.notes),
-    questionsRisks: collapseMarkdownSection(sections.questionsRisks)
+    questionsRisks: collapseMarkdownSection(sections.questionsRisks),
+    targetComparison: collapseMarkdownSection(sections.targetComparison),
+    minimumAcceptableEvidence: collapseMarkdownSection(sections.minimumAcceptableEvidence),
+    disallowedShortcuts: collapseMarkdownSection(sections.disallowedShortcuts),
+    allowedBudgetedPasses: collapseMarkdownSection(sections.allowedBudgetedPasses),
+    paperCeiling: collapseMarkdownSection(sections.paperCeiling)
   };
 }
 
@@ -516,6 +526,26 @@ function mapMarkdownHeadingToSection(value: string): keyof MarkdownRunBriefSecti
     case "questions/risks":
     case "questions and risks":
       return "questionsRisks";
+    case "target comparison":
+    case "target comparisons":
+    case "comparison":
+      return "targetComparison";
+    case "minimum acceptable evidence":
+    case "minimum evidence":
+    case "acceptable evidence":
+      return "minimumAcceptableEvidence";
+    case "disallowed shortcuts":
+    case "forbidden shortcuts":
+    case "disallowed":
+      return "disallowedShortcuts";
+    case "allowed budgeted passes":
+    case "budgeted passes":
+    case "allowed passes":
+      return "allowedBudgetedPasses";
+    case "paper ceiling if evidence remains weak":
+    case "paper ceiling":
+    case "evidence ceiling":
+      return "paperCeiling";
     default:
       return undefined;
   }
