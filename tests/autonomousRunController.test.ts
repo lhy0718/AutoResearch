@@ -19,9 +19,11 @@ import { StateGraphRuntime } from "../src/core/stateGraph/runtime.js";
 import { GraphNodeHandler, GraphNodeRegistry } from "../src/core/stateGraph/types.js";
 import { GRAPH_NODE_ORDER, GraphNodeId } from "../src/types.js";
 
+const ORIGINAL_CWD = process.cwd();
 const tempDirs: string[] = [];
 
 afterEach(() => {
+  process.chdir(ORIGINAL_CWD);
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
     if (dir) {
@@ -60,6 +62,7 @@ async function setup(registry: GraphNodeRegistry): Promise<{
 }> {
   const cwd = mkdtempSync(path.join(os.tmpdir(), "autolabos-autonomy-"));
   tempDirs.push(cwd);
+  process.chdir(cwd);
 
   const paths = resolveAppPaths(cwd);
   await ensureScaffold(paths);
