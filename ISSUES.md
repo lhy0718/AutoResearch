@@ -127,3 +127,16 @@
   - `blocked_for_paper_scale`
 - Missing artifacts:
 - Next action:
+
+---
+
+### LV-021 — Test suite leaks .autolabos/runs/ dirs at project root
+- Status: FIXED (commit 3a52cce)
+- Root-cause class: `persisted_state_bug`
+- Validation target: `npx vitest run` → check project root for leaked dirs
+- Reproduction: Running `npx vitest run` created 34 `.autolabos/runs/<id>/` directories at the project root. Artifacts included `run_context.json`, `long_term.jsonl`, `episodes.jsonl`, governance ledgers, and candidate isolation reports.
+- Expected behavior: All test artifacts should be created inside temp workspaces under `test/.tmp/`, not at the project root.
+- Actual behavior: `RunContextMemory`, `EpisodeMemory`, `writeRunArtifact`, and governance helpers use relative paths (`.autolabos/runs/<id>/...`) that resolve against `process.cwd()`. In tests, `process.cwd()` was the project root instead of the temp workspace.
+- Root cause: Five test files did not call `process.chdir(workspace)` before invoking code that writes relative artifact paths. Production code works correctly because `process.cwd()` IS the workspace.
+- Fix: Added `process.chdir(workspace)` + `ORIGINAL_CWD` restore to 5 test files following the pattern already used by 14 other test files. Added `zzz_noProjectRootLeak.test.ts` regression guard.
+- Regression status: 856/856 tests pass. 0 leaked dirs.
