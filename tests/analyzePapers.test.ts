@@ -2373,7 +2373,11 @@ describe("analyzePapers node", () => {
       responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
     });
 
-    await expect(node.execute({ run, graph: run.graph })).rejects.toThrow(/aborted/i);
+    // Without a user abortSignal, abort errors from individual papers are
+    // treated as per-paper failures (not node-level abort). The node should
+    // succeed with partial results.
+    const result = await node.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
 
     const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
     expect(summariesRaw).toContain('"paper_id":"p1"');
@@ -2382,7 +2386,7 @@ describe("analyzePapers node", () => {
     const manifestRaw = await readFile(path.join(".autolabos", "runs", runId, "analysis_manifest.json"), "utf8");
     const manifest = JSON.parse(manifestRaw);
     expect(manifest.papers.p1.status).toBe("completed");
-    expect(manifest.papers.p2.status).toBe("pending");
+    expect(manifest.papers.p2.status).toBe("failed");
   });
 
   it("falls back to local text/abstract analysis when Responses API times out downloading a remote PDF", async () => {
@@ -2744,6 +2748,82 @@ describe("analyzePapers node", () => {
     const manifestRaw = await readFile(path.join(".autolabos", "runs", runId, "analysis_manifest.json"), "utf8");
     expect(manifestRaw).toContain('"selectionRequestFingerprint"');
     expect(manifestRaw).toContain('"corpusFingerprint"');
+  });
+
+  it("reuses deterministic fallback selection on re-entry (rerankApplied=false)", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-determ-reuse-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-determ-reuse";
+    const run = makeRun(runId);
+    // Use titles that match the run topic (Multi-Agent Collaboration) so quality safeguards pass
+    await writeCorpus(runId, [
+      { paper_id: "p1", title: "Multi-agent collaboration benchmark", abstract: "A1", authors: ["Alice"], pdf_url: "https://example.com/p1.pdf" },
+      { paper_id: "p2", title: "Agent collaboration in planning tasks", abstract: "A2", authors: ["Bob"], pdf_url: "https://example.com/p2.pdf" },
+      { paper_id: "p3", title: "Multi-agent coordination systems", abstract: "A3", authors: ["Cara"], pdf_url: "https://example.com/p3.pdf" }
+    ]);
+
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    await runContext.put("analyze_papers.request", {
+      topN: 1,
+      selectionMode: "top_n",
+      selectionPolicy: "hybrid_title_citation_recency_pdf_v2"
+    });
+
+    // First execution: LLM rerank fails → deterministic fallback
+    const failingRerankLlm = new FixedErrorLLM(new Error("rerank unavailable"));
+    let firstAnalyzePdfCalls = 0;
+    const firstNode = createAnalyzePapersNode({
+      config: { analysis: { pdf_mode: "responses_api_pdf", responses_model: "gpt-5.4" } } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: failingRerankLlm,
+      pdfTextLlm: new SequenceJsonLLM([]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: {
+        hasApiKey: async () => true,
+        analyzePdf: async () => {
+          firstAnalyzePdfCalls += 1;
+          return { text: jsonOutput("summary", "claim") };
+        }
+      } as unknown as ResponsesPdfAnalysisClient
+    });
+
+    const first = await firstNode.execute({ run, graph: run.graph });
+    expect(first.status).toBe("success");
+    expect(firstAnalyzePdfCalls).toBe(1);
+
+    // Verify manifest has rerankApplied=false (deterministic fallback)
+    const manifestAfterFirst = JSON.parse(
+      await readFile(path.join(".autolabos", "runs", runId, "analysis_manifest.json"), "utf8")
+    );
+    expect(manifestAfterFirst.rerankApplied).toBe(false);
+    expect(manifestAfterFirst.selectedPaperIds.length).toBeGreaterThan(0);
+
+    // Second execution: should reuse the deterministic fallback selection, NOT re-rerank
+    const secondRerankLlm = new CountingJsonLLM(["should-not-be-used"]);
+    const secondNode = createAnalyzePapersNode({
+      config: { analysis: { pdf_mode: "responses_api_pdf", responses_model: "gpt-5.4" } } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: secondRerankLlm,
+      pdfTextLlm: new SequenceJsonLLM([]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: {
+        hasApiKey: async () => true,
+        analyzePdf: async () => { throw new Error("analysis should not rerun"); }
+      } as unknown as ResponsesPdfAnalysisClient
+    });
+
+    const second = await secondNode.execute({ run, graph: run.graph });
+    expect(second.status).toBe("success");
+    // Key assertion: the LLM rerank should NOT have been called on re-entry
+    expect(secondRerankLlm.callCount).toBe(0);
   });
 
   it("auto-expands a sparse top-N selection and preserves completed analyses", async () => {

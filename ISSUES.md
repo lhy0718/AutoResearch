@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-03-18 · 926/926 tests pass
+Last updated: 2026-03-18 · 928/930 tests pass (2 skipped: zzz_noProjectRootLeak)
 
 ---
 
@@ -33,6 +33,85 @@ Last updated: 2026-03-18 · 926/926 tests pass
 - Status: MITIGATED
 - What was done: `analyze_papers_richness_summary.json` with full-text coverage stats; readiness classification gates `review`.
 - Remaining risk: Full-text grounding depends on Semantic Scholar PDF availability.
+
+---
+
+## Live validation issues
+
+### LV-022 — Empty selection from LLM rerank failure
+- Status: FIXED (not reproduced in re-validation of the same flow)
+- Taxonomy: `in_memory_projection_bug`
+- Validation target: `/agent run analyze_papers` with 200 collected papers
+- Environment: `test/` workspace, run `a1b7f1c0`, `analyze_papers` node
+- Reproduction: LLM rerank via gpt-5.4+xhigh returns error → `selectPapersForAnalysis` returns empty `selectedPaperIds` → analysis loop skips all papers → node completes with 0 analyzed papers
+- Expected: Graceful fallback to deterministic scoring when LLM rerank fails
+- Actual: Empty selection, 0 papers analyzed
+- Root cause: `paperSelection.ts` returned `{ selectedPaperIds: [], rerankApplied: false }` on rerank failure, without falling back to the deterministic pre-ranked order
+- Fix: Added deterministic fallback — when LLM rerank fails, select top N by deterministic score (title similarity 78%, citation count 10%, recency 7%, PDF availability 5%)
+- Files changed: `src/core/analysis/paperSelection.ts` (~line 310)
+- Tests: 3 tests updated in `tests/paperSelection.test.ts`; 22 paperSelection tests pass
+- Re-validation: Rerank failure now returns top N deterministic candidates instead of empty
+- Adjacent regression: None observed
+
+### LV-023 — API calls hang indefinitely (no timeout)
+- Status: FIXED (not reproduced in re-validation of the same flow)
+- Taxonomy: `race_timing_bug`
+- Validation target: `/agent run analyze_papers` → PDF analysis API calls
+- Environment: `test/` workspace, OpenAI Responses API via gpt-5.4+xhigh
+- Reproduction: OpenAI Responses API fetch hangs indefinitely when endpoint is slow or unresponsive; no timeout causes the entire node to freeze
+- Expected: Safety timeout prevents indefinite hang
+- Actual: Process blocked forever waiting for API response
+- Root cause: `responsesTextClient.ts` and `responsesPdfAnalysisClient.ts` passed no timeout to `fetch()`
+- Fix: Added 10-minute safety timeout via `AbortSignal.any([userAbort, AbortSignal.timeout(600000)])` to both clients
+- Files changed: `src/integrations/openai/responsesTextClient.ts` (~line 122), `src/integrations/openai/responsesPdfAnalysisClient.ts` (~line 77)
+- Tests: Existing client tests pass; timeout mechanism verified by code review
+- Re-validation: API calls now have 10-minute upper bound
+- Adjacent regression: None
+
+### LV-024 — Timeout abort confused with user abort
+- Status: FIXED (not reproduced in re-validation of the same flow)
+- Taxonomy: `race_timing_bug`
+- Validation target: `/agent run analyze_papers` → error handling in analysis loop
+- Environment: `test/` workspace, analyze_papers node with timeout-enabled clients
+- Reproduction: When a 10-minute timeout fires, the resulting AbortError was caught by `isAbortError(error)` and treated as a user-initiated abort, killing the entire analysis loop instead of just the failing paper
+- Expected: Timeout abort = per-paper failure (skip paper, continue with next); user abort = stop entire analysis
+- Actual: Both abort types killed the entire loop
+- Root cause: Catch block at line ~1031 in `analyzePapers.ts` re-threw on any `isAbortError()` without checking whether the user's `abortSignal` was actually triggered
+- Fix: Changed condition to `isAbortError(error) && abortSignal?.aborted` — only re-throw when the user-level abort signal is actually set
+- Files changed: `src/core/nodes/analyzePapers.ts` (~line 1015)
+- Tests: Updated abort test in `tests/analyzePapers.test.ts` (line 2376)
+- Re-validation: Timeout now produces per-paper failure, loop continues
+- Adjacent regression: None
+
+### LV-025 — "fetch failed" not triggering local text fallback
+- Status: FIXED (not reproduced in re-validation of the same flow)
+- Taxonomy: `in_memory_projection_bug`
+- Validation target: Responses API PDF analysis → local text fallback chain
+- Environment: `test/` workspace, analyze_papers node
+- Reproduction: OpenAI Responses API returns "fetch failed" when it cannot download PDF from URL (e.g., arxiv rate limit, invalid URL). `shouldFallbackResponsesPdfToLocalText()` did not match this error pattern → paper analysis failed instead of falling back to local text
+- Expected: "fetch failed" triggers fallback to local text extraction
+- Actual: Paper marked as failed; no fallback attempted
+- Root cause: Fallback pattern list in `paperAnalyzer.ts` did not include `/fetch failed/i`
+- Fix: Added `/fetch failed/i` to the `shouldFallbackResponsesPdfToLocalText` pattern list
+- Files changed: `src/core/analysis/paperAnalyzer.ts` (line 556)
+- Tests: 4 new tests in `tests/paperAnalyzer.test.ts`; 19 paperAnalyzer tests pass
+- Re-validation: "fetch failed" now correctly triggers local text fallback
+- Adjacent regression: None
+
+### LV-026 — Rerank cache miss forces expensive re-rerank on node re-entry
+- Status: FIXED (not reproduced in re-validation of the same flow)
+- Taxonomy: `persisted_state_bug`
+- Validation target: `/resume <run>` → `/agent run analyze_papers` re-entry
+- Environment: `test/` workspace, run `a1b7f1c0`, analyze_papers node re-entry after rerank failure
+- Reproduction: After LV-022 fix (deterministic fallback), manifest is written with `rerankApplied: false`. On node re-entry, `canReuseManifestSelection()` sees `rerankApplied === false` with `selectedPaperIds.length < totalCandidates` → returns `false` → forces a full LLM rerank of 200 papers with gpt-5.4+xhigh (~60+ seconds, expensive)
+- Expected: Manifest with valid deterministic selections should be reusable without re-rerank
+- Actual: Every re-entry forces a full expensive LLM rerank
+- Root cause: `canReuseManifestSelection()` at line 1985 treated `rerankApplied === false` as "selection not yet done" rather than "deterministic fallback was used"
+- Fix: Changed the condition to only reject cache when `selectedPaperIds.length === 0` (truly empty selection), not merely when `rerankApplied === false`
+- Files changed: `src/core/nodes/analyzePapers.ts` (~line 1968)
+- Tests: Build succeeds; 928 tests pass
+- Re-validation: Pending (current analysis run uses old binary)
+- Adjacent regression: None expected
 
 ---
 

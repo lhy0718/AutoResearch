@@ -553,6 +553,7 @@ export function shouldFallbackResponsesPdfToLocalText(error: unknown): boolean {
     /unable to download/i,
     /unable to fetch/i,
     /could not fetch/i,
+    /fetch failed/i,
     /upstream status code:\s*40[34]/i,
     /invalid_request_error/i,
     /param"\s*:\s*"url"/i,

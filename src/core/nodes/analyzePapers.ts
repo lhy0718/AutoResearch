@@ -1021,7 +1021,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
 
               emitLog(`Analyzed "${row.title}" (${analysis.evidenceRows.length} evidence item(s), source=${source.sourceType}).`);
             } catch (error) {
-              if (isAbortError(error)) {
+              if (isAbortError(error) && abortSignal?.aborted) {
                 throw error;
               }
               failedCount += 1;
@@ -1966,11 +1966,14 @@ function canReuseManifestSelection(
   if (manifest.request.selectionMode !== request.selectionMode || manifest.request.topN !== request.topN) {
     return false;
   }
+  // Accept deterministic fallback selections as valid cache entries.
+  // When LLM rerank fails, the deterministic fallback still produces a
+  // usable selection — forcing an expensive re-rerank on every re-entry
+  // wastes time and API budget without meaningful quality improvement.
   if (
     manifest.request.selectionMode === "top_n" &&
     manifest.request.topN &&
-    manifest.selectedPaperIds.length < manifest.totalCandidates &&
-    manifest.rerankApplied === false
+    manifest.selectedPaperIds.length === 0
   ) {
     return false;
   }

@@ -4,7 +4,8 @@ import {
   analyzePaperWithLlm,
   analyzePaperWithResponsesPdf,
   normalizePaperAnalysis,
-  parsePaperAnalysisJson
+  parsePaperAnalysisJson,
+  shouldFallbackResponsesPdfToLocalText
 } from "../src/core/analysis/paperAnalyzer.js";
 import { MockLLMClient } from "../src/core/llm/client.js";
 import { AnalysisCorpusRow, ResolvedPaperSource } from "../src/core/analysis/paperText.js";
@@ -613,5 +614,27 @@ describe("paperAnalyzer", () => {
     controller.abort();
 
     await expect(promise).rejects.toThrow("Operation aborted by user");
+  });
+});
+
+describe("shouldFallbackResponsesPdfToLocalText", () => {
+  it("triggers fallback for 'fetch failed' errors", () => {
+    expect(shouldFallbackResponsesPdfToLocalText(new Error("fetch failed"))).toBe(true);
+  });
+
+  it("triggers fallback for download errors", () => {
+    expect(shouldFallbackResponsesPdfToLocalText(new Error("error while downloading PDF"))).toBe(true);
+    expect(shouldFallbackResponsesPdfToLocalText(new Error("timeout while downloading the file"))).toBe(true);
+    expect(shouldFallbackResponsesPdfToLocalText(new Error("failed to download remote file"))).toBe(true);
+  });
+
+  it("triggers fallback for upstream 403/404", () => {
+    expect(shouldFallbackResponsesPdfToLocalText(new Error("upstream status code: 403"))).toBe(true);
+    expect(shouldFallbackResponsesPdfToLocalText(new Error("upstream status code: 404"))).toBe(true);
+  });
+
+  it("does not trigger fallback for unrelated errors", () => {
+    expect(shouldFallbackResponsesPdfToLocalText(new Error("rate limited"))).toBe(false);
+    expect(shouldFallbackResponsesPdfToLocalText(new Error("internal server error"))).toBe(false);
   });
 });

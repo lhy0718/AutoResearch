@@ -74,15 +74,31 @@ export class ResponsesPdfAnalysisClient {
       };
     }
 
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
-      },
-      signal: args.abortSignal,
-      body: JSON.stringify(body)
-    });
+    // Combine user abort signal with a 10-minute safety timeout
+    const timeoutMs = 10 * 60 * 1000;
+    const timeoutController = new AbortController();
+    const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
+    let combinedSignal: AbortSignal;
+    if (args.abortSignal) {
+      combinedSignal = AbortSignal.any([args.abortSignal, timeoutController.signal]);
+    } else {
+      combinedSignal = timeoutController.signal;
+    }
+
+    let response: Response;
+    try {
+      response = await fetch("https://api.openai.com/v1/responses", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json"
+        },
+        signal: combinedSignal,
+        body: JSON.stringify(body)
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     if (!response.ok) {
       const body = await safeReadText(response);
