@@ -215,7 +215,10 @@ export interface SectionBudgetEntry {
 
 export interface PageBudgetManagerReport {
   venue_style: string;
+  column_count: 1 | 2;
   main_page_limit: number;
+  references_counted: boolean;
+  appendix_allowed: boolean;
   estimated_words_per_page: number;
   minimum_main_words: number;
   target_main_words: number;
@@ -394,6 +397,7 @@ export interface WritePaperGateDecision {
 
 const DEFAULT_PAPER_PROFILE: PaperProfileConfig = {
   venue_style: "acl_long",
+  column_count: 2,
   main_page_limit: 8,
   references_counted: false,
   appendix_allowed: true,
@@ -435,6 +439,7 @@ export function resolvePaperProfile(
 
   return {
     venue_style: inferredVenueStyle,
+    column_count: profile?.column_count === 1 ? 1 : DEFAULT_PAPER_PROFILE.column_count,
     main_page_limit: inferredPageLimit,
     references_counted:
       typeof profile?.references_counted === "boolean"
@@ -888,7 +893,10 @@ export function pageBudgetManager(input: {
 
   return {
     venue_style: profile.venue_style,
+    column_count: profile.column_count,
     main_page_limit: profile.main_page_limit,
+    references_counted: profile.references_counted,
+    appendix_allowed: profile.appendix_allowed,
     estimated_words_per_page: estimatedWordsPerPage,
     minimum_main_words: minimumMainWords,
     target_main_words: targetMainWords,
@@ -3857,25 +3865,33 @@ function buildSectionParagraphCandidates(
 }
 
 export function buildGateWarningLimitationSentences(gateWarnings: GateWarningItem[]): string[] {
-  const warningsByCategory = new Map<string, string[]>();
-  for (const w of gateWarnings) {
+  // Group by category, ordered by severity (error > warning > info)
+  const severityOrder: Record<string, number> = { error: 0, warning: 1, info: 2 };
+  const sorted = [...gateWarnings].sort(
+    (a, b) => (severityOrder[a.severity] ?? 9) - (severityOrder[b.severity] ?? 9)
+  );
+
+  const warningsByCategory = new Map<string, GateWarningItem[]>();
+  for (const w of sorted) {
     const cat = w.category || "general";
     const existing = warningsByCategory.get(cat) ?? [];
-    if (w.message) {
-      existing.push(w.message);
-    }
+    existing.push(w);
     warningsByCategory.set(cat, existing);
   }
 
   const sentences: string[] = [];
-  for (const [category, messages] of warningsByCategory) {
-    if (messages.length === 0) continue;
+  for (const [category, items] of warningsByCategory) {
+    if (items.length === 0) continue;
     const label = category.replace(/_/g, " ");
-    sentences.push(
-      `The automated quality gate flagged ${label} concerns: ${messages[0]}.`
-    );
+    const highestSeverity = items[0].severity || "warning";
+    const msgSummary = items.map((i) => i.message).filter(Boolean).join("; ");
+    if (msgSummary) {
+      sentences.push(
+        `[${highestSeverity}] ${label}: ${msgSummary}.`
+      );
+    }
   }
-  return sentences.slice(0, 3);
+  return sentences.slice(0, 5);
 }
 
 export function applyGateWarningsToLimitations(

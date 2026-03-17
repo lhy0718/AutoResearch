@@ -1,12 +1,40 @@
 # ISSUES.md
 
 ## Current status
-- Last updated: 2026-03-17
-- All live-validation code bugs (LV-001 through LV-019) have been resolved.
-- LV-020 (plan-vs-script drift detection gap) FIXED.
-- All research-quality and paper-readiness risks (R-001–R-003, P-001–P-003) have been addressed with artifact materialization, gate strengthening, and gate-warning surfacing.
+- Last updated: 2026-03-18
+- All live-validation code bugs (LV-001 through LV-021) have been resolved.
+- All research-quality and paper-readiness risks (R-001–R-003, P-001–P-003) have been further strengthened with manuscript format infrastructure, output bundle improvements, and gate warning categorization.
+- AM-001 through AM-003 implemented (Autonomous Mode + two-layer paper evaluation).
+- AM-004: Manuscript format infrastructure, output bundle improvements, gate warning categorization.
 
 ## Active issues
+
+### AM-004 — Manuscript Format Infrastructure and Output Bundle Improvements
+- Status: IMPLEMENTED
+- Category: paper-quality infrastructure
+- Validation target: Brief→manuscript format propagation, 2-column TeX rendering, output bundle structure, gate warning categorization
+- Summary:
+  - **Manuscript format target**: Added `ManuscriptFormatTarget` interface and `column_count` to `PaperProfileConfig`. Brief template now includes `## Manuscript Format` section. `parseManuscriptFormatFromBrief()` extracts format fields from brief markdown.
+  - **TeX 2-column rendering**: `renderSubmissionPaperTex()` now accepts `paperProfile` and uses `\documentclass[twocolumn]{article}` with tighter margins when `column_count=2`.
+  - **Format propagation**: Brief format is parsed at run creation, stored in RunContext as `run_brief.manuscript_format`, overrides `PaperProfileConfig` at write_paper time. Paper writer session manager prompt includes column_count and references_counted.
+  - **Output bundle**: `result_table.json` and `baseline_summary.json` now published to `analysis/` and `experiment/` output sections. `scientific_validation.json` published to `paper/` section. New `generatePublicRunReadme()` creates user-facing README.md for the output bundle.
+  - **Gate warning categorization (R-002 improvement)**: `buildGateWarningLimitationSentences()` now groups by category with severity labels, shows all messages per category, limits to 5 sentences.
+  - **Output sections**: Added `results` and `reproduce` to `PublicRunOutputSection`.
+- Tests: 11 new tests in `tests/manuscriptFormat.test.ts`, 1 updated test in `tests/gateWarningsToLimitations.test.ts`. 919/920 pass (pre-existing zzz_noProjectRootLeak only failure).
+- Files modified:
+  - `src/types.ts` (ManuscriptFormatTarget, column_count)
+  - `src/config.ts` (column_count default and normalization)
+  - `src/core/analysis/scientificWriting.ts` (page budget, gate warnings)
+  - `src/core/analysis/paperManuscript.ts` (twocolumn TeX)
+  - `src/core/nodes/writePaper.ts` (format override, output publishing)
+  - `src/core/nodes/analyzeResults.ts` (result_table/baseline_summary publishing)
+  - `src/core/nodes/designExperiments.ts` (baseline_summary publishing)
+  - `src/core/runs/researchBriefFiles.ts` (format section, parser)
+  - `src/core/runs/runBriefParser.ts` (manuscriptFormat field)
+  - `src/tui/TerminalApp.ts` (format parsing at run creation)
+  - `src/core/agents/paperWriterSessionManager.ts` (format in prompt)
+  - `src/core/publicArtifacts.ts` (results/reproduce sections)
+  - `src/core/publicOutputPublisher.ts` (README generator)
 
 ### LV-020 — implement_experiments does not detect experiment plan changes
 - Status: FIXED

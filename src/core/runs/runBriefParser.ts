@@ -43,6 +43,7 @@ export interface MarkdownRunBriefSections {
   disallowedShortcuts?: string;
   allowedBudgetedPasses?: string;
   paperCeiling?: string;
+  manuscriptFormat?: string;
 }
 
 const RUN_BRIEF_TIMEOUT_REASONING = "medium";
@@ -174,7 +175,8 @@ export function parseMarkdownRunBriefSections(markdown: string): MarkdownRunBrie
     minimumAcceptableEvidence: collapseMarkdownSection(sections.minimumAcceptableEvidence),
     disallowedShortcuts: collapseMarkdownSection(sections.disallowedShortcuts),
     allowedBudgetedPasses: collapseMarkdownSection(sections.allowedBudgetedPasses),
-    paperCeiling: collapseMarkdownSection(sections.paperCeiling)
+    paperCeiling: collapseMarkdownSection(sections.paperCeiling),
+    manuscriptFormat: collapseMarkdownSection(sections.manuscriptFormat)
   };
 }
 
@@ -546,6 +548,10 @@ function mapMarkdownHeadingToSection(value: string): keyof MarkdownRunBriefSecti
     case "paper ceiling":
     case "evidence ceiling":
       return "paperCeiling";
+    case "manuscript format":
+    case "paper format":
+    case "format":
+      return "manuscriptFormat";
     default:
       return undefined;
   }

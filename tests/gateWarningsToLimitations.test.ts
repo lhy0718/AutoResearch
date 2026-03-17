@@ -49,16 +49,18 @@ describe("buildGateWarningLimitationSentences", () => {
     expect(sentences[1]).toContain("No confidence intervals reported");
   });
 
-  it("caps output at 3 sentences even with many categories", () => {
+  it("caps output at 5 sentences even with many categories", () => {
     const warnings: GateWarningItem[] = [
       { severity: "warning", category: "method_completeness", message: "msg1" },
       { severity: "warning", category: "results_richness", message: "msg2" },
       { severity: "warning", category: "discussion_richness", message: "msg3" },
       { severity: "warning", category: "consistency", message: "msg4" },
-      { severity: "warning", category: "appendix", message: "msg5" }
+      { severity: "warning", category: "appendix", message: "msg5" },
+      { severity: "warning", category: "page_budget", message: "msg6" },
+      { severity: "warning", category: "evidence_quality", message: "msg7" }
     ];
     const sentences = buildGateWarningLimitationSentences(warnings);
-    expect(sentences.length).toBeLessThanOrEqual(3);
+    expect(sentences.length).toBeLessThanOrEqual(5);
   });
 
   it("uses 'general' label when category is empty", () => {

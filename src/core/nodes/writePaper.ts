@@ -5,7 +5,7 @@ import { GraphNodeHandler } from "../stateGraph/types.js";
 import { safeRead, writeRunArtifact } from "./helpers.js";
 import { NodeExecutionDeps } from "./types.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
-import { publishPublicRunOutputs } from "../publicOutputPublisher.js";
+import { publishPublicRunOutputs, generatePublicRunReadme } from "../publicOutputPublisher.js";
 import { TransitionRecommendation } from "../../types.js";
 import { resolveConstraintProfile } from "../constraintProfile.js";
 import { ensureDir, fileExists } from "../../utils/fs.js";
@@ -173,7 +173,20 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       });
       const objectiveEvaluation = await loadObjectiveEvaluation(runContextMemory, run.id);
       const bundle = bundleResult.bundle;
-      const paperProfile = deps.config.paper_profile;
+      const basePaperProfile = deps.config.paper_profile;
+      const manuscriptFormatTarget = await runContextMemory.get("run_brief.manuscript_format") as
+        { columns?: number; main_body_pages?: number; references_excluded_from_page_limit?: boolean; appendices_excluded_from_page_limit?: boolean } | undefined;
+      const paperProfile: typeof basePaperProfile = manuscriptFormatTarget
+        ? {
+            ...basePaperProfile,
+            column_count: manuscriptFormatTarget.columns === 1 ? 1 : (basePaperProfile.column_count ?? 2),
+            main_page_limit: typeof manuscriptFormatTarget.main_body_pages === "number"
+              ? manuscriptFormatTarget.main_body_pages
+              : basePaperProfile.main_page_limit,
+            references_counted: manuscriptFormatTarget.references_excluded_from_page_limit === false,
+            appendix_allowed: manuscriptFormatTarget.appendices_excluded_from_page_limit !== false
+          }
+        : basePaperProfile;
       const validationMode = resolvePaperValidationMode(deps.config.paper?.validation_mode);
       bundle.latestResults = await loadLatestResultsArtifact(run);
       const relatedWorkScout = await maybeRunRelatedWorkScout({
@@ -355,6 +368,11 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await runContextMemory.put("write_paper.scientific_validation", {
         mode: validationMode,
         page_budget_status: scientificDraft.page_budget.status,
+        page_budget_column_count: scientificDraft.page_budget.column_count,
+        page_budget_main_page_limit: scientificDraft.page_budget.main_page_limit,
+        page_budget_references_counted: scientificDraft.page_budget.references_counted,
+        page_budget_target_words: scientificDraft.page_budget.target_main_words,
+        page_budget_estimated_words: scientificDraft.page_budget.estimated_main_words,
         method_status: scientificDraft.method_completeness.status,
         results_status: scientificDraft.results_richness.status,
         related_work_status: scientificDraft.related_work_richness.status,
@@ -425,7 +443,8 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         manuscript,
         traceability,
         citationKeysByPaperId: bibtex.citationKeysByPaperId,
-        template: deps.config?.paper?.template
+        template: deps.config?.paper?.template,
+        paperProfile
       });
       const evidenceMap = JSON.stringify(buildPaperEvidenceMap(paperDraft), null, 2);
       const traceabilityJson = `${JSON.stringify(traceability, null, 2)}\n`;
@@ -623,10 +642,22 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
             sourcePath: path.join(runPaperDir, "build.log"),
             targetRelativePath: "build.log",
             optional: true
+          },
+          {
+            sourcePath: path.join(runPaperDir, "scientific_validation.json"),
+            targetRelativePath: "scientific_validation.json",
+            optional: true
           }
         ]
       });
       emitLog(`Public paper outputs are available at ${publicOutputs.sectionDirRelative}.`);
+
+      // Generate output bundle README after all sections are published
+      try {
+        await generatePublicRunReadme(process.cwd(), run);
+      } catch {
+        // non-fatal — README generation is best-effort
+      }
       const toolCallsUsed = preCompileToolCallsUsed + compileResult.toolCallsUsed;
       await runContextMemory.put("write_paper.compile_status", compileResult.status);
       await runContextMemory.put("write_paper.compile_report", compileResult);

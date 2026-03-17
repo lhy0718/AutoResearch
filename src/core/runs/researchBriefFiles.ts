@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 
 import { ensureDir, fileExists } from "../../utils/fs.js";
 import { ExtractedRunBrief, MarkdownRunBriefSections, parseMarkdownRunBriefSections } from "./runBriefParser.js";
+import type { ManuscriptFormatTarget } from "../../types.js";
 
 export const RESEARCH_BRIEF_DIR = ".autolabos/briefs";
 
@@ -30,6 +31,13 @@ export function buildResearchBriefTemplate(): string {
     "## Plan",
     "",
     "Outline the experiment plan, baselines, ablations, and confirmatory runs.",
+    "",
+    "## Manuscript Format",
+    "",
+    "- Columns: 2",
+    "- Main body pages: 8",
+    "- References excluded from page limit: yes",
+    "- Appendices excluded from page limit: yes",
     "",
     "## Notes",
     "",
@@ -279,4 +287,39 @@ function slugify(value: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return slug || "research-brief";
+}
+
+/**
+ * Parse the "## Manuscript Format" section of a brief into a ManuscriptFormatTarget.
+ * Returns undefined if the section is absent or unparseable.
+ *
+ * Expected format (case-insensitive, flexible):
+ *   - Columns: 2
+ *   - Main body pages: 8
+ *   - References excluded from page limit: yes
+ *   - Appendices excluded from page limit: yes
+ */
+export function parseManuscriptFormatFromBrief(markdown: string): ManuscriptFormatTarget | undefined {
+  const sections = parseMarkdownRunBriefSections(markdown);
+  if (!sections?.manuscriptFormat) return undefined;
+  const text = sections.manuscriptFormat;
+
+  const columnsMatch = text.match(/columns?\s*:\s*(\d+)/i);
+  const pagesMatch = text.match(/main[\s_]*(?:body[\s_]*)?pages?\s*:\s*(\d+)/i);
+  const refsMatch = text.match(/references?[\s_]+excluded[\s_]+from[\s_]+page[\s_]+limit\s*:\s*(yes|no|true|false)/i);
+  const appendixMatch = text.match(/appendi(?:ces|x)[\s_]+excluded[\s_]+from[\s_]+page[\s_]+limit\s*:\s*(yes|no|true|false)/i);
+
+  if (!columnsMatch && !pagesMatch) return undefined;
+
+  const columns = columnsMatch ? (parseInt(columnsMatch[1], 10) === 1 ? 1 : 2) as 1 | 2 : 2;
+  const mainBodyPages = pagesMatch ? Math.max(1, parseInt(pagesMatch[1], 10)) : 8;
+  const refsExcluded = refsMatch ? /^(yes|true)$/i.test(refsMatch[1]) : true;
+  const appendixExcluded = appendixMatch ? /^(yes|true)$/i.test(appendixMatch[1]) : true;
+
+  return {
+    columns,
+    main_body_pages: mainBodyPages,
+    references_excluded_from_page_limit: refsExcluded,
+    appendices_excluded_from_page_limit: appendixExcluded
+  };
 }

@@ -258,6 +258,7 @@ function buildConfigFromWizardAnswers(answers: {
     paper_profile: {
       venue_style: "acl_long",
       target_venue_style: "generic_cs_paper",
+      column_count: 2,
       main_page_limit: 8,
       references_counted: false,
       appendix_allowed: true,
@@ -851,6 +852,7 @@ function normalizePaperProfileConfig(value: AppConfig["paper_profile"] | undefin
   return {
     venue_style: value?.venue_style?.trim() || "acl_long",
     target_venue_style: value?.target_venue_style?.trim() || undefined,
+    column_count: value?.column_count === 1 ? 1 : 2,
     main_page_limit:
       typeof value?.main_page_limit === "number" && Number.isFinite(value.main_page_limit)
         ? Math.max(1, Math.round(value.main_page_limit))

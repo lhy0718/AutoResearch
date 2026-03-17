@@ -162,7 +162,29 @@ The brief template includes **core** sections (required) and **governance** sect
 <tr><td><code>## Disallowed Shortcuts</code></td><td>🟡 Governance</td><td>Shortcuts that invalidate results (cherry-picking, fabrication)</td></tr>
 <tr><td><code>## Allowed Budgeted Passes</code></td><td>🟡 Governance</td><td>Extra analysis passes permitted within compute budget</td></tr>
 <tr><td><code>## Paper Ceiling If Evidence Remains Weak</code></td><td>🟡 Governance</td><td>Maximum paper classification if evidence is insufficient</td></tr>
+<tr><td><code>## Manuscript Format</code></td><td>🟡 Optional</td><td>Target paper format: columns, page limit, reference/appendix exclusions</td></tr>
 </table>
+
+### Manuscript Format Target
+
+The brief can specify manuscript format constraints that flow through to TeX generation and section planning:
+
+```markdown
+## Manuscript Format
+- columns: 2
+- main_body_pages: 8
+- references_excluded_from_page_limit: true
+- appendices_excluded_from_page_limit: true
+```
+
+| Field | Default | Effect |
+|---|---|---|
+| `columns` | `2` | `\documentclass[twocolumn]{article}` vs. single-column |
+| `main_body_pages` | `8` | Target word budget for section planning |
+| `references_excluded_from_page_limit` | `true` | References do not count toward page limit |
+| `appendices_excluded_from_page_limit` | `true` | Appendices do not count toward page limit |
+
+When format is specified, the page budget manager plans section word counts to fit the target, and the scientific validation artifact reports compliance.
 
 ### Brief Completeness Grading
 
@@ -432,16 +454,16 @@ flowchart TB
     B1 --> C["generate_hypotheses"]
     C --> C1["hypotheses.jsonl<br/>hypothesis_generation/*"]
     C1 --> D["design_experiments"]
-    D --> D1["experiment_plan.yaml<br/>experiment_contract.json<br/>brief_design_consistency.json<br/>design_experiments_panel/*"]
+    D --> D1["experiment_plan.yaml<br/>experiment_contract.json<br/>baseline_summary.json<br/>brief_design_consistency.json<br/>design_experiments_panel/*"]
     D1 --> E["implement_experiments"]
     E --> F["run_experiments"]
     F --> F1["metrics.json<br/>failure_memory.jsonl<br/>objective_evaluation.json<br/>run_experiments_panel/*"]
     F1 --> G["analyze_results"]
-    G --> G1["result_analysis.json<br/>attempt_decisions.jsonl<br/>transition_recommendation.json<br/>analyze_results_panel/*"]
+    G --> G1["result_analysis.json<br/>result_table.json<br/>attempt_decisions.jsonl<br/>transition_recommendation.json<br/>analyze_results_panel/*"]
     G1 --> H["review"]
-    H --> H1["review/pre_review_summary.json<br/>review/review_packet.json<br/>review/paper_critique.json<br/>review/checklist.md"]
+    H --> H1["review/pre_review_summary.json<br/>review/review_packet.json<br/>review/paper_critique.json<br/>review/minimum_gate.json<br/>review/paper_quality_evaluation.json<br/>review/checklist.md"]
     H1 --> I["write_paper"]
-    I --> I1["paper/main.tex<br/>paper/references.bib<br/>paper/main.pdf (optional)"]
+    I --> I1["paper/main.tex<br/>paper/references.bib<br/>paper/scientific_validation.json<br/>paper/main.pdf (optional)"]
 ```
 
 All run artifacts live under `.autolabos/runs/<run_id>/`. User-facing deliverables are mirrored to `outputs/<run-title>-<run_id_prefix>/`.
@@ -451,10 +473,12 @@ All run artifacts live under `.autolabos/runs/<run_id>/`. User-facing deliverabl
 
 | Section | Typical files |
 |---|---|
-| `experiment/` | `experiment_plan.yaml`, `metrics.json`, `objective_evaluation.json`, optional supplemental metrics |
-| `analysis/` | `result_analysis.json`, `result_analysis_synthesis.json`, `transition_recommendation.json`, optional `figures/performance.svg` |
-| `review/` | `review_packet.json`, `checklist.md`, `decision.json`, `findings.jsonl`, `paper_critique.json` |
-| `paper/` | `main.tex`, `references.bib`, `evidence_links.json`, optional `main.pdf` |
+| `experiment/` | `experiment_plan.yaml`, `baseline_summary.json`, `metrics.json`, `objective_evaluation.json`, optional supplemental metrics |
+| `analysis/` | `result_analysis.json`, `result_analysis_synthesis.json`, `result_table.json`, `baseline_summary.json`, `transition_recommendation.json`, optional `figures/performance.svg` |
+| `review/` | `review_packet.json`, `checklist.md`, `decision.json`, `findings.jsonl`, `paper_critique.json`, `minimum_gate.json`, `paper_quality_evaluation.json` |
+| `paper/` | `main.tex`, `references.bib`, `evidence_links.json`, `scientific_validation.json`, optional `main.pdf` |
+| `results/` | Compact quantitative result summaries |
+| `reproduce/` | Reproduction scripts and notes |
 
 </details>
 

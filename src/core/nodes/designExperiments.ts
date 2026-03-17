@@ -292,6 +292,11 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
           {
             sourcePath: outputPath,
             targetRelativePath: "experiment_plan.yaml"
+          },
+          {
+            sourcePath: path.join(process.cwd(), ".autolabos", "runs", run.id, "baseline_summary.json"),
+            targetRelativePath: "baseline_summary.json",
+            optional: true
           }
         ]
       });

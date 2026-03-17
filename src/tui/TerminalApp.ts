@@ -76,6 +76,7 @@ import { HumanInterventionRequest } from "../core/humanIntervention.js";
 import {
   createResearchBriefFile,
   findLatestResearchBrief,
+  parseManuscriptFormatFromBrief,
   resolveResearchBriefPath,
   snapshotResearchBriefToRun,
   summarizeBriefValidation,
@@ -2020,6 +2021,10 @@ export class TerminalApp {
       await runContext.put("run_brief.raw", input.brief);
       await runContext.put("run_brief.extracted", extracted);
       await runContext.put("run_brief.plan_summary", extracted.planSummary || null);
+      const manuscriptFormat = parseManuscriptFormatFromBrief(input.brief);
+      if (manuscriptFormat) {
+        await runContext.put("run_brief.manuscript_format", manuscriptFormat);
+      }
       if (input.sourcePath) {
         const resolvedSourcePath = path.isAbsolute(input.sourcePath)
           ? input.sourcePath

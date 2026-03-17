@@ -135,7 +135,29 @@ autolabos web
 - `$EDITOR` 또는 `$VISUAL`이 설정되어 있으면 AutoLabOS가 brief를 그 편집기로 열고, 필수 섹션을 검증한 뒤 지금 바로 실행할지 한 번만 묻습니다.
 - `/brief start <path>` 또는 `/brief start --latest`는 brief를 `.autolabos/runs/<run_id>/brief/source_brief.md`로 스냅샷하고, `topic`, `objective metric`, `constraints`, `plan`을 추출한 뒤 `collect_papers`부터 자동 시작합니다.
 - 생성되는 템플릿은 `# Research Brief`, `## Topic`, `## Objective Metric`, `## Constraints`, `## Plan`을 필수 골격으로 쓰고, `## Notes`, `## Questions / Risks`는 선택입니다.
+- `## Manuscript Format` 섹션을 추가하면 원고 형식 타깃을 지정할 수 있습니다.
 - 자연어로 run을 바로 만드는 경로도 남아 있지만, TUI에서는 외부에서 편집 가능하고 추적 가능한 brief 파일을 남기는 file-first 흐름을 권장합니다.
+
+### 원고 형식 타깃
+
+Brief에 원고 형식 제약을 지정하면, TeX 생성과 섹션 길이 계획에 반영됩니다:
+
+```markdown
+## Manuscript Format
+- columns: 2
+- main_body_pages: 8
+- references_excluded_from_page_limit: true
+- appendices_excluded_from_page_limit: true
+```
+
+| 필드 | 기본값 | 효과 |
+|---|---|---|
+| `columns` | `2` | `\documentclass[twocolumn]{article}` 또는 단일 컬럼 |
+| `main_body_pages` | `8` | 섹션별 단어 수 목표 계획에 사용 |
+| `references_excluded_from_page_limit` | `true` | 참고 문헌이 페이지 제한에 포함되지 않음 |
+| `appendices_excluded_from_page_limit` | `true` | 부록이 페이지 제한에 포함되지 않음 |
+
+형식이 지정되면 page budget manager가 섹션별 단어 수를 목표에 맞추고, scientific_validation.json에 규정 준수 상태를 보고합니다.
 
 ## 처음 사용자용 문제 해결
 
@@ -437,16 +459,16 @@ flowchart TB
     B1 --> C["generate_hypotheses"]
     C --> C1["hypotheses.jsonl<br/>hypothesis_generation/evidence_axes.json<br/>hypothesis_generation/selection.json<br/>hypothesis_generation/drafts.jsonl<br/>hypothesis_generation/reviews.jsonl"]
     C1 --> D["design_experiments"]
-    D --> D1["experiment_plan.yaml<br/>design_experiments_panel/candidates.json<br/>design_experiments_panel/reviews.json<br/>design_experiments_panel/selection.json"]
+    D --> D1["experiment_plan.yaml<br/>baseline_summary.json<br/>design_experiments_panel/candidates.json<br/>design_experiments_panel/reviews.json<br/>design_experiments_panel/selection.json"]
     D1 --> E["implement_experiments"]
     E --> F["run_experiments"]
     F --> F1["exec_logs/run_experiments.txt<br/>exec_logs/observations.jsonl<br/>metrics.json<br/>objective_evaluation.json<br/>run_experiments_supplemental_runs.json (optional)<br/>run_experiments_verify_report.json<br/>run_experiments_panel/execution_plan.json<br/>run_experiments_panel/triage.json<br/>run_experiments_panel/rerun_decision.json"]
     F1 --> G["analyze_results"]
-    G --> G1["result_analysis.json<br/>result_analysis_synthesis.json<br/>transition_recommendation.json<br/>figures/performance.svg<br/>analyze_results_panel/inputs.json<br/>analyze_results_panel/reviews.json<br/>analyze_results_panel/scorecard.json<br/>analyze_results_panel/decision.json"]
+    G --> G1["result_analysis.json<br/>result_table.json<br/>result_analysis_synthesis.json<br/>transition_recommendation.json<br/>figures/performance.svg<br/>analyze_results_panel/inputs.json<br/>analyze_results_panel/reviews.json<br/>analyze_results_panel/scorecard.json<br/>analyze_results_panel/decision.json"]
     G1 --> H["review"]
-    H --> H1["review/findings.jsonl<br/>review/scorecard.json<br/>review/consistency_report.json<br/>review/bias_report.json<br/>review/revision_plan.json<br/>review/decision.json<br/>review/review_packet.json<br/>review/checklist.md"]
+    H --> H1["review/findings.jsonl<br/>review/scorecard.json<br/>review/consistency_report.json<br/>review/bias_report.json<br/>review/revision_plan.json<br/>review/decision.json<br/>review/review_packet.json<br/>review/minimum_gate.json<br/>review/paper_quality_evaluation.json<br/>review/checklist.md"]
     H1 --> I["write_paper"]
-    I --> I1["paper/main.tex<br/>paper/references.bib<br/>paper/evidence_links.json<br/>paper/draft.json<br/>paper/validation.json<br/>paper/validation_repair_report.json<br/>paper/related_work_scout/* (optional)<br/>paper/main.pdf (optional)"]
+    I --> I1["paper/main.tex<br/>paper/references.bib<br/>paper/evidence_links.json<br/>paper/scientific_validation.json<br/>paper/draft.json<br/>paper/validation.json<br/>paper/validation_repair_report.json<br/>paper/related_work_scout/* (optional)<br/>paper/main.pdf (optional)"]
 ```
 
 모든 run 아티팩트는 `.autolabos/runs/<run_id>/` 아래에 저장되므로, TUI와 로컬 웹 UI 양쪽에서 같은 실행 결과를 추적하고 점검할 수 있습니다.
@@ -455,10 +477,12 @@ flowchart TB
 
 | Public section | 보통 여기에 미러링되는 파일 |
 | --- | --- |
-| `experiment/` | `experiment_plan.yaml`, 재사용 가능한 experiment bundle 파일, `metrics.json`, `objective_evaluation.json`, `run_experiments_verify_report.json`, optional supplemental metrics, `workspace_changed_files.json` |
-| `analysis/` | `result_analysis.json`, `result_analysis_synthesis.json`, `transition_recommendation.json`, optional `figures/performance.svg` |
-| `review/` | `review_packet.json`, `checklist.md`, `decision.json`, `findings.jsonl` |
-| `paper/` | `main.tex`, `references.bib`, `evidence_links.json`, optional `main.pdf`, optional `build.log` |
+| `experiment/` | `experiment_plan.yaml`, `baseline_summary.json`, 재사용 가능한 experiment bundle 파일, `metrics.json`, `objective_evaluation.json`, `run_experiments_verify_report.json`, optional supplemental metrics, `workspace_changed_files.json` |
+| `analysis/` | `result_analysis.json`, `result_analysis_synthesis.json`, `result_table.json`, `baseline_summary.json`, `transition_recommendation.json`, optional `figures/performance.svg` |
+| `review/` | `review_packet.json`, `checklist.md`, `decision.json`, `findings.jsonl`, `minimum_gate.json`, `paper_quality_evaluation.json` |
+| `paper/` | `main.tex`, `references.bib`, `evidence_links.json`, `scientific_validation.json`, optional `main.pdf`, optional `build.log` |
+| `results/` | 컴팩트 정량 결과 요약 |
+| `reproduce/` | 재현 스크립트 및 노트 |
 
 `analyze_papers`는 `analysis_manifest.json`을 이용해 미완료 작업만 재개합니다. 선택된 논문 집합이 바뀌거나, 분석 설정이 바뀌거나, `paper_summaries.jsonl` / `evidence_store.jsonl`가 manifest와 어긋나면 AutoLabOS는 오래된 행을 정리하고 영향받은 논문만 다시 큐에 넣은 뒤 downstream 노드를 계속 진행합니다.
 

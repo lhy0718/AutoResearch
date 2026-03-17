@@ -472,6 +472,7 @@ export function renderSubmissionPaperTex(input: {
   traceability: PaperTraceabilityReport;
   citationKeysByPaperId: Map<string, string>;
   template?: string;
+  paperProfile?: PaperProfileConfig;
 }): string {
   const sectionCitationMap = new Map<string, string[]>();
   for (const item of input.traceability.paragraphs) {
@@ -481,10 +482,15 @@ export function renderSubmissionPaperTex(input: {
     );
   }
 
+  const columnCount = input.paperProfile?.column_count ?? 2;
+  const docClassOptions = columnCount === 2 ? "[twocolumn]" : "";
+
   const lines = [
-    resolveDocumentClass(input.template),
+    resolveDocumentClass(input.template).replace("{article}", `${docClassOptions}{article}`),
     "\\usepackage[T1]{fontenc}",
-    "\\usepackage[margin=1in]{geometry}",
+    columnCount === 2
+      ? "\\usepackage[margin=0.75in]{geometry}"
+      : "\\usepackage[margin=1in]{geometry}",
     "\\usepackage{graphicx}",
     "\\title{" + latexEscape(input.manuscript.title) + "}",
     "\\date{}",

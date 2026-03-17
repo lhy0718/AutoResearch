@@ -2,7 +2,7 @@ import path from "node:path";
 
 import { RunRecord } from "../types.js";
 
-export type PublicRunOutputSection = "experiment" | "analysis" | "review" | "paper";
+export type PublicRunOutputSection = "experiment" | "analysis" | "review" | "paper" | "results" | "reproduce";
 
 export function buildPublicRunOutputDir(
   workspaceRoot: string,
@@ -61,6 +61,10 @@ export function buildPublicSectionDir(
       return buildPublicReviewDir(workspaceRoot, run);
     case "paper":
       return buildPublicPaperDir(workspaceRoot, run);
+    case "results":
+      return path.join(buildPublicRunOutputDir(workspaceRoot, run), "results");
+    case "reproduce":
+      return path.join(buildPublicRunOutputDir(workspaceRoot, run), "reproduce");
   }
 }
 

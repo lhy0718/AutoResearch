@@ -365,7 +365,17 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
                   targetRelativePath: "latest_results.json"
                 }
               ]
-            : [])
+            : []),
+          {
+            sourcePath: path.join(process.cwd(), ".autolabos", "runs", run.id, "result_table.json"),
+            targetRelativePath: "result_table.json",
+            optional: true
+          },
+          {
+            sourcePath: path.join(process.cwd(), ".autolabos", "runs", run.id, "baseline_summary.json"),
+            targetRelativePath: "baseline_summary.json",
+            optional: true
+          }
         ]
       });
       deps.eventStream.emit({

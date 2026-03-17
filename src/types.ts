@@ -115,12 +115,26 @@ export interface PaperProfileConfig {
   venue_style: string;
   /** Manuscript rhetoric/style target (e.g. "acl", "neurips", "generic_cs_paper"). */
   target_venue_style?: string;
+  /** Number of columns for the main body (1 or 2). Default: 2. */
+  column_count: 1 | 2;
   main_page_limit: number;
   references_counted: boolean;
   appendix_allowed: boolean;
   appendix_format: "double_column" | "single_column";
   prefer_appendix_for: string[];
   estimated_words_per_page?: number;
+}
+
+/** Manuscript format constraints that can be specified in a research brief. */
+export interface ManuscriptFormatTarget {
+  /** Number of columns (1 or 2). */
+  columns: 1 | 2;
+  /** Target page count for the main paper body. */
+  main_body_pages: number;
+  /** Whether the reference list is excluded from the page count. */
+  references_excluded_from_page_limit: boolean;
+  /** Whether appendices are excluded from the page count. */
+  appendices_excluded_from_page_limit: boolean;
 }
 
 export interface RunRecord {
