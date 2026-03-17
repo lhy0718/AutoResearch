@@ -285,5 +285,16 @@ export async function generatePublicRunReadme(
   const content = lines.join("\n");
   await ensureDir(outputRoot);
   await fs.writeFile(readmePath, content, "utf8");
+
+  // Create convenience `output` symlink at workspace root pointing to this run's output
+  try {
+    const symlinkPath = path.join(workspaceRoot, "output");
+    const relativeTarget = path.relative(workspaceRoot, outputRoot);
+    try { await fs.unlink(symlinkPath); } catch { /* ok if doesn't exist */ }
+    await fs.symlink(relativeTarget, symlinkPath);
+  } catch {
+    // non-fatal — symlink creation may fail on some filesystems
+  }
+
   return readmePath;
 }

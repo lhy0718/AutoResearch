@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-03-18 · 928/930 tests pass (2 skipped: zzz_noProjectRootLeak)
+Last updated: 2026-03-18 · 931/933 tests pass (2 skipped: zzz_noProjectRootLeak)
 
 ---
 
@@ -109,9 +109,24 @@ Last updated: 2026-03-18 · 928/930 tests pass (2 skipped: zzz_noProjectRootLeak
 - Root cause: `canReuseManifestSelection()` at line 1985 treated `rerankApplied === false` as "selection not yet done" rather than "deterministic fallback was used"
 - Fix: Changed the condition to only reject cache when `selectedPaperIds.length === 0` (truly empty selection), not merely when `rerankApplied === false`
 - Files changed: `src/core/nodes/analyzePapers.ts` (~line 1968)
-- Tests: Build succeeds; 928 tests pass
-- Re-validation: Pending (current analysis run uses old binary)
-- Adjacent regression: None expected
+- Tests: 1 new test; 929 tests pass
+- Re-validation: Deterministic fallback cache reuse confirmed in test
+- Adjacent regression: None
+
+### LV-027 — Vitest globalTeardown deletes live TUI workspace in test/
+- Status: FIXED (not reproduced in re-validation of the same flow)
+- Taxonomy: `persisted_state_bug`
+- Validation target: `test/.autolabos/` preservation during concurrent vitest runs
+- Environment: `test/` workspace with active TUI run; `npx vitest run` from project root
+- Reproduction: `tests/globalTeardown.ts` `cleanTestWorkspaces()` deletes all entries in `test/` except those in `KEEP = new Set(["smoke", ".env"])`. When `test/` is also the live TUI workspace, `.autolabos/`, `outputs/`, and the `output` symlink are destroyed. `tests/setupTempRoot.ts` sets `TMPDIR=test/` so all test temp dirs go there, and `globalTeardown.ts` sweeps them — along with everything else.
+- Expected: Vitest temp cleanup should not destroy the live validation workspace
+- Actual: `.autolabos/`, `outputs/`, and `output` symlink deleted during both vitest setup and teardown phases; TUI continues with in-memory state but loses config, runs.json, brief, corpus, checkpoints
+- Root cause: `KEEP` set in `tests/globalTeardown.ts` was too narrow — only preserved `smoke` and `.env`
+- Fix: Added `.autolabos`, `outputs`, `output` to the `KEEP` set in `tests/globalTeardown.ts`
+- Files changed: `tests/globalTeardown.ts`
+- Tests: 931/933 pass (2 skipped: zzz_noProjectRootLeak)
+- Re-validation: Ran full vitest suite after fix; `test/.autolabos/` survives cleanup
+- Adjacent regression: None — temp dirs still cleaned; only live workspace dirs preserved
 
 ---
 
