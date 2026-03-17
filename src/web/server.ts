@@ -437,6 +437,10 @@ class AutoLabOSWebController {
           const result = await session.submitInput(`/agent overnight ${runId}`);
           return jsonResponse(res, 200, buildSessionInputResponse(result, session.getActiveRunId()));
         }
+        if (action === "autonomous") {
+          const result = await session.submitInput(`/agent autonomous ${runId}`);
+          return jsonResponse(res, 200, buildSessionInputResponse(result, session.getActiveRunId()));
+        }
         if (action === "jump") {
           const node = asTrimmedString(body.node);
           if (!node) {

@@ -63,7 +63,7 @@ import { askLine } from "../utils/prompt.js";
 import { ensureDir, fileExists } from "../utils/fs.js";
 import { resolveOpenAiApiKey, upsertEnvVar } from "../config.js";
 import { AgentOrchestrator } from "../core/agents/agentOrchestrator.js";
-import { AutonomousRunController, buildDefaultOvernightPolicy } from "../core/agents/autonomousRunController.js";
+import { AutonomousRunController, buildDefaultOvernightPolicy, buildDefaultAutonomousPolicy } from "../core/agents/autonomousRunController.js";
 import { RunContextMemory } from "../core/memory/runContextMemory.js";
 import { parseAnalysisReport } from "../core/resultAnalysis.js";
 import {
@@ -2718,8 +2718,53 @@ export class TerminalApp {
       return { ok: outcome.status !== "failed", reason: outcome.status === "failed" ? outcome.reason : undefined };
     }
 
+    if (sub === "autonomous") {
+      const runQuery = args.slice(1).join(" ").trim() || undefined;
+      const run = await this.resolveTargetRun(runQuery);
+      if (!run) {
+        return { ok: false, reason: "target run not found" };
+      }
+      this.pushLog("┌──────────────────────────────────────────────────────────────┐");
+      this.pushLog("│  AUTONOMOUS MODE — Long-running open-ended research mode    │");
+      this.pushLog("│                                                              │");
+      this.pushLog("│  • Explores many hypothesis/experiment cycles autonomously   │");
+      this.pushLog("│  • Continuously upgrades the strongest paper candidate       │");
+      this.pushLog("│  • May consume substantially more time and compute           │");
+      this.pushLog("│  • May revisit earlier stages many times                     │");
+      this.pushLog("│  • NOT optimized for conservative early stopping             │");
+      this.pushLog("│  • Stops on: user stop, budget limits, or emergency fuse     │");
+      this.pushLog("│  • Progress: .autolabos/runs/<id>/RUN_STATUS.md              │");
+      this.pushLog("│  • Press Ctrl+C to stop at any time                          │");
+      this.pushLog("└──────────────────────────────────────────────────────────────┘");
+      const controller = new AutonomousRunController(this.runStore, this.orchestrator, this.eventStream);
+      const policy = buildDefaultAutonomousPolicy();
+      const outcome = await controller.runAutonomous(run.id, policy, { abortSignal });
+      this.pushLog(`Autonomous mode ${outcome.status}: ${outcome.reason}`);
+      this.pushLog(
+        `Cycles=${outcome.researchCycles || 0}, iterations=${outcome.iterations}, ` +
+        `approvals=${outcome.approvalsApplied}, transitions=${outcome.transitionsApplied}`
+      );
+      if (outcome.stopReason) {
+        this.pushLog(`Stop reason: ${outcome.stopReason}`);
+      }
+      if (outcome.noveltySignals && outcome.noveltySignals.length > 0) {
+        this.pushLog(`Novelty signals: ${outcome.noveltySignals.length} total`);
+      }
+      if (outcome.bestBranch) {
+        this.pushLog(`Best branch: ${outcome.bestBranch.hypothesis} (${outcome.bestBranch.manuscriptType})`);
+        if (outcome.bestBranch.evidenceGaps.length > 0) {
+          this.pushLog(`Evidence gaps: ${outcome.bestBranch.evidenceGaps.join(", ")}`);
+        }
+      }
+      if (outcome.paperStatus) {
+        this.pushLog(`Paper status: ${outcome.paperStatus}`);
+      }
+      await this.refreshRunIndex();
+      return { ok: outcome.status !== "failed", reason: outcome.status === "failed" ? outcome.reason : undefined };
+    }
+
     this.pushLog(
-      "Usage: /agent list | run | status | review | collect | recollect | clear | count | clear_papers | focus | graph | resume | retry | jump | transition | apply | overnight"
+      "Usage: /agent list | run | status | review | collect | recollect | clear | count | clear_papers | focus | graph | resume | retry | jump | transition | apply | overnight | autonomous"
     );
     return { ok: false, reason: `unknown /agent subcommand ${sub}` };
   }

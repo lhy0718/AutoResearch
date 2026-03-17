@@ -4,7 +4,7 @@ import { promises as fs } from "node:fs";
 import { RunStore } from "../core/runs/runStore.js";
 import { TitleGenerator } from "../core/runs/titleGenerator.js";
 import { AgentOrchestrator } from "../core/agents/agentOrchestrator.js";
-import { AutonomousRunController, buildDefaultOvernightPolicy } from "../core/agents/autonomousRunController.js";
+import { AutonomousRunController, buildDefaultOvernightPolicy, buildDefaultAutonomousPolicy } from "../core/agents/autonomousRunController.js";
 import { EventStream, AutoLabOSEvent } from "../core/events.js";
 import { buildNaturalAssistantResponse, matchesNaturalAssistantIntent } from "../core/commands/naturalAssistant.js";
 import { buildNaturalAssistantResponseWithLlm } from "../core/commands/naturalLlmAssistant.js";
@@ -1052,7 +1052,7 @@ export class InteractionSession {
     this.pushLog("/help | /runs | /run <run> | /resume <run> | /title <new title>");
     this.pushLog("/doctor | /approve | /retry");
     this.pushLog("/agent list | /agent status [run] | /agent graph [run]");
-    this.pushLog("/agent review [run] | /agent transition [run] | /agent apply [run] | /agent overnight [run]");
+    this.pushLog("/agent review [run] | /agent transition [run] | /agent apply [run] | /agent overnight [run] | /agent autonomous [run]");
     this.pushLog("/agent run <node> [run] [--top-n <n> | --top-k <n> --branch-count <n>]");
     this.pushLog("/agent collect [query] [options] | /agent jump <node> [run] [--force]");
   }
@@ -1451,8 +1451,42 @@ export class InteractionSession {
       return { ok: outcome.status !== "failed", reason: outcome.status === "failed" ? outcome.reason : undefined };
     }
 
+    if (sub === "autonomous") {
+      const run = await this.resolveTargetRun(args.slice(1).join(" ").trim() || undefined);
+      if (!run) {
+        return { ok: false, reason: "target run not found" };
+      }
+      this.pushLog("Starting autonomous mode: long-running open-ended research exploration.");
+      this.pushLog("This mode explores many hypothesis/experiment cycles and upgrades the strongest paper candidate.");
+      this.pushLog("It may consume substantially more time and compute than overnight mode.");
+      this.pushLog("It stops on: user stop (Ctrl+C), budget/time limits, or emergency fuse.");
+      this.pushLog("Progress is written to .autolabos/runs/<id>/RUN_STATUS.md");
+      const controller = new AutonomousRunController(this.runStore, this.orchestrator, this.eventStream);
+      const policy = buildDefaultAutonomousPolicy();
+      const outcome = await controller.runAutonomous(run.id, policy, { abortSignal });
+      this.pushLog(`Autonomous mode ${outcome.status}: ${outcome.reason}`);
+      this.pushLog(
+        `Cycles=${outcome.researchCycles || 0}, iterations=${outcome.iterations}, ` +
+        `approvals=${outcome.approvalsApplied}, transitions=${outcome.transitionsApplied}`
+      );
+      if (outcome.stopReason) {
+        this.pushLog(`Stop reason: ${outcome.stopReason}`);
+      }
+      if (outcome.bestBranch) {
+        this.pushLog(`Best branch: ${outcome.bestBranch.hypothesis} (${outcome.bestBranch.manuscriptType})`);
+        if (outcome.bestBranch.evidenceGaps.length > 0) {
+          this.pushLog(`Evidence gaps: ${outcome.bestBranch.evidenceGaps.join(", ")}`);
+        }
+      }
+      if (outcome.paperStatus) {
+        this.pushLog(`Paper status: ${outcome.paperStatus}`);
+      }
+      await this.refreshRunIndex();
+      return { ok: outcome.status !== "failed", reason: outcome.status === "failed" ? outcome.reason : undefined };
+    }
+
     this.pushLog(
-      "Usage: /agent list | run | status | review | collect | recollect | clear | count | clear_papers | focus | graph | resume | retry | jump | transition | apply | overnight"
+      "Usage: /agent list | run | status | review | collect | recollect | clear | count | clear_papers | focus | graph | resume | retry | jump | transition | apply | overnight | autonomous"
     );
     return { ok: false, reason: `unknown /agent subcommand ${sub}` };
   }

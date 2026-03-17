@@ -140,3 +140,26 @@
 - Root cause: Five test files did not call `process.chdir(workspace)` before invoking code that writes relative artifact paths. Production code works correctly because `process.cwd()` IS the workspace.
 - Fix: Added `process.chdir(workspace)` + `ORIGINAL_CWD` restore to 5 test files following the pattern already used by 14 other test files. Added `zzz_noProjectRootLeak.test.ts` regression guard.
 - Regression status: 856/856 tests pass. 0 leaked dirs.
+
+---
+
+### AM-001 — Autonomous Mode Implementation
+- Status: IMPLEMENTED
+- Category: feature implementation
+- Validation target: `/agent autonomous` TUI/web entry, `AutonomousRunController.runAutonomous()`, policy, novelty, paper pressure, progress reporting
+- Summary: Autonomous mode is now fully implemented with:
+  - Dual-loop architecture (research exploration + paper-quality improvement)
+  - Best-branch tracking with artifact-based evidence evaluation
+  - Paper-pressure consolidation (jumps to `review` when strong branch exists)
+  - Enhanced novelty detection (hypothesis, analysis, comparator, experiment artifact, backtrack signals)
+  - Rich RUN_STATUS.md progress reporting with all required fields
+  - Final summary written on stop with evidence gaps and open issues
+  - All stop reasons clearly distinguished and surfaced
+  - Emergency fuse (catastrophic runaway protection)
+  - 16 new tests (20 total), all passing
+  - Overnight mode behavior fully preserved (no regressions)
+- Evidence: 872/872 tests pass (16 new). TS compiles clean. Build succeeds. Only pre-existing `zzz_noProjectRootLeak` failure (LV-021).
+- Risks:
+  - Paper-pressure consolidation jumps to `review` node with force mode; if review node encounters artifacts from a different cycle context, it may produce a review that doesn't match the latest experiment
+  - Stagnation detection relies on node-level notes; if nodes don't write meaningful notes, novelty detection may under-count signals
+  - `evaluateBestBranch` reads artifacts at fixed paths; if the run has branched into multiple experiment directions, only the latest artifacts are evaluated

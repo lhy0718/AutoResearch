@@ -33,7 +33,8 @@ const AGENT_SUBCOMMANDS = [
   "jump",
   "transition",
   "apply",
-  "overnight"
+  "overnight",
+  "autonomous"
 ] as const;
 
 export function buildSuggestions(ctx: SuggestionContext): SuggestionItem[] {
