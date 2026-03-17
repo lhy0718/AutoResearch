@@ -72,6 +72,8 @@
 | PDF 분석 모드 | 로컬 텍스트 추출 + Codex, 또는 Responses API 직접 분석 중 선택 가능 |
 | 연구 실행 패턴 | ReAct, ReWOO, ToT, Reflexion 패턴을 노드 성격에 맞게 사용 |
 | 로컬 ACI 실행 | `implement_experiments`, `run_experiments`를 파일/명령/테스트 액션으로 수행 |
+| 자율 연구 모드 | 장시간 개방형 연구 탐색, 가설→실험→분석 반복과 논문 품질 개선을 병행하는 Autonomous Mode 지원 |
+| 2계층 논문 평가 | 결정적 최소 게이트 + LLM 기반 논문 품질 평가로 감사 가능한 초안 진입 판단 |
 
 ## 여기서 시작하세요
 
@@ -220,7 +222,8 @@ stateDiagram-v2
 | Workflow mode | `agent_approval` | 고정 | 논문 수집부터 논문 작성까지 9개 노드 연구 그래프를 실행 | 자체적으로 pause를 만들지는 않음 |
 | Approval mode | `workflow.approval_mode: minimal` | 예 | 일반 완료 게이트를 자동 승인하고, review 결과를 포함한 안전한 전이 추천을 자동 적용 | recommendation이 `pause_for_human`이거나 `autoExecutable=false`이면 멈춤 |
 | Approval mode | `workflow.approval_mode: manual` | 선택 | 자동 해소 대신 모든 승인 경계에서 멈춤 | `/approve`, `/agent apply`, `/agent jump` 같은 명시적 명령으로 진행 |
-| Autonomy preset | `/agent overnight` | 필요할 때만 실행 | 현재 run을 사람 없이 한동안 진행하는 보수적인 야간 자동운전 정책 | `write_paper` 직전, low-confidence 또는 허용되지 않은 backtrack, 반복 recommendation, 시간 제한, 수동 전용 recommendation에서 멈춤 |
+| Overnight | `/agent overnight` | 필요할 때만 실행 | 보수적인 야간 자동운전 정책 (24시간 제한) | `write_paper` 직전, low-confidence 또는 허용되지 않은 backtrack, 반복 recommendation, 시간 제한, 수동 전용 recommendation에서 멈춤 |
+| Autonomous | `/agent autonomous` | 필요할 때만 실행 | 장시간 개방형 자율 연구 탐색 (시간 제한 없음) | 사용자 명시적 중단, 자원 한계, 정체 감지, 비상 퓨즈에서 멈춤 |
 | TUI supervisor | Interactive run supervisor | `autolabos` 기본 동작 | `minimal` 모드로 run을 계속 진행하고, 재시작 후에도 pending question을 복원하며, 실제 사람 답변이 필요할 때만 제어를 돌려줌 | 같은 TUI 안에서 답변을 받고 지정된 resume action을 적용한 뒤 자동으로 다시 실행 |
 
 ### 인간 개입이 필요한 조건
@@ -230,7 +233,8 @@ stateDiagram-v2
 | `analyze_results` | best-effort metric rematch 뒤에도 objective metric을 구체적인 수치 신호에 연결하지 못함 | TUI가 어떤 metric 또는 성공 기준을 쓸지 질문하고, 답변을 저장한 뒤 `analyze_results`를 재시도하고 자동 실행을 이어감 |
 | `analyze_results` | hypothesis reset 추천이 나왔지만 confidence가 낮아 `autoExecutable=true`가 아님 | TUI가 명시적인 다음 단계 선택지를 보여주고, 선택된 transition 또는 jump를 적용한 뒤 자동 실행을 이어감 |
 | 모든 노드 (`manual` approval mode) | 노드가 승인 경계에 도달함 | `/approve`, `/agent apply`, 또는 다른 명시적 운영자 선택을 기다림 |
-| `/agent overnight` | `write_paper` 도달, low-confidence 또는 비허용 recommendation, recommendation 반복 과다, 야간 시간 제한 도달 | overnight 실행을 중단하고 운영자에게 제어를 돌려줌 |
+| `/agent overnight` | `write_paper` 도달, low-confidence 또는 비허용 recommendation, recommendation 반복 과다, 24시간 제한 도달 | overnight 실행을 중단하고 운영자에게 제어를 돌려줌 |
+| `/agent autonomous` | 명시적 사용자 중단, 자원 한계, 정체(stagnation) 임계치 초과, 비상 퓨즈 | autonomous 실행을 중단하고 운영자에게 제어를 돌려줌 |
 
 기본 설정에서는 review 결과가 자동으로 `write_paper` 또는 지원되는 backtrack으로 적용됩니다. `minimal` 모드에서 review는 별도의 수동 hold 지점이 아닙니다.
 
@@ -245,6 +249,39 @@ stateDiagram-v2
 | `analyze_results` | best-effort metric rematch로 objective grounding을 다시 시도한 뒤 결정적 result panel로 confidence를 보정 | 캐시된 또는 fresh objective evaluation이 `missing` 또는 `unknown`이거나, 최종 transition recommendation을 확정해야 할 때 | 사람 clarification pause 전 1회 bounded rematch, 그리고 내부 `analyze_results_panel/*` 아티팩트 생성 |
 | `write_paper` | 문헌 커버리지가 얇을 때 drafting 전에 작은 query planner와 coverage auditor가 붙은 bounded related-work scout를 수행 | 검증된 writing bundle의 analyzed paper/corpus 수가 부족하거나 review context가 citation gap을 가리킬 때 | best-effort Semantic Scholar scout를 `paper/related_work_scout/*`에 기록하고, planned query를 coverage가 충분해지면 일찍 멈춘 뒤 메인 `corpus.jsonl` 대신 집필용 in-memory bundle에만 합침 |
 | `write_paper` | validation-aware repair를 한 번 더 돌리고 재검증 | draft validation에서 repair 가능한 borrowed grounding warning이 나올 때 | 최대 1회 repair, warning 수가 늘어나면 채택하지 않음 |
+
+### Overnight 모드 vs Autonomous 모드
+
+AutoLabOS는 두 가지 무인 운영 모드를 제공합니다. 두 모드 모두 9노드 워크플로우와 모든 안전 게이트를 보존합니다.
+
+| | Overnight 모드 | Autonomous 모드 |
+|---|---|---|
+| 명령어 | `/agent overnight [run]` | `/agent autonomous [run]` |
+| 실행 시간 제한 | **24시간** | **제한 없음** |
+| 목적 | 보수적 단일 패스 무인 실행 | 개방형 장시간 자율 연구 탐색 |
+| 백트래킹 | 제한적, 보수적 | 광범위하게 완화 |
+| 루핑 | `write_paper` 도달 또는 반복 recommendation 시 정지 | 가설→실험→분석 사이클을 반복 |
+| 논문 초안 진입 게이트 | 기본적으로 `write_paper` 전에 정지 | 최소 증거 기준 충족 시에만 진입 — 미충족 시 백트랙 |
+| 정지 조건 | 시간 제한, `write_paper` 도달, 반복 recommendation, low confidence | 사용자 중단, 자원 소진, 정체 감지, 비상 퓨즈 |
+
+**Autonomous 모드**는 최소한의 사용자 개입으로 지속적인 가설→실험→분석 루프를 실행하도록 설계되었습니다. 두 개의 병렬 루프를 운영합니다:
+
+1. **연구 탐색 루프** — 가설 생성/정제, 실험 설계/실행, 결과 분석, 다음 가설 도출
+2. **논문 품질 개선 루프** — 가장 강한 브랜치 식별, 기준선(baseline) 강화, 주장→증거 연결 개선, 원고 준비 상태 향상
+
+이 모드는 **2계층 논문 평가 모델**을 사용합니다:
+- **1계층 (결정적 최소 게이트)**: 증거가 부족한 브랜치가 `write_paper`에 진입하는 것을 범주적으로 차단하는 7가지 아티팩트 존재 확인
+- **2계층 (LLM 논문 품질 평가)**: 브랜치 품질을 점수화하고, 증거 갭을 식별하며, 개선 조치를 권고하는 구조화된 LLM 비평
+
+Autonomous 모드는 run 아티팩트 디렉터리 안에 `RUN_STATUS.md` 파일을 기록합니다. 이 파일은 각 반복마다 현재 사이클, 노드, 가설, 최고 브랜치, 증거 갭, 논문 품질 점수, 게이트 상태, 정지 위험을 추적합니다.
+
+Autonomous 모드의 정지 조건:
+- 명시적 사용자 중단
+- 자원 또는 디스크 한계
+- 반복적 비생산적 루핑이 임계치 초과 (novelty/stagnation 감지)
+- 치명적 런타임 실패 (비상 퓨즈)
+
+논문 품질이 일시적으로 정체되거나 단일 실험이 부정적이라는 이유만으로는 **정지하지 않습니다**.
 
 ### 단계별 연결 그래프
 
@@ -611,7 +648,8 @@ TUI에서는 디스크에 editable brief를 남길 수 있는 `/new` + `/brief s
 | `/agent resume [run] [checkpoint]` | 최신/특정 체크포인트 재개 |
 | `/agent retry [node] [run]` | 노드 재시도 |
 | `/agent jump <node> [run] [--force]` | 노드 점프 |
-| `/agent overnight [run]` | 기본 safe policy로 overnight autonomy preset 실행 |
+| `/agent overnight [run]` | 보수적 overnight 자동운전 (24시간 제한) |
+| `/agent autonomous [run]` | 개방형 자율 연구 탐색 (시간 제한 없음) |
 | `/model` | 화살표 선택기로 모델/effort 선택 |
 | `/approve` | 멈춘 현재 노드를 승인 |
 | `/retry` | 현재 노드 재시도 |

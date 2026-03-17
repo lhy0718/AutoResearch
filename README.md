@@ -105,6 +105,8 @@ Most AI research tools handle one piece of the pipeline. AutoLabOS is a **comple
 | 🤖 | **Hybrid provider model** | Codex CLI or OpenAI API for primary flow; independent PDF analysis mode |
 | 🧠 | **Runtime patterns** | ReAct, ReWOO, ToT, and Reflexion used where they make sense |
 | 🛡️ | **5-specialist review panel** | Claim verifier, methodology reviewer, statistics reviewer, writing readiness, integrity reviewer |
+| 🔬 | **Autonomous Mode** | Open-ended long-running research exploration with dual hypothesis–experiment and paper-quality loops |
+| 📄 | **Two-layer paper evaluation** | Deterministic minimum gate + LLM-based paper-quality evaluator for auditable draft readiness |
 
 ---
 
@@ -464,7 +466,8 @@ All run artifacts live under `.autolabos/runs/<run_id>/`. User-facing deliverabl
 |---|---|---|---|
 | Approval mode | `minimal` | ✅ | Auto-approves safe transitions including review outcomes |
 | Approval mode | `manual` | Optional | Pauses at every approval boundary |
-| Autonomy | `/agent overnight` | On demand | Runs unattended with conservative policy |
+| Overnight | `/agent overnight` | On demand | Runs unattended with conservative policy (24-hour limit) |
+| Autonomous | `/agent autonomous` | On demand | Long-running open-ended research exploration (no time limit) |
 | Supervisor | Interactive TUI | Default | Keeps run moving, captures human answers when needed |
 
 ### Bounded Automation
@@ -477,6 +480,39 @@ All run artifacts live under `.autolabos/runs/<run_id>/`. User-facing deliverabl
 | `run_experiments` | Failure memory: fingerprint → equivalent-failure stopping | ≥ 3 identical → exhausts retries |
 | `analyze_results` | Objective rematching + result panel calibration | One rematch before human pause |
 | `write_paper` | Related-work scout + validation-aware repair | Best-effort, 1 repair pass max |
+
+### Overnight Mode vs Autonomous Mode
+
+AutoLabOS provides two unattended operating modes. Both preserve the 9-node workflow and all safety gates.
+
+| | Overnight Mode | Autonomous Mode |
+|---|---|---|
+| Command | `/agent overnight [run]` | `/agent autonomous [run]` |
+| Runtime limit | **24 hours** | **No time limit** |
+| Purpose | Conservative single-pass unattended run | Open-ended long-running research exploration |
+| Backtracking | Limited, conservative | Broadly relaxed |
+| Looping | Stops at `write_paper` or on repeated recommendations | Repeats hypothesis → experiment → analysis cycles |
+| Paper drafting gate | Stops before `write_paper` by default | Gated by minimum evidence bar — backtracks if not met |
+| Stop conditions | Time limit, `write_paper` reached, repeated recommendation, low confidence | User stop, resource exhaustion, stagnation, catastrophic fuse |
+
+**Autonomous Mode** is designed for sustained hypothesis → experiment → analysis loops with minimal user intervention. It runs two parallel loops:
+
+1. **Research exploration loop** — generate/refine hypotheses, design/run experiments, analyze outcomes, derive next hypothesis
+2. **Paper-quality improvement loop** — identify the strongest branch, tighten baselines, strengthen claim→evidence linkage, improve manuscript readiness
+
+The mode uses a **two-layer paper evaluation model**:
+- **Layer 1 (deterministic minimum gate)**: 7 artifact-presence checks that categorically block under-evidenced branches from entering `write_paper`
+- **Layer 2 (LLM paper-quality evaluator)**: structured LLM critique that scores branch quality, identifies evidence gaps, and recommends upgrade actions
+
+Autonomous Mode writes a `RUN_STATUS.md` file inside the run's artifact directory. This file tracks the current cycle, node, hypothesis, best branch, evidence gaps, paper-quality scores, gate status, and stop risk at each iteration.
+
+Autonomous Mode stops on:
+- explicit user stop
+- resource or disk limits
+- repeated unproductive looping beyond threshold (novelty/stagnation detection)
+- catastrophic runtime failure (emergency fuse)
+
+It does **not** stop merely because paper quality is temporarily flat or because a single experiment is negative.
 
 ---
 
@@ -493,7 +529,8 @@ All run artifacts live under `.autolabos/runs/<run_id>/`. User-facing deliverabl
 | `/agent run <node> [run]` | Execute from a graph node |
 | `/agent status [run]` | Show node statuses |
 | `/agent jump <node> [--force]` | Jump between nodes |
-| `/agent overnight [run]` | Run unattended overnight |
+| `/agent overnight [run]` | Run unattended overnight (24-hour limit) |
+| `/agent autonomous [run]` | Long-running autonomous research exploration (no time limit) |
 | `/model` | Switch model and reasoning effort |
 | `/settings` | Edit provider, model, PDF settings |
 | `/doctor` | Environment + workspace diagnostics |
@@ -559,7 +596,8 @@ Multi-step plans pause between steps: `y` (next), `a` (all), `n` (cancel).
 | `/agent resume [run] [checkpoint]` | Resume from checkpoint |
 | `/agent retry [node] [run]` | Retry node |
 | `/agent jump <node> [run] [--force]` | Jump node |
-| `/agent overnight [run]` | Overnight autonomy |
+| `/agent overnight [run]` | Overnight autonomy (24h) |
+| `/agent autonomous [run]` | Open-ended autonomous research (no time limit) |
 | `/model` | Model and reasoning selector |
 | `/approve` | Approve paused node |
 | `/retry` | Retry current node |
