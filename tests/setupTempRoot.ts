@@ -3,10 +3,11 @@ import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const testTmpRoot = path.join(repoRoot, "test", ".tmp");
+const testRoot = path.join(repoRoot, "test");
 
-mkdirSync(testTmpRoot, { recursive: true });
+mkdirSync(testRoot, { recursive: true });
 
-process.env.TMPDIR = testTmpRoot;
-process.env.TMP = testTmpRoot;
-process.env.TEMP = testTmpRoot;
+// Route os.tmpdir() into test/ so all mkdtempSync calls create dirs there.
+process.env.TMPDIR = testRoot;
+process.env.TMP = testRoot;
+process.env.TEMP = testRoot;

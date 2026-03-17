@@ -5,6 +5,6 @@ import { describe, expect, it } from "vitest";
 
 describe("test temp root setup", () => {
   it("routes os.tmpdir under the repository test directory", () => {
-    expect(tmpdir()).toBe(path.join(process.cwd(), "test", ".tmp"));
+    expect(tmpdir()).toBe(path.join(process.cwd(), "test"));
   });
 });

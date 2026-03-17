@@ -5,6 +5,7 @@ export default defineConfig({
     include: ["tests/**/*.test.ts"],
     environment: "node",
     setupFiles: ["./tests/setupTempRoot.ts"],
+    globalSetup: ["./tests/globalTeardown.ts"],
     // Many node-side tests switch process.cwd() to isolated temp workspaces.
     // File-level parallelism makes those tests race on global cwd in CI.
     fileParallelism: false
