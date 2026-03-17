@@ -19,6 +19,8 @@ import {
 import { loadAttemptDecisions } from "../experiments/attemptDecision.js";
 import { loadExperimentContract } from "../experiments/experimentContract.js";
 import { FailureMemory } from "../experiments/failureMemory.js";
+import { evaluateMinimumGate } from "../analysis/paperMinimumGate.js";
+import { runLLMPaperQualityEvaluation } from "../analysis/llmPaperQualityEvaluator.js";
 
 export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
@@ -79,8 +81,60 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         presence
       });
 
-      // Use critique to potentially strengthen transition recommendation
-      const transitionRecommendation = buildReviewTransitionRecommendation(panel, packet, preDraftCritique);
+      // --- Layer 1: Deterministic minimum gate ---
+      const minimumGate = evaluateMinimumGate({
+        presence,
+        report,
+        topic: run.topic,
+        objectiveMetric: run.objectiveMetric
+      });
+      await writeRunArtifact(
+        run,
+        "review/minimum_gate.json",
+        `${JSON.stringify(minimumGate, null, 2)}\n`
+      );
+
+      // --- Layer 2: LLM paper-quality evaluation ---
+      let llmEvalCost = 0;
+      const hypothesis = run.graph.nodeStates.generate_hypotheses?.note || run.topic;
+      const llmEvalResult = await runLLMPaperQualityEvaluation(
+        {
+          topic: run.topic,
+          objectiveMetric: run.objectiveMetric,
+          hypothesis,
+          report,
+          presence,
+          minimumGate,
+          reviewScorecard: panel.scorecard ? {
+            overall_score_1_to_5: panel.scorecard.overall_score_1_to_5,
+            dimensions: Object.fromEntries(
+              (panel.scorecard.dimensions || []).map((d: { dimension: string; score_1_to_5: number }) => [d.dimension, d.score_1_to_5])
+            )
+          } : undefined
+        },
+        deps.llm,
+        { abortSignal, timeoutMs: Number(process.env.AUTOLABOS_REVIEW_REFINEMENT_TIMEOUT_MS) || 30_000 }
+      );
+      llmEvalCost = llmEvalResult.costUsd ?? 0;
+      await writeRunArtifact(
+        run,
+        "review/paper_quality_evaluation.json",
+        `${JSON.stringify(llmEvalResult.evaluation, null, 2)}\n`
+      );
+
+      deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId: run.id,
+        node: "review",
+        payload: {
+          text: `Paper quality evaluation: gate ${minimumGate.passed ? "PASSED" : "BLOCKED (" + minimumGate.ceiling_type + ")"}. LLM score: ${llmEvalResult.evaluation.overall_score_1_to_10}/10, worthiness: ${llmEvalResult.evaluation.paper_worthiness}, action: ${llmEvalResult.evaluation.recommended_action}.`
+        }
+      });
+
+      // Use critique + minimum gate + LLM evaluation to build transition recommendation
+      const transitionRecommendation = buildReviewTransitionRecommendation(
+        panel, packet, preDraftCritique, minimumGate, llmEvalResult.evaluation
+      );
       const markdown = renderReviewChecklist(run, packet, panel);
 
       const findingsPath = await writeRunArtifact(run, "review/findings.jsonl", renderJsonl(panel.findings));
@@ -141,6 +195,8 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       await runContextMemory.put("review.paper_critique", preDraftCritique);
       await runContextMemory.put("review.manuscript_type", preDraftCritique.manuscript_type);
       await runContextMemory.put("review.target_venue_style", preDraftCritique.target_venue_style);
+      await runContextMemory.put("review.minimum_gate", minimumGate);
+      await runContextMemory.put("review.paper_quality_evaluation", llmEvalResult.evaluation);
 
       deps.eventStream.emit({
         type: "OBS_RECEIVED",
@@ -174,8 +230,8 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
               ? `Review panel prepared ${panel.findings.length} finding(s) with ${warnings} warning(s) and ${manual} manual review item(s). The next stage will carry the attached revision checklist or follow the recommended backtrack automatically.${critiqueLabel} Public outputs: ${publicOutputs.outputRootRelative}.`
               : `Review panel completed with outcome ${panel.decision.outcome}.${critiqueLabel} The runtime can continue automatically from the review recommendation. Public outputs: ${publicOutputs.outputRootRelative}.`,
         needsApproval: true,
-        toolCallsUsed: Math.max(1, panel.llm_calls_used),
-        costUsd: panel.llm_cost_usd,
+        toolCallsUsed: Math.max(1, panel.llm_calls_used + (llmEvalResult.llmUsed ? 1 : 0)),
+        costUsd: (panel.llm_cost_usd ?? 0) + llmEvalCost,
         transitionRecommendation
       };
     }
@@ -185,7 +241,9 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
 function buildReviewTransitionRecommendation(
   panel: Awaited<ReturnType<typeof runReviewPanel>>,
   packet: ReturnType<typeof buildReviewPacket>,
-  critique: PaperCritique
+  critique: PaperCritique,
+  minimumGate?: ReturnType<typeof evaluateMinimumGate>,
+  llmEval?: { recommended_action: string; paper_worthiness: string; overall_score_1_to_10: number }
 ): TransitionRecommendation | undefined {
   const action = panel.decision.outcome;
   const confidence = Number(panel.decision.confidence.toFixed(2));
@@ -193,6 +251,59 @@ function buildReviewTransitionRecommendation(
     panel.decision.summary,
     ...panel.findings.slice(0, 3).map((finding) => finding.title)
   ].filter((value, index, items) => Boolean(value) && items.indexOf(value) === index);
+
+  // Layer 1: If deterministic minimum gate blocks and the panel recommends advance,
+  // override to backtrack. The gate is a hard safety boundary.
+  if (
+    minimumGate &&
+    !minimumGate.passed &&
+    (minimumGate.ceiling_type === "blocked_for_paper_scale" || minimumGate.ceiling_type === "system_validation_note")
+  ) {
+    const gateBlockers = minimumGate.blockers.join(", ");
+    return createReviewTransition({
+      action: "backtrack_to_design",
+      targetNode: "design_experiments",
+      reason: `Minimum evidence gate blocked (${minimumGate.ceiling_type}): missing ${gateBlockers}. Cannot advance to paper drafting.`,
+      confidence: 0.9,
+      autoExecutable: true,
+      evidence: [
+        `Gate ceiling: ${minimumGate.ceiling_type}`,
+        `Blockers: ${gateBlockers}`,
+        ...evidence.slice(0, 2)
+      ],
+      suggestedCommands: packet.suggested_actions
+    });
+  }
+
+  // Layer 2: If LLM evaluator recommends backtrack and panel says advance,
+  // respect LLM judgment (but don't override deterministic gate passes)
+  if (
+    llmEval &&
+    action === "advance" &&
+    (llmEval.recommended_action === "backtrack_to_experiments" ||
+     llmEval.recommended_action === "backtrack_to_design" ||
+     llmEval.recommended_action === "backtrack_to_hypotheses") &&
+    llmEval.paper_worthiness === "not_ready"
+  ) {
+    const targetNode = llmEval.recommended_action === "backtrack_to_hypotheses"
+      ? "generate_hypotheses" as const
+      : llmEval.recommended_action === "backtrack_to_design"
+        ? "design_experiments" as const
+        : "implement_experiments" as const;
+    return createReviewTransition({
+      action: llmEval.recommended_action as TransitionRecommendation["action"],
+      targetNode,
+      reason: `LLM paper-quality evaluator recommends ${llmEval.recommended_action} (score: ${llmEval.overall_score_1_to_10}/10, worthiness: ${llmEval.paper_worthiness}).`,
+      confidence: Math.min(confidence, 0.7),
+      autoExecutable: true,
+      evidence: [
+        `LLM score: ${llmEval.overall_score_1_to_10}/10`,
+        `Worthiness: ${llmEval.paper_worthiness}`,
+        ...evidence.slice(0, 2)
+      ],
+      suggestedCommands: packet.suggested_actions
+    });
+  }
 
   // If the critique found the manuscript is blocked_for_paper_scale or system_validation_note
   // with blocking issues, override the panel decision with a backtrack

@@ -33,6 +33,16 @@ export interface AutonomousCycleSnapshot {
   writePaperGateBlocked?: boolean;
   /** Specific conditions blocking write_paper entry */
   writePaperGateBlockers?: string[];
+  /** Whether deterministic minimum gate passed */
+  minimumGatePassed?: boolean;
+  /** Minimum gate ceiling type */
+  minimumGateCeiling?: string;
+  /** LLM paper-quality score (1–10) */
+  llmPaperScore?: number;
+  /** LLM paper-worthiness judgment */
+  llmPaperWorthiness?: string;
+  /** LLM recommended next action */
+  llmRecommendedAction?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -50,6 +60,16 @@ export interface BestBranchInfo {
   lastUpgradeCycle: number;
   evidenceGaps: string[];
   upgradeActions: string[];
+  /** LLM paper-quality score (1–10), when available */
+  llmScore?: number;
+  /** LLM paper-worthiness judgment */
+  llmWorthiness?: string;
+  /** LLM recommended next action */
+  llmRecommendedAction?: string;
+  /** Whether deterministic minimum gate passed */
+  minimumGatePassed?: boolean;
+  /** Minimum gate ceiling type */
+  minimumGateCeiling?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -135,6 +155,20 @@ export class AutonomousProgressReporter {
     // Write-paper gate status
     if (snap.writePaperGateBlocked != null) {
       lines.push(`| Write-Paper Gate | ${snap.writePaperGateBlocked ? "⛔ BLOCKED" : "✅ PASSED"} |`);
+    }
+
+    // Two-layer paper quality evaluation
+    if (snap.minimumGatePassed != null) {
+      lines.push(`| Minimum Gate | ${snap.minimumGatePassed ? "✅ PASSED" : "⛔ BLOCKED"} (${snap.minimumGateCeiling || "—"}) |`);
+    }
+    if (snap.llmPaperScore != null) {
+      lines.push(`| LLM Paper Score | ${snap.llmPaperScore}/10 |`);
+    }
+    if (snap.llmPaperWorthiness) {
+      lines.push(`| LLM Worthiness | ${snap.llmPaperWorthiness} |`);
+    }
+    if (snap.llmRecommendedAction) {
+      lines.push(`| LLM Rec. Action | ${snap.llmRecommendedAction} |`);
     }
 
     lines.push("");

@@ -438,7 +438,12 @@ export class AutonomousRunController {
         loopDirection,
         runtimePolicy,
         writePaperGateBlocked: !gateResult.passes,
-        writePaperGateBlockers: gateResult.blockers
+        writePaperGateBlockers: gateResult.blockers,
+        minimumGatePassed: bestBranch?.minimumGatePassed,
+        minimumGateCeiling: bestBranch?.minimumGateCeiling,
+        llmPaperScore: bestBranch?.llmScore,
+        llmPaperWorthiness: bestBranch?.llmWorthiness,
+        llmRecommendedAction: bestBranch?.llmRecommendedAction
       };
       await reporter.writeFinalSummary(run, snap, stopReason);
       return {
@@ -494,7 +499,8 @@ export class AutonomousRunController {
             writePaperGateBlocked: true,
             writePaperGateBlockers: gate.blockers,
             loopDirection: "consolidating",
-            runtimePolicy
+            runtimePolicy,
+            ...this.bestBranchQualityFields(bestBranch)
           });
           try {
             await this.orchestrator.jumpToNode(run.id, "design_experiments", "force",
@@ -575,7 +581,8 @@ export class AutonomousRunController {
             evidenceGaps: bestBranch?.evidenceGaps,
             nextUpgradeAction: upgradeAction,
             loopDirection: "consolidating",
-            whyContinued: `Best branch has upgrade potential: ${upgradeAction}`
+            whyContinued: `Best branch has upgrade potential: ${upgradeAction}`,
+            ...this.bestBranchQualityFields(bestBranch)
           });
 
           // Jump to review to trigger paper-quality improvement
@@ -605,7 +612,8 @@ export class AutonomousRunController {
           evidenceGaps: bestBranch?.evidenceGaps,
           loopDirection: "exploring",
           whyContinued,
-          hypothesis: run.graph.nodeStates.generate_hypotheses?.note?.slice(0, 100)
+          hypothesis: run.graph.nodeStates.generate_hypotheses?.note?.slice(0, 100),
+          ...this.bestBranchQualityFields(bestBranch)
         });
 
         // Re-cycle: backtrack to generate_hypotheses for next research cycle
@@ -674,7 +682,8 @@ export class AutonomousRunController {
                   evidenceGaps: bestBranch?.evidenceGaps,
                   writePaperGateBlocked: true,
                   writePaperGateBlockers: gate.blockers,
-                  loopDirection: "consolidating"
+                  loopDirection: "consolidating",
+                  ...this.bestBranchQualityFields(bestBranch)
                 });
                 try {
                   await this.orchestrator.jumpToNode(run.id, "design_experiments", "force",
@@ -760,7 +769,8 @@ export class AutonomousRunController {
               evidenceGaps: bestBranch?.evidenceGaps,
               writePaperGateBlocked: true,
               writePaperGateBlockers: gate.blockers,
-              loopDirection: "consolidating"
+              loopDirection: "consolidating",
+              ...this.bestBranchQualityFields(bestBranch)
             });
             try {
               await this.orchestrator.jumpToNode(run.id, "design_experiments", "force",
@@ -835,7 +845,8 @@ export class AutonomousRunController {
             evidenceGaps: bestBranch?.evidenceGaps,
             loopDirection,
             hypothesis: run.graph.nodeStates.generate_hypotheses?.note?.slice(0, 100),
-            experimentTarget: run.graph.nodeStates.design_experiments?.note?.slice(0, 100)
+            experimentTarget: run.graph.nodeStates.design_experiments?.note?.slice(0, 100),
+            ...this.bestBranchQualityFields(bestBranch)
           });
         }
       } catch (err) {
@@ -855,6 +866,20 @@ export class AutonomousRunController {
   // Best-branch evaluation
   // -------------------------------------------------------------------------
 
+  /** Extract two-layer quality fields from a BestBranchInfo for snapshot inclusion */
+  private bestBranchQualityFields(b: BestBranchInfo | undefined): Pick<
+    AutonomousCycleSnapshot,
+    "minimumGatePassed" | "minimumGateCeiling" | "llmPaperScore" | "llmPaperWorthiness" | "llmRecommendedAction"
+  > {
+    return {
+      minimumGatePassed: b?.minimumGatePassed,
+      minimumGateCeiling: b?.minimumGateCeiling,
+      llmPaperScore: b?.llmScore,
+      llmPaperWorthiness: b?.llmWorthiness,
+      llmRecommendedAction: b?.llmRecommendedAction
+    };
+  }
+
   async evaluateBestBranch(
     run: RunRecord,
     current: BestBranchInfo | undefined,
@@ -864,13 +889,15 @@ export class AutonomousRunController {
 
     const hypothesis = run.graph.nodeStates.generate_hypotheses?.note || run.topic;
 
-    // Read key artifacts to assess evidence quality
-    const [metricsRaw, baselineRaw, resultTableRaw, analysisRaw, critiqueRaw] = await Promise.all([
+    // Read key artifacts to assess evidence quality (including two-layer evaluation)
+    const [metricsRaw, baselineRaw, resultTableRaw, analysisRaw, critiqueRaw, gateRaw, llmEvalRaw] = await Promise.all([
       safeRead(path.join(runDir, "metrics.json")),
       safeRead(path.join(runDir, "baseline_summary.json")),
       safeRead(path.join(runDir, "result_table.json")),
       safeRead(path.join(runDir, "result_analysis.json")),
-      safeRead(path.join(runDir, "review", "paper_critique.json"))
+      safeRead(path.join(runDir, "review", "paper_critique.json")),
+      safeRead(path.join(runDir, "review", "minimum_gate.json")),
+      safeRead(path.join(runDir, "review", "paper_quality_evaluation.json"))
     ]);
 
     const hasBaseline = baselineRaw.trim().length > 10;
@@ -892,15 +919,57 @@ export class AutonomousRunController {
       }
     } catch { /* ignore parse errors */ }
 
-    // Determine evidence gaps
-    const evidenceGaps: string[] = [];
-    if (!hasBaseline) evidenceGaps.push("Missing explicit baseline or comparator");
-    if (!hasQuantitativeResults) evidenceGaps.push("No quantitative results (metrics.json)");
-    if (!hasResultTable) evidenceGaps.push("No result table artifact");
-    if (!hasComparator) evidenceGaps.push("No comparator identified");
+    // Read Layer 1: Minimum gate result
+    let minimumGatePassed: boolean | undefined;
+    let minimumGateCeiling: string | undefined;
+    try {
+      if (gateRaw.trim()) {
+        const gate = JSON.parse(gateRaw);
+        minimumGatePassed = gate.passed;
+        minimumGateCeiling = gate.ceiling_type;
+      }
+    } catch { /* ignore */ }
+
+    // Read Layer 2: LLM paper-quality evaluation
+    let llmScore: number | undefined;
+    let llmWorthiness: string | undefined;
+    let llmRecommendedAction: string | undefined;
+    let llmEvidenceGaps: string[] | undefined;
+    let llmUpgradeActions: string[] | undefined;
+    try {
+      if (llmEvalRaw.trim()) {
+        const llmEval = JSON.parse(llmEvalRaw);
+        llmScore = llmEval.overall_score_1_to_10;
+        llmWorthiness = llmEval.paper_worthiness;
+        llmRecommendedAction = llmEval.recommended_action;
+        llmEvidenceGaps = llmEval.evidence_gaps;
+        llmUpgradeActions = llmEval.upgrade_priorities;
+      }
+    } catch { /* ignore */ }
+
+    // Determine evidence gaps: prefer LLM gaps, augment with structural checks
+    const evidenceGaps: string[] = llmEvidenceGaps && llmEvidenceGaps.length > 0
+      ? [...llmEvidenceGaps]
+      : [];
+    if (!hasBaseline && !evidenceGaps.some(g => g.toLowerCase().includes("baseline"))) {
+      evidenceGaps.push("Missing explicit baseline or comparator");
+    }
+    if (!hasQuantitativeResults && !evidenceGaps.some(g => g.toLowerCase().includes("quantitative"))) {
+      evidenceGaps.push("No quantitative results (metrics.json)");
+    }
+    if (!hasResultTable && !evidenceGaps.some(g => g.toLowerCase().includes("result table"))) {
+      evidenceGaps.push("No result table artifact");
+    }
+    if (!hasComparator && !evidenceGaps.some(g => g.toLowerCase().includes("comparator"))) {
+      evidenceGaps.push("No comparator identified");
+    }
     if (manuscriptType === "not_analyzed" || manuscriptType === "system_validation_note") {
       evidenceGaps.push("Manuscript not at paper-scale level");
     }
+
+    const upgradeActions = llmUpgradeActions && llmUpgradeActions.length > 0
+      ? llmUpgradeActions
+      : current?.upgradeActions || [];
 
     const branch: BestBranchInfo = {
       branchId: `cycle-${cycle}`,
@@ -912,11 +981,18 @@ export class AutonomousRunController {
       manuscriptType,
       lastUpgradeCycle: current?.lastUpgradeCycle || 0,
       evidenceGaps,
-      upgradeActions: current?.upgradeActions || []
+      upgradeActions,
+      llmScore,
+      llmWorthiness,
+      llmRecommendedAction,
+      minimumGatePassed,
+      minimumGateCeiling
     };
 
-    // Keep current if it's stronger
-    if (current && this.branchScore(current) > this.branchScore(branch)) {
+    // Use LLM score when available for comparison, else fall back to heuristic
+    const currentScore = current ? (current.llmScore ?? this.branchScore(current)) : -1;
+    const newScore = llmScore ?? this.branchScore(branch);
+    if (current && currentScore > newScore) {
       return { ...current, evidenceGaps: current.evidenceGaps };
     }
 
@@ -957,6 +1033,17 @@ export class AutonomousRunController {
       return { passes: false, blockers: ["No evaluated branch available"] };
     }
 
+    // Layer 1: If minimum gate result is available and blocked, use it directly
+    if (bestBranch.minimumGatePassed === false) {
+      blockers.push(`Minimum evidence gate blocked (${bestBranch.minimumGateCeiling || "unknown ceiling"})`);
+    }
+
+    // Layer 2: If LLM evaluation recommends against drafting, add as blocker
+    if (bestBranch.llmWorthiness === "not_ready") {
+      blockers.push(`LLM evaluation: not ready for drafting (score: ${bestBranch.llmScore ?? "?"}/10)`);
+    }
+
+    // Structural checks (still enforced even without Layer 1/2 artifacts)
     if (gate.requireBaselineOrComparator && !bestBranch.hasBaseline && !bestBranch.hasComparator) {
       blockers.push("Missing baseline or comparator");
     }

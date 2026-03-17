@@ -193,3 +193,25 @@
   - `stopAfterApprovalBoundary: true` means each node takes one controller iteration, making the loop slower (more iterations per cycle). Acceptable for autonomous long-running mode.
   - If `evaluateBestBranch` misreads evidence artifacts, the gate may incorrectly block or pass write_paper
   - `minBranchScore: 5` threshold may need tuning based on real-world evidence patterns
+
+### AM-003 — Two-Layer Paper-Quality Evaluation Model
+- Status: IMPLEMENTED
+- Category: paper-quality evaluation architecture
+- Validation target: Review node paper-quality evaluation, autonomous controller best-branch selection, write-paper gating
+- Summary: Refactored paper-quality evaluation into a two-layer model:
+  - **Layer 1 — Deterministic minimum gate** (`src/core/analysis/paperMinimumGate.ts`): 7 strict artifact-presence checks (objective metric, experiment plan, baseline/comparator, executed result, result artifacts, claim-evidence linkage, not-smoke-only). Returns `MinimumGateResult` with pass/fail, blockers, and ceiling type (`unrestricted`, `research_memo`, `system_validation_note`, `blocked_for_paper_scale`).
+  - **Layer 2 — LLM paper-quality evaluator** (`src/core/analysis/llmPaperQualityEvaluator.ts`): Structured LLM critique above the gate. Produces `PaperQualityEvaluation` with 6-dimension scorecard, branch trajectory, paper worthiness, evidence gaps, upgrade priorities, strengths/weaknesses, critique summary, and recommended action. Includes `enforceMinimumGateOverride()` — deterministic gate always overrides optimistic LLM judgments. Has fallback evaluation when LLM unavailable.
+  - **Review node integration** (`src/core/nodes/review.ts`): Both layers run after the 5-specialist panel. Artifacts written to `review/minimum_gate.json` and `review/paper_quality_evaluation.json`. Transition recommendation now considers gate ceiling and LLM worthiness — minimum gate blocks override panel advance decisions; LLM "not_ready" worthiness also triggers backtrack.
+  - **Autonomous controller integration** (`src/core/agents/autonomousRunController.ts`): `evaluateBestBranch()` reads both new artifacts for richer branch assessment. LLM score used for branch comparison when available (heuristic `branchScore()` as fallback). `meetsWritePaperBar()` now checks minimum gate and LLM worthiness as additional blockers. `BestBranchInfo` extended with `llmScore`, `llmWorthiness`, `llmRecommendedAction`, `minimumGatePassed`, `minimumGateCeiling`.
+  - **Progress reporter** (`src/core/agents/autonomousProgressReporter.ts`): `AutonomousCycleSnapshot` and `BestBranchInfo` extended with two-layer fields. Markdown status output shows minimum gate status, LLM score, worthiness, and recommended action alongside existing fields.
+- Design intent: Less "large bundles of fixed heuristics decide paper quality" → more "minimum structural gate first, then LLM critique decides how good, how promising, and what to improve next."
+- Tests: 27 new tests added (908 total passing):
+  - `tests/paperMinimumGate.test.ts` (12 tests): passes when all artifacts present, blocks on each missing check, ceiling types, ISO timestamp, condition comparisons as baseline substitute
+  - `tests/llmPaperQualityEvaluator.test.ts` (11 tests): enforceMinimumGateOverride caps worthiness for blocked/system_validation/research_memo ceilings, handles invalid LLM output, fallback evaluation, dimension count, ISO timestamp
+  - `tests/autonomousRunController.test.ts` (4 new tests): meetsWritePaperBar blocks on minimumGatePassed=false, blocks on llmWorthiness=not_ready, passes when both layers satisfied, BestBranchInfo field check
+- Evidence: 908/909 tests pass (27 new). Only pre-existing `zzz_noProjectRootLeak` failure.
+- Risks:
+  - LLM evaluator quality depends on the quality of the prompt and the LLM model used — may need prompt tuning
+  - 30s LLM evaluator timeout (or env-configured) may be too short for complex evaluations
+  - Fallback evaluation is conservative but less informative — long runs without LLM access lose structured critique
+  - `enforceMinimumGateOverride` is strict: even strong LLM endorsement cannot bypass missing artifacts

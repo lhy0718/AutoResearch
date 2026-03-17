@@ -743,4 +743,123 @@ describe("AutonomousRunController — autonomous mode", () => {
     expect(result.stopReason).toBe("catastrophic_fuse");
     expect(result.stopReason).not.toBe("time_limit");
   });
+
+  // -----------------------------------------------------------------------
+  // Two-layer paper quality evaluation integration
+  // -----------------------------------------------------------------------
+
+  it("meetsWritePaperBar blocks when minimumGatePassed is false", () => {
+    const controller = Object.create(AutonomousRunController.prototype);
+    const gate: WritePaperGateConfig = {
+      requireBaselineOrComparator: true,
+      requireQuantitativeResults: true,
+      minBranchScore: 5,
+      blockedManuscriptTypes: ["system_validation_note", "blocked_for_paper_scale"]
+    };
+    const branch = {
+      branchId: "cycle-1",
+      hypothesis: "test",
+      hasBaseline: true,
+      hasComparator: true,
+      hasQuantitativeResults: true,
+      hasResultTable: true,
+      manuscriptType: "paper_scale_candidate",
+      lastUpgradeCycle: 1,
+      evidenceGaps: [],
+      upgradeActions: [],
+      minimumGatePassed: false,
+      minimumGateCeiling: "blocked_for_paper_scale"
+    };
+
+    const result = controller.meetsWritePaperBar(branch, gate);
+
+    expect(result.passes).toBe(false);
+    expect(result.blockers.some((b: string) => b.includes("Minimum evidence gate blocked"))).toBe(true);
+  });
+
+  it("meetsWritePaperBar blocks when LLM worthiness is not_ready", () => {
+    const controller = Object.create(AutonomousRunController.prototype);
+    const gate: WritePaperGateConfig = {
+      requireBaselineOrComparator: true,
+      requireQuantitativeResults: true,
+      minBranchScore: 5,
+      blockedManuscriptTypes: ["system_validation_note", "blocked_for_paper_scale"]
+    };
+    const branch = {
+      branchId: "cycle-1",
+      hypothesis: "test",
+      hasBaseline: true,
+      hasComparator: true,
+      hasQuantitativeResults: true,
+      hasResultTable: true,
+      manuscriptType: "paper_scale_candidate",
+      lastUpgradeCycle: 1,
+      evidenceGaps: [],
+      upgradeActions: [],
+      minimumGatePassed: true,
+      minimumGateCeiling: "unrestricted",
+      llmWorthiness: "not_ready",
+      llmScore: 3
+    };
+
+    const result = controller.meetsWritePaperBar(branch, gate);
+
+    expect(result.passes).toBe(false);
+    expect(result.blockers.some((b: string) => b.includes("LLM evaluation: not ready"))).toBe(true);
+  });
+
+  it("meetsWritePaperBar passes when both layers are satisfied", () => {
+    const controller = Object.create(AutonomousRunController.prototype);
+    const gate: WritePaperGateConfig = {
+      requireBaselineOrComparator: true,
+      requireQuantitativeResults: true,
+      minBranchScore: 5,
+      blockedManuscriptTypes: ["system_validation_note", "blocked_for_paper_scale"]
+    };
+    const branch = {
+      branchId: "cycle-1",
+      hypothesis: "test",
+      hasBaseline: true,
+      hasComparator: true,
+      hasQuantitativeResults: true,
+      hasResultTable: true,
+      manuscriptType: "paper_scale_candidate",
+      lastUpgradeCycle: 1,
+      evidenceGaps: [],
+      upgradeActions: [],
+      minimumGatePassed: true,
+      minimumGateCeiling: "unrestricted",
+      llmWorthiness: "paper_scale_candidate",
+      llmScore: 7
+    };
+
+    const result = controller.meetsWritePaperBar(branch, gate);
+
+    expect(result.passes).toBe(true);
+    expect(result.blockers).toHaveLength(0);
+  });
+
+  it("BestBranchInfo includes two-layer quality fields", () => {
+    const branch = {
+      branchId: "cycle-5",
+      hypothesis: "Testing hypothesis",
+      hasBaseline: true,
+      hasComparator: true,
+      hasQuantitativeResults: true,
+      hasResultTable: true,
+      manuscriptType: "paper_scale_candidate",
+      lastUpgradeCycle: 3,
+      evidenceGaps: [],
+      upgradeActions: ["Improve result table"],
+      llmScore: 7,
+      llmWorthiness: "paper_scale_candidate",
+      llmRecommendedAction: "consolidate_evidence",
+      minimumGatePassed: true,
+      minimumGateCeiling: "unrestricted"
+    };
+
+    expect(branch.llmScore).toBe(7);
+    expect(branch.llmWorthiness).toBe("paper_scale_candidate");
+    expect(branch.minimumGatePassed).toBe(true);
+  });
 });
