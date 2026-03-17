@@ -20,7 +20,8 @@
   - **Output bundle**: `result_table.json` and `baseline_summary.json` now published to `analysis/` and `experiment/` output sections. `scientific_validation.json` published to `paper/` section. New `generatePublicRunReadme()` creates user-facing README.md for the output bundle.
   - **Gate warning categorization (R-002 improvement)**: `buildGateWarningLimitationSentences()` now groups by category with severity labels, shows all messages per category, limits to 5 sentences.
   - **Output sections**: Added `results` and `reproduce` to `PublicRunOutputSection`.
-- Tests: 11 new tests in `tests/manuscriptFormat.test.ts`, 1 updated test in `tests/gateWarningsToLimitations.test.ts`. 919/920 pass (pre-existing zzz_noProjectRootLeak only failure).
+- TeX→PDF validation: Installed user-space TexLive 2025. Verified `renderSubmissionPaperTex()` produces valid twocolumn TeX that compiles to PDF with real `pdflatex`. Both 1-column and 2-column outputs compile cleanly. End-to-end test validates real PDF output (>1KB, not a stub).
+- Tests: 17 tests in `tests/manuscriptFormat.test.ts` (11 format parsing + 4 TeX rendering + 2 real pdflatex compilation), 1 updated test in `tests/gateWarningsToLimitations.test.ts`. 926/926 pass.
 - Files modified:
   - `src/types.ts` (ManuscriptFormatTarget, column_count)
   - `src/config.ts` (column_count default and normalization)

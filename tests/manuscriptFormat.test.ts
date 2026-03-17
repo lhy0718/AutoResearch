@@ -168,3 +168,165 @@ describe("PublicRunOutputSection", () => {
     expect(sections).toContain("reproduce");
   });
 });
+
+// ---------------------------------------------------------------------------
+// renderSubmissionPaperTex column_count
+// ---------------------------------------------------------------------------
+import { renderSubmissionPaperTex } from "../src/core/analysis/paperManuscript.js";
+import type { PaperManuscript, PaperTraceabilityReport } from "../src/core/analysis/paperWriting.js";
+
+function makeMinimalManuscript(): PaperManuscript {
+  return {
+    title: "Test Paper",
+    abstract: "An abstract.",
+    keywords: ["test"],
+    sections: [
+      {
+        heading: "Introduction",
+        paragraphs: ["This is the introduction."]
+      },
+      {
+        heading: "Conclusion",
+        paragraphs: ["This is the conclusion."]
+      }
+    ],
+    visuals: [],
+    appendices: []
+  };
+}
+
+function makeMinimalTraceability(): PaperTraceabilityReport {
+  return {
+    paragraphs: [],
+    sections: [],
+    unmapped_evidence_ids: [],
+    unmapped_citation_paper_ids: [],
+    total_paragraph_count: 2,
+    mapped_paragraph_count: 0
+  };
+}
+
+describe("renderSubmissionPaperTex column_count", () => {
+  it("renders twocolumn documentclass when column_count is 2", () => {
+    const tex = renderSubmissionPaperTex({
+      manuscript: makeMinimalManuscript(),
+      traceability: makeMinimalTraceability(),
+      citationKeysByPaperId: new Map(),
+      paperProfile: { column_count: 2 } as any
+    });
+    expect(tex).toContain("\\documentclass[twocolumn]{article}");
+    expect(tex).toContain("margin=0.75in");
+  });
+
+  it("renders single-column documentclass when column_count is 1", () => {
+    const tex = renderSubmissionPaperTex({
+      manuscript: makeMinimalManuscript(),
+      traceability: makeMinimalTraceability(),
+      citationKeysByPaperId: new Map(),
+      paperProfile: { column_count: 1 } as any
+    });
+    expect(tex).toContain("\\documentclass{article}");
+    expect(tex).not.toContain("twocolumn");
+    expect(tex).toContain("margin=1in");
+  });
+
+  it("defaults to twocolumn when no paperProfile is provided", () => {
+    const tex = renderSubmissionPaperTex({
+      manuscript: makeMinimalManuscript(),
+      traceability: makeMinimalTraceability(),
+      citationKeysByPaperId: new Map()
+    });
+    expect(tex).toContain("\\documentclass[twocolumn]{article}");
+  });
+
+  it("produces valid TeX structure", () => {
+    const tex = renderSubmissionPaperTex({
+      manuscript: makeMinimalManuscript(),
+      traceability: makeMinimalTraceability(),
+      citationKeysByPaperId: new Map(),
+      paperProfile: { column_count: 2 } as any
+    });
+    expect(tex).toContain("\\begin{document}");
+    expect(tex).toContain("\\end{document}");
+    expect(tex).toContain("\\begin{abstract}");
+    expect(tex).toContain("\\end{abstract}");
+    expect(tex).toContain("\\maketitle");
+    expect(tex).toContain("\\section{Introduction}");
+    expect(tex).toContain("\\section{Conclusion}");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// End-to-end TeX→PDF compilation
+// ---------------------------------------------------------------------------
+import { execSync } from "child_process";
+import { writeFileSync, existsSync, mkdirSync, statSync, rmSync } from "fs";
+import path from "path";
+import os from "os";
+
+describe("TeX→PDF compilation (real pdflatex)", () => {
+  const hasPdflatex = (() => {
+    try {
+      execSync("pdflatex --version", { stdio: "pipe" });
+      return true;
+    } catch { return false; }
+  })();
+
+  it.skipIf(!hasPdflatex)("compiles twocolumn TeX to PDF successfully", () => {
+    const tex = renderSubmissionPaperTex({
+      manuscript: makeMinimalManuscript(),
+      traceability: makeMinimalTraceability(),
+      citationKeysByPaperId: new Map(),
+      paperProfile: { column_count: 2 } as any
+    });
+
+    const tmpDir = path.join(os.tmpdir(), `autolabos-tex-test-${Date.now()}`);
+    mkdirSync(tmpDir, { recursive: true });
+
+    try {
+      writeFileSync(path.join(tmpDir, "main.tex"), tex);
+      // Create empty references.bib so \bibliography doesn't fail
+      writeFileSync(path.join(tmpDir, "references.bib"), "");
+
+      execSync(
+        "pdflatex -interaction=nonstopmode -halt-on-error -file-line-error main.tex",
+        { cwd: tmpDir, stdio: "pipe", timeout: 30000 }
+      );
+
+      const pdfPath = path.join(tmpDir, "main.pdf");
+      expect(existsSync(pdfPath)).toBe(true);
+      const pdfSize = statSync(pdfPath).size;
+      expect(pdfSize).toBeGreaterThan(1000); // real PDF, not stub
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(!hasPdflatex)("compiles single-column TeX to PDF successfully", () => {
+    const tex = renderSubmissionPaperTex({
+      manuscript: makeMinimalManuscript(),
+      traceability: makeMinimalTraceability(),
+      citationKeysByPaperId: new Map(),
+      paperProfile: { column_count: 1 } as any
+    });
+
+    const tmpDir = path.join(os.tmpdir(), `autolabos-tex-test-${Date.now()}`);
+    mkdirSync(tmpDir, { recursive: true });
+
+    try {
+      writeFileSync(path.join(tmpDir, "main.tex"), tex);
+      writeFileSync(path.join(tmpDir, "references.bib"), "");
+
+      execSync(
+        "pdflatex -interaction=nonstopmode -halt-on-error -file-line-error main.tex",
+        { cwd: tmpDir, stdio: "pipe", timeout: 30000 }
+      );
+
+      const pdfPath = path.join(tmpDir, "main.pdf");
+      expect(existsSync(pdfPath)).toBe(true);
+      expect(statSync(pdfPath).size).toBeGreaterThan(1000);
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
