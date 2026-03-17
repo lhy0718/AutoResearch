@@ -1,210 +1,153 @@
 ---
 name: paper-scale-research-loop
-description: Use this skill when the goal is to choose a research topic that supports a real small-scale experiment, collect a paper-writing-scale related-work corpus, formulate falsifiable hypotheses, run experiments with baselines and ablations, and push toward a paper-ready manuscript with results and limitations.
+description: Use this skill when the goal is to keep a broad research topic fixed while iteratively revising hypotheses, running real experiments with baselines/comparators, and improving the manuscript until it reaches paper-scale quality.
 ---
 
 # Paper-Scale Research Loop
 
 ## Purpose
+This skill is for producing a **real experimental paper candidate**, not merely a system-complete run.
 
-This skill is for work that must go beyond “the system completed the workflow.”
+It is designed for cases where you want:
+- a broad topic to stay fixed
+- hypotheses to evolve inside that topic
+- real experiments with baselines/comparators
+- result tables and quantitative evidence
+- claim→evidence linkage
+- limitations and failure cases
+- an actual path toward paper-ready quality
 
-Its goal is to choose a genuinely testable research question, collect related work at a scale and density suitable for paper writing, formulate falsifiable hypotheses, run small but real experiments, and produce a manuscript with result tables and limitations.
+This skill prioritizes:
+- **verified research claims over paper-like prose**
+- **broad-topic stability plus hypothesis refinement**
+rather than prematurely locking in a narrow hypothesis.
 
-The core principle of this skill is to prioritize **validated research claims** over a document that merely **looks like a paper**.
+## Use this skill when
+Use this skill when the user wants:
 
-## When to use this skill
-
-Use this skill when the user wants things like:
-
-- “I want a paper with a real small experiment, not just a test-level demo.”
-- “Collect papers at a scale that is sufficient for actual paper writing.”
-- “Form a hypothesis and run real experiments with a baseline.”
-- “Raise the work to a paper-ready level, not just a completed run.”
-- “Produce an experiment paper, not just a survey.”
-- “Deliver a manuscript with real experimental substance.”
+- a paper-scale research loop
+- a broad topic with revisable hypotheses
+- real experiments with baselines
+- a manuscript that is stronger than a research memo
+- paper-ready pressure rather than just workflow completion
 
 Typical trigger phrases:
+- "paper-scale research"
+- "real experiment paper"
+- "baseline included"
+- "broad topic"
+- "revise the hypothesis as you go"
+- "push toward paper-ready"
 
-- “paper-scale”
-- “small real experiment”
-- “with baseline”
-- “experimental paper”
-- “paper-ready”
-- “a paper with numerical results”
-
-## Required distinctions
-
-Explicitly distinguish among:
+## What this skill enforces
+It explicitly distinguishes:
 
 - **workflow completed**
 - **write_paper completed**
 - **paper-shaped draft**
 - **paper-ready experimental manuscript**
 
-The first three are not sufficient.
+The first three are not enough.
 
-If the target is the last one, the work must pass the hard gate below.
+## Broad topic rule
+- The broad research topic must be fixed explicitly.
+- A narrow hypothesis must not be frozen too early.
+- AutoLabOS is expected to revise, branch, or prune hypotheses based on experiments, review findings, evidence gaps, and failure cases.
+- The brief must define:
+  - broad topic
+  - objective metric
+  - constraints
+  - baselines/comparators
+  - evaluation plan
+- Hypothesis revision must be visible in artifacts and reporting.
 
-## Hard Gate: Paper-Worthy Minimum
+## Hard gate: minimum paper-worthy conditions
+If any of the following is missing, the result must be downgraded to something like `paper_ready=false`, `research_memo`, or `blocked_for_paper_scale`:
 
-If any of the following is missing, the output must be marked `paper_ready=false` or `blocked_for_paper_scale`.
+1. Explicit broad topic
+2. A current hypothesis linked to that topic
+3. Related work grounded in actual source material, not just titles
+4. At least one explicit baseline or comparator
+5. At least one actually executed experiment result
+6. A numeric table or core quantitative comparison
+7. Claim→evidence linkage for major claims
+8. Limitations and/or failure cases in the manuscript
+9. No mislabeling of workflow validation as research contribution
 
-1. The research question is explicit and testable.
-2. Related work is not just a list of titles or abstracts; at least some of it must be grounded in full-text evidence.
-3. The collected corpus is not just a tiny test sample; it must cover the main axes of the topic.
-4. The hypothesis is falsifiable.
-5. There is at least one explicit baseline or comparator.
-6. There is at least one actually executed experiment.
-7. The results section includes a numeric table or a core quantitative comparison.
-8. Major claims are linked to explicit evidence.
-9. Failed experiments or limitations are included in the manuscript.
-10. Workflow validation itself is not treated as the paper’s main contribution.
+## Allowed hypothesis loop
+This skill explicitly allows and encourages:
 
-## Conditions that force blocked or downgrade status
+- generating an initial hypothesis
+- refining a hypothesis after negative results
+- adding comparators and revising the hypothesis
+- branching into alternative hypotheses
+- pruning weak branches
+- focusing on the strongest branch
+- upgrading the best branch into a paper candidate
 
-Automatically block or downgrade when any of the following happens:
+The topic is fixed.
+The hypothesis is allowed to evolve.
 
-- Only a literature-only draft is produced, without experiments
-- The manuscript describes only the proposed method, with no baseline
-- A run trace is mistaken for a research contribution
-- Novelty is claimed without evidence
-- The results section has no tables or quantitative evidence
-- The work depends too heavily on abstract-only evidence
-- A toy smoke experiment is treated as the main experimental evidence
-- A system validation report is packaged as if it were an experiment paper
+## Manuscript format rule
+By default, for paper-generation validation:
 
-## Topic selection rules
+- 2-column format
+- 8-page main body
+- References excluded
+- Appendices excluded
 
-A good topic should satisfy most of the following:
+This must be reflected both in the brief and in actual manuscript generation and evaluation.
 
-- A real experiment is possible even at small scope
-- A dataset, task, metric, and baseline are realistically available
-- The implementation and execution budget is not excessive
-- A meaningful signal could appear in a 1–3 day experiment window
-- Related work is not too thin
-- A negative result would still be interpretable and worthwhile
+## Two-layer paper evaluation
+Use the current repository model:
 
-## Corpus collection standard
+- deterministic minimum gate
+- LLM-based paper-quality evaluator
 
-Do not optimize for raw volume alone.
-Require coverage across the following axes:
+Rules:
+- if the minimum gate is not met, optimistic LLM judgment must not promote the draft
+- the LLM evaluator should drive strongest-branch selection, evidence-gap analysis, upgrade priority, and critique depth
+- review remains a structural gate
 
-- seminal paper
-- recent paper
-- baseline paper
-- method paper
-- evaluation paper
-- task or dataset paper
+## Loop goals
+This skill drives two loops simultaneously:
 
-When summarizing the corpus, always record:
+1. **Research exploration loop**
+   - maintain the broad topic
+   - generate / revise / branch hypotheses
+   - run real experiments
+   - analyze outcomes
 
-- total collected count
-- count with full text available
-- count that are abstract-only
-- whether any topic axis is over- or under-represented
-- the core subset that will actually support the downstream experiment
+2. **Paper-quality improvement loop**
+   - identify the strongest branch
+   - improve baselines/comparators
+   - improve result tables
+   - improve claim→evidence linkage
+   - improve limitation honesty
+   - improve manuscript structure
 
-## Hypothesis standard
+## Stopping rule
+Only consider stopping when one of the following is true:
 
-Every hypothesis must include:
+- no meaningful hypothesis refinement remains within the broad topic
+- repeated full cycles no longer improve paper-quality artifacts
+- the strongest branch has largely exhausted its upgrade path
+- the user explicitly stops the run
 
-- independent variable
-- dependent variable
-- expected mechanism
-- expected change relative to the baseline
-- falsification condition
+## Prohibited behaviors
+- Do not define only a hypothesis without a broad topic.
+- Do not treat toy runs or smoke validation as paper evidence.
+- Do not declare paper-ready without baselines/comparators.
+- Do not hide negative results or soften them rhetorically.
+- Do not confuse `write_paper completed` with paper-ready.
 
-Bad examples:
+## Good completion criteria
+This skill has been used well when:
 
-- “This approach might be better.”
-- “This research is meaningful.”
-
-Good example:
-
-- “Setting X will improve macro-F1 by at least 0.5 points over logistic regression on small tabular classification tasks. If no improvement appears, or runtime cost is too high, the hypothesis is rejected.”
-
-## Experiment design requirements
-
-Must include:
-
-- dataset / task / bench
-- objective metric
-- baseline / comparator
-- ablation or controlled variation
-- compute or time budget
-- stopping rule
-- failure condition
-- reproducibility artifact
-
-## Output format
-
-Always include these sections:
-
-1. Research question
-2. Why this topic can be tested with a small real experiment
-3. Corpus scale and inclusion/exclusion criteria
-4. Main related-work axes and research gap
-5. Hypothesis and falsification condition
-6. Experiment design
-7. Baseline / comparator
-8. Dataset / task / metric
-9. Actually executed experiments
-10. Result table and key numbers
-11. Failed experiments / negative results
-12. Claim-to-evidence mapping
-13. Paper-ready decision
-14. Reproducibility assets
-15. Remaining weaknesses and next iteration
-
-## Review-stage rule
-
-Do not auto-advance to `write_paper` from `review` if any of the following is true:
-
-- No experiment was run on a real external task
-- No baseline exists
-- No result table exists
-- Claim-to-evidence mapping is weak
-- Related work is too shallow
-- Workflow validation dominates the manuscript
-
-In those cases, mark the outcome as:
-
-- `blocked_for_paper_scale`
-- or `downgrade_to_system_validation_note`
-
-## Recommended execution order
-
-1. Narrow the research question
-2. Collect a paper-worthy corpus
-3. Structure the related work
-4. State a falsifiable hypothesis
-5. Design a feasible small experiment
-6. Implement with a baseline
-7. Run the real experiment
-8. Analyze results and build tables
-9. Organize claim-to-evidence links
-10. State limitations and failed experiments
-11. Decide whether the work is paper-ready
-12. If not, iterate again
-
-## Prohibitions
-
-- Do not declare success just because `write_paper` completed.
-- Do not call something an experimental paper without a baseline.
-- Do not decorate a results section without real experiments.
-- Do not substitute internal workflow artifacts for research contribution.
-- Do not package weak evidence as a strong claim.
-
-## Good completion standard
-
-This skill is complete only when:
-
-- the paper-worthy research question is clear
-- the corpus is large and deep enough for actual paper writing
-- a falsifiable hypothesis exists
-- experiments with baseline and ablation were actually run
-- quantitative results are organized in tables
-- claim-to-evidence links are explicit
-- limitations are stated
-- the manuscript is honestly judged as either paper-ready or explicitly blocked
+- the broad topic remained explicit and stable
+- hypothesis revision history is preserved
+- real experiments with baselines/comparators were run
+- result tables and claim→evidence linkage exist
+- the strongest branch was selected structurally
+- review-gate pressure improved manuscript quality
+- limitations and negative/failure cases are included honestly

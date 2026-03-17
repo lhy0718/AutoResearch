@@ -308,8 +308,11 @@ export async function selectPapersForAnalysis(args: {
     args.abortSignal
   );
   if (!rerank.applied) {
+    // Deterministic fallback: use pre-ranked order when LLM rerank fails
+    const fallbackTopN = Math.min(args.request.topN, candidatePool.length);
+    const fallbackIds = candidatePool.slice(0, fallbackTopN).map((c) => c.paper.paper_id);
     args.onProgress?.(
-      `LLM rerank failed. Top ${args.request.topN} selection requires a successful model rerank (${rerank.fallbackReason}).`
+      `LLM rerank failed (${rerank.fallbackReason}). Using deterministic fallback: selecting top ${fallbackTopN} by deterministic score.`
     );
     return {
       request: args.request,
@@ -317,15 +320,15 @@ export async function selectPapersForAnalysis(args: {
       candidatePoolSize,
       deterministicRankingPreview: ranked.slice(0, 10).map(toPreviewRow),
       rerankedPaperIds: [],
-      selectedPaperIds: [],
-      selectionFingerprint: buildSelectionFingerprint(args.request, args.runTitle, args.runTopic, []),
+      selectedPaperIds: fallbackIds,
+      selectionFingerprint: buildSelectionFingerprint(args.request, args.runTitle, args.runTopic, fallbackIds),
       rerankApplied: false,
       rerankFallbackReason: rerank.fallbackReason,
-      rankedCandidates: ranked.map((candidate) => ({
+      rankedCandidates: ranked.map((candidate, idx) => ({
         ...candidate,
         selectionScore: candidate.deterministicScore,
-        selected: false,
-        rank: undefined,
+        selected: idx < fallbackTopN,
+        rank: idx < fallbackTopN ? idx + 1 : undefined,
         rerankPosition: undefined
       }))
     };

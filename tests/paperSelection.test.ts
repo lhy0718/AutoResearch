@@ -234,7 +234,8 @@ describe("paperSelection", () => {
 
     expect(selection.rerankApplied).toBe(false);
     expect(selection.rerankFallbackReason).toBeDefined();
-    expect(selection.selectedPaperIds).toEqual([]);
+    // Deterministic fallback selects top N by deterministic score
+    expect(selection.selectedPaperIds.length).toBe(2);
   });
 
   it("repairs truncated rerank JSON when only the closing delimiter is missing", async () => {
@@ -275,7 +276,8 @@ describe("paperSelection", () => {
 
     expect(selection.rerankApplied).toBe(false);
     expect(selection.rerankFallbackReason).toContain("shell snapshot cleanup produced no usable rerank output");
-    expect(selection.selectedPaperIds).toEqual([]);
+    // Deterministic fallback selects top N by deterministic score
+    expect(selection.selectedPaperIds.length).toBe(1);
   });
 
   it("uses a dedicated rerank llm when provided", async () => {
@@ -370,7 +372,8 @@ describe("paperSelection", () => {
     expect(selection.rerankApplied).toBe(false);
     expect(selection.rerankFallbackReason).toContain("usage limit");
     expect(selection.rerankFallbackReason).not.toContain("shell_snapshot");
-    expect(selection.selectedPaperIds).toEqual([]);
+    // Deterministic fallback selects top N by deterministic score
+    expect(selection.selectedPaperIds.length).toBe(1);
   });
 
   it("keeps topic-specific tabular baseline papers ahead of generic ML classification titles", async () => {
