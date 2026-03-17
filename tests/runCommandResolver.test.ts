@@ -8,9 +8,11 @@ import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 import { RunStore } from "../src/core/runs/runStore.js";
 import { resolveRunCommand } from "../src/core/nodes/runCommandResolver.js";
 
+const ORIGINAL_CWD = process.cwd();
 const tempDirs: string[] = [];
 
 afterEach(() => {
+  process.chdir(ORIGINAL_CWD);
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
     if (dir) {
@@ -23,6 +25,7 @@ describe("resolveRunCommand", () => {
   it("prefers explicit run command stored in run context", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-run-command-"));
     tempDirs.push(workspace);
+    process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
 
@@ -50,6 +53,7 @@ describe("resolveRunCommand", () => {
   it("falls back to run-local experiment script when no explicit command exists", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-run-script-"));
     tempDirs.push(workspace);
+    process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
 
@@ -75,6 +79,7 @@ describe("resolveRunCommand", () => {
   it("prefers public experiment artifacts when available", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-run-public-script-"));
     tempDirs.push(workspace);
+    process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
 
@@ -104,6 +109,7 @@ describe("resolveRunCommand", () => {
   it("falls back to a materialized script when the explicit command points to a missing artifact", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-run-missing-explicit-"));
     tempDirs.push(workspace);
+    process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
 
@@ -134,6 +140,7 @@ describe("resolveRunCommand", () => {
   it("preserves explicit commands when the interpreter path is missing but the script artifact exists", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-run-missing-interpreter-"));
     tempDirs.push(workspace);
+    process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
 

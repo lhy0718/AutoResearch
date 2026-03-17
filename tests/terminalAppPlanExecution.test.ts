@@ -511,6 +511,10 @@ describe("TerminalApp pending natural plan execution", () => {
   });
 
   it("stores top-k and branch-count request for /agent run generate_hypotheses", async () => {
+    const originalCwd = process.cwd();
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "autolabos-generate-options-"));
+    process.chdir(tmpDir);
+    try {
     const app = makeApp();
     const run = makeRun("run-generate-options");
     run.currentNode = "generate_hypotheses";
@@ -556,6 +560,10 @@ describe("TerminalApp pending natural plan execution", () => {
     const stored = JSON.parse(await readFile(run.memoryRefs.runContextPath, "utf8"));
     const requestItem = stored.items.find((item: { key: string }) => item.key === "generate_hypotheses.request");
     expect(requestItem?.value).toEqual({ topK: 3, branchCount: 8 });
+    } finally {
+      process.chdir(originalCwd);
+      await rm(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it("delegates manual node runs to orchestrator.runAgentWithOptions", async () => {
@@ -604,6 +612,10 @@ describe("TerminalApp pending natural plan execution", () => {
   });
 
   it("auto-continues after /agent collect recovery advances past collect_papers", async () => {
+    const origCwd = process.cwd();
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "autolabos-collect-recovery-"));
+    process.chdir(tmpDir);
+    try {
     const app = makeApp();
     const run = makeRun("run-collect-recovery");
     run.status = "paused";
@@ -657,9 +669,17 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(result).toEqual({ ok: true });
     expect(app.runStore.getRun).toHaveBeenCalledWith(run.id);
     expect(app.continueSupervisedRun).toHaveBeenCalledWith(run.id, undefined);
+    } finally {
+      process.chdir(origCwd);
+      await rm(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it("does not auto-continue after /agent collect when the run remains on collect_papers", async () => {
+    const origCwd = process.cwd();
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "autolabos-collect-stays-put-"));
+    process.chdir(tmpDir);
+    try {
     const app = makeApp();
     const run = makeRun("run-collect-stays-put");
     run.status = "paused";
@@ -708,6 +728,10 @@ describe("TerminalApp pending natural plan execution", () => {
 
     expect(result).toEqual({ ok: true });
     expect(app.continueSupervisedRun).not.toHaveBeenCalled();
+    } finally {
+      process.chdir(origCwd);
+      await rm(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it("rejects /agent clear_papers while the target run is still running", async () => {
@@ -731,6 +755,10 @@ describe("TerminalApp pending natural plan execution", () => {
   });
 
   it("summarizes an existing review packet through /agent review", async () => {
+    const origCwd = process.cwd();
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "autolabos-review-command-"));
+    process.chdir(tmpDir);
+    try {
     const app = makeApp();
     const run = makeRun("run-review-command");
     run.status = "paused";
@@ -821,6 +849,10 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(app.logs).toContain("review finished: Review packet prepared.");
     expect(app.logs.some((line: string) => line.includes("Review readiness: warning"))).toBe(true);
     expect(app.logs.some((line: string) => line.includes("Manual: Human sign-off"))).toBe(true);
+    } finally {
+      process.chdir(origCwd);
+      await rm(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it("shuts down on ctrl+c while busy instead of replaying queued inputs", async () => {

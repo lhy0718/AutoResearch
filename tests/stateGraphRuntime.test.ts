@@ -13,9 +13,11 @@ import { GraphNodeHandler, GraphNodeRegistry } from "../src/core/stateGraph/type
 import { GRAPH_NODE_ORDER, GraphNodeId, RunRecord } from "../src/types.js";
 import { readJsonFile } from "../src/utils/fs.js";
 
+const ORIGINAL_CWD = process.cwd();
 const tempDirs: string[] = [];
 
 afterEach(() => {
+  process.chdir(ORIGINAL_CWD);
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
     if (dir) {
@@ -52,6 +54,7 @@ class Registry implements GraphNodeRegistry {
 async function setup(registry: GraphNodeRegistry) {
   const cwd = mkdtempSync(path.join(os.tmpdir(), "autolabos-runtime-"));
   tempDirs.push(cwd);
+  process.chdir(cwd);
 
   const paths = resolveAppPaths(cwd);
   await ensureScaffold(paths);

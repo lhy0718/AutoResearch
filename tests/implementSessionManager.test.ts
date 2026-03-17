@@ -18,9 +18,11 @@ import { CodexCliClient } from "../src/integrations/codex/codexCliClient.js";
 import { LocalAciAdapter } from "../src/tools/aciLocalAdapter.js";
 import { buildHeuristicObjectiveMetricProfile } from "../src/core/objectiveMetric.js";
 
+const ORIGINAL_CWD = process.cwd();
 const tempDirs: string[] = [];
 
 afterEach(() => {
+  process.chdir(ORIGINAL_CWD);
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
     if (dir) {
@@ -120,6 +122,7 @@ describe("ImplementSessionManager", () => {
   it("persists thread id and run command from Codex session", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-session-"));
     tempDirs.push(workspace);
+    process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
 
@@ -290,6 +293,7 @@ describe("ImplementSessionManager", () => {
   it("writes running implement progress artifacts before the final result is persisted", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-progress-"));
     tempDirs.push(workspace);
+    process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
 
@@ -365,6 +369,7 @@ describe("ImplementSessionManager", () => {
   it("records workspace-root code edits in workspace_changed_files.json without copying them into outputs", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-workspace-manifest-"));
     tempDirs.push(workspace);
+    process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
 
@@ -488,6 +493,7 @@ describe("ImplementSessionManager", () => {
   it("materializes run-dir artifacts into the public experiment directory before local verification", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-materialize-"));
     tempDirs.push(workspace);
+    process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
 
@@ -558,6 +564,7 @@ describe("ImplementSessionManager", () => {
   it("fails before local verification when the claimed artifact was never materialized", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-missing-artifact-"));
     tempDirs.push(workspace);
+    process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
 
@@ -627,6 +634,7 @@ describe("ImplementSessionManager", () => {
   it("fails early when a declared supplemental artifact was never materialized even if local verification would pass", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-missing-supplemental-"));
     tempDirs.push(workspace);
+    process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
 
@@ -705,6 +713,7 @@ describe("ImplementSessionManager", () => {
   it("emits coalesced intermediate Codex output", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-stream-"));
     tempDirs.push(workspace);
+    process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
 
@@ -831,6 +840,7 @@ describe("ImplementSessionManager", () => {
   it("reuses long-term implementation memory and saves a durable lesson", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-long-term-"));
     tempDirs.push(workspace);
+    process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
 
@@ -969,6 +979,7 @@ describe("ImplementSessionManager", () => {
   it("injects runner feedback into the implement prompt and search-backed localization", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-runner-feedback-"));
     tempDirs.push(workspace);
+    process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
 
@@ -1099,6 +1110,7 @@ describe("ImplementSessionManager", () => {
   it("promotes synthetic reproducibility runs to the reusable real_execution bundle", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-promote-"));
     tempDirs.push(workspace);
+    process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
 
@@ -1217,6 +1229,7 @@ describe("ImplementSessionManager", () => {
   it("replaces incompatible real_execution commands with the managed public bundle", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-managed-real-"));
     tempDirs.push(workspace);
+    process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
 
@@ -1328,6 +1341,7 @@ describe("ImplementSessionManager", () => {
   it("retries after local verification fails and records attempt artifacts", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-retry-"));
     tempDirs.push(workspace);
+    process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
 
@@ -1489,6 +1503,7 @@ describe("ImplementSessionManager", () => {
   it("switches to an alternate branch when another candidate file is available", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-branch-"));
     tempDirs.push(workspace);
+    process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
 
@@ -1628,6 +1643,7 @@ describe("ImplementSessionManager", () => {
   it("uses attempt worktrees to isolate retry candidates when the workspace is git-backed", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-worktree-"));
     tempDirs.push(workspace);
+    process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
 
@@ -1756,6 +1772,7 @@ describe("ImplementSessionManager", () => {
   it("falls back to snapshot restore when worktree isolation is requested without git support", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-worktree-fallback-"));
     tempDirs.push(workspace);
+    process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
 
@@ -1846,6 +1863,7 @@ describe("ImplementSessionManager", () => {
   it("falls back to snapshot restore when git worktree isolation is blocked by dirty tracked files", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-worktree-dirty-"));
     tempDirs.push(workspace);
+    process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
 
@@ -1916,6 +1934,7 @@ describe("ImplementSessionManager", () => {
   it("requires approval when local verification is deferred to run_experiments", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-manual-handoff-"));
     tempDirs.push(workspace);
+    process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
 
@@ -2018,6 +2037,7 @@ describe("ImplementSessionManager", () => {
   it("fails when the implementer response provides no structured result or runnable artifact", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-invalid-response-"));
     tempDirs.push(workspace);
+    process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
 
@@ -2118,6 +2138,7 @@ describe("ImplementSessionManager", () => {
   it("ignores model-supplied paths that escape the workspace", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-path-guard-"));
     tempDirs.push(workspace);
+    process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
 
@@ -2242,6 +2263,7 @@ describe("ImplementSessionManager", () => {
   it("uses sandbox-friendly /tmp aliases for /private/tmp implementer sessions and remaps returned paths", async () => {
     const workspaceReal = mkdtempSync(path.join("/tmp", "autolabos-implement-private-tmp-"));
     tempDirs.push(workspaceReal);
+    process.chdir(workspaceReal);
     const workspace = workspaceReal.replace(/^\/tmp(?=\/)/u, "/private/tmp");
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
@@ -2331,6 +2353,7 @@ describe("ImplementSessionManager", () => {
   it("stops when the local verification command is blocked by policy", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-policy-block-"));
     tempDirs.push(workspace);
+    process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
 
@@ -2444,6 +2467,7 @@ describe("ImplementSessionManager", () => {
   it("blocks auto-handoff when experiment plan changed but script was not updated", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-plan-drift-"));
     tempDirs.push(workspace);
+    process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
     await ensureScaffold(paths);
 
