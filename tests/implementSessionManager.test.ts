@@ -2440,4 +2440,84 @@ describe("ImplementSessionManager", () => {
     expect(await memory.get("implement_experiments.auto_handoff_to_run_experiments")).toBe(false);
     expect(eventStream.history().some((event) => event.type === "TEST_FAILED" && event.payload.failure_type === "policy")).toBe(true);
   });
+
+  it("blocks auto-handoff when experiment plan changed but script was not updated", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-plan-drift-"));
+    tempDirs.push(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Plan Drift Run",
+      topic: "plan drift detection",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    // Write a plan that differs from the previously hashed plan
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - new_design_v2\n  - calibrated_routing\n", "utf8");
+
+    const scriptPath = path.join(runDir, "experiment.py");
+    const publicDir = buildPublicExperimentDir(workspace, run);
+
+    // Codex returns no changed files (reuses old script)
+    const codex = {
+      runTurnStream: async ({ onEvent }: { onEvent?: (event: Record<string, unknown>) => void }) => {
+        writeFileSync(scriptPath, "print('old script')\n", "utf8");
+        // Note: no file.changed event — script was not modified
+        return {
+          threadId: "thread-drift-1",
+          finalText: JSON.stringify({
+            summary: "Verified existing script.",
+            run_command: `python3 ${JSON.stringify(scriptPath)}`,
+            changed_files: [],
+            artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: path.join(runDir, "metrics.json"),
+            experiment_mode: "real_execution"
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexCliClient;
+
+    const eventStream = new InMemoryEventStream();
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+
+    // Set a previous plan hash that differs from the current plan
+    const { createHash } = await import("node:crypto");
+    const oldPlanHash = createHash("sha256").update("hypotheses:\n  - old_design_v1\n").digest("hex").slice(0, 16);
+    await memory.put("implement_experiments.plan_hash", oldPlanHash);
+
+    const contract = buildExperimentComparisonContract({
+      run,
+      selectedDesign: {
+        id: "plan_drift",
+        hypothesis_ids: ["h_1"],
+        baselines: ["baseline_runner"]
+      },
+      objectiveProfile: buildHeuristicObjectiveMetricProfile(run.objectiveMetric),
+      managedBundleSupported: false
+    });
+    await storeExperimentGovernanceDecision(run, memory, { contract, entries: [] });
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream,
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+
+    // Plan changed + no files modified → auto-handoff should be blocked
+    expect(result.autoHandoffToRunExperiments).toBe(false);
+    expect(await memory.get("implement_experiments.plan_hash")).not.toBe(oldPlanHash);
+    expect(await memory.get("implement_experiments.auto_handoff_to_run_experiments")).toBe(false);
+  });
 });

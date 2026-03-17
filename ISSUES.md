@@ -2,10 +2,34 @@
 
 ## Current status
 - Last updated: 2026-03-17
-- All live-validation code bugs (LV-001 through LV-018) have been resolved.
+- All live-validation code bugs (LV-001 through LV-019) have been resolved.
+- LV-020 (plan-vs-script drift detection gap) FIXED.
 - All research-quality and paper-readiness risks (R-001–R-003, P-001–P-003) have been addressed with artifact materialization, gate strengthening, and gate-warning surfacing.
 
 ## Active issues
+
+### LV-020 — implement_experiments does not detect experiment plan changes
+- Status: FIXED
+- Root-cause class: `persisted_state_bug`
+- Validation target: design_experiments backward-jump → implement_experiments re-run
+- Reproduction: After `analyze_results` triggers a backward jump to `design_experiments`, the plan is redesigned and `experiment_plan.yaml` is updated. When `implement_experiments` re-runs, the LLM sees the old verified script, decides it's "good enough," and produces zero file changes. The verify step passes (syntax-only check), and auto-handoff sends the unchanged old script to `run_experiments`.
+- Expected behavior: `implement_experiments` should detect that the experiment plan changed and force re-implementation.
+- Actual behavior: `workspace_changed_files.json` shows `"files": []`. Old script runs unchanged.
+- Root cause: Five gaps in `ImplementSessionManager`:
+  1. No plan hash comparison — can't detect that the plan changed
+  2. No drift warning in LLM prompt — LLM defaults to reusing old script
+  3. Early exit on verification pass without checking changes
+  4. Auto-handoff ignores workspace change count
+  5. Plan hash never saved to RunContext
+- Fix (in `src/core/agents/implementSessionManager.ts`):
+  1. Added `createHash` import and plan hash computation in `buildTaskSpec()`
+  2. Added `plan_changed` and `plan_hash` fields to `ImplementTaskSpec.context`
+  3. Compare current plan hash with stored `implement_experiments.plan_hash`
+  4. Inject prominent drift warning in `buildAttemptPrompt()` when plan changed
+  5. Save plan hash to RunContext after implementation
+  6. Block auto-handoff when `plan_changed && workspaceChangedFiles.length === 0`
+- Tests: Added regression test "blocks auto-handoff when experiment plan changed but script was not updated" in `tests/implementSessionManager.test.ts` — 855 tests passing.
+- Regression: None observed.
 
 ### LV-019 — Backward jump does not reset target node to pending
 - Status: FIXED

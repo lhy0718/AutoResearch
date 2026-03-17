@@ -1,4 +1,5 @@
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
@@ -154,6 +155,8 @@ interface ImplementTaskSpec {
       };
       evaluator_contract_id: string;
     };
+    plan_changed: boolean;
+    plan_hash: string;
   };
 }
 
@@ -880,7 +883,8 @@ export class ImplementSessionManager {
       ...finalAttempt.verifyReport,
       command: rewrittenTestCommand || finalAttempt.verifyReport.command
     };
-    const autoHandoffToRunExperiments = shouldAutoHandoffToRunExperiments(finalVerifyReport);
+    const baseAutoHandoff = shouldAutoHandoffToRunExperiments(finalVerifyReport);
+    const autoHandoffToRunExperiments = baseAutoHandoff && !(taskSpec.context.plan_changed && workspaceChangedFiles.length === 0);
     const handoffReason = autoHandoffToRunExperiments
       ? buildRunExperimentsHandoffReason(finalVerifyReport)
       : undefined;
@@ -911,6 +915,7 @@ export class ImplementSessionManager {
 
     await runContext.put("implement_experiments.thread_id", activeThreadId);
     await runContext.put("implement_experiments.task_spec", taskSpec);
+    await runContext.put("implement_experiments.plan_hash", taskSpec.context.plan_hash);
     await runContext.put("implement_experiments.long_term_memory", finalLongTermMemory);
     await runContext.put("implement_experiments.long_term_entry", savedLongTermMemory || null);
     await runContext.put("implement_experiments.auto_handoff_to_run_experiments", autoHandoffToRunExperiments);
@@ -1139,6 +1144,9 @@ export class ImplementSessionManager {
     longTermMemory: LongTermMemorySnapshot
   ): Promise<ImplementTaskSpec> {
     const plan = trimBlock(await safeRead(path.join(runDir, "experiment_plan.yaml")), 12_000);
+    const planHash = plan ? createHash("sha256").update(plan).digest("hex").slice(0, 16) : "";
+    const previousPlanHash = await runContext.get<string>("implement_experiments.plan_hash");
+    const planChanged = !!(plan && previousPlanHash && planHash !== previousPlanHash);
     const hypotheses = trimBlock(await safeRead(path.join(runDir, "hypotheses.jsonl")), 12_000);
     const previousSummary = await runContext.get<string>("implement_experiments.last_summary");
     const previousRunCommand = await runContext.get<string>("implement_experiments.run_command");
@@ -1201,7 +1209,9 @@ export class ImplementSessionManager {
               },
               this.deps.workspaceRoot
             )
-          : undefined
+          : undefined,
+        plan_changed: planChanged,
+        plan_hash: planHash
       }
     };
   }
@@ -1288,6 +1298,18 @@ export class ImplementSessionManager {
         JSON.stringify(sandboxTaskSpec.context.comparison_contract, null, 2),
         "",
         "Do not silently change the comparison metric, baseline binding, or locked budget profile."
+      );
+    }
+
+    if (sandboxTaskSpec.context.plan_changed) {
+      lines.push(
+        "",
+        "⚠ CRITICAL: The experiment plan has changed since the last implementation (plan hash mismatch).",
+        "You MUST re-implement the experiment script to match the new plan.",
+        "Do NOT reuse the previous script unchanged. Read the updated plan_excerpt carefully",
+        "and ensure the script reflects the new datasets, conditions, baselines, sample sizes,",
+        "and evaluation criteria specified in the current plan.",
+        "The previous script is provided only as reference for code patterns, not as a valid implementation."
       );
     }
 
