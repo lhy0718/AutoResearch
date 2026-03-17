@@ -163,3 +163,33 @@
   - Paper-pressure consolidation jumps to `review` node with force mode; if review node encounters artifacts from a different cycle context, it may produce a review that doesn't match the latest experiment
   - Stagnation detection relies on node-level notes; if nodes don't write meaningful notes, novelty detection may under-count signals
   - `evaluateBestBranch` reads artifacts at fixed paths; if the run has branched into multiple experiment directions, only the latest artifacts are evaluated
+
+---
+
+### AM-002 — Autonomous Mode Refinement: Review Gate, Time Limits, stopAfterApprovalBoundary
+- Status: IMPLEMENTED
+- Category: feature refinement
+- Validation target: `AutonomousRunController.runAutonomous()`, `AgentOrchestrator.runCurrentAgentWithOptions()`, review/write_paper gating, time-limit policy
+- Summary: Corrected over-aggressive auto-approval in autonomous mode and adjusted time limits:
+  - **Review gate**: `review` and `write_paper` removed from `autoApproveNodes`. Review is a real structural gate; write_paper is only entered when `meetsWritePaperBar()` evidence bar is met.
+  - **WritePaperGateConfig**: New config with `requireBaselineOrComparator`, `requireQuantitativeResults`, `minBranchScore`, `blockedManuscriptTypes`. On failure, backtracks to `design_experiments`.
+  - **Three gate checkpoints**: (1) top-of-loop pre-execution check for `currentNode === "write_paper"`, (2) recommendation path check when advancing from review, (3) no-recommendation path check at review/write_paper.
+  - **stopAfterApprovalBoundary**: Added `stopAfterApprovalBoundary?: boolean` to `AgentOrchestrator.runCurrentAgentWithOptions()`. Autonomous mode uses `stopAfterApprovalBoundary: true` so the runtime returns after each approval gate, giving the controller a chance to check evidence gates between nodes.
+  - **Overnight runtime**: 8h → 24h (`maxMinutes: 1440`)
+  - **Autonomous runtime**: 24h → unbounded (`maxMinutes: Infinity`), with `Number.isFinite()` guard
+  - **Progress reporter**: Added `runtimePolicy`, `writePaperGateBlocked`, `writePaperGateBlockers` to snapshot; shown in markdown status output
+  - **TUI/CLI copy**: Updated overnight banner ("24-hour limit"), autonomous banner ("No runtime time limit", "write_paper gated by minimum evidence bar")
+- Tests: 10 new tests added (30 total), all passing:
+  - Policy limits (overnight 24h, autonomous Infinity)
+  - Gate config defaults
+  - autoApproveNodes exclusions (review, write_paper)
+  - meetsWritePaperBar: passes, blocks, no-branch
+  - Gate blocks at review node (integration)
+  - Gate blocks advance recommendation from review (integration)
+  - No time_limit stop with Infinity
+- Evidence: 881/882 tests pass (10 new). Only pre-existing `zzz_noProjectRootLeak` failure.
+- Architecture insight: Two-level approval system — runtime `resolveApprovalGate()` auto-approves nodes in "minimal" mode BEFORE the controller sees them. `stopAfterApprovalBoundary: true` is the key fix that gives the controller per-node control.
+- Risks:
+  - `stopAfterApprovalBoundary: true` means each node takes one controller iteration, making the loop slower (more iterations per cycle). Acceptable for autonomous long-running mode.
+  - If `evaluateBestBranch` misreads evidence artifacts, the gate may incorrectly block or pass write_paper
+  - `minBranchScore: 5` threshold may need tuning based on real-world evidence patterns

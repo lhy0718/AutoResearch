@@ -51,8 +51,20 @@ export interface AutonomousFuseConfig {
   maxRepeatedRecommendation: number;
 }
 
+export interface WritePaperGateConfig {
+  /** Require baseline or comparator before drafting */
+  requireBaselineOrComparator: boolean;
+  /** Require quantitative results before drafting */
+  requireQuantitativeResults: boolean;
+  /** Minimum branch score to allow write_paper entry */
+  minBranchScore: number;
+  /** Manuscript types that block write_paper (evidence too weak) */
+  blockedManuscriptTypes: string[];
+}
+
 export interface AutonomousModePolicy {
   mode: "autonomous";
+  /** Runtime limit in minutes. Use Infinity for unbounded runtime. */
   maxMinutes: number;
   minTransitionConfidence: number;
   minDeepBacktrackConfidence: number;
@@ -64,6 +76,8 @@ export interface AutonomousModePolicy {
   novelty: AutonomousNoveltyConfig;
   paperPressure: AutonomousPaperPressureConfig;
   fuse: AutonomousFuseConfig;
+  /** Conditional gate for write_paper entry — review remains a structural gate */
+  writePaperGate: WritePaperGateConfig;
 }
 
 export type AutonomousRunPolicy = OvernightRunPolicy | AutonomousModePolicy;
@@ -127,7 +141,7 @@ export interface AutonomousRunResult {
 export function buildDefaultOvernightPolicy(): OvernightRunPolicy {
   return {
     mode: "overnight",
-    maxMinutes: 8 * 60,
+    maxMinutes: 24 * 60,
     minTransitionConfidence: 0.75,
     minDeepBacktrackConfidence: 0.88,
     autoApproveNodes: [
@@ -147,7 +161,7 @@ export function buildDefaultOvernightPolicy(): OvernightRunPolicy {
 export function buildDefaultAutonomousPolicy(): AutonomousModePolicy {
   return {
     mode: "autonomous",
-    maxMinutes: 24 * 60,
+    maxMinutes: Infinity,
     minTransitionConfidence: 0.60,
     minDeepBacktrackConfidence: 0.70,
     autoApproveNodes: [
@@ -155,9 +169,7 @@ export function buildDefaultAutonomousPolicy(): AutonomousModePolicy {
       "design_experiments",
       "implement_experiments",
       "run_experiments",
-      "analyze_results",
-      "review",
-      "write_paper"
+      "analyze_results"
     ],
     allowedBacktracks: [
       "generate_hypotheses",
@@ -180,6 +192,12 @@ export function buildDefaultAutonomousPolicy(): AutonomousModePolicy {
       maxTotalIterations: 500,
       maxConsecutiveFailures: 10,
       maxRepeatedRecommendation: 5
+    },
+    writePaperGate: {
+      requireBaselineOrComparator: true,
+      requireQuantitativeResults: true,
+      minBranchScore: 5,
+      blockedManuscriptTypes: ["not_analyzed", "system_validation_note"]
     }
   };
 }
@@ -372,9 +390,15 @@ export class AutonomousRunController {
     const reporter = new AutonomousProgressReporter();
 
     let run = await this.getRunOrThrow(runId);
+    const runtimePolicy = Number.isFinite(policy.maxMinutes)
+      ? `${Math.round(policy.maxMinutes / 60)}h`
+      : "unbounded";
+    const timeStr = Number.isFinite(policy.maxMinutes)
+      ? `max ${policy.maxMinutes} min`
+      : "no runtime time limit";
     this.emit(
       run,
-      `Autonomous mode started. Max ${policy.maxMinutes} min, ` +
+      `Autonomous mode started. ${timeStr}, ` +
       `max ${policy.fuse.maxTotalIterations} iterations, ` +
       `novelty window=${policy.novelty.windowSize} cycles.`
     );
@@ -389,7 +413,8 @@ export class AutonomousRunController {
       paperStatus: "not_started",
       stopRisk: "none",
       message: "Autonomous mode started.",
-      loopDirection: "exploring"
+      loopDirection: "exploring",
+      runtimePolicy
     });
 
     const buildStopResult = async (
@@ -400,6 +425,7 @@ export class AutonomousRunController {
     ): Promise<AutonomousRunResult> => {
       run = await this.getRunOrThrow(runId);
       const paperStatus = await this.readPaperStatus(run);
+      const gateResult = this.meetsWritePaperBar(bestBranch, policy.writePaperGate);
       const snap: AutonomousCycleSnapshot = {
         mode: "autonomous", cycle: researchCycles, iteration: iterations,
         currentNode: run.currentNode, status,
@@ -409,7 +435,10 @@ export class AutonomousRunController {
         bestBranch: bestBranch?.hypothesis,
         paperCandidateStatus: bestBranch?.manuscriptType,
         evidenceGaps: bestBranch?.evidenceGaps,
-        loopDirection
+        loopDirection,
+        runtimePolicy,
+        writePaperGateBlocked: !gateResult.passes,
+        writePaperGateBlockers: gateResult.blockers
       };
       await reporter.writeFinalSummary(run, snap, stopReason);
       return {
@@ -434,8 +463,8 @@ export class AutonomousRunController {
           `Emergency stop: ${iterations} total iterations reached.`);
       }
 
-      // --- Time limit ---
-      if (Date.now() - startedAt > policy.maxMinutes * 60 * 1000) {
+      // --- Time limit (skipped when unbounded) ---
+      if (Number.isFinite(policy.maxMinutes) && Date.now() - startedAt > policy.maxMinutes * 60 * 1000) {
         this.emit(run, "Autonomous mode stopped: time limit reached.");
         return buildStopResult("stopped", "Time limit reached.", "time_limit");
       }
@@ -444,6 +473,38 @@ export class AutonomousRunController {
       if (consecutiveFailures >= policy.fuse.maxConsecutiveFailures) {
         this.emit(run, `Autonomous mode emergency stop: ${consecutiveFailures} consecutive failures.`);
         return buildStopResult("stopped", "Catastrophic fuse: consecutive failures.", "consecutive_failures");
+      }
+
+      // --- Write-paper gate (top-of-loop): catches runtime auto-advancing past review ---
+      if (run.currentNode === "write_paper" && run.status === "running") {
+        bestBranch = await this.evaluateBestBranch(run, bestBranch, researchCycles);
+        const gate = this.meetsWritePaperBar(bestBranch, policy.writePaperGate);
+        if (!gate.passes) {
+          this.emit(run, `[autonomous] Write-paper gate (pre-execution): blocked. ${gate.blockers.join(", ")}`);
+          await reporter.writeSnapshot(run, {
+            mode: "autonomous", cycle: researchCycles, iteration: iterations,
+            currentNode: run.currentNode, status: "running",
+            noveltySignals: noveltySignals.slice(-10),
+            paperStatus: await this.readPaperStatus(run),
+            stopRisk: "write_paper_gate_blocked",
+            message: `Write-paper gate blocked (pre-execution): ${gate.blockers.join(", ")}`,
+            bestBranch: bestBranch?.hypothesis,
+            paperCandidateStatus: bestBranch?.manuscriptType,
+            evidenceGaps: bestBranch?.evidenceGaps,
+            writePaperGateBlocked: true,
+            writePaperGateBlockers: gate.blockers,
+            loopDirection: "consolidating",
+            runtimePolicy
+          });
+          try {
+            await this.orchestrator.jumpToNode(run.id, "design_experiments", "force",
+              `Write-paper evidence bar not met (pre-execution): ${gate.blockers.join(", ")}`);
+            this.emit(run, "[autonomous] Backtracked to design_experiments to strengthen evidence.");
+          } catch {
+            return buildStopResult("stopped", `Write-paper gate blocked: ${gate.blockers.join(", ")}`, "write_paper_gate");
+          }
+          continue;
+        }
       }
 
       // --- Run completed: in autonomous mode, this triggers re-cycle ---
@@ -595,6 +656,37 @@ export class AutonomousRunController {
           }
 
           if (this.canApplyRecommendation(run, recommendation, policy)) {
+            // Write-paper gate: block advancing from review unless evidence bar is met
+            if (run.currentNode === "review" && recommendation.action === "advance") {
+              bestBranch = await this.evaluateBestBranch(run, bestBranch, researchCycles);
+              const gate = this.meetsWritePaperBar(bestBranch, policy.writePaperGate);
+              if (!gate.passes) {
+                this.emit(run, `[autonomous] Review→write_paper blocked: ${gate.blockers.join(", ")}. Backtracking.`);
+                await reporter.writeSnapshot(run, {
+                  mode: "autonomous", cycle: researchCycles, iteration: iterations,
+                  currentNode: run.currentNode, status: "running",
+                  noveltySignals: noveltySignals.slice(-10),
+                  paperStatus: await this.readPaperStatus(run),
+                  stopRisk: "write_paper_gate_blocked",
+                  message: `Write-paper gate blocked: ${gate.blockers.join(", ")}`,
+                  bestBranch: bestBranch?.hypothesis,
+                  paperCandidateStatus: bestBranch?.manuscriptType,
+                  evidenceGaps: bestBranch?.evidenceGaps,
+                  writePaperGateBlocked: true,
+                  writePaperGateBlockers: gate.blockers,
+                  loopDirection: "consolidating"
+                });
+                try {
+                  await this.orchestrator.jumpToNode(run.id, "design_experiments", "force",
+                    `Write-paper evidence bar not met: ${gate.blockers.join(", ")}`);
+                  this.emit(run, "[autonomous] Backtracked to design_experiments to strengthen evidence.");
+                } catch {
+                  return buildStopResult("stopped", `Write-paper gate blocked: ${gate.blockers.join(", ")}`, "write_paper_gate");
+                }
+                continue;
+              }
+            }
+
             this.emit(
               run,
               `[autonomous] Applying ${recommendation.action} -> ${recommendation.targetNode || "stay"}.`
@@ -616,6 +708,21 @@ export class AutonomousRunController {
 
           // In autonomous mode: auto-approve even non-auto-executable recommendations with relaxed confidence
           if (recommendation.confidence >= policy.minTransitionConfidence) {
+            // Gate check for review→write_paper even on force-apply path
+            if (run.currentNode === "review" && recommendation.action === "advance") {
+              bestBranch = await this.evaluateBestBranch(run, bestBranch, researchCycles);
+              const gate = this.meetsWritePaperBar(bestBranch, policy.writePaperGate);
+              if (!gate.passes) {
+                this.emit(run, `[autonomous] Review→write_paper blocked (force path): ${gate.blockers.join(", ")}.`);
+                try {
+                  await this.orchestrator.jumpToNode(run.id, "design_experiments", "force",
+                    `Write-paper evidence bar not met: ${gate.blockers.join(", ")}`);
+                } catch {
+                  return buildStopResult("stopped", `Write-paper gate blocked: ${gate.blockers.join(", ")}`, "write_paper_gate");
+                }
+                continue;
+              }
+            }
             this.emit(run, `[autonomous] Force-applying recommendation ${key} (confidence=${recommendation.confidence}).`);
             run = await this.orchestrator.applyPendingTransition(run.id);
             transitionsApplied += 1;
@@ -634,7 +741,60 @@ export class AutonomousRunController {
           return buildStopResult("stopped", `Manual review required: ${key} at ${run.currentNode}.`, "manual_review_required");
         }
 
-        // No recommendation, but needs approval
+        // No recommendation, but needs approval — gate check for review and write_paper
+        if (run.currentNode === "review" || run.currentNode === "write_paper") {
+          bestBranch = await this.evaluateBestBranch(run, bestBranch, researchCycles);
+          const gate = this.meetsWritePaperBar(bestBranch, policy.writePaperGate);
+          if (run.currentNode === "review" && !gate.passes) {
+            // Review completed but evidence insufficient for write_paper — backtrack
+            this.emit(run, `[autonomous] Review gate: write_paper blocked. ${gate.blockers.join(", ")}. Backtracking.`);
+            await reporter.writeSnapshot(run, {
+              mode: "autonomous", cycle: researchCycles, iteration: iterations,
+              currentNode: run.currentNode, status: "running",
+              noveltySignals: noveltySignals.slice(-10),
+              paperStatus: await this.readPaperStatus(run),
+              stopRisk: "write_paper_gate_blocked",
+              message: `Review gate: write_paper blocked. ${gate.blockers.join(", ")}`,
+              bestBranch: bestBranch?.hypothesis,
+              paperCandidateStatus: bestBranch?.manuscriptType,
+              evidenceGaps: bestBranch?.evidenceGaps,
+              writePaperGateBlocked: true,
+              writePaperGateBlockers: gate.blockers,
+              loopDirection: "consolidating"
+            });
+            try {
+              await this.orchestrator.jumpToNode(run.id, "design_experiments", "force",
+                `Write-paper evidence bar not met at review: ${gate.blockers.join(", ")}`);
+              this.emit(run, "[autonomous] Backtracked to design_experiments to strengthen evidence.");
+            } catch {
+              return buildStopResult("stopped", `Write-paper gate blocked at review: ${gate.blockers.join(", ")}`, "write_paper_gate");
+            }
+            continue;
+          }
+          if (run.currentNode === "review" && gate.passes) {
+            this.emit(run, "[autonomous] Review gate passed — evidence sufficient for write_paper. Approving review.");
+            run = await this.orchestrator.approveCurrent(run.id);
+            approvalsApplied += 1;
+            continue;
+          }
+          if (run.currentNode === "write_paper" && gate.passes) {
+            this.emit(run, "[autonomous] Write-paper evidence bar met. Approving write_paper.");
+            run = await this.orchestrator.approveCurrent(run.id);
+            approvalsApplied += 1;
+            continue;
+          }
+          if (run.currentNode === "write_paper" && !gate.passes) {
+            this.emit(run, `[autonomous] Write-paper evidence bar not met: ${gate.blockers.join(", ")}. Backtracking.`);
+            try {
+              await this.orchestrator.jumpToNode(run.id, "design_experiments", "force",
+                `Write-paper evidence bar not met: ${gate.blockers.join(", ")}`);
+            } catch {
+              return buildStopResult("stopped", `Write-paper gate blocked: ${gate.blockers.join(", ")}`, "write_paper_gate");
+            }
+            continue;
+          }
+        }
+
         if (policy.autoApproveNodes.includes(run.currentNode)) {
           this.emit(run, `[autonomous] Auto-approving ${run.currentNode}.`);
           run = await this.orchestrator.approveCurrent(run.id);
@@ -649,7 +809,8 @@ export class AutonomousRunController {
       // --- Execute current node ---
       try {
         const response = await this.orchestrator.runCurrentAgentWithOptions(run.id, {
-          abortSignal: opts?.abortSignal
+          abortSignal: opts?.abortSignal,
+          stopAfterApprovalBoundary: true
         });
         run = response.run;
         iterations += 1;
@@ -779,6 +940,37 @@ export class AutonomousRunController {
     };
     score += typeScores[b.manuscriptType] || 0;
     return score;
+  }
+
+  /**
+   * Check if the current best branch meets the minimum evidence bar for
+   * entering write_paper. This is the structural gate that prevents the
+   * system from drafting a paper before sufficient evidence exists.
+   */
+  meetsWritePaperBar(
+    bestBranch: BestBranchInfo | undefined,
+    gate: WritePaperGateConfig
+  ): { passes: boolean; blockers: string[] } {
+    const blockers: string[] = [];
+
+    if (!bestBranch) {
+      return { passes: false, blockers: ["No evaluated branch available"] };
+    }
+
+    if (gate.requireBaselineOrComparator && !bestBranch.hasBaseline && !bestBranch.hasComparator) {
+      blockers.push("Missing baseline or comparator");
+    }
+    if (gate.requireQuantitativeResults && !bestBranch.hasQuantitativeResults) {
+      blockers.push("No quantitative results");
+    }
+    if (gate.blockedManuscriptTypes.includes(bestBranch.manuscriptType)) {
+      blockers.push(`Manuscript type '${bestBranch.manuscriptType}' is below draft threshold`);
+    }
+    if (this.branchScore(bestBranch) < gate.minBranchScore) {
+      blockers.push(`Branch score ${this.branchScore(bestBranch)} < required ${gate.minBranchScore}`);
+    }
+
+    return { passes: blockers.length === 0, blockers };
   }
 
   // -------------------------------------------------------------------------

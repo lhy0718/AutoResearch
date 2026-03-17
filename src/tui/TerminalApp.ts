@@ -2707,7 +2707,7 @@ export class TerminalApp {
       if (!run) {
         return { ok: false, reason: "target run not found" };
       }
-      this.pushLog("Starting autonomy preset: overnight (default safe policy).");
+      this.pushLog("Starting autonomy preset: overnight (24-hour limit, conservative safe policy).");
       const controller = new AutonomousRunController(this.runStore, this.orchestrator, this.eventStream);
       const outcome = await controller.runOvernight(run.id, buildDefaultOvernightPolicy(), { abortSignal });
       this.pushLog(`Overnight autonomy ${outcome.status}: ${outcome.reason}`);
@@ -2727,12 +2727,14 @@ export class TerminalApp {
       this.pushLog("┌──────────────────────────────────────────────────────────────┐");
       this.pushLog("│  AUTONOMOUS MODE — Long-running open-ended research mode    │");
       this.pushLog("│                                                              │");
+      this.pushLog("│  • No runtime time limit (runs until stopped or fuse trips)  │");
       this.pushLog("│  • Explores many hypothesis/experiment cycles autonomously   │");
       this.pushLog("│  • Continuously upgrades the strongest paper candidate       │");
+      this.pushLog("│  • write_paper gated by minimum evidence bar (review gate)   │");
       this.pushLog("│  • May consume substantially more time and compute           │");
       this.pushLog("│  • May revisit earlier stages many times                     │");
       this.pushLog("│  • NOT optimized for conservative early stopping             │");
-      this.pushLog("│  • Stops on: user stop, budget limits, or emergency fuse     │");
+      this.pushLog("│  • Stops on: user stop, emergency fuse, or stagnation        │");
       this.pushLog("│  • Progress: .autolabos/runs/<id>/RUN_STATUS.md              │");
       this.pushLog("│  • Press Ctrl+C to stop at any time                          │");
       this.pushLog("└──────────────────────────────────────────────────────────────┘");

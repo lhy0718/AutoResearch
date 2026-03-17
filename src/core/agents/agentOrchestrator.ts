@@ -75,7 +75,7 @@ export class AgentOrchestrator {
 
   async runCurrentAgentWithOptions(
     runId: string,
-    opts?: { abortSignal?: AbortSignal }
+    opts?: { abortSignal?: AbortSignal; stopAfterApprovalBoundary?: boolean }
   ): Promise<AgentRunResponse> {
     await this.runtime.start(runId);
     const current = await this.runStore.getRun(runId);
@@ -84,7 +84,8 @@ export class AgentOrchestrator {
     }
     await this.runtime.runUntilPause(runId, {
       abortSignal: opts?.abortSignal,
-      floorNode: current.currentNode
+      floorNode: current.currentNode,
+      stopAfterApprovalBoundary: opts?.stopAfterApprovalBoundary
     });
     const run = await this.getPersistedRunOrThrow(runId);
 

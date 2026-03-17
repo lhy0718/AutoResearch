@@ -1457,9 +1457,9 @@ export class InteractionSession {
         return { ok: false, reason: "target run not found" };
       }
       this.pushLog("Starting autonomous mode: long-running open-ended research exploration.");
-      this.pushLog("This mode explores many hypothesis/experiment cycles and upgrades the strongest paper candidate.");
-      this.pushLog("It may consume substantially more time and compute than overnight mode.");
-      this.pushLog("It stops on: user stop (Ctrl+C), budget/time limits, or emergency fuse.");
+      this.pushLog("No runtime time limit. Explores many hypothesis/experiment cycles.");
+      this.pushLog("Upgrades the strongest paper candidate while gating write_paper on evidence quality.");
+      this.pushLog("Stops on: user stop (Ctrl+C), emergency fuse, or sustained stagnation.");
       this.pushLog("Progress is written to .autolabos/runs/<id>/RUN_STATUS.md");
       const controller = new AutonomousRunController(this.runStore, this.orchestrator, this.eventStream);
       const policy = buildDefaultAutonomousPolicy();

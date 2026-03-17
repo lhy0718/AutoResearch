@@ -9,7 +9,8 @@ import { AgentOrchestrator } from "../src/core/agents/agentOrchestrator.js";
 import {
   AutonomousRunController,
   buildDefaultOvernightPolicy,
-  buildDefaultAutonomousPolicy
+  buildDefaultAutonomousPolicy,
+  WritePaperGateConfig
 } from "../src/core/agents/autonomousRunController.js";
 import { InMemoryEventStream } from "../src/core/events.js";
 import { RunStore } from "../src/core/runs/runStore.js";
@@ -244,18 +245,22 @@ describe("AutonomousRunController — autonomous mode", () => {
     const autonomous = buildDefaultAutonomousPolicy();
 
     expect(autonomous.mode).toBe("autonomous");
-    expect(autonomous.maxMinutes).toBeGreaterThan(overnight.maxMinutes);
+    // Autonomous has no time limit (Infinity)
+    expect(autonomous.maxMinutes).toBe(Infinity);
+    expect(Number.isFinite(autonomous.maxMinutes)).toBe(false);
+    // Overnight now has 24-hour limit
+    expect(overnight.maxMinutes).toBe(24 * 60);
     expect(autonomous.maxBackwardJumps).toBeGreaterThan(overnight.maxBackwardJumps);
     expect(autonomous.maxDeepBacktracks).toBeGreaterThan(overnight.maxDeepBacktracks);
     expect(autonomous.minTransitionConfidence).toBeLessThan(overnight.minTransitionConfidence);
     expect(autonomous.minDeepBacktrackConfidence).toBeLessThan(overnight.minDeepBacktrackConfidence);
     expect(autonomous.stopBeforeWritePaper).toBe(false);
 
-    // Autonomous auto-approves more nodes
+    // Autonomous auto-approves more nodes than overnight, but NOT review or write_paper
     expect(autonomous.autoApproveNodes.length).toBeGreaterThan(overnight.autoApproveNodes.length);
-    expect(autonomous.autoApproveNodes).toContain("review");
-    expect(autonomous.autoApproveNodes).toContain("write_paper");
     expect(autonomous.autoApproveNodes).toContain("generate_hypotheses");
+    expect(autonomous.autoApproveNodes).not.toContain("review");
+    expect(autonomous.autoApproveNodes).not.toContain("write_paper");
   });
 
   it("policy has required novelty, paper pressure, and fuse configs", () => {
@@ -542,5 +547,200 @@ describe("AutonomousRunController — autonomous mode", () => {
     ];
     // This is a compile-time check reflected here for documentation
     expect(validReasons.length).toBe(11);
+  });
+
+  it("autonomous mode default policy has no time limit (Infinity)", () => {
+    const policy = buildDefaultAutonomousPolicy();
+    expect(policy.maxMinutes).toBe(Infinity);
+    expect(Number.isFinite(policy.maxMinutes)).toBe(false);
+  });
+
+  it("overnight mode default policy has 24-hour limit", () => {
+    const policy = buildDefaultOvernightPolicy();
+    expect(policy.maxMinutes).toBe(24 * 60);
+  });
+
+  it("autonomous policy has writePaperGate config", () => {
+    const policy = buildDefaultAutonomousPolicy();
+    expect(policy.writePaperGate).toBeDefined();
+    expect(policy.writePaperGate.requireBaselineOrComparator).toBe(true);
+    expect(policy.writePaperGate.requireQuantitativeResults).toBe(true);
+    expect(policy.writePaperGate.minBranchScore).toBeGreaterThan(0);
+    expect(policy.writePaperGate.blockedManuscriptTypes).toContain("not_analyzed");
+    expect(policy.writePaperGate.blockedManuscriptTypes).toContain("system_validation_note");
+  });
+
+  it("review and write_paper are NOT in autonomous autoApproveNodes", () => {
+    const policy = buildDefaultAutonomousPolicy();
+    expect(policy.autoApproveNodes).not.toContain("review");
+    expect(policy.autoApproveNodes).not.toContain("write_paper");
+    // But exploration nodes are still auto-approved
+    expect(policy.autoApproveNodes).toContain("generate_hypotheses");
+    expect(policy.autoApproveNodes).toContain("design_experiments");
+    expect(policy.autoApproveNodes).toContain("implement_experiments");
+    expect(policy.autoApproveNodes).toContain("run_experiments");
+    expect(policy.autoApproveNodes).toContain("analyze_results");
+  });
+
+  it("meetsWritePaperBar blocks when evidence is insufficient", async () => {
+    const { store, controller } = await setup(new DeterministicRegistry({}));
+    const run = await store.createRun({
+      title: "Run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    const branch = await controller.evaluateBestBranch(run, undefined, 1);
+    const gate: WritePaperGateConfig = {
+      requireBaselineOrComparator: true,
+      requireQuantitativeResults: true,
+      minBranchScore: 5,
+      blockedManuscriptTypes: ["not_analyzed", "system_validation_note"]
+    };
+
+    const result = controller.meetsWritePaperBar(branch, gate);
+    expect(result.passes).toBe(false);
+    expect(result.blockers.length).toBeGreaterThan(0);
+    expect(result.blockers.some(b => b.includes("baseline") || b.includes("comparator"))).toBe(true);
+    expect(result.blockers.some(b => b.includes("quantitative"))).toBe(true);
+  });
+
+  it("meetsWritePaperBar passes when evidence is sufficient", () => {
+    const { controller } = { controller: new AutonomousRunController(
+      {} as any, {} as any, new InMemoryEventStream()
+    )};
+
+    const strongBranch = {
+      branchId: "cycle-5",
+      hypothesis: "Test hypothesis",
+      hasBaseline: true,
+      hasComparator: true,
+      hasQuantitativeResults: true,
+      hasResultTable: true,
+      manuscriptType: "paper_scale_candidate",
+      lastUpgradeCycle: 4,
+      evidenceGaps: [],
+      upgradeActions: []
+    };
+
+    const gate: WritePaperGateConfig = {
+      requireBaselineOrComparator: true,
+      requireQuantitativeResults: true,
+      minBranchScore: 5,
+      blockedManuscriptTypes: ["not_analyzed", "system_validation_note"]
+    };
+
+    const result = controller.meetsWritePaperBar(strongBranch, gate);
+    expect(result.passes).toBe(true);
+    expect(result.blockers).toEqual([]);
+  });
+
+  it("meetsWritePaperBar returns blockers when no branch available", () => {
+    const controller = new AutonomousRunController(
+      {} as any, {} as any, new InMemoryEventStream()
+    );
+
+    const gate: WritePaperGateConfig = {
+      requireBaselineOrComparator: true,
+      requireQuantitativeResults: true,
+      minBranchScore: 5,
+      blockedManuscriptTypes: ["not_analyzed"]
+    };
+
+    const result = controller.meetsWritePaperBar(undefined, gate);
+    expect(result.passes).toBe(false);
+    expect(result.blockers).toContain("No evaluated branch available");
+  });
+
+  it("write_paper gate blocks at review node in autonomous mode", async () => {
+    const { store, controller } = await setup(new DeterministicRegistry({}));
+    const run = await store.createRun({
+      title: "Run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    // Set up run at review node needing approval (no recommendation, no artifacts)
+    run.currentNode = "review";
+    run.graph.currentNode = "review";
+    run.status = "paused";
+    run.graph.nodeStates.review.status = "needs_approval";
+    await store.updateRun(run);
+
+    // Use maxTotalIterations=8: with stopAfterApprovalBoundary each node takes
+    // one iteration. 5 iterations to reach write_paper from design, then gate
+    // blocks and backtracks, then fuse fires at a non-write_paper node.
+    const policy = {
+      ...buildDefaultAutonomousPolicy(),
+      fuse: { maxTotalIterations: 8, maxConsecutiveFailures: 10, maxRepeatedRecommendation: 5 }
+    };
+
+    const result = await controller.runAutonomous(run.id, policy);
+    // Without evidence artifacts, the gate should block write_paper entry.
+    // The system should backtrack or stop — it should NOT proceed to write_paper.
+    const latest = await store.getRun(run.id);
+    expect(latest?.currentNode).not.toBe("write_paper");
+  });
+
+  it("write_paper gate blocks advance recommendation from review", async () => {
+    const { store, controller } = await setup(new DeterministicRegistry({}));
+    const run = await store.createRun({
+      title: "Run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    // Set up review with advance recommendation but no evidence artifacts
+    run.currentNode = "review";
+    run.graph.currentNode = "review";
+    run.status = "paused";
+    run.graph.nodeStates.review.status = "needs_approval";
+    run.graph.pendingTransition = {
+      action: "advance",
+      sourceNode: "review",
+      targetNode: "write_paper",
+      reason: "Ready for paper drafting",
+      confidence: 0.95,
+      autoExecutable: true,
+      evidence: ["Review passed"],
+      suggestedCommands: ["/approve"],
+      generatedAt: new Date().toISOString()
+    };
+    await store.updateRun(run);
+
+    // Same iteration budget: 8 iterations allows gate to fire before fuse
+    const policy = {
+      ...buildDefaultAutonomousPolicy(),
+      fuse: { maxTotalIterations: 8, maxConsecutiveFailures: 10, maxRepeatedRecommendation: 5 }
+    };
+
+    const result = await controller.runAutonomous(run.id, policy);
+    // Without evidence artifacts, the advance should be blocked by the gate
+    const latest = await store.getRun(run.id);
+    expect(latest?.currentNode).not.toBe("write_paper");
+  });
+
+  it("does not stop on time_limit when maxMinutes is Infinity", async () => {
+    const { store, controller } = await setup(new DeterministicRegistry({}));
+    const run = await store.createRun({
+      title: "Run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    const policy = {
+      ...buildDefaultAutonomousPolicy(),
+      // maxMinutes is already Infinity by default
+      fuse: { maxTotalIterations: 2, maxConsecutiveFailures: 10, maxRepeatedRecommendation: 5 }
+    };
+
+    const result = await controller.runAutonomous(run.id, policy);
+    // Should stop on fuse (iterations), NOT time_limit
+    expect(result.stopReason).toBe("catastrophic_fuse");
+    expect(result.stopReason).not.toBe("time_limit");
   });
 });

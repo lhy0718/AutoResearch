@@ -27,6 +27,12 @@ export interface AutonomousCycleSnapshot {
   evidenceGaps?: string[];
   nextUpgradeAction?: string;
   whyContinued?: string;
+  /** Runtime policy description: "24h" or "unbounded" */
+  runtimePolicy?: string;
+  /** Whether write_paper is currently blocked by the evidence gate */
+  writePaperGateBlocked?: boolean;
+  /** Specific conditions blocking write_paper entry */
+  writePaperGateBlockers?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -63,6 +69,7 @@ export class AutonomousProgressReporter {
       : `# Autonomous Run Status — ${run.id.slice(0, 8)}\n\n` +
         `**Topic:** ${run.topic}\n` +
         `**Mode:** ${snap.mode}\n` +
+        `**Runtime policy:** ${snap.runtimePolicy || (snap.mode === "autonomous" ? "unbounded" : "24h")}\n` +
         `**Started:** ${new Date().toISOString()}\n\n` +
         `---\n\n`;
 
@@ -89,6 +96,9 @@ export class AutonomousProgressReporter {
     lines.push(`| Field | Value |`);
     lines.push(`|-------|-------|`);
     lines.push(`| Mode | ${snap.mode} |`);
+    if (snap.runtimePolicy) {
+      lines.push(`| Runtime Policy | ${snap.runtimePolicy} |`);
+    }
     lines.push(`| Current Node | ${snap.currentNode} |`);
     lines.push(`| Status | ${snap.status} |`);
     lines.push(`| Paper Status | ${snap.paperStatus} |`);
@@ -122,12 +132,26 @@ export class AutonomousProgressReporter {
       lines.push(`| Next Upgrade Action | ${snap.nextUpgradeAction} |`);
     }
 
+    // Write-paper gate status
+    if (snap.writePaperGateBlocked != null) {
+      lines.push(`| Write-Paper Gate | ${snap.writePaperGateBlocked ? "⛔ BLOCKED" : "✅ PASSED"} |`);
+    }
+
     lines.push("");
     lines.push(`**Message:** ${snap.message}`);
 
     if (snap.whyContinued) {
       lines.push("");
       lines.push(`**Why continued:** ${snap.whyContinued}`);
+    }
+
+    // Write-paper gate blockers
+    if (snap.writePaperGateBlocked && snap.writePaperGateBlockers && snap.writePaperGateBlockers.length > 0) {
+      lines.push("");
+      lines.push("**Write-paper gate blockers (conditions not met for drafting):**");
+      for (const blocker of snap.writePaperGateBlockers) {
+        lines.push(`- ${blocker}`);
+      }
     }
 
     if (snap.noveltySignals.length > 0) {
@@ -169,6 +193,9 @@ export class AutonomousProgressReporter {
     lines.push(`| Field | Value |`);
     lines.push(`|-------|-------|`);
     lines.push(`| Mode | ${snap.mode} |`);
+    if (snap.runtimePolicy) {
+      lines.push(`| Runtime Policy | ${snap.runtimePolicy} |`);
+    }
     lines.push(`| Total Cycles | ${snap.cycle} |`);
     lines.push(`| Total Iterations | ${snap.iteration} |`);
     lines.push(`| Final Node | ${snap.currentNode} |`);
@@ -181,6 +208,9 @@ export class AutonomousProgressReporter {
     }
     if (snap.paperCandidateStatus) {
       lines.push(`| Paper Candidate | ${snap.paperCandidateStatus} |`);
+    }
+    if (snap.writePaperGateBlocked != null) {
+      lines.push(`| Write-Paper Gate | ${snap.writePaperGateBlocked ? "⛔ BLOCKED" : "✅ PASSED"} |`);
     }
 
     lines.push("");
