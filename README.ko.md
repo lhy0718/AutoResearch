@@ -13,7 +13,25 @@
     <a href="./README.md"><strong>English</strong></a>
     &nbsp;&middot;&nbsp;
     <a href="./README.ko.md"><strong>한국어</strong></a>
+    &nbsp;&middot;&nbsp;
+    <a href="./README.ja.md"><strong>日本語</strong></a>
+    &nbsp;&middot;&nbsp;
+    <a href="./README.zh-CN.md"><strong>简体中文</strong></a>
+    &nbsp;&middot;&nbsp;
+    <a href="./README.zh-TW.md"><strong>繁體中文</strong></a>
+    &nbsp;&middot;&nbsp;
+    <a href="./README.es.md"><strong>Español</strong></a>
+    &nbsp;&middot;&nbsp;
+    <a href="./README.fr.md"><strong>Français</strong></a>
+    &nbsp;&middot;&nbsp;
+    <a href="./README.de.md"><strong>Deutsch</strong></a>
+    &nbsp;&middot;&nbsp;
+    <a href="./README.pt.md"><strong>Português</strong></a>
+    &nbsp;&middot;&nbsp;
+    <a href="./README.ru.md"><strong>Русский</strong></a>
   </p>
+
+  <p><sub>다른 언어 README는 같은 구조의 개요 번역입니다. 가장 상세한 기술 기준 문서는 영어 README입니다.</sub></p>
 
   <!-- CI & Quality -->
   <p>
