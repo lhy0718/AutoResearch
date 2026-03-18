@@ -204,7 +204,7 @@ Your lab learns from its own failures within a run.
 Paper readiness is not a single LLM judgment call.
 
 - **Layer 1 — Deterministic minimum gate**: 7 artifact-presence checks that categorically block under-evidenced work from entering `write_paper`. No LLM involved. Pass or fail.
-- **Layer 2 — LLM paper-quality evaluator**: Structured critique across 11 dimensions — claim verification, methodology, statistical rigor, related-work depth, writing readiness, and more. Produces blocking issues, non-blocking issues, and a manuscript-type classification.
+- **Layer 2 — LLM paper-quality evaluator**: Structured critique across 6 dimensions — result significance, methodology rigor, evidence strength, writing structure, claim support, and limitations honesty. Produces blocking issues, non-blocking issues, and a manuscript-type classification.
 
 If evidence is insufficient, the system recommends backtracking — not polishing.
 
@@ -255,8 +255,6 @@ Designed for sustained hypothesis → experiment → analysis loops with minimal
 2. **Paper-quality improvement** — identify strongest branch, tighten baselines, strengthen evidence linkage
 
 Stops on: explicit user stop, resource limits, stagnation detection, or catastrophic failure. Does **not** stop merely because one experiment was negative or paper quality is temporarily flat.
-
-Writes a live `RUN_STATUS.md` tracking current cycle, hypothesis, evidence gaps, gate status, and stop risk.
 
 ---
 
