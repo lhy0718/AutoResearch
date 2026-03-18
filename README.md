@@ -12,26 +12,26 @@
   <p>
     <a href="./README.md"><strong>English</strong></a>
     &nbsp;&middot;&nbsp;
-    <a href="./README.ko.md"><strong>한국어</strong></a>
+    <a href="./docs/README.ko.md"><strong>한국어</strong></a>
     &nbsp;&middot;&nbsp;
-    <a href="./README.ja.md"><strong>日本語</strong></a>
+    <a href="./docs/README.ja.md"><strong>日本語</strong></a>
     &nbsp;&middot;&nbsp;
-    <a href="./README.zh-CN.md"><strong>简体中文</strong></a>
+    <a href="./docs/README.zh-CN.md"><strong>简体中文</strong></a>
     &nbsp;&middot;&nbsp;
-    <a href="./README.zh-TW.md"><strong>繁體中文</strong></a>
+    <a href="./docs/README.zh-TW.md"><strong>繁體中文</strong></a>
     &nbsp;&middot;&nbsp;
-    <a href="./README.es.md"><strong>Español</strong></a>
+    <a href="./docs/README.es.md"><strong>Español</strong></a>
     &nbsp;&middot;&nbsp;
-    <a href="./README.fr.md"><strong>Français</strong></a>
+    <a href="./docs/README.fr.md"><strong>Français</strong></a>
     &nbsp;&middot;&nbsp;
-    <a href="./README.de.md"><strong>Deutsch</strong></a>
+    <a href="./docs/README.de.md"><strong>Deutsch</strong></a>
     &nbsp;&middot;&nbsp;
-    <a href="./README.pt.md"><strong>Português</strong></a>
+    <a href="./docs/README.pt.md"><strong>Português</strong></a>
     &nbsp;&middot;&nbsp;
-    <a href="./README.ru.md"><strong>Русский</strong></a>
+    <a href="./docs/README.ru.md"><strong>Русский</strong></a>
   </p>
 
-  <p><sub>Localized README files are aligned overview translations. For the most exhaustive technical detail, use the English README as the canonical reference.</sub></p>
+  <p><sub>Localized README files are maintained translations of this document. For normative wording and latest edits, use the English README as the canonical reference.</sub></p>
 
   <!-- CI & Quality -->
   <p>

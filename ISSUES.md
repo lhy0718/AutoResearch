@@ -8,6 +8,36 @@ Last updated: 2026-03-18 · 931/933 tests pass (2 skipped: zzz_noProjectRootLeak
 
 None — all tracked issues are resolved or mitigated. See sections below for historical records.
 
+### LV-028 — Harness validation misses ISSUES.md when workspace is a subdirectory
+- Status: FIXED (not reproduced in re-validation of the same flow)
+- Taxonomy: `persisted_state_bug`
+- Validation target: `/doctor` harness-validation check from `test/` workspace
+- Environment: `test/` workspace (subdirectory of project root)
+- Reproduction: `/doctor` runs `runHarnessValidation({ workspaceRoot: "test/" })`. Harness looks for `path.join(workspaceRoot, "ISSUES.md")` → `test/ISSUES.md`. The real file lives at project root `./ISSUES.md`. No fallback → `issues_file_missing` finding raised.
+- Expected: Harness finds `ISSUES.md` when it lives in the parent directory of the workspace
+- Actual: `issues_file_missing` finding, even though ISSUES.md exists one level up
+- Root cause: `runHarnessValidation()` only checked `workspaceRoot` for ISSUES.md with no parent-directory fallback
+- Fix: Added parent-directory fallback — when ISSUES.md is not found in `workspaceRoot`, check `path.dirname(workspaceRoot)/ISSUES.md` before raising the finding
+- Files changed: `src/core/validation/harnessValidationService.ts` (~line 73-89)
+- Tests: Regression test added in `tests/harnessValidationService.test.ts`
+- Re-validation: `/doctor` harness-validation passes with ISSUES.md at project root and workspace at `test/`
+- Adjacent regression: None
+
+### LV-029 — Stale "running" node persists after TUI process kill / resume
+- Status: FIXED (not reproduced in re-validation of the same flow)
+- Taxonomy: `resume_reload_bug`
+- Validation target: TUI restart after process termination during node execution
+- Environment: `test/` workspace, run `02e7a6ee`, `implement_experiments` node
+- Reproduction: TUI process terminated (kill/Ctrl-C) while `implement_experiments` is in "running" state → node status persisted as "running" → TUI restart displays "implement_experiments running" but no execution is happening → `/approve` rejected ("node not in needs_approval state") → `/resume` restores state but does not trigger execution → node stuck indefinitely
+- Expected: On TUI restart, stale "running" nodes should be detected and recovered to an executable state
+- Actual: Node stuck in "running" with no execution; no recovery path available
+- Root cause: 5-point failure chain: (1) TUI startup has no auto-detection of stale running nodes; (2) `/resume` only restores state, doesn't trigger execution; (3) `runtime.resume()` keeps "running" status; (4) `defaultRunStatusForGraph()` maps "running" → "running"; (5) no progress recovery in node session manager
+- Fix: Added `recoverStaleRunningNode()` method to `TerminalApp.ts` — on TUI startup, detects nodes in "running" state and calls `orchestrator.retryCurrent()` to reset them, making them re-executable
+- Files changed: `src/tui/TerminalApp.ts` (modified `start()` at ~line 317; added `recoverStaleRunningNode()` at ~line 4515)
+- Tests: Regression test added in `tests/agentOrchestrator.test.ts`
+- Re-validation: TUI restart correctly shows `implement_experiments pending` instead of stale `running`; `/retry` successfully triggers execution
+- Adjacent regression: None
+
 ---
 
 ## Open risks

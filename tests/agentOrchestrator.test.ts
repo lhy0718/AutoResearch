@@ -641,6 +641,42 @@ describe("AgentOrchestrator (state graph)", () => {
     expect(latest?.graph.nodeStates.analyze_papers.status).toBe("completed");
   });
 
+  it("recovers a stale running node via retryCurrent (LV-029)", async () => {
+    const { store, orchestrator } = await setup(new DeterministicRegistry({}));
+
+    const run = await store.createRun({
+      title: "Run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    // Execute collect_papers to create checkpoints and advance state
+    await orchestrator.runAgent(run.id, "collect_papers");
+
+    // Simulate stale state: TUI was killed while node was running
+    const stale = await store.getRun(run.id);
+    expect(stale).toBeTruthy();
+    if (!stale) throw new Error("Run missing");
+
+    stale.currentNode = "analyze_papers";
+    stale.graph.currentNode = "analyze_papers";
+    stale.graph.nodeStates.analyze_papers = {
+      ...stale.graph.nodeStates.analyze_papers,
+      status: "running",
+      updatedAt: new Date().toISOString(),
+      note: "in progress before kill"
+    };
+    stale.status = "running";
+    await store.updateRun(stale);
+
+    // Recovery: this is what recoverStaleRunningNode calls
+    const recovered = await orchestrator.retryCurrent(run.id, "analyze_papers");
+
+    expect(recovered.graph.nodeStates.analyze_papers.status).toBe("running");
+    expect(recovered.graph.nodeStates.analyze_papers.note).toBe("manual retry");
+  });
+
   it("cancels a running agent task with abort signal", async () => {
     const registry = new DeterministicRegistry({
       collect_papers: cancellableSlowNode("collect_papers", 1000)

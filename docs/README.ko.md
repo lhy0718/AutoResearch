@@ -10,7 +10,7 @@
   문헌 조사에서 원고 작성까지, 통제되고 체크포인트되며 검토 가능한 루프 안에서 진행합니다.</p>
 
   <p>
-    <a href="./README.md"><strong>English</strong></a>
+    <a href="../README.md"><strong>English</strong></a>
     &nbsp;&middot;&nbsp;
     <a href="./README.ko.md"><strong>한국어</strong></a>
     &nbsp;&middot;&nbsp;
@@ -31,7 +31,7 @@
     <a href="./README.ru.md"><strong>Русский</strong></a>
   </p>
 
-  <p><sub>다른 언어 README는 같은 구조의 개요 번역입니다. 가장 상세한 기술 기준 문서는 영어 README입니다.</sub></p>
+  <p><sub>다른 언어 README도 이 문서를 기준으로 관리되는 번역본입니다. 규범 문구와 최신 변경 기준은 영어 README입니다.</sub></p>
 
   <!-- CI & Quality -->
   <p>

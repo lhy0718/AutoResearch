@@ -315,9 +315,15 @@ export class TerminalApp {
   }
 
   async start(): Promise<void> {
+    // Prevent unhandled EIO/EPIPE crashes when stdout disconnects
+    process.stdout.on("error", () => {
+      this.stopped = true;
+    });
+
     await this.refreshRunIndex();
     if (this.activeRunId) {
       await this.loadHistoryForRun(this.activeRunId);
+      await this.recoverStaleRunningNode(this.activeRunId);
     }
     this.unsubscribeEvents = this.eventStream.subscribe((event) => {
       void this.handleStreamEvent(event);
@@ -4512,6 +4518,22 @@ export class TerminalApp {
     this.historyLoadedRunId = runId;
   }
 
+  /**
+   * Detect stale "running" nodes from a previous TUI session and reset them
+   * to "pending" so they can be re-executed. When the TUI restarts, any node
+   * marked "running" has lost its in-memory execution context.
+   */
+  private async recoverStaleRunningNode(runId: string): Promise<void> {
+    const run = this.runIndex.find((r) => r.id === runId);
+    if (!run) return;
+    const nodeState = run.graph.nodeStates[run.currentNode];
+    if (nodeState?.status !== "running") return;
+
+    this.pushLog(`Recovering stale running node: ${run.currentNode} (reset to pending for re-execution).`);
+    await this.orchestrator.retryCurrent(run.id, run.currentNode);
+    await this.refreshRunIndex();
+  }
+
   private historyFilePath(runId: string): string {
     return path.join(process.cwd(), ".autolabos", "runs", runId, "tui_history.json");
   }
@@ -4668,14 +4690,19 @@ export class TerminalApp {
     this.transcriptScrollOffset = frame.appliedTranscriptScrollOffset;
     this.lastRenderedFrame = frame;
 
-    process.stdout.write("\x1b[2J\x1b[H");
-    process.stdout.write(frame.lines.join("\n"));
+    try {
+      process.stdout.write("\x1b[2J\x1b[H");
+      process.stdout.write(frame.lines.join("\n"));
 
-    const up = frame.lines.length - frame.inputLineIndex;
-    if (up > 0) {
-      process.stdout.write(`\x1b[${up}A`);
+      const up = frame.lines.length - frame.inputLineIndex;
+      if (up > 0) {
+        process.stdout.write(`\x1b[${up}A`);
+      }
+      process.stdout.write(`\x1b[${frame.inputColumn}G`);
+    } catch {
+      // stdout disconnected (EIO/EPIPE) — stop rendering to avoid crash
+      this.stopped = true;
     }
-    process.stdout.write(`\x1b[${frame.inputColumn}G`);
   }
 
   private getContextualGuidance(run = this.getRenderableRun()) {

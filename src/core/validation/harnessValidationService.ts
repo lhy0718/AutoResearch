@@ -71,8 +71,16 @@ export async function runHarnessValidation(options: HarnessValidationOptions): P
   const findings: HarnessValidationFinding[] = [];
 
   let issueEntryCount = 0;
-  if (await fileExists(issuesPath)) {
-    const issueResult = await validateLiveValidationIssueFile(issuesPath);
+  let resolvedIssuesPath = issuesPath;
+  if (!(await fileExists(resolvedIssuesPath))) {
+    // Fall back to parent directory (e.g. project root when workspace is test/)
+    const parentCandidate = path.join(path.dirname(workspaceRoot), "ISSUES.md");
+    if (await fileExists(parentCandidate)) {
+      resolvedIssuesPath = parentCandidate;
+    }
+  }
+  if (await fileExists(resolvedIssuesPath)) {
+    const issueResult = await validateLiveValidationIssueFile(resolvedIssuesPath);
     issueEntryCount = issueResult.issueCount;
     for (const issue of issueResult.issues) {
       findings.push(classifyFinding(issue, "issue_log"));
