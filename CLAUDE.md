@@ -1,42 +1,8 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working in this repository.
 
-## Commands
-
-    # Install dependencies (also installs web sub-package)
-    npm install
-
-    # Build TypeScript + web UI bundle
-    npm run build
-
-    # Run all unit tests (vitest, file parallelism disabled)
-    npm test
-
-    # Watch mode during development
-    npm run test:watch
-
-    # Run a single test file
-    npx vitest run tests/<test-file>.test.ts
-
-    # Start TUI without build step
-    npm run dev
-
-    # Start local web UI (builds web assets, then launches server)
-    npm run dev:web
-
-    # Smoke tests
-    npm run test:smoke:natural-collect
-    npm run test:smoke:natural-collect-execute
-    npm run test:smoke:all
-    npm run test:smoke:ci
-
-Smoke test env vars:
-- `AUTOLABOS_FAKE_CODEX_RESPONSE=1`
-- `AUTOLABOS_FAKE_SEMANTIC_SCHOLAR_RESPONSE=1`
-- `AUTOLABOS_SMOKE_VERBOSE=1`
-
-## Repository contract
+## Read first
 
 Follow these first:
 
@@ -51,151 +17,139 @@ Follow these first:
 - `docs/live-validation-issue-template.md`
 - `docs/research-brief-template.md`
 
-Unless there is an explicit, justified contract change:
-- preserve the top-level workflow contract
-- prefer small, validated fixes over broad refactors
-- keep `review` as a structural gate
-- do not overclaim beyond artifacts
-- do not confuse `workflow completed`, `write_paper completed`, `PDF built`, and `paper_ready`
+If this file conflicts with them, those docs win.
 
-## Architecture overview
+## Mission
 
-AutoLabOS is a TypeScript/ESM CLI (`npm run build` → `dist/cli/main.js`) that automates the scientific research loop through a state-graph workflow.
+AutoLabOS validates a 9-node research workflow through real TUI/web interaction and produces evidence-grounded artifacts.
 
-Two UI surfaces share the same runtime:
-- a slash-first TUI
-- a local web ops UI
+Always prioritize:
 
-Workspace state lives under `.autolabos/` in the active project directory.
+1. correct live behavior
+2. state and artifact consistency
+3. reproducible validation
+4. honest scientific writing
+5. paper-readiness only when the bar is actually met
 
-### Source layout
+Do not confuse:
 
-    src/
-      cli/
-      runtime/
-      core/
-        stateGraph/
-        nodes/
-        agents/
-        analysis/
-        commands/
-        runs/
-        memory/
-        llm/
-        collection/
-        evaluation/
-        experiments/
-      integrations/
-      interaction/
-      tui/
-      tools/
-      web/
-      config.ts
-      types.ts
-    web/
-    tests/
-    tests/smoke/
-    .agents/skills/
+- workflow completed
+- `write_paper` completed
+- PDF built
+- paper-ready manuscript
 
-### Important runtime facts
+These are not the same.
 
-- Runtime bootstrap lives in `src/runtime/createRuntime.ts`
-- Shared interaction/session logic lives in `src/interaction/InteractionSession.ts`
-- TUI surface lives in `src/tui/`
-- Web surface lives in `src/web/`
-- Runs and artifacts are stored under `.autolabos/`
-- Internal panels and review systems may exist inside nodes, but do not silently assume this changes the top-level workflow contract
+## Core rules
 
-## Required operating mode for real validation work
+- Do not change the top-level 9-node workflow unless explicitly required.
+- Prefer small, validated fixes over broad refactors.
+- Do not claim a fix until the same live flow has been rerun.
+- Do not overclaim beyond the evidence in produced artifacts.
+- Lower claim strength when evidence is weak.
+- `review` is a gate, not a polish pass.
 
-When the task is to run a real AutoLabOS TUI validation → fix → revalidation loop, use the following skills explicitly:
+## Runtime map
 
-- `tui-live-validation`
-- `tui-validation-loop-automation`
-- `paper-scale-research-loop`
-- `stale-state-triage`
+Important paths:
+
+- runtime bootstrap: `src/runtime/createRuntime.ts`
+- shared session logic: `src/interaction/InteractionSession.ts`
+- TUI: `src/tui/`
+- web UI: `src/web/`
+- run state/artifacts: `.autolabos/`
+- project skills: `.agents/skills/`
+
+## Commands
+
+- install: `npm install`
+- build: `npm run build`
+- test: `npm test`
+- watch tests: `npm run test:watch`
+- single test: `npx vitest run tests/<test-file>.test.ts`
+- dev TUI: `npm run dev`
+- dev web: `npm run dev:web`
+- smoke: `npm run test:smoke:natural-collect`
+- smoke execute: `npm run test:smoke:natural-collect-execute`
+- smoke all: `npm run test:smoke:all`
+- smoke ci: `npm run test:smoke:ci`
+
+Useful smoke env vars:
+
+- `AUTOLABOS_FAKE_CODEX_RESPONSE=1`
+- `AUTOLABOS_FAKE_SEMANTIC_SCHOLAR_RESPONSE=1`
+- `AUTOLABOS_SMOKE_VERBOSE=1`
+
+## Skills
+
+Available skills:
+
 - `execution-mode-matrix-validation`
 - `paper-build-output-hygiene`
+- `paper-scale-research-loop`
+- `stale-state-triage`
+- `tui-live-validation`
+- `tui-live-validation-research-loop`
+- `tui-validation-loop-automation`
 
-Use `tui-live-validation-research-loop` as the top-level operating skill when appropriate.
+Use them intentionally:
 
-## Fixed broad research topic for validation loops
+- `tui-live-validation`: reproduce or verify real TUI issues
+- `stale-state-triage`: stale UI, refresh, resume, projection mismatch
+- `tui-validation-loop-automation`: validation -> fix -> rerun loop
+- `execution-mode-matrix-validation`: verify multiple execution modes
+- `paper-build-output-hygiene`: check output bundle and paper artifacts
+- `paper-scale-research-loop`: improve experiment/manuscript quality
+- `tui-live-validation-research-loop`: use when live validation and research-quality iteration are both required
 
-For the current research-validation loop, keep the broad topic fixed as:
+## Validation loop
 
-**Efficient Test-Time Reasoning for Small Language Models**
+For real validation work, do this:
 
-Important:
-- keep the broad topic fixed unless the user explicitly changes it
-- do not lock one narrow hypothesis too early
-- allow AutoLabOS to iteratively generate, test, revise, branch, and prune hypotheses inside this topic area
-- the brief should define the broad topic, constraints, baselines/comparators, and evaluation plan
-- hypotheses may evolve during the loop
-
-## test/ is the live execution environment
-
-For real TUI validation work:
-
-- use `test/` itself as the active AutoLabOS execution environment
-- do not default to creating `test/<run>/` workspaces unless runtime mechanics absolutely require nested internal run directories
-- launch, resume, inspect, and validate TUI flows from `test/`
-- keep automated tests under `tests/`
-- do not confuse `test/` with `tests/`
-
-If the runtime assumes a different workspace layout, fix it so `test/` can act as the direct operator-facing validation environment cleanly.
-
-## Execution-mode coverage is mandatory
-
-Do not validate only one happy-path mode.
-
-Enumerate and validate all execution modes currently exposed by the repository, including when present:
-
-- normal interactive TUI execution
-- fresh-session execution
-- resumed/existing-session execution
-- unattended / long-running execution
-- Overnight Mode
-- Autonomous Mode
-- draft / paper-generation paths
-- any alternate entry path that materially changes runtime behavior, artifact generation, gating, or output layout
-
-For each mode, verify:
-- discoverability
-- operator clarity
-- policy/config activation
-- artifact/output behavior
-- resume/reload behavior when relevant
-- review/write_paper gate behavior when relevant
-- TeX→PDF behavior when relevant
-- cross-mode regressions after each fix
-
-Do not assume fixing one mode fixes all others.
-
-## TUI validation loop rule
-
-When doing real validation work, the loop must be:
-
-1. run `/doctor` first
+1. run `/doctor`
 2. reproduce in a fresh session
-3. compare against an existing/resumed session when relevant
+3. compare with resumed/existing session when relevant
 4. record the issue in `ISSUES.md`
 5. patch the smallest plausible root cause
-6. add/update deterministic tests under `tests/`
+6. add or update deterministic tests in `tests/`
 7. rerun the same flow
 8. check adjacent regressions
 9. check cross-mode regressions
-10. repeat until paper quality no longer improves
 
-Do not stop merely because:
-- one workflow run completed
-- TeX was generated
-- PDF was generated once
+Do not stop just because one run, TeX build, or PDF build succeeded once.
+
+## `test/` vs `tests/`
+
+Do not confuse them:
+
+- `test/` = operator-facing live execution environment
+- `tests/` = automated tests
+
+For real validation:
+
+- use `test/` as the active workspace
+- keep automated tests under `tests/`
+- do not replace live validation with unit tests only
+
+## Execution-mode coverage
+
+Do not validate only one happy path.
+
+Check all exposed modes that materially affect behavior, gating, artifacts, or operator UX, including when present:
+
+- normal interactive execution
+- fresh-session execution
+- resumed-session execution
+- unattended or long-running execution
+- Overnight Mode
+- Autonomous Mode
+- paper-generation paths
+- alternate entry paths
 
 ## ISSUES.md discipline
 
-`ISSUES.md` is the live validation tracker.
+For each live-validation issue, record:
 
-Always record:
 - validation target
 - environment/session context
 - reproduction steps
@@ -207,39 +161,33 @@ Always record:
 - regression status
 - follow-up risks
 
-Use exactly one dominant taxonomy per issue:
+Use exactly one dominant taxonomy:
+
 - `persisted_state_bug`
 - `in_memory_projection_bug`
 - `refresh_render_bug`
 - `resume_reload_bug`
 - `race_timing_bug`
 
-## Output hygiene and artifact-generation rules
+## Artifact rules
 
 AutoLabOS must generate its own artifacts.
 
-Do not manually create, hand-author, or substitute:
+Do not manually substitute for:
+
 - experiment summaries
 - result artifacts
 - research README artifacts
 - TeX outputs
 - PDF outputs
 - paper bundle artifacts
-- structured result summaries
+- structured summaries
 
-If an expected artifact is missing or malformed:
-- fix the relevant node
-- fix the prompt
-- fix the config
-- fix the runtime path
-- fix the wiring
-- fix the bundling logic
+If an expected artifact is missing or malformed, fix the responsible node, prompt, config, path, wiring, or bundling logic.
 
-Do not fake the output outside the product workflow.
+Do not fake outputs outside the workflow.
 
-### Output bundle rule
-
-Reproducibility-facing outputs should be visible under:
+Operator-facing outputs should be visible under:
 
 - `test/output/README.md`
 - `test/output/reproduce/`
@@ -247,91 +195,60 @@ Reproducibility-facing outputs should be visible under:
 - `test/output/paper/`
 - `test/output/artifacts/`
 
-If canonical runtime paths must remain elsewhere, keep them working, but also provide a coherent operator-facing bundle under `test/output/`.
+## Paper/build rules
 
-Avoid:
-- unnecessary files/folders
-- duplicate summaries
-- redundant artifacts
-- scattered important outputs outside the intended run area
-
-## Brief and manuscript-format requirements
-
-The research brief must explicitly carry manuscript-format constraints:
-- target column count
-- target main-paper page budget
-- whether References are excluded
-- whether Appendices are excluded
-
-For the current validation loop, require:
-- 2 columns
-- 8 pages main body
-- References excluded from the page limit
-- Appendices excluded from the page limit
-
-These constraints must be actively used by manuscript generation to:
-- plan section length
-- control density
-- avoid under-length drafts
-- avoid uncontrolled overflow
-- surface target violations
-- report page-budget compliance or deviation in visible artifacts
-
-## TeX → PDF validation rule
-
-Do not stop at TeX generation alone.
+Do not stop at TeX generation.
 
 During live validation:
+
 - require TeX generation
 - require actual PDF generation
-- treat “TeX exists but PDF was not generated” as incomplete validation unless the failure is caused by a clearly documented environment/toolchain constraint
-- if PDF generation fails, diagnose whether the cause is:
-  - missing TeX toolchain
-  - malformed generated TeX
-  - missing assets / references / paths
-  - runtime/output wiring
+- treat “TeX exists but PDF missing” as incomplete unless a clear environment/toolchain constraint is documented
 
-Record the failure in `ISSUES.md`, fix the smallest plausible root cause where possible, and rerun the TeX→PDF flow.
+If PDF generation fails, diagnose whether the cause is:
+
+- missing TeX toolchain
+- malformed generated TeX
+- missing assets/references/paths
+- runtime/output wiring
 
 Do not manually author TeX or PDF as a substitute.
 
-## Scientific writing / agent behavior principles
+## Research and writing rules
 
-- Claims must not exceed what the evidence supports
-- Weak evidence requires weaker language
-- Manuscript completeness requires explicit method details, result variance or equivalent support, and internal consistency checks
-- Use claim→evidence traceability
-- Never fabricate statistics, confidence intervals, or reproducibility claims without artifacts
-- Negative results are allowed, but they must be framed honestly
-- Baseline/comparator, quantitative comparison, and claim→evidence linkage are required for serious paper-readiness claims
-- `review` and `write_paper` must continue to respect evidence-quality gates
+Every serious paper-target run should have:
 
-## Test conventions
+- a clear research question
+- a falsifiable hypothesis
+- a baseline or comparator
+- real executed experiments
+- quantitative results
+- claim-to-evidence linkage
+- limitations or failure modes
 
-- All unit tests are under `tests/` as `*.test.ts`
-- Smoke tests live under `tests/smoke/`
-- Tests frequently switch `process.cwd()` to isolated temp workspaces
-- Run a single unit test with:
-  - `npx vitest run tests/<name>.test.ts`
+Rules:
 
-For live validation work:
-- add or update regression tests for the bug being fixed
-- add or update tests for output-path routing and artifact generation when relevant
-- add or update tests for mode-specific behavior when relevant
-- add or update tests for TeX→PDF behavior when relevant
-- do not rely on tests alone; always rerun the actual live flow
+- claims must not exceed evidence
+- weak evidence requires weaker language
+- negative results are acceptable if honest
+- do not fabricate statistics or reproducibility claims
+- if the evidence is not strong enough, explicitly downgrade the output
 
-## Completion rule
+## Definition of done
 
-Do not declare success merely because one path worked once.
+Do not report success unless:
 
-Only treat a live issue as fixed when:
-- it was reproduced
-- the fix was applied
-- relevant tests pass
-- the same live flow was rerun
-- adjacent regressions were checked
-- cross-mode regressions were checked
-- remaining risks were documented
-- paper-quality-relevant artifacts improved or clearly plateaued
-- all exposed execution modes were exercised
+- the issue was reproduced
+- the same flow was rerun after the change
+- the original symptom no longer reproduces
+- relevant tests were rerun
+- key artifacts were checked
+- adjacent regression risk was reviewed
+- remaining risks were stated
+
+For paper-target work, also require:
+
+- executed experiments with a baseline
+- quantitative results
+- clear claim-to-evidence linkage
+- passing `review`, or an explicit blocked decision
