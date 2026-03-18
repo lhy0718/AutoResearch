@@ -4,6 +4,12 @@ Last updated: 2026-03-18 · 931/933 tests pass (2 skipped: zzz_noProjectRootLeak
 
 ---
 
+## Active issues
+
+None — all tracked issues are resolved or mitigated. See sections below for historical records.
+
+---
+
 ## Open risks
 
 ### R-001 — Result-table discipline and claim→evidence linkage
