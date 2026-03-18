@@ -51,6 +51,22 @@ describe("normalizeConstraintProfile", () => {
     });
   });
 
+  it("sanitizes llm-generated queries to Semantic Scholar-friendly free text and prioritizes them", () => {
+    const candidates = buildLiteratureQueryCandidates({
+      runTopic: "Budget-aware test-time reasoning for small language models",
+      llmGeneratedQueries: ["adaptive test-time reasoning", 'title:"test-time reasoning" AND small language models']
+    });
+
+    expect(candidates[0]).toEqual({
+      query: "adaptive test-time reasoning",
+      reason: "llm_generated"
+    });
+    expect(candidates).not.toContainEqual({
+      query: 'title:"test-time reasoning" AND small language models',
+      reason: "llm_generated"
+    });
+  });
+
   it("drops invalid llm-derived collect date filters instead of treating freeform prose as a date range", () => {
     const profile = normalizeConstraintProfile(
       {

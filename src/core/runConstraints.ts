@@ -35,6 +35,7 @@ export interface LiteratureQueryCandidate {
   query: string;
   reason:
     | "requested_query"
+    | "llm_generated"
     | "brief_topic"
     | "run_topic"
     | "constraint_stripped"
@@ -226,6 +227,7 @@ export function extractResearchBriefTopic(rawBrief: string | undefined): string 
 export function buildLiteratureQueryCandidates(input: {
   requestedQuery?: string;
   runTopic: string;
+  llmGeneratedQueries?: string[];
   extractedBriefTopic?: string;
   briefTopic?: string;
 }): LiteratureQueryCandidate[] {
@@ -242,18 +244,28 @@ export function buildLiteratureQueryCandidates(input: {
   };
 
   const requested = normalizeLiteratureQuery(input.requestedQuery);
+  const llmGeneratedQueries = sanitizeSemanticScholarQueryList(input.llmGeneratedQueries || []);
   const extractedBriefTopic = normalizeLiteratureQuery(input.extractedBriefTopic);
   const briefTopic = normalizeLiteratureQuery(input.briefTopic);
   const runTopic = normalizeLiteratureQuery(input.runTopic);
   const strippedRequested = stripLiteratureConstraintPhrases(requested);
+  const strippedLlmGeneratedQueries = sanitizeSemanticScholarQueryList(
+    llmGeneratedQueries.map((query) => stripLiteratureConstraintPhrases(query))
+  );
   const strippedExtractedBriefTopic = stripLiteratureConstraintPhrases(extractedBriefTopic);
   const strippedBriefTopic = stripLiteratureConstraintPhrases(briefTopic);
   const strippedRunTopic = stripLiteratureConstraintPhrases(runTopic);
 
   pushCandidate(requested, "requested_query");
+  for (const query of llmGeneratedQueries) {
+    pushCandidate(query, "llm_generated");
+  }
   pushCandidate(extractedBriefTopic, "brief_topic");
   pushCandidate(briefTopic, "brief_topic");
   pushCandidate(strippedRequested, "constraint_stripped");
+  for (const query of strippedLlmGeneratedQueries) {
+    pushCandidate(query, "constraint_stripped");
+  }
   pushCandidate(strippedExtractedBriefTopic, "constraint_stripped");
   pushCandidate(strippedBriefTopic, "constraint_stripped");
   pushCandidate(strippedRunTopic, "constraint_stripped");
@@ -261,8 +273,10 @@ export function buildLiteratureQueryCandidates(input: {
   pushCandidate(
     buildKeywordAnchorQuery(
       strippedRequested ||
+        strippedLlmGeneratedQueries[0] ||
         strippedExtractedBriefTopic ||
         strippedBriefTopic ||
+        llmGeneratedQueries[0] ||
         extractedBriefTopic ||
         briefTopic ||
         strippedRunTopic ||
@@ -309,6 +323,45 @@ function normalizeLiteratureQuery(value: string | undefined): string | undefined
     .replace(/[.?!,:;]+$/u, "")
     .trim();
   return cleaned || undefined;
+}
+
+export function sanitizeSemanticScholarQueryList(values: Array<string | undefined>): string[] {
+  const results: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const normalized = sanitizeSemanticScholarFreeTextQuery(value);
+    if (!normalized) {
+      continue;
+    }
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    results.push(normalized);
+  }
+  return results;
+}
+
+export function sanitizeSemanticScholarFreeTextQuery(value: string | undefined): string | undefined {
+  const normalized = normalizeLiteratureQuery(value);
+  if (!normalized) {
+    return undefined;
+  }
+
+  const cleaned = normalized
+    .replace(/```/gu, " ")
+    .replace(
+      /\b(?:title|abstract|author|authors|venue|journal|year|paperid|doi|fieldsofstudy|fields[\s_-]*of[\s_-]*study)\s*:/giu,
+      " "
+    )
+    .replace(/\b(?:and|or|not)\b/giu, " ")
+    .replace(/["'`()[\]{}<>]/gu, " ")
+    .replace(/[,:;|+=]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+
+  return normalizeLiteratureQuery(cleaned);
 }
 
 function stripLiteratureConstraintPhrases(value: string | undefined): string | undefined {

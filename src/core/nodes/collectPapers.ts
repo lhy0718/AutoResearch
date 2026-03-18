@@ -1,6 +1,7 @@
 import { GraphNodeHandler } from "../stateGraph/types.js";
 import { appendJsonl, safeRead, writeRunArtifact } from "./helpers.js";
 import { NodeExecutionDeps } from "./types.js";
+import { resolveGeneratedLiteratureQueries } from "../literatureQueryGeneration.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { LongTermStore } from "../memory/longTermStore.js";
 import {
@@ -216,11 +217,25 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       const requestFromContext = await runContextMemory.get<CollectPapersNodeRequest>("collect_papers.request");
       const rawBrief = await runContextMemory.get<string>("run_brief.raw");
       const extractedBrief = await runContextMemory.get<{ topic?: string }>("run_brief.extracted");
+      const generatedQueries =
+        requestFromContext?.query
+          ? undefined
+          : await resolveGeneratedLiteratureQueries({
+              run,
+              rawBrief,
+              extractedBriefTopic: extractedBrief?.topic,
+              runContextMemory,
+              llm: deps.llm,
+              eventStream: deps.eventStream,
+              node: "collect_papers",
+              abortSignal
+            });
       const normalizedRequest = normalizeCollectRequest({
         request: requestFromContext,
         topic: run.topic,
         rawBrief,
         extractedBriefTopic: extractedBrief?.topic,
+        llmGeneratedQueries: generatedQueries?.queries,
         constraintProfile,
         configuredLimit: deps.config.papers.max_results
       });
@@ -602,6 +617,7 @@ function normalizeCollectRequest(input: {
   topic: string;
   rawBrief?: string;
   extractedBriefTopic?: string;
+  llmGeneratedQueries?: string[];
   constraintProfile: { collect: CollectPapersNodeRequest["filters"] };
   configuredLimit: number;
 }): PreparedCollectRequestPlan {
@@ -624,6 +640,7 @@ function normalizeCollectRequest(input: {
   const queryCandidates = buildLiteratureQueryCandidates({
     requestedQuery,
     runTopic: input.topic,
+    llmGeneratedQueries: input.llmGeneratedQueries,
     extractedBriefTopic: input.extractedBriefTopic,
     briefTopic
   });

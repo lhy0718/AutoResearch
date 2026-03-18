@@ -2077,4 +2077,208 @@ describe("collectPapers bibtex", () => {
       'Semantic Scholar stored 2 papers for "Multi-Agent Collaboration". Deferred enrichment finished for 2 paper(s). PDF recovered 0; BibTeX enriched 0.'
     );
   });
+
+  it("uses llm-generated Semantic Scholar free-text queries from the brief topic before raw topic fallbacks", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-llm-query-"));
+    process.chdir(root);
+
+    const runId = "run-collect-llm-query";
+    const run: RunRecord = {
+      version: 3,
+      workflowVersion: 3,
+      id: runId,
+      title: "Reasoning Query Generation",
+      topic: "Budget-aware test-time reasoning for small language models",
+      constraints: [],
+      objectiveMetric: "GSM8K accuracy",
+      status: "running",
+      currentNode: "collect_papers",
+      latestSummary: undefined,
+      nodeThreads: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      graph: createDefaultGraphState(),
+      memoryRefs: {
+        runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
+      }
+    };
+
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "run_brief.raw",
+            value: [
+              "# Research Brief",
+              "",
+              "## Topic",
+              "Budget-aware test-time reasoning for small language models",
+              "",
+              "## Research Question",
+              "Can adaptive test-time reasoning improve GSM8K accuracy for small language models?"
+            ].join("\n"),
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const streamSearchPapers = vi.fn(async function* (_request: { query: string }) {
+      yield [
+        {
+          paperId: "paper-1",
+          title: "Adaptive Test-Time Reasoning for Small Language Models",
+          authors: ["Alice Kim"]
+        }
+      ];
+    });
+
+    const node = createCollectPapersNode({
+      config: {
+        papers: {
+          max_results: 200
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new JsonLLMClient(
+        JSON.stringify({
+          queries: ["adaptive test-time reasoning", "small language models gsm8k"],
+          assumptions: ["Dropped unsupported fielded syntax and kept the core method/topic terms."]
+        })
+      ),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {
+        streamSearchPapers,
+        getLastSearchDiagnostics: vi.fn(() => ({
+          attemptCount: 1,
+          lastStatus: 200,
+          attempts: [{ attempt: 1, ok: true, status: 200, endpoint: "search" }]
+        }))
+      } as any
+    });
+
+    const result = await node.execute({
+      run,
+      graph: run.graph
+    });
+
+    expect(result.status).toBe("success");
+    expect(streamSearchPapers).toHaveBeenCalledTimes(1);
+    expect(streamSearchPapers.mock.calls[0]?.[0]?.query).toBe("adaptive test-time reasoning");
+
+    const lastResult = (await readRunContextValue(root, runId, "collect_papers.last_result")) as {
+      query?: string;
+      queryAttempts?: Array<{ query?: string; reason?: string }>;
+    } | undefined;
+    expect(lastResult?.query).toBe("adaptive test-time reasoning");
+    expect(lastResult?.queryAttempts?.[0]).toMatchObject({
+      query: "adaptive test-time reasoning",
+      reason: "llm_generated"
+    });
+
+    await waitForCollectEnrichmentJob(runId);
+  });
+
+  it("attempts llm-generated keyword bundles even when only the run topic is available", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-run-topic-llm-query-"));
+    process.chdir(root);
+
+    const runId = "run-collect-run-topic-llm-query";
+    const run: RunRecord = {
+      version: 3,
+      workflowVersion: 3,
+      id: runId,
+      title: "Run Topic Query Generation",
+      topic: "Classical machine learning baselines for tabular classification on public datasets",
+      constraints: [],
+      objectiveMetric: "macro-F1",
+      status: "running",
+      currentNode: "collect_papers",
+      latestSummary: undefined,
+      nodeThreads: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      graph: createDefaultGraphState(),
+      memoryRefs: {
+        runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
+      }
+    };
+
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({ version: 1, items: [] }),
+      "utf8"
+    );
+
+    const streamSearchPapers = vi.fn(async function* (request: { query: string }) {
+      expect(request.query).toBe("classical machine learning baselines");
+      yield [
+        {
+          paperId: "paper-1",
+          title: "Classical Machine Learning Baselines for Tabular Data",
+          authors: ["Alice Kim"]
+        }
+      ];
+    });
+
+    const node = createCollectPapersNode({
+      config: {
+        papers: {
+          max_results: 200
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new JsonLLMClient(
+        JSON.stringify({
+          queries: ["classical machine learning baselines", "tabular classification public datasets"],
+          assumptions: ["Split the topic into smaller paper-title-style bundles."]
+        })
+      ),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {
+        streamSearchPapers,
+        getLastSearchDiagnostics: vi.fn(() => ({
+          attemptCount: 1,
+          lastStatus: 200,
+          attempts: [{ attempt: 1, ok: true, status: 200, endpoint: "search" }]
+        }))
+      } as any
+    });
+
+    const result = await node.execute({
+      run,
+      graph: run.graph
+    });
+
+    expect(result.status).toBe("success");
+    expect(streamSearchPapers).toHaveBeenCalledTimes(1);
+    expect(streamSearchPapers.mock.calls[0]?.[0]?.query).toBe("classical machine learning baselines");
+
+    const lastResult = (await readRunContextValue(root, runId, "collect_papers.last_result")) as {
+      query?: string;
+      queryAttempts?: Array<{ query?: string; reason?: string }>;
+    } | undefined;
+    expect(lastResult?.query).toBe("classical machine learning baselines");
+    expect(lastResult?.queryAttempts?.[0]).toMatchObject({
+      query: "classical machine learning baselines",
+      reason: "llm_generated"
+    });
+
+    await waitForCollectEnrichmentJob(runId);
+  });
 });

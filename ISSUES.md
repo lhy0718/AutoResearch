@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-03-18 · 934/936 tests pass (2 skipped: zzz_noProjectRootLeak)
+Last updated: 2026-03-19 · 944/944 tests pass
 
 ---
 
@@ -239,6 +239,18 @@ None — all tracked issues are resolved or mitigated. See sections below for hi
 - Paper-readiness decision: `paper_ready` · `paper_scale_candidate` · `research_memo` · `system_validation_note` · `blocked_for_paper_scale`
 - Missing artifacts:
 - Next action:
+
+### Paper-scale Iteration 1 — Run 800dab9d
+- Goal: Progress from brief → governed run → auditable paper-scale outputs for "Efficient Test-Time Reasoning for Small Language Models"
+- Research question: Under a constrained inference budget, can an adaptive test-time reasoning policy improve GSM8K reasoning accuracy for a small instruction-tuned language model relative to greedy decoding and a fixed always-revise comparator?
+- Baseline/comparator: greedy decoding (baseline) + fixed always-revise structured reflection (comparator) — defined in brief, not yet executed
+- Dataset/task/metric: GSM8K, exact-match accuracy, secondary: tokens/latency
+- Quantitative result summary: None — pipeline at `analyze_papers` (1/30 papers analyzed)
+- Claim→evidence status: No claims, no evidence yet
+- Paper-readiness decision: `blocked_for_paper_scale`
+- Missing artifacts: paper_summaries (29/30), evidence_store (thin), hypotheses, experiment_plan, baseline_summary, result_table, review_packet, paper_critique, main.tex, main.pdf, evidence_links, claim_evidence_table
+- Environment update (2026-03-19): `pdflatex` is now available at `/usr/bin/pdflatex`; PDF build blocker removed
+- Next action: Resume run 800dab9d via `/resume 800dab9d` in TUI to progress `analyze_papers` → full pipeline
 
 ---
 
