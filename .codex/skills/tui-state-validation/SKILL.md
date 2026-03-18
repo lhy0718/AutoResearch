@@ -1,32 +1,29 @@
 ---
-name: tui-live-validation
-description: Use this skill when the task is to run or analyze real TUI validation, reproduce an interactive issue, compare fresh sessions with existing sessions, or produce a structured validation record before proposing a fix.
+name: tui-state-validation
+description: Use this skill when the task is to reproduce or analyze a concrete AutoLabOS TUI/web symptom, especially when stale state, fresh-vs-existing divergence, resume mismatch, or persisted-artifact-vs-UI disagreement may be involved.
 ---
 
-# TUI Live Validation
+# TUI State Validation
 
 ## Purpose
-Produce a structured validation result for a real TUI workflow before proposing or evaluating a code change.
+Produce a structured live-validation result for one concrete target before proposing or evaluating a code change.
 
-This skill is not just for “running it once.”
-It treats actual user-visible TUI behavior as the source of truth and checks consistency across:
-
+Treat actual user-visible behavior as the source of truth and compare, when relevant:
 - fresh sessions
-- existing/resumed sessions
+- existing or resumed sessions
 - persisted artifacts
 - runtime projections and summaries
 
-This skill focuses on **one concrete validation target at a time**.
-Use `execution-mode-matrix-validation` separately when the goal is to inventory and verify all exposed execution modes.
+This skill is for narrowing the problem to the most likely minimal failing boundary before patching.
 
 ## Use this skill when
 Use this skill when the user asks to:
-
 - run TUI live validation
 - reproduce an interactive bug
-- compare a fresh TUI session with an already-running session
+- compare fresh vs existing or resumed sessions
 - check whether persisted outputs match what the UI shows
 - verify whether a fix actually solved the live symptom
+- triage stale summaries, stale panels, stale progress, or stale session-local state
 - validate a specific execution mode or a specific end-to-end flow
 
 Typical trigger phrases:
@@ -34,8 +31,9 @@ Typical trigger phrases:
 - "reproduce the interactive bug"
 - "compare fresh vs existing session"
 - "the existing session looks stale"
-- "actually run it and verify"
 - "the screen looks wrong"
+- "actually run it and verify"
+- "persisted output is right but the UI is wrong"
 
 ## Output format
 Always produce these sections:
@@ -48,29 +46,40 @@ Always produce these sections:
 6. Actual behavior
 7. Fresh vs existing session comparison
 8. Persisted artifact vs UI comparison
-9. Most likely problem boundary
-10. Recommended next step
+9. Most likely failing boundary
+10. Evidence supporting that boundary
+11. Recommended next step
+12. Regression risks
 
 ## Method
 1. Restate the validation target in one sentence.
 2. Identify the relevant execution mode, commands, flows, sessions, and screens.
-3. Check `/doctor` output and current runtime context first.
+3. Check `/doctor` output and current runtime context first when applicable.
 4. When possible, compare all of:
    - fresh session
-   - existing/resumed session
+   - existing or resumed session
    - persisted artifact
-   - top-level summary / projection
+   - top-level summary or projection
 5. Record reproduction steps and observations clearly enough that another agent could follow them exactly.
-6. Classify the issue using one dominant category:
+6. Choose one dominant problem category:
    - `persisted_state_bug`
    - `in_memory_projection_bug`
    - `refresh_render_bug`
    - `resume_reload_bug`
    - `race_timing_bug`
-7. Recommend the next action:
+7. Also identify the most likely failing boundary:
+   - persisted artifact layer
+   - loader / read layer
+   - projection / aggregation layer
+   - refresh / subscription / invalidation layer
+   - session resume / restore layer
+   - renderer presentation layer
+   - mode-specific policy divergence boundary
+   - timing / race boundary
+8. Recommend the next action:
    - boundary investigation
-   - patch
    - instrumentation
+   - minimal patch
    - rerun with a narrower hypothesis
 
 ## Guardrails
@@ -80,12 +89,3 @@ Always produce these sections:
 - If a fresh reopen fixes the symptom, explicitly suspect in-memory projection, refresh wiring, resume handling, or session-local cache before blaming persistence.
 - Separate observations from hypotheses.
 - Prefer precise reproduction notes over broad conclusions.
-
-## Good completion criteria
-This skill is complete when:
-
-- the symptom is described clearly enough that another agent can reproduce it
-- fresh and existing-session behavior were explicitly compared when relevant
-- persisted state and rendered state were explicitly compared when relevant
-- the most likely failing boundary has been narrowed down
-- the recommended next action is specific enough to guide the next loop
