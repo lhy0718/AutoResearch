@@ -80,6 +80,7 @@ import {
   resolveResearchBriefPath,
   snapshotResearchBriefToRun,
   summarizeBriefValidation,
+  validateResearchBriefDraftMarkdown,
   validateResearchBriefFile
 } from "../core/runs/researchBriefFiles.js";
 import {
@@ -1963,12 +1964,21 @@ export class TerminalApp {
       return;
     }
 
-    const validation = await validateResearchBriefFile(filePath);
-    for (const line of summarizeBriefValidation(validation)) {
+    const brief = await fs.readFile(filePath, "utf8");
+    const draftValidation = validateResearchBriefDraftMarkdown(brief);
+    for (const line of summarizeBriefValidation(draftValidation)) {
       this.pushLog(line);
     }
+    if (draftValidation.errors.length > 0) {
+      this.pushLog("The Research Brief needs a substantive Topic before it can be used as a working draft.");
+      return;
+    }
+
+    const validation = await validateResearchBriefFile(filePath);
     if (validation.errors.length > 0) {
-      this.pushLog("The Research Brief is not ready yet. Update the missing sections, then start it with /brief start.");
+      this.pushLog(
+        "Draft saved. Fill the remaining paper-scale sections, then start it with /brief start --latest or /brief start <path>."
+      );
       return;
     }
 

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildBriefCompletenessArtifact,
   buildResearchBriefTemplate,
+  validateResearchBriefDraftMarkdown,
   validateResearchBriefMarkdown
 } from "../src/core/runs/researchBriefFiles.js";
 import { parseMarkdownRunBriefSections } from "../src/core/runs/runBriefParser.js";
@@ -164,6 +165,26 @@ function partialBrief(): string {
 function malformedBrief(): string {
   return "This is just plain text with no headings at all.";
 }
+
+describe("validateResearchBriefDraftMarkdown", () => {
+  it("allows a topic-only working draft", () => {
+    const result = validateResearchBriefDraftMarkdown([
+      "# Research Brief",
+      "",
+      "## Topic",
+      "Budget-aware test-time reasoning for small language models."
+    ].join("\n"));
+    expect(result.errors).toHaveLength(0);
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it("requires a substantive topic before a draft is considered usable", () => {
+    const result = validateResearchBriefDraftMarkdown(buildResearchBriefTemplate());
+    expect(result.errors).toEqual([
+      'Replace the placeholder text in "## Topic" before using the brief as a working draft.'
+    ]);
+  });
+});
 
 describe("validateResearchBriefMarkdown", () => {
   it("validates a full paper-scale brief with no errors", () => {

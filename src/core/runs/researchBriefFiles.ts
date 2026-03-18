@@ -324,6 +324,24 @@ export async function validateResearchBriefFile(filePath: string): Promise<Brief
   return validateResearchBriefMarkdown(raw);
 }
 
+export function validateResearchBriefDraftMarkdown(markdown: string): BriefValidationResult {
+  const sections = parseMarkdownRunBriefSections(markdown);
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  if (!sections?.title || sections.title.toLowerCase() !== "research brief") {
+    warnings.push('Expected the document to start with "# Research Brief".');
+  }
+
+  const topicStatus = sectionStatus("topic", sections?.topic);
+  if (!topicStatus.present) {
+    errors.push('Fill in the "## Topic" section before using the brief as a working draft.');
+  } else if (!topicStatus.substantive) {
+    errors.push('Replace the placeholder text in "## Topic" before using the brief as a working draft.');
+  }
+
+  return { errors, warnings };
+}
+
 export function validateResearchBriefMarkdown(markdown: string): BriefValidationResult {
   const sections = parseMarkdownRunBriefSections(markdown);
   const completeness = buildBriefCompletenessArtifact(markdown);

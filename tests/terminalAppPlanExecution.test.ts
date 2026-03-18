@@ -2412,6 +2412,45 @@ describe("TerminalApp pending natural plan execution", () => {
     }
   });
 
+  it("treats a topic-only brief as a saved draft during /new without weakening /brief start", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "autolabos-brief-draft-"));
+    const originalCwd = process.cwd();
+    process.chdir(cwd);
+    try {
+      const paths = resolveAppPaths(cwd);
+      await ensureScaffold(paths);
+      const app = makeApp();
+      app.openResearchBriefInEditor = vi.fn(async (filePath: string) => {
+        await writeFile(
+          filePath,
+          [
+            "# Research Brief",
+            "",
+            "## Topic",
+            "",
+            "Budget-aware test-time reasoning for small language models."
+          ].join("\n"),
+          "utf8"
+        );
+        return true;
+      });
+      app.askWithinTui = vi.fn().mockResolvedValue("Y");
+
+      await app.handleNewRun();
+
+      expect(app.logs).toContain(
+        "Draft saved. Fill the remaining paper-scale sections, then start it with /brief start --latest or /brief start <path>."
+      );
+      expect(
+        app.logs.some((line: string) => line.includes('Replace the placeholder text in "## Objective Metric"'))
+      ).toBe(false);
+      expect(app.askWithinTui).not.toHaveBeenCalled();
+    } finally {
+      process.chdir(originalCwd);
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("starts a run from the latest brief file, snapshots it, and auto-starts execution", async () => {
     const cwd = await mkdtemp(path.join(os.tmpdir(), "autolabos-brief-start-"));
     const originalCwd = process.cwd();
