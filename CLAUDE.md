@@ -58,7 +58,7 @@ Important paths:
 - TUI: `src/tui/`
 - web UI: `src/web/`
 - run state/artifacts: `.autolabos/`
-- project skills: `.agents/skills/`
+- project skills: `.claude/skills/`
 
 ## Commands
 
