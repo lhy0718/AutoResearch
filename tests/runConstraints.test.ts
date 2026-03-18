@@ -51,18 +51,25 @@ describe("normalizeConstraintProfile", () => {
     });
   });
 
-  it("sanitizes llm-generated queries to Semantic Scholar-friendly free text and prioritizes them", () => {
+  it("sanitizes llm-generated queries to Semantic Scholar-friendly bulk syntax and prioritizes them", () => {
     const candidates = buildLiteratureQueryCandidates({
       runTopic: "Budget-aware test-time reasoning for small language models",
-      llmGeneratedQueries: ["adaptive test-time reasoning", 'title:"test-time reasoning" AND small language models']
+      llmGeneratedQueries: [
+        "adaptive test-time reasoning",
+        'title:"test-time reasoning" AND ("small language models" OR "compact language models") NOT survey'
+      ]
     });
 
     expect(candidates[0]).toEqual({
       query: "adaptive test-time reasoning",
       reason: "llm_generated"
     });
+    expect(candidates).toContainEqual({
+      query: '"test-time reasoning" +("small language models" | "compact language models") -survey',
+      reason: "llm_generated"
+    });
     expect(candidates).not.toContainEqual({
-      query: 'title:"test-time reasoning" AND small language models',
+      query: 'title:"test-time reasoning" AND ("small language models" OR "compact language models") NOT survey',
       reason: "llm_generated"
     });
   });

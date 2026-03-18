@@ -3,7 +3,11 @@ import { createHash } from "node:crypto";
 import { AutoLabOSEvent, EventStream } from "./events.js";
 import { LLMClient } from "./llm/client.js";
 import { RunContextMemory } from "./memory/runContextMemory.js";
-import { extractResearchBriefTopic, sanitizeSemanticScholarQueryList } from "./runConstraints.js";
+import {
+  extractResearchBriefTopic,
+  hasSemanticScholarSpecialSyntax,
+  sanitizeSemanticScholarQueryList
+} from "./runConstraints.js";
 import { parseMarkdownRunBriefSections } from "./runs/runBriefParser.js";
 import { RunRecord } from "../types.js";
 
@@ -134,8 +138,8 @@ function buildLiteratureQuerySystemPrompt(): string {
   return [
     "You are the AutoLabOS literature query planner.",
     "Generate Semantic Scholar paper-search queries from a research topic.",
-    "Semantic Scholar paper search uses plain free-text queries, not boolean or fielded syntax.",
-    "Prefer several small keyword bundles over one long sentence-like query.",
+    "Prefer Semantic Scholar bulk-search syntax when it sharpens retrieval.",
+    "Use + for required terms, | for alternatives, and - for exclusions when helpful.",
     "Return JSON only.",
     "Do not invent methods, datasets, venues, or claims that are not explicit or strongly implied."
   ].join("\n");
@@ -157,17 +161,17 @@ function buildLiteratureQueryPrompt(
     "",
     "Rules:",
     "- Return 2 to 4 queries when possible, ordered from most precise to broader fallback.",
-    "- Each query should usually be 2 to 5 keyword units, not a full sentence or a research question.",
-    "- Prefer several small keyword bundles over one long query.",
-    "- Split longer ideas into smaller standalone keyword bundles that can each work as a paper search.",
-    "- Do NOT use boolean operators such as AND, OR, or NOT.",
+    "- Each query should be a concise Semantic Scholar search expression, not a full sentence or research question.",
+    "- Prefer 1 to 3 focused concept groups per query instead of a long bag of words.",
+    "- Use quoted phrases, parentheses, +, |, and - when they make the query more precise.",
+    "- If you naturally think in AND/OR/NOT, convert them into Semantic Scholar bulk-search syntax using +, |, and -.",
     "- Do NOT use field prefixes like title:, abstract:, author:, venue:, or year:.",
-    '- Do NOT use quoted phrases, parentheses, wildcard syntax, plus/minus operators, or advanced search syntax.',
+    "- Do NOT use wildcard syntax or unsupported advanced search operators beyond quoted phrases, parentheses, +, |, and -.",
     "- Prefer paper-title/abstract terms: method family, task, modality, domain, and benchmark family only when central.",
     "- Avoid generic meta words like research, study, literature review, survey, benchmark plan, reproducible, or pipeline.",
     "- Avoid resource/execution qualifiers such as CPU-only, runtime, memory, local, lightweight, or public datasets unless they are central to the actual paper topic.",
     "- Drop sentence glue such as can, improve, under, and similar question words whenever they are not core search terms.",
-    "- If the explicit brief topic is already a good search seed, preserve its core terms but break them into smaller query bundles.",
+    "- If the explicit brief topic is already a good search seed, preserve its core terms but rewrite them into tighter search expressions.",
     "",
     `Run topic: ${run.topic}`,
     `Explicit brief topic: ${explicitBriefTopic || "none"}`,
@@ -278,6 +282,19 @@ function expandSmallKeywordBundles(queries: string[]): string[] {
   const results: string[] = [];
   const seen = new Set<string>();
   for (const query of queries) {
+    if (hasSemanticScholarSpecialSyntax(query)) {
+      const normalizedStructured = query.trim();
+      if (!normalizedStructured) {
+        continue;
+      }
+      const structuredKey = normalizedStructured.toLowerCase();
+      if (seen.has(structuredKey)) {
+        continue;
+      }
+      seen.add(structuredKey);
+      results.push(normalizedStructured);
+      continue;
+    }
     const variants = toSmallKeywordBundles(query);
     for (const variant of variants.length > 0 ? variants : [query]) {
       const normalized = variant.trim();
@@ -345,11 +362,7 @@ function extractKeywordTokens(query: string): string[] {
 }
 
 function isUsableSemanticScholarQuery(query: string): boolean {
-  const tokens = query
-    .toLowerCase()
-    .split(/\s+/u)
-    .map((token) => token.trim())
-    .filter(Boolean);
+  const tokens = extractKeywordTokens(query);
   if (tokens.length < 2) {
     return false;
   }

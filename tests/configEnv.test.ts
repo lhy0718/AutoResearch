@@ -163,7 +163,7 @@ describe("config .env overrides", () => {
     await expect(hasSemanticScholarApiKey(cwd)).resolves.toBe(true);
   });
 
-  it("prefers process.env over .env for Semantic Scholar API key", async () => {
+  it("prefers .env over process.env for Semantic Scholar API key", async () => {
     process.env.SEMANTIC_SCHOLAR_API_KEY = "process-env-key";
     const { cwd, paths } = await createWorkspace();
     await fs.writeFile(path.join(cwd, ".env"), "SEMANTIC_SCHOLAR_API_KEY=file-env-key\n", "utf8");
@@ -171,7 +171,7 @@ describe("config .env overrides", () => {
     const config = await loadConfig(paths);
 
     expect("semantic_scholar_api_key" in config.papers).toBe(false);
-    await expect(resolveSemanticScholarApiKey(cwd)).resolves.toBe("process-env-key");
+    await expect(resolveSemanticScholarApiKey(cwd)).resolves.toBe("file-env-key");
   });
 
   it("upserts SEMANTIC_SCHOLAR_API_KEY into .env without removing other entries", async () => {
@@ -212,6 +212,14 @@ describe("config .env overrides", () => {
 
     await expect(resolveOpenAiApiKey(cwd)).resolves.toBe("openai-env-key");
     await expect(hasOpenAiApiKey(cwd)).resolves.toBe(true);
+  });
+
+  it("prefers .env over process.env for OpenAI API key", async () => {
+    process.env.OPENAI_API_KEY = "process-env-openai-key";
+    const { cwd } = await createWorkspace();
+    await fs.writeFile(path.join(cwd, ".env"), 'OPENAI_API_KEY="file-env-openai-key"\n', "utf8");
+
+    await expect(resolveOpenAiApiKey(cwd)).resolves.toBe("file-env-openai-key");
   });
 
   it("writes OPENAI_API_KEY during setup when OpenAI API provider implies Responses PDF mode", async () => {

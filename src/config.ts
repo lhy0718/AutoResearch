@@ -723,8 +723,8 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
 export async function resolveSemanticScholarApiKey(cwd: string): Promise<string | undefined> {
   const fileEnv = await readDotEnvFile(path.join(cwd, ".env"));
   const semanticScholarApiKey =
-    process.env.SEMANTIC_SCHOLAR_API_KEY ||
-    fileEnv.SEMANTIC_SCHOLAR_API_KEY;
+    fileEnv.SEMANTIC_SCHOLAR_API_KEY ||
+    process.env.SEMANTIC_SCHOLAR_API_KEY;
   const normalized = semanticScholarApiKey?.trim();
   return normalized ? normalized : undefined;
 }
@@ -736,8 +736,8 @@ export async function hasSemanticScholarApiKey(cwd: string): Promise<boolean> {
 export async function resolveOpenAiApiKey(cwd: string): Promise<string | undefined> {
   const fileEnv = await readDotEnvFile(path.join(cwd, ".env"));
   const openAiApiKey =
-    process.env.OPENAI_API_KEY ||
-    fileEnv.OPENAI_API_KEY;
+    fileEnv.OPENAI_API_KEY ||
+    process.env.OPENAI_API_KEY;
   const normalized = openAiApiKey?.trim();
   return normalized ? normalized : undefined;
 }

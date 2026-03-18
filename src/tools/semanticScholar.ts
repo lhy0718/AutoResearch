@@ -1,4 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
+import { hasSemanticScholarSpecialSyntax } from "../core/runConstraints.js";
 
 export type SemanticScholarSortField = "relevance" | "citationCount" | "publicationDate" | "paperId";
 export type SemanticScholarSortOrder = "asc" | "desc";
@@ -159,7 +160,7 @@ export class SemanticScholarClient {
 
     const targetLimit = Math.max(1, normalized.limit);
     const sortField = normalized.sort?.field ?? "relevance";
-    if (sortField === "relevance") {
+    if (sortField === "relevance" && !hasSemanticScholarSpecialSyntax(normalized.query)) {
       yield* this.streamByRelevance(normalized, targetLimit, abortSignal);
       return;
     }

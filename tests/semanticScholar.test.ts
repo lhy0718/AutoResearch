@@ -68,6 +68,28 @@ describe("SemanticScholarClient", () => {
     expect(url.searchParams.has("openAccessPdf")).toBe(true);
   });
 
+  it("uses /paper/search/bulk for relevance mode when the query uses special syntax", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        data: [{ paperId: "p1", title: "Paper 1", authors: [] }]
+      })
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new SemanticScholarClient({ perSecondLimit: 1000 });
+    await client.searchPapers({
+      query: '("small language models" | "compact language models") +reasoning -survey',
+      limit: 1,
+      sort: { field: "relevance" }
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(url.pathname).toBe("/graph/v1/paper/search/bulk");
+    expect(url.searchParams.get("query")).toBe('("small language models" | "compact language models") +reasoning -survey');
+  });
+
   it("normalizes rich fields including citationStyles bibtex", async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,

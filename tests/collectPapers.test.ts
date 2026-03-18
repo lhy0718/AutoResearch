@@ -2078,7 +2078,7 @@ describe("collectPapers bibtex", () => {
     );
   });
 
-  it("uses llm-generated Semantic Scholar free-text queries from the brief topic before raw topic fallbacks", async () => {
+  it("uses llm-generated Semantic Scholar syntax queries from the brief topic before raw topic fallbacks", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-llm-query-"));
     process.chdir(root);
 
@@ -2150,8 +2150,8 @@ describe("collectPapers bibtex", () => {
       eventStream: new InMemoryEventStream(),
       llm: new JsonLLMClient(
         JSON.stringify({
-          queries: ["adaptive test-time reasoning", "small language models gsm8k"],
-          assumptions: ["Dropped unsupported fielded syntax and kept the core method/topic terms."]
+          queries: ['("adaptive test-time reasoning" | "structured test-time reasoning") +"small language models"'],
+          assumptions: ["Used Semantic Scholar syntax to require the model family while allowing test-time strategy variants."]
         })
       ),
       codex: {} as any,
@@ -2173,15 +2173,17 @@ describe("collectPapers bibtex", () => {
 
     expect(result.status).toBe("success");
     expect(streamSearchPapers).toHaveBeenCalledTimes(1);
-    expect(streamSearchPapers.mock.calls[0]?.[0]?.query).toBe("adaptive test-time reasoning");
+    expect(streamSearchPapers.mock.calls[0]?.[0]?.query).toBe(
+      '("adaptive test-time reasoning" | "structured test-time reasoning") +"small language models"'
+    );
 
     const lastResult = (await readRunContextValue(root, runId, "collect_papers.last_result")) as {
       query?: string;
       queryAttempts?: Array<{ query?: string; reason?: string }>;
     } | undefined;
-    expect(lastResult?.query).toBe("adaptive test-time reasoning");
+    expect(lastResult?.query).toBe('("adaptive test-time reasoning" | "structured test-time reasoning") +"small language models"');
     expect(lastResult?.queryAttempts?.[0]).toMatchObject({
-      query: "adaptive test-time reasoning",
+      query: '("adaptive test-time reasoning" | "structured test-time reasoning") +"small language models"',
       reason: "llm_generated"
     });
 

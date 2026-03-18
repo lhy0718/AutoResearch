@@ -355,13 +355,26 @@ export function sanitizeSemanticScholarFreeTextQuery(value: string | undefined):
       /\b(?:title|abstract|author|authors|venue|journal|year|paperid|doi|fieldsofstudy|fields[\s_-]*of[\s_-]*study)\s*:/giu,
       " "
     )
-    .replace(/\b(?:and|or|not)\b/giu, " ")
-    .replace(/["'`()[\]{}<>]/gu, " ")
-    .replace(/[,:;|+=]/gu, " ")
+    .replace(/\bAND\b/gu, " + ")
+    .replace(/\bOR\b/gu, " | ")
+    .replace(/\bNOT\b/gu, " - ")
+    .replace(/'/gu, '"')
+    .replace(/[`[\]{}<>]/gu, " ")
+    .replace(/[,:;=]/gu, " ")
+    .replace(/\s*\|\s*/gu, " | ")
+    .replace(/(^|[\s(])\+\s*/gu, "$1+")
+    .replace(/(^|[\s(])-+\s*/gu, "$1-")
     .replace(/\s+/gu, " ")
     .trim();
 
   return normalizeLiteratureQuery(cleaned);
+}
+
+export function hasSemanticScholarSpecialSyntax(query: string | undefined): boolean {
+  if (!query?.trim()) {
+    return false;
+  }
+  return /[|+()"]/u.test(query) || /\b(?:AND|OR|NOT)\b/u.test(query);
 }
 
 function stripLiteratureConstraintPhrases(value: string | undefined): string | undefined {
