@@ -75,6 +75,18 @@ When this skill is used together with paper-generation validation, require:
 
 These constraints must be reflected in the brief and in the actual paper-generation behavior, not only stored as metadata.
 
+## Workflow-structure rule
+- Respect the repository’s current core workflow and do not casually remove, reorder, or redefine existing stages.
+- If the need is strong, a new node may be added, but only when it clearly improves the runtime/research contract rather than duplicating an existing responsibility.
+- Any workflow-structure change must preserve:
+  - inspectable state transitions
+  - auditable artifacts
+  - reproducibility
+  - review gating
+  - claim-ceiling discipline
+  - safe backtracking behavior
+- Any structural workflow change must also be reflected in the docs, runtime behavior, and validation expectations.
+
 ## Loop contract
 One iteration always follows this sequence:
 

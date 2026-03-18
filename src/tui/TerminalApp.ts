@@ -2316,6 +2316,9 @@ export class TerminalApp {
     if (resume) {
       await this.orchestrator.resumeRun(run.id);
       this.pushLog("Run resumed from latest checkpoint state.");
+      await this.refreshRunIndex();
+      void this.continueSupervisedRun(run.id);
+      return { ok: true };
     }
 
     await this.refreshRunIndex();
@@ -4532,6 +4535,9 @@ export class TerminalApp {
     this.pushLog(`Recovering stale running node: ${run.currentNode} (reset to pending for re-execution).`);
     await this.orchestrator.retryCurrent(run.id, run.currentNode);
     await this.refreshRunIndex();
+    await this.setActiveRunId(run.id);
+    // Actually trigger execution (matching handleRetry behavior)
+    void this.continueSupervisedRun(run.id);
   }
 
   private historyFilePath(runId: string): string {

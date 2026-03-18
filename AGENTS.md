@@ -2,7 +2,7 @@
 
 ## Mission
 
-This repository builds and validates a 9-node research workflow that runs through real TUI/web interactions, produces evidence-grounded artifacts, and, when the bar is met, reaches paper-ready outputs.
+This repository builds and validates a governed research operating system that runs through real TUI/web interactions, produces evidence-grounded artifacts, and reaches paper-ready outputs only when the experimental and review bars are actually met.
 
 Always prioritize:
 
@@ -10,7 +10,7 @@ Always prioritize:
 2. State and artifact consistency
 3. Reproducible validation
 4. Honest scientific writing that does not exceed the evidence
-5. Paper-readiness only when the minimum experimental bar is actually met
+5. Review-gated progression instead of appearance-driven completion
 
 ---
 
@@ -37,9 +37,27 @@ Use the docs above as the canonical source for detailed rules.
 - Do not claim a fix is complete until the same validation flow has been re-run.
 - Record live-validation issues in `ISSUES.md` with reproduction steps, expected behavior, actual behavior, session comparison, root-cause hypothesis, and regression status.
 - Lower the strength of any claim that is not backed by explicit evidence.
-- Do not change the 9-node flow, TUI/web UX contract, or runtime boundaries unless the task explicitly requires it.
 - Do not present partial success as full completion.
 - Do not mark unverified improvements as done.
+- Treat `/doctor`, targeted smoke checks, and live validation as first-class diagnostic surfaces when applicable.
+- Prefer bounded node-internal loops, auditable artifacts, and minimal high-confidence fixes over broad speculative refactors.
+
+---
+
+## Workflow Contract
+
+The repository currently operates around a 9-node research workflow with bounded transitions, built-in backtracking, and checkpointed artifacts.
+
+- Do not casually remove, reorder, or redefine existing core workflow stages.
+- If the need is strong, a new node may be added, but only when it clearly improves the research/runtime contract rather than duplicating existing responsibilities.
+- Any workflow-structure change must preserve:
+  - inspectable state transitions
+  - artifact audibility
+  - reproducibility
+  - review gating
+  - claim-ceiling discipline
+  - safe backtracking behavior
+- Any structural workflow change must be reflected in the relevant docs, runtime behavior, and validation expectations.
 
 ---
 
@@ -70,6 +88,7 @@ If that bar is not met, downgrade the output explicitly, for example as:
 
 - `paper_ready=false`
 - `blocked_for_paper_scale`
+- `paper_scale_candidate`
 - `system_validation_note`
 - `research_memo`
 
@@ -94,7 +113,8 @@ Every live-validation issue must name one dominant root-cause class:
 - Do not claim an experimental paper without a baseline or comparator.
 - Do not over-rely on abstract-only evidence.
 - Negative results are acceptable, but they still require real evidence and honest interpretation.
-- If the experiment is not strong enough, explicitly lower the genre of the output.
+- If the experiment is not strong enough, explicitly lower the genre or readiness class of the output.
+- Keep claims under the strongest defensible evidence ceiling established by the available artifacts.
 
 ---
 
@@ -109,6 +129,7 @@ It is a structural gate for:
 - evidence linkage
 - writing discipline
 - reproducibility handoff
+- claim-ceiling enforcement
 
 Do not allow automatic progression to `write_paper` unless the work includes:
 
@@ -117,6 +138,8 @@ Do not allow automatic progression to `write_paper` unless the work includes:
 - claim-to-evidence mapping
 - evidence that real experiments were executed
 - minimum acceptable related-work depth
+
+If evidence is insufficient, prefer backtracking or explicit downgrade over cosmetic drafting.
 
 ---
 
@@ -139,18 +162,41 @@ Every brief must include:
 - Paper-worthiness Gate
 - Failure Conditions
 
+Do not treat missing governance fields as harmless omissions for paper-scale work.
+
 ---
 
 ## ISSUES.md Expectations
 
 `ISSUES.md` is not only a bug list.
-It is also the running log for validation status and research-completion risk.
-
-Keep these categories distinct:
+It is also the running log for:
 
 - live validation issues
 - research completion risks
 - paper readiness risks
+
+Keep these categories distinct.
+
+For interactive defects, always prefer:
+1. real reproduction
+2. issue logging
+3. smallest plausible root-cause fix
+4. same-flow revalidation
+5. adjacent regression review
+
+---
+
+## Reproducibility Expectations
+
+Do not treat a run as trustworthy unless its outputs and transitions can be inspected and rechecked.
+
+When applicable:
+
+- verify checkpoint/state consistency
+- verify that public-facing outputs match underlying run artifacts
+- run relevant smoke, harness, or live validation checks
+- confirm that changed behavior is reflected in observable artifacts, not only in code paths
+- state any remaining reproducibility or validation gaps explicitly
 
 ---
 
@@ -158,10 +204,10 @@ Keep these categories distinct:
 
 Do not report work as done unless:
 
-- the issue was reproduced
-- the same flow was re-run after the change
-- the original symptom no longer reproduces
-- relevant tests, smoke checks, or live validation were re-run
+- the issue was reproduced, or the missing reproduction was explicitly stated
+- the same flow was re-run after the change when revalidation is applicable
+- the original symptom no longer reproduces, or the remaining gap was stated honestly
+- relevant tests, smoke checks, harness checks, or live validation were re-run as appropriate
 - key artifacts were checked for consistency
 - adjacent regression risk was reviewed
 - remaining risks were stated in the final summary

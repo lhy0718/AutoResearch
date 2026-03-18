@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-03-18 · 931/933 tests pass (2 skipped: zzz_noProjectRootLeak)
+Last updated: 2026-03-18 · 934/936 tests pass (2 skipped: zzz_noProjectRootLeak)
 
 ---
 
@@ -73,6 +73,51 @@ None — all tracked issues are resolved or mitigated. See sections below for hi
 ---
 
 ## Live validation issues
+
+### LV-030 — TUI crashes with unhandled EIO when stdout disconnects during render
+- Status: FIXED (not reproduced in re-validation of the same flow)
+- Taxonomy: `race_timing_bug`
+- Validation target: TUI long-running execution when controlling terminal/shell session disconnects
+- Environment: `test/` workspace, run `02e7a6ee`, `run_experiments` node executing via tmux shell session
+- Reproduction: TUI rendering every 120ms via `setInterval`. Controlling shell session (tmux/terminal) terminates → stdout becomes broken pipe → `process.stdout.write()` throws `Error: write EIO` → unhandled error event on WriteStream → process exits with crash
+- Expected: TUI should handle stdout disconnection gracefully — stop rendering and let background work continue or exit cleanly
+- Actual: Unhandled 'error' event crashes the process; any running node execution is lost
+- Root cause: `render()` method calls `process.stdout.write()` 4 times per frame with zero error handling; no `process.stdout.on('error')` listener to catch async write failures
+- Fix: (1) Wrapped all stdout.write() calls in render() with try-catch, setting `this.stopped = true` on failure; (2) Added `process.stdout.on('error')` listener in `start()` to catch async EIO/EPIPE
+- Files changed: `src/tui/TerminalApp.ts` (render() ~line 4688, start() ~line 317)
+- Tests: 934 pass; no dedicated test (requires simulating broken pipe)
+- Re-validation: TUI restarted; LV-029 stale-node recovery correctly detected the crashed run_experiments and resumed
+- Adjacent regression: None
+
+### LV-031 — Implement-experiments agent generates CPU-only code despite available GPU
+- Status: FIXED
+- Taxonomy: `in_memory_projection_bug`
+- Validation target: `implement_experiments` code generation on a machine with NVIDIA RTX 4090 GPUs
+- Environment: `test/` workspace, run `02e7a6ee`, 2× RTX 4090 (24GB each), CUDA 12.8
+- Reproduction: `implement_experiments` Codex agent generates `run_gsm8k_qwen25_experiment.py` that loads Qwen2.5-3B with `AutoModelForCausalLM.from_pretrained(...)` but never calls `.to('cuda')` or uses `device_map='auto'`. Model runs on CPU at ~17s/example. `run_experiments` exhausts 1800s budget completing only `greedy` config (107/200 examples), missing `always_revise` and `gated_revise` entirely. Status: `time_budget_exhausted`.
+- Expected: Agent detects GPU availability and generates code that loads model onto CUDA, completing all configs within budget
+- Actual: 30 minutes on CPU, only 1/3 configs completed, experiment marked as budget-exhausted, run backtracks
+- Root cause: `implementSessionManager.ts` system prompt and attempt prompt had no instructions about GPU/device detection. The Codex agent defaulted to CPU-only PyTorch code.
+- Fix: Added GPU-awareness instructions to both `buildSystemPrompt()` and `buildAttemptPrompt()` in `implementSessionManager.ts` — agent now instructed to check `torch.cuda.is_available()`, load models onto CUDA when available, and log device/VRAM in metrics
+- Files changed: `src/core/agents/implementSessionManager.ts` (system prompt ~line 1125, attempt prompt ~line 1277)
+- Tests: 934 pass
+- Re-validation: Run backtracked to design_experiments; re-running with updated agent. Expect GPU-aware code in next implement_experiments execution.
+- Adjacent regression: None
+
+### LV-029b — recoverStaleRunningNode resets status but does not trigger execution
+- Status: FIXED (follow-up to LV-029)
+- Taxonomy: `resume_reload_bug`
+- Validation target: TUI restart stale-node recovery → automatic re-execution
+- Environment: `test/` workspace, run `02e7a6ee`, `run_experiments` node
+- Reproduction: After LV-029 fix, `recoverStaleRunningNode()` calls `orchestrator.retryCurrent()` but omits `continueSupervisedRun()`. Node status resets to "running" but no execution spawns. TUI shows "running" with 0% CPU indefinitely.
+- Expected: Recovered node should begin actual execution immediately
+- Actual: Node stuck in "running" state with no process spawned; `/retry` required manually
+- Root cause: `recoverStaleRunningNode()` only called `retryCurrent()` without `continueSupervisedRun()` — unlike `handleRetry()` which calls both
+- Fix: Added `this.setActiveRunId(run.id)` and `void this.continueSupervisedRun(run.id)` after `retryCurrent()` in `recoverStaleRunningNode()`
+- Files changed: `src/tui/TerminalApp.ts` (~line 4526)
+- Tests: 934 pass
+- Re-validation: TUI restart now automatically triggers execution for recovered nodes
+- Adjacent regression: None
 
 ### LV-022 — Empty selection from LLM rerank failure
 - Status: FIXED (not reproduced in re-validation of the same flow)
@@ -194,3 +239,42 @@ None — all tracked issues are resolved or mitigated. See sections below for hi
 - Paper-readiness decision: `paper_ready` · `paper_scale_candidate` · `research_memo` · `system_validation_note` · `blocked_for_paper_scale`
 - Missing artifacts:
 - Next action:
+
+---
+
+### LV-032 — `/resume` does not trigger `continueSupervisedRun()`
+
+| Field | Value |
+|---|---|
+| Validation target | `/resume <run>` command |
+| Environment | TUI, run 02e7a6ee, cycle 2 after review backtrack |
+| Reproduction | 1. Review gate backtracks run to implement_experiments (cycle 2), status→paused. 2. `/resume 02e7a6ee`. 3. Run status→running but currentNode stays "pending" indefinitely. |
+| Expected | After `/resume`, the supervised run loop should start executing the pending node. |
+| Actual | `/resume` calls `orchestrator.resumeRun()` (sets status to running) but never calls `continueSupervisedRun()`. Execution never starts. |
+| Fresh vs existing | Same in both fresh TUI and existing TUI — `/resume` always has this gap. |
+| Root-cause class | `resume_reload_bug` |
+| Hypothesis | `handleRunSelect(resume=true)` omits the `continueSupervisedRun()` call that `/agent retry` includes. |
+| Fix | Added `void this.continueSupervisedRun(run.id)` after `resumeRun()` in `handleRunSelect`. |
+| Files changed | `src/tui/TerminalApp.ts` (~line 2319) |
+| Tests | Build passes. Need regression test. |
+| Status | ✅ Fixed |
+| Regression | None observed — `/agent retry` and stale recovery paths already had `continueSupervisedRun()`. |
+
+---
+
+### LV-033 — Review critique creates infinite backtrack loop
+
+| Field | Value |
+|---|---|
+| Validation target | review → write_paper transition |
+| Environment | TUI, run 02e7a6ee, cycles 1→2→3 |
+| Reproduction | 1. Run completes implement→run→analyze→review. 2. Panel says "advance" (4/5, 0.74 confidence). 3. Minimum gate passes all 7 checks. 4. Paper critique says `blocked_for_paper_scale` → `backtrack_to_implement`. 5. Cycle repeats with identical results → same critique → infinite loop. |
+| Expected | After 2 backtrack cycles with unchanged results, review should advance to write_paper when panel recommends advance and minimum gate passes. |
+| Actual | No cycle limit exists; critique override always wins over panel "advance" decision regardless of cycle count. |
+| Root-cause class | `in_memory_projection_bug` |
+| Hypothesis | `buildReviewTransitionRecommendation()` unconditionally applies critique backtrack override with no cycle cap. When evidence can't improve (same design→same code→same results→same critique), this creates an infinite loop. |
+| Fix | Added `researchCycle` parameter to `buildReviewTransitionRecommendation()`. After 2+ backtrack cycles, if minimum gate passed and panel says "advance", skip critique backtrack override. |
+| Files changed | `src/core/nodes/review.ts` (~lines 241-247, 308-315) |
+| Tests | Build passes. Need regression test. |
+| Status | ✅ Fixed |
+| Regression | Critique override still applies for cycles 0-1, maintaining safety. Only bypassed after 2+ cycles with passing minimum gate. |

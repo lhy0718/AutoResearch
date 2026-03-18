@@ -133,7 +133,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
 
       // Use critique + minimum gate + LLM evaluation to build transition recommendation
       const transitionRecommendation = buildReviewTransitionRecommendation(
-        panel, packet, preDraftCritique, minimumGate, llmEvalResult.evaluation
+        panel, packet, preDraftCritique, minimumGate, llmEvalResult.evaluation, run.graph.researchCycle
       );
       const markdown = renderReviewChecklist(run, packet, panel);
 
@@ -243,7 +243,8 @@ function buildReviewTransitionRecommendation(
   packet: ReturnType<typeof buildReviewPacket>,
   critique: PaperCritique,
   minimumGate?: ReturnType<typeof evaluateMinimumGate>,
-  llmEval?: { recommended_action: string; paper_worthiness: string; overall_score_1_to_10: number }
+  llmEval?: { recommended_action: string; paper_worthiness: string; overall_score_1_to_10: number },
+  researchCycle?: number
 ): TransitionRecommendation | undefined {
   const action = panel.decision.outcome;
   const confidence = Number(panel.decision.confidence.toFixed(2));
@@ -306,8 +307,13 @@ function buildReviewTransitionRecommendation(
   }
 
   // If the critique found the manuscript is blocked_for_paper_scale or system_validation_note
-  // with blocking issues, override the panel decision with a backtrack
+  // with blocking issues, override the panel decision with a backtrack.
+  // But enforce a cycle cap: after 2 backtrack cycles, if the minimum gate passed
+  // and the panel recommends advance, stop backtracking to avoid infinite loops.
+  const currentCycle = researchCycle || 0;
+  const cycleCappedAdvance = currentCycle >= 2 && minimumGate?.passed && action === "advance";
   if (
+    !cycleCappedAdvance &&
     critique.overall_decision !== "advance" &&
     critique.overall_decision !== "repair_then_retry" &&
     (critique.manuscript_type === "blocked_for_paper_scale" || critique.manuscript_type === "system_validation_note")

@@ -1,6 +1,6 @@
 ---
 name: tui-live-validation
-description: Use this skill when the task is to run or analyze real TUI validation, reproduce an interactive issue, compare fresh sessions with existing sessions, or produce a structured validation report before proposing a fix.
+description: Use this skill when the task is to run or analyze real TUI validation, reproduce an interactive issue, compare fresh sessions with existing sessions, or produce a structured validation record before proposing a fix.
 ---
 
 # TUI Live Validation
@@ -8,11 +8,16 @@ description: Use this skill when the task is to run or analyze real TUI validati
 ## Purpose
 Produce a structured validation result for a real TUI workflow before proposing or evaluating a code change.
 
-This skill is not just for “running it once.” It treats actual user-visible TUI behavior as the source of truth and checks consistency across:
+This skill is not just for “running it once.”
+It treats actual user-visible TUI behavior as the source of truth and checks consistency across:
+
 - fresh sessions
 - existing/resumed sessions
 - persisted artifacts
 - runtime projections and summaries
+
+This skill focuses on **one concrete validation target at a time**.
+Use `execution-mode-matrix-validation` separately when the goal is to inventory and verify all exposed execution modes.
 
 ## Use this skill when
 Use this skill when the user asks to:
@@ -22,8 +27,7 @@ Use this skill when the user asks to:
 - compare a fresh TUI session with an already-running session
 - check whether persisted outputs match what the UI shows
 - verify whether a fix actually solved the live symptom
-- validate mode-specific behavior
-- validate an end-to-end paper flow including TeX generation and PDF generation
+- validate a specific execution mode or a specific end-to-end flow
 
 Typical trigger phrases:
 - "TUI live validation"
@@ -32,7 +36,6 @@ Typical trigger phrases:
 - "the existing session looks stale"
 - "actually run it and verify"
 - "the screen looks wrong"
-- "test every execution mode"
 
 ## Output format
 Always produce these sections:
@@ -50,27 +53,21 @@ Always produce these sections:
 
 ## Method
 1. Restate the validation target in one sentence.
-2. Identify the relevant execution modes, commands, flows, sessions, and screens.
+2. Identify the relevant execution mode, commands, flows, sessions, and screens.
 3. Check `/doctor` output and current runtime context first.
 4. When possible, compare all of:
    - fresh session
    - existing/resumed session
    - persisted artifact
    - top-level summary / projection
-5. Check which execution modes are exposed, for example:
-   - interactive TUI
-   - resumed session
-   - unattended / long-running mode
-   - Autonomous Mode / Overnight Mode
-   - draft / paper-generation path
-6. Record reproduction steps and observations clearly enough that another agent could follow them exactly.
-7. Classify the issue using one dominant category:
+5. Record reproduction steps and observations clearly enough that another agent could follow them exactly.
+6. Classify the issue using one dominant category:
    - `persisted_state_bug`
    - `in_memory_projection_bug`
    - `refresh_render_bug`
    - `resume_reload_bug`
    - `race_timing_bug`
-8. Recommend the next action:
+7. Recommend the next action:
    - boundary investigation
    - patch
    - instrumentation
@@ -79,16 +76,16 @@ Always produce these sections:
 ## Guardrails
 - Do not jump straight into editing before writing down the validation record.
 - Do not assume persisted state is correct just because the file exists.
+- Do not assume one working mode implies all modes work.
 - If a fresh reopen fixes the symptom, explicitly suspect in-memory projection, refresh wiring, resume handling, or session-local cache before blaming persistence.
 - Separate observations from hypotheses.
 - Prefer precise reproduction notes over broad conclusions.
-- Do not declare success after checking only one happy-path execution mode.
 
 ## Good completion criteria
 This skill is complete when:
 
 - the symptom is described clearly enough that another agent can reproduce it
-- fresh and existing-session behavior were explicitly compared
+- fresh and existing-session behavior were explicitly compared when relevant
 - persisted state and rendered state were explicitly compared when relevant
-- all relevant exposed execution modes were validated
 - the most likely failing boundary has been narrowed down
+- the recommended next action is specific enough to guide the next loop

@@ -1122,6 +1122,13 @@ export class ImplementSessionManager {
       `Preferred public experiment directory: ${sandboxPublicDir}`,
       `The experiment execution must produce JSON metrics at: ${sandboxMetricsPath}`,
       `Configured real-execution LLM: provider=${experimentLlmProfile.provider}, model=${experimentLlmProfile.model}, reasoning=${experimentLlmProfile.reasoningEffort}, fast_mode=${experimentLlmProfile.fastMode ? "true" : "false"}`,
+      "CRITICAL — GPU / device selection (MUST follow for any ML experiment):",
+      "Every generated Python script that loads a neural network or language model MUST:",
+      "1. Detect the device at startup: device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')",
+      "2. Load models onto the detected device: model = AutoModelForCausalLM.from_pretrained(..., device_map='auto', torch_dtype=torch.float16) if CUDA is available, or model.to(device) after loading.",
+      "3. Move input tensors to the same device before inference: inputs = {k: v.to(device) for k, v in inputs.items()}",
+      "4. Log device info in metrics: torch.cuda.get_device_name(0), torch.cuda.max_memory_allocated().",
+      "5. NEVER hardcode CPU-only execution. NEVER omit .to(device) or device_map. Using CPU when a GPU is available is a critical performance bug.",
       "Put reusable code, configs, READMEs, and documentation in the public experiment directory whenever possible.",
       "Use the private run artifact directory only for AutoLabOS metadata, logs, and required metric outputs.",
       "Prefer real executable experiments against actual repo code, benchmarks, and model calls when the workspace supports them.",
@@ -1272,7 +1279,16 @@ export class ImplementSessionManager {
       "Prefer minimal changes and explain localization clearly.",
       "If localization is uncertain, say so in localization.reasoning and candidate_files.",
       "If you create a new script, include it in changed_files and localization.selected_files.",
-      "Reuse long-term implementation memory when it directly applies to the current branch focus."
+      "Reuse long-term implementation memory when it directly applies to the current branch focus.",
+      "",
+      "Hardware / device selection (MANDATORY for all ML scripts):",
+      "- At the top of any generated ML script: device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')",
+      "- Load models with GPU support: model = AutoModelForCausalLM.from_pretrained(..., device_map='auto', torch_dtype=torch.float16) — this auto-places on GPU.",
+      "- If device_map='auto' is not used, MUST call model = model.to(device) immediately after loading.",
+      "- Before model.generate() or forward pass, move inputs: inputs = {k: v.to(device) for k, v in inputs.items()}",
+      "- In metrics output, include: 'device': str(device), 'gpu_name': torch.cuda.get_device_name(0) if available, 'peak_vram_gb': torch.cuda.max_memory_allocated()/1e9.",
+      "- FAILURE TO USE GPU WHEN AVAILABLE IS A BLOCKING BUG. CPU inference on a 3B model takes ~17s/example; GPU takes <0.5s/example.",
+      "- If an existing script already exists and uses CPU-only, you MUST patch it to use GPU."
     ];
 
     lines.push("", "Search-backed localization hints:", JSON.stringify(sandboxSearchLocalization, null, 2));
