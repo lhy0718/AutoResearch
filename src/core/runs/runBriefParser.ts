@@ -36,6 +36,10 @@ export interface MarkdownRunBriefSections {
   objectiveMetric?: string;
   constraints?: string;
   plan?: string;
+  researchQuestion?: string;
+  whySmallExperiment?: string;
+  baselineComparator?: string;
+  datasetTaskBench?: string;
   notes?: string;
   questionsRisks?: string;
   targetComparison?: string;
@@ -43,6 +47,9 @@ export interface MarkdownRunBriefSections {
   disallowedShortcuts?: string;
   allowedBudgetedPasses?: string;
   paperCeiling?: string;
+  minimumExperimentPlan?: string;
+  paperWorthinessGate?: string;
+  failureConditions?: string;
   manuscriptFormat?: string;
 }
 
@@ -169,6 +176,10 @@ export function parseMarkdownRunBriefSections(markdown: string): MarkdownRunBrie
     objectiveMetric: collapseMarkdownSection(sections.objectiveMetric),
     constraints: collapseMarkdownSection(sections.constraints),
     plan: collapseMarkdownSection(sections.plan),
+    researchQuestion: collapseMarkdownSection(sections.researchQuestion),
+    whySmallExperiment: collapseMarkdownSection(sections.whySmallExperiment),
+    baselineComparator: collapseMarkdownSection(sections.baselineComparator),
+    datasetTaskBench: collapseMarkdownSection(sections.datasetTaskBench),
     notes: collapseMarkdownSection(sections.notes),
     questionsRisks: collapseMarkdownSection(sections.questionsRisks),
     targetComparison: collapseMarkdownSection(sections.targetComparison),
@@ -176,6 +187,9 @@ export function parseMarkdownRunBriefSections(markdown: string): MarkdownRunBrie
     disallowedShortcuts: collapseMarkdownSection(sections.disallowedShortcuts),
     allowedBudgetedPasses: collapseMarkdownSection(sections.allowedBudgetedPasses),
     paperCeiling: collapseMarkdownSection(sections.paperCeiling),
+    minimumExperimentPlan: collapseMarkdownSection(sections.minimumExperimentPlan),
+    paperWorthinessGate: collapseMarkdownSection(sections.paperWorthinessGate),
+    failureConditions: collapseMarkdownSection(sections.failureConditions),
     manuscriptFormat: collapseMarkdownSection(sections.manuscriptFormat)
   };
 }
@@ -522,6 +536,21 @@ function mapMarkdownHeadingToSection(value: string): keyof MarkdownRunBriefSecti
       return "constraints";
     case "plan":
       return "plan";
+    case "research question":
+      return "researchQuestion";
+    case "why this can be tested with a small real experiment":
+    case "why this can be tested with a small experiment":
+    case "why this is a small real experiment":
+      return "whySmallExperiment";
+    case "baseline / comparator":
+    case "baseline/comparator":
+    case "baseline comparator":
+      return "baselineComparator";
+    case "dataset / task / bench":
+    case "dataset/task/bench":
+    case "dataset / task / benchmark":
+    case "dataset / task / corpus":
+      return "datasetTaskBench";
     case "notes":
       return "notes";
     case "questions / risks":
@@ -548,6 +577,16 @@ function mapMarkdownHeadingToSection(value: string): keyof MarkdownRunBriefSecti
     case "paper ceiling":
     case "evidence ceiling":
       return "paperCeiling";
+    case "minimum experiment plan":
+      return "minimumExperimentPlan";
+    case "paper-worthiness gate":
+    case "paper worthiness gate":
+    case "paper-readiness gate":
+    case "paper readiness gate":
+      return "paperWorthinessGate";
+    case "failure conditions":
+    case "blocked conditions":
+      return "failureConditions";
     case "manuscript format":
     case "paper format":
     case "format":

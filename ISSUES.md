@@ -278,3 +278,25 @@ None — all tracked issues are resolved or mitigated. See sections below for hi
 | Tests | Build passes. Need regression test. |
 | Status | ✅ Fixed |
 | Regression | Critique override still applies for cycles 0-1, maintaining safety. Only bypassed after 2+ cycles with passing minimum gate. |
+
+---
+
+### LV-034 — `/new` creates a non-paper-scale brief and `/brief start` runs it anyway
+
+| Field | Value |
+|---|---|
+| Validation target | Fresh-session TUI brief creation + `/brief start --latest` |
+| Execution mode | Interactive TUI, fresh `test/` workspace |
+| Environment | `test/` workspace after first-run onboarding, Codex provider, broad topic intended to stay within "Efficient Test-Time Reasoning for Small Language Models" |
+| Reproduction | 1. Launch TUI from `test/`. 2. Run `/new`. 3. Inspect generated brief at `test/.autolabos/briefs/20260318-220659-research-brief.md`. 4. Compare it with `docs/research-brief-template.md`. 5. Run `/brief start --latest` without filling the placeholders. 6. Inspect `test/.autolabos/runs/runs.json` and `test/.autolabos/runs/e9526c8b-472b-4e80-a151-082d155d3dc4/memory/run_context.json`. |
+| Expected | `/new` should generate a brief that matches the documented research-brief contract, and `/brief start` should block an unedited placeholder brief or any brief missing required governance sections. |
+| Actual | `/new` generated a brief with only Topic, Objective Metric, Constraints, Plan, Manuscript Format, Notes, and Questions / Risks. `/brief start --latest` still created run `e9526c8b-472b-4e80-a151-082d155d3dc4` and advanced it into `analyze_papers` using placeholder strings as the topic, objective, and constraints. |
+| Fresh vs existing | Fresh session: reproduced immediately after onboarding. Existing session: expected to behave the same because template generation and brief validation are file-based, not session-cached. Divergence: none observed/expected. |
+| Persisted artifact vs UI | Persisted brief snapshot and `run_brief.extracted` in run context contain placeholder text from the template, and `runs.json` shows the run as `running` with `currentNode = analyze_papers`; the UI therefore allowed a paper-scale-invalid brief to drive real collection/execution. |
+| Root-cause class | `persisted_state_bug` |
+| Hypothesis | `buildResearchBriefTemplate()` drifted below the documented brief contract, `validateResearchBriefMarkdown()` only errors on Topic/Objective presence, and `startRunFromBriefPath()` blocks only on validation errors. Placeholder/template text is therefore treated as valid run input. |
+| Fix | Extended the generated brief template to include the documented paper-scale sections, taught the Markdown parser to recognize those headings, and made brief validation block missing or non-substantive placeholder content before `/brief start` can create a run. |
+| Files changed | `src/core/runs/researchBriefFiles.ts`; `src/core/runs/runBriefParser.ts`; `tests/briefValidation.test.ts`; `tests/terminalAppPlanExecution.test.ts` |
+| Tests | Added/updated deterministic coverage in `tests/briefValidation.test.ts` and `tests/terminalAppPlanExecution.test.ts`; focused rerun passed; full `npm test` and `npm run validate:harness` passed. |
+| Status | ✅ Fixed |
+| Regression | Same-flow live rerun in `test/`: `/new` now writes a paper-scale brief template, and `/brief start --latest` leaves `test/.autolabos/runs/runs.json` empty when the template is untouched. Adjacent valid-brief start paths still pass. |

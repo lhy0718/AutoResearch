@@ -12,40 +12,265 @@ export interface BriefValidationResult {
   warnings: string[];
 }
 
+type ResearchBriefSectionKey =
+  | "topic"
+  | "objectiveMetric"
+  | "constraints"
+  | "plan"
+  | "researchQuestion"
+  | "whySmallExperiment"
+  | "baselineComparator"
+  | "datasetTaskBench"
+  | "targetComparison"
+  | "minimumAcceptableEvidence"
+  | "disallowedShortcuts"
+  | "allowedBudgetedPasses"
+  | "paperCeiling"
+  | "minimumExperimentPlan"
+  | "paperWorthinessGate"
+  | "failureConditions"
+  | "manuscriptFormat"
+  | "notes"
+  | "questionsRisks";
+
+type RequiredResearchBriefSectionKey = Exclude<
+  ResearchBriefSectionKey,
+  "manuscriptFormat" | "notes" | "questionsRisks"
+>;
+
+const RESEARCH_BRIEF_SECTION_SPECS: Array<{
+  key: ResearchBriefSectionKey;
+  heading: string;
+  lines: string[];
+  required: boolean;
+}> = [
+  {
+    key: "topic",
+    heading: "Topic",
+    required: true,
+    lines: ["State the research area and the concrete problem in 1-3 sentences."]
+  },
+  {
+    key: "objectiveMetric",
+    heading: "Objective Metric",
+    required: true,
+    lines: [
+      "- Primary metric:",
+      "- Secondary metrics (if any):",
+      "- What counts as meaningful improvement:"
+    ]
+  },
+  {
+    key: "constraints",
+    heading: "Constraints",
+    required: true,
+    lines: [
+      "- compute/time budget:",
+      "- dataset or environment limits:",
+      "- provider/tooling constraints:",
+      "- reproducibility constraints:",
+      "- forbidden shortcuts:"
+    ]
+  },
+  {
+    key: "plan",
+    heading: "Plan",
+    required: true,
+    lines: [
+      "1. collect paper-scale related work",
+      "2. identify comparator family",
+      "3. form a falsifiable hypothesis",
+      "4. design a small but real experiment",
+      "5. implement and run baseline + proposed condition",
+      "6. analyze results",
+      "7. draft only after evidence is sufficient"
+    ]
+  },
+  {
+    key: "researchQuestion",
+    heading: "Research Question",
+    required: true,
+    lines: ["Write one clear research question that could be answered by a small real experiment."]
+  },
+  {
+    key: "whySmallExperiment",
+    heading: "Why This Can Be Tested With A Small Real Experiment",
+    required: true,
+    lines: [
+      "- accessible dataset/task:",
+      "- feasible implementation scope:",
+      "- feasible baseline:",
+      "- realistic run budget:",
+      "- expected signal size or decision rule:"
+    ]
+  },
+  {
+    key: "baselineComparator",
+    heading: "Baseline / Comparator",
+    required: true,
+    lines: [
+      "- baseline name:",
+      "- why it is relevant:",
+      "- expected comparison dimension:"
+    ]
+  },
+  {
+    key: "datasetTaskBench",
+    heading: "Dataset / Task / Bench",
+    required: true,
+    lines: [
+      "- dataset(s):",
+      "- task type:",
+      "- train/eval protocol:",
+      "- split or validation discipline:",
+      "- known limitations:"
+    ]
+  },
+  {
+    key: "targetComparison",
+    heading: "Target Comparison",
+    required: true,
+    lines: [
+      "- proposed method or condition:",
+      "- comparator or baseline:",
+      "- comparison dimension:",
+      "- direction of expected improvement:"
+    ]
+  },
+  {
+    key: "minimumAcceptableEvidence",
+    heading: "Minimum Acceptable Evidence",
+    required: true,
+    lines: [
+      "- minimum effect size or decision boundary:",
+      "- minimum number of runs or folds:",
+      "- what counts as no signal vs weak signal:"
+    ]
+  },
+  {
+    key: "disallowedShortcuts",
+    heading: "Disallowed Shortcuts",
+    required: true,
+    lines: [
+      "- Do not use workflow smoke artifacts as experimental evidence.",
+      "- Do not cherry-pick a single favorable dataset and omit others.",
+      "- Do not fabricate or interpolate missing metric values.",
+      "- Do not claim statistical significance without running the test."
+    ]
+  },
+  {
+    key: "allowedBudgetedPasses",
+    heading: "Allowed Budgeted Passes",
+    required: true,
+    lines: [
+      "- permitted extra pass(es) within budget:",
+      "- total budget guardrail:"
+    ]
+  },
+  {
+    key: "paperCeiling",
+    heading: "Paper Ceiling If Evidence Remains Weak",
+    required: true,
+    lines: [
+      "State the maximum paper classification if the evidence stays weak.",
+      "Choose one of: system_validation_note | research_memo | blocked_for_paper_scale."
+    ]
+  },
+  {
+    key: "minimumExperimentPlan",
+    heading: "Minimum Experiment Plan",
+    required: true,
+    lines: [
+      "- one baseline run",
+      "- one proposed or alternative condition",
+      "- one result table",
+      "- one limitation note",
+      "- one claim->evidence mapping"
+    ]
+  },
+  {
+    key: "paperWorthinessGate",
+    heading: "Paper-worthiness Gate",
+    required: true,
+    lines: [
+      "- Is the research question explicit?",
+      "- Is the related work sufficient to position the study?",
+      "- Is there at least one explicit baseline?",
+      "- Is there at least one real executed experiment?",
+      "- Is there at least one quantitative comparison?",
+      "- Can major claims be traced to evidence?",
+      "- Are limitations stated?"
+    ]
+  },
+  {
+    key: "failureConditions",
+    heading: "Failure Conditions",
+    required: true,
+    lines: [
+      "- No usable dataset can be identified.",
+      "- No meaningful baseline can be implemented.",
+      "- The experiment only proves the pipeline runs.",
+      "- Results are too weak to support the intended claim."
+    ]
+  },
+  {
+    key: "manuscriptFormat",
+    heading: "Manuscript Format",
+    required: false,
+    lines: [
+      "- Columns: 2",
+      "- Main body pages: 8",
+      "- References excluded from page limit: yes",
+      "- Appendices excluded from page limit: yes"
+    ]
+  },
+  {
+    key: "notes",
+    heading: "Notes",
+    required: false,
+    lines: ["Optional context, references, or working assumptions."]
+  },
+  {
+    key: "questionsRisks",
+    heading: "Questions / Risks",
+    required: false,
+    lines: ["Optional open questions, blockers, or major risks."]
+  }
+];
+
+const REQUIRED_RESEARCH_BRIEF_SECTION_KEYS = RESEARCH_BRIEF_SECTION_SPECS
+  .filter((spec) => spec.required)
+  .map((spec) => spec.key) as RequiredResearchBriefSectionKey[];
+
+const PARTIAL_RESEARCH_BRIEF_SECTION_KEYS: RequiredResearchBriefSectionKey[] = [
+  "topic",
+  "objectiveMetric",
+  "constraints",
+  "plan",
+  "researchQuestion",
+  "baselineComparator",
+  "datasetTaskBench",
+  "targetComparison"
+];
+
+const RESEARCH_BRIEF_SECTION_LABELS = Object.fromEntries(
+  RESEARCH_BRIEF_SECTION_SPECS.map((spec) => [spec.key, spec.heading])
+) as Record<ResearchBriefSectionKey, string>;
+
+const RESEARCH_BRIEF_SECTION_PLACEHOLDERS = Object.fromEntries(
+  RESEARCH_BRIEF_SECTION_SPECS.map((spec) => [spec.key, spec.lines.join("\n")])
+) as Record<ResearchBriefSectionKey, string>;
+
 export function buildResearchBriefTemplate(): string {
   return [
     "# Research Brief",
     "",
-    "## Topic",
-    "",
-    "Describe the research question or capability you want to investigate.",
-    "",
-    "## Objective Metric",
-    "",
-    "State the primary success metric or threshold.",
-    "",
-    "## Constraints",
-    "",
-    "- List practical limits, required datasets, costs, or tools here.",
-    "",
-    "## Plan",
-    "",
-    "Outline the experiment plan, baselines, ablations, and confirmatory runs.",
-    "",
-    "## Manuscript Format",
-    "",
-    "- Columns: 2",
-    "- Main body pages: 8",
-    "- References excluded from page limit: yes",
-    "- Appendices excluded from page limit: yes",
-    "",
-    "## Notes",
-    "",
-    "Optional context, references, or working assumptions.",
-    "",
-    "## Questions / Risks",
-    "",
-    "Optional open questions, blockers, or major risks."
+    ...RESEARCH_BRIEF_SECTION_SPECS.flatMap((spec) => [
+      `## ${spec.heading}`,
+      "",
+      ...spec.lines,
+      ""
+    ])
   ].join("\n");
 }
 
@@ -101,37 +326,23 @@ export async function validateResearchBriefFile(filePath: string): Promise<Brief
 
 export function validateResearchBriefMarkdown(markdown: string): BriefValidationResult {
   const sections = parseMarkdownRunBriefSections(markdown);
+  const completeness = buildBriefCompletenessArtifact(markdown);
   const errors: string[] = [];
   const warnings: string[] = [];
   if (!sections?.title || sections.title.toLowerCase() !== "research brief") {
     warnings.push('Expected the document to start with "# Research Brief".');
   }
-  if (!sections?.topic) {
-    errors.push('Fill in the "## Topic" section before starting the run.');
-  }
-  if (!sections?.objectiveMetric) {
-    errors.push('Fill in the "## Objective Metric" section before starting the run.');
-  }
-  if (!sections?.constraints) {
-    warnings.push('The "## Constraints" section is empty. The run will continue without explicit constraints.');
-  }
-  if (!sections?.plan) {
-    warnings.push('The "## Plan" section is empty. Consider adding experiment intent before starting.');
-  }
-  if (!sections?.targetComparison) {
-    warnings.push('The "## Target Comparison" section is missing. Paper-scale claims require an explicit comparison.');
-  }
-  if (!sections?.minimumAcceptableEvidence) {
-    warnings.push('The "## Minimum Acceptable Evidence" section is missing. Review will apply default thresholds.');
-  }
-  if (!sections?.disallowedShortcuts) {
-    warnings.push('The "## Disallowed Shortcuts" section is missing. No shortcut guardrails will be enforced.');
-  }
-  if (!sections?.allowedBudgetedPasses) {
-    warnings.push('The "## Allowed Budgeted Passes" section is missing. Budget enforcement will use defaults.');
-  }
-  if (!sections?.paperCeiling) {
-    warnings.push('The "## Paper Ceiling If Evidence Remains Weak" section is missing. Claim ceiling will be inferred at review time.');
+
+  for (const key of REQUIRED_RESEARCH_BRIEF_SECTION_KEYS) {
+    const status = completeness.sections[key];
+    const heading = RESEARCH_BRIEF_SECTION_LABELS[key];
+    if (!status.present) {
+      errors.push(`Fill in the "## ${heading}" section before starting the run.`);
+      continue;
+    }
+    if (!status.substantive) {
+      errors.push(`Replace the placeholder text in "## ${heading}" before starting the run.`);
+    }
   }
   return { errors, warnings };
 }
@@ -155,81 +366,94 @@ export interface BriefCompletenessArtifact {
     objectiveMetric: BriefSectionStatus;
     constraints: BriefSectionStatus;
     plan: BriefSectionStatus;
+    researchQuestion: BriefSectionStatus;
+    whySmallExperiment: BriefSectionStatus;
+    baselineComparator: BriefSectionStatus;
+    datasetTaskBench: BriefSectionStatus;
     targetComparison: BriefSectionStatus;
     minimumAcceptableEvidence: BriefSectionStatus;
     disallowedShortcuts: BriefSectionStatus;
     allowedBudgetedPasses: BriefSectionStatus;
     paperCeiling: BriefSectionStatus;
+    minimumExperimentPlan: BriefSectionStatus;
+    paperWorthinessGate: BriefSectionStatus;
+    failureConditions: BriefSectionStatus;
   };
   missing_sections: string[];
   paper_scale_ready: boolean;
 }
 
-function sectionStatus(content: string | undefined): BriefSectionStatus {
+function normalizeBriefSectionText(content: string): string {
+  return content.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function sectionStatus(
+  key: RequiredResearchBriefSectionKey,
+  content: string | undefined
+): BriefSectionStatus {
   if (!content) return { present: false, substantive: false };
   const trimmed = content.trim();
   if (!trimmed) return { present: false, substantive: false };
-  // A section is substantive if it has at least 10 characters of non-boilerplate content
+  if (
+    normalizeBriefSectionText(trimmed) ===
+    normalizeBriefSectionText(RESEARCH_BRIEF_SECTION_PLACEHOLDERS[key])
+  ) {
+    return { present: true, substantive: false };
+  }
   const stripped = trimmed
     .replace(/\(not specified\)/gi, "")
-    .replace(/TBD/gi, "")
-    .replace(/TODO/gi, "")
-    .replace(/N\/A/gi, "")
+    .replace(/\bTBD\b/gi, "")
+    .replace(/\bTODO\b/gi, "")
+    .replace(/\bN\/A\b/gi, "")
+    .replace(/^\s*-\s*[^:\n]+:\s*$/gmu, "")
     .trim();
-  return { present: true, substantive: stripped.length >= 10 };
+  return {
+    present: true,
+    substantive: normalizeBriefSectionText(stripped).length >= 10
+  };
 }
 
 export function buildBriefCompletenessArtifact(markdown: string): BriefCompletenessArtifact {
   const sections = parseMarkdownRunBriefSections(markdown);
 
   const sectionMap = {
-    topic: sectionStatus(sections?.topic),
-    objectiveMetric: sectionStatus(sections?.objectiveMetric),
-    constraints: sectionStatus(sections?.constraints),
-    plan: sectionStatus(sections?.plan),
-    targetComparison: sectionStatus(sections?.targetComparison),
-    minimumAcceptableEvidence: sectionStatus(sections?.minimumAcceptableEvidence),
-    disallowedShortcuts: sectionStatus(sections?.disallowedShortcuts),
-    allowedBudgetedPasses: sectionStatus(sections?.allowedBudgetedPasses),
-    paperCeiling: sectionStatus(sections?.paperCeiling)
-  };
-
-  const SECTION_LABELS: Record<string, string> = {
-    topic: "Topic",
-    objectiveMetric: "Objective Metric",
-    constraints: "Constraints",
-    plan: "Plan",
-    targetComparison: "Target Comparison",
-    minimumAcceptableEvidence: "Minimum Acceptable Evidence",
-    disallowedShortcuts: "Disallowed Shortcuts",
-    allowedBudgetedPasses: "Allowed Budgeted Passes",
-    paperCeiling: "Paper Ceiling If Evidence Remains Weak"
+    topic: sectionStatus("topic", sections?.topic),
+    objectiveMetric: sectionStatus("objectiveMetric", sections?.objectiveMetric),
+    constraints: sectionStatus("constraints", sections?.constraints),
+    plan: sectionStatus("plan", sections?.plan),
+    researchQuestion: sectionStatus("researchQuestion", sections?.researchQuestion),
+    whySmallExperiment: sectionStatus("whySmallExperiment", sections?.whySmallExperiment),
+    baselineComparator: sectionStatus("baselineComparator", sections?.baselineComparator),
+    datasetTaskBench: sectionStatus("datasetTaskBench", sections?.datasetTaskBench),
+    targetComparison: sectionStatus("targetComparison", sections?.targetComparison),
+    minimumAcceptableEvidence: sectionStatus("minimumAcceptableEvidence", sections?.minimumAcceptableEvidence),
+    disallowedShortcuts: sectionStatus("disallowedShortcuts", sections?.disallowedShortcuts),
+    allowedBudgetedPasses: sectionStatus("allowedBudgetedPasses", sections?.allowedBudgetedPasses),
+    paperCeiling: sectionStatus("paperCeiling", sections?.paperCeiling),
+    minimumExperimentPlan: sectionStatus("minimumExperimentPlan", sections?.minimumExperimentPlan),
+    paperWorthinessGate: sectionStatus("paperWorthinessGate", sections?.paperWorthinessGate),
+    failureConditions: sectionStatus("failureConditions", sections?.failureConditions)
   };
 
   const missing: string[] = [];
-  for (const [key, status] of Object.entries(sectionMap)) {
-    if (!status.present) {
-      missing.push(SECTION_LABELS[key] ?? key);
+  for (const key of REQUIRED_RESEARCH_BRIEF_SECTION_KEYS) {
+    const status = sectionMap[key];
+    if (!status.present || !status.substantive) {
+      missing.push(RESEARCH_BRIEF_SECTION_LABELS[key]);
     }
   }
 
-  const coreSections = [sectionMap.topic, sectionMap.objectiveMetric];
-  const extendedSections = [
-    sectionMap.targetComparison,
-    sectionMap.minimumAcceptableEvidence,
-    sectionMap.disallowedShortcuts,
-    sectionMap.allowedBudgetedPasses,
-    sectionMap.paperCeiling
-  ];
-
-  const coreComplete = coreSections.every((s) => s.present && s.substantive);
-  const extendedPresent = extendedSections.filter((s) => s.present).length;
-  const extendedSubstantive = extendedSections.filter((s) => s.substantive).length;
+  const substantiveRequiredCount = REQUIRED_RESEARCH_BRIEF_SECTION_KEYS.filter(
+    (key) => sectionMap[key].substantive
+  ).length;
+  const partialCoreComplete = PARTIAL_RESEARCH_BRIEF_SECTION_KEYS.every(
+    (key) => sectionMap[key].substantive
+  );
 
   let grade: BriefCompletenessGrade;
-  if (coreComplete && extendedSubstantive >= 4) {
+  if (substantiveRequiredCount === REQUIRED_RESEARCH_BRIEF_SECTION_KEYS.length) {
     grade = "complete";
-  } else if (coreComplete && extendedPresent >= 2) {
+  } else if (partialCoreComplete && substantiveRequiredCount >= 10) {
     grade = "partial";
   } else {
     grade = "minimal";

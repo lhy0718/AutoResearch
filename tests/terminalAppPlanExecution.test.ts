@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { ensureScaffold, resolveAppPaths } from "../src/config.js";
 import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
+import { buildResearchBriefTemplate } from "../src/core/runs/researchBriefFiles.js";
 import { RunStore } from "../src/core/runs/runStore.js";
 import { TerminalApp } from "../src/tui/TerminalApp.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
@@ -61,6 +62,114 @@ function makeRun(id = "run-1"): any {
       episodePath: `.autolabos/runs/${id}/memory/episodes.jsonl`
     }
   };
+}
+
+function makeValidResearchBriefMarkdown(topic = "Multi-agent code repair on SWE-bench"): string {
+  return [
+    "# Research Brief",
+    "",
+    "## Topic",
+    "",
+    topic,
+    "",
+    "## Objective Metric",
+    "",
+    "- Primary metric: pass@1.",
+    "- Secondary metrics (if any): latency, cost.",
+    "- What counts as meaningful improvement: pass@1 >= 0.4 with acceptable runtime.",
+    "",
+    "## Constraints",
+    "",
+    "- compute/time budget: 6 hour time limit.",
+    "- dataset or environment limits: public SWE-bench subset only.",
+    "- provider/tooling constraints: local runner only.",
+    "- reproducibility constraints: persist scripts and result tables.",
+    "- forbidden shortcuts: no fabricated results.",
+    "",
+    "## Plan",
+    "",
+    "Run baseline, ablation, and confirmatory evaluations.",
+    "",
+    "## Research Question",
+    "",
+    "Can a multi-agent repair strategy improve SWE-bench pass@1 over a single-agent baseline within the same budget?",
+    "",
+    "## Why This Can Be Tested With A Small Real Experiment",
+    "",
+    "- accessible dataset/task: SWE-bench has a public subset.",
+    "- feasible implementation scope: compare one baseline and one proposal.",
+    "- feasible baseline: single-agent repair.",
+    "- realistic run budget: bounded local evaluation.",
+    "- expected signal size or decision rule: stop if pass@1 gains disappear under cost control.",
+    "",
+    "## Baseline / Comparator",
+    "",
+    "- baseline name: single-agent repair.",
+    "- why it is relevant: it is the simplest competitive baseline.",
+    "- expected comparison dimension: pass@1 versus runtime cost.",
+    "",
+    "## Dataset / Task / Bench",
+    "",
+    "- dataset(s): SWE-bench-lite.",
+    "- task type: code repair.",
+    "- train/eval protocol: fixed benchmark evaluation.",
+    "- split or validation discipline: one held-out evaluation slice.",
+    "- known limitations: subset scale is smaller than a paper-ready full benchmark run.",
+    "",
+    "## Target Comparison",
+    "",
+    "- proposed method or condition: multi-agent repair.",
+    "- comparator or baseline: single-agent repair.",
+    "- comparison dimension: pass@1 and runtime cost.",
+    "- direction of expected improvement: higher pass@1 with bounded overhead.",
+    "",
+    "## Minimum Acceptable Evidence",
+    "",
+    "- minimum effect size or decision boundary: +0.05 pass@1.",
+    "- minimum number of runs or folds: one full baseline run and one proposal run.",
+    "- what counts as no signal vs weak signal: no signal if pass@1 is flat; weak signal if cost dominates gains.",
+    "",
+    "## Disallowed Shortcuts",
+    "",
+    "- Do not use workflow smoke artifacts as experimental evidence.",
+    "- Do not cherry-pick only favorable tasks.",
+    "- Do not fabricate or interpolate missing metric values.",
+    "- Do not claim statistical significance without running the test.",
+    "",
+    "## Allowed Budgeted Passes",
+    "",
+    "- permitted extra pass(es) within budget: one verifier pass.",
+    "- total budget guardrail: stay within the single-workstation budget.",
+    "",
+    "## Paper Ceiling If Evidence Remains Weak",
+    "",
+    "Cap the output at research_memo if the evidence package stays weak.",
+    "",
+    "## Minimum Experiment Plan",
+    "",
+    "- one baseline run: single-agent repair on SWE-bench-lite.",
+    "- one proposed or alternative condition: multi-agent repair on the same task slice.",
+    "- one result table: pass@1 and runtime by condition.",
+    "- one limitation note: benchmark slice is smaller than a paper-ready full run.",
+    "- one claim->evidence mapping: link every conclusion to the result table or cited paper.",
+    "",
+    "## Paper-worthiness Gate",
+    "",
+    "- Is the research question explicit? yes.",
+    "- Is the related work sufficient to position the study? yes, if collection succeeds.",
+    "- Is there at least one explicit baseline? yes.",
+    "- Is there at least one real executed experiment? yes.",
+    "- Is there at least one quantitative comparison? yes.",
+    "- Can major claims be traced to evidence? yes.",
+    "- Are limitations stated? yes.",
+    "",
+    "## Failure Conditions",
+    "",
+    "- No usable benchmark slice can be run.",
+    "- No meaningful baseline can be implemented.",
+    "- The experiment only proves the pipeline runs.",
+    "- Results are too weak to support the intended claim."
+  ].join("\n");
 }
 
 describe("TerminalApp pending natural plan execution", () => {
@@ -2291,6 +2400,11 @@ describe("TerminalApp pending natural plan execution", () => {
       const raw = await readFile(path.join(briefsDir, files[0]), "utf8");
       expect(raw).toContain("# Research Brief");
       expect(raw).toContain("## Topic");
+      expect(raw).toContain("## Research Question");
+      expect(raw).toContain("## Baseline / Comparator");
+      expect(raw).toContain("## Dataset / Task / Bench");
+      expect(raw).toContain("## Minimum Experiment Plan");
+      expect(raw).toContain("## Failure Conditions");
       expect(app.logs.some((line: string) => line.includes("Created research brief:"))).toBe(true);
     } finally {
       process.chdir(originalCwd);
@@ -2377,26 +2491,7 @@ describe("TerminalApp pending natural plan execution", () => {
       const briefPath = path.join(briefDir, "20260311-190000-agent-study.md");
       await writeFile(
         briefPath,
-        [
-          "# Research Brief",
-          "",
-          "## Topic",
-          "",
-          "Multi-agent code repair on SWE-bench",
-          "",
-          "## Objective Metric",
-          "",
-          "pass@1 >= 0.4",
-          "",
-          "## Constraints",
-          "",
-          "- recent papers",
-          "- 6 hour time limit",
-          "",
-          "## Plan",
-          "",
-          "Run baseline, ablation, and confirmatory evaluations."
-        ].join("\n"),
+        makeValidResearchBriefMarkdown(),
         "utf8"
       );
 
@@ -2412,6 +2507,83 @@ describe("TerminalApp pending natural plan execution", () => {
       const runContext = new RunContextMemory(path.join(cwd, run.memoryRefs.runContextPath));
       expect(await runContext.get("run_brief.source_path")).toBe(await realpath(briefPath));
       expect(await runContext.get("run_brief.snapshot_path")).toBe(`.autolabos/runs/${run.id}/brief/source_brief.md`);
+    } finally {
+      process.chdir(originalCwd);
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks /brief start when the latest brief still contains template placeholders", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "autolabos-brief-placeholder-"));
+    const originalCwd = process.cwd();
+    process.chdir(cwd);
+    try {
+      const paths = resolveAppPaths(cwd);
+      await ensureScaffold(paths);
+      const runStore = new RunStore(paths);
+      const app = new TerminalApp({
+        config: {
+          papers: { max_results: 100 },
+          providers: {
+            llm_mode: "codex_chatgpt_only",
+            codex: {
+              model: "gpt-5.3-codex",
+              chat_model: "gpt-5.3-codex",
+              reasoning_effort: "medium",
+              chat_reasoning_effort: "medium",
+              fast_mode: false,
+              chat_fast_mode: false
+            },
+            openai: { model: "gpt-5.4", reasoning_effort: "medium" }
+          },
+          analysis: {
+            pdf_mode: "codex_text_image_hybrid",
+            responses_model: "gpt-5.4"
+          },
+          research: {
+            default_topic: "Multi-agent collaboration",
+            default_constraints: ["recent papers"],
+            default_objective_metric: "reproducibility"
+          }
+        } as any,
+        runStore,
+        titleGenerator: {
+          generateTitle: vi.fn().mockResolvedValue("Should not run")
+        } as any,
+        codex: {
+          runTurnStream: vi.fn(async () => {
+            throw new Error("llm unavailable");
+          })
+        } as any,
+        eventStream: { subscribe: () => () => {} } as any,
+        orchestrator: {
+          runCurrentAgentWithOptions: vi.fn()
+        } as any,
+        semanticScholarApiKeyConfigured: false,
+        onQuit: () => {},
+        saveConfig: async () => {}
+      }) as any;
+      app.render = () => {};
+      app.updateSuggestions = () => {};
+      app.drainQueuedInputs = async () => {};
+      app.startRun = vi.fn();
+
+      const briefDir = path.join(cwd, ".autolabos", "briefs");
+      await mkdir(briefDir, { recursive: true });
+      await writeFile(
+        path.join(briefDir, "20260311-190100-placeholder-brief.md"),
+        buildResearchBriefTemplate(),
+        "utf8"
+      );
+
+      await app.handleBriefCommand(["start", "--latest"]);
+
+      expect(await runStore.listRuns()).toHaveLength(0);
+      expect(app.startRun).not.toHaveBeenCalled();
+      expect(
+        app.logs.some((line: string) => line.includes('Replace the placeholder text in "## Topic"'))
+      ).toBe(true);
+      expect(app.logs).toContain("The brief still needs required sections before AutoLabOS can start the run.");
     } finally {
       process.chdir(originalCwd);
       await rm(cwd, { recursive: true, force: true });
@@ -2495,26 +2667,7 @@ describe("TerminalApp pending natural plan execution", () => {
       const briefPath = path.join(briefDir, "20260311-190500-agent-study.md");
       await writeFile(
         briefPath,
-        [
-          "# Research Brief",
-          "",
-          "## Topic",
-          "",
-          "Multi-agent code repair on SWE-bench",
-          "",
-          "## Objective Metric",
-          "",
-          "pass@1 >= 0.4",
-          "",
-          "## Constraints",
-          "",
-          "- recent papers",
-          "- 6 hour time limit",
-          "",
-          "## Plan",
-          "",
-          "Run baseline, ablation, and confirmatory evaluations."
-        ].join("\n"),
+        makeValidResearchBriefMarkdown(),
         "utf8"
       );
 
@@ -2639,26 +2792,7 @@ describe("TerminalApp pending natural plan execution", () => {
       const briefPath = path.join(briefDir, "20260313-190000-agent-study.md");
       await writeFile(
         briefPath,
-        [
-          "# Research Brief",
-          "",
-          "## Topic",
-          "",
-          "Multi-agent code repair on SWE-bench",
-          "",
-          "## Objective Metric",
-          "",
-          "pass@1 >= 0.4",
-          "",
-          "## Constraints",
-          "",
-          "- recent papers",
-          "- 6 hour time limit",
-          "",
-          "## Plan",
-          "",
-          "Run baseline, ablation, and confirmatory evaluations."
-        ].join("\n"),
+        makeValidResearchBriefMarkdown(),
         "utf8"
       );
 
@@ -2722,26 +2856,7 @@ describe("TerminalApp pending natural plan execution", () => {
       await mkdir(briefDir, { recursive: true });
       await writeFile(
         path.join(briefDir, "20260313-191500-agent-study.md"),
-        [
-          "# Research Brief",
-          "",
-          "## Topic",
-          "",
-          "Multi-agent code repair on SWE-bench",
-          "",
-          "## Objective Metric",
-          "",
-          "pass@1 >= 0.4",
-          "",
-          "## Constraints",
-          "",
-          "- recent papers",
-          "- 6 hour time limit",
-          "",
-          "## Plan",
-          "",
-          "Run baseline, ablation, and confirmatory evaluations."
-        ].join("\n"),
+        makeValidResearchBriefMarkdown(),
         "utf8"
       );
 
