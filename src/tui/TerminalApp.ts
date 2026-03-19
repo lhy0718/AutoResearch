@@ -5442,8 +5442,89 @@ export class TerminalApp {
 }
 
 export async function launchTerminalApp(deps: TerminalAppDeps): Promise<void> {
-  const app = new TerminalApp(deps);
-  await app.start();
+  const sessionLock = await acquireTerminalSessionLock(process.cwd());
+  try {
+    const app = new TerminalApp(deps);
+    await app.start();
+  } finally {
+    await releaseTerminalSessionLock(sessionLock);
+  }
+}
+
+interface TerminalSessionLock {
+  lockPath: string;
+  token: string;
+}
+
+interface PersistedTerminalSessionLock {
+  pid: number;
+  cwd: string;
+  startedAt: string;
+  token: string;
+}
+
+async function acquireTerminalSessionLock(cwd: string): Promise<TerminalSessionLock> {
+  const runtimeDir = path.join(cwd, ".autolabos", "runtime");
+  await ensureDir(runtimeDir);
+  const lockPath = path.join(runtimeDir, "tui-session-lock.json");
+  const existing = await readTerminalSessionLock(lockPath);
+  if (existing && existing.pid !== process.pid && isProcessAlive(existing.pid)) {
+    throw new Error(
+      `Another AutoLabOS TUI session is already running for ${existing.cwd} (pid ${existing.pid}). Close that session before starting a new live validation loop.`
+    );
+  }
+
+  const token = `${process.pid}:${Date.now()}`;
+  const nextLock: PersistedTerminalSessionLock = {
+    pid: process.pid,
+    cwd,
+    startedAt: new Date().toISOString(),
+    token
+  };
+  await fs.writeFile(lockPath, `${JSON.stringify(nextLock, null, 2)}\n`, "utf8");
+  return { lockPath, token };
+}
+
+async function releaseTerminalSessionLock(lock: TerminalSessionLock): Promise<void> {
+  const existing = await readTerminalSessionLock(lock.lockPath);
+  if (!existing || existing.token !== lock.token) {
+    return;
+  }
+  await fs.rm(lock.lockPath, { force: true }).catch(() => undefined);
+}
+
+async function readTerminalSessionLock(lockPath: string): Promise<PersistedTerminalSessionLock | undefined> {
+  if (!(await fileExists(lockPath))) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(await fs.readFile(lockPath, "utf8")) as Partial<PersistedTerminalSessionLock>;
+    if (
+      typeof parsed.pid === "number" &&
+      Number.isFinite(parsed.pid) &&
+      typeof parsed.cwd === "string" &&
+      typeof parsed.startedAt === "string" &&
+      typeof parsed.token === "string"
+    ) {
+      return parsed as PersistedTerminalSessionLock;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    if (code === "ESRCH") {
+      return false;
+    }
+    return true;
+  }
 }
 
 function oneLine(text: string, maxLength = 220): string {

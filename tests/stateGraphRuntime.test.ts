@@ -466,6 +466,52 @@ describe("StateGraphRuntime", () => {
     expect(persisted?.status).toBe("failed");
   });
 
+  it("uses the latest persisted retry state when a stale run_experiments failure arrives", async () => {
+    const { store, runtime } = await setup(new Registry({}));
+
+    const run = await store.createRun({
+      title: "Stale Run Failure",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "run_experiments";
+    run.graph.currentNode = "run_experiments";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 3;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 2;
+    run.graph.retryCounters.run_experiments = 3;
+    run.graph.rollbackCounters.run_experiments = 2;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    run.graph.nodeStates.implement_experiments.status = "completed";
+    run.graph.nodeStates.run_experiments.status = "running";
+    run.graph.nodeStates.run_experiments.note = "old fatal error";
+    await store.updateRun(run);
+
+    const stale = structuredClone(run);
+    stale.graph.retryCounters.run_experiments = 0;
+    stale.graph.rollbackCounters.run_experiments = 0;
+
+    const failureRuntime = runtime as unknown as {
+      handleFailure(runRecord: RunRecord, node: GraphNodeId, message: string): Promise<RunRecord>;
+    };
+    const updated = await failureRuntime.handleFailure(
+      stale,
+      "run_experiments",
+      "fatal: bounded retry scope did not exceed previous local scope"
+    );
+
+    expect(updated.currentNode).toBe("run_experiments");
+    expect(updated.status).toBe("failed");
+    expect(updated.graph.nodeStates.run_experiments.status).toBe("failed");
+    expect(updated.graph.retryCounters.run_experiments).toBe(3);
+    expect(updated.graph.rollbackCounters.run_experiments).toBe(2);
+  });
+
   it("pauses instead of auto-applying backward jump when maxAutoBackwardJumps is reached (LV-015)", async () => {
     // Node that emits a backward-jump recommendation on analyze_results
     const registry = new Registry({

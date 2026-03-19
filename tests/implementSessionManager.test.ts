@@ -2245,6 +2245,148 @@ describe("ImplementSessionManager", () => {
     expect(result.verifyReport).toMatchObject({ status: "pass" });
   });
 
+  it("does not reuse a recovered bundle when the bounded retry scope does not exceed the previous local scope", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-scope-gate-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Retry Scope Gate Run",
+      topic: "agent reasoning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+    mkdirSync(path.dirname(run.memoryRefs.episodePath), { recursive: true });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - revised_design_v2\n", "utf8");
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const scriptPath = path.join(publicDir, "run_gsm8k_budget_reasoning.py");
+    const configPath = path.join(publicDir, "frozen_config.json");
+    const readmePath = path.join(publicDir, "README.md");
+    const metricsPath = path.join(runDir, "metrics.json");
+    const artifactPath = path.join(publicDir, "artifacts", "pilot", "metrics.public.json");
+    const baselinePath = path.join(publicDir, "baseline_summary.json");
+
+    mkdirSync(path.dirname(artifactPath), { recursive: true });
+    mkdirSync(publicDir, { recursive: true });
+    writeFileSync(scriptPath, "print('stale bounded retry')\n", "utf8");
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          split: {
+            registered_pilot_size: 200,
+            default_local_pilot_size: 16,
+            previous_local_pilot_size: 12
+          },
+          repeats: {
+            registered_repeats: 5,
+            default_local_repeats: 1
+          },
+          negative_control: {
+            previous_scope: {
+              pilot_size: 12,
+              repeats: 1
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    writeFileSync(baselinePath, "{\"baseline\":\"greedy\"}\n", "utf8");
+    writeFileSync(metricsPath, "{\"status\":\"ok\"}\n", "utf8");
+    writeFileSync(artifactPath, "{\"accuracy\":0.5}\n", "utf8");
+    writeFileSync(
+      readmePath,
+      [
+        "# Existing Bundle",
+        "",
+        "```bash",
+        `python outputs/${path.basename(path.dirname(publicDir))}/experiment/${path.basename(scriptPath)} \\`,
+        `  --config outputs/${path.basename(path.dirname(publicDir))}/experiment/${path.basename(configPath)} \\`,
+        `  --public-dir outputs/${path.basename(path.dirname(publicDir))}/experiment \\`,
+        `  --run-dir .autolabos/runs/${run.id} \\`,
+        `  --metrics-path .autolabos/runs/${run.id}/metrics.json \\`,
+        "  --pilot-size 12 --repeats 1",
+        "```"
+      ].join("\n"),
+      "utf8"
+    );
+
+    let callCount = 0;
+    const codex = {
+      runTurnStream: async () => {
+        callCount += 1;
+        writeFileSync(scriptPath, "print('fresh bounded retry')\n", "utf8");
+        writeFileSync(
+          configPath,
+          JSON.stringify(
+            {
+              split: {
+                registered_pilot_size: 200,
+                default_local_pilot_size: 16,
+                previous_local_pilot_size: 12
+              },
+              repeats: {
+                registered_repeats: 5,
+                default_local_repeats: 2
+              },
+              negative_control: {
+                previous_scope: {
+                  pilot_size: 12,
+                  repeats: 1
+                }
+              }
+            },
+            null,
+            2
+          ),
+          "utf8"
+        );
+        return {
+          threadId: "thread-retry-scope-refresh",
+          finalText: JSON.stringify({
+            summary: "Re-implemented the bounded retry with a larger scope.",
+            experiment_mode: "real_execution",
+            run_command: `python ${JSON.stringify(scriptPath)} --config ${JSON.stringify(configPath)} --run-dir ${JSON.stringify(runDir)} --metrics-path ${JSON.stringify(metricsPath)} --pilot-size 16 --repeats 2`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            changed_files: [scriptPath, configPath],
+            artifacts: [scriptPath, configPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath, configPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexCliClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+
+    expect(callCount).toBe(1);
+    expect(result.summary).toContain("Re-implemented the bounded retry with a larger scope.");
+    expect(result.runCommand).toContain("--pilot-size 16 --repeats 2");
+  });
+
   it("pauses for approval after an unrecoverable Codex transport failure instead of triggering graph-level auto-retries", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-stop-error-"));
     tempDirs.push(workspace);
@@ -2947,5 +3089,86 @@ describe("ImplementSessionManager", () => {
     expect(result.autoHandoffToRunExperiments).toBe(false);
     expect(await memory.get("implement_experiments.plan_hash")).not.toBe(oldPlanHash);
     expect(await memory.get("implement_experiments.auto_handoff_to_run_experiments")).toBe(false);
+  });
+
+  it("starts a fresh implement thread when the experiment plan changed", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-fresh-thread-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Fresh Thread After Plan Change",
+      topic: "plan drift detection",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - new_design_v2\n  - calibrated_routing\n", "utf8");
+
+    const scriptPath = path.join(runDir, "experiment.py");
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    const oldPlanHash = createHash("sha256").update("hypotheses:\n  - old_design_v1\n").digest("hex").slice(0, 16);
+    await memory.put("implement_experiments.plan_hash", oldPlanHash);
+    await memory.put("implement_experiments.thread_id", "thread-stale-impl");
+    const seededRun = (await runStore.getRun(run.id)) || run;
+    seededRun.nodeThreads.implement_experiments = "thread-stale-impl";
+    await runStore.updateRun(seededRun);
+
+    const contract = buildExperimentComparisonContract({
+      run,
+      selectedDesign: {
+        id: "plan_new_thread",
+        hypothesis_ids: ["h_1"],
+        baselines: ["baseline_runner"]
+      },
+      objectiveProfile: buildHeuristicObjectiveMetricProfile(run.objectiveMetric),
+      managedBundleSupported: false
+    });
+    await storeExperimentGovernanceDecision(run, memory, { contract, entries: [] });
+
+    let seenThreadId: string | undefined = "uninitialized";
+    const codex = {
+      runTurnStream: async ({ threadId }: { threadId?: string }) => {
+        seenThreadId = threadId;
+        writeFileSync(scriptPath, "print('fresh turn')\n", "utf8");
+        return {
+          threadId: "thread-fresh-impl",
+          finalText: JSON.stringify({
+            summary: "Implemented a runnable experiment script from a fresh thread.",
+            run_command: `python3 ${JSON.stringify(scriptPath)}`,
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: path.join(runDir, "metrics.json"),
+            experiment_mode: "real_execution"
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexCliClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const updatedRun = await runStore.getRun(run.id);
+    const progressText = readFileSync(path.join(runDir, "implement_experiments", "progress.jsonl"), "utf8");
+
+    expect(seenThreadId).toBeUndefined();
+    expect(result.threadId).toBe("thread-fresh-impl");
+    expect(updatedRun?.nodeThreads.implement_experiments).toBe("thread-fresh-impl");
+    expect(await memory.get("implement_experiments.thread_id")).toBe("thread-fresh-impl");
+    expect(progressText).toContain("starting a fresh implementation thread");
   });
 });

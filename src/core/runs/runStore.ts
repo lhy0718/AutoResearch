@@ -3,7 +3,15 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 
 import { AppPaths } from "../../config.js";
-import { GRAPH_NODE_ORDER, GraphNodeId, NodeStatus, RunRecord, RunsFile, SlashContextRun } from "../../types.js";
+import {
+  GRAPH_NODE_ORDER,
+  GraphNodeId,
+  NodeStatus,
+  RunRecord,
+  RunsFile,
+  SlashContextRun,
+  TransitionRecommendation
+} from "../../types.js";
 import { ensureDir, readJsonFile, writeJsonFile } from "../../utils/fs.js";
 import { nowIso } from "../../utils/time.js";
 import {
@@ -215,6 +223,8 @@ export class RunStore {
 
     next = applyCollectDerivedState(next, collectSummary);
     next = applyAnalyzeDerivedState(next, analyzeSummary);
+    next = applyTransitionDerivedState(next, details.transitionRecommendationFile);
+    next = clearStalePendingTransition(next);
     next = normalizeCurrentRunPointer(next);
 
     const latestSummary = pickLatestSummary(next);
@@ -228,7 +238,8 @@ export class RunStore {
       details.latestCheckpoint?.createdAt,
       details.latestCheckpoint?.runSnapshot.updatedAt,
       collectSummary.updatedAt,
-      analyzeSummary.updatedAt
+      analyzeSummary.updatedAt,
+      details.transitionRecommendationFile.updatedAt
     ]);
     if (latestTimestamp) {
       next.updatedAt = latestTimestamp;
@@ -240,11 +251,20 @@ export class RunStore {
   private async readDerivedRunDetails(run: RunRecord): Promise<DerivedRunDetails> {
     const runRoot = path.join(this.paths.runsDir, run.id);
     const runContextPath = this.resolveWorkspacePath(run.memoryRefs.runContextPath);
-    const [contextItems, collectResultFile, analysisManifest, summaryArtifact, evidenceArtifact, latestCheckpoint] =
+    const [
+      contextItems,
+      collectResultFile,
+      analysisManifest,
+      transitionRecommendationFile,
+      summaryArtifact,
+      evidenceArtifact,
+      latestCheckpoint
+    ] =
       await Promise.all([
       this.readRunContextItems(runContextPath),
       this.readOptionalJson<CollectResultLike>(path.join(runRoot, "collect_result.json")),
       this.readOptionalJson<AnalysisManifestLike>(path.join(runRoot, "analysis_manifest.json")),
+      this.readOptionalJson<TransitionRecommendation>(path.join(runRoot, "transition_recommendation.json")),
       this.readJsonlArtifact(path.join(runRoot, "paper_summaries.jsonl")),
       this.readJsonlArtifact(path.join(runRoot, "evidence_store.jsonl")),
       this.readLatestCheckpointSnapshot(runRoot)
@@ -254,6 +274,7 @@ export class RunStore {
       contextEntries: new Map(contextItems.map((item) => [item.key, item])),
       collectResultFile,
       analysisManifest,
+      transitionRecommendationFile,
       summaryArtifact,
       evidenceArtifact,
       latestCheckpoint
@@ -412,6 +433,7 @@ interface DerivedRunDetails {
   contextEntries: Map<string, RunContextItem>;
   collectResultFile: DerivedJsonFile<CollectResultLike>;
   analysisManifest: DerivedJsonFile<AnalysisManifestLike>;
+  transitionRecommendationFile: DerivedJsonFile<TransitionRecommendation>;
   summaryArtifact: DerivedCountFile;
   evidenceArtifact: DerivedCountFile;
   latestCheckpoint?: DerivedCheckpointRecord;
@@ -539,6 +561,51 @@ function applyAnalyzeDerivedState(run: RunRecord, summary: DerivedNodeSummary): 
         ...run.graph.nodeStates,
         analyze_papers: mergeNodeNote(state, summary)
       }
+    }
+  };
+}
+
+function applyTransitionDerivedState(
+  run: RunRecord,
+  transitionFile: DerivedJsonFile<TransitionRecommendation>
+): RunRecord {
+  const currentState = run.graph.nodeStates[run.currentNode];
+  const shouldHydrateFailedRecovery =
+    run.status === "failed" || currentState?.status === "failed";
+  if (run.graph.pendingTransition || !transitionFile.value || !shouldHydrateFailedRecovery) {
+    return run;
+  }
+
+  const transition = normalizePendingTransition(transitionFile.value);
+  if (!transition) {
+    return run;
+  }
+
+  return {
+    ...run,
+    graph: {
+      ...run.graph,
+      pendingTransition: transition
+    }
+  };
+}
+
+function clearStalePendingTransition(run: RunRecord): RunRecord {
+  const transition = run.graph.pendingTransition;
+  if (!transition) {
+    return run;
+  }
+
+  const currentState = run.graph.nodeStates[run.currentNode];
+  if (run.status === "failed" || currentState?.status === "failed" || currentState?.status === "needs_approval") {
+    return run;
+  }
+
+  return {
+    ...run,
+    graph: {
+      ...run.graph,
+      pendingTransition: undefined
     }
   };
 }

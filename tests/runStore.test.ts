@@ -292,4 +292,144 @@ describe("RunStore", () => {
     expect(latest?.graph.checkpointSeq).toBeGreaterThan(stale.graph.checkpointSeq);
     expect(latest?.graph.nodeStates.collect_papers.status).toBe("completed");
   });
+
+  it("hydrates a missing pendingTransition from transition_recommendation.json", async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), "autolabos-runstore-transition-"));
+    tempDirs.push(cwd);
+    const paths = resolveAppPaths(cwd);
+    await ensureScaffold(paths);
+
+    const store = new RunStore(paths);
+    const run = await store.createRun({
+      title: "Transition Recovery",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "run_experiments";
+    run.graph.currentNode = "run_experiments";
+    run.status = "failed";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    run.graph.nodeStates.implement_experiments.status = "completed";
+    run.graph.nodeStates.run_experiments.status = "failed";
+    run.graph.pendingTransition = undefined;
+    await store.updateRun(run);
+
+    await writeFile(
+      path.join(paths.runsDir, run.id, "transition_recommendation.json"),
+      `${JSON.stringify(
+        {
+          action: "backtrack_to_design",
+          sourceNode: "analyze_results",
+          targetNode: "design_experiments",
+          reason: "Objective not met",
+          confidence: 0.64,
+          autoExecutable: true,
+          evidence: ["accuracy_delta_vs_baseline < 0"],
+          suggestedCommands: ["/agent jump design_experiments", "/agent run design_experiments"],
+          generatedAt: new Date().toISOString()
+        },
+        null,
+        2
+      )}\n`,
+      "utf8"
+    );
+
+    const hydrated = await store.getRun(run.id);
+    expect(hydrated?.graph.pendingTransition?.action).toBe("backtrack_to_design");
+    expect(hydrated?.graph.pendingTransition?.targetNode).toBe("design_experiments");
+  });
+
+  it("does not rehydrate transition_recommendation.json once the run has already re-entered a non-failed node", async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), "autolabos-runstore-transition-running-"));
+    tempDirs.push(cwd);
+    const paths = resolveAppPaths(cwd);
+    await ensureScaffold(paths);
+
+    const store = new RunStore(paths);
+    const run = await store.createRun({
+      title: "Transition Recovery Narrowing",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "design_experiments";
+    run.graph.currentNode = "design_experiments";
+    run.status = "running";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "running";
+    run.graph.pendingTransition = undefined;
+    await store.updateRun(run);
+
+    await writeFile(
+      path.join(paths.runsDir, run.id, "transition_recommendation.json"),
+      `${JSON.stringify(
+        {
+          action: "backtrack_to_design",
+          sourceNode: "analyze_results",
+          targetNode: "design_experiments",
+          reason: "Objective not met",
+          confidence: 0.64,
+          autoExecutable: true,
+          evidence: ["accuracy_delta_vs_baseline < 0"],
+          suggestedCommands: ["/agent jump design_experiments", "/agent run design_experiments"],
+          generatedAt: new Date().toISOString()
+        },
+        null,
+        2
+      )}\n`,
+      "utf8"
+    );
+
+    const hydrated = await store.getRun(run.id);
+    expect(hydrated?.graph.pendingTransition).toBeUndefined();
+    expect(hydrated?.currentNode).toBe("design_experiments");
+  });
+
+  it("clears a stale pendingTransition after the run has already moved into a non-failed node", async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), "autolabos-runstore-transition-clear-"));
+    tempDirs.push(cwd);
+    const paths = resolveAppPaths(cwd);
+    await ensureScaffold(paths);
+
+    const store = new RunStore(paths);
+    const run = await store.createRun({
+      title: "Transition Recovery Cleanup",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "design_experiments";
+    run.graph.currentNode = "design_experiments";
+    run.status = "running";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "running";
+    run.graph.pendingTransition = {
+      action: "backtrack_to_design",
+      sourceNode: "analyze_results",
+      targetNode: "design_experiments",
+      reason: "Objective not met",
+      confidence: 0.64,
+      autoExecutable: true,
+      evidence: ["accuracy_delta_vs_baseline < 0"],
+      suggestedCommands: ["/agent jump design_experiments", "/agent run design_experiments"],
+      generatedAt: new Date().toISOString()
+    };
+    await store.updateRun(run);
+
+    const hydrated = await store.getRun(run.id);
+    expect(hydrated?.graph.pendingTransition).toBeUndefined();
+    expect(hydrated?.status).toBe("running");
+    expect(hydrated?.currentNode).toBe("design_experiments");
+  });
 });

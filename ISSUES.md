@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-03-19 · 944/944 tests pass
+Last updated: 2026-03-19 · 971 tests pass, 2 skipped
 
 ---
 
@@ -630,3 +630,103 @@ Last updated: 2026-03-19 · 944/944 tests pass
 - Root-cause hypothesis: `run_experiments` validated and published metrics from `resolved.metricsPath`, but only mirrored them to the public experiment directory; it wrote `objective_evaluation.json` to the run root yet skipped canonical `metrics.json` when the execution plan targeted a bundle-local/public metrics path.
 - Planned fix: always write canonical run-root `metrics.json` from the validated parsed metrics on the successful `run_experiments` path, regardless of where the runner emitted its raw metrics file; add deterministic regression coverage for public-path metrics.
 - Update (2026-03-19): patched `src/core/nodes/runExperiments.ts` to write canonical run-root `metrics.json` before `objective_evaluation.json` on the success path. Added deterministic regression coverage in `tests/objectiveMetricPropagation.test.ts` for the case where `implement_experiments.metrics_path` points at a public bundle metrics file instead of `.autolabos/runs/<id>/metrics.json`. Targeted regression passed: `CI=1 npx vitest run tests/objectiveMetricPropagation.test.ts --pool=forks -t 'auto-runs managed quick_check and confirmatory profiles after a successful standard run'`. Same-flow live revalidation in `test/` is in progress on run `81820c46-d1b6-4080-8575-a35c60583480`.
+
+## LV-050 implement_experiments can resume a stale Codex thread after a design backtrack changes the plan
+- Category: live validation issue
+- Status: active
+- Validation target: `test/` run `81820c46-d1b6-4080-8575-a35c60583480` after `review -> generate_hypotheses -> design_experiments -> implement_experiments`
+- Execution mode: fresh interactive TUI in `test/`, resumed existing governed run after the PDF/provider config migration.
+- Reproduction:
+  1. Let `review` backtrack the run to `generate_hypotheses`, then allow minimal-approval auto-progression through `design_experiments`.
+  2. Observe the new cycle’s `experiment_plan.yaml` and `implement_task_spec.json` with `context.plan_changed=true`.
+  3. Compare the TUI stream and `implement_experiments/status.json` / `implement_experiments/progress.jsonl`.
+  4. Observe the thread id reused for `implement_experiments`.
+- Expected behavior: when a new design cycle materially changes the experiment plan, `implement_experiments` should start a fresh implementation turn so the new plan is actually applied to a new prompt/thread.
+- Actual behavior: the node entered `implement_experiments` with the previous `threadId` still attached (`019d0421-6ef0-7f00-bcea-7e694feb9342`) even though `implement_task_spec.json` marked `plan_changed=true`; persisted status stayed at `stage=localize`, `progressCount=4`, and the live TUI remained on `Implementing experiments...` with no new persisted progress.
+- Fresh vs existing: reproduced from a fresh TUI restart of the existing governed run in `test/`; the stale-thread reuse is persisted through `run.nodeThreads` / `implement_experiments.thread_id`, not just an in-memory render issue.
+- Persisted artifact vs UI: the UI shows a fresh `implement_experiments` turn, but persisted `status.json`, `progress.jsonl`, and `implement_task_spec.json` disagree about whether it is a truly fresh turn because the new plan is paired with an old implement thread.
+- Dominant taxonomy: `resume_reload_bug`
+- Root-cause hypothesis: `ImplementSessionManager.run()` always seeds `activeThreadId` from the previous implement cycle before it knows whether the experiment plan changed, so a backtracked design retry can resume a stale Codex thread instead of forcing a fresh implementation turn.
+- Planned fix: if `taskSpec.context.plan_changed=true`, clear the saved implement thread id before the Codex call, start a fresh implementation thread, add deterministic regression coverage, and rerun the same live flow in `test/`.
+- Update (2026-03-19): patched `src/core/agents/implementSessionManager.ts` so `implement_experiments` clears the saved thread id and starts a fresh implementation turn whenever `taskSpec.context.plan_changed=true`. Added deterministic coverage in `tests/implementSessionManager.test.ts` (`starts a fresh implement thread when the experiment plan changed`). Revalidated with `npm test`, `npm run validate:harness`, and a fresh TUI rerun in `test/`: `implement_experiments/progress.jsonl` now records `Experiment plan changed since the last implement cycle; starting a fresh implementation thread.`, and the new cycle no longer attaches the stale `019d0421-6ef0-7f00-bcea-7e694feb9342` thread to the retry attempt. Status: fixed for stale implement-thread reuse across design backtracks.
+
+## LV-051 implement_experiments can still recover an invalid bounded-retry bundle that repeats the previous 12x1 local scope
+- Category: live validation issue
+- Status: active
+- Validation target: `test/` run `81820c46-d1b6-4080-8575-a35c60583480` after the LV-050 fix, specifically the `implement_experiments -> run_experiments` handoff on the backtracked design cycle.
+- Execution mode: fresh interactive TUI in `test/`, resumed existing governed run after the stale-thread fix.
+- Reproduction:
+  1. Resume run `81820c46-d1b6-4080-8575-a35c60583480` from `test/` after `review -> generate_hypotheses -> design_experiments`.
+  2. Let the fixed `implement_experiments` cycle start fresh.
+  3. Observe `implement_result.json`, `implement_experiments/status.json`, `run_experiments_panel/execution_plan.json`, and `test/outputs/.../experiment/frozen_config.json`.
+  4. Compare the recovered bundle scope with `design_experiments_panel/retry_context.json`.
+- Expected behavior: once the retry context says the next bounded local branch must materially exceed the previous `pilot_size=12, repeats=1` scope, `implement_experiments` should refuse to recover/reuse any bundle whose recovered runnable command still uses `12x1`.
+- Actual behavior: the node started fresh, but recovered a plan-aligned bundle whose command still used `--pilot-size 12 --repeats 1`; `run_experiments` then failed honestly with `The bounded retry must materially exceed the previous local scope`.
+- Fresh vs existing: reproduced from a fresh TUI reopen of the existing governed run; the mismatch is persisted in the recovered bundle artifacts and not only in the UI projection.
+- Persisted artifact vs UI: `design_experiments_panel/retry_context.json` and `experiment_plan.yaml` demand a materially larger bounded retry, while `implement_result.json`, `execution_plan.json`, and `frozen_config.json` still encode the invalid `12x1` scope.
+- Dominant taxonomy: `persisted_state_bug`
+- Root-cause hypothesis: recovered-bundle validation only checked plan freshness by mtime; it did not inspect the recovered bundle’s runnable scope against the retry guard encoded in `frozen_config.json` / negative-control scope.
+- Planned fix: reject recovered bundles whose `run_command` / `frozen_config.json` do not materially exceed the previous bounded local scope, add deterministic coverage, and rerun the same flow in `test/`.
+- Update (2026-03-19): patched `src/core/agents/implementSessionManager.ts` so recovered-bundle reuse now parses `frozen_config.json` plus the recovered `run_command`, rejects bundles that do not exceed the previous local retry scope, and falls back to a fresh implementation turn instead of handing an invalid bundle to `run_experiments`. Added deterministic coverage in `tests/implementSessionManager.test.ts` (`does not reuse a recovered bundle when the bounded retry scope does not exceed the previous local scope`). Validation: targeted regression passed, `npm test` passed, `npm run validate:harness` passed, and `npm run build` passed outside the sandbox; inside the sandbox, `vite build` intermittently segfaulted, so the build gap is environment-side rather than a repo compile regression. Live same-flow revalidation for this specific guard is still pending because the current run remains stuck in the already-launched old `run_experiments` retry loop with the invalid `12x1` command.
+
+## LV-052 run_experiments can remain in `running` after a fatal structural runner failure, preventing conservative backtrack or pause
+- Category: live validation issue
+- Status: fixed
+- Validation target: `test/` run `81820c46-d1b6-4080-8575-a35c60583480` after the invalid `12x1` bounded retry reaches `run_experiments`
+- Execution mode: fresh interactive TUI in `test/`, resumed existing governed run
+- Reproduction:
+  1. Resume the same governed run in `test/`.
+  2. Let `run_experiments` execute the invalid recovered command `--pilot-size 12 --repeats 1`.
+  3. Observe `run_experiments_verify_report.json`, `runs.json`, and the live TUI status.
+- Expected behavior: once the runner hits a structural fatal error that cannot be auto-retried honestly, the node should converge to `failed` / `needs_approval` or backtrack conservatively, so the loop can move to the next design cycle.
+- Actual behavior: `run_experiments_verify_report.json` records the fatal structural failure, but `runs.json` still shows `currentNode: "run_experiments"` with `status: "running"`, and the TUI keeps surfacing `run_experiments error` / `Running experiments...` with no pending approval.
+- Fresh vs existing: reproduced from a fresh TUI reopen of the existing governed run; the stuck state is persisted in `runs.json`, not just a stale UI frame.
+- Persisted artifact vs UI: persisted verifier artifacts already classify the run as failed, but persisted run-graph state still says `running`, blocking the next conservative transition.
+- Dominant taxonomy: `persisted_state_bug`
+- Root-cause hypothesis: `handleFailure()` persisted a `fail` checkpoint while the run still had `status: running`, then later wrote `status: failed` only to `runs.json`; on reload, `RunStore.applyCheckpointDerivedState()` preferred the fresher checkpoint snapshot and resurrected the stale `running` state.
+- Code/test changes:
+  - `src/core/stateGraph/runtime.ts`
+  - `tests/stateGraphRuntime.test.ts`
+- Update (2026-03-19): patched `StateGraphRuntime.handleFailure()` to (1) re-read the latest persisted run before applying failure bookkeeping so stale in-memory retries cannot overwrite exhausted counters, and (2) write a final terminal `fail` checkpoint after setting `run.status = "failed"` when retries/rollbacks are exhausted. Added deterministic regression coverage in `tests/stateGraphRuntime.test.ts` (`uses the latest persisted retry state when a stale run_experiments failure arrives`). Validation: targeted regression passed, `tests/terminalAppLaunch.test.ts` passed, `npm test` passed, `npm run build` passed, and `npm run validate:harness` passed outside the sandbox. Same-flow live revalidation in `test/` now converges the persisted run to `status: "failed"` / `nodeStates.run_experiments.status: "failed"` while `run_experiments_verify_report.json` remains `status: "fail"`, matching the TUI after the same fatal bounded-scope error.
+
+## LV-053 duplicate TUI sessions in the same `test/` workspace can compound stale-run recovery and risk server unresponsiveness
+- Category: live validation issue
+- Status: fixed
+- Validation target: real TUI launch discipline in `test/` during repeated live validation loops
+- Execution mode: fresh interactive TUI in `test/`, plus a second concurrent fresh launch attempt in the same workspace
+- Reproduction:
+  1. Launch the real TUI from `test/`.
+  2. Leave the first TUI attached to run `81820c46-d1b6-4080-8575-a35c60583480`.
+  3. Start a second `../node_modules/.bin/tsx ../src/cli/main.ts` process from the same `test/` workspace.
+- Expected behavior: only one live TUI session should own a workspace at a time; duplicate launches should fail fast with a clear operator-facing error instead of attaching a second renderer/recovery loop.
+- Actual behavior: before the fix, nothing prevented multiple TUI sessions from reopening the same workspace/run concurrently, which could multiply stale-node recovery and repeated redraw/execution pressure.
+- Fresh vs existing: the risk appears specifically when a fresh second session is opened while an existing session is still alive; the first session itself can be healthy.
+- Persisted artifact vs UI: the problematic overlap is primarily runtime/session ownership rather than a persisted artifact mismatch, but it can amplify stale persisted-state recovery bugs like LV-052.
+- Dominant taxonomy: `race_timing_bug`
+- Root-cause hypothesis: `launchTerminalApp()` had no workspace-scoped ownership guard, so repeated operator restarts or accidental duplicate launches could create overlapping TUI processes in the same live validation workspace.
+- Code/test changes:
+  - `src/tui/TerminalApp.ts`
+  - `tests/terminalAppLaunch.test.ts`
+- Update (2026-03-19): added a workspace-scoped TUI session lock under `test/.autolabos/runtime/tui-session-lock.json`. A second live launch now fails fast with `Another AutoLabOS TUI session is already running for /home/hanyong/AutoLabOS/test ...`, while stale dead locks are cleared automatically. Deterministic validation passed in `tests/terminalAppLaunch.test.ts`, and same-flow live validation confirmed that a second `test/` TUI launch is rejected while the first session is active.
+
+## LV-054 failed-run natural steering ignored the recorded `transition_recommendation.json` and only proposed retrying the failed node
+- Category: live validation issue
+- Status: fixed
+- Validation target: failed run recovery in `test/`, specifically `run_experiments failed -> design_experiments` backtrack guidance for run `81820c46-d1b6-4080-8575-a35c60583480`
+- Execution mode: fresh interactive TUI in `test/`, resumed existing governed run
+- Reproduction:
+  1. Reopen the failed run in `test/` after LV-052.
+  2. Confirm the detail panel shows `Target design_experiments | Auto yes` from `transition_recommendation.json`.
+  3. Enter natural steering such as `Backtrack this run to design_experiments and continue with the next governed cycle.`
+- Expected behavior: natural failed-run guidance should use the recorded transition recommendation and offer a backtrack/apply action toward `design_experiments`.
+- Actual behavior: before the fix, natural guidance ignored the recorded transition artifact, reported `Next action: run`, and armed `/agent retry run_experiments <run>` even though the visible recommendation targeted `design_experiments`.
+- Fresh vs existing: reproduced from a fresh TUI reopen of the existing failed run; the mismatch was driven by persisted guidance state versus the natural-command resolver, not by a session-only render glitch.
+- Persisted artifact vs UI: `transition_recommendation.json` clearly recommended `backtrack_to_design` with suggested commands `/agent jump design_experiments` and `/agent run design_experiments`, while the natural assistant still proposed retrying `run_experiments`.
+- Dominant taxonomy: `persisted_state_bug`
+- Root-cause hypothesis: `RunStore` did not hydrate `transition_recommendation.json` back into `run.graph.pendingTransition`, and `buildNaturalAssistantResponse()` always preferred `/agent retry <currentNode>` for failed runs instead of consulting a persisted transition recommendation.
+- Code/test changes:
+  - `src/core/runs/runStore.ts`
+  - `src/core/commands/naturalAssistant.ts`
+  - `tests/runStore.test.ts`
+  - `tests/naturalAssistant.test.ts`
+- Update (2026-03-19): patched `RunStore` to recover `pendingTransition` from `transition_recommendation.json` when the run record lacks one, and patched `naturalAssistant` so failed runs prefer `apply transition` guidance over blind retry when a recorded transition exists. Deterministic regressions passed (`hydrates a missing pendingTransition from transition_recommendation.json`, `prefers an apply-transition recommendation for failed runs when a pending transition exists`). Same-flow live revalidation in `test/` now proposes `/agent apply 81820c46-d1b6-4080-8575-a35c60583480`, successfully applies `backtrack_to_design -> design_experiments`, and advances the run into a new `design_experiments` cycle instead of retrying the failed `run_experiments` node.

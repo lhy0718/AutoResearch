@@ -426,6 +426,20 @@ export class ImplementSessionManager {
     }
 
     let activeThreadId = currentThreadId;
+    if (taskSpec.context.plan_changed && activeThreadId) {
+      activeThreadId = undefined;
+      await runContext.put("implement_experiments.thread_id", null);
+      const latestRun = (await this.deps.runStore.getRun(run.id)) || run;
+      if (latestRun.nodeThreads.implement_experiments) {
+        delete latestRun.nodeThreads.implement_experiments;
+        await this.deps.runStore.updateRun(latestRun);
+      }
+      emitImplementObservation(
+        "preflight",
+        "Experiment plan changed since the last implement cycle; starting a fresh implementation thread.",
+        { publicDir: defaultPublicDir }
+      );
+    }
     let finalAttempt: PreparedImplementAttempt | undefined;
     let finalIsolation: AttemptIsolationContext | undefined;
     const attemptRecords: AttemptRecord[] = [];
@@ -2374,6 +2388,9 @@ async function recoverStructuredResultFromPublicBundle(params: {
   if (!runCommand) {
     return undefined;
   }
+  if (!(await recoveredBundleSatisfiesRetryScope({ frozenConfigPath, runCommand }))) {
+    return undefined;
+  }
 
   return {
     finalText: JSON.stringify({
@@ -2556,6 +2573,74 @@ function inferRecoveredBundleRunCommand(params: {
     return segments.join(" ");
   }
   return inferRunCommand(params.scriptPath, params.publicDir, path.basename(params.runDir));
+}
+
+async function recoveredBundleSatisfiesRetryScope(args: {
+  frozenConfigPath: string;
+  runCommand: string;
+}): Promise<boolean> {
+  const config = parseJsonObject(await fs.readFile(args.frozenConfigPath, "utf8").catch(() => ""));
+  if (!config || typeof config !== "object") {
+    return true;
+  }
+  const record = config as Record<string, unknown>;
+  const split = record.split && typeof record.split === "object" ? (record.split as Record<string, unknown>) : undefined;
+  const repeats = record.repeats && typeof record.repeats === "object" ? (record.repeats as Record<string, unknown>) : undefined;
+  const negativeControl =
+    record.negative_control && typeof record.negative_control === "object"
+      ? (record.negative_control as Record<string, unknown>)
+      : undefined;
+  const previousScope =
+    negativeControl?.previous_scope && typeof negativeControl.previous_scope === "object"
+      ? (negativeControl.previous_scope as Record<string, unknown>)
+      : undefined;
+
+  const previousPilotSize =
+    asFiniteNumber(previousScope?.pilot_size) ?? asFiniteNumber(split?.previous_local_pilot_size);
+  const previousRepeats = asFiniteNumber(previousScope?.repeats);
+  if (previousPilotSize === undefined && previousRepeats === undefined) {
+    return true;
+  }
+
+  const nextPilotSize =
+    extractNumericFlag(args.runCommand, "--pilot-size") ?? asFiniteNumber(split?.default_local_pilot_size);
+  const nextRepeats =
+    extractNumericFlag(args.runCommand, "--repeats") ?? asFiniteNumber(repeats?.default_local_repeats);
+
+  if (previousPilotSize !== undefined && nextPilotSize !== undefined && nextPilotSize > previousPilotSize) {
+    return true;
+  }
+  if (previousRepeats !== undefined && nextRepeats !== undefined && nextRepeats > previousRepeats) {
+    return true;
+  }
+  if (previousPilotSize === undefined && previousRepeats !== undefined && nextRepeats === undefined) {
+    return false;
+  }
+  if (previousRepeats === undefined && previousPilotSize !== undefined && nextPilotSize === undefined) {
+    return false;
+  }
+  return previousPilotSize === undefined && previousRepeats === undefined;
+}
+
+function extractNumericFlag(command: string, flag: string): number | undefined {
+  const escapedFlag = escapeRegex(flag);
+  const pattern = new RegExp(`${escapedFlag}\\s+(?:"([^"]+)"|'([^']+)'|(\\S+))`, "u");
+  const match = command.match(pattern);
+  if (!match) {
+    return undefined;
+  }
+  return asFiniteNumber(match[1] || match[2] || match[3]);
+}
+
+function asFiniteNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
 }
 
 function normalizeExperimentMode(mode: string | undefined, summary: string | undefined): string {

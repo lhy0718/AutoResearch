@@ -157,6 +157,17 @@ function buildNextStepRecommendation(
   }
 
   if (run.status === "failed" || nodeStatus === "failed") {
+    const recommendation = run.graph.pendingTransition;
+    if (recommendation) {
+      return {
+        lines: [
+          "Next action: apply transition",
+          `Apply the recorded transition to ${recommendation.targetNode || "stay"}.`
+        ],
+        primaryCommand: `/agent apply ${run.id}`
+      };
+    }
+
     const command = `/agent retry ${run.currentNode} ${run.id}`;
     return {
       lines: ["Next action: run", `This retries ${run.currentNode}.`],

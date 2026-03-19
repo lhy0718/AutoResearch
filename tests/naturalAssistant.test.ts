@@ -106,6 +106,37 @@ describe("buildNaturalAssistantResponse", () => {
     expect(response.pendingCommand).toBeUndefined();
   });
 
+  it("prefers an apply-transition recommendation for failed runs when a pending transition exists", () => {
+    const run = makeRun({
+      id: "run-failed-transition",
+      status: "failed",
+      currentNode: "run_experiments"
+    });
+    run.graph.currentNode = "run_experiments";
+    run.graph.nodeStates.run_experiments.status = "failed";
+    run.graph.pendingTransition = {
+      action: "backtrack_to_design",
+      sourceNode: "analyze_results",
+      targetNode: "design_experiments",
+      reason: "Objective not met",
+      confidence: 0.64,
+      autoExecutable: true,
+      evidence: ["accuracy_delta_vs_baseline < 0"],
+      suggestedCommands: ["/agent jump design_experiments", "/agent run design_experiments"],
+      generatedAt: new Date().toISOString()
+    };
+
+    const response = buildNaturalAssistantResponse({
+      input: "what should I do next",
+      runs: [run],
+      activeRunId: run.id
+    });
+
+    expect(response.lines).toContain("Next action: apply transition");
+    expect(response.lines).toContain("Apply the recorded transition to design_experiments.");
+    expect(response.pendingCommand).toBeUndefined();
+  });
+
   it("returns the underlying run command when execution intent is present", () => {
     const run = makeRun({
       id: "run-execute",

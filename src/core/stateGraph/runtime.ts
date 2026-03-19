@@ -539,6 +539,15 @@ export class StateGraphRuntime {
   }
 
   private async handleFailure(run: RunRecord, node: GraphNodeId, errorMessage: string): Promise<RunRecord> {
+    const latest = await this.getRunOrThrow(run.id);
+    if (
+      latest.currentNode !== node &&
+      latest.graph.currentNode !== node &&
+      latest.graph.nodeStates[node]?.status !== "running"
+    ) {
+      return latest;
+    }
+    run = latest;
     run.graph.pendingTransition = undefined;
     const maxAttempts = Math.max(1, run.graph.retryPolicy.maxAttemptsPerNode);
     const nextRetry = Math.min((run.graph.retryCounters[node] ?? 0) + 1, maxAttempts);
@@ -621,7 +630,7 @@ export class StateGraphRuntime {
     if (currentRollbackCount >= maxRollbacks) {
       run.status = "failed";
       this.syncLatestSummary(run, node);
-      await this.runStore.updateRun(run);
+      await this.saveCheckpointAndPersist(run, "fail", errorMessage);
       return this.getRunOrThrow(run.id);
     }
 
@@ -629,7 +638,7 @@ export class StateGraphRuntime {
     if (!prev) {
       run.status = "failed";
       this.syncLatestSummary(run, node);
-      await this.runStore.updateRun(run);
+      await this.saveCheckpointAndPersist(run, "fail", errorMessage);
       return this.getRunOrThrow(run.id);
     }
 
