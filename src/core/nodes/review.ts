@@ -38,6 +38,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       }
 
       const runDir = path.join(".autolabos", "runs", run.id);
+      const priorCompiledPageValidation = await loadPriorCompiledPageValidation(runDir);
 
       // --- Pre-review summary artifact (Target 6) ---
       const experimentContract = await loadExperimentContract(run.id);
@@ -50,6 +51,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         attemptDecisions,
         failureClusters,
         objectiveMetric: run.objectiveMetric,
+        priorCompiledPageValidation,
         retryCounters: run.graph.retryCounters,
         rollbackCounters: run.graph.rollbackCounters
       });
@@ -164,6 +166,10 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         runContext: runContextMemory,
         section: "review",
         files: [
+          {
+            sourcePath: path.join(runDir, "review", "pre_review_summary.json"),
+            targetRelativePath: "pre_review_summary.json"
+          },
           {
             sourcePath: reviewPacketPath,
             targetRelativePath: "review_packet.json"
@@ -590,6 +596,13 @@ interface PreReviewSummary {
     abort_condition: string;
     keep_or_discard_rule: string;
   };
+  prior_compiled_page_validation?: {
+    status: string;
+    outcome: string;
+    main_page_limit: number | null;
+    compiled_pdf_page_count: number | null;
+    message: string;
+  };
   retry_counters: Record<string, number>;
   rollback_counters: Record<string, number>;
 }
@@ -600,6 +613,13 @@ function buildPreReviewSummary(input: {
   attemptDecisions: import("../experiments/attemptDecision.js").AttemptDecision[];
   failureClusters: Array<[string, number]>;
   objectiveMetric: string;
+  priorCompiledPageValidation?: {
+    status: string;
+    outcome: string;
+    main_page_limit: number | null;
+    compiled_pdf_page_count: number | null;
+    message: string;
+  };
   retryCounters: Record<string, number>;
   rollbackCounters: Record<string, number>;
 }): PreReviewSummary {
@@ -675,6 +695,7 @@ function buildPreReviewSummary(input: {
           keep_or_discard_rule: experimentContract.keep_or_discard_rule
         }
       : undefined,
+    prior_compiled_page_validation: input.priorCompiledPageValidation,
     retry_counters: Object.fromEntries(
       Object.entries(input.retryCounters).filter(([, v]) => v !== undefined)
     ) as Record<string, number>,
@@ -682,6 +703,34 @@ function buildPreReviewSummary(input: {
       Object.entries(input.rollbackCounters).filter(([, v]) => v !== undefined)
     ) as Record<string, number>
   };
+}
+
+async function loadPriorCompiledPageValidation(runDir: string): Promise<PreReviewSummary["prior_compiled_page_validation"] | undefined> {
+  try {
+    const raw = await safeRead(path.join(runDir, "paper", "compiled_page_validation.json"));
+    if (!raw) {
+      return undefined;
+    }
+    const parsed = JSON.parse(raw) as {
+      status?: unknown;
+      outcome?: unknown;
+      main_page_limit?: unknown;
+      compiled_pdf_page_count?: unknown;
+      message?: unknown;
+    };
+    if (typeof parsed.status !== "string" || typeof parsed.outcome !== "string" || typeof parsed.message !== "string") {
+      return undefined;
+    }
+    return {
+      status: parsed.status,
+      outcome: parsed.outcome,
+      main_page_limit: typeof parsed.main_page_limit === "number" ? parsed.main_page_limit : null,
+      compiled_pdf_page_count: typeof parsed.compiled_pdf_page_count === "number" ? parsed.compiled_pdf_page_count : null,
+      message: parsed.message
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 function extractPreReviewBaselineLabels(report: AnalysisReport): string[] {

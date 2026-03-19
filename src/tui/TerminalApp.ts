@@ -57,11 +57,11 @@ import {
   isStructuredActionTimeoutError,
   looksLikeStructuredActionRequest
 } from "../core/commands/naturalActionIntent.js";
-import { runDoctorReport } from "../core/doctor.js";
+import { buildDoctorHighlightLines, runDoctorReport } from "../core/doctor.js";
 import { resolveRunByQuery } from "../core/runs/runResolver.js";
 import { askLine } from "../utils/prompt.js";
 import { ensureDir, fileExists } from "../utils/fs.js";
-import { resolveOpenAiApiKey, upsertEnvVar } from "../config.js";
+import { getDefaultPdfAnalysisModeForLlmMode, getPdfAnalysisModeForConfig, resolveOpenAiApiKey, upsertEnvVar } from "../config.js";
 import { AgentOrchestrator } from "../core/agents/agentOrchestrator.js";
 import { AutonomousRunController, buildDefaultOvernightPolicy, buildDefaultAutonomousPolicy } from "../core/agents/autonomousRunController.js";
 import { RunContextMemory } from "../core/memory/runContextMemory.js";
@@ -2252,7 +2252,7 @@ export class TerminalApp {
   private async handleDoctor(): Promise<void> {
     const report = await runDoctorReport(this.codex, {
       llmMode: this.config.providers.llm_mode,
-      pdfAnalysisMode: this.config.analysis.pdf_mode,
+      pdfAnalysisMode: getPdfAnalysisModeForConfig(this.config),
       openAiApiKeyConfigured: await resolveOpenAiApiKey(process.cwd()).then(Boolean),
       codexResearchModel: this.config.providers.codex.model,
       codexPdfModel: this.config.providers.codex.pdf_model || this.config.providers.codex.model,
@@ -2265,6 +2265,9 @@ export class TerminalApp {
       includeHarnessTestRecords: false,
       maxHarnessFindings: 30
     });
+    for (const line of buildDoctorHighlightLines(report)) {
+      this.pushLog(line);
+    }
     for (const check of report.checks) {
       const mark = check.ok ? "OK" : "FAIL";
       this.pushLog(`[${mark}] ${check.name}: ${check.detail}`);
@@ -3120,12 +3123,13 @@ export class TerminalApp {
     }
 
     await this.saveConfigFn(this.config);
+    const pdfAnalysisMode = getPdfAnalysisModeForConfig(this.config);
     const analysisSummary =
-      this.config.analysis.pdf_mode === "responses_api_pdf"
-        ? `${this.describePdfAnalysisMode(this.config.analysis.pdf_mode)} (${this.config.analysis.responses_model})`
-        : this.config.analysis.pdf_mode === "ollama_vision"
-          ? `${this.describePdfAnalysisMode(this.config.analysis.pdf_mode)} (${this.config.providers.ollama?.vision_model || DEFAULT_OLLAMA_VISION_MODEL})`
-          : this.describePdfAnalysisMode(this.config.analysis.pdf_mode);
+      pdfAnalysisMode === "responses_api_pdf"
+        ? `${this.describePdfAnalysisMode(pdfAnalysisMode)} (${this.config.analysis.responses_model})`
+        : pdfAnalysisMode === "ollama_vision"
+          ? `${this.describePdfAnalysisMode(pdfAnalysisMode)} (${this.config.providers.ollama?.vision_model || DEFAULT_OLLAMA_VISION_MODEL})`
+          : this.describePdfAnalysisMode(pdfAnalysisMode);
     const approvalSummary = this.config.workflow?.approval_mode === "manual" ? "Manual" : "Minimal";
     this.pushLog(
       `Settings saved. Workflow mode: Agent approval. Approval mode: ${approvalSummary}. LLM provider: ${this.describePrimaryLlmProvider(this.config.providers.llm_mode)}. PDF analysis mode: ${analysisSummary}.`
@@ -3252,7 +3256,7 @@ export class TerminalApp {
       await upsertEnvVar(path.join(process.cwd(), ".env"), "OPENAI_API_KEY", openAiApiKey.trim());
     }
 
-    if (slot === "pdf" && this.config.analysis.pdf_mode === "responses_api_pdf") {
+    if (slot === "pdf" && getPdfAnalysisModeForConfig(this.config) === "responses_api_pdf") {
       const selectedResponsesSlot = await this.selectResponsesPdfSlot(
         this.getCurrentResponsesPdfModel(),
         this.getCurrentResponsesPdfReasoning()
@@ -3365,16 +3369,7 @@ export class TerminalApp {
       this.applyCodexSlotSelection("pdf", taskSlot.selection, taskSlot.effort);
     }
 
-    const pdfMode = await this.openSelectionMenu(
-      "Select research backend PDF mode",
-      this.buildPdfAnalysisModeOptions(),
-      this.config.analysis.pdf_mode
-    );
-    if (!pdfMode) {
-      this.pushLog(cancelMessage);
-      return false;
-    }
-
+    const pdfMode = getDefaultPdfAnalysisModeForLlmMode(llmMode);
     if (pdfMode === "responses_api_pdf" && !(await resolveOpenAiApiKey(process.cwd()))) {
       const openAiApiKey = await this.askWithinTui("OpenAI API key", "");
       if (!openAiApiKey.trim()) {
@@ -3384,7 +3379,6 @@ export class TerminalApp {
       await upsertEnvVar(path.join(process.cwd(), ".env"), "OPENAI_API_KEY", openAiApiKey.trim());
     }
 
-    this.config.analysis.pdf_mode = pdfMode as AppConfig["analysis"]["pdf_mode"];
     if (pdfMode === "responses_api_pdf") {
       const selectedResponsesSlot = await this.selectResponsesPdfSlot(
         this.getCurrentResponsesPdfModel(),
@@ -3565,7 +3559,7 @@ export class TerminalApp {
     return parts.join(" | ");
   }
 
-  private describePdfAnalysisMode(mode: AppConfig["analysis"]["pdf_mode"]): string {
+  private describePdfAnalysisMode(mode: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision"): string {
     if (mode === "responses_api_pdf") return "Responses API PDF input";
     if (mode === "ollama_vision") return "Ollama vision";
     return "Codex text + image hybrid";
@@ -3989,7 +3983,7 @@ export class TerminalApp {
       return this.getCurrentOllamaSlotModel(slot);
     }
     if (this.config.providers.llm_mode === "openai_api") {
-      if (slot === "pdf" && this.config.analysis.pdf_mode === "responses_api_pdf") {
+      if (slot === "pdf" && getPdfAnalysisModeForConfig(this.config) === "responses_api_pdf") {
         return `${this.getCurrentResponsesPdfModel()} + ${this.getCurrentResponsesPdfReasoning()}`;
       }
       return `${this.getCurrentOpenAiSlotModel(slot)} + ${this.getCurrentOpenAiSlotReasoning(slot)}`;
@@ -4002,16 +3996,16 @@ export class TerminalApp {
       return this.getRecommendedOllamaModel(slot);
     }
     if (this.config.providers.llm_mode === "openai_api") {
-      if (slot === "pdf" && this.config.analysis.pdf_mode === "responses_api_pdf") {
-        return `${this.getRecommendedResponsesPdfModel()} + xhigh`;
+      if (slot === "pdf" && getPdfAnalysisModeForConfig(this.config) === "responses_api_pdf") {
+        return `${this.getRecommendedResponsesPdfModel()} + high`;
       }
-      return `${this.getRecommendedOpenAiModel(slot)} + ${slot === "chat" ? "low" : "xhigh"}`;
+      return `${this.getRecommendedOpenAiModel(slot)} + ${slot === "chat" ? "low" : "high"}`;
     }
-    return `${this.getRecommendedCodexSelection(slot)} + ${slot === "chat" ? "medium" : "xhigh"}`;
+    return `${this.getRecommendedCodexSelection(slot)} + ${slot === "chat" ? "low" : "high"}`;
   }
 
   private getRecommendedCodexSelection(slot: "chat" | "task" | "pdf"): string {
-    return slot === "chat" ? "gpt-5.3-codex-spark" : RECOMMENDED_CODEX_MODEL;
+    return "gpt-5.4";
   }
 
   private getRecommendedOpenAiModel(slot: "chat" | "task" | "pdf"): string {
@@ -4115,7 +4109,7 @@ export class TerminalApp {
   }
 
   private getCurrentResearchBackendPreset(): string {
-    const pdfMode = this.config.analysis?.pdf_mode || "codex_text_image_hybrid";
+    const pdfMode = getPdfAnalysisModeForConfig(this.config);
     const pdfSummary =
       pdfMode === "responses_api_pdf"
         ? `${this.describePdfAnalysisMode(pdfMode)} (${this.config.analysis?.responses_model || "gpt-5.4"} + ${this.config.analysis?.responses_reasoning_effort || "xhigh"})`

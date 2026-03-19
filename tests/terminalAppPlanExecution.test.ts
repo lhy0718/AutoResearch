@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node
 import os from "node:os";
 import path from "node:path";
 
-import { ensureScaffold, resolveAppPaths } from "../src/config.js";
+import { ensureScaffold, getDefaultPdfAnalysisModeForLlmMode, resolveAppPaths } from "../src/config.js";
 import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 import { buildResearchBriefTemplate } from "../src/core/runs/researchBriefFiles.js";
 import { RunStore } from "../src/core/runs/runStore.js";
@@ -184,7 +184,6 @@ describe("TerminalApp pending natural plan execution", () => {
           openai: { model: "gpt-5.4", reasoning_effort: "medium" }
         },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         },
         research: {
@@ -224,15 +223,9 @@ describe("TerminalApp pending natural plan execution", () => {
       expect.any(Array),
       "codex_chatgpt_only"
     );
-    expect(app.openSelectionMenu).toHaveBeenNthCalledWith(
-      2,
-      "Select research backend PDF mode",
-      expect.any(Array),
-      "codex_text_image_hybrid"
-    );
     expect(app.config.providers.codex.pdf_model).toBe("gpt-5.3-codex");
     expect(app.config.providers.codex.pdf_reasoning_effort).toBe("xhigh");
-    expect(app.config.analysis.pdf_mode).toBe("codex_text_image_hybrid");
+    expect(getDefaultPdfAnalysisModeForLlmMode(app.config.providers.llm_mode)).toBe("codex_text_image_hybrid");
     expect(app.selectCodexSlot).toHaveBeenCalledTimes(2);
     expect(saveConfig).toHaveBeenCalledTimes(1);
   });
@@ -250,7 +243,6 @@ describe("TerminalApp pending natural plan execution", () => {
           openai: { model: "gpt-5.4", reasoning_effort: "medium", command_reasoning_effort: "low" }
         },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         },
         research: {
@@ -311,17 +303,17 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(app.logs).toContain("Current model slots:");
     expect(
       app.logs.some((line: string) =>
-        line.includes("- general chat:") && line.includes("Recommended: gpt-5.3-codex-spark + medium")
+        line.includes("- general chat:") && line.includes("Recommended: gpt-5.4 + low")
       )
     ).toBe(true);
     expect(
       app.logs.some((line: string) =>
-        line.includes("- analysis/hypothesis:") && line.includes("Recommended: gpt-5.4 + xhigh")
+        line.includes("- analysis/hypothesis:") && line.includes("Recommended: gpt-5.4 + high")
       )
     ).toBe(true);
     expect(
       app.logs.some((line: string) =>
-        line.includes("- PDF analysis:") && line.includes("Recommended: gpt-5.4 + xhigh")
+        line.includes("- PDF analysis:") && line.includes("Recommended: gpt-5.4 + high")
       )
     ).toBe(true);
     expect(app.openSelectionMenu).toHaveBeenNthCalledWith(
@@ -336,7 +328,7 @@ describe("TerminalApp pending natural plan execution", () => {
       expect.arrayContaining([
         expect.objectContaining({
           value: "chat",
-          description: expect.stringContaining("Recommended: gpt-5.3-codex-spark + medium")
+          description: expect.stringContaining("Recommended: gpt-5.4 + low")
         }),
         expect.objectContaining({
           value: "backend",
@@ -344,11 +336,11 @@ describe("TerminalApp pending natural plan execution", () => {
         }),
         expect.objectContaining({
           value: "task",
-          description: expect.stringContaining("Recommended: gpt-5.4 + xhigh")
+          description: expect.stringContaining("Recommended: gpt-5.4 + high")
         }),
         expect.objectContaining({
           value: "pdf",
-          description: expect.stringContaining("Recommended: gpt-5.4 + xhigh")
+          description: expect.stringContaining("Recommended: gpt-5.4 + high")
         })
       ]),
       "backend"
@@ -368,7 +360,6 @@ describe("TerminalApp pending natural plan execution", () => {
           openai: { model: "gpt-5.4", reasoning_effort: "medium", command_reasoning_effort: "low" }
         },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         },
         research: {
@@ -397,7 +388,8 @@ describe("TerminalApp pending natural plan execution", () => {
       .mockResolvedValueOnce("backend")
       .mockResolvedValueOnce("gpt-5-mini")
       .mockResolvedValueOnce("high")
-      .mockResolvedValueOnce("codex_text_image_hybrid");
+      .mockResolvedValueOnce("gpt-5.4")
+      .mockResolvedValueOnce("medium");
 
     await app.handleModel([]);
 
@@ -414,20 +406,14 @@ describe("TerminalApp pending natural plan execution", () => {
       expect.any(Array),
       "backend"
     );
-    expect(app.openSelectionMenu).toHaveBeenNthCalledWith(
-      5,
-      "Select research backend PDF mode",
-      expect.any(Array),
-      "codex_text_image_hybrid"
-    );
     expect(saveConfig).toHaveBeenCalledTimes(2);
     expect(openAiTextClient.updateDefaults).toHaveBeenCalledWith({
       model: "gpt-5-mini",
       reasoningEffort: "high"
     });
-    expect(app.config.providers.openai.pdf_model).toBe("gpt-5-mini");
-    expect(app.config.providers.openai.pdf_reasoning_effort).toBe("high");
-    expect(app.config.analysis.pdf_mode).toBe("codex_text_image_hybrid");
+    expect(app.config.providers.openai.pdf_model).toBe("gpt-5.4");
+    expect(app.config.providers.openai.pdf_reasoning_effort).toBe("medium");
+    expect(getDefaultPdfAnalysisModeForLlmMode(app.config.providers.llm_mode)).toBe("responses_api_pdf");
     expect(app.logs).toContain("Model backend updated to OpenAI API.");
     delete process.env.OPENAI_API_KEY;
   });
@@ -451,7 +437,6 @@ describe("TerminalApp pending natural plan execution", () => {
           }
         },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         },
         research: {
@@ -2364,7 +2349,7 @@ describe("TerminalApp pending natural plan execution", () => {
       "Auto rollback from implement_experiments after 4/3 retries (rollback 2/2).";
     run.graph.nodeStates.implement_experiments.status = "failed";
     run.graph.nodeStates.implement_experiments.lastError =
-      "Local verification failed via python -m py_compile outputs/example/experiment/run.py (environment): [Errno 2] No such file or directory.";
+      "Local verification failed via python -m py_compile outputs/experiment/run.py (environment): [Errno 2] No such file or directory.";
 
     app.runProjectionHints.set(run.id, {
       analyze: {
@@ -2496,7 +2481,6 @@ describe("TerminalApp pending natural plan execution", () => {
             openai: { model: "gpt-5.4", reasoning_effort: "medium" }
           },
           analysis: {
-            pdf_mode: "codex_text_image_hybrid",
             responses_model: "gpt-5.4"
           },
           research: {
@@ -2576,7 +2560,6 @@ describe("TerminalApp pending natural plan execution", () => {
             openai: { model: "gpt-5.4", reasoning_effort: "medium" }
           },
           analysis: {
-            pdf_mode: "codex_text_image_hybrid",
             responses_model: "gpt-5.4"
           },
           research: {
@@ -2672,7 +2655,6 @@ describe("TerminalApp pending natural plan execution", () => {
             openai: { model: "gpt-5.4", reasoning_effort: "medium" }
           },
           analysis: {
-            pdf_mode: "codex_text_image_hybrid",
             responses_model: "gpt-5.4"
           },
           research: {
@@ -2788,7 +2770,6 @@ describe("TerminalApp pending natural plan execution", () => {
             openai: { model: "gpt-5.4", reasoning_effort: "medium" }
           },
           analysis: {
-            pdf_mode: "codex_text_image_hybrid",
             responses_model: "gpt-5.4"
           },
           research: {
@@ -2920,7 +2901,6 @@ describe("TerminalApp pending natural plan execution", () => {
             openai: { model: "gpt-5.4", reasoning_effort: "medium" }
           },
           analysis: {
-            pdf_mode: "codex_text_image_hybrid",
             responses_model: "gpt-5.4"
           },
           research: {
@@ -3041,7 +3021,6 @@ describe("TerminalApp pending natural plan execution", () => {
             openai: { model: "gpt-5.4", reasoning_effort: "medium" }
           },
           analysis: {
-            pdf_mode: "codex_text_image_hybrid",
             responses_model: "gpt-5.4"
           },
           research: {

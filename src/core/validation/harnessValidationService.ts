@@ -339,6 +339,9 @@ async function walk(currentPath: string, files: string[]): Promise<void> {
   for (const entry of entries) {
     const nextPath = path.join(currentPath, entry.name);
     if (entry.isDirectory()) {
+      if (entry.name === ".tmp") {
+        continue;
+      }
       await walk(nextPath, files);
       continue;
     }

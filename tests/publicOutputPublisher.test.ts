@@ -25,7 +25,7 @@ describe("generatePublicRunReadme", () => {
       version: 1,
       run_id: run.id,
       title: run.title,
-      output_root: "outputs/test-run-title-abc12345",
+      output_root: "outputs",
       updated_at: "2026-03-18T00:00:00Z",
       workspace_changed_files: [],
       generated_files: ["paper/main.tex", "paper/references.bib", "analysis/result_table.json"],
@@ -44,7 +44,7 @@ describe("generatePublicRunReadme", () => {
     expect(content).toContain("result_table.json");
   });
 
-  it("creates output symlink at workspace root", async () => {
+  it("does not create an output symlink at workspace root", async () => {
     const outputDir = buildPublicRunOutputDir(tmpDir, run);
     await fs.mkdir(outputDir, { recursive: true });
     const manifestPath = buildPublicRunManifestPath(tmpDir, run);
@@ -52,7 +52,7 @@ describe("generatePublicRunReadme", () => {
       version: 1,
       run_id: run.id,
       title: run.title,
-      output_root: "outputs/test-run-title-abc12345",
+      output_root: "outputs",
       updated_at: "2026-03-18T00:00:00Z",
       workspace_changed_files: [],
       generated_files: [],
@@ -60,10 +60,6 @@ describe("generatePublicRunReadme", () => {
     }));
 
     await generatePublicRunReadme(tmpDir, run);
-    const symlinkPath = path.join(tmpDir, "output");
-    const stat = await fs.lstat(symlinkPath);
-    expect(stat.isSymbolicLink()).toBe(true);
-    const target = await fs.readlink(symlinkPath);
-    expect(target).toContain("test-run-title-abc12345");
+    await expect(fs.lstat(path.join(tmpDir, "output"))).rejects.toThrow();
   });
 });

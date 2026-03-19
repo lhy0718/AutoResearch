@@ -360,7 +360,7 @@ flowchart TB
 <summary><strong>Bundle de saída pública</strong></summary>
 
 ```
-outputs/<title-slug>-<run_id_prefix>/
+outputs/
   ├── paper/           # Fonte TeX, PDF, referências, log de build
   ├── experiment/      # Resumo do baseline, código do experimento
   ├── analysis/        # Tabela de resultados, análise de evidências

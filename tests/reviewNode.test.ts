@@ -509,6 +509,18 @@ describe("review node", () => {
     );
     await writeFile(path.join(runDir, "baseline_summary.json"), JSON.stringify({ baseline: "current_best_baseline" }, null, 2), "utf8");
     await writeFile(path.join(runDir, "result_table.json"), JSON.stringify({ summary: "baseline vs treatment" }, null, 2), "utf8");
+    await mkdir(path.join(runDir, "paper"), { recursive: true });
+    await writeFile(
+      path.join(runDir, "paper", "compiled_page_validation.json"),
+      JSON.stringify({
+        status: "warn",
+        outcome: "under_limit",
+        compiled_pdf_page_count: 3,
+        main_page_limit: 8,
+        message: "Compiled PDF is only 3 pages, below the configured main_page_limit of 8."
+      }, null, 2),
+      "utf8"
+    );
     await writeFile(
       path.join(runDir, "result_analysis.json"),
       `${JSON.stringify(
@@ -640,9 +652,20 @@ describe("review node", () => {
     expect(result.status).toBe("success");
 
     const preReviewRaw = await readFile(path.join(runDir, "review", "pre_review_summary.json"), "utf8");
-    const preReview = JSON.parse(preReviewRaw) as { baseline: string };
+    const preReview = JSON.parse(preReviewRaw) as {
+      baseline: string;
+      prior_compiled_page_validation?: { status: string; compiled_pdf_page_count: number; main_page_limit: number };
+    };
     expect(preReview.baseline).toContain("current_best_baseline");
     expect(preReview.baseline).toContain("fixed_cot_256");
+    expect(preReview.prior_compiled_page_validation).toMatchObject({
+      status: "warn",
+      compiled_pdf_page_count: 3,
+      main_page_limit: 8
+    });
+    expect(await readFile(path.join(buildPublicReviewDir(root, run), "pre_review_summary.json"), "utf8")).toContain(
+      "\"prior_compiled_page_validation\""
+    );
   });
 
   it("recommends a hypothesis reset when review finds unsupported claims", async () => {

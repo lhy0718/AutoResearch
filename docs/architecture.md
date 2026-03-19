@@ -35,7 +35,7 @@ Harness and runtime work must preserve both TUI and web behaviors unless a chang
 ## 3) Artifact model
 
 - Run-scoped source of truth: `.autolabos/runs/<run-id>/...`
-- Public mirrored outputs: `outputs/<run-id>-...`
+- Public mirrored outputs: `outputs/` (single latest-run public bundle)
 - Checkpoints and run context are persisted under each run directory.
 
 Quality checks should be deterministic and file-based whenever possible.

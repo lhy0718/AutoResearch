@@ -5,7 +5,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { runDoctorReport } from "../src/core/doctor.js";
+import { buildDoctorHighlightLines, runDoctorReport } from "../src/core/doctor.js";
 import { CodexCliClient } from "../src/integrations/codex/codexCliClient.js";
 
 const tempDirs: string[] = [];
@@ -37,6 +37,36 @@ describe("runDoctorReport", () => {
     expect(report.harness?.status).toBe("ok");
     expect(report.harness?.findings).toEqual([]);
     expect(report.harness?.targets.find((target) => target.scope === "workspace")?.runStoreCount).toBe(1);
+  });
+
+  it("includes the latest compiled paper page-budget check when available", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-page-budget-");
+    await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
+    await writeJson(path.join(workspace, ".autolabos", "runs", "runs.json"), {
+      runs: [{ id: "run-1", updatedAt: "2026-03-19T12:00:00.000Z" }]
+    });
+    await writeJson(path.join(workspace, ".autolabos", "runs", "run-1", "paper", "compiled_page_validation.json"), {
+      status: "warn",
+      compiled_pdf_page_count: 3,
+      main_page_limit: 8,
+      message: "Compiled PDF is only 3 pages, below the configured main_page_limit of 8."
+    });
+
+    const report = await runDoctorReport(createCodexStub(), {
+      workspaceRoot: workspace,
+      includeHarnessValidation: false
+    });
+
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "paper-page-budget",
+        ok: false,
+        detail: expect.stringContaining("pages=3, main_page_limit=8")
+      })
+    );
+    expect(buildDoctorHighlightLines(report)).toEqual([
+      expect.stringContaining("[ATTN] paper page budget:")
+    ]);
   });
 });
 

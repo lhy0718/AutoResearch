@@ -180,7 +180,7 @@ describe("runProjection", () => {
     run.graph.nodeStates.implement_experiments.status = "failed";
     run.graph.nodeStates.implement_experiments.updatedAt = "2026-03-12T10:22:48.582Z";
     run.graph.nodeStates.implement_experiments.lastError =
-      "Local verification failed via python -m py_compile outputs/example/experiment/run.py (environment): [Errno 2] No such file or directory.";
+      "Local verification failed via python -m py_compile outputs/experiment/run.py (environment): [Errno 2] No such file or directory.";
     run.graph.nodeStates.analyze_papers.status = "completed";
     run.graph.nodeStates.analyze_papers.note =
       "Analyzed top 30/200 ranked papers into 119 evidence item(s); 5 full-text and 25 abstract fallback.";
@@ -212,7 +212,7 @@ describe("runProjection", () => {
     stale.graph.nodeStates.implement_experiments.status = "failed";
     stale.graph.nodeStates.implement_experiments.updatedAt = "2026-03-12T10:22:48.582Z";
     stale.graph.nodeStates.implement_experiments.lastError =
-      "Local verification failed via python -m py_compile outputs/example/experiment/run.py (environment): [Errno 2] No such file or directory.";
+      "Local verification failed via python -m py_compile outputs/experiment/run.py (environment): [Errno 2] No such file or directory.";
 
     const checkpointSnapshot = makeRun({
       status: "paused",
@@ -228,7 +228,7 @@ describe("runProjection", () => {
     checkpointSnapshot.graph.nodeStates.implement_experiments.status = "failed";
     checkpointSnapshot.graph.nodeStates.implement_experiments.updatedAt = "2026-03-12T10:22:48.582Z";
     checkpointSnapshot.graph.nodeStates.implement_experiments.lastError =
-      "Local verification failed via python -m py_compile outputs/example/experiment/run.py (environment): [Errno 2] No such file or directory.";
+      "Local verification failed via python -m py_compile outputs/experiment/run.py (environment): [Errno 2] No such file or directory.";
 
     const projection = projectRunForDisplay(stale, {
       checkpoint: {
@@ -264,20 +264,20 @@ describe("runProjection", () => {
         stage: "verify",
         updatedAt: "2026-03-13T11:44:05.000Z",
         message:
-          "Starting local verification via python outputs/demo/experiment/run_experiment.py --metrics-path .autolabos/runs/run-1/metrics.json.",
+          "Starting local verification via python outputs/experiment/run_experiment.py --metrics-path .autolabos/runs/run-1/metrics.json.",
         attempt: 1,
         maxAttempts: 3,
         progressCount: 6,
         verificationCommand:
-          "python outputs/demo/experiment/run_experiment.py --metrics-path .autolabos/runs/run-1/metrics.json"
+          "python outputs/experiment/run_experiment.py --metrics-path .autolabos/runs/run-1/metrics.json"
       }
     });
 
     expect(projection.headline).toBe(
-      "Starting local verification via python outputs/demo/experiment/run_experiment.py --metrics-path .autolabos/runs/run-1/metrics.json."
+      "Starting local verification via python outputs/experiment/run_experiment.py --metrics-path .autolabos/runs/run-1/metrics.json."
     );
     expect(projection.detail).toBe(
-      "Attempt 1/3. 6 persisted progress update(s). Verification: python outputs/demo/experiment/run_experiment.py --metrics-path .autolabos/runs/run-1/metrics.json."
+      "Attempt 1/3. 6 persisted progress update(s). Verification: python outputs/experiment/run_experiment.py --metrics-path .autolabos/runs/run-1/metrics.json."
     );
   });
 
@@ -306,7 +306,7 @@ describe("runProjection", () => {
         maxAttempts: 3,
         progressCount: 10,
         verificationCommand:
-          "python -m py_compile outputs/demo/experiment/run_experiment.py"
+          "python -m py_compile outputs/experiment/run_experiment.py"
       }
     });
 

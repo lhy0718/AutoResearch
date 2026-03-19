@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { InMemoryEventStream } from "../src/core/events.js";
 import { LLMClient, LLMCompleteOptions, MockLLMClient } from "../src/core/llm/client.js";
 import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
-import { createWritePaperNode } from "../src/core/nodes/writePaper.js";
+import { createWritePaperNode, validateCompiledPdfPageBudget } from "../src/core/nodes/writePaper.js";
 import { buildPublicAnalysisDir, buildPublicPaperDir, buildPublicRunManifestPath } from "../src/core/publicArtifacts.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { RunRecord } from "../src/types.js";
@@ -982,7 +982,7 @@ async function seedMediumScientificRun(run: RunRecord): Promise<void> {
   await writeLatestResults(run, buildMediumLatestResults());
 }
 
-function createPdfBuildAci(options?: { failFirstCompile?: boolean; failAllCompiles?: boolean }) {
+function createPdfBuildAci(options?: { failFirstCompile?: boolean; failAllCompiles?: boolean; pdfPageCount?: number }) {
   const commands: string[] = [];
   let firstCompileFailed = false;
 
@@ -1030,6 +1030,15 @@ function createPdfBuildAci(options?: { failFirstCompile?: boolean; failAllCompil
             stderr: "",
             exit_code: 0,
             duration_ms: 2
+          };
+        }
+        if (command === "pdfinfo main.pdf") {
+          return {
+            status: "ok" as const,
+            stdout: `Title: mock\nPages: ${options?.pdfPageCount ?? 8}\n`,
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 1
           };
         }
         return {
@@ -1083,11 +1092,13 @@ describe("writePaper PDF build", () => {
 
     const node = createWritePaperNode({
       config: {
+        providers: {
+          llm_mode: "openai_api"
+        },
         paper: {
           build_pdf: false
         },
         analysis: {
-          pdf_mode: "responses_api_pdf",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -1305,7 +1316,8 @@ describe("writePaper PDF build", () => {
       "pdflatex -interaction=nonstopmode -halt-on-error -file-line-error main.tex",
       "bibtex main",
       "pdflatex -interaction=nonstopmode -halt-on-error -file-line-error main.tex",
-      "pdflatex -interaction=nonstopmode -halt-on-error -file-line-error main.tex"
+      "pdflatex -interaction=nonstopmode -halt-on-error -file-line-error main.tex",
+      "pdfinfo main.pdf"
     ]);
 
     expect(await exists(path.join(runDir, "paper", "main.pdf"))).toBe(true);
@@ -1313,6 +1325,7 @@ describe("writePaper PDF build", () => {
     expect(await exists(path.join(runDir, "paper", "manuscript.json"))).toBe(true);
     expect(await exists(path.join(runDir, "paper", "traceability.json"))).toBe(true);
     expect(await exists(path.join(runDir, "paper", "submission_validation.json"))).toBe(true);
+    expect(await exists(path.join(runDir, "paper", "compiled_page_validation.json"))).toBe(true);
     expect(await exists(path.join(buildPublicPaperDir(root, run), "main.pdf"))).toBe(true);
     expect(await exists(path.join(buildPublicPaperDir(root, run), "build.log"))).toBe(true);
     expect(await exists(path.join(buildPublicPaperDir(root, run), "manuscript.json"))).toBe(true);
@@ -1331,6 +1344,12 @@ describe("writePaper PDF build", () => {
     ) as { ok: boolean; issues: unknown[] };
     expect(submissionValidation.ok).toBe(true);
     expect(submissionValidation.issues).toHaveLength(0);
+    const compiledPageValidation = JSON.parse(
+      await readFile(path.join(runDir, "paper", "compiled_page_validation.json"), "utf8")
+    ) as { status: string; compiled_pdf_page_count: number; main_page_limit: number };
+    expect(compiledPageValidation.status).toBe("pass");
+    expect(compiledPageValidation.compiled_pdf_page_count).toBe(8);
+    expect(compiledPageValidation.main_page_limit).toBe(8);
 
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);
     expect(await memory.get("write_paper.compile_status")).toBe("success");
@@ -1470,7 +1489,8 @@ describe("writePaper PDF build", () => {
       "pdflatex -interaction=nonstopmode -halt-on-error -file-line-error main.tex",
       "bibtex main",
       "pdflatex -interaction=nonstopmode -halt-on-error -file-line-error main.tex",
-      "pdflatex -interaction=nonstopmode -halt-on-error -file-line-error main.tex"
+      "pdflatex -interaction=nonstopmode -halt-on-error -file-line-error main.tex",
+      "pdfinfo main.pdf"
     ]);
 
     const repairedTex = await readFile(path.join(runDir, "paper", "latex_repair.tex"), "utf8");
@@ -1511,6 +1531,88 @@ describe("writePaper PDF build", () => {
     expect(manifest.sections?.paper?.generated_files).toEqual(
       expect.arrayContaining(["paper/main.tex", "paper/references.bib", "paper/evidence_links.json", "paper/main.pdf"])
     );
+  });
+
+  it("warns in default mode when the compiled PDF remains below main_page_limit", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-pdf-short-default-"));
+    process.chdir(root);
+
+    const run = makeRun("run-paper-pdf-short-default");
+    const runDir = await seedRun(root, run);
+    const aci = createPdfBuildAci({ pdfPageCount: 3 });
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          template: "acl",
+          build_pdf: true,
+          validation_mode: "default"
+        },
+        paper_profile: {
+          venue_style: "acl_long",
+          main_page_limit: 8
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient(buildSessionResponses()),
+      codex: {} as any,
+      aci: aci.api as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const compiledPageValidation = JSON.parse(
+      await readFile(path.join(runDir, "paper", "compiled_page_validation.json"), "utf8")
+    ) as { status: string; outcome: string; compiled_pdf_page_count: number; main_page_limit: number; message: string };
+    expect(compiledPageValidation.status).toBe("warn");
+    expect(compiledPageValidation.outcome).toBe("under_limit");
+    expect(compiledPageValidation.compiled_pdf_page_count).toBe(3);
+    expect(compiledPageValidation.main_page_limit).toBe(8);
+    expect(compiledPageValidation.message).toContain("below the configured main_page_limit");
+    expect(await exists(path.join(buildPublicPaperDir(root, run), "compiled_page_validation.json"))).toBe(true);
+  });
+
+  it("fails compiled page-budget validation in strict-paper mode when the PDF remains below main_page_limit", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-pdf-short-strict-"));
+    process.chdir(root);
+
+    const run = makeRun("run-paper-pdf-short-strict");
+    const compiledPageValidation = await validateCompiledPdfPageBudget({
+      deps: {
+        aci: {
+          async runCommand(command: string) {
+            expect(command).toBe("pdfinfo main.pdf");
+            return {
+              status: "ok" as const,
+              stdout: "Title: mock\nPages: 0\n",
+              stderr: "",
+              exit_code: 0,
+              duration_ms: 1
+            };
+          }
+        }
+      } as any,
+      run,
+      compileResult: {
+        enabled: true,
+        status: "success",
+        repaired: false,
+        toolCallsUsed: 0,
+        attempts: [],
+        warnings: [],
+        pdf_path: path.join(".autolabos", "runs", run.id, "paper", "main.pdf")
+      },
+      validationMode: "strict_paper",
+      mainPageLimit: 1
+    });
+
+    expect(compiledPageValidation.status).toBe("fail");
+    expect(compiledPageValidation.outcome).toBe("under_limit");
+    expect(compiledPageValidation.compiled_pdf_page_count).toBe(0);
+    expect(compiledPageValidation.main_page_limit).toBe(1);
   });
 
   it("fails the node when PDF compilation still fails after repair", async () => {

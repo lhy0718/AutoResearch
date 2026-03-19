@@ -22,6 +22,22 @@ const originalFetch = globalThis.fetch;
 const originalHome = process.env.HOME;
 const originalAnalysisExtractTimeout = process.env.AUTOLABOS_ANALYSIS_EXTRACT_TIMEOUT_MS;
 
+function makeCodexProviderConfig() {
+  return {
+    llm_mode: "codex_chatgpt_only" as const,
+    codex: {
+      model: "gpt-5.3-codex",
+      chat_model: "gpt-5.3-codex",
+      reasoning_effort: "medium" as const,
+      chat_reasoning_effort: "low" as const,
+      command_reasoning_effort: "low" as const,
+      fast_mode: false,
+      chat_fast_mode: false,
+      auth_required: true
+    }
+  };
+}
+
 afterEach(async () => {
   process.chdir(originalCwd);
   globalThis.fetch = originalFetch;
@@ -527,7 +543,6 @@ describe("analyzePapers node", () => {
     const node = createAnalyzePapersNode({
       config: {
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         },
         papers: {
@@ -576,8 +591,8 @@ describe("analyzePapers node", () => {
     const eventStream = new InMemoryEventStream();
     const node = createAnalyzePapersNode({
       config: {
+        providers: makeCodexProviderConfig(),
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -645,8 +660,8 @@ describe("analyzePapers node", () => {
     const initialRunsRaw = await readFile(paths.runsFile, "utf8");
     const node = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -705,8 +720,8 @@ describe("analyzePapers node", () => {
 
     const node = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -773,8 +788,8 @@ describe("analyzePapers node", () => {
 
     const node = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -819,8 +834,8 @@ describe("analyzePapers node", () => {
     const eventStream = new InMemoryEventStream();
     const node = createAnalyzePapersNode({
       config: {
+        providers: makeCodexProviderConfig(),
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -868,8 +883,8 @@ describe("analyzePapers node", () => {
 
     const firstNode = createAnalyzePapersNode({
       config: {
+        providers: makeCodexProviderConfig(),
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -896,8 +911,8 @@ describe("analyzePapers node", () => {
 
     const secondNode = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -939,8 +954,8 @@ describe("analyzePapers node", () => {
     const eventStream = new InMemoryEventStream();
     const node = createAnalyzePapersNode({
       config: {
+        providers: makeCodexProviderConfig(),
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -986,8 +1001,8 @@ describe("analyzePapers node", () => {
 
     const firstNode = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -1008,8 +1023,8 @@ describe("analyzePapers node", () => {
     const eventStream = new InMemoryEventStream();
     const secondNode = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -1057,8 +1072,8 @@ describe("analyzePapers node", () => {
 
     const firstNode = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -1079,8 +1094,8 @@ describe("analyzePapers node", () => {
     const eventStream = new InMemoryEventStream();
     const secondNode = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -1126,8 +1141,8 @@ describe("analyzePapers node", () => {
 
     const firstNode = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -1166,8 +1181,8 @@ describe("analyzePapers node", () => {
 
     const firstNode = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -1188,8 +1203,8 @@ describe("analyzePapers node", () => {
     const eventStream = new InMemoryEventStream();
     const secondNode = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -1238,8 +1253,8 @@ describe("analyzePapers node", () => {
     const eventStream = new InMemoryEventStream();
     const node = createAnalyzePapersNode({
       config: {
+        providers: makeCodexProviderConfig(),
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -1291,8 +1306,8 @@ describe("analyzePapers node", () => {
     const eventStream = new InMemoryEventStream();
     const node = createAnalyzePapersNode({
       config: {
+        providers: makeCodexProviderConfig(),
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -1351,7 +1366,6 @@ describe("analyzePapers node", () => {
           }
         },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -1402,8 +1416,8 @@ describe("analyzePapers node", () => {
     const eventStream = new InMemoryEventStream();
     const node = createAnalyzePapersNode({
       config: {
+        providers: makeCodexProviderConfig(),
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -1460,7 +1474,6 @@ describe("analyzePapers node", () => {
           }
         },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -1517,7 +1530,6 @@ describe("analyzePapers node", () => {
           }
         },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -1559,8 +1571,8 @@ describe("analyzePapers node", () => {
     const eventStream = new InMemoryEventStream();
     const node = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -1612,8 +1624,8 @@ describe("analyzePapers node", () => {
     const eventStream = new InMemoryEventStream();
     const node = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -1684,8 +1696,8 @@ describe("analyzePapers node", () => {
     const eventStream = new InMemoryEventStream();
     const node = createAnalyzePapersNode({
       config: {
+        providers: makeCodexProviderConfig(),
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -1735,8 +1747,8 @@ describe("analyzePapers node", () => {
     const eventStream = new InMemoryEventStream();
     const node = createAnalyzePapersNode({
       config: {
+        providers: makeCodexProviderConfig(),
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -1799,8 +1811,8 @@ describe("analyzePapers node", () => {
     const eventStream = new InMemoryEventStream();
     const node = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "responses_api_pdf",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -1894,8 +1906,8 @@ describe("analyzePapers node", () => {
     const eventStream = new InMemoryEventStream();
     const node = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "responses_api_pdf",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -1954,8 +1966,8 @@ describe("analyzePapers node", () => {
     const eventStream = new InMemoryEventStream();
     const node = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "responses_api_pdf",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -2016,8 +2028,8 @@ describe("analyzePapers node", () => {
 
     const node = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "responses_api_pdf",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -2078,8 +2090,8 @@ describe("analyzePapers node", () => {
     let analyzePdfCalls = 0;
     const node = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "responses_api_pdf",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -2160,8 +2172,8 @@ describe("analyzePapers node", () => {
     let analyzePdfCalls = 0;
     const node = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "responses_api_pdf",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -2267,8 +2279,8 @@ describe("analyzePapers node", () => {
     const eventStream = new InMemoryEventStream();
     const node = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "responses_api_pdf",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -2481,8 +2493,8 @@ describe("analyzePapers node", () => {
 
     const node = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -2547,8 +2559,8 @@ describe("analyzePapers node", () => {
 
     const node = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "responses_api_pdf",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -2604,8 +2616,8 @@ describe("analyzePapers node", () => {
 
     const node = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "responses_api_pdf",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -2674,8 +2686,8 @@ describe("analyzePapers node", () => {
 
     const node = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -2728,8 +2740,8 @@ describe("analyzePapers node", () => {
     const eventStream = new InMemoryEventStream();
     const node = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "responses_api_pdf",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -2814,8 +2826,8 @@ describe("analyzePapers node", () => {
     let analyzePdfCalls = 0;
     const firstNode = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "responses_api_pdf",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -2844,8 +2856,8 @@ describe("analyzePapers node", () => {
     const secondEventStream = new InMemoryEventStream();
     const secondNode = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "responses_api_pdf",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -2902,7 +2914,7 @@ describe("analyzePapers node", () => {
     const failingRerankLlm = new FixedErrorLLM(new Error("rerank unavailable"));
     let firstAnalyzePdfCalls = 0;
     const firstNode = createAnalyzePapersNode({
-      config: { analysis: { pdf_mode: "responses_api_pdf", responses_model: "gpt-5.4" } } as any,
+      config: { providers: { llm_mode: "openai_api" }, analysis: { responses_model: "gpt-5.4" } } as any,
       runStore: {} as any,
       eventStream: new InMemoryEventStream(),
       llm: failingRerankLlm,
@@ -2933,7 +2945,7 @@ describe("analyzePapers node", () => {
     // Second execution: should reuse the deterministic fallback selection, NOT re-rerank
     const secondRerankLlm = new CountingJsonLLM(["should-not-be-used"]);
     const secondNode = createAnalyzePapersNode({
-      config: { analysis: { pdf_mode: "responses_api_pdf", responses_model: "gpt-5.4" } } as any,
+      config: { providers: { llm_mode: "openai_api" }, analysis: { responses_model: "gpt-5.4" } } as any,
       runStore: {} as any,
       eventStream: new InMemoryEventStream(),
       llm: secondRerankLlm,
@@ -2996,8 +3008,8 @@ describe("analyzePapers node", () => {
     const eventStream = new InMemoryEventStream();
     const node = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -3066,8 +3078,8 @@ describe("analyzePapers node", () => {
 
     const firstNode = createAnalyzePapersNode({
       config: {
+        providers: makeCodexProviderConfig(),
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -3093,8 +3105,8 @@ describe("analyzePapers node", () => {
     });
     const secondNode = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -3141,8 +3153,8 @@ describe("analyzePapers node", () => {
 
     const firstNode = createAnalyzePapersNode({
       config: {
+        providers: makeCodexProviderConfig(),
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -3162,8 +3174,8 @@ describe("analyzePapers node", () => {
     const secondEventStream = new InMemoryEventStream();
     const secondNode = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "responses_api_pdf",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -3208,8 +3220,8 @@ describe("analyzePapers node", () => {
 
     const firstNode = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,
@@ -3230,8 +3242,8 @@ describe("analyzePapers node", () => {
     const secondEventStream = new InMemoryEventStream();
     const secondNode = createAnalyzePapersNode({
       config: {
+        providers: { llm_mode: "openai_api" },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         }
       } as any,

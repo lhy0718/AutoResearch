@@ -19,10 +19,11 @@ import {
   isStructuredActionTimeoutError,
   looksLikeStructuredActionRequest
 } from "../core/commands/naturalActionIntent.js";
-import { runDoctorReport } from "../core/doctor.js";
+import { buildDoctorHighlightLines, runDoctorReport } from "../core/doctor.js";
 import { resolveRunByQuery } from "../core/runs/runResolver.js";
 import { RunContextMemory } from "../core/memory/runContextMemory.js";
 import { parseSlashCommand } from "../core/commands/parseSlash.js";
+import { getPdfAnalysisModeForConfig } from "../config.js";
 import { parseAnalysisReport } from "../core/resultAnalysis.js";
 import {
   extractRunBrief,
@@ -1060,7 +1061,7 @@ export class InteractionSession {
   private async handleDoctor(): Promise<void> {
     const report = await runDoctorReport(this.codex, {
       llmMode: this.config.providers.llm_mode,
-      pdfAnalysisMode: this.config.analysis.pdf_mode,
+      pdfAnalysisMode: getPdfAnalysisModeForConfig(this.config),
       openAiApiKeyConfigured: await resolveOpenAiApiKey(this.workspaceRoot).then(Boolean),
       codexResearchModel: this.config.providers.codex.model,
       codexPdfModel: this.config.providers.codex.pdf_model || this.config.providers.codex.model,
@@ -1073,6 +1074,9 @@ export class InteractionSession {
       includeHarnessTestRecords: false,
       maxHarnessFindings: 30
     });
+    for (const line of buildDoctorHighlightLines(report)) {
+      this.pushLog(line);
+    }
     for (const check of report.checks) {
       this.pushLog(`[${check.ok ? "OK" : "FAIL"}] ${check.name}: ${check.detail}`);
     }

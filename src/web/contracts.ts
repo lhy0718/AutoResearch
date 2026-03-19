@@ -23,7 +23,6 @@ export interface WebConfigFormData {
   defaultConstraints: string;
   defaultObjectiveMetric: string;
   llmMode: "codex_chatgpt_only" | "openai_api" | "ollama";
-  pdfAnalysisMode: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
   codexChatModelChoice: string;
   codexChatReasoningEffort: string;
   codexTaskModelChoice: string;

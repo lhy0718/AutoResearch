@@ -390,12 +390,17 @@ function deriveLocalizationFocusHints(input: ImplementationLocalizerInput): Loca
 function extractPreferredOutputRoots(value: string, workspaceRoot: string): string[] {
   const matches = value.match(/(?:^|[\s"'`(])((?:\/[^"'`\s)]+|outputs\/[^"'`\s)]+))(?:$|[\s"'`),])/gu) || [];
   const roots = new Set<string>();
+  const canonicalOutputsRoot = path.join(workspaceRoot, "outputs");
   for (const match of matches) {
     const candidate = match.trim().replace(/^[\s"'`(]+|[\s"'`),]+$/gu, "");
     if (!candidate.includes("outputs/")) {
       continue;
     }
     const normalized = path.isAbsolute(candidate) ? candidate : path.join(workspaceRoot, candidate);
+    if (isInsideOutputsDirectory(normalized)) {
+      roots.add(canonicalOutputsRoot);
+      continue;
+    }
     const experimentIndex = normalized.indexOf(`${path.sep}experiment${path.sep}`);
     if (experimentIndex >= 0) {
       roots.add(normalized.slice(0, experimentIndex));
@@ -405,13 +410,6 @@ function extractPreferredOutputRoots(value: string, workspaceRoot: string): stri
     if (normalized.endsWith(manifestSuffix)) {
       roots.add(normalized.slice(0, -manifestSuffix.length));
       continue;
-    }
-    if (isInsideOutputsDirectory(normalized)) {
-      const relative = path.relative(path.join(workspaceRoot, "outputs"), normalized);
-      const firstSegment = relative.split(path.sep).filter(Boolean)[0];
-      if (firstSegment) {
-        roots.add(path.join(workspaceRoot, "outputs", firstSegment));
-      }
     }
   }
   return [...roots];

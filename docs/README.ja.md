@@ -355,7 +355,7 @@ flowchart TB
 <summary><strong>公開出力バンドル</strong></summary>
 
 ```
-outputs/<title-slug>-<run_id_prefix>/
+outputs/
   ├── paper/           # TeX ソース、PDF、参考文献、ビルドログ
   ├── experiment/      # ベースライン要約、実験コード
   ├── analysis/        # 結果表、証拠分析

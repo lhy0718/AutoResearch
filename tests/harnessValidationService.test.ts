@@ -87,6 +87,29 @@ describe("harnessValidationService", () => {
 
     expect(report.findings.some((f) => f.code === "issues_file_missing")).toBe(true);
   });
+
+  it("ignores transient test/.tmp run stores when scanning reproducibility records", async () => {
+    const workspace = createTempWorkspace("autolabos-harness-ignore-tmp-");
+    await writeFile(path.join(workspace, "ISSUES.md"), "## Issue: ok\n- Status: open\n", "utf8");
+
+    await writeJson(path.join(workspace, ".autolabos", "runs", "runs.json"), {
+      runs: [{ id: "workspace-run", status: "completed", graph: { nodeStates: {} } }]
+    });
+    await mkdir(path.join(workspace, ".autolabos", "runs", "workspace-run"), { recursive: true });
+
+    await writeJson(path.join(workspace, "test", ".tmp", "session-1", ".autolabos", "runs", "runs.json"), {
+      runs: [{ id: "tmp-run", status: "running", graph: { nodeStates: {} } }]
+    });
+
+    const report = await runHarnessValidation({
+      workspaceRoot: workspace,
+      includeWorkspaceRuns: true,
+      includeTestRunStores: true
+    });
+
+    expect(report.targets.find((target) => target.scope === "test_records")?.runStoreCount).toBe(0);
+    expect(report.runsChecked).toBe(1);
+  });
 });
 
 function createTempWorkspace(prefix: string): string {

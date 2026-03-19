@@ -8,8 +8,8 @@ export function buildPublicRunOutputDir(
   workspaceRoot: string,
   run: Pick<RunRecord, "id" | "title">
 ): string {
-  const slug = sanitizeSlug(run.title) || "run";
-  return path.join(workspaceRoot, "outputs", `${slug}-${run.id.slice(0, 8)}`);
+  void run;
+  return path.join(workspaceRoot, "outputs");
 }
 
 export function buildPublicExperimentDir(

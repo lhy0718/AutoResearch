@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   ensureScaffold,
+  getDefaultPdfAnalysisModeForLlmMode,
   hasOpenAiApiKey,
   hasSemanticScholarApiKey,
   loadConfig,
@@ -81,7 +82,6 @@ function makeConfig(): AppConfig {
       }
     },
     analysis: {
-      pdf_mode: "codex_text_image_hybrid",
       responses_model: "gpt-5.4",
       responses_reasoning_effort: "xhigh"
     },
@@ -240,36 +240,42 @@ describe("config .env overrides", () => {
       })
     );
 
-    expect(config.analysis.pdf_mode).toBe("responses_api_pdf");
+    expect(getDefaultPdfAnalysisModeForLlmMode(config.providers.llm_mode)).toBe("responses_api_pdf");
     expect(config.analysis.responses_model).toBe("gpt-4o");
     expect(config.providers.openai.pdf_model).toBe("gpt-4o");
     expect(config.providers.openai.pdf_reasoning_effort).toBe("medium");
-    expect(config.providers.pdf?.mode).toBe("responses_api_pdf");
     await expect(resolveOpenAiApiKey(cwd)).resolves.toBe("openai-key");
     await expect(fs.readFile(path.join(cwd, ".env"), "utf8")).resolves.toContain('OPENAI_API_KEY="openai-key"');
   });
 
-  it("defaults first-run Codex chat prompts to gpt-5.3-codex-spark + medium and research backend prompts to gpt-5.4", async () => {
+  it("defaults first-run setup to the current openai_api gpt-5.4 low/high configuration", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autolabos-setup-codex-defaults-"));
     const paths = resolveAppPaths(cwd);
 
     const config = await runSetupWizard(
       paths,
       makePromptReaderFromQuestionMap({
-        "Primary LLM provider (codex/api/ollama)": "codex",
-        "General chat model": "",
+        "Primary LLM provider (codex/api/ollama)": "",
+        "OpenAI API general chat model": "",
         "General chat reasoning effort": "",
         "Research backend selection": "",
-        "Research backend reasoning effort": ""
+        "Research backend reasoning effort": "",
+        "Research backend Responses API PDF model": "",
+        "Research backend PDF reasoning effort": "",
+        "OpenAI API key": "openai-key"
       })
     );
 
-    expect(config.providers.llm_mode).toBe("codex_chatgpt_only");
-    expect(config.providers.codex.chat_model).toBe("gpt-5.3-codex-spark");
-    expect(config.providers.codex.chat_reasoning_effort).toBe("medium");
-    expect(config.providers.codex.command_reasoning_effort).toBe("medium");
-    expect(config.providers.codex.model).toBe("gpt-5.4");
-    expect(config.providers.codex.pdf_model).toBe("gpt-5.4");
+    expect(config.providers.llm_mode).toBe("openai_api");
+    expect(config.providers.openai.chat_model).toBe("gpt-5.4");
+    expect(config.providers.openai.chat_reasoning_effort).toBe("low");
+    expect(config.providers.openai.command_reasoning_effort).toBe("low");
+    expect(config.providers.openai.model).toBe("gpt-5.4");
+    expect(config.providers.openai.reasoning_effort).toBe("high");
+    expect(config.providers.openai.pdf_model).toBe("gpt-5.4");
+    expect(config.providers.openai.pdf_reasoning_effort).toBe("high");
+    expect(config.analysis.responses_model).toBe("gpt-5.4");
+    expect(config.analysis.responses_reasoning_effort).toBe("high");
   });
 
   it("guides the user to sign in later when Codex login is missing during setup", async () => {
@@ -318,14 +324,13 @@ describe("config .env overrides", () => {
       defaultConstraints: ["recent papers", "benchmarks"],
       defaultObjectiveMetric: "sample efficiency",
       llmMode: "openai_api",
-      pdfAnalysisMode: "responses_api_pdf",
       semanticScholarApiKey: "semantic-key",
       openAiApiKey: "openai-key"
     });
 
     expect(config.project_name).toBe("web-project");
     expect(config.providers.llm_mode).toBe("openai_api");
-    expect(config.analysis.pdf_mode).toBe("responses_api_pdf");
+    expect(getDefaultPdfAnalysisModeForLlmMode(config.providers.llm_mode)).toBe("responses_api_pdf");
     await expect(resolveSemanticScholarApiKey(cwd)).resolves.toBe("semantic-key");
     await expect(resolveOpenAiApiKey(cwd)).resolves.toBe("openai-key");
   });
@@ -340,7 +345,6 @@ describe("config .env overrides", () => {
       defaultConstraints: ["recent papers"],
       defaultObjectiveMetric: "sample efficiency",
       llmMode: "codex_chatgpt_only",
-      pdfAnalysisMode: "codex_text_image_hybrid",
       semanticScholarApiKey: "semantic-key",
       codexTaskModelChoice: "gpt-5.3-codex",
       codexTaskReasoningEffort: "high",
@@ -382,7 +386,7 @@ describe("config .env overrides", () => {
     expect(config.providers.llm_mode).toBe("openai_api");
     expect(config.providers.openai.command_reasoning_effort).toBe("low");
     expect(config.providers.openai.reasoning_effort).toBe("high");
-    expect(config.analysis.pdf_mode).toBe("responses_api_pdf");
+    expect(getDefaultPdfAnalysisModeForLlmMode(config.providers.llm_mode)).toBe("responses_api_pdf");
     expect(asked).not.toContain("Research backend PDF mode (codex/api)");
     expect(asked).toContain("OpenAI API key (press Enter to keep existing)");
     expect(asked).not.toContain("Project name");
@@ -419,7 +423,6 @@ describe("config .env overrides", () => {
   it("normalizes unsupported Responses API PDF models to the default", async () => {
     const { paths } = await createWorkspace();
     const config = makeConfig();
-    config.analysis.pdf_mode = "responses_api_pdf";
     config.analysis.responses_model = "unsupported-model";
     await saveConfig(paths, config);
 
@@ -427,14 +430,13 @@ describe("config .env overrides", () => {
 
     expect(loaded.analysis.responses_model).toBe(DEFAULT_RESPONSES_PDF_MODEL);
     expect(loaded.providers.openai.pdf_model).toBe(DEFAULT_RESPONSES_PDF_MODEL);
-    expect(loaded.providers.pdf?.mode).toBe("responses_api_pdf");
     expect(loaded.providers.openai.model).toBe("gpt-5.4");
   });
 
   it("preserves an explicitly configured OpenAI PDF slot and mirrors it into analysis when Responses PDF mode is enabled", async () => {
     const { paths } = await createWorkspace();
     const config = makeConfig();
-    config.analysis.pdf_mode = "responses_api_pdf";
+    config.providers.llm_mode = "openai_api";
     config.analysis.responses_model = "gpt-4o";
     config.analysis.responses_reasoning_effort = "xhigh";
     config.providers.openai.pdf_model = "gpt-5-mini";
@@ -447,25 +449,21 @@ describe("config .env overrides", () => {
     expect(loaded.providers.openai.pdf_reasoning_effort).toBe("medium");
     expect(loaded.analysis.responses_model).toBe("gpt-5-mini");
     expect(loaded.analysis.responses_reasoning_effort).toBe("medium");
-    expect(loaded.providers.pdf?.mode).toBe("responses_api_pdf");
   });
 
-  it("saves provider-owned pdf mode without persisting the legacy analysis block", async () => {
+  it("saves config without persisting a separate provider pdf mode or legacy analysis block", async () => {
     const { paths } = await createWorkspace();
     const config = makeConfig();
-    config.providers.pdf = { mode: "responses_api_pdf" };
-    config.analysis.pdf_mode = "responses_api_pdf";
+    config.providers.llm_mode = "openai_api";
     await saveConfig(paths, config);
 
     const raw = await fs.readFile(paths.configFile, "utf8");
     expect(raw).toContain("providers:");
-    expect(raw).toContain("pdf:");
-    expect(raw).toContain("mode: responses_api_pdf");
+    expect(raw).not.toContain("\n  pdf:\n");
     expect(raw).not.toContain("\nanalysis:\n");
 
     const loaded = await loadConfig(paths);
-    expect(loaded.providers.pdf?.mode).toBe("responses_api_pdf");
-    expect(loaded.analysis.pdf_mode).toBe("responses_api_pdf");
+    expect(getDefaultPdfAnalysisModeForLlmMode(loaded.providers.llm_mode)).toBe("responses_api_pdf");
   });
 
   it("does not create .autolabos if first-run setup aborts before completion", async () => {

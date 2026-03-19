@@ -422,7 +422,6 @@ export function App() {
           heading="Initial setup"
           submitLabel="Initialize workspace"
           apiKeyHelp="API key fields are required on first setup."
-          autoSelectPdfMode
         />
       </div>
     );
@@ -1218,19 +1217,9 @@ interface ConfigEditorFormProps {
   heading: string;
   submitLabel: string;
   apiKeyHelp: string;
-  autoSelectPdfMode?: boolean;
 }
 
 function ConfigEditorForm(props: ConfigEditorFormProps) {
-  const handleLlmModeChange = (value: SetupFormState["llmMode"]) => {
-    patchSetupForm(
-      props.onChange,
-      props.autoSelectPdfMode
-        ? { llmMode: value, pdfAnalysisMode: derivePdfAnalysisModeForLlmMode(value) }
-        : { llmMode: value }
-    );
-  };
-
   return (
     <form className={props.className} onSubmit={props.onSubmit}>
       <div className="section-heading">
@@ -1267,31 +1256,14 @@ function ConfigEditorForm(props: ConfigEditorFormProps) {
           <select
             disabled={props.disabled}
             value={props.form.llmMode}
-            onChange={(event) => handleLlmModeChange(event.target.value as SetupFormState["llmMode"])}
+            onChange={(event) => patchSetupForm(props.onChange, { llmMode: event.target.value as SetupFormState["llmMode"] })}
           >
             <option value="codex_chatgpt_only">Codex ChatGPT (Default)</option>
             <option value="openai_api">OpenAI API</option>
           </select>
         </label>
-        {props.autoSelectPdfMode ? null : (
-          <label>
-            PDF mode
-            <select
-              disabled={props.disabled}
-              value={props.form.pdfAnalysisMode}
-              onChange={(event) =>
-                patchSetupForm(props.onChange, { pdfAnalysisMode: event.target.value as SetupFormState["pdfAnalysisMode"] })
-              }
-            >
-              <option value="codex_text_image_hybrid">Codex text + image hybrid (Default)</option>
-              <option value="responses_api_pdf">Responses API PDF</option>
-            </select>
-          </label>
-        )}
       </div>
-      {props.autoSelectPdfMode ? (
-        <p className="form-help">Research backend PDF mode follows the primary provider during initial setup.</p>
-      ) : null}
+      <p className="form-help">PDF analysis backend follows the selected primary provider automatically.</p>
 
       <div className="section-heading">
         <div>
@@ -1484,12 +1456,6 @@ function createSetupFormFromBootstrap(bootstrap: BootstrapResponse): SetupFormSt
   };
 }
 
-function derivePdfAnalysisModeForLlmMode(
-  llmMode: SetupFormState["llmMode"]
-): SetupFormState["pdfAnalysisMode"] {
-  return llmMode === "openai_api" ? "responses_api_pdf" : "codex_text_image_hybrid";
-}
-
 function createDefaultConfigForm(): WebConfigFormData {
   return {
     projectName: "",
@@ -1497,7 +1463,6 @@ function createDefaultConfigForm(): WebConfigFormData {
     defaultConstraints: "",
     defaultObjectiveMetric: "",
     llmMode: "codex_chatgpt_only",
-    pdfAnalysisMode: "codex_text_image_hybrid",
     codexChatModelChoice: "gpt-5.3-codex-spark",
     codexChatReasoningEffort: "medium",
     codexTaskModelChoice: "gpt-5.3-codex",

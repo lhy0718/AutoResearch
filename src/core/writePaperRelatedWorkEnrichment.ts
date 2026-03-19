@@ -6,6 +6,7 @@ import {
   PaperSummaryRow,
   shouldFallbackResponsesPdfToLocalText
 } from "./analysis/paperAnalyzer.js";
+import { getPdfAnalysisModeForConfig } from "../config.js";
 import { AnalysisCorpusRow, resolvePaperPdfUrl, resolvePaperTextSource } from "./analysis/paperText.js";
 import { safeRead, writeRunArtifact } from "./nodes/helpers.js";
 import { StoredCorpusRow } from "./collection/types.js";
@@ -137,7 +138,7 @@ export async function maybeEnrichRelatedWorkScout(input: {
       let analysis;
       if (
         canUseResponsesClient &&
-        input.config.analysis?.pdf_mode === "responses_api_pdf" &&
+        getPdfAnalysisModeForConfig(input.config) === "responses_api_pdf" &&
         pdfUrl &&
         input.responsesPdfAnalysis
       ) {
@@ -384,7 +385,7 @@ function parseJsonl<T>(raw: string): T[] {
 }
 
 function buildEnrichmentAnalysisSignature(config: AppConfig): RelatedWorkEnrichmentAnalysisSignature {
-  const pdfMode = config.analysis?.pdf_mode || "codex_text_image_hybrid";
+  const pdfMode = getPdfAnalysisModeForConfig(config);
   if (pdfMode === "responses_api_pdf") {
     return {
       pdf_mode: pdfMode,

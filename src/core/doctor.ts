@@ -1,4 +1,6 @@
+import path from "node:path";
 import { spawn } from "node:child_process";
+import { promises as fs } from "node:fs";
 
 import { DoctorCheck } from "../types.js";
 import { CodexCliClient } from "../integrations/codex/codexCliClient.js";
@@ -28,6 +30,17 @@ export interface DoctorRunOptions {
 export interface DoctorReport {
   checks: DoctorCheck[];
   harness?: HarnessValidationReport;
+}
+
+interface RunsFileSnapshot {
+  runs?: Array<{ id?: string; updatedAt?: string }>;
+}
+
+interface CompiledPageValidationSnapshot {
+  status?: string;
+  main_page_limit?: number;
+  compiled_pdf_page_count?: number | null;
+  message?: string;
 }
 
 export async function runDoctorReport(
@@ -131,6 +144,11 @@ export async function runDoctorReport(
     }
   }
 
+  const pageBudgetCheck = await loadLatestPaperPageBudgetCheck(opts?.workspaceRoot || process.cwd());
+  if (pageBudgetCheck) {
+    checks.push(pageBudgetCheck);
+  }
+
   const includeHarnessValidation = opts?.includeHarnessValidation !== false;
   const harness = includeHarnessValidation
     ? await runHarnessValidation({
@@ -152,6 +170,16 @@ export async function runDoctor(
   return report.checks;
 }
 
+export function buildDoctorHighlightLines(report: DoctorReport): string[] {
+  const pageBudgetCheck = report.checks.find((check) => check.name === "paper-page-budget");
+  if (!pageBudgetCheck) {
+    return [];
+  }
+  return [
+    `${pageBudgetCheck.ok ? "[OK]" : "[ATTN]"} paper page budget: ${pageBudgetCheck.detail}`
+  ];
+}
+
 function buildCodexModelCheck(name: string, label: string, model: string): DoctorCheck {
   const normalized = model.trim();
   if (normalized.toLowerCase().includes("spark")) {
@@ -167,6 +195,50 @@ function buildCodexModelCheck(name: string, label: string, model: string): Docto
     name,
     ok: true,
     detail: `Configured Codex ${label} model ${normalized} is suitable for rerank and paper analysis.`
+  };
+}
+
+async function loadLatestPaperPageBudgetCheck(workspaceRoot: string): Promise<DoctorCheck | undefined> {
+  const runsFilePath = path.join(workspaceRoot, ".autolabos", "runs", "runs.json");
+  let runsFile: RunsFileSnapshot;
+  try {
+    runsFile = JSON.parse(await fs.readFile(runsFilePath, "utf8")) as RunsFileSnapshot;
+  } catch {
+    return undefined;
+  }
+
+  const latestRun = [...(runsFile.runs || [])]
+    .filter((run) => typeof run.id === "string" && run.id.trim().length > 0)
+    .sort((a, b) => Date.parse(b.updatedAt || "") - Date.parse(a.updatedAt || ""))[0];
+  if (!latestRun?.id) {
+    return undefined;
+  }
+
+  const validationPath = path.join(
+    workspaceRoot,
+    ".autolabos",
+    "runs",
+    latestRun.id,
+    "paper",
+    "compiled_page_validation.json"
+  );
+  let validation: CompiledPageValidationSnapshot;
+  try {
+    validation = JSON.parse(await fs.readFile(validationPath, "utf8")) as CompiledPageValidationSnapshot;
+  } catch {
+    return undefined;
+  }
+
+  const status = validation.status === "pass" ? "pass" : validation.status === "warn" ? "warn" : "fail";
+  const pageCount =
+    typeof validation.compiled_pdf_page_count === "number" ? String(validation.compiled_pdf_page_count) : "unknown";
+  const limit = typeof validation.main_page_limit === "number" ? String(validation.main_page_limit) : "unknown";
+  return {
+    name: "paper-page-budget",
+    ok: status === "pass",
+    detail:
+      `Latest compiled paper page-budget check for run ${latestRun.id}: ${status}. ` +
+      `pages=${pageCount}, main_page_limit=${limit}. ${validation.message || ""}`.trim()
   };
 }
 

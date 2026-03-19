@@ -97,7 +97,6 @@ describe("InteractionSession", () => {
           openai: { model: "gpt-5.4", reasoning_effort: "medium" }
         },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         },
         papers: { max_results: 100 }
@@ -153,7 +152,6 @@ describe("InteractionSession", () => {
           openai: { model: "gpt-5.4", reasoning_effort: "medium" }
         },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         },
         papers: { max_results: 100 }
@@ -350,7 +348,6 @@ describe("InteractionSession", () => {
           openai: { model: "gpt-5.4", reasoning_effort: "medium" }
         },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         },
         papers: { max_results: 100 }
@@ -571,7 +568,6 @@ describe("InteractionSession", () => {
           openai: { model: "gpt-5.4", reasoning_effort: "medium" }
         },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         },
         papers: { max_results: 100 }
@@ -643,7 +639,6 @@ describe("InteractionSession", () => {
           openai: { model: "gpt-5.4", reasoning_effort: "medium" }
         },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         },
         papers: { max_results: 100 }
@@ -722,7 +717,6 @@ describe("InteractionSession", () => {
           openai: { model: "gpt-5.4", reasoning_effort: "medium" }
         },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4"
         },
         papers: { max_results: 100 }

@@ -96,7 +96,6 @@ describe("App", () => {
         defaultConstraints: "recent papers, last 5 years",
         defaultObjectiveMetric: "state-of-the-art reproducibility",
         llmMode: "codex_chatgpt_only",
-        pdfAnalysisMode: "codex_text_image_hybrid",
         codexChatModelChoice: "gpt-5.3-codex",
         codexChatReasoningEffort: "low",
         codexTaskModelChoice: "gpt-5.4",
@@ -128,6 +127,7 @@ describe("App", () => {
       }
       if (url.includes("/api/setup")) {
         const body = JSON.parse(String(init?.body));
+        expect(body.pdfAnalysisMode).toBeUndefined();
         expect(body.codexChatModelChoice).toBe("gpt-5.4");
         expect(body.codexChatReasoningEffort).toBe("high");
         expect(body.responsesPdfModel).toBe("gpt-4o");

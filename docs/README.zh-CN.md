@@ -355,7 +355,7 @@ flowchart TB
 <summary><strong>公开输出包</strong></summary>
 
 ```
-outputs/<title-slug>-<run_id_prefix>/
+outputs/
   ├── paper/           # TeX 源文件、PDF、参考文献、构建日志
   ├── experiment/      # baseline 摘要、实验代码
   ├── analysis/        # 结果表、证据分析

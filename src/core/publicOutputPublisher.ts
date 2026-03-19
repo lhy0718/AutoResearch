@@ -59,8 +59,12 @@ export async function publishPublicRunOutputs(
   input: PublishPublicRunOutputsInput
 ): Promise<PublishPublicRunOutputsResult> {
   const outputRoot = buildPublicRunOutputDir(input.workspaceRoot, input.run);
-  const sectionDir = buildPublicSectionDir(input.workspaceRoot, input.run, input.section);
   const manifestPath = buildPublicRunManifestPath(input.workspaceRoot, input.run);
+  const existingManifest = await loadStoredPublicRunManifest(manifestPath);
+  if (existingManifest?.run_id && existingManifest.run_id !== input.run.id) {
+    await fs.rm(outputRoot, { recursive: true, force: true });
+  }
+  const sectionDir = buildPublicSectionDir(input.workspaceRoot, input.run, input.section);
   await ensureDir(sectionDir);
 
   const now = new Date().toISOString();
@@ -286,15 +290,18 @@ export async function generatePublicRunReadme(
   await ensureDir(outputRoot);
   await fs.writeFile(readmePath, content, "utf8");
 
-  // Create convenience `output` symlink at workspace root pointing to this run's output
-  try {
-    const symlinkPath = path.join(workspaceRoot, "output");
-    const relativeTarget = path.relative(workspaceRoot, outputRoot);
-    try { await fs.unlink(symlinkPath); } catch { /* ok if doesn't exist */ }
-    await fs.symlink(relativeTarget, symlinkPath);
-  } catch {
-    // non-fatal — symlink creation may fail on some filesystems
-  }
-
   return readmePath;
+}
+
+async function loadStoredPublicRunManifest(manifestPath: string): Promise<PublicRunManifest | undefined> {
+  try {
+    const raw = await fs.readFile(manifestPath, "utf8");
+    const parsed = JSON.parse(raw) as PublicRunManifest;
+    if (parsed && parsed.version === 1 && typeof parsed.run_id === "string") {
+      return parsed;
+    }
+  } catch {
+    // ignore invalid or missing manifest
+  }
+  return undefined;
 }

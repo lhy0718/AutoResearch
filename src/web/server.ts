@@ -28,8 +28,8 @@ import {
 import {
   DEFAULT_CODEX_CHAT_SETUP_MODEL,
   DEFAULT_CODEX_CHAT_SETUP_REASONING_EFFORT,
-  DEFAULT_PDF_ANALYSIS_MODE,
   DEFAULT_PRIMARY_LLM_MODE,
+  getPdfAnalysisModeForConfig,
   ensureScaffold,
   hasOpenAiApiKey,
   resolveOpenAiApiKey,
@@ -66,7 +66,6 @@ interface SetupRequestBody {
   defaultConstraints?: string[];
   defaultObjectiveMetric?: string;
   llmMode?: "codex_chatgpt_only" | "openai_api" | "ollama";
-  pdfAnalysisMode?: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
   codexChatModelChoice?: string;
   codexChatReasoningEffort?: string;
   codexTaskModelChoice?: string;
@@ -192,10 +191,7 @@ class AutoLabOSWebController {
         if (!semanticScholarApiKey) {
           return jsonResponse(res, 400, { error: "semanticScholarApiKey is required." });
         }
-        if (
-          (body.llmMode === "openai_api" || body.pdfAnalysisMode === "responses_api_pdf") &&
-          !openAiApiKey
-        ) {
+        if (body.llmMode === "openai_api" && !openAiApiKey) {
           return jsonResponse(res, 400, { error: "openAiApiKey is required for the selected provider/mode." });
         }
         const config = await runNonInteractiveSetup(this.paths, {
@@ -204,7 +200,6 @@ class AutoLabOSWebController {
           defaultConstraints: body.defaultConstraints,
           defaultObjectiveMetric: body.defaultObjectiveMetric,
           llmMode: body.llmMode,
-          pdfAnalysisMode: body.pdfAnalysisMode,
           semanticScholarApiKey,
           openAiApiKey,
           codexChatModelChoice: body.codexChatModelChoice,
@@ -254,7 +249,7 @@ class AutoLabOSWebController {
         }
         const report = await runDoctorReport(this.runtime.codex, {
           llmMode: this.runtime.config.providers.llm_mode,
-          pdfAnalysisMode: this.runtime.config.analysis.pdf_mode,
+          pdfAnalysisMode: getPdfAnalysisModeForConfig(this.runtime.config),
           openAiApiKeyConfigured: await hasOpenAiApiKey(this.cwd),
           codexResearchModel: this.runtime.config.providers.codex.model,
           codexPdfModel: this.runtime.config.providers.codex.pdf_model || this.runtime.config.providers.codex.model,
@@ -608,12 +603,13 @@ function buildSessionInputResponse(
 }
 
 function summarizeConfig(config: AutoLabOSRuntime["config"]): ConfigSummary {
+  const pdfMode = getPdfAnalysisModeForConfig(config);
   return {
     projectName: config.project_name,
     workflowMode: config.workflow.mode,
     approvalMode: config.workflow.approval_mode || "minimal",
     llmMode: config.providers.llm_mode,
-    pdfMode: config.analysis.pdf_mode,
+    pdfMode,
     taskModel:
       config.providers.llm_mode === "openai_api"
         ? config.providers.openai.model
@@ -633,7 +629,7 @@ function summarizeConfig(config: AutoLabOSRuntime["config"]): ConfigSummary {
           ? config.providers.ollama?.experiment_model || config.providers.ollama?.research_model || "ollama"
           : config.providers.codex.experiment_model || config.providers.codex.model,
     pdfModel:
-      config.analysis.pdf_mode === "responses_api_pdf"
+      pdfMode === "responses_api_pdf"
         ? config.analysis.responses_model
         : config.providers.llm_mode === "openai_api"
           ? config.providers.openai.pdf_model || config.providers.openai.model
@@ -659,7 +655,7 @@ function summarizeConfig(config: AutoLabOSRuntime["config"]): ConfigSummary {
           ? undefined
           : config.providers.codex.experiment_reasoning_effort || config.providers.codex.reasoning_effort,
     pdfReasoning:
-      config.analysis.pdf_mode === "responses_api_pdf"
+      pdfMode === "responses_api_pdf"
         ? config.analysis.responses_reasoning_effort || "xhigh"
         : config.providers.llm_mode === "openai_api"
           ? config.providers.openai.pdf_reasoning_effort || config.providers.openai.reasoning_effort
@@ -688,7 +684,6 @@ function buildConfigFormData(
     defaultConstraints: (config?.research.default_constraints || ["recent papers", "last 5 years"]).join(", "),
     defaultObjectiveMetric: config?.research.default_objective_metric || "state-of-the-art reproducibility",
     llmMode: config?.providers.llm_mode || DEFAULT_PRIMARY_LLM_MODE,
-    pdfAnalysisMode: config?.analysis.pdf_mode || DEFAULT_PDF_ANALYSIS_MODE,
     codexChatModelChoice: getCurrentCodexModelSelectionValue(codexChatModel, config?.providers.codex.chat_fast_mode),
     codexChatReasoningEffort:
       config?.providers.codex.chat_reasoning_effort ||

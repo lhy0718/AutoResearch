@@ -88,6 +88,17 @@ interface PaperCompileResult {
   repair_error?: string;
 }
 
+interface CompiledPdfPageValidationReport {
+  checked: boolean;
+  validation_mode: "default" | "strict_paper";
+  status: "pass" | "warn" | "fail";
+  outcome: "ok" | "under_limit" | "measurement_unavailable" | "skipped";
+  main_page_limit: number;
+  compiled_pdf_page_count: number | null;
+  pdf_path: string | null;
+  message: string;
+}
+
 interface PaperInputValidationIssue {
   artifact: string;
   path: string;
@@ -647,6 +658,11 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
             sourcePath: path.join(runPaperDir, "scientific_validation.json"),
             targetRelativePath: "scientific_validation.json",
             optional: true
+          },
+          {
+            sourcePath: path.join(runPaperDir, "compiled_page_validation.json"),
+            targetRelativePath: "compiled_page_validation.json",
+            optional: true
           }
         ]
       });
@@ -680,6 +696,38 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
           };
         }
         emitLog("PDF compilation tool is unavailable; continuing with LaTeX source only.");
+      }
+      const compiledPageValidation = await validateCompiledPdfPageBudget({
+        deps,
+        run,
+        compileResult,
+        validationMode,
+        mainPageLimit: scientificDraft.page_budget.main_page_limit
+      });
+      await writeRunArtifact(
+        run,
+        "paper/compiled_page_validation.json",
+        `${JSON.stringify(compiledPageValidation, null, 2)}\n`
+      );
+      await fs.writeFile(
+        path.join(publicPaperDir, "compiled_page_validation.json"),
+        `${JSON.stringify(compiledPageValidation, null, 2)}\n`,
+        "utf8"
+      );
+      await runContextMemory.put("write_paper.compiled_page_validation", compiledPageValidation);
+      if (compiledPageValidation.status === "warn") {
+        emitLog(`Compiled PDF page-budget warning: ${compiledPageValidation.message}`);
+      }
+      if (compiledPageValidation.status === "fail") {
+        const pageValidationError = buildCompiledPdfPageValidationError(compiledPageValidation);
+        emitLog(pageValidationError);
+        await runContextMemory.put("write_paper.last_error", pageValidationError);
+        return {
+          status: "failure",
+          error: pageValidationError,
+          summary: pageValidationError,
+          toolCallsUsed
+        };
       }
       await runContextMemory.put("write_paper.last_error", sessionResult.errors[0] || null);
 
@@ -1338,6 +1386,11 @@ function buildSubmissionValidationError(
   return `write_paper generated manuscript artifacts but stopped before PDF build because submission-quality validation failed: ${leadDetail}.${unresolved}`;
 }
 
+function buildCompiledPdfPageValidationError(report: CompiledPdfPageValidationReport): string {
+  const qualifier = report.validation_mode === "strict_paper" ? "strict-paper mode" : "default mode";
+  return `write_paper generated PDF artifacts but stopped because compiled PDF page-budget validation failed in ${qualifier}: ${report.message}`;
+}
+
 function buildCompileFailureError(result: PaperCompileResult): string {
   const latestAttempt = [...result.attempts].reverse().find((item) => item.status === "failed");
   const detail = (result.repair_error || latestAttempt?.error || "unknown LaTeX compilation error").trim();
@@ -1366,6 +1419,72 @@ function buildScientificGateFailureError(report: {
 
 function resolvePaperValidationMode(value: unknown): "default" | "strict_paper" {
   return value === "strict_paper" ? "strict_paper" : "default";
+}
+
+export async function validateCompiledPdfPageBudget(input: {
+  deps: NodeExecutionDeps;
+  run: Parameters<GraphNodeHandler["execute"]>[0]["run"];
+  compileResult: PaperCompileResult;
+  validationMode: "default" | "strict_paper";
+  mainPageLimit: number;
+}): Promise<CompiledPdfPageValidationReport> {
+  if (!input.compileResult.pdf_path) {
+    return {
+      checked: false,
+      validation_mode: input.validationMode,
+      status: "pass",
+      outcome: "skipped",
+      main_page_limit: input.mainPageLimit,
+      compiled_pdf_page_count: null,
+      pdf_path: null,
+      message: "Compiled PDF page-budget validation was skipped because no PDF artifact was produced."
+    };
+  }
+
+  const runPaperDir = path.join(process.cwd(), ".autolabos", "runs", input.run.id, "paper");
+  const observation = await input.deps.aci.runCommand("pdfinfo main.pdf", runPaperDir);
+  const stdoutText = observation.stdout || "";
+  const match = stdoutText.match(/^Pages:\s+(\d+)/mu);
+  const parsedPageCount = match ? Number.parseInt(match[1], 10) : Number.NaN;
+  if (observation.status !== "ok" || !Number.isFinite(parsedPageCount)) {
+    return {
+      checked: false,
+      validation_mode: input.validationMode,
+      status: input.validationMode === "strict_paper" ? "fail" : "warn",
+      outcome: "measurement_unavailable",
+      main_page_limit: input.mainPageLimit,
+      compiled_pdf_page_count: null,
+      pdf_path: input.compileResult.pdf_path,
+      message:
+        "Compiled PDF page count could not be verified with pdfinfo, so main_page_limit compliance remains unverified."
+    };
+  }
+  if (parsedPageCount < input.mainPageLimit) {
+    return {
+      checked: true,
+      validation_mode: input.validationMode,
+      status: input.validationMode === "strict_paper" ? "fail" : "warn",
+      outcome: "under_limit",
+      main_page_limit: input.mainPageLimit,
+      compiled_pdf_page_count: parsedPageCount,
+      pdf_path: input.compileResult.pdf_path,
+      message:
+        `Compiled PDF is only ${parsedPageCount} page${parsedPageCount === 1 ? "" : "s"}, below the configured ` +
+        `main_page_limit of ${input.mainPageLimit}.`
+    };
+  }
+  return {
+    checked: true,
+    validation_mode: input.validationMode,
+    status: "pass",
+    outcome: "ok",
+    main_page_limit: input.mainPageLimit,
+    compiled_pdf_page_count: parsedPageCount,
+    pdf_path: input.compileResult.pdf_path,
+    message:
+      `Compiled PDF reached ${parsedPageCount} page${parsedPageCount === 1 ? "" : "s"}, meeting the configured ` +
+      `main_page_limit of ${input.mainPageLimit}.`
+  };
 }
 
 function isMissingBinaryObservation(obs: { stderr?: string; exit_code?: number }): boolean {

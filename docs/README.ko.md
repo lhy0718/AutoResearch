@@ -360,7 +360,7 @@ flowchart TB
 <summary><strong>공개 산출물 번들</strong></summary>
 
 ```
-outputs/<title-slug>-<run_id_prefix>/
+outputs/
   ├── paper/           # TeX 소스, PDF, 참고문헌, 빌드 로그
   ├── experiment/      # 베이스라인 요약, 실험 코드
   ├── analysis/        # 결과 테이블, 증거 분석

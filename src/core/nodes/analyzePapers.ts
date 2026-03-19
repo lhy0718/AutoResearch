@@ -20,6 +20,7 @@ import {
   shouldFallbackResponsesPdfToLocalText
 } from "../analysis/paperAnalyzer.js";
 import { OllamaPdfAnalysisClient } from "../../integrations/ollama/ollamaPdfAnalysisClient.js";
+import { getPdfAnalysisModeForConfig } from "../../config.js";
 import {
   AnalysisCorpusRow,
   ResolvedPaperSource,
@@ -245,7 +246,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       const runContextMemory = new RunContextMemory(run.memoryRefs.runContextPath);
       const corpusRows = await readCorpusRows(run.id);
       const corpusFingerprint = buildCorpusFingerprint(corpusRows);
-      const analysisMode = deps.config.analysis.pdf_mode;
+      const analysisMode = getPdfAnalysisModeForConfig(deps.config);
       const artifactsRoot = runArtifactsDir(run);
       const manifestPath = path.join(artifactsRoot, "analysis_manifest.json");
       const summaryPath = path.join(artifactsRoot, "paper_summaries.jsonl");
@@ -3028,11 +3029,17 @@ async function upsertRunContextValues(runContextPath: string, updates: Record<st
 async function runAnalyzeCodexPreflight(input: {
   codex: NodeExecutionDeps["codex"];
   llmMode: NodeExecutionDeps["config"]["providers"]["llm_mode"] | undefined;
-  analysisMode: NodeExecutionDeps["config"]["analysis"]["pdf_mode"];
+  analysisMode: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
   researchModel: string | undefined;
   pdfModel: string | undefined;
 }): Promise<DoctorCheck[]> {
   if (input.llmMode !== "codex_chatgpt_only") {
+    return [];
+  }
+  if (
+    typeof input.codex?.checkCliAvailable !== "function" ||
+    typeof input.codex?.checkLoginStatus !== "function"
+  ) {
     return [];
   }
 

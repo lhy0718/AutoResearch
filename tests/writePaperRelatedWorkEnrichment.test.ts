@@ -64,8 +64,10 @@ describe("writePaper related-work enrichment", () => {
     const result = await maybeEnrichRelatedWorkScout({
       run,
       config: {
+        providers: {
+          llm_mode: "codex_chatgpt_only"
+        },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid"
         }
       } as any,
       scoutRows: [
@@ -212,7 +214,7 @@ describe("writePaper related-work enrichment", () => {
       ...baseInput,
       config: {
         providers: {
-          llm_mode: "codex_chatgpt_only",
+          llm_mode: "openai_api",
           codex: {
             model: "gpt-5.3-codex",
             pdf_model: "gpt-5.4",
@@ -221,7 +223,6 @@ describe("writePaper related-work enrichment", () => {
           }
         },
         analysis: {
-          pdf_mode: "responses_api_pdf",
           responses_model: "gpt-5.4",
           responses_reasoning_effort: "medium"
         }
@@ -244,7 +245,6 @@ describe("writePaper related-work enrichment", () => {
           }
         },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid"
         }
       } as any,
       pdfTextLlm: {

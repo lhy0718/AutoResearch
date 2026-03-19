@@ -360,7 +360,7 @@ flowchart TB
 <summary><strong>Публичный пакет результатов</strong></summary>
 
 ```
-outputs/<title-slug>-<run_id_prefix>/
+outputs/
   ├── paper/           # Исходники TeX, PDF, ссылки, лог сборки
   ├── experiment/      # Сводка базовой линии, код эксперимента
   ├── analysis/        # Таблица результатов, анализ доказательств

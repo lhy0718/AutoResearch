@@ -56,16 +56,16 @@ function makeBaseConfig(): AppConfig {
     version: 1,
     project_name: "test",
     providers: {
-      llm_mode: "codex_chatgpt_only",
+      llm_mode: "openai_api",
       codex: {
-        model: "gpt-5.3-codex",
-        chat_model: "gpt-5.3-codex",
-        experiment_model: "gpt-5.3-codex",
-        pdf_model: "gpt-5.3-codex",
-        reasoning_effort: "xhigh",
+        model: "gpt-5.4",
+        chat_model: "gpt-5.4",
+        experiment_model: "gpt-5.4",
+        pdf_model: "gpt-5.4",
+        reasoning_effort: "high",
         chat_reasoning_effort: "low",
-        experiment_reasoning_effort: "xhigh",
-        pdf_reasoning_effort: "xhigh",
+        experiment_reasoning_effort: "high",
+        pdf_reasoning_effort: "high",
         command_reasoning_effort: "low",
         fast_mode: false,
         chat_fast_mode: false,
@@ -78,24 +78,23 @@ function makeBaseConfig(): AppConfig {
         chat_model: "gpt-5.4",
         experiment_model: "gpt-5.4",
         pdf_model: "gpt-5.4",
-        reasoning_effort: "medium",
+        reasoning_effort: "high",
         chat_reasoning_effort: "low",
-        experiment_reasoning_effort: "medium",
-        pdf_reasoning_effort: "medium",
+        experiment_reasoning_effort: "high",
+        pdf_reasoning_effort: "high",
         command_reasoning_effort: "low",
         api_key_required: true
       }
     },
     analysis: {
-      pdf_mode: "codex_text_image_hybrid",
       responses_model: "gpt-5.4",
-      responses_reasoning_effort: "xhigh"
+      responses_reasoning_effort: "high"
     },
     papers: { max_results: 200, per_second_limit: 1 },
     research: {
       default_topic: "Multi-agent collaboration",
-      default_constraints: ["recent papers"],
-      default_objective_metric: "reproducibility"
+      default_constraints: ["recent papers", "last 5 years"],
+      default_objective_metric: "state-of-the-art reproducibility"
     },
     workflow: { mode: "agent_approval", wizard_enabled: true, approval_mode: "minimal" },
     experiments: { runner: "local_python", timeout_sec: 3600, allow_network: false },
@@ -122,7 +121,6 @@ function makeOllamaConfig(): AppConfig {
     experiment_model: DEFAULT_OLLAMA_EXPERIMENT_MODEL,
     vision_model: DEFAULT_OLLAMA_VISION_MODEL
   };
-  config.analysis.pdf_mode = "ollama_vision";
   return config;
 }
 
@@ -156,9 +154,9 @@ describe("Ollama config backward compatibility", () => {
   it("loads a config without ollama section and defaults remain intact", async () => {
     const { paths } = await createWorkspace();
     const loaded = await loadConfig(paths);
-    expect(loaded.providers.llm_mode).toBe("codex_chatgpt_only");
+    expect(loaded.providers.llm_mode).toBe("openai_api");
     expect(loaded.providers.ollama).toBeUndefined();
-    expect(loaded.analysis.pdf_mode).toBe("codex_text_image_hybrid");
+    expect(getDefaultPdfAnalysisModeForLlmMode(loaded.providers.llm_mode)).toBe("responses_api_pdf");
   });
 
   it("loads a config with ollama section intact", async () => {
@@ -198,7 +196,7 @@ describe("Ollama config backward compatibility", () => {
   it("preserves codex and openai config when switching to ollama mode", async () => {
     const { paths } = await createWorkspace(makeOllamaConfig());
     const loaded = await loadConfig(paths);
-    expect(loaded.providers.codex.model).toBe("gpt-5.3-codex");
+    expect(loaded.providers.codex.model).toBe("gpt-5.4");
     expect(loaded.providers.openai.model).toBe("gpt-5.4");
   });
 
@@ -240,7 +238,7 @@ describe("Ollama setup wizard", () => {
     expect(config.providers.ollama!.research_model).toBe(DEFAULT_OLLAMA_RESEARCH_MODEL);
     expect(config.providers.ollama!.experiment_model).toBe(DEFAULT_OLLAMA_EXPERIMENT_MODEL);
     expect(config.providers.ollama!.vision_model).toBe(DEFAULT_OLLAMA_VISION_MODEL);
-    expect(config.analysis.pdf_mode).toBe("ollama_vision");
+    expect(getDefaultPdfAnalysisModeForLlmMode(config.providers.llm_mode)).toBe("ollama_vision");
   });
 
   it("setup wizard skips Codex login notification for ollama mode", async () => {
@@ -294,7 +292,7 @@ describe("Ollama setup wizard", () => {
     expect(config.providers.ollama!.research_model).toBe("deepseek-r1:32b");
     expect(config.providers.ollama!.experiment_model).toBe("qwen2.5-coder:32b");
     expect(config.providers.ollama!.vision_model).toBe("llama3.2-vision:11b");
-    expect(config.analysis.pdf_mode).toBe("ollama_vision");
+    expect(getDefaultPdfAnalysisModeForLlmMode(config.providers.llm_mode)).toBe("ollama_vision");
   });
 
   it("non-interactive setup with ollama uses defaults when models are not specified", async () => {
@@ -344,10 +342,10 @@ describe("Ollama settings updates", () => {
     expect(reloaded.providers.ollama!.vision_model).toBe("llama3.2-vision:11b");
   });
 
-  it("can switch llm_mode from codex to ollama and back without data loss", async () => {
+  it("can switch llm_mode from the default provider to ollama and back without data loss", async () => {
     const { paths } = await createWorkspace();
     let config = await loadConfig(paths);
-    expect(config.providers.llm_mode).toBe("codex_chatgpt_only");
+    expect(config.providers.llm_mode).toBe("openai_api");
 
     config.providers.llm_mode = "ollama";
     config.providers.ollama = {
@@ -358,12 +356,12 @@ describe("Ollama settings updates", () => {
     await saveConfig(paths, config);
     config = await loadConfig(paths);
     expect(config.providers.llm_mode).toBe("ollama");
-    expect(config.providers.codex.model).toBe("gpt-5.3-codex");
+    expect(config.providers.codex.model).toBe("gpt-5.4");
 
-    config.providers.llm_mode = "codex_chatgpt_only";
+    config.providers.llm_mode = "openai_api";
     await saveConfig(paths, config);
     config = await loadConfig(paths);
-    expect(config.providers.llm_mode).toBe("codex_chatgpt_only");
+    expect(config.providers.llm_mode).toBe("openai_api");
     expect(config.providers.ollama!.chat_model).toBe("qwen3.5:27b");
   });
 });
@@ -428,10 +426,9 @@ describe("Ollama PDF mode selection", () => {
 
   it("normalizes ollama_vision pdf_mode through config load", async () => {
     const config = makeOllamaConfig();
-    config.analysis.pdf_mode = "ollama_vision";
     const { paths } = await createWorkspace(config);
     const loaded = await loadConfig(paths);
-    expect(loaded.analysis.pdf_mode).toBe("ollama_vision");
+    expect(getDefaultPdfAnalysisModeForLlmMode(loaded.providers.llm_mode)).toBe("ollama_vision");
   });
 
   it("ollama setup automatically selects ollama_vision pdf mode", async () => {
@@ -441,7 +438,7 @@ describe("Ollama PDF mode selection", () => {
       llmMode: "ollama",
       semanticScholarApiKey: "test-key"
     });
-    expect(config.analysis.pdf_mode).toBe("ollama_vision");
+    expect(getDefaultPdfAnalysisModeForLlmMode(config.providers.llm_mode)).toBe("ollama_vision");
   });
 });
 
@@ -704,7 +701,7 @@ describe("Ollama end-to-end provider coexistence", () => {
       semanticScholarApiKey: "test-key"
     });
 
-    expect(config.providers.codex.model).toBe("gpt-5.3-codex");
+    expect(config.providers.codex.model).toBe("gpt-5.4");
     expect(config.providers.codex.auth_required).toBe(true);
     expect(config.providers.openai.model).toBe("gpt-5.4");
     expect(config.providers.openai.api_key_required).toBe(true);
@@ -724,11 +721,11 @@ describe("Ollama end-to-end provider coexistence", () => {
 
     // Switch to codex
     const config = await loadConfig(paths);
-    config.providers.llm_mode = "codex_chatgpt_only";
+    config.providers.llm_mode = "openai_api";
     await saveConfig(paths, config);
 
     const reloaded = await loadConfig(paths);
-    expect(reloaded.providers.llm_mode).toBe("codex_chatgpt_only");
+    expect(reloaded.providers.llm_mode).toBe("openai_api");
     expect(reloaded.providers.codex.model).toBeTruthy();
     expect(reloaded.providers.ollama).toBeDefined();
   });
@@ -791,7 +788,7 @@ describe("Ollama end-to-end provider coexistence", () => {
     expect(loaded.providers.codex.model).toBe("gpt-5.4");
     expect(loaded.providers.openai.model).toBe("gpt-5-mini");
     expect(loaded.providers.ollama!.research_model).toBe("deepseek-r1:32b");
-    expect(loaded.analysis.pdf_mode).toBe("ollama_vision");
+    expect(getDefaultPdfAnalysisModeForLlmMode(loaded.providers.llm_mode)).toBe("ollama_vision");
   });
 });
 

@@ -360,7 +360,7 @@ flowchart TB
 <summary><strong>公開輸出 bundle</strong></summary>
 
 ```
-outputs/<title-slug>-<run_id_prefix>/
+outputs/
   ├── paper/           # TeX 原始碼、PDF、參考文獻、建置日誌
   ├── experiment/      # Baseline 摘要、實驗程式碼
   ├── analysis/        # 結果表格、證據分析

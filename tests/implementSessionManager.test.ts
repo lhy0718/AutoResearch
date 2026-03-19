@@ -87,7 +87,6 @@ function createTestConfig(candidateIsolation: "attempt_snapshot_restore" | "atte
       }
     },
     analysis: {
-      pdf_mode: "codex_text_image_hybrid" as const,
       responses_model: "gpt-5.4",
       responses_reasoning_effort: "xhigh" as const
     },
@@ -214,7 +213,6 @@ describe("ImplementSessionManager", () => {
           }
         },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4",
           responses_reasoning_effort: "xhigh"
         },
@@ -447,7 +445,6 @@ describe("ImplementSessionManager", () => {
           }
         },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4",
           responses_reasoning_effort: "xhigh"
         },
@@ -803,7 +800,6 @@ describe("ImplementSessionManager", () => {
           }
         },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4",
           responses_reasoning_effort: "xhigh"
         },
@@ -994,7 +990,6 @@ describe("ImplementSessionManager", () => {
           }
         },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4",
           responses_reasoning_effort: "xhigh"
         },
@@ -1136,7 +1131,6 @@ describe("ImplementSessionManager", () => {
           }
         },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4",
           responses_reasoning_effort: "xhigh"
         },
@@ -1248,7 +1242,6 @@ describe("ImplementSessionManager", () => {
           }
         },
         analysis: {
-          pdf_mode: "codex_text_extract",
           responses_model: "gpt-5.4",
           responses_reasoning_effort: "xhigh"
         },
@@ -1370,7 +1363,6 @@ describe("ImplementSessionManager", () => {
           }
         },
         analysis: {
-          pdf_mode: "codex_text_extract",
           responses_model: "gpt-5.4",
           responses_reasoning_effort: "xhigh"
         },
@@ -1509,7 +1501,6 @@ describe("ImplementSessionManager", () => {
           }
         },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4",
           responses_reasoning_effort: "xhigh"
         },
@@ -1673,7 +1664,6 @@ describe("ImplementSessionManager", () => {
           }
         },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4",
           responses_reasoning_effort: "xhigh"
         },
@@ -2064,7 +2054,6 @@ describe("ImplementSessionManager", () => {
           }
         },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4",
           responses_reasoning_effort: "xhigh"
         },
@@ -2206,9 +2195,9 @@ describe("ImplementSessionManager", () => {
         "# Recovered Bundle",
         "",
         "```bash",
-        `python outputs/${path.basename(path.dirname(publicDir))}/experiment/${path.basename(scriptPath)} \\`,
-        `  --config outputs/${path.basename(path.dirname(publicDir))}/experiment/${path.basename(configPath)} \\`,
-        `  --public-dir outputs/${path.basename(path.dirname(publicDir))}/experiment \\`,
+        `python outputs/experiment/${path.basename(scriptPath)} \\`,
+        `  --config outputs/experiment/${path.basename(configPath)} \\`,
+        `  --public-dir outputs/experiment \\`,
         `  --run-dir .autolabos/runs/${run.id} \\`,
         `  --metrics-path .autolabos/runs/${run.id}/metrics.json`,
         "```"
@@ -2279,9 +2268,9 @@ describe("ImplementSessionManager", () => {
         "# Existing Bundle",
         "",
         "```bash",
-        `python outputs/${path.basename(path.dirname(publicDir))}/experiment/${path.basename(scriptPath)} \\`,
-        `  --config outputs/${path.basename(path.dirname(publicDir))}/experiment/${path.basename(configPath)} \\`,
-        `  --public-dir outputs/${path.basename(path.dirname(publicDir))}/experiment \\`,
+        `python outputs/experiment/${path.basename(scriptPath)} \\`,
+        `  --config outputs/experiment/${path.basename(configPath)} \\`,
+        `  --public-dir outputs/experiment \\`,
         `  --run-dir .autolabos/runs/${run.id} \\`,
         `  --metrics-path .autolabos/runs/${run.id}/metrics.json`,
         "```"
@@ -2380,9 +2369,9 @@ describe("ImplementSessionManager", () => {
         "# Existing Bundle",
         "",
         "```bash",
-        `python outputs/${path.basename(path.dirname(publicDir))}/experiment/${path.basename(scriptPath)} \\`,
-        `  --config outputs/${path.basename(path.dirname(publicDir))}/experiment/${path.basename(configPath)} \\`,
-        `  --public-dir outputs/${path.basename(path.dirname(publicDir))}/experiment \\`,
+        `python outputs/experiment/${path.basename(scriptPath)} \\`,
+        `  --config outputs/experiment/${path.basename(configPath)} \\`,
+        `  --public-dir outputs/experiment \\`,
         `  --run-dir .autolabos/runs/${run.id} \\`,
         `  --metrics-path .autolabos/runs/${run.id}/metrics.json \\`,
         "  --pilot-size 12 --repeats 1",
@@ -2498,9 +2487,9 @@ describe("ImplementSessionManager", () => {
         "# Existing Bundle",
         "",
         "```bash",
-        `python outputs/${path.basename(path.dirname(publicDir))}/experiment/${path.basename(scriptPath)} \\`,
-        `  --config outputs/${path.basename(path.dirname(publicDir))}/experiment/${path.basename(configPath)} \\`,
-        `  --public-dir outputs/${path.basename(path.dirname(publicDir))}/experiment \\`,
+        `python outputs/experiment/${path.basename(scriptPath)} \\`,
+        `  --config outputs/experiment/${path.basename(configPath)} \\`,
+        `  --public-dir outputs/experiment \\`,
         `  --run-dir .autolabos/runs/${run.id} \\`,
         `  --metrics-path .autolabos/runs/${run.id}/metrics.json`,
         "```"
@@ -2598,9 +2587,9 @@ describe("ImplementSessionManager", () => {
         "# Existing Bundle",
         "",
         "```bash",
-        `python outputs/${path.basename(path.dirname(publicDir))}/experiment/${path.basename(scriptPath)} \\`,
-        `  --config outputs/${path.basename(path.dirname(publicDir))}/experiment/${path.basename(configPath)} \\`,
-        `  --public-dir outputs/${path.basename(path.dirname(publicDir))}/experiment \\`,
+        `python outputs/experiment/${path.basename(scriptPath)} \\`,
+        `  --config outputs/experiment/${path.basename(configPath)} \\`,
+        `  --public-dir outputs/experiment \\`,
         `  --run-dir .autolabos/runs/${run.id} \\`,
         `  --metrics-path .autolabos/runs/${run.id}/metrics.json`,
         "```"
@@ -2768,9 +2757,9 @@ describe("ImplementSessionManager", () => {
         "# Existing Bundle",
         "",
         "```bash",
-        `python outputs/${path.basename(path.dirname(publicDir))}/experiment/${path.basename(scriptPath)} \\`,
-        `  --config outputs/${path.basename(path.dirname(publicDir))}/experiment/${path.basename(configPath)} \\`,
-        `  --public-dir outputs/${path.basename(path.dirname(publicDir))}/experiment \\`,
+        `python outputs/experiment/${path.basename(scriptPath)} \\`,
+        `  --config outputs/experiment/${path.basename(configPath)} \\`,
+        `  --public-dir outputs/experiment \\`,
         `  --run-dir .autolabos/runs/${run.id} \\`,
         `  --metrics-path .autolabos/runs/${run.id}/metrics.json`,
         "```"
@@ -2919,7 +2908,6 @@ describe("ImplementSessionManager", () => {
           }
         },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4",
           responses_reasoning_effort: "xhigh"
         },
@@ -3039,7 +3027,6 @@ describe("ImplementSessionManager", () => {
           }
         },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4",
           responses_reasoning_effort: "xhigh"
         },
@@ -3246,7 +3233,6 @@ describe("ImplementSessionManager", () => {
           }
         },
         analysis: {
-          pdf_mode: "codex_text_image_hybrid",
           responses_model: "gpt-5.4",
           responses_reasoning_effort: "xhigh"
         },

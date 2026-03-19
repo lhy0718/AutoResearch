@@ -13,7 +13,7 @@ const testRoot = path.join(repoRoot, "test");
 // Directories and files that must be preserved inside test/
 // .autolabos / outputs / output are kept so live TUI validation
 // workspaces survive vitest runs (see LV-027).
-const KEEP = new Set(["smoke", ".env", ".autolabos", "outputs", "output"]);
+const KEEP = new Set(["smoke", ".env", ".autolabos", "outputs", "output", ".tmp"]);
 
 function cleanTestWorkspaces(): void {
   if (!existsSync(testRoot)) return;

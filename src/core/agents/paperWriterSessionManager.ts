@@ -817,7 +817,7 @@ function buildOutlinePrompt(bundle: PaperWritingBundle, paperProfile?: PaperProf
           `Main page limit: ${paperProfile.main_page_limit}`,
           `References counted toward limit: ${paperProfile.references_counted}`,
           `Appendix allowed: ${paperProfile.appendix_allowed}`,
-          `Appendix preferences: ${paperProfile.prefer_appendix_for.join(", ") || "none"}`
+          `Appendix preferences: ${(paperProfile.prefer_appendix_for || []).join(", ") || "none"}`
         ]
       : []),
     "Prefer an outline that preserves the main paper's core logic while reserving only supporting detail for the appendix.",

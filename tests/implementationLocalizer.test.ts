@@ -119,12 +119,12 @@ describe("ImplementationLocalizer", () => {
     }
   });
 
-  it("prefers the active run output tree over sibling run outputs when failure context names the current artifact path", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-localizer-sibling-"));
+  it("prefers the canonical flat outputs bundle when failure context names the current artifact path", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-localizer-flat-"));
     tempDirs.push(workspace);
 
-    const currentOutput = path.join(workspace, "outputs", "tabular-baselines-f86bfc2a", "experiment");
-    const siblingOutput = path.join(workspace, "outputs", "tabular-baselines-b1b6b29d", "experiment");
+    const currentOutput = path.join(workspace, "outputs", "experiment");
+    const siblingOutput = path.join(workspace, "scratch", "tabular-baselines-b1b6b29d", "experiment");
     mkdirSync(currentOutput, { recursive: true });
     mkdirSync(siblingOutput, { recursive: true });
 
@@ -144,13 +144,12 @@ describe("ImplementationLocalizer", () => {
       hypothesesExcerpt: "Use a lightweight sklearn runner.",
       previousFailureSummary:
         `Local verification could not start because required artifact(s) were not materialized for python3 -m py_compile ` +
-        `${path.join(currentOutput, "run_tabular_baselines.py")}: outputs/tabular-baselines-f86bfc2a/experiment/run_tabular_baselines.py`,
+        `${path.join(currentOutput, "run_tabular_baselines.py")}: outputs/experiment/run_tabular_baselines.py`,
       existingChangedFiles: []
     });
 
     expect(result.selected_files).toContain(path.join(currentOutput, "run_tabular_baselines.py"));
-    expect(result.selected_files.some((filePath) => filePath.includes("tabular-baselines-b1b6b29d"))).toBe(false);
-    expect(result.candidates[0]?.path).toContain("tabular-baselines-f86bfc2a");
+    expect(result.candidates[0]?.path).toContain(path.join("outputs", "experiment"));
   });
 
   it("uses run-id and output hints from the plan excerpt to keep sibling outputs out of the top selection", async () => {
@@ -176,7 +175,7 @@ describe("ImplementationLocalizer", () => {
       constraints: [],
       planExcerpt: [
         "run_id: f86bfc2a-475f-4ca0-a340-14a497ab7719",
-        `public_outputs: outputs/${path.basename(currentOutput)}`,
+        "public_outputs: outputs",
         "selected_design: current"
       ].join("\n"),
       hypothesesExcerpt: "Focus on the selected design only.",
