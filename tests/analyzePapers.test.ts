@@ -198,6 +198,31 @@ class TitleSelectiveHangingExtractorLLM extends MockLLMClient {
   }
 }
 
+class PlannerThenHangingResponsesPdfClient {
+  callCount = 0;
+
+  async hasApiKey(): Promise<boolean> {
+    return true;
+  }
+
+  async analyzePdf(args: { abortSignal?: AbortSignal; systemPrompt?: string }): Promise<{ text: string }> {
+    this.callCount += 1;
+    if (args.systemPrompt?.includes("planning agent")) {
+      return {
+        text: JSON.stringify({
+          focus_sections: ["methods"],
+          target_claims: ["claim"],
+          extraction_priorities: ["metrics"],
+          verification_checks: ["source-grounded"],
+          risk_flags: []
+        })
+      };
+    }
+    void args;
+    return await new Promise<{ text: string }>(() => undefined);
+  }
+}
+
 class RerankHangingLLM extends MockLLMClient {
   override async complete(_prompt: string, opts?: LLMCompleteOptions): Promise<{ text: string }> {
     if (opts?.systemPrompt?.includes("You rerank scientific papers")) {
@@ -2642,6 +2667,60 @@ describe("analyzePapers node", () => {
     expect(loggedTexts.some((text) => text.includes("Upstream status code: 403"))).toBe(true);
     expect(loggedTexts.some((text) => text.includes("Falling back to abstract for \"Paper 1\" after Responses API fallback"))).toBe(true);
     expect(loggedTexts.some((text) => text.includes('Analysis failed for "Paper 1"'))).toBe(false);
+  });
+
+  it("falls back to local text/abstract analysis when the Responses PDF extractor times out", async () => {
+    process.env.AUTOLABOS_ANALYSIS_EXTRACT_TIMEOUT_MS = "10";
+
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-pdf-timeout-fallback-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-pdf-timeout-fallback";
+    const run = makeRun(runId);
+    await writeCorpus(runId, [
+      {
+        paper_id: "p1",
+        title: "Paper 1",
+        abstract: "Abstract 1",
+        authors: ["Alice"],
+        pdf_url: "https://example.com/p1.pdf"
+      }
+    ]);
+
+    globalThis.fetch = (async () => new Response("missing", { status: 404 })) as typeof fetch;
+
+    const eventStream = new InMemoryEventStream();
+    const responseClient = new PlannerThenHangingResponsesPdfClient();
+
+    const node = createAnalyzePapersNode({
+      config: {
+        providers: { llm_mode: "openai_api" },
+        analysis: {
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream,
+      llm: new SequenceJsonLLM([jsonOutput("fallback summary", "fallback claim")]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: responseClient as unknown as ResponsesPdfAnalysisClient
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
+    expect(summariesRaw).toContain('"summary":"fallback summary"');
+    expect(summariesRaw).toContain('"source_type":"abstract"');
+    expect(responseClient.callCount).toBe(2);
+
+    const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
+    expect(loggedTexts.some((text) => text.includes("extractor exceeded the 10ms timeout"))).toBe(true);
+    expect(loggedTexts.some((text) => text.includes("Responses API could not download the remote PDF"))).toBe(true);
+    expect(loggedTexts.some((text) => text.includes("Falling back to abstract for \"Paper 1\" after Responses API fallback"))).toBe(true);
   });
 
   it("analyzes only the selected top-N papers when a request is provided", async () => {

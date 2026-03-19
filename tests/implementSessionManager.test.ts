@@ -2681,6 +2681,7 @@ describe("ImplementSessionManager", () => {
       runStore,
       workspaceRoot: workspace,
       llm: {} as any,
+      experimentLlm: {} as any,
       pdfTextLlm: {} as any,
       semanticScholar: {} as any,
       responsesPdfAnalysis: {} as any
@@ -2701,7 +2702,7 @@ describe("ImplementSessionManager", () => {
       status: "success",
       needsApproval: true
     });
-    expect(result.summary).toContain("Codex execution failed before any runnable implementation was produced");
+    expect(result.summary).toContain("Implementation execution failed before any runnable implementation was produced");
     expect(status).toMatchObject({
       status: "failed",
       stage: "failed",
@@ -2717,6 +2718,85 @@ describe("ImplementSessionManager", () => {
       }
     });
     expect(attempts.attempts[0]?.verify_report.summary).toContain("codex exec failed (exit 1)");
+  });
+
+  it("obeys openai_api mode and materializes staged LLM file edits without invoking Codex", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-openai-mode-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Implementation OpenAI Mode Run",
+      topic: "small model reasoning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "experiment.py");
+    let codexCalls = 0;
+    const codex = {
+      runTurnStream: async () => {
+        codexCalls += 1;
+        throw new Error("Codex should not be used when llm_mode=openai_api");
+      }
+    } as unknown as CodexCliClient;
+    const llm = {
+      complete: async () => ({
+        text: JSON.stringify({
+          summary: "Implemented a runnable experiment script through the configured API provider.",
+          run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
+          test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+          changed_files: [publicScriptPath],
+          artifacts: [publicScriptPath],
+          public_artifacts: [publicScriptPath],
+          script_path: publicScriptPath,
+          metrics_path: path.join(runDir, "metrics.json"),
+          experiment_mode: "real_execution",
+          file_edits: [
+            {
+              path: publicScriptPath,
+              content: "print('ok')"
+            }
+          ]
+        })
+      })
+    };
+
+    const config = createTestConfig();
+    config.providers.llm_mode = "openai_api";
+    const manager = new ImplementSessionManager({
+      config,
+      codex,
+      llm: llm as any,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const status = JSON.parse(readFileSync(path.join(runDir, "implement_experiments", "status.json"), "utf8")) as {
+      status: string;
+      stage: string;
+    };
+
+    expect(codexCalls).toBe(0);
+    expect(result.verifyReport).toMatchObject({ status: "pass" });
+    expect(result.scriptPath).toBe(publicScriptPath);
+    expect(result.publicArtifacts).toContain(publicScriptPath);
+    expect(readFileSync(publicScriptPath, "utf8")).toBe("print('ok')");
+    expect(status).toMatchObject({
+      status: "completed",
+      stage: "completed"
+    });
   });
 
   it("does not recover or reuse a stale public bundle after the experiment plan changes", async () => {

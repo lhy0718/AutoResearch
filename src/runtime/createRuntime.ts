@@ -93,6 +93,12 @@ export async function createAutoLabOSRuntime(
     reasoningEffort: config.providers.codex.reasoning_effort,
     fastMode: config.providers.codex.fast_mode
   });
+  const codexExperimentLlm = new CodexLLMClient(codex, {
+    model: config.providers.codex.experiment_model || config.providers.codex.model,
+    reasoningEffort:
+      config.providers.codex.experiment_reasoning_effort || config.providers.codex.reasoning_effort,
+    fastMode: config.providers.codex.experiment_fast_mode ?? config.providers.codex.fast_mode
+  });
   const codexPdfLlm = new CodexLLMClient(codex, {
     model: config.providers.codex.pdf_model || config.providers.codex.model,
     reasoningEffort: config.providers.codex.pdf_reasoning_effort || config.providers.codex.reasoning_effort,
@@ -101,6 +107,11 @@ export async function createAutoLabOSRuntime(
   const openAiTaskLlm = new OpenAiResponsesLLMClient(openAiText, {
     model: config.providers.openai.model,
     reasoningEffort: config.providers.openai.reasoning_effort
+  });
+  const openAiExperimentLlm = new OpenAiResponsesLLMClient(openAiText, {
+    model: config.providers.openai.experiment_model || config.providers.openai.model,
+    reasoningEffort:
+      config.providers.openai.experiment_reasoning_effort || config.providers.openai.reasoning_effort
   });
   const openAiPdfLlm = new OpenAiResponsesLLMClient(openAiText, {
     model: config.providers.openai.pdf_model || config.providers.openai.model,
@@ -116,6 +127,9 @@ export async function createAutoLabOSRuntime(
   });
   const ollamaChatLlm = new OllamaLLMClient(ollamaHttpClient, {
     model: ollamaConfig?.chat_model || "qwen3.5:27b"
+  });
+  const ollamaExperimentLlm = new OllamaLLMClient(ollamaHttpClient, {
+    model: ollamaConfig?.experiment_model || ollamaConfig?.research_model || "qwen3.5:35b-a3b"
   });
   const ollamaPdfLlm = new OllamaLLMClient(ollamaHttpClient, {
     model: ollamaConfig?.vision_model || "qwen3.5:35b-a3b"
@@ -183,6 +197,11 @@ export async function createAutoLabOSRuntime(
     if (config.providers.llm_mode === "ollama") return ollamaPdfLlm;
     return codexPdfLlm;
   });
+  const experimentLlm = new RoutedLLMClient(() => {
+    if (config.providers.llm_mode === "openai_api") return openAiExperimentLlm;
+    if (config.providers.llm_mode === "ollama") return ollamaExperimentLlm;
+    return codexExperimentLlm;
+  });
   const aci = new LocalAciAdapter({
     allowNetwork: config.experiments.allow_network === true
   });
@@ -199,6 +218,7 @@ export async function createAutoLabOSRuntime(
     runStore,
     eventStream,
     llm,
+    experimentLlm,
     pdfTextLlm,
     codex,
     aci,

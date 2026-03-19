@@ -245,6 +245,30 @@ describe("harness validators", () => {
     expect(invalid.issues.length).toBeGreaterThan(0);
     expect(invalid.issues.some((item) => item.code === "issue_field_missing")).toBe(true);
   });
+
+  it("parses LV-XXX heading format and accepts alternate field names", () => {
+    const lvMarkdown = `
+### LV-062 — Fresh runs can hang in analyze_papers
+- Status: FIXED
+- Validation target: fresh test run
+- Environment: test workspace
+- Reproduction:
+  1. start fresh run
+  2. observe hang
+- Expected behavior: should time out
+- Actual behavior: hangs indefinitely
+- Fresh vs existing: reproduced on fresh run
+- Root-cause hypothesis: unbounded timeouts
+- Code/test changes: bounded timeouts added
+- Regression status: VALIDATED
+- Follow-up risks: none identified
+`.trim();
+
+    const result = validateLiveValidationIssueMarkdown(lvMarkdown, "ISSUES.md");
+
+    expect(result.issueCount).toBe(1);
+    expect(result.issues).toEqual([]);
+  });
 });
 
 function createTempRunDir(prefix: string): string {

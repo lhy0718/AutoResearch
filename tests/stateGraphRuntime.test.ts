@@ -10,6 +10,7 @@ import { RunStore } from "../src/core/runs/runStore.js";
 import { CheckpointStore } from "../src/core/stateGraph/checkpointStore.js";
 import { StateGraphRuntime } from "../src/core/stateGraph/runtime.js";
 import { GraphNodeHandler, GraphNodeRegistry } from "../src/core/stateGraph/types.js";
+import { FailureMemory, buildErrorFingerprint } from "../src/core/experiments/failureMemory.js";
 import { GRAPH_NODE_ORDER, GraphNodeId, RunRecord } from "../src/types.js";
 import { readJsonFile } from "../src/utils/fs.js";
 
@@ -510,6 +511,56 @@ describe("StateGraphRuntime", () => {
     expect(updated.graph.nodeStates.run_experiments.status).toBe("failed");
     expect(updated.graph.retryCounters.run_experiments).toBe(3);
     expect(updated.graph.rollbackCounters.run_experiments).toBe(2);
+  });
+
+  it("does not schedule an auto retry after equivalent failures exhaust retries early", async () => {
+    const { store, runtime } = await setup(new Registry({}));
+
+    const run = await store.createRun({
+      title: "Equivalent Failure Stop",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "run_experiments";
+    run.graph.currentNode = "run_experiments";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 3;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 0;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    run.graph.nodeStates.implement_experiments.status = "completed";
+    run.graph.nodeStates.run_experiments.status = "running";
+    await store.updateRun(run);
+
+    const errorMessage = "Experiment finished without metrics output at /tmp/metrics.json";
+    const failureMemory = FailureMemory.forRun(run.id);
+    const fingerprint = buildErrorFingerprint(errorMessage);
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      await failureMemory.append({
+        run_id: run.id,
+        node_id: "run_experiments",
+        attempt,
+        failure_class: "equivalent",
+        error_fingerprint: fingerprint,
+        error_message: errorMessage,
+        do_not_retry: true,
+        do_not_retry_reason: "Repeated without improvement."
+      });
+    }
+
+    const failureRuntime = runtime as unknown as {
+      handleFailure(runRecord: RunRecord, node: GraphNodeId, message: string): Promise<RunRecord>;
+    };
+    const updated = await failureRuntime.handleFailure(run, "run_experiments", errorMessage);
+
+    expect(updated.status).toBe("failed");
+    expect(updated.graph.retryCounters.run_experiments).toBe(3);
+    expect(updated.graph.nodeStates.run_experiments.status).toBe("failed");
+    expect(updated.graph.nodeStates.run_experiments.note).toContain("without metrics output");
   });
 
   it("pauses instead of auto-applying backward jump when maxAutoBackwardJumps is reached (LV-015)", async () => {

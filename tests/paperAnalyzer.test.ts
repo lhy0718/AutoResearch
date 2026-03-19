@@ -96,6 +96,27 @@ class HangingExtractorLLM extends MockLLMClient {
   }
 }
 
+class HangingResponsesPdfClient {
+  callCount = 0;
+
+  async analyzePdf(args: { abortSignal?: AbortSignal; systemPrompt?: string }): Promise<{ text: string }> {
+    this.callCount += 1;
+    if (args.systemPrompt?.includes("planning agent")) {
+      return {
+        text: JSON.stringify({
+          focus_sections: ["method", "results"],
+          target_claims: ["main result"],
+          extraction_priorities: ["prefer explicit metrics"],
+          verification_checks: ["drop unsupported claims"],
+          risk_flags: []
+        })
+      };
+    }
+    void args;
+    return await new Promise<{ text: string }>(() => undefined);
+  }
+}
+
 class PlannerImageSensitiveLLM extends MockLLMClient {
   plannerCallsWithImages = 0;
   extractorCallsWithImages = 0;
@@ -564,6 +585,30 @@ describe("paperAnalyzer", () => {
     expect(result.evidenceRows[0].claim).toBe("PDF claim");
   });
 
+  it("does not retry the remote Responses PDF path after an extractor timeout", async () => {
+    process.env.AUTOLABOS_ANALYSIS_EXTRACT_TIMEOUT_MS = "10";
+    const client = new HangingResponsesPdfClient();
+    const progress: string[] = [];
+
+    await expect(
+      analyzePaperWithResponsesPdf({
+        client: client as unknown as ResponsesPdfAnalysisClient,
+        paper,
+        pdfUrl: "https://example.com/paper.pdf",
+        model: "gpt-5.4",
+        maxAttempts: 2,
+        onProgress: (message) => progress.push(message)
+      })
+    ).rejects.toThrow("paper_analysis_extractor_timeout_after_10ms");
+
+    expect(client.callCount).toBe(2);
+    expect(
+      progress.some((message) =>
+        message.includes("PDF analysis attempt 1/2 failed: extractor exceeded the 10ms timeout")
+      )
+    ).toBe(true);
+  });
+
   it("caps confidence when the evidence span is not grounded in the source text", () => {
     const normalized = normalizePaperAnalysis(paper, source, {
       summary: "A concise summary",
@@ -626,6 +671,11 @@ describe("shouldFallbackResponsesPdfToLocalText", () => {
     expect(shouldFallbackResponsesPdfToLocalText(new Error("error while downloading PDF"))).toBe(true);
     expect(shouldFallbackResponsesPdfToLocalText(new Error("timeout while downloading the file"))).toBe(true);
     expect(shouldFallbackResponsesPdfToLocalText(new Error("failed to download remote file"))).toBe(true);
+  });
+
+  it("triggers fallback for paper-analysis timeout fingerprints", () => {
+    expect(shouldFallbackResponsesPdfToLocalText(new Error("paper_analysis_extractor_timeout_after_45000ms"))).toBe(true);
+    expect(shouldFallbackResponsesPdfToLocalText(new Error("extractor exceeded the 45000ms timeout"))).toBe(true);
   });
 
   it("triggers fallback for upstream 403/404", () => {

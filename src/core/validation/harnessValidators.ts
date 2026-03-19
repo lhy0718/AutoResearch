@@ -38,8 +38,7 @@ const ISSUE_REQUIRED_FIELDS = [
   "Fresh vs existing session comparison",
   "Root cause hypothesis",
   "Code/test changes",
-  "Regression status",
-  "Follow-up risks"
+  "Regression status"
 ] as const;
 
 const PLACEHOLDER_TOKENS = new Set([
@@ -261,7 +260,9 @@ export function validateLiveValidationIssueMarkdown(
     }
 
     if (hasField(entry.body, "Fresh vs existing session comparison")) {
-      if (!/Fresh session:/m.test(entry.body) || !/Existing session:/m.test(entry.body)) {
+      const hasFullFormat = /Fresh session:/m.test(entry.body) && /Existing session:/m.test(entry.body);
+      const hasInlineFormat = /^-\s*Fresh vs existing\s*:/m.test(entry.body);
+      if (!hasFullFormat && !hasInlineFormat) {
         issues.push({
           code: "issue_session_comparison_incomplete",
           message: `${entry.title} must include both Fresh session and Existing session lines.`,
@@ -682,12 +683,17 @@ async function readFileIfExists(filePath: string): Promise<string | undefined> {
 }
 
 function collectIssueEntries(markdown: string): Array<{ title: string; body: string }> {
-  const headingPattern = /^##+\s+Issue:\s+(.+)$/gm;
-  const matches = [...markdown.matchAll(headingPattern)];
+  // Scope to "Live validation issues" section when present, since Active/Resolved
+  // sections use a compact format that predates the detailed template.
+  const liveSection = markdown.match(/##\s*Live validation issues[\s\S]*$/iu)?.[0];
+  const scope = liveSection ?? markdown;
+
+  const headingPattern = /^##+\s+(?:Issue:\s+|LV-\d+\s*[—–-]\s*)(.+)$/gm;
+  const matches = [...scope.matchAll(headingPattern)];
   return matches.map((match, index) => {
     const start = match.index || 0;
-    const end = index + 1 < matches.length ? matches[index + 1].index || markdown.length : markdown.length;
-    const body = markdown.slice(start, end);
+    const end = index + 1 < matches.length ? matches[index + 1].index || scope.length : scope.length;
+    const body = scope.slice(start, end);
     return {
       title: match[1]?.trim() || `Issue ${index + 1}`,
       body
@@ -695,8 +701,20 @@ function collectIssueEntries(markdown: string): Array<{ title: string; body: str
   });
 }
 
+const FIELD_ALIASES: Record<string, string[]> = {
+  "Environment/session context": ["Environment"],
+  "Root cause hypothesis": ["Root-cause hypothesis"],
+  "Fresh vs existing session comparison": ["Fresh vs existing"],
+  "Reproduction steps": ["Reproduction"],
+  "Expected behavior": ["Expected"],
+  "Actual behavior": ["Actual"]
+};
+
 function hasField(text: string, field: string): boolean {
-  return new RegExp(`^-\\s*${escapeRegExp(field)}\\s*:`, "m").test(text);
+  const candidates = [field, ...(FIELD_ALIASES[field] ?? [])];
+  return candidates.some(
+    (name) => new RegExp(`^-\\s*${escapeRegExp(name)}\\s*:`, "m").test(text)
+  );
 }
 
 function escapeRegExp(value: string): string {

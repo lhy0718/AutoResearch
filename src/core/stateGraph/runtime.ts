@@ -550,7 +550,7 @@ export class StateGraphRuntime {
     run = latest;
     run.graph.pendingTransition = undefined;
     const maxAttempts = Math.max(1, run.graph.retryPolicy.maxAttemptsPerNode);
-    const nextRetry = Math.min((run.graph.retryCounters[node] ?? 0) + 1, maxAttempts);
+    let nextRetry = Math.min((run.graph.retryCounters[node] ?? 0) + 1, maxAttempts);
     run.graph.retryCounters[node] = nextRetry;
 
     run.graph.nodeStates[node] = {
@@ -579,7 +579,8 @@ export class StateGraphRuntime {
     const fingerprint = buildErrorFingerprint(errorMessage);
     const equivalentCount = await failMem.countEquivalentFailures(node, fingerprint);
     if (equivalentCount >= 3 && nextRetry < maxAttempts) {
-      run.graph.retryCounters[node] = maxAttempts; // exhaust retries
+      nextRetry = maxAttempts;
+      run.graph.retryCounters[node] = nextRetry; // exhaust retries
       this.eventStream.emit({
         type: "OBS_RECEIVED",
         runId: run.id,

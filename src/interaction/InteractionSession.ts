@@ -42,6 +42,8 @@ import {
 } from "../core/resultAnalysisPresentation.js";
 import { CodexCliClient, CodexReasoningEffort } from "../integrations/codex/codexCliClient.js";
 import { OpenAiResponsesTextClient } from "../integrations/openai/responsesTextClient.js";
+import { OllamaClient } from "../integrations/ollama/ollamaClient.js";
+import { OllamaLLMClient } from "../core/llm/client.js";
 import {
   AppConfig,
   GraphNodeId,
@@ -57,6 +59,7 @@ import {
   parseCollectArgs
 } from "../core/commands/collectOptions.js";
 import { resolveOpenAiApiKey } from "../config.js";
+import { DEFAULT_OLLAMA_BASE_URL, DEFAULT_OLLAMA_CHAT_MODEL } from "../integrations/ollama/modelCatalog.js";
 
 interface PendingNaturalCommandState {
   command: string;
@@ -1743,6 +1746,26 @@ export class InteractionSession {
           })
       };
     }
+    if (this.config.providers.llm_mode === "ollama") {
+      const ollamaClient = new OllamaClient(
+        this.config.providers.ollama?.base_url || DEFAULT_OLLAMA_BASE_URL
+      );
+      const ollamaLlm = new OllamaLLMClient(ollamaClient, {
+        model:
+          this.config.providers.ollama?.chat_model ||
+          this.config.providers.ollama?.research_model ||
+          DEFAULT_OLLAMA_CHAT_MODEL
+      });
+      return {
+        runForText: async (opts) =>
+          (
+            await ollamaLlm.complete(opts.prompt, {
+              systemPrompt: opts.systemPrompt,
+              abortSignal: opts.abortSignal
+            })
+          ).text
+      };
+    }
     const codexRunTurnStream = this.codex.runTurnStream.bind(this.codex);
     return {
       runForText: async (opts) =>
@@ -1793,6 +1816,26 @@ export class InteractionSession {
             model: this.config.providers.openai.chat_model || this.config.providers.openai.model,
             reasoningEffort
           })
+      };
+    }
+    if (this.config.providers.llm_mode === "ollama") {
+      const ollamaClient = new OllamaClient(
+        this.config.providers.ollama?.base_url || DEFAULT_OLLAMA_BASE_URL
+      );
+      const ollamaLlm = new OllamaLLMClient(ollamaClient, {
+        model:
+          this.config.providers.ollama?.chat_model ||
+          this.config.providers.ollama?.research_model ||
+          DEFAULT_OLLAMA_CHAT_MODEL
+      });
+      return {
+        runForText: async (opts) =>
+          (
+            await ollamaLlm.complete(opts.prompt, {
+              systemPrompt: opts.systemPrompt,
+              abortSignal: opts.abortSignal
+            })
+          ).text
       };
     }
     const reasoningEffort =

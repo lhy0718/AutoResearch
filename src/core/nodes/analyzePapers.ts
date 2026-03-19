@@ -114,7 +114,7 @@ function createSelectionRerankLlm(deps: NodeExecutionDeps): NodeExecutionDeps["l
     return deps.llm;
   }
 
-  if (providerConfig.llm_mode === "openai_api") {
+  if (providerConfig.llm_mode !== "codex_chatgpt_only") {
     return deps.llm;
   }
 

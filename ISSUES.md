@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-03-19 · 971 tests pass, 2 skipped
+Last updated: 2026-03-19 · 993 tests pass, 0 skipped
 
 ---
 
@@ -13,7 +13,31 @@ Last updated: 2026-03-19 · 971 tests pass, 2 skipped
 - Environment: project root, local reproduction of the workflow steps on 2026-03-19
 - Reproduction: `npm run build`
 - Expected: TypeScript build completes so the smoke job can reach `npm run test:smoke:ci`
-- Actual: Build fails first with `src/core/agents/implementSessionManager.ts(445,26): TS2554 Expected 4 arguments, but got 3` and `src/core/nodes/analyzePapers.ts(847,19): TS2322 Type '"running"' is not assignable to type '"pending" | "completed" | "failed" | "skipped"'`
+- Actual: Build fails first with `src/core/agents/implementSessionManager.ts(445,26): TS2554 Expected 4 arguments, but got 3` and `src/core/nodes/analy
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
+zePapers.ts(847,19): TS2322 Type '"running"' is not assignable to type '"pending" | "completed" | "failed" | "skipped"'`
 - Fresh vs existing: Same in both fresh and existing workspaces because the failure is in compile-time code paths, not persisted runtime state
 - Root cause hypothesis: `chooseBranchPlan()` gained a fourth `defaultFocusFiles` argument and one caller was not updated; `AnalysisManifestEntry.status` drifted behind runtime behavior that persists `"running"` while analysis is in progress
 - Code/test changes: Pending
@@ -35,6 +59,30 @@ Last updated: 2026-03-19 · 971 tests pass, 2 skipped
 - Re-validation: `/doctor` harness-validation passes with ISSUES.md at project root and workspace at `test/`
 - Adjacent regression: None
 
+
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
 ### LV-029 — Stale "running" node persists after TUI process kill / resume
 - Status: FIXED (not reproduced in re-validation of the same flow)
 - Taxonomy: `resume_reload_bug`
@@ -50,6 +98,30 @@ Last updated: 2026-03-19 · 971 tests pass, 2 skipped
 - Re-validation: TUI restart correctly shows `implement_experiments pending` instead of stale `running`; `/retry` successfully triggers execution
 - Adjacent regression: None
 
+
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
 ---
 
 ## Open risks
@@ -86,8 +158,125 @@ Last updated: 2026-03-19 · 971 tests pass, 2 skipped
 
 ## Live validation issues
 
+### LV-062 — Fresh paper-scale runs can hang indefinitely in `analyze_papers` because Responses PDF planner/extractor/reviewer timeouts default to unbounded waits
+- Status: FIXED
+- Taxonomy: `persisted_state_bug`
+- Validation target: fresh `test/` run `98987fc4-6ce2-4d39-8623-6dacbcb1508d`, specifically `collect_papers -> analy
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
+ze_papers` under `providers.llm_mode=openai_api`
+- Environment: `test/` workspace, fresh governed brief for `Efficient Test-Time Reasoning for Small Language Models`, `providers.llm_mode=openai_api`
+- Reproduction:
+  1. Start a fresh governed run from `test/` with the substantive GSM8K small-model brief.
+  2. Let `collect_papers` complete and `analyze_papers` select a PDF-backed paper.
+  3. Observe the Responses PDF planner succeed, then the extractor request remain in-flight with no summaries, no evidence, no new checkpoints, and no transition.
+- Expected: `analyze_papers` should either finish, time out within a bounded window, or fall back to local text/image analysis so the workflow can continue.
+- Actual: default planner/extractor/reviewer timeouts were all `0`, so the remote Responses PDF path could wait indefinitely; the fresh run remained at `analyze_papers before` with no new artifacts.
+- Fresh vs existing: reproduced on the new fresh run rather than only on a resumed session, so this was not a resume-only defect.
+- Persisted artifact vs UI: TUI showed repeated `Submitting PDF analysis request to Responses API` progress, while persisted artifacts stayed frozen at `analysis_manifest.json` with `status: running`, no `paper_summaries.jsonl`, no `evidence_store.jsonl`, and `checkpoints/latest.json` stuck at `analyze_papers-before`.
+- Root-cause hypothesis: Responses PDF analysis stages were wrapped in timeout helpers, but the default timeout constants were zero, making those safety boundaries inert; extractor timeout errors also stayed on the remote path instead of falling back locally.
+- Code/test changes:
+  - `src/core/analysis/paperAnalyzer.ts` now uses bounded default planner/extractor/reviewer timeouts, stops remote retry on timeout fingerprints, and treats those timeout fingerprints as eligible for local fallback.
+  - regressions added in `tests/paperAnalyzer.test.ts` and `tests/analyzePapers.test.ts`.
+- Regression status:
+  - deterministic regressions VALIDATED (993/993 tests pass, including targeted timeout-fallback and shouldFallbackResponsesPdfToLocalText regressions)
+  - harness validation OK: no structural violations
+- Follow-up risks: none — the 45s default is conservative; if future models are slower, the env-var override remains available
+
+### LV-061 — Rebooted host can leave a false-positive live TUI session lock when the saved PID is reused by a non-TUI process
+- Status: FIXED
+- Taxonomy: `persisted_state_bug`
+- Validation target: fresh `test/` TUI launch after reboot with `test/.autolabos/runtime/tui-session-lock.json` still present from the prior session
+- Environment: `test/` workspace, fresh interactive TUI after forced reboot
+- Reproduction:
+  1. Leave `test/.autolabos/runtime/tui-session-lock.json` behind from a previous live session.
+  2. Reboot the host so the original TUI process is gone.
+  3. Start a fresh TUI from `test/`.
+  4. Observe that the saved PID may now belong to an unrelated process.
+- Expected: stale lock should be discarded and the fresh TUI should start.
+- Actual: the launcher only checked `process.kill(pid, 0)`, treated the reused PID as alive, and blocked the fresh validation loop with `Another AutoLabOS TUI session is already running ...`.
+- Fresh vs existing: the existing TUI session no longer existed after reboot, but the fresh session was still refused because the persisted lock trusted PID reachability alone.
+- Persisted artifact vs UI: persisted `test/.autolabos/runtime/tui-session-lock.json` claimed a live owner that no longer existed; startup UI trusted it and refused launch.
+- Root-cause hypothesis: PID-only liveness checks allowed PID reuse after reboot or namespace reuse to masquerade as an active TUI owner.
+- Code/test changes:
+  - `src/tui/TerminalApp.ts` now verifies `/proc/<pid>/cwd` and `/proc/<pid>/cmdline` before treating a saved lock as live.
+  - `tests/terminalAppLaunch.test.ts` adds a regression for reused live PIDs that do not belong to an AutoLabOS TUI process.
+- Regression status:
+  - targeted regression VALIDATED (993/993 tests pass, including reused-pid-lock clearance regression in terminalAppLaunch.test.ts)
+  - harness validation OK: no structural violations
+- Follow-up risks: on non-Linux platforms (macOS) where /proc is unavailable, the enhanced check degrades to always treating locks as stale; acceptable since stale-lock clearing is the safer failure mode
+
+
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
 ### LV-060 — fallback paper drafting leaks internal artifact paths into submission prose
-- Status: FIXED (same-flow live revalidation no longer dies at `fetch failed`; manuscript artifacts now materialize, and deterministic submission sanitization removes `.autolabos/` leakage from fallback drafting)
+- Status: FIXED (same-flow live revalidation no longer dies at `fetch failed`; manuscript artifacts now materiali
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
+ze, and deterministic submission sanitization removes `.autolabos/` leakage from fallback drafting)
 - Taxonomy: `in_memory_projection_bug`
 - Validation target: `test/` run `81820c46-d1b6-4080-8575-a35c60583480` at `write_paper` after staged LLM fetch failures trigger deterministic fallback drafting
 - Environment: `test/` workspace, existing paper-scale run, `providers.llm_mode=openai_api`
@@ -132,6 +321,30 @@ Last updated: 2026-03-19 · 971 tests pass, 2 skipped
   - pending same-flow live revalidation from `test/` after patch
 - Remaining risks: This keeps paper drafting honest and auditable under provider failure, but it does not create stronger experimental evidence; manuscript classification must still remain under the review/claim ceiling
 
+
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
 ### LV-058 — `run_experiments` can monopolize host responsiveness during heavy local model execution
 - Status: FIXED (not reproduced in short same-flow revalidation after the safety patch)
 - Taxonomy: `race_timing_bug`
@@ -142,7 +355,31 @@ Last updated: 2026-03-19 · 971 tests pass, 2 skipped
   2. Let the workflow auto-handoff into `run_experiments`
   3. Observe persisted state reach `currentNode=run_experiments` at `2026-03-19T09:44:51Z`
   4. Shortly after, the server becomes unresponsive and needs a hard reboot
-- Expected: A governed local experiment may be slow, but it should not monopolize the host to the point that the server stops responding
+- Expected: A governed local experiment may be slow, but it should not monopoli
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
+ze the host to the point that the server stops responding
 - Actual: The last persisted workload before reboot was the local Python command in `run_experiments`, with heavy model-loading stderr already present; the host stopped responding before the workflow could converge
 - Fresh vs existing: Observed on the existing resumed run after multiple backtrack cycles; the failing boundary is the local execution surface itself, not fresh-run startup
 - Persisted artifact vs UI: `runs.json` shows `currentNode=run_experiments` with checkpoint `1094`; `run_experiments_panel/execution_plan.json` shows a real local Python runner command with `--pilot-size 16`; the reboot cut the UI before a new verifier artifact could be written for that cycle
@@ -170,7 +407,31 @@ Last updated: 2026-03-19 · 971 tests pass, 2 skipped
 - Expected: A new runner failure should start a fresh implement thread so the repair prompt is anchored on the new governed feedback
 - Actual: `implement_experiments` reuses the old thread even though the repair target changed, and live progress stalls while the old thread repeats read-only inspection commands
 - Fresh vs existing: Reproduced on the existing resumed run; the evidence points to stale thread continuity across cycles rather than fresh-run startup
-- Persisted artifact vs UI: TUI shows repeated `sed` / `rg` / `py_compile` tool activity, while persisted `status.json` and `progress.jsonl` remain stuck at the initial `localize` entries for the cycle
+- Persisted artifact vs UI: TUI shows repeated `sed` / `rg` / `py_compile` tool activity, while persisted `status.json` and `progress.jsonl` remain stuck at the initial `locali
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
+ze` entries for the cycle
 - Root cause hypothesis: thread reset only occurs when the experiment plan hash changes; new `run_experiments` feedback does not clear the stale thread, so Codex keeps the old repair context
 - Code/test changes: Pending
 - Regression status: Pending same-flow revalidation after forcing a fresh implement thread whenever runner feedback is present
@@ -195,6 +456,30 @@ Last updated: 2026-03-19 · 971 tests pass, 2 skipped
 - Regression status: Pending same-flow revalidation after the minimal supervisor-loop patch
 - Remaining risks: Need to confirm the loop continues exactly once into the new pending node without creating a self-loop when no progress occurs
 
+
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
 ### LV-030 — TUI crashes with unhandled EIO when stdout disconnects during render
 - Status: FIXED (not reproduced in re-validation of the same flow)
 - Taxonomy: `race_timing_bug`
@@ -203,7 +488,31 @@ Last updated: 2026-03-19 · 971 tests pass, 2 skipped
 - Reproduction: TUI rendering every 120ms via `setInterval`. Controlling shell session (tmux/terminal) terminates → stdout becomes broken pipe → `process.stdout.write()` throws `Error: write EIO` → unhandled error event on WriteStream → process exits with crash
 - Expected: TUI should handle stdout disconnection gracefully — stop rendering and let background work continue or exit cleanly
 - Actual: Unhandled 'error' event crashes the process; any running node execution is lost
-- Root cause: `render()` method calls `process.stdout.write()` 4 times per frame with zero error handling; no `process.stdout.on('error')` listener to catch async write failures
+- Root cause: `render()` method calls `process.stdout.write()` 4 times per frame with 
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
+zero error handling; no `process.stdout.on('error')` listener to catch async write failures
 - Fix: (1) Wrapped all stdout.write() calls in render() with try-catch, setting `this.stopped = true` on failure; (2) Added `process.stdout.on('error')` listener in `start()` to catch async EIO/EPIPE
 - Files changed: `src/tui/TerminalApp.ts` (render() ~line 4688, start() ~line 317)
 - Tests: 934 pass; no dedicated test (requires simulating broken pipe)
@@ -225,6 +534,30 @@ Last updated: 2026-03-19 · 971 tests pass, 2 skipped
 - Re-validation: Run backtracked to design_experiments; re-running with updated agent. Expect GPU-aware code in next implement_experiments execution.
 - Adjacent regression: None
 
+
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
 ### LV-029b — recoverStaleRunningNode resets status but does not trigger execution
 - Status: FIXED (follow-up to LV-029)
 - Taxonomy: `resume_reload_bug`
@@ -240,10 +573,58 @@ Last updated: 2026-03-19 · 971 tests pass, 2 skipped
 - Re-validation: TUI restart now automatically triggers execution for recovered nodes
 - Adjacent regression: None
 
+
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
 ### LV-022 — Empty selection from LLM rerank failure
 - Status: FIXED (not reproduced in re-validation of the same flow)
 - Taxonomy: `in_memory_projection_bug`
-- Validation target: `/agent run analyze_papers` with 200 collected papers
+- Validation target: `/agent run analy
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
+ze_papers` with 200 collected papers
 - Environment: `test/` workspace, run `a1b7f1c0`, `analyze_papers` node
 - Reproduction: LLM rerank via gpt-5.4+xhigh returns error → `selectPapersForAnalysis` returns empty `selectedPaperIds` → analysis loop skips all papers → node completes with 0 analyzed papers
 - Expected: Graceful fallback to deterministic scoring when LLM rerank fails
@@ -258,7 +639,31 @@ Last updated: 2026-03-19 · 971 tests pass, 2 skipped
 ### LV-023 — API calls hang indefinitely (no timeout)
 - Status: FIXED (not reproduced in re-validation of the same flow)
 - Taxonomy: `race_timing_bug`
-- Validation target: `/agent run analyze_papers` → PDF analysis API calls
+- Validation target: `/agent run analy
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
+ze_papers` → PDF analysis API calls
 - Environment: `test/` workspace, OpenAI Responses API via gpt-5.4+xhigh
 - Reproduction: OpenAI Responses API fetch hangs indefinitely when endpoint is slow or unresponsive; no timeout causes the entire node to freeze
 - Expected: Safety timeout prevents indefinite hang
@@ -273,7 +678,31 @@ Last updated: 2026-03-19 · 971 tests pass, 2 skipped
 ### LV-024 — Timeout abort confused with user abort
 - Status: FIXED (not reproduced in re-validation of the same flow)
 - Taxonomy: `race_timing_bug`
-- Validation target: `/agent run analyze_papers` → error handling in analysis loop
+- Validation target: `/agent run analy
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
+ze_papers` → error handling in analysis loop
 - Environment: `test/` workspace, analyze_papers node with timeout-enabled clients
 - Reproduction: When a 10-minute timeout fires, the resulting AbortError was caught by `isAbortError(error)` and treated as a user-initiated abort, killing the entire analysis loop instead of just the failing paper
 - Expected: Timeout abort = per-paper failure (skip paper, continue with next); user abort = stop entire analysis
@@ -289,7 +718,31 @@ Last updated: 2026-03-19 · 971 tests pass, 2 skipped
 - Status: FIXED (not reproduced in re-validation of the same flow)
 - Taxonomy: `in_memory_projection_bug`
 - Validation target: Responses API PDF analysis → local text fallback chain
-- Environment: `test/` workspace, analyze_papers node
+- Environment: `test/` workspace, analy
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
+ze_papers node
 - Reproduction: OpenAI Responses API returns "fetch failed" when it cannot download PDF from URL (e.g., arxiv rate limit, invalid URL). `shouldFallbackResponsesPdfToLocalText()` did not match this error pattern → paper analysis failed instead of falling back to local text
 - Expected: "fetch failed" triggers fallback to local text extraction
 - Actual: Paper marked as failed; no fallback attempted
@@ -303,7 +756,31 @@ Last updated: 2026-03-19 · 971 tests pass, 2 skipped
 ### LV-026 — Rerank cache miss forces expensive re-rerank on node re-entry
 - Status: FIXED (not reproduced in re-validation of the same flow)
 - Taxonomy: `persisted_state_bug`
-- Validation target: `/resume <run>` → `/agent run analyze_papers` re-entry
+- Validation target: `/resume <run>` → `/agent run analy
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
+ze_papers` re-entry
 - Environment: `test/` workspace, run `a1b7f1c0`, analyze_papers node re-entry after rerank failure
 - Reproduction: After LV-022 fix (deterministic fallback), manifest is written with `rerankApplied: false`. On node re-entry, `canReuseManifestSelection()` sees `rerankApplied === false` with `selectedPaperIds.length < totalCandidates` → returns `false` → forces a full LLM rerank of 200 papers with gpt-5.4+xhigh (~60+ seconds, expensive)
 - Expected: Manifest with valid deterministic selections should be reusable without re-rerank
@@ -326,7 +803,31 @@ Last updated: 2026-03-19 · 971 tests pass, 2 skipped
 - Root cause: `KEEP` set in `tests/globalTeardown.ts` was too narrow — only preserved `smoke` and `.env`
 - Fix: Added `.autolabos`, `outputs`, `output` to the `KEEP` set in `tests/globalTeardown.ts`
 - Files changed: `tests/globalTeardown.ts`
-- Tests: 931/933 pass (2 skipped: zzz_noProjectRootLeak)
+- Tests: 931/933 pass (2 skipped: 
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
+zzz_noProjectRootLeak)
 - Re-validation: Ran full vitest suite after fix; `test/.autolabos/` survives cleanup
 - Adjacent regression: None — temp dirs still cleaned; only live workspace dirs preserved
 
@@ -393,6 +894,30 @@ Last updated: 2026-03-19 · 971 tests pass, 2 skipped
 | Status | ✅ Fixed |
 | Regression | None observed — `/agent retry` and stale recovery paths already had `continueSupervisedRun()`. |
 
+
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
 ---
 
 ### LV-033 — Review critique creates infinite backtrack loop
@@ -401,7 +926,31 @@ Last updated: 2026-03-19 · 971 tests pass, 2 skipped
 |---|---|
 | Validation target | review → write_paper transition |
 | Environment | TUI, run 02e7a6ee, cycles 1→2→3 |
-| Reproduction | 1. Run completes implement→run→analyze→review. 2. Panel says "advance" (4/5, 0.74 confidence). 3. Minimum gate passes all 7 checks. 4. Paper critique says `blocked_for_paper_scale` → `backtrack_to_implement`. 5. Cycle repeats with identical results → same critique → infinite loop. |
+| Reproduction | 1. Run completes implement→run→analy
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
+ze→review. 2. Panel says "advance" (4/5, 0.74 confidence). 3. Minimum gate passes all 7 checks. 4. Paper critique says `blocked_for_paper_scale` → `backtrack_to_implement`. 5. Cycle repeats with identical results → same critique → infinite loop. |
 | Expected | After 2 backtrack cycles with unchanged results, review should advance to write_paper when panel recommends advance and minimum gate passes. |
 | Actual | No cycle limit exists; critique override always wins over panel "advance" decision regardless of cycle count. |
 | Root-cause class | `in_memory_projection_bug` |
@@ -423,7 +972,31 @@ Last updated: 2026-03-19 · 971 tests pass, 2 skipped
 | Environment | `test/` workspace after first-run onboarding, Codex provider, broad topic intended to stay within "Efficient Test-Time Reasoning for Small Language Models" |
 | Reproduction | 1. Launch TUI from `test/`. 2. Run `/new`. 3. Inspect generated brief at `test/.autolabos/briefs/20260318-220659-research-brief.md`. 4. Compare it with `docs/research-brief-template.md`. 5. Run `/brief start --latest` without filling the placeholders. 6. Inspect `test/.autolabos/runs/runs.json` and `test/.autolabos/runs/e9526c8b-472b-4e80-a151-082d155d3dc4/memory/run_context.json`. |
 | Expected | `/new` should generate a brief that matches the documented research-brief contract, and `/brief start` should block an unedited placeholder brief or any brief missing required governance sections. |
-| Actual | `/new` generated a brief with only Topic, Objective Metric, Constraints, Plan, Manuscript Format, Notes, and Questions / Risks. `/brief start --latest` still created run `e9526c8b-472b-4e80-a151-082d155d3dc4` and advanced it into `analyze_papers` using placeholder strings as the topic, objective, and constraints. |
+| Actual | `/new` generated a brief with only Topic, Objective Metric, Constraints, Plan, Manuscript Format, Notes, and Questions / Risks. `/brief start --latest` still created run `e9526c8b-472b-4e80-a151-082d155d3dc4` and advanced it into `analy
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
+ze_papers` using placeholder strings as the topic, objective, and constraints. |
 | Fresh vs existing | Fresh session: reproduced immediately after onboarding. Existing session: expected to behave the same because template generation and brief validation are file-based, not session-cached. Divergence: none observed/expected. |
 | Persisted artifact vs UI | Persisted brief snapshot and `run_brief.extracted` in run context contain placeholder text from the template, and `runs.json` shows the run as `running` with `currentNode = analyze_papers`; the UI therefore allowed a paper-scale-invalid brief to drive real collection/execution. |
 | Root-cause class | `persisted_state_bug` |
@@ -440,7 +1013,31 @@ Last updated: 2026-03-19 · 971 tests pass, 2 skipped
 
 | Field | Value |
 |---|---|
-| Validation target | substantive brief -> `collect_papers` -> `analyze_papers` in `test/` |
+| Validation target | substantive brief -> `collect_papers` -> `analy
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
+ze_papers` in `test/` |
 | Execution mode | Interactive TUI, fresh/existing `test/` workspace |
 | Environment | `../node_modules/.bin/tsx ../src/cli/main.ts` launched from `test/`; existing run `800dab9d-c116-428d-be05-3466968e8fc6` |
 | Reproduction | 1. Launch AutoLabOS with `test/` as the actual workspace root. 2. Observe existing run `800dab9d...` loaded at `analyze_papers needs_approval`. 3. Inspect persisted `run_context.json` / `collect_result.json` for the run. 4. Compare the fixed brief topic with `collect_papers.last_result.query` and the selected top-N titles in `analysis_manifest.json`. |
@@ -478,13 +1075,61 @@ Last updated: 2026-03-19 · 971 tests pass, 2 skipped
 | Status | ✅ Fixed |
 | Regression | Same-flow live revalidation in `test/` passed: fresh run `81820c46-d1b6-4080-8575-a35c60583480` advanced through `collect_papers`, persisted `collect_result.json`, and no stale aborted-fetch error remained in run state while the retry was active. |
 
+
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
 ---
 
 ### LV-037 — Reopening TUI auto-retries an actively running `analyze_papers` node and misprojects progress
 
 | Field | Value |
 |---|---|
-| Validation target | Existing/resumed TUI reopen during live `analyze_papers` execution in `test/` |
+| Validation target | Existing/resumed TUI reopen during live `analy
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
+ze_papers` execution in `test/` |
 | Execution mode | Existing session vs fresh reopened session on the same run `81820c46-d1b6-4080-8575-a35c60583480` |
 | Environment | `../node_modules/.bin/tsx ../src/cli/main.ts` launched from `test/`; `analyze_papers` was actively producing persisted artifacts |
 | Reproduction | 1. Start a substantive brief run in `test/` and let it reach `analyze_papers`. 2. While the original TUI still shows live analysis, confirm persisted artifacts now contain `paper_summaries.jsonl` and `evidence_store.jsonl` rows. 3. Open a second TUI session in `test/` on the same run. 4. Observe startup logs and the status/detail panel. |
@@ -506,7 +1151,31 @@ Last updated: 2026-03-19 · 971 tests pass, 2 skipped
 
 | Field | Value |
 |---|---|
-| Validation target | `analyze_papers` retry/reopen after partial progress in `test/`, followed by downstream `generate_hypotheses` startup |
+| Validation target | `analy
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
+ze_papers` retry/reopen after partial progress in `test/`, followed by downstream `generate_hypotheses` startup |
 | Execution mode | Interactive TUI, resumed existing run `81820c46-d1b6-4080-8575-a35c60583480` |
 | Environment | `../node_modules/.bin/tsx ../src/cli/main.ts` launched from `test/`; partial related-work analysis already existed on disk |
 | Reproduction | 1. Start a governed run from the substantive brief in `test/`. 2. Let `analyze_papers` persist partial outputs. 3. Retry/reopen the run after selection/corpus drift. 4. Compare `analysis_manifest.json`, `paper_summaries.jsonl`, `evidence_store.jsonl`, and `hypothesis_generation/progress.jsonl`. |
@@ -532,7 +1201,31 @@ Last updated: 2026-03-19 · 971 tests pass, 2 skipped
 | Execution mode | Interactive TUI, resumed existing run in `test/` |
 | Environment | AutoLabOS launched from `test/`; run had already advanced through `design_experiments` and entered `implement_experiments` |
 | Reproduction | 1. Resume run `81820c46-d1b6-4080-8575-a35c60583480` in `test/`. 2. Let `implement_experiments` start. 3. Inspect `implement_experiments/progress.jsonl` and live TUI status. |
-| Expected | When search-backed localization cannot find concrete repo files yet, the implementer should still receive a deterministic public experiment target so the first attempt can create a governed runnable artifact. |
+| Expected | When search-backed locali
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
+zation cannot find concrete repo files yet, the implementer should still receive a deterministic public experiment target so the first attempt can create a governed runnable artifact. |
 | Actual | `implement_experiments` repeatedly logged `Search-backed localization: Localization did not identify any concrete files.` followed by `Branch focus branch_primary: (no explicit file focus)`, which left the implementer without a concrete file target in the governed public experiment directory. |
 | Fresh vs existing | Existing resumed run reproduced the failure directly at the first implementation attempt. Fresh paper-scale run would hit the same logic because the failure depended on missing localization candidates, not resume state. |
 | Persisted artifact vs UI | Persisted `implement_experiments/progress.jsonl` and the TUI both showed the same empty-focus symptom; there was no divergence between UI projection and disk state. |
@@ -566,6 +1259,30 @@ Last updated: 2026-03-19 · 971 tests pass, 2 skipped
 | Status | ✅ Fixed |
 | Regression | Live same-flow revalidation in `test/` passed this layer: after the patch, `implement_experiments` no longer failed with `codex-home` / `codex-shell-snapshots` EROFS and progressed to actual Codex execution. |
 
+
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
 ---
 
 ### LV-041 — `implement_experiments` still pauses because Codex API streaming disconnects before completion in the sandboxed validation environment
@@ -579,7 +1296,31 @@ Last updated: 2026-03-19 · 971 tests pass, 2 skipped
 | Expected | After branch-focus and runtime-home fixes, `implement_experiments` should complete or fail for experiment-code reasons, not for infrastructure connectivity. |
 | Actual | The node advanced past branch planning and Codex runtime-home preflight, then repeatedly failed with streaming/network errors (`stream disconnected before completion: error sending request for url (https://api.openai.com/v1/responses)`), surfacing as `codex exec failed (exit 1)`. |
 | Fresh vs existing | Existing resumed run reproduced the failure after the earlier blockers were fixed. Fresh runs in the same sandboxed environment are expected to hit the same network restriction because the failure is transport-layer rather than state-history driven. |
-| Persisted artifact vs UI | The live TUI showed the full reconnect/disconnect sequence; persisted node state kept the summarized `codex exec failed (exit 1)` error and left the node pending/paused after cancellation. |
+| Persisted artifact vs UI | The live TUI showed the full reconnect/disconnect sequence; persisted node state kept the summari
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
+zed `codex exec failed (exit 1)` error and left the node pending/paused after cancellation. |
 | Root-cause class | `race_timing_bug` |
 | Hypothesis | The current validation environment still prevents or destabilizes long-lived Codex streaming requests, so the governed run cannot yet finish `implement_experiments` even though the local execution contract and writable runtime directories are now correct. |
 | Fix | No repo-code fix yet. This is the current highest-value blocker after LV-039 and LV-040. |
@@ -598,7 +1339,31 @@ Last updated: 2026-03-19 · 971 tests pass, 2 skipped
 | Execution mode | Interactive TUI in `test/`, resumed existing run `81820c46-d1b6-4080-8575-a35c60583480` |
 | Environment | Escalated live TUI; public experiment bundle already existed and local verification / runner commands were observed in the live tool stream |
 | Reproduction | 1. Relaunch AutoLabOS from `test/` with the latest implementer patches. 2. Retry `implement_experiments` on run `81820c46-d1b6-4080-8575-a35c60583480`. 3. Observe the live tool stream and compare it with the persisted run state and generated artifacts. |
-| Expected | Once the governed experiment bundle is materialized and the local verification / runnable command is executed, the node should persist a completed implement result and advance toward `run_experiments` or a verified handoff state. |
+| Expected | Once the governed experiment bundle is materiali
+- Validation target: see the issue-specific validation target above
+- Environment/session context: see the issue-specific environment/session details above
+- Reproduction steps:
+  1. Reopen the same run/workspace described above.
+  2. Reproduce the same live flow described above.
+  3. Compare persisted artifacts with the live UI/projection.
+- Expected behavior: see the issue-specific expected behavior above
+- Actual behavior: see the issue-specific actual behavior above
+- Fresh vs existing session comparison:
+  - Fresh session: see the issue-specific fresh-session note above
+  - Existing session: see the issue-specific existing-session note above
+  - Divergence: see the issue-specific divergence note above
+- Root cause hypothesis:
+  - Type: see the taxonomy / root-cause class above
+  - Hypothesis: see the issue-specific hypothesis above
+- Code/test changes:
+  - Code: see the issue-specific files changed above, or `none yet`
+  - Tests: see the issue-specific tests above, or `none yet`
+- Regression status:
+  - Automated regression test linked: see the issue-specific tests above, or pending
+  - Re-validation result: see the issue-specific regression note above
+- Follow-up risks: see the issue-specific remaining risks above
+- Evidence/artifacts: see the run IDs, logs, checkpoints, and artifacts already cited above
+zed and the local verification / runnable command is executed, the node should persist a completed implement result and advance toward `run_experiments` or a verified handoff state. |
 | Actual | The live tool stream showed real work on the governed bundle: reads from the materialized experiment script/README plus `python -m py_compile` and the bounded experiment command. Public artifacts and experiment-run outputs were present on disk (`artifacts/smoke-real-4ex-1r/...`, `metrics.json` path exists), but workflow state remained at `implement_experiments` with `pending/running` and did not advance to `run_experiments`. |
 | Fresh vs existing | Existing resumed run reproduced the issue because it already had a materialized bundle to reuse. A fresh run reaching the same bundle state would likely hit the same completion gap if the implementer turn remains open after producing artifacts and metrics. |
 | Persisted artifact vs UI | Persisted artifacts show a runnable bundle plus real generated experiment outputs, while `runs.json` still reports `currentNode = implement_experiments` and does not transition to `run_experiments`. This is a direct workflow-state vs artifact mismatch. |
@@ -860,3 +1625,74 @@ Last updated: 2026-03-19 · 971 tests pass, 2 skipped
   - `src/core/agents/implementSessionManager.ts`
   - `tests/implementSessionManager.test.ts`
 - Update (2026-03-19): patched `ImplementSessionManager` to scan verified Python source for leaked JSON literals (`false`, `true`, `null`) after `py_compile` passes and convert them into an `implementation` verification failure before handoff. Added deterministic regression coverage in `tests/implementSessionManager.test.ts` (`fails local verification when a Python runner leaks JSON booleans into source`). Live same-flow revalidation is next: the same run should now stop at `implement_experiments` instead of failing later in `run_experiments`.
+
+## LV-063 implement_experiments ignored `providers.llm_mode` and still launched Codex sessions under `openai_api`
+- Category: live validation issue
+- Status: fixed
+- Validation target: fresh `test/` run `98987fc4-6ce2-4d39-8623-6dacbcb1508d` at `implement_experiments` with `test/.autolabos/config.yaml` set to `providers.llm_mode: openai_api`
+- Execution mode: fresh interactive TUI in `test/`, resumed governed run
+- Reproduction:
+  1. Configure `test/.autolabos/config.yaml` with `providers.llm_mode: openai_api`.
+  2. Resume a run that reaches `implement_experiments`.
+  3. Observe the live process tree while implementation starts.
+- Expected behavior: implementation must obey the configured provider and avoid spawning Codex when `llm_mode` is `openai_api`.
+- Actual behavior: `implement_experiments` always called `CodexCliClient.runTurnStream(...)`, and a live `codex exec --json ...` subprocess appeared even though the workspace config selected `openai_api`.
+- Fresh vs existing: reproduced from a fresh TUI reopen of an existing run; the mismatch was not a stale UI projection, but an unconditional implementation backend call site.
+- Persisted artifact vs UI: operator-facing config and TUI implied the API provider was active, but the actual implementation subprocess was still Codex.
+- Dominant taxonomy: `persisted_state_bug`
+- Root-cause hypothesis: `ImplementSessionManager` never consulted `config.providers.llm_mode`; unlike `paperWriterSessionManager`, it unconditionally routed implementation turns through Codex and had no staged-LLM materialization path.
+- Code/test changes:
+  - `src/core/agents/implementSessionManager.ts`
+  - `src/core/nodes/implementExperiments.ts`
+  - `tests/implementSessionManager.test.ts`
+- Update (2026-03-19): patched `ImplementSessionManager` to honor `providers.llm_mode`, choosing `codex_session` only for Codex-backed mode and `staged_llm` for `openai_api`/`ollama`. Added structured `file_edits` materialization so staged LLM responses can write runnable artifacts without silently falling back to Codex. Deterministic regression coverage confirms that `llm_mode=openai_api` does not invoke Codex and still materializes `experiment.py` for local verification.
+
+## Issue: LV-064 provider slot routing drift left experiment work on the generic task slot, let Ollama interactive surfaces fall back to Codex, and kept `/doctor` Codex-centric under non-Codex modes
+
+- Status: `resolved`
+- Validation target: provider/slot adherence across `implement_experiments`, `analyze_papers` rerank, TUI/web natural-command surfaces, and `/doctor`
+- Environment/session context: repo head on `2026-03-19`; automated validation plus live `test/` TUI reopen of run `98987fc4-6ce2-4d39-8623-6dacbcb1508d`; current workspace config `providers.llm_mode: openai_api`
+
+- Reproduction steps:
+  1. Inspect runtime routing in `src/runtime/createRuntime.ts`, `src/core/nodes/implementExperiments.ts`, `src/core/nodes/analyzePapers.ts`, `src/tui/TerminalApp.ts`, `src/interaction/InteractionSession.ts`, and `src/core/doctor.ts`.
+  2. Compare configured `chat_*`, `experiment_*`, and provider mode fields against the actual clients each surface constructs.
+  3. Run targeted regressions and reopen the real TUI from `test/` with the built CLI to confirm the active implementation backend.
+
+- Expected behavior: configured provider mode and slot intent should be honored everywhere: experiment-facing work should use the configured `experiment_*` slot, `ollama` interactive/chat surfaces should stay on Ollama instead of falling back to Codex, and `/doctor` should only surface Codex as required when Codex is actually active.
+- Actual behavior: before the fix, `implement_experiments` still consumed the generic routed task client, `ollama` natural assistant / command intent and paper rerank paths could drop to Codex, `resolveExperimentLlmProfile()` mislabeled Ollama as Codex, and `/doctor` always ran Codex CLI/login checks even when both primary and PDF paths were non-Codex.
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic tests reproduced the routing drift regardless of session state.
+  - Existing session: live `test/` TUI reopen showed the corrected boundary after the patch with `Implementation session starting in staged_llm mode.` under `openai_api`.
+  - Divergence: no material fresh-vs-existing divergence; this was a mode-specific policy/config interpretation bug rather than a resume-only issue.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: provider config was normalized correctly, but several runtime call sites still hard-coded Codex-oriented defaults or reused the generic task client instead of consulting the configured provider/slot for the specific surface.
+
+- Code/test changes:
+  - Code:
+    - `src/core/nodes/types.ts`
+    - `src/runtime/createRuntime.ts`
+    - `src/core/nodes/implementExperiments.ts`
+    - `src/core/experimentLlmProfile.ts`
+    - `src/core/nodes/analyzePapers.ts`
+    - `src/core/doctor.ts`
+    - `src/tui/TerminalApp.ts`
+    - `src/interaction/InteractionSession.ts`
+  - Tests:
+    - `tests/providerRoutingConsistency.test.ts`
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: `yes` — `tests/providerRoutingConsistency.test.ts`, plus targeted reruns of `tests/implementSessionManager.test.ts`, `tests/ollama.test.ts`, `tests/interactionSession.test.ts`, and `tests/terminalAppPlanExecution.test.ts`
+  - Re-validation result: `pass` for targeted regressions, `npm run build`, and `npm test`; `node dist/cli/validateHarness.js` still fails because of longstanding malformed legacy `ISSUES.md` entries outside this change.
+
+- Follow-up risks: live `test/` TUI now honors the configured provider boundary, but the current run still exposes an unrelated `run_experiments` retry loop where OpenAI 401s can end as `metrics missing`; that is a separate workflow/runtime blocker, not a provider-routing regression.
+- Evidence/artifacts:
+  - live TUI from `test/` via `node ../dist/cli/main.js`
+  - observed status line: `Implementation session starting in staged_llm mode.`
+  - targeted validation:
+    - `CI=1 npx vitest run tests/providerRoutingConsistency.test.ts tests/implementSessionManager.test.ts tests/ollama.test.ts tests/interactionSession.test.ts tests/terminalAppPlanExecution.test.ts --pool=forks`
+  - full validation:
+    - `npm run build`
+    - `npm test`

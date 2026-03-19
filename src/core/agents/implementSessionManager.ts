@@ -5,6 +5,7 @@ import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
 
 import { EventStream } from "../events.js";
+import { LLMClient } from "../llm/client.js";
 import { RunStore } from "../runs/runStore.js";
 import { AppConfig, RunRecord } from "../../types.js";
 import { CodexCliClient, CodexEvent, RunTurnResult } from "../../integrations/codex/codexCliClient.js";
@@ -64,10 +65,16 @@ export class ImplementSessionStopError extends Error {
 interface ImplementSessionDeps {
   config: AppConfig;
   codex: CodexCliClient;
+  llm?: LLMClient;
   aci: AgentComputerInterface;
   eventStream: EventStream;
   runStore: RunStore;
   workspaceRoot: string;
+}
+
+interface StructuredImplementFileEdit {
+  path: string;
+  content: string;
 }
 
 interface StructuredImplementResponse {
@@ -84,6 +91,7 @@ interface StructuredImplementResponse {
   metrics_path?: string;
   localization?: unknown;
   assumptions?: string[];
+  file_edits?: StructuredImplementFileEdit[];
 }
 
 interface ParsedStructuredImplementResponse {
@@ -315,6 +323,10 @@ export class ImplementSessionManager {
     const metricsPath = path.join(runDir, "metrics.json");
     const defaultPublicDir = buildPublicExperimentDir(this.deps.workspaceRoot, run);
     const experimentLlmProfile = resolveExperimentLlmProfile(this.deps.config);
+    const useCodexSession =
+      typeof this.deps.codex?.runTurnStream === "function" &&
+      this.deps.config?.providers?.llm_mode !== "openai_api" &&
+      this.deps.config?.providers?.llm_mode !== "ollama";
     const currentThreadId =
       run.nodeThreads.implement_experiments ||
       (await runContext.get<string>("implement_experiments.thread_id"));
@@ -407,6 +419,11 @@ export class ImplementSessionManager {
       maxAttempts: MAX_IMPLEMENT_ATTEMPTS,
       publicDir: defaultPublicDir
     });
+    emitImplementObservation(
+      "preflight",
+      `Implementation session starting in ${useCodexSession ? "codex_session" : "staged_llm"} mode.`,
+      { publicDir: defaultPublicDir }
+    );
 
     this.deps.eventStream.emit({
       type: "PLAN_CREATED",
@@ -561,6 +578,30 @@ export class ImplementSessionManager {
           publicDir: defaultPublicDir
         });
       });
+      const attemptPrompt = this.buildAttemptPrompt({
+        taskSpec: promptTaskSpec,
+        searchLocalization: promptSearchLocalization,
+        branchPlan: promptBranchPlan,
+        recentReflections,
+        attempt,
+        previousAttempt: promptPreviousAttempt,
+        existingChangedFiles: translatePathsBetweenWorkspaces([...changedFiles], {
+          fromWorkspaceRoot: this.deps.workspaceRoot,
+          toWorkspaceRoot: isolation.workspaceRoot
+        }),
+        historicalChangedFiles: translatePathsBetweenWorkspaces([...historicalChangedFiles], {
+          fromWorkspaceRoot: this.deps.workspaceRoot,
+          toWorkspaceRoot: isolation.workspaceRoot
+        }),
+        sessionMode: useCodexSession ? "codex_session" : "staged_llm"
+      });
+      const attemptSystemPrompt = this.buildSystemPrompt(
+        isolation.runDir,
+        isolation.publicDir,
+        isolation.metricsPath,
+        experimentLlmProfile,
+        useCodexSession ? "codex_session" : "staged_llm"
+      );
 
       let result: RunTurnResult;
       const recoveredBeforeTurn = await recoverStructuredResultFromPublicBundle({
@@ -587,62 +628,68 @@ export class ImplementSessionManager {
         result = recoveredBeforeTurn;
       } else {
         try {
-          result = await this.deps.codex.runTurnStream({
-          prompt: this.buildAttemptPrompt({
-            taskSpec: promptTaskSpec,
-            searchLocalization: promptSearchLocalization,
-            branchPlan: promptBranchPlan,
-            recentReflections,
-            attempt,
-            previousAttempt: promptPreviousAttempt,
-            existingChangedFiles: translatePathsBetweenWorkspaces([...changedFiles], {
-              fromWorkspaceRoot: this.deps.workspaceRoot,
-              toWorkspaceRoot: isolation.workspaceRoot
-            }),
-            historicalChangedFiles: translatePathsBetweenWorkspaces([...historicalChangedFiles], {
-              fromWorkspaceRoot: this.deps.workspaceRoot,
-              toWorkspaceRoot: isolation.workspaceRoot
-            })
-          }),
-          threadId: activeThreadId,
-          agentId: `implementer:${run.id}`,
-          systemPrompt: this.buildSystemPrompt(
-            isolation.runDir,
-            isolation.publicDir,
-            isolation.metricsPath,
-            experimentLlmProfile
-          ),
-          sandboxMode: "workspace-write",
-          approvalPolicy: "never",
-          workingDirectory: toSandboxFriendlyWorkspaceRoot(isolation.workspaceRoot),
-          abortSignal,
-          onEvent: (event) => {
-            rawEvents.push(event);
-            streamProgress.onEvent(event);
-            const mapped = mapCodexEventToAutoLabOSEvents({
-              event,
-              runId: run.id,
-              node: "implement_experiments",
-              agentRole: "implementer",
-              workspaceRoot: isolation.workspaceRoot
+          if (useCodexSession) {
+            result = await this.deps.codex.runTurnStream({
+              prompt: attemptPrompt,
+              threadId: activeThreadId,
+              agentId: `implementer:${run.id}`,
+              systemPrompt: attemptSystemPrompt,
+              sandboxMode: "workspace-write",
+              approvalPolicy: "never",
+              workingDirectory: toSandboxFriendlyWorkspaceRoot(isolation.workspaceRoot),
+              abortSignal,
+              onEvent: (event) => {
+                rawEvents.push(event);
+                streamProgress.onEvent(event);
+                const mapped = mapCodexEventToAutoLabOSEvents({
+                  event,
+                  runId: run.id,
+                  node: "implement_experiments",
+                  agentRole: "implementer",
+                  workspaceRoot: isolation.workspaceRoot
+                });
+                for (const item of mapped) {
+                  const nextItem = translateMappedCodexEventToPrimaryWorkspace(item, {
+                    fromWorkspaceRoot: isolation.workspaceRoot,
+                    toWorkspaceRoot: this.deps.workspaceRoot
+                  });
+                  if (item.type === "PATCH_APPLIED" && !shouldTrackPatchEvent(item.payload)) {
+                    continue;
+                  }
+                  this.deps.eventStream.emit(nextItem);
+                  const fileValue = typeof item.payload.file === "string" ? item.payload.file : undefined;
+                  if (fileValue && item.type === "PATCH_APPLIED") {
+                    attemptChangedFiles.add(fileValue);
+                    attemptArtifacts.add(fileValue);
+                  }
+                }
+              }
             });
-            for (const item of mapped) {
-              const nextItem = translateMappedCodexEventToPrimaryWorkspace(item, {
-                fromWorkspaceRoot: isolation.workspaceRoot,
-                toWorkspaceRoot: this.deps.workspaceRoot
-              });
-              if (item.type === "PATCH_APPLIED" && !shouldTrackPatchEvent(item.payload)) {
-                continue;
-              }
-              this.deps.eventStream.emit(nextItem);
-              const fileValue = typeof item.payload.file === "string" ? item.payload.file : undefined;
-              if (fileValue && item.type === "PATCH_APPLIED") {
-                attemptChangedFiles.add(fileValue);
-                attemptArtifacts.add(fileValue);
-              }
+          } else {
+            if (!this.deps.llm) {
+              throw new Error("implement_experiments is configured for staged_llm mode, but no LLM client is available.");
             }
+            const completion = await this.deps.llm.complete(attemptPrompt, {
+              systemPrompt: attemptSystemPrompt,
+              abortSignal,
+              onProgress: (event) => {
+                const text = event.text.trim();
+                if (!text) {
+                  return;
+                }
+                emitImplementObservation("codex", event.type === "delta" ? `LLM> ${text}` : text, {
+                  attempt,
+                  threadId: activeThreadId,
+                  publicDir: defaultPublicDir
+                });
+              }
+            });
+            result = {
+              threadId: activeThreadId,
+              finalText: completion.text,
+              events: []
+            };
           }
-          });
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
           const recovered = await recoverStructuredResultFromPublicBundle({
@@ -656,7 +703,7 @@ export class ImplementSessionManager {
               Boolean(promptTaskSpec.context.paper_critique_feedback)
           });
           if (!recovered) {
-            const verifyReport = buildCodexTurnFailureReport(errorMessage);
+            const verifyReport = buildImplementationTurnFailureReport(errorMessage);
             attemptRecords.push({
               attempt,
               summary: verifyReport.summary,
@@ -708,7 +755,7 @@ export class ImplementSessionManager {
       streamProgress.flush();
 
       activeThreadId = result.threadId || activeThreadId;
-      queueProgressUpdate("codex", "Codex implementation turn completed.", {
+      queueProgressUpdate("codex", "Implementation turn completed.", {
         attempt,
         threadId: activeThreadId,
         publicDir: defaultPublicDir
@@ -937,7 +984,7 @@ export class ImplementSessionManager {
     }
 
     if (!finalAttempt) {
-      throw new Error("Codex implementation session did not return an implementation attempt.");
+      throw new Error("Implementation session did not return an implementation attempt.");
     }
     if (finalIsolation?.effectiveStrategy === "attempt_worktree") {
       finalAttempt = await materializeWorktreeAttemptToPrimaryWorkspace(finalAttempt, {
@@ -1247,14 +1294,17 @@ export class ImplementSessionManager {
     runDir: string,
     publicDir: string,
     metricsPath: string,
-    experimentLlmProfile: ReturnType<typeof resolveExperimentLlmProfile>
+    experimentLlmProfile: ReturnType<typeof resolveExperimentLlmProfile>,
+    sessionMode: "codex_session" | "staged_llm"
   ): string {
     const sandboxRunDir = rewriteWorkspacePathsForSandbox(runDir, this.deps.workspaceRoot);
     const sandboxPublicDir = rewriteWorkspacePathsForSandbox(publicDir, this.deps.workspaceRoot);
     const sandboxMetricsPath = rewriteWorkspacePathsForSandbox(metricsPath, this.deps.workspaceRoot);
     return [
       "You are the AutoLabOS implementer role.",
-      "Work directly in the workspace using Codex tools.",
+      sessionMode === "codex_session"
+        ? "Work directly in the workspace using Codex tools."
+        : "You cannot edit files directly. Return full file contents in file_edits so AutoLabOS can materialize the implementation exactly as specified.",
       "Prefer concrete, runnable changes over prose.",
       "Do not modify git history or perform destructive cleanup.",
       `Private AutoLabOS run artifact directory: ${sandboxRunDir}`,
@@ -1273,9 +1323,10 @@ export class ImplementSessionManager {
       "Prefer real executable experiments against actual repo code, benchmarks, and model calls when the workspace supports them.",
       "Use a synthetic validation harness only as a fallback when a real execution path is impossible or clearly underspecified.",
       "Before editing, identify the smallest viable set of files to inspect or change.",
-      "Return ONLY one JSON object with keys: summary, experiment_mode, run_command, test_command, working_dir, changed_files, artifacts, public_dir, public_artifacts, script_path, metrics_path, localization, assumptions.",
+      "Return ONLY one JSON object with keys: summary, experiment_mode, run_command, test_command, working_dir, changed_files, artifacts, public_dir, public_artifacts, script_path, metrics_path, localization, assumptions, file_edits.",
       "Use experiment_mode = real_execution | hybrid_validation | synthetic_validation.",
       "changed_files, artifacts, and public_artifacts must be arrays of workspace paths.",
+      "file_edits must be an array of objects with keys: path, content.",
       "localization must be an object with keys: summary, strategy, reasoning, selected_files, candidate_files, confidence.",
       "candidate_files must be an array of objects with keys: path, symbol, reason, confidence."
     ].join("\n");
@@ -1399,6 +1450,7 @@ export class ImplementSessionManager {
     previousAttempt?: AttemptRecord;
     existingChangedFiles: string[];
     historicalChangedFiles: string[];
+    sessionMode: "codex_session" | "staged_llm";
   }): string {
     const sandboxTaskSpec = rewriteWorkspacePathsForSandbox(params.taskSpec, this.deps.workspaceRoot);
     const sandboxSearchLocalization = rewriteWorkspacePathsForSandbox(params.searchLocalization, this.deps.workspaceRoot);
@@ -1457,6 +1509,9 @@ export class ImplementSessionManager {
       "- FAILURE TO USE GPU WHEN AVAILABLE IS A BLOCKING BUG. CPU inference on a 3B model takes ~17s/example; GPU takes <0.5s/example.",
       "- If an existing script already exists and uses CPU-only, you MUST patch it to use GPU."
     ];
+    if (params.sessionMode === "staged_llm") {
+      lines.splice(10, 0, "6. Include file_edits entries with the full UTF-8 contents for every created or modified text file.");
+    }
 
     lines.push("", "Search-backed localization hints:", JSON.stringify(sandboxSearchLocalization, null, 2));
     lines.push("", "Branch focus:", JSON.stringify(sandboxBranchPlan, null, 2));
@@ -1604,11 +1659,21 @@ export class ImplementSessionManager {
       (await inferScriptPath(params.runDir, normalizedPublicDir, params.workspaceRoot, parsed.run_command));
     let normalizedScriptPath = originalScriptPath;
     let experimentMode = normalizeExperimentMode(parsed.experiment_mode, parsed.summary);
+    const normalizedFileEdits = normalizeStructuredFileEdits(parsed.file_edits, params.workspaceRoot);
 
     await params.attemptSnapshot?.capturePaths([
       normalizedPublicDir,
-      normalizedMetricsPath
+      normalizedMetricsPath,
+      ...normalizedFileEdits.map((item) => item.path)
     ]);
+    await materializeStructuredFileEdits(normalizedFileEdits);
+    for (const item of normalizedFileEdits) {
+      params.changedFiles.add(item.path);
+      params.artifacts.add(item.path);
+      if (isSubpath(item.path, normalizedPublicDir)) {
+        params.publicArtifacts.add(item.path);
+      }
+    }
 
     for (const filePath of parsed.changed_files || []) {
       const normalized = normalizeStoredPath(filePath, params.workspaceRoot);
@@ -2117,10 +2182,57 @@ function parseStructuredResponse(text: string): ParsedStructuredImplementRespons
       script_path: asString(record.script_path),
       metrics_path: asString(record.metrics_path),
       localization: record.localization,
-      assumptions: asStringArray(record.assumptions)
+      assumptions: asStringArray(record.assumptions),
+      file_edits: asStructuredFileEdits(record.file_edits)
     },
     isStructured: true
   };
+}
+
+function asStructuredFileEdits(value: unknown): StructuredImplementFileEdit[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const edits = value
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        return undefined;
+      }
+      const record = item as Record<string, unknown>;
+      const filePath = asString(record.path);
+      const content = asString(record.content);
+      if (!filePath || content === undefined) {
+        return undefined;
+      }
+      return { path: filePath, content };
+    })
+    .filter((item): item is StructuredImplementFileEdit => Boolean(item));
+  return edits.length > 0 ? edits : undefined;
+}
+
+function normalizeStructuredFileEdits(
+  fileEdits: StructuredImplementFileEdit[] | undefined,
+  workspaceRoot: string
+): StructuredImplementFileEdit[] {
+  return (fileEdits || [])
+    .map((item) => {
+      const normalizedPath = normalizeStoredPath(item.path, workspaceRoot);
+      if (!normalizedPath) {
+        return undefined;
+      }
+      return {
+        path: normalizedPath,
+        content: item.content
+      };
+    })
+    .filter((item): item is StructuredImplementFileEdit => Boolean(item));
+}
+
+async function materializeStructuredFileEdits(fileEdits: StructuredImplementFileEdit[]): Promise<void> {
+  for (const item of fileEdits) {
+    await ensureDir(path.dirname(item.path));
+    await fs.writeFile(item.path, item.content, "utf8");
+  }
 }
 
 function parseJsonObject(text: string): unknown {
@@ -4219,13 +4331,13 @@ function buildMissingArtifactVerifyReport(
   };
 }
 
-function buildCodexTurnFailureReport(errorMessage: string): VerifyReport {
+function buildImplementationTurnFailureReport(errorMessage: string): VerifyReport {
   return {
     status: "fail",
     failure_type: "environment",
     next_action: "stop_for_environment",
     stderr_excerpt: trimBlock(errorMessage, 1200) || errorMessage,
-    summary: `Codex execution failed before any runnable implementation was produced: ${errorMessage}`
+    summary: `Implementation execution failed before any runnable implementation was produced: ${errorMessage}`
   };
 }
 

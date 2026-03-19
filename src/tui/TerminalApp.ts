@@ -96,6 +96,8 @@ import { getAppVersion } from "./version.js";
 import { buildAnimatedStatusText, buildFrame, buildThinkingText, RenderFrameOutput, SelectionMenuOption } from "./renderFrame.js";
 import { applyCodexSurfaceTheme, parseTerminalBackgroundResponse, supportsColor, TUI_THEME, type RgbColor } from "./theme.js";
 import { OpenAiResponsesTextClient } from "../integrations/openai/responsesTextClient.js";
+import { OllamaClient } from "../integrations/ollama/ollamaClient.js";
+import { OllamaLLMClient } from "../core/llm/client.js";
 import { buildContextualGuidance, detectGuidanceLanguageFromText, GuidanceLanguage } from "./contextualGuidance.js";
 import {
   AnalyzeProgressState,
@@ -3597,6 +3599,26 @@ export class TerminalApp {
           })
       };
     }
+    if (this.config.providers.llm_mode === "ollama") {
+      const ollamaClient = new OllamaClient(
+        this.config.providers.ollama?.base_url || DEFAULT_OLLAMA_BASE_URL
+      );
+      const ollamaLlm = new OllamaLLMClient(ollamaClient, {
+        model:
+          this.config.providers.ollama?.chat_model ||
+          this.config.providers.ollama?.research_model ||
+          DEFAULT_OLLAMA_CHAT_MODEL
+      });
+      return {
+        runForText: async (opts) =>
+          (
+            await ollamaLlm.complete(opts.prompt, {
+              systemPrompt: opts.systemPrompt,
+              abortSignal: opts.abortSignal
+            })
+          ).text
+      };
+    }
     const codexRunForText =
       typeof this.codex.runForText === "function"
         ? this.codex.runForText.bind(this.codex)
@@ -3682,6 +3704,26 @@ export class TerminalApp {
             model: this.config.providers.openai.chat_model || this.config.providers.openai.model,
             reasoningEffort
           })
+      };
+    }
+    if (this.config.providers.llm_mode === "ollama") {
+      const ollamaClient = new OllamaClient(
+        this.config.providers.ollama?.base_url || DEFAULT_OLLAMA_BASE_URL
+      );
+      const ollamaLlm = new OllamaLLMClient(ollamaClient, {
+        model:
+          this.config.providers.ollama?.chat_model ||
+          this.config.providers.ollama?.research_model ||
+          DEFAULT_OLLAMA_CHAT_MODEL
+      });
+      return {
+        runForText: async (opts) =>
+          (
+            await ollamaLlm.complete(opts.prompt, {
+              systemPrompt: opts.systemPrompt,
+              abortSignal: opts.abortSignal
+            })
+          ).text
       };
     }
     const reasoningEffort =
@@ -5462,7 +5504,7 @@ async function acquireTerminalSessionLock(cwd: string): Promise<TerminalSessionL
   await ensureDir(runtimeDir);
   const lockPath = path.join(runtimeDir, "tui-session-lock.json");
   const existing = await readTerminalSessionLock(lockPath);
-  if (existing && existing.pid !== process.pid && isProcessAlive(existing.pid)) {
+  if (existing && existing.pid !== process.pid && (await isTerminalSessionProcessActive(existing))) {
     throw new Error(
       `Another AutoLabOS TUI session is already running for ${existing.cwd} (pid ${existing.pid}). Close that session before starting a new live validation loop.`
     );
@@ -5519,6 +5561,53 @@ function isProcessAlive(pid: number): boolean {
     }
     return true;
   }
+}
+
+async function isTerminalSessionProcessActive(lock: PersistedTerminalSessionLock): Promise<boolean> {
+  if (!isProcessAlive(lock.pid)) {
+    return false;
+  }
+
+  const [processCwd, processCmdline] = await Promise.all([readProcessCwd(lock.pid), readProcessCmdline(lock.pid)]);
+  if (!processCmdline) {
+    return false;
+  }
+  const expectedCwd = path.resolve(lock.cwd);
+  if (processCwd && path.resolve(processCwd) !== expectedCwd) {
+    return false;
+  }
+  if (!looksLikeAutoLabosTuiCmdline(processCmdline)) {
+    return false;
+  }
+
+  return true;
+}
+
+async function readProcessCwd(pid: number): Promise<string | undefined> {
+  try {
+    return await fs.readlink(`/proc/${pid}/cwd`);
+  } catch {
+    return undefined;
+  }
+}
+
+async function readProcessCmdline(pid: number): Promise<string | undefined> {
+  try {
+    const raw = await fs.readFile(`/proc/${pid}/cmdline`, "utf8");
+    const normalized = raw.replace(/\0+/g, " ").trim();
+    return normalized.length > 0 ? normalized : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function looksLikeAutoLabosTuiCmdline(cmdline: string): boolean {
+  const normalized = cmdline.toLowerCase();
+  return (
+    normalized.includes("src/cli/main.") ||
+    normalized.includes("dist/cli/main.") ||
+    normalized.includes("autolabos")
+  );
 }
 
 function oneLine(text: string, maxLength = 220): string {

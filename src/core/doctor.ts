@@ -48,22 +48,28 @@ export async function runDoctorReport(
   opts?: DoctorRunOptions
 ): Promise<DoctorReport> {
   const checks: DoctorCheck[] = [];
+  const requiresCodexChecks =
+    !opts ||
+    opts.llmMode === "codex_chatgpt_only" ||
+    opts.pdfAnalysisMode === "codex_text_image_hybrid";
 
-  const cli = await codex.checkCliAvailable();
-  checks.push({ name: "codex-cli", ok: cli.ok, detail: cli.detail });
+  if (requiresCodexChecks) {
+    const cli = await codex.checkCliAvailable();
+    checks.push({ name: "codex-cli", ok: cli.ok, detail: cli.detail });
 
-  const login = await codex.checkLoginStatus();
-  checks.push({ name: "codex-login", ok: login.ok, detail: login.detail });
+    const login = await codex.checkLoginStatus();
+    checks.push({ name: "codex-login", ok: login.ok, detail: login.detail });
 
-  if (typeof codex.checkEnvironmentReadiness === "function") {
-    const codexEnvironmentChecks = await codex.checkEnvironmentReadiness();
-    checks.push(
-      ...codexEnvironmentChecks.map((check) => ({
-        name: check.name,
-        ok: check.ok,
-        detail: check.detail
-      }))
-    );
+    if (typeof codex.checkEnvironmentReadiness === "function") {
+      const codexEnvironmentChecks = await codex.checkEnvironmentReadiness();
+      checks.push(
+        ...codexEnvironmentChecks.map((check) => ({
+          name: check.name,
+          ok: check.ok,
+          detail: check.detail
+        }))
+      );
+    }
   }
 
   if (opts?.llmMode === "codex_chatgpt_only" && opts.codexResearchModel) {

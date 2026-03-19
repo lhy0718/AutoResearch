@@ -8,6 +8,7 @@ export function createImplementExperimentsNode(deps: NodeExecutionDeps): GraphNo
   const sessions = new ImplementSessionManager({
     config: deps.config,
     codex: deps.codex,
+    llm: deps.experimentLlm,
     aci: deps.aci,
     eventStream: deps.eventStream,
     runStore: deps.runStore,

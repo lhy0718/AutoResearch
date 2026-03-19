@@ -103,9 +103,9 @@ const ANALYSIS_REVIEWER_SYSTEM_PROMPT = [
   "Whenever you lower confidence or keep a caveat, fill confidence_reason with a short source-grounded explanation."
 ].join(" ");
 
-const DEFAULT_ANALYSIS_PLANNER_TIMEOUT_MS = 0;
-const DEFAULT_ANALYSIS_EXTRACT_TIMEOUT_MS = 0;
-const DEFAULT_ANALYSIS_REVIEW_TIMEOUT_MS = 0;
+const DEFAULT_ANALYSIS_PLANNER_TIMEOUT_MS = 45_000;
+const DEFAULT_ANALYSIS_EXTRACT_TIMEOUT_MS = 45_000;
+const DEFAULT_ANALYSIS_REVIEW_TIMEOUT_MS = 45_000;
 
 export async function analyzePaperWithLlm(args: {
   llm: LLMClient;
@@ -169,6 +169,9 @@ export async function analyzePaperWithLlm(args: {
       args.onProgress?.(
         `Analysis attempt ${attempt}/${imageBearingAttemptLimit} failed: ${describeAnalysisAttemptFailureReason(lastError)}`
       );
+      if (isPaperAnalysisTimeoutError(lastError)) {
+        throw lastError;
+      }
     }
   }
 
@@ -245,6 +248,9 @@ export async function analyzePaperWithResponsesPdf(args: {
       args.onProgress?.(
         `PDF analysis attempt ${attempt}/${maxAttempts} failed: ${describeAnalysisAttemptFailureReason(lastError)}`
       );
+      if (isPaperAnalysisTimeoutError(lastError)) {
+        throw lastError;
+      }
     }
   }
 
@@ -547,6 +553,10 @@ function resolvePlannerOutput(
 export function shouldFallbackResponsesPdfToLocalText(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return [
+    /paper_analysis_(planner|extractor|reviewer)_timeout_after_\d+ms/i,
+    /planner exceeded the \d+ms timeout/i,
+    /extractor exceeded the \d+ms timeout/i,
+    /reviewer exceeded the \d+ms timeout/i,
     /error while downloading/i,
     /timeout while downloading/i,
     /failed to download/i,
@@ -580,6 +590,11 @@ function emitLlmProgress(
   if (text) {
     onProgress(text);
   }
+}
+
+function isPaperAnalysisTimeoutError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /paper_analysis_(planner|extractor|reviewer)_timeout_after_\d+ms/i.test(message);
 }
 
 function isAbortError(error: unknown): boolean {
@@ -1204,13 +1219,18 @@ async function runWithAbortableTimeout<T>(
     }
   }
 
-  timeoutHandle = setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, timeoutMs);
+  const operationPromise = operation(controller.signal);
+  void operationPromise.catch(() => undefined);
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeoutHandle = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+      reject(new Error(timeoutErrorMessage));
+    }, timeoutMs);
+  });
 
   try {
-    return await operation(controller.signal);
+    return await Promise.race([operationPromise, timeoutPromise]);
   } catch (error) {
     if (timedOut) {
       throw new Error(timeoutErrorMessage);
