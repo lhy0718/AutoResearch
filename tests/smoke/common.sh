@@ -29,6 +29,10 @@ smoke_require_expect() {
   fi
 }
 
+smoke_has_expect() {
+  command -v expect >/dev/null 2>&1
+}
+
 smoke_prepare_workspace() {
   rm -rf "$SMOKE_WORK_DIR/.autolabos"
   mkdir -p "$SMOKE_WORK_DIR/.autolabos/runs" "$SMOKE_WORK_DIR/.autolabos/logs"
@@ -200,6 +204,11 @@ smoke_run_expect() {
   local exp_name="$1"
   local run_id="$2"
   expect "$SMOKE_ROOT_DIR/tests/smoke/$exp_name" "$SMOKE_WORK_DIR" "$run_id"
+}
+
+smoke_run_pending_without_expect() {
+  local run_id="$1"
+  python3 "$SMOKE_ROOT_DIR/tests/smoke/pending_smoke_without_expect.py" "$SMOKE_WORK_DIR" "$run_id"
 }
 
 smoke_bib_key_for_prefix() {

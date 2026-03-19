@@ -40,3 +40,9 @@ pnpm-debug.log*
 
 # Generated media / local previews
 output/
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd

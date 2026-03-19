@@ -31,6 +31,28 @@ Use the docs above as the canonical source for detailed rules.
 
 ---
 
+## Codex Operating Style
+
+- Read this file first, then open the relevant source-of-truth docs before editing behaviorally significant code.
+- Prefer explicit, minimally scoped changes over broad speculative rewrites.
+- Preserve the repository’s governed workflow, auditability, and observable artifacts.
+- When a rule here conflicts with a more detailed rule in the docs, follow the docs.
+
+---
+
+## Skill Usage
+
+Use repository-local skills in `.codex/skills` when the task matches their scope.
+
+- Use the TUI/live-validation skill for interactive behavior, slash-command flows, session reload/resume issues, or anything that must be verified in a real TUI/web flow.
+- Use the research-quality or paper-writing skill for claim-evidence alignment, paper-readiness checks, related-work depth, or genre/readiness downgrades.
+- Use the reproducibility or artifact-validation skill for checkpoint/state consistency, artifact verification, harness expectations, or run-output audits.
+- Use the brief/plan-oriented skill when creating or repairing governed research briefs or execution plans.
+
+If a relevant skill exists, follow it in addition to this file and the docs.
+
+---
+
 ## Working Rules
 
 - Plan briefly before editing when the issue is complex.
@@ -46,10 +68,10 @@ Use the docs above as the canonical source for detailed rules.
 
 ## Workflow Contract
 
-The repository currently operates around a 9-node research workflow with bounded transitions, built-in backtracking, and checkpointed artifacts.
+The repository currently operates around a governed 9-node research workflow with bounded transitions, built-in backtracking, and checkpointed artifacts.
 
-- Do not casually remove, reorder, or redefine existing core workflow stages.
-- If the need is strong, a new node may be added, but only when it clearly improves the research/runtime contract rather than duplicating existing responsibilities.
+- Do not casually add, remove, reorder, or redefine top-level workflow nodes.
+- Treat the 9-node structure as fixed unless there is an explicit contract change reflected in docs, runtime behavior, and validation expectations.
 - Any workflow-structure change must preserve:
   - inspectable state transitions
   - artifact audibility
@@ -57,7 +79,29 @@ The repository currently operates around a 9-node research workflow with bounded
   - review gating
   - claim-ceiling discipline
   - safe backtracking behavior
-- Any structural workflow change must be reflected in the relevant docs, runtime behavior, and validation expectations.
+
+---
+
+## Required Validation Commands
+
+Run the smallest relevant validation set that honestly covers the change.
+
+Core commands:
+
+- `npm run build` — required when changing shipped TypeScript/runtime or web build behavior
+- `npm test` — required for most code changes affecting logic, state handling, workflow control, or CLI/TUI behavior
+- `npm run test:web` — required when changing web UI behavior or web-facing interactive flows
+- `npm run validate:harness` — required when changing harness expectations, governed workflow contracts, issue/brief/review artifacts, or reproducibility-facing validation logic
+
+Targeted smoke checks when relevant:
+
+- `npm run test:smoke:natural-collect`
+- `npm run test:smoke:natural-collect-execute`
+- `npm run test:smoke:all`
+- other targeted smoke scripts in `tests/smoke/`
+
+For interactive defects, do not rely on tests alone if a real TUI/web flow can be run.
+Re-run the same flow that exposed the issue.
 
 ---
 
@@ -155,12 +199,22 @@ Every brief must include:
 - Constraints
 - Plan
 - Research Question
-- Why This Can Be Tested With a Small Real Experiment
+- Why This Can Be Tested With A Small Real Experiment
 - Baseline / Comparator
 - Dataset / Task / Bench
+- Target Comparison
+- Minimum Acceptable Evidence
+- Disallowed Shortcuts
+- Allowed Budgeted Passes
+- Paper Ceiling If Evidence Remains Weak
 - Minimum Experiment Plan
 - Paper-worthiness Gate
 - Failure Conditions
+
+Recommended when uncertainty is material:
+
+- Notes
+- Questions / Risks
 
 Do not treat missing governance fields as harmless omissions for paper-scale work.
 
@@ -178,6 +232,7 @@ It is also the running log for:
 Keep these categories distinct.
 
 For interactive defects, always prefer:
+
 1. real reproduction
 2. issue logging
 3. smallest plausible root-cause fix

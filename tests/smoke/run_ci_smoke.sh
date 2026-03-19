@@ -7,7 +7,19 @@ ROOT_DIR="$SMOKE_ROOT_DIR"
 MODE="${AUTOLABOS_SMOKE_MODE:-pending}"
 CI_FLAG="${CI:-false}"
 
-smoke_require_expect
+if ! smoke_has_expect; then
+  if [[ "$MODE" == "pending" ]]; then
+    echo "CI smoke mode: ${MODE} (CI=${CI_FLAG})"
+    RUN_ID="$(smoke_run_id)"
+    smoke_set_fake_codex_structured_actions \
+      "$RUN_ID" \
+      '[{"type":"collect","limit":100,"sort":{"field":"relevance","order":"desc"},"filters":{"last_years":5}}]'
+    smoke_run_pending_without_expect "$RUN_ID"
+    echo "PASS: CI smoke completed ($MODE)"
+    exit 0
+  fi
+  smoke_require_expect
+fi
 
 echo "CI smoke mode: ${MODE} (CI=${CI_FLAG})"
 

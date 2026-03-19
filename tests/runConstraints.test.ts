@@ -19,12 +19,19 @@ describe("normalizeConstraintProfile", () => {
     expect(profile.collect.publicationTypes).toEqual(["Review"]);
   });
 
-  it("returns no automatic topic-derived candidates when llm queries are absent", () => {
+  it("builds deterministic topic-derived candidates when llm queries are absent", () => {
     const candidates = buildLiteratureQueryCandidates({
       runTopic: "Resource-aware baselines for tabular classification on small public datasets"
     });
 
-    expect(candidates).toEqual([]);
+    expect(candidates).toContainEqual({
+      query: "Resource-aware baselines for tabular classification on small public datasets",
+      reason: "run_topic"
+    });
+    expect(candidates).toContainEqual({
+      query: "baselines for tabular classification",
+      reason: "constraint_stripped"
+    });
   });
 
   it("prefers an explicit requested query and does not append llm-generated fallbacks", () => {
