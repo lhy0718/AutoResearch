@@ -729,6 +729,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         run.objectiveMetric
       );
       objectiveEvaluationSummary = objectiveEvaluation.summary;
+      await writeRunArtifact(run, "metrics.json", JSON.stringify(parsedMetrics, null, 2));
       await writeRunArtifact(run, "objective_evaluation.json", JSON.stringify(objectiveEvaluation, null, 2));
       if (comparisonContract) {
         const managedBundleLock = await freezeManagedBundleLock({

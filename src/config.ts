@@ -142,7 +142,18 @@ export async function loadConfig(paths: AppPaths): Promise<AppConfig> {
 
 export async function saveConfig(paths: AppPaths, config: AppConfig): Promise<void> {
   await ensureDir(paths.rootDir);
-  await fs.writeFile(paths.configFile, YAML.stringify(config), "utf8");
+  const normalized = normalizeLoadedConfig(config);
+  const normalizedForSave = {
+    ...normalized,
+    providers: {
+      ...normalized.providers,
+      pdf: {
+        mode: normalized.providers.pdf?.mode || normalized.analysis.pdf_mode
+      }
+    }
+  };
+  const { analysis: _legacyAnalysis, ...serialized } = normalizedForSave;
+  await fs.writeFile(paths.configFile, YAML.stringify(serialized), "utf8");
 }
 
 function buildConfigFromWizardAnswers(answers: {
@@ -184,6 +195,9 @@ function buildConfigFromWizardAnswers(answers: {
     project_name: answers.projectName,
     providers: {
       llm_mode: answers.llmMode,
+      pdf: {
+        mode: answers.pdfAnalysisMode
+      },
       codex: {
         model: codexTaskSelection.model,
         chat_model: codexChatSelection.model,
@@ -587,6 +601,11 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
   if (!config.papers) {
     throw new Error("Invalid config: papers is missing");
   }
+  if (!config.providers.pdf) {
+    config.providers.pdf = {
+      mode: config.analysis?.pdf_mode || DEFAULT_PDF_ANALYSIS_MODE
+    };
+  }
   if (!config.analysis) {
     config.analysis = {
       pdf_mode: DEFAULT_PDF_ANALYSIS_MODE,
@@ -604,9 +623,16 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
 
   const codex = config.providers.codex;
   const openai = config.providers.openai;
+  const providerPdf = config.providers.pdf;
   const analysis = config.analysis;
   const papers = config.papers;
+  const normalizedPdfMode = normalizePdfAnalysisMode(providerPdf?.mode || analysis.pdf_mode);
+  const rawAnalysisResponsesModel = analysis.responses_model?.trim();
+  const rawAnalysisResponsesReasoning = analysis.responses_reasoning_effort;
   config.providers.llm_mode = normalizePrimaryLlmMode(config.providers.llm_mode);
+  config.providers.pdf = {
+    mode: normalizedPdfMode
+  };
   if (!codex.model) {
     codex.model = DEFAULT_CODEX_MODEL;
   }
@@ -667,7 +693,21 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
   openai.model = normalizeOpenAiResponsesModel(openai.model);
   openai.chat_model = normalizeOpenAiResponsesModel(openai.chat_model || openai.model);
   openai.experiment_model = normalizeOpenAiResponsesModel(openai.experiment_model || openai.model);
-  openai.pdf_model = normalizeOpenAiResponsesModel(openai.pdf_model || openai.model);
+  const rawOpenAiPdfModel = openai.pdf_model?.trim();
+  const rawOpenAiPdfReasoning = openai.pdf_reasoning_effort;
+  const providerPdfSlotExplicit = Boolean(rawOpenAiPdfModel && rawOpenAiPdfModel !== openai.model);
+  const preferLegacyAnalysisPdfModel =
+    normalizedPdfMode === "responses_api_pdf" &&
+    rawAnalysisResponsesModel &&
+    (!rawOpenAiPdfModel || rawOpenAiPdfModel === openai.model);
+  const preferredPdfModelSource =
+    preferLegacyAnalysisPdfModel
+      ? rawAnalysisResponsesModel
+      : rawOpenAiPdfModel || rawAnalysisResponsesModel || openai.model;
+  openai.pdf_model =
+    normalizedPdfMode === "responses_api_pdf"
+      ? normalizeResponsesPdfModel(preferredPdfModelSource)
+      : normalizeOpenAiResponsesModel(preferredPdfModelSource);
   openai.reasoning_effort = normalizeOpenAiResponsesReasoningEffort(
     openai.model,
     openai.reasoning_effort
@@ -680,9 +720,16 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
     openai.experiment_model,
     openai.experiment_reasoning_effort || openai.reasoning_effort
   ) as AppConfig["providers"]["openai"]["reasoning_effort"];
+  const preferLegacyAnalysisPdfReasoning =
+    normalizedPdfMode === "responses_api_pdf" &&
+    rawAnalysisResponsesReasoning &&
+    !providerPdfSlotExplicit &&
+    (!rawOpenAiPdfReasoning || rawOpenAiPdfReasoning === openai.reasoning_effort);
   openai.pdf_reasoning_effort = normalizeOpenAiResponsesReasoningEffort(
     openai.pdf_model,
-    openai.pdf_reasoning_effort || openai.reasoning_effort
+    preferLegacyAnalysisPdfReasoning
+      ? rawAnalysisResponsesReasoning
+      : rawOpenAiPdfReasoning || rawAnalysisResponsesReasoning || openai.reasoning_effort
   ) as AppConfig["providers"]["openai"]["reasoning_effort"];
   openai.command_reasoning_effort = normalizeOpenAiResponsesReasoningEffort(
     openai.chat_model,
@@ -695,12 +742,18 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
     per_second_limit: Math.max(1, papers.per_second_limit || 1)
   };
   config.analysis = {
-    pdf_mode: normalizePdfAnalysisMode(analysis.pdf_mode),
-    responses_model: normalizeResponsesPdfModel(analysis.responses_model),
-    responses_reasoning_effort: normalizeOpenAiResponsesReasoningEffort(
-      analysis.responses_model,
-      analysis.responses_reasoning_effort || "xhigh"
-    ) as AppConfig["analysis"]["responses_reasoning_effort"]
+    pdf_mode: normalizedPdfMode,
+    responses_model:
+      normalizedPdfMode === "responses_api_pdf"
+        ? openai.pdf_model
+        : normalizeResponsesPdfModel(analysis.responses_model),
+    responses_reasoning_effort:
+      (normalizedPdfMode === "responses_api_pdf"
+        ? openai.pdf_reasoning_effort
+        : normalizeOpenAiResponsesReasoningEffort(
+            normalizeResponsesPdfModel(analysis.responses_model),
+            analysis.responses_reasoning_effort || "xhigh"
+          )) as AppConfig["analysis"]["responses_reasoning_effort"]
   };
   config.workflow = {
     mode: "agent_approval",

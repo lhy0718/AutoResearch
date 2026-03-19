@@ -2285,6 +2285,7 @@ describe("objective metric propagation", () => {
     const runDir = path.join(root, ".autolabos", "runs", runId);
     const memoryDir = path.join(runDir, "memory");
     const publicDir = path.join(root, "public-bundle");
+    const publicMetricsPath = path.join(publicDir, "metrics.json");
     const scriptPath = path.join(publicDir, "run_experiment.py");
     await mkdir(memoryDir, { recursive: true });
     await mkdir(publicDir, { recursive: true });
@@ -2298,7 +2299,7 @@ describe("objective metric propagation", () => {
           {
             key: "implement_experiments.run_command",
             value: `python3 -B ${JSON.stringify(scriptPath)} --profile standard --metrics-out ${JSON.stringify(
-              path.join(runDir, "metrics.json")
+              publicMetricsPath
             )}`,
             updatedAt: new Date().toISOString()
           },
@@ -2309,7 +2310,7 @@ describe("objective metric propagation", () => {
           },
           {
             key: "implement_experiments.metrics_path",
-            value: `.autolabos/runs/${runId}/metrics.json`,
+            value: publicMetricsPath,
             updatedAt: new Date().toISOString()
           },
           {
@@ -2346,9 +2347,9 @@ describe("objective metric propagation", () => {
             ? path.join(publicDir, "quick_check_metrics.json")
             : command.includes("--profile confirmatory")
               ? path.join(publicDir, "confirmatory_metrics.json")
-              : path.join(runDir, "metrics.json");
+              : publicMetricsPath;
           const metrics =
-            targetPath === path.join(runDir, "metrics.json")
+            targetPath === publicMetricsPath
               ? { accuracy: 0.91, f1: 0.88 }
               : targetPath.includes("quick_check")
                 ? { accuracy: 0.9, f1: 0.86, sampling_profile: { name: "quick_check", total_trials: 4 } }
@@ -2392,6 +2393,7 @@ describe("objective metric propagation", () => {
       { profile: "confirmatory", status: "pass" }
     ]);
 
+    expect(await readFile(path.join(runDir, "metrics.json"), "utf8")).toContain('"accuracy": 0.91');
     const quickCheckRaw = await readFile(path.join(publicDir, "quick_check_metrics.json"), "utf8");
     const confirmatoryRaw = await readFile(path.join(publicDir, "confirmatory_metrics.json"), "utf8");
     expect(quickCheckRaw).toContain('"name": "quick_check"');

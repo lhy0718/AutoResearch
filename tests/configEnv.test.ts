@@ -242,6 +242,9 @@ describe("config .env overrides", () => {
 
     expect(config.analysis.pdf_mode).toBe("responses_api_pdf");
     expect(config.analysis.responses_model).toBe("gpt-4o");
+    expect(config.providers.openai.pdf_model).toBe("gpt-4o");
+    expect(config.providers.openai.pdf_reasoning_effort).toBe("medium");
+    expect(config.providers.pdf?.mode).toBe("responses_api_pdf");
     await expect(resolveOpenAiApiKey(cwd)).resolves.toBe("openai-key");
     await expect(fs.readFile(path.join(cwd, ".env"), "utf8")).resolves.toContain('OPENAI_API_KEY="openai-key"');
   });
@@ -423,7 +426,46 @@ describe("config .env overrides", () => {
     const loaded = await loadConfig(paths);
 
     expect(loaded.analysis.responses_model).toBe(DEFAULT_RESPONSES_PDF_MODEL);
+    expect(loaded.providers.openai.pdf_model).toBe(DEFAULT_RESPONSES_PDF_MODEL);
+    expect(loaded.providers.pdf?.mode).toBe("responses_api_pdf");
     expect(loaded.providers.openai.model).toBe("gpt-5.4");
+  });
+
+  it("preserves an explicitly configured OpenAI PDF slot and mirrors it into analysis when Responses PDF mode is enabled", async () => {
+    const { paths } = await createWorkspace();
+    const config = makeConfig();
+    config.analysis.pdf_mode = "responses_api_pdf";
+    config.analysis.responses_model = "gpt-4o";
+    config.analysis.responses_reasoning_effort = "xhigh";
+    config.providers.openai.pdf_model = "gpt-5-mini";
+    config.providers.openai.pdf_reasoning_effort = "medium";
+    await saveConfig(paths, config);
+
+    const loaded = await loadConfig(paths);
+
+    expect(loaded.providers.openai.pdf_model).toBe("gpt-5-mini");
+    expect(loaded.providers.openai.pdf_reasoning_effort).toBe("medium");
+    expect(loaded.analysis.responses_model).toBe("gpt-5-mini");
+    expect(loaded.analysis.responses_reasoning_effort).toBe("medium");
+    expect(loaded.providers.pdf?.mode).toBe("responses_api_pdf");
+  });
+
+  it("saves provider-owned pdf mode without persisting the legacy analysis block", async () => {
+    const { paths } = await createWorkspace();
+    const config = makeConfig();
+    config.providers.pdf = { mode: "responses_api_pdf" };
+    config.analysis.pdf_mode = "responses_api_pdf";
+    await saveConfig(paths, config);
+
+    const raw = await fs.readFile(paths.configFile, "utf8");
+    expect(raw).toContain("providers:");
+    expect(raw).toContain("pdf:");
+    expect(raw).toContain("mode: responses_api_pdf");
+    expect(raw).not.toContain("\nanalysis:\n");
+
+    const loaded = await loadConfig(paths);
+    expect(loaded.providers.pdf?.mode).toBe("responses_api_pdf");
+    expect(loaded.analysis.pdf_mode).toBe("responses_api_pdf");
   });
 
   it("does not create .autolabos if first-run setup aborts before completion", async () => {

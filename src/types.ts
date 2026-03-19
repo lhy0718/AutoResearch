@@ -169,6 +169,9 @@ export interface AppConfig {
   project_name: string;
   providers: {
     llm_mode: "codex_chatgpt_only" | "openai_api" | "ollama";
+    pdf?: {
+      mode: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
+    };
     codex: {
       model: string;
       chat_model?: string;

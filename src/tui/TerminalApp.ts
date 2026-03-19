@@ -3254,16 +3254,14 @@ export class TerminalApp {
 
     if (slot === "pdf" && this.config.analysis.pdf_mode === "responses_api_pdf") {
       const selectedResponsesSlot = await this.selectResponsesPdfSlot(
-        normalizeResponsesPdfModel(this.config.analysis.responses_model),
-        this.config.analysis.responses_reasoning_effort || "xhigh"
+        this.getCurrentResponsesPdfModel(),
+        this.getCurrentResponsesPdfReasoning()
       );
       if (!selectedResponsesSlot) {
         this.pushLog("Model selection canceled.");
         return;
       }
-      this.config.analysis.responses_model = selectedResponsesSlot.model;
-      this.config.analysis.responses_reasoning_effort =
-        selectedResponsesSlot.effort as AppConfig["analysis"]["responses_reasoning_effort"];
+      this.applyResponsesPdfSlotSelection(selectedResponsesSlot.model, selectedResponsesSlot.effort);
       await this.saveConfigFn(this.config);
       this.pushLog("Responses API PDF model updated.");
       this.pushCurrentModelDefaults();
@@ -3389,16 +3387,14 @@ export class TerminalApp {
     this.config.analysis.pdf_mode = pdfMode as AppConfig["analysis"]["pdf_mode"];
     if (pdfMode === "responses_api_pdf") {
       const selectedResponsesSlot = await this.selectResponsesPdfSlot(
-        normalizeResponsesPdfModel(this.config.analysis.responses_model),
-        this.config.analysis.responses_reasoning_effort || "xhigh"
+        this.getCurrentResponsesPdfModel(),
+        this.getCurrentResponsesPdfReasoning()
       );
       if (!selectedResponsesSlot) {
         this.pushLog(cancelMessage);
         return false;
       }
-      this.config.analysis.responses_model = selectedResponsesSlot.model;
-      this.config.analysis.responses_reasoning_effort =
-        selectedResponsesSlot.effort as AppConfig["analysis"]["responses_reasoning_effort"];
+      this.applyResponsesPdfSlotSelection(selectedResponsesSlot.model, selectedResponsesSlot.effort);
     }
 
     return true;
@@ -3932,6 +3928,33 @@ export class TerminalApp {
     this.config.providers.openai.reasoning_effort = effort;
   }
 
+  private getCurrentResponsesPdfModel(): string {
+    return normalizeResponsesPdfModel(
+      this.config.providers.openai.pdf_model ||
+        this.config.analysis.responses_model ||
+        this.config.providers.openai.model
+    );
+  }
+
+  private getCurrentResponsesPdfReasoning(): AppConfig["analysis"]["responses_reasoning_effort"] {
+    return (
+      this.config.providers.openai.pdf_reasoning_effort ||
+      this.config.analysis.responses_reasoning_effort ||
+      "xhigh"
+    ) as AppConfig["analysis"]["responses_reasoning_effort"];
+  }
+
+  private applyResponsesPdfSlotSelection(
+    model: string,
+    effort: AppConfig["analysis"]["responses_reasoning_effort"]
+  ): void {
+    this.config.providers.openai.pdf_model = model;
+    this.config.providers.openai.pdf_reasoning_effort =
+      effort as AppConfig["providers"]["openai"]["reasoning_effort"];
+    this.config.analysis.responses_model = model;
+    this.config.analysis.responses_reasoning_effort = effort;
+  }
+
   private async selectResponsesPdfSlot(
     currentModel: string,
     currentEffort: AppConfig["analysis"]["responses_reasoning_effort"]
@@ -3967,7 +3990,7 @@ export class TerminalApp {
     }
     if (this.config.providers.llm_mode === "openai_api") {
       if (slot === "pdf" && this.config.analysis.pdf_mode === "responses_api_pdf") {
-        return `${this.config.analysis.responses_model} + ${this.config.analysis.responses_reasoning_effort || "xhigh"}`;
+        return `${this.getCurrentResponsesPdfModel()} + ${this.getCurrentResponsesPdfReasoning()}`;
       }
       return `${this.getCurrentOpenAiSlotModel(slot)} + ${this.getCurrentOpenAiSlotReasoning(slot)}`;
     }

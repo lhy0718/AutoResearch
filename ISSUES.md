@@ -611,3 +611,22 @@ Last updated: 2026-03-19 · 944/944 tests pass
 - Root-cause hypothesis: `generateHypothesesFromEvidence()` does not bound its staged `llm.complete(...)` calls, so a stalled Codex/LLM completion can keep the node in `running` forever instead of dropping into the existing single-pass or deterministic fallback path.
 - Planned fix: add bounded timeouts around staged and single-pass hypothesis generation LLM calls, add deterministic regression coverage, and rerun the same `review -> generate_hypotheses` flow in `test/`.
 - Update (2026-03-19): patched `src/core/analysis/researchPlanning.ts` and `src/core/nodes/generateHypotheses.ts` so staged and single-pass hypothesis generation calls use bounded timeouts and fall through to the existing fallback path. Added deterministic coverage in `tests/generateHypothesesNode.test.ts`. Revalidated with `npm run build`, `npm test`, `npm run validate:harness`, and a fresh TUI rerun in `test/`. The same run now records `hypothesis_axes_timeout:45000ms`, falls through `single_pass`, then completes with fallback instead of remaining `running`; current-cycle `hypotheses.jsonl`, `hypothesis_generation/selection.json`, and `hypothesis_generation/llm_trace.json` were rewritten at `2026-03-19 14:35:13`. Status: fixed for bounded completion of review-driven hypothesis regeneration.
+
+## LV-049 run_experiments can finish with public metrics present but canonical run-root metrics.json missing
+- Category: live validation issue
+- Status: active
+- Validation target: `test/` run `81820c46-d1b6-4080-8575-a35c60583480` at `run_experiments`, with fresh TUI reopen plus harness/doctor inspection.
+- Execution mode: fresh interactive TUI in `test/`, resumed existing governed run.
+- Reproduction:
+  1. Launch the real TUI from `test/`.
+  2. Let the TUI recover the stale `run_experiments` node and rerun the governed command.
+  3. Run `/doctor`.
+  4. Compare `.autolabos/runs/81820c46-d1b6-4080-8575-a35c60583480/metrics.json`, `.autolabos/runs/81820c46-d1b6-4080-8575-a35c60583480/objective_evaluation.json`, and `outputs/budget-aware-adaptive-and-structured-test-time-r-81820c46/experiment/metrics.json`.
+- Expected behavior: after a successful or partially successful governed experiment run, the canonical run root should contain `metrics.json` and `objective_evaluation.json`, and public output mirroring should be secondary to that canonical artifact contract.
+- Actual behavior: `/doctor` reported `run_metrics_missing` for run `81820c46-d1b6-4080-8575-a35c60583480`; persisted inspection showed `objective_evaluation.json` present in the run root and `outputs/.../experiment/metrics.json` present in the public bundle, but `.autolabos/runs/.../metrics.json` was absent.
+- Fresh vs existing: reproduced from a fresh TUI reopen of the existing run; the symptom is persisted on disk and is not a session-only render issue.
+- Persisted artifact vs UI: the TUI continued `run_experiments` and showed the governed Python command running, while persisted artifacts violated the run-root contract that the harness and review layers depend on. This is a direct artifact-layer mismatch.
+- Dominant taxonomy: `persisted_state_bug`
+- Root-cause hypothesis: `run_experiments` validated and published metrics from `resolved.metricsPath`, but only mirrored them to the public experiment directory; it wrote `objective_evaluation.json` to the run root yet skipped canonical `metrics.json` when the execution plan targeted a bundle-local/public metrics path.
+- Planned fix: always write canonical run-root `metrics.json` from the validated parsed metrics on the successful `run_experiments` path, regardless of where the runner emitted its raw metrics file; add deterministic regression coverage for public-path metrics.
+- Update (2026-03-19): patched `src/core/nodes/runExperiments.ts` to write canonical run-root `metrics.json` before `objective_evaluation.json` on the success path. Added deterministic regression coverage in `tests/objectiveMetricPropagation.test.ts` for the case where `implement_experiments.metrics_path` points at a public bundle metrics file instead of `.autolabos/runs/<id>/metrics.json`. Targeted regression passed: `CI=1 npx vitest run tests/objectiveMetricPropagation.test.ts --pool=forks -t 'auto-runs managed quick_check and confirmatory profiles after a successful standard run'`. Same-flow live revalidation in `test/` is in progress on run `81820c46-d1b6-4080-8575-a35c60583480`.
