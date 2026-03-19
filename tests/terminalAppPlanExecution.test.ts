@@ -3073,4 +3073,59 @@ describe("TerminalApp pending natural plan execution", () => {
       await rm(cwd, { recursive: true, force: true });
     }
   });
+
+  it("does not auto-recover a recently updated running node on reopen (LV-037)", async () => {
+    const app = makeApp();
+    const run = makeRun("run-live");
+    const now = new Date().toISOString();
+    run.status = "running";
+    run.currentNode = "analyze_papers";
+    run.graph.currentNode = "analyze_papers";
+    run.updatedAt = now;
+    run.graph.nodeStates.analyze_papers = {
+      ...run.graph.nodeStates.analyze_papers,
+      status: "running",
+      updatedAt: now,
+      note: "Analyzed 1 papers into 4 evidence item(s)."
+    };
+    app.runIndex = [run];
+    app.orchestrator = { retryCurrent: vi.fn() };
+    app.refreshRunIndex = vi.fn();
+    app.setActiveRunId = vi.fn();
+    app.continueSupervisedRun = vi.fn();
+
+    await app.recoverStaleRunningNode(run.id);
+
+    expect(app.orchestrator.retryCurrent).not.toHaveBeenCalled();
+    expect(app.continueSupervisedRun).not.toHaveBeenCalled();
+    expect(app.logs.some((line: string) => line.includes("Recovering stale running node"))).toBe(false);
+  });
+
+  it("auto-recovers an old running node on reopen (LV-037)", async () => {
+    const app = makeApp();
+    const run = makeRun("run-stale");
+    const staleAt = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    run.status = "running";
+    run.currentNode = "analyze_papers";
+    run.graph.currentNode = "analyze_papers";
+    run.updatedAt = staleAt;
+    run.graph.nodeStates.analyze_papers = {
+      ...run.graph.nodeStates.analyze_papers,
+      status: "running",
+      updatedAt: staleAt,
+      note: "in progress before kill"
+    };
+    app.runIndex = [run];
+    app.orchestrator = { retryCurrent: vi.fn().mockResolvedValue(run) };
+    app.refreshRunIndex = vi.fn();
+    app.setActiveRunId = vi.fn();
+    app.continueSupervisedRun = vi.fn();
+
+    await app.recoverStaleRunningNode(run.id);
+
+    expect(app.orchestrator.retryCurrent).toHaveBeenCalledWith(run.id, "analyze_papers");
+    expect(app.refreshRunIndex).toHaveBeenCalled();
+    expect(app.setActiveRunId).toHaveBeenCalledWith(run.id);
+    expect(app.continueSupervisedRun).toHaveBeenCalledWith(run.id);
+  });
 });

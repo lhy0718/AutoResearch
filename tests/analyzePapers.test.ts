@@ -733,6 +733,64 @@ describe("analyzePapers node", () => {
     await expect(execution).rejects.toThrow(/aborted/i);
   });
 
+  it("marks a selected paper as running in analysis_manifest before llm analysis completes", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-manifest-running-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const paths = resolveAppPaths(root);
+    await ensureScaffold(paths);
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Budgeted Reasoning",
+      topic: "Budgeted Reasoning",
+      constraints: [],
+      objectiveMetric: "accuracy >= 0.9"
+    });
+    run.status = "running";
+    run.currentNode = "analyze_papers";
+    run.graph.currentNode = "analyze_papers";
+    run.graph.nodeStates.analyze_papers = {
+      status: "running",
+      updatedAt: new Date().toISOString()
+    };
+    await runStore.updateRun(run);
+
+    await writeCorpus(run.id, [
+      { paper_id: "p1", title: "Paper 1", abstract: "Abstract 1", authors: ["Alice"] }
+    ]);
+
+    class ManifestCheckingLlm extends MockLLMClient {
+      override async complete(_prompt: string): Promise<{ text: string }> {
+        const manifestRaw = await readFile(path.join(".autolabos", "runs", run.id, "analysis_manifest.json"), "utf8");
+        const manifest = JSON.parse(manifestRaw) as {
+          papers?: Record<string, { status?: string }>;
+        };
+        expect(manifest.papers?.p1?.status).toBe("running");
+        return { text: jsonOutput("summary 1", "claim 1") };
+      }
+    }
+
+    const node = createAnalyzePapersNode({
+      config: {
+        analysis: {
+          pdf_mode: "codex_text_image_hybrid",
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore,
+      eventStream: new InMemoryEventStream(),
+      llm: new ManifestCheckingLlm(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+  });
+
   it("keeps completed artifacts when post-persist run summary refresh fails", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-post-persist-refresh-"));
     tempDirs.push(root);
@@ -983,6 +1041,75 @@ describe("analyzePapers node", () => {
     const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
     expect(loggedTexts.some((text) => text.includes("Preserving 1 summary row(s) and 1 evidence row(s)"))).toBe(true);
     expect(loggedTexts.some((text) => text.includes("Resetting summaries/evidence"))).toBe(false);
+  });
+
+  it("preserves pre-retarget artifacts when selection regresses under the same request after a corpus change", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-retarget-regression-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-retarget-regression";
+    const run = makeRun(runId);
+    await writeCorpus(runId, [
+      { paper_id: "p1", title: "Paper 1", abstract: "Abstract 1", authors: ["Alice"] },
+      { paper_id: "p2", title: "Paper 2", abstract: "Abstract 2", authors: ["Bob"] }
+    ]);
+
+    const firstNode = createAnalyzePapersNode({
+      config: {
+        analysis: {
+          pdf_mode: "codex_text_image_hybrid",
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequenceJsonLLM([jsonOutput("summary 1", "claim 1"), jsonOutput("summary 2", "claim 2")]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const first = await firstNode.execute({ run, graph: run.graph });
+    expect(first.status).toBe("success");
+
+    await writeCorpus(runId, [{ paper_id: "p3", title: "Paper 3", abstract: "Abstract 3", authors: ["Carol"] }]);
+
+    const eventStream = new InMemoryEventStream();
+    const secondNode = createAnalyzePapersNode({
+      config: {
+        analysis: {
+          pdf_mode: "codex_text_image_hybrid",
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream,
+      llm: new SequenceJsonLLM(["should-not-be-used"]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const second = await secondNode.execute({ run, graph: run.graph });
+    expect(second.status).toBe("success");
+    expect(second.needsApproval).toBe(true);
+    expect(second.summary).toContain("Preserving 2 summary row(s) and 2 evidence row(s)");
+    expect(second.transitionRecommendation?.action).toBe("pause_for_human");
+
+    const manifestRaw = await readFile(path.join(".autolabos", "runs", runId, "analysis_manifest.json"), "utf8");
+    const manifest = JSON.parse(manifestRaw) as { selectedPaperIds: string[] };
+    expect(manifest.selectedPaperIds).toEqual(["p1", "p2"]);
+
+    const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
+    const evidenceRaw = await readFile(path.join(".autolabos", "runs", runId, "evidence_store.jsonl"), "utf8");
+    expect(summariesRaw.trim().split("\n")).toHaveLength(2);
+    expect(evidenceRaw.trim().split("\n")).toHaveLength(2);
+
+    const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
+    expect(loggedTexts.some((text) => text.includes("Preserving 2 summary row(s) and 2 evidence row(s)"))).toBe(true);
   });
 
   it("pauses with preserved partial evidence when retries stop shrinking the failed subset", async () => {

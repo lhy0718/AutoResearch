@@ -282,6 +282,37 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       let diagnostics: SemanticScholarSearchDiagnostics = emptyCollectDiagnostics();
       const queryAttempts: CollectQueryAttemptMeta[] = [];
       let effectiveRequest = normalizedRequest.primaryRequest;
+      await syncCollectRunContext({
+        runContextMemory,
+        request: effectiveRequest,
+        resultMeta: buildCollectResultMeta({
+          request: effectiveRequest,
+          fetched: 0,
+          stored: storedCount,
+          added: newPaperIds.size,
+          baseCount,
+          mode,
+          diagnostics,
+          filters: effectiveRequest.filters || {},
+          bibtexMode: normalizeBibtexMode(requestFromContext?.bibtexMode),
+          completed: false,
+          pdfRecovered,
+          bibtexEnriched,
+          enrichmentAttempts: 0,
+          fallbackSources: [],
+          requestedQuery: normalizedRequest.requestedQuery,
+          queryAttempts,
+          enrichment: {
+            blocking: false,
+            status: "not_needed",
+            targetCount: 0,
+            processedCount: 0,
+            attemptedCount: 0,
+            updatedCount: 0
+          }
+        }),
+        diagnostics
+      });
 
       let fetchError: string | undefined;
       for (let searchIndex = 0; searchIndex < normalizedRequest.searchPlan.length; searchIndex += 1) {

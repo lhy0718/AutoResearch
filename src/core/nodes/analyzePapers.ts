@@ -564,22 +564,6 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         );
         let existingSummaryRows = await readSummaryRows(summaryPath);
         let existingEvidenceRows = await readEvidenceRows(evidencePath);
-        const retargetedSelection =
-          canRetargetExistingManifest && existingManifest
-            ? retargetManifestForSelectionChange(
-                existingManifest,
-                selection,
-                existingSummaryRows,
-                existingEvidenceRows,
-                analysisFingerprint,
-                selectionRequestFingerprint,
-                corpusFingerprint
-              )
-            : undefined;
-        if (retargetedSelection) {
-          existingSummaryRows = retargetedSelection.summaryRows;
-          existingEvidenceRows = retargetedSelection.evidenceRows;
-        }
         const resetReason =
           existingManifest && existingManifest.selectionFingerprint !== selection.selectionFingerprint
             ? "selection_changed"
@@ -627,6 +611,22 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             toolCallsUsed: 0,
             transitionRecommendation: preservedSelectionRegression.transitionRecommendation
           };
+        }
+        const retargetedSelection =
+          canRetargetExistingManifest && existingManifest
+            ? retargetManifestForSelectionChange(
+                existingManifest,
+                selection,
+                existingSummaryRows,
+                existingEvidenceRows,
+                analysisFingerprint,
+                selectionRequestFingerprint,
+                corpusFingerprint
+              )
+            : undefined;
+        if (retargetedSelection) {
+          existingSummaryRows = retargetedSelection.summaryRows;
+          existingEvidenceRows = retargetedSelection.evidenceRows;
         }
         let manifest: AnalysisManifest | undefined =
           existingManifest &&
@@ -834,6 +834,33 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             );
 
             try {
+              await persistQueue.run(async () => {
+                const nextManifest: AnalysisManifest = {
+                  ...manifestState,
+                  papers: { ...manifestState.papers }
+                };
+                const manifestEntry = manifestState.papers[row.paper_id];
+                nextManifest.papers[row.paper_id] = {
+                  ...manifestEntry,
+                  paper_id: row.paper_id,
+                  title: row.title,
+                  status: "running",
+                  selected: true,
+                  source_type: source.sourceType,
+                  analysis_mode: analysisModeUsed,
+                  pdf_url: source.pdfUrl ?? resolvePaperPdfUrl(row),
+                  pdf_cache_path: source.pdfCachePath,
+                  text_cache_path: source.textCachePath,
+                  fallback_reason: source.fallbackReason,
+                  last_error: undefined,
+                  score_breakdown: refreshPdfAvailabilityScoreBreakdown(manifestEntry?.score_breakdown, row),
+                  updatedAt: new Date().toISOString()
+                };
+                nextManifest.updatedAt = new Date().toISOString();
+                await writeJsonFile(manifestPath, nextManifest);
+                manifestState = nextManifest;
+              });
+
               const sourceMismatchError = validateResolvedSourceIdentity(row, source);
               if (sourceMismatchError) {
                 quarantineRecord = buildAnalysisQuarantineRow({

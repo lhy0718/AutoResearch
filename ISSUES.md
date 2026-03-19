@@ -334,3 +334,69 @@ None — all tracked issues are resolved or mitigated. See sections below for hi
 | Tests | Added deterministic regression coverage for phrase-bundle fallback and retry behavior in `tests/collectPapersDeterministicFallback.test.ts`. |
 | Status | ✅ Fixed |
 | Regression | Fresh-session live revalidation in `test/` created run `81820c46-d1b6-4080-8575-a35c60583480` and persisted `collect_papers.last_result.query = +"small language models" +"test-time reasoning"` with `reason = brief_topic`; the observed stop was an operator abort during Semantic Scholar fetch, not a fallback-query regression. |
+
+---
+
+### LV-036 — `collect_papers` retry leaves stale aborted-fetch error visible while the node is running
+
+| Field | Value |
+|---|---|
+| Validation target | `collect_papers` retry / stale-running recovery in `test/` |
+| Execution mode | Interactive TUI, resumed existing fresh-session run `81820c46-d1b6-4080-8575-a35c60583480` |
+| Environment | `../node_modules/.bin/tsx ../src/cli/main.ts` launched from `test/`; previous collect attempt had been interrupted by operator abort |
+| Reproduction | 1. Launch TUI from `test/`. 2. Let stale-running recovery reopen run `81820c46...` at `collect_papers`. 3. Observe TUI shows `collect_papers running`. 4. Compare with persisted `run_context.json` and `collect_result.json`. 5. Retry with `/retry`. |
+| Expected | Once a new fetch attempt starts, the old aborted-fetch error should be cleared from run context so the UI no longer surfaces a stale collect error while the node is running. |
+| Actual | TUI remained in `collect_papers running`, but persisted `collect_papers.last_error = Operation aborted by user` and `last_result.fetchError` stayed intact from the prior attempt, so the UI kept surfacing the old error banner during the new retry. |
+| Fresh vs existing | Fresh run: issue appeared after a user-aborted first collect attempt. Existing/resumed session: reproduced immediately through stale-running recovery plus `/retry`. Divergence: none once stale aborted state existed. |
+| Persisted artifact vs UI | UI projected `running`, but persisted `collect_papers.last_error` and `last_result.fetchError` still described the previous aborted attempt. |
+| Root-cause class | `persisted_state_bug` |
+| Hypothesis | `collect_papers` only rewrote `last_error` after a new fetch finished or failed; retry start never wrote an in-progress result that cleared the stale error surface. |
+| Fix | On `collect_papers` execute start, write an in-progress `last_result` and `last_error=null` before issuing the new Semantic Scholar fetch. |
+| Files changed | `src/core/nodes/collectPapers.ts`; `tests/collectPapers.test.ts` |
+| Tests | Added deterministic regression coverage that seeds a stale aborted collect error and asserts it is cleared before `streamSearchPapers()` begins. |
+| Status | ✅ Fixed |
+| Regression | Same-flow live revalidation in `test/` passed: fresh run `81820c46-d1b6-4080-8575-a35c60583480` advanced through `collect_papers`, persisted `collect_result.json`, and no stale aborted-fetch error remained in run state while the retry was active. |
+
+---
+
+### LV-037 — Reopening TUI auto-retries an actively running `analyze_papers` node and misprojects progress
+
+| Field | Value |
+|---|---|
+| Validation target | Existing/resumed TUI reopen during live `analyze_papers` execution in `test/` |
+| Execution mode | Existing session vs fresh reopened session on the same run `81820c46-d1b6-4080-8575-a35c60583480` |
+| Environment | `../node_modules/.bin/tsx ../src/cli/main.ts` launched from `test/`; `analyze_papers` was actively producing persisted artifacts |
+| Reproduction | 1. Start a substantive brief run in `test/` and let it reach `analyze_papers`. 2. While the original TUI still shows live analysis, confirm persisted artifacts now contain `paper_summaries.jsonl` and `evidence_store.jsonl` rows. 3. Open a second TUI session in `test/` on the same run. 4. Observe startup logs and the status/detail panel. |
+| Expected | Reopening the TUI should attach to the active run, preserve already persisted analysis progress, and avoid retrying the node unless it is truly stale. |
+| Actual | The new TUI briefly loaded the persisted progress (`Analyzed 1 papers into 4 evidence item(s)` / `Persisted 1 summary row(s) and 4 evidence row(s)`), then `recoverStaleRunningNode()` immediately classified the live node as stale, reset it to pending for re-execution, and the UI reverted to `Selected 6/15` with `Persisted 0 summary row(s) and 0 evidence row(s)` while the run already had persisted outputs. |
+| Fresh vs existing | Existing live session: remained attached to the already-running analysis but displayed stale `0/0` progress until refreshed. Fresh reopened session: reproduced the worse behavior by auto-retrying the still-active node. Divergence shows a resume/recovery-specific bug rather than a pure persistence failure. |
+| Persisted artifact vs UI | Persisted artifacts showed `paper_summaries.jsonl` with 1 row, `evidence_store.jsonl` with 4 rows, and `analysis_manifest.json` / `runs.json` updated around `2026-03-19T01:47:57Z`. The reopened TUI still reset to a `0/0` in-progress projection after the automatic recovery path fired. |
+| Root-cause class | `resume_reload_bug` |
+| Hypothesis | `TerminalApp.recoverStaleRunningNode()` unconditionally retries any `running` node on startup, without checking whether the run or node was updated recently enough to indicate an active live execution. |
+| Fix | Added a freshness gate in `recoverStaleRunningNode()` so recently updated running nodes are not auto-retried on reopen; only older inactive-looking runs are recovered automatically. |
+| Files changed | `src/tui/TerminalApp.ts`; `tests/terminalAppPlanExecution.test.ts` |
+| Tests | Added deterministic TerminalApp coverage for both cases: recently updated running nodes are left alone, and old running nodes are still auto-recovered. |
+| Status | ✅ Fixed |
+| Regression | Live existing-vs-fresh revalidation in `test/` passed: reopening the patched TUI no longer emitted the stale-recovery log and correctly loaded the in-progress run with persisted analysis counts instead of forcing a manual retry. |
+
+---
+
+### LV-038 — `analyze_papers` selection regression prunes preserved artifacts before the regression guard can stop it
+
+| Field | Value |
+|---|---|
+| Validation target | `analyze_papers` retry/reopen after partial progress in `test/`, followed by downstream `generate_hypotheses` startup |
+| Execution mode | Interactive TUI, resumed existing run `81820c46-d1b6-4080-8575-a35c60583480` |
+| Environment | `../node_modules/.bin/tsx ../src/cli/main.ts` launched from `test/`; partial related-work analysis already existed on disk |
+| Reproduction | 1. Start a governed run from the substantive brief in `test/`. 2. Let `analyze_papers` persist partial outputs. 3. Retry/reopen the run after selection/corpus drift. 4. Compare `analysis_manifest.json`, `paper_summaries.jsonl`, `evidence_store.jsonl`, and `hypothesis_generation/progress.jsonl`. |
+| Expected | If the shortlist regresses under the same selection request after partial analysis already exists, AutoLabOS should preserve the previously completed summaries/evidence, pause for manual review if needed, and avoid shrinking the evidence base before hypothesis generation starts. |
+| Actual | The canonical analysis state regressed: persisted summaries/evidence shrank, `generate_hypotheses` restarted against a smaller evidence bundle, and the hypothesis progress log showed a later restart from only 8 evidence items after earlier larger counts had already existed. |
+| Fresh vs existing | Fresh run: partial analysis advanced normally at first. Existing/resumed flow: retry/reopen after partial progress exposed the regression, because the node re-entered selection-retarget logic with prior artifacts already on disk. |
+| Persisted artifact vs UI | Persisted `analysis_manifest.json`, `paper_summaries.jsonl`, and `evidence_store.jsonl` showed the evidence-base shrink directly; downstream `hypothesis_generation/progress.jsonl` then restarted from the smaller evidence count. TUI logs mixed stale `analyze_papers` text with newer node transitions, so the artifact layer was the reliable source of truth. |
+| Root-cause class | `persisted_state_bug` |
+| Hypothesis | `retargetManifestForSelectionChange()` pruned `existingSummaryRows` / `existingEvidenceRows` before `shouldPreservePartialArtifactsOnSelectionRegression()` ran, so the preservation guard saw an already-truncated artifact set and could not protect the full partial analysis from a selection regression. |
+| Fix | Reordered `analyzePapers.ts` so the selection-regression preservation guard runs on the pre-retarget artifact set; retarget pruning now happens only after the preservation check declines to intervene. |
+| Files changed | `src/core/nodes/analyzePapers.ts`; `tests/analyzePapers.test.ts` |
+| Tests | Added deterministic regression coverage that starts with two completed analyzed papers, changes the corpus to a smaller different shortlist under the same selection request, and asserts the original artifacts remain preserved instead of being pruned to the new shortlist. |
+| Status | 🔄 Reproduced and narrowed; deterministic fix added |
+| Regression | Targeted deterministic revalidation passed. Clean same-flow live revalidation is still pending because the currently running TUI process was started before the patch and continued mutating the same run. |

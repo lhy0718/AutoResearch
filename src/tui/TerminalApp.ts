@@ -225,6 +225,7 @@ const MAX_SHIFT_ENTER_SEQUENCE_LENGTH = SHIFT_ENTER_SEQUENCE_LIST.reduce(
   (max, sequence) => Math.max(max, sequence.length),
   0
 );
+const STALE_RUNNING_NODE_RECOVERY_MS = 5 * 60 * 1000;
 
 export class TerminalApp {
   private readonly config: AppConfig;
@@ -4541,6 +4542,18 @@ export class TerminalApp {
     if (!run) return;
     const nodeState = run.graph.nodeStates[run.currentNode];
     if (nodeState?.status !== "running") return;
+    const lastActivityMs = Math.max(
+      Number.isFinite(Date.parse(run.updatedAt)) ? Date.parse(run.updatedAt) : Number.NEGATIVE_INFINITY,
+      Number.isFinite(Date.parse(nodeState.updatedAt))
+        ? Date.parse(nodeState.updatedAt)
+        : Number.NEGATIVE_INFINITY
+    );
+    if (
+      Number.isFinite(lastActivityMs) &&
+      Date.now() - lastActivityMs < STALE_RUNNING_NODE_RECOVERY_MS
+    ) {
+      return;
+    }
 
     this.pushLog(`Recovering stale running node: ${run.currentNode} (reset to pending for re-execution).`);
     await this.orchestrator.retryCurrent(run.id, run.currentNode);

@@ -1452,6 +1452,116 @@ describe("collectPapers bibtex", () => {
     await waitForCollectEnrichmentJob(runId);
   });
 
+  it("clears stale collect fetch errors before retrying a new fetch", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-clear-stale-error-"));
+    process.chdir(root);
+
+    const runId = "run-collect-clear-stale-error";
+    const run: RunRecord = {
+      version: 3,
+      workflowVersion: 3,
+      id: runId,
+      title: "Budgeted Reasoning",
+      topic: "Investigate how small language models can improve reasoning quality under constrained inference budgets through adaptive or structured test-time strategies",
+      constraints: [],
+      objectiveMetric: "GSM8K accuracy",
+      status: "running",
+      currentNode: "collect_papers",
+      latestSummary: undefined,
+      nodeThreads: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      graph: createDefaultGraphState(),
+      memoryRefs: {
+        runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
+      }
+    };
+
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "run_brief.raw",
+            value: "# Research Brief\n\n## Topic\n\nInvestigate how small language models can improve reasoning quality under constrained inference budgets through adaptive or structured test-time strategies\n",
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "run_brief.extracted",
+            value: {
+              topic: "Investigate how small language models can improve reasoning quality under constrained inference budgets through adaptive or structured test-time strategies"
+            },
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "collect_papers.last_error",
+            value: "Operation aborted by user",
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "collect_papers.last_result",
+            value: {
+              query: '+"small language models" +"test-time reasoning"',
+              fetchError: "Operation aborted by user",
+              stored: 0
+            },
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const streamSearchPapers = vi.fn(async function* (_request: { query: string }) {
+      expect(await readRunContextValue(root, runId, "collect_papers.last_error")).toBeNull();
+      const result = (await readRunContextValue(root, runId, "collect_papers.last_result")) as {
+        fetchError?: string | null;
+      } | undefined;
+      expect(result?.fetchError ?? null).toBeNull();
+      yield [
+        {
+          paperId: "paper-1",
+          title: "Adaptive Test-Time Reasoning for Small Language Models",
+          authors: ["Alice Kim"]
+        }
+      ];
+    });
+
+    const node = createCollectPapersNode({
+      config: {
+        papers: {
+          max_results: 200
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {
+        streamSearchPapers,
+        getLastSearchDiagnostics: vi.fn(() => ({
+          attemptCount: 1,
+          lastStatus: 200,
+          attempts: [{ attempt: 1, ok: true, status: 200, endpoint: "search" }]
+        }))
+      } as any
+    });
+
+    const result = await node.execute({
+      run,
+      graph: run.graph
+    });
+
+    expect(result.status).toBe("success");
+    expect(await readRunContextValue(root, runId, "collect_papers.last_error")).toBeNull();
+  });
+
   it("falls back to deterministic brief-topic phrase bundles when llm query generation is unavailable", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-extracted-brief-topic-"));
     process.chdir(root);
