@@ -1,6 +1,7 @@
 import path from "node:path";
-import { exec, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
+import { setPriority as setProcessPriority } from "node:os";
 
 import { AgentComputerInterface, AciAction, AciObservation } from "./aci.js";
 import { evaluateCommandPolicy, formatPolicyBlockMessage } from "./commandPolicy.js";
@@ -256,23 +257,71 @@ export class LocalAciAdapter implements AgentComputerInterface {
 function runShell(command: string, cwd?: string, signal?: AbortSignal): Promise<AciObservation> {
   const started = Date.now();
   return new Promise((resolve) => {
-    exec(command, {
+    const child = spawn(process.env.SHELL || "/bin/sh", ["-lc", command], {
       cwd: cwd || process.cwd(),
-      env: process.env,
-      maxBuffer: 1024 * 1024 * 16,
+      env: buildManagedExecutionEnv(process.env),
+      stdio: ["ignore", "pipe", "pipe"],
       signal
-    }, (error, stdout, stderr) => {
+    });
+    lowerChildPriority(child.pid);
+
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.on("error", (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
       resolve({
-        status: error ? "error" : "ok",
+        status: "error",
+        stderr: error instanceof Error ? error.message : String(error),
+        duration_ms: Date.now() - started
+      });
+    });
+    child.on("close", (code) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve({
+        status: code === 0 ? "ok" : "error",
         stdout,
         stderr,
-        exit_code: error && typeof (error as { code?: number }).code === "number"
-          ? (error as { code: number }).code
-          : 0,
+        exit_code: code ?? 1,
         duration_ms: Date.now() - started
       });
     });
   });
+}
+
+function buildManagedExecutionEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return {
+    ...baseEnv,
+    OMP_NUM_THREADS: baseEnv.OMP_NUM_THREADS || "1",
+    MKL_NUM_THREADS: baseEnv.MKL_NUM_THREADS || "1",
+    OPENBLAS_NUM_THREADS: baseEnv.OPENBLAS_NUM_THREADS || "1",
+    NUMEXPR_NUM_THREADS: baseEnv.NUMEXPR_NUM_THREADS || "1",
+    TOKENIZERS_PARALLELISM: baseEnv.TOKENIZERS_PARALLELISM || "false",
+    MALLOC_ARENA_MAX: baseEnv.MALLOC_ARENA_MAX || "2"
+  };
+}
+
+function lowerChildPriority(pid?: number): void {
+  if (typeof pid !== "number" || pid <= 0) {
+    return;
+  }
+  try {
+    setProcessPriority(pid, 10);
+  } catch {
+    // Best-effort only: command execution should continue even when niceness cannot be changed.
+  }
 }
 
 function asString(value: unknown): string | undefined {

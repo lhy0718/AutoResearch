@@ -8,7 +8,8 @@ import {
   PaperDraft,
   PaperDraftClaim,
   PaperWritingBundle,
-  ResultAnalysisArtifact
+  ResultAnalysisArtifact,
+  sanitizePaperNarrativeText
 } from "./paperWriting.js";
 
 const STANDARD_SECTION_HEADINGS = [
@@ -201,7 +202,7 @@ export function buildPaperPolishPrompt(input: {
       title: input.bundle.runTitle,
       topic: input.bundle.topic,
       objective_metric: input.bundle.objectiveMetric,
-      constraints: input.bundle.constraints
+      constraints: input.bundle.constraints.map((item) => sanitizePaperNarrativeText(item))
     },
     title_guidance: {
       suggested_paper_title: input.draft.title || buildSuggestedPaperTitle(input.bundle),

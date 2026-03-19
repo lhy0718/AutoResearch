@@ -149,6 +149,14 @@ interface ImplementTaskSpec {
     previous_script?: string;
     long_term_memory: LongTermMemorySnapshot;
     runner_feedback?: RunVerifierReport;
+    paper_critique_feedback?: {
+      overall_decision?: string;
+      manuscript_type?: string;
+      needs_additional_experiments?: boolean;
+      blocking_issue_summaries: string[];
+      recommended_fixes: string[];
+      summary?: string;
+    };
     resolved_constraint_profile?: CachedConstraintProfile["profile"];
     comparison_contract?: {
       plan_id: string;
@@ -424,9 +432,23 @@ export class ImplementSessionManager {
         { publicDir: defaultPublicDir }
       );
     }
+    if (taskSpec.context.paper_critique_feedback) {
+      emitImplementObservation(
+        "preflight",
+        `Loaded paper critique feedback from write_paper: ${taskSpec.context.paper_critique_feedback.summary || "additional experimental evidence is required"}`,
+        { publicDir: defaultPublicDir }
+      );
+    }
 
     let activeThreadId = currentThreadId;
-    if (taskSpec.context.plan_changed && activeThreadId) {
+    if (
+      activeThreadId &&
+      (
+        taskSpec.context.plan_changed ||
+        taskSpec.context.runner_feedback ||
+        taskSpec.context.paper_critique_feedback
+      )
+    ) {
       activeThreadId = undefined;
       await runContext.put("implement_experiments.thread_id", null);
       const latestRun = (await this.deps.runStore.getRun(run.id)) || run;
@@ -436,7 +458,11 @@ export class ImplementSessionManager {
       }
       emitImplementObservation(
         "preflight",
-        "Experiment plan changed since the last implement cycle; starting a fresh implementation thread.",
+        taskSpec.context.plan_changed
+          ? "Experiment plan changed since the last implement cycle; starting a fresh implementation thread."
+          : taskSpec.context.runner_feedback
+            ? "Runner feedback changed the repair target; starting a fresh implementation thread."
+            : "Paper critique requested additional implementation evidence; starting a fresh implementation thread.",
         { publicDir: defaultPublicDir }
       );
     }
@@ -543,7 +569,10 @@ export class ImplementSessionManager {
         metricsPath: isolation.metricsPath,
         workspaceRoot: isolation.workspaceRoot,
         errorMessage: "Recovered an already materialized governed experiment bundle before re-entering Codex.",
-        requireFreshPlanAlignment: promptTaskSpec.context.plan_changed
+        requireFreshPlanAlignment:
+          promptTaskSpec.context.plan_changed ||
+          Boolean(promptTaskSpec.context.runner_feedback) ||
+          Boolean(promptTaskSpec.context.paper_critique_feedback)
       });
       if (recoveredBeforeTurn && (await hasRecoverableExecutionEvidence(isolation.publicDir, isolation.metricsPath))) {
         emitImplementObservation(
@@ -622,7 +651,9 @@ export class ImplementSessionManager {
             metricsPath: isolation.metricsPath,
             workspaceRoot: isolation.workspaceRoot,
             errorMessage,
-            requireFreshPlanAlignment: promptTaskSpec.context.plan_changed
+            requireFreshPlanAlignment:
+              promptTaskSpec.context.plan_changed ||
+              Boolean(promptTaskSpec.context.paper_critique_feedback)
           });
           if (!recovered) {
             const verifyReport = buildCodexTurnFailureReport(errorMessage);
@@ -1269,6 +1300,30 @@ export class ImplementSessionManager {
     const runnerFeedback =
       (await runContext.get<RunVerifierReport>("implement_experiments.runner_feedback")) ||
       (await runContext.get<RunVerifierReport>("run_experiments.feedback_for_implementer"));
+    const paperCritique = await runContext.get<{
+      overall_decision?: string;
+      manuscript_type?: string;
+      needs_additional_experiments?: boolean;
+      manuscript_claim_risk_summary?: string;
+      blocking_issues?: Array<{ summary?: string; recommended_fix?: string }>;
+    }>("write_paper.paper_critique");
+    const paperCritiqueFeedback =
+      paperCritique?.needs_additional_experiments || paperCritique?.overall_decision === "backtrack_to_implement"
+        ? {
+            overall_decision: paperCritique.overall_decision,
+            manuscript_type: paperCritique.manuscript_type,
+            needs_additional_experiments: paperCritique.needs_additional_experiments,
+            blocking_issue_summaries: (paperCritique.blocking_issues || [])
+              .map((item) => trimBlock(item.summary || "", 240))
+              .filter(Boolean)
+              .slice(0, 6),
+            recommended_fixes: (paperCritique.blocking_issues || [])
+              .map((item) => trimBlock(item.recommended_fix || "", 240))
+              .filter(Boolean)
+              .slice(0, 6),
+            summary: trimBlock(paperCritique.manuscript_claim_risk_summary || "", 500)
+          }
+        : undefined;
     const cachedConstraintProfile = await runContext.get<CachedConstraintProfile>("constraints.profile");
     const comparisonContract = await loadExperimentComparisonContract(run, runContext);
     const repoListing = await topLevelWorkspaceListing(this.deps.workspaceRoot);
@@ -1311,6 +1366,10 @@ export class ImplementSessionManager {
         previous_script: rewriteWorkspacePathsForSandbox(previousScript, this.deps.workspaceRoot),
         long_term_memory: rewriteWorkspacePathsForSandbox(longTermMemory, this.deps.workspaceRoot),
         runner_feedback: rewriteWorkspacePathsForSandbox(runnerFeedback, this.deps.workspaceRoot),
+        paper_critique_feedback: rewriteWorkspacePathsForSandbox(
+          paperCritiqueFeedback,
+          this.deps.workspaceRoot
+        ),
         resolved_constraint_profile: rewriteWorkspacePathsForSandbox(cachedConstraintProfile?.profile, this.deps.workspaceRoot),
         comparison_contract: comparisonContract
           ? rewriteWorkspacePathsForSandbox(
@@ -1413,6 +1472,16 @@ export class ImplementSessionManager {
         "",
         "Runner feedback from run_experiments:",
         JSON.stringify(sandboxTaskSpec.context.runner_feedback, null, 2)
+      );
+    }
+    if (sandboxTaskSpec.context.paper_critique_feedback) {
+      lines.push(
+        "",
+        "Post-draft critique requiring stronger experimental evidence:",
+        JSON.stringify(sandboxTaskSpec.context.paper_critique_feedback, null, 2),
+        "",
+        "Treat this as a fresh implementation target. Do NOT reuse the previous script unchanged.",
+        "Expand the implementation so the next governed run can add the missing evidence categories called out by the critique when possible within budget."
       );
     }
     if (sandboxTaskSpec.context.comparison_contract) {
@@ -1857,6 +1926,38 @@ export class ImplementSessionManager {
         verifyStatus: baseReport.status
       });
       return baseReport;
+    }
+
+    const pythonLiteralLeak = await detectPythonJsonLiteralLeak(executionScriptPath);
+    if (pythonLiteralLeak) {
+      const report: VerifyReport = {
+        status: "fail",
+        command,
+        cwd: attempt.workingDir,
+        exit_code: 0,
+        failure_type: "implementation",
+        next_action: "retry_patch",
+        stderr_excerpt: pythonLiteralLeak,
+        summary: buildVerificationFailureSummary(command, "implementation", pythonLiteralLeak)
+      };
+      this.deps.eventStream.emit({
+        type: "TEST_FAILED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          command,
+          cwd: attempt.workingDir,
+          failure_type: report.failure_type,
+          stderr: report.stderr_excerpt || report.summary,
+          attempt: attemptNumber
+        }
+      });
+      onProgress?.(report.summary, {
+        verificationCommand: command,
+        verifyStatus: report.status
+      });
+      return report;
     }
 
     this.deps.eventStream.emit({
@@ -2340,6 +2441,9 @@ async function recoverStructuredResultFromPublicBundle(params: {
   errorMessage: string;
   requireFreshPlanAlignment?: boolean;
 }): Promise<RunTurnResult | undefined> {
+  if (params.requireFreshPlanAlignment) {
+    return undefined;
+  }
   const entries = await fs.readdir(params.publicDir).catch(() => []);
   const scriptName = entries.find((entry) => /\.(py|js|sh|mjs|cjs)$/i.test(entry));
   if (!scriptName) {
@@ -4227,6 +4331,30 @@ function summarizeVerification(
     stderr_excerpt: stderrExcerpt || undefined,
     summary: buildVerificationFailureSummary(command, failureType, stderrExcerpt || stdoutExcerpt || "unknown error")
   };
+}
+
+async function detectPythonJsonLiteralLeak(scriptPath?: string): Promise<string | undefined> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return undefined;
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  const lines = source.split(/\r?\n/u);
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const match = line.match(/["'][^"'\\]+["']\s*:\s*(true|false|null)\b/u);
+    if (match) {
+      return `Python source contains JSON literal ${match[1]} at ${path.basename(scriptPath)}:${index + 1}; use Python ${match[1] === "null" ? "None" : match[1] === "true" ? "True" : "False"} instead.`;
+    }
+  }
+
+  return undefined;
 }
 
 function classifyVerificationFailure(

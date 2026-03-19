@@ -632,32 +632,58 @@ export class PaperWriterSessionManager {
       }
     }
 
-    const completion = await this.deps.llm.complete(input.prompt, {
-      systemPrompt: input.systemPrompt,
-      abortSignal: input.abortSignal,
-      onProgress: (event) => {
-        const text = event.text.trim();
-        if (!text) {
-          return;
+    try {
+      const completion = await this.deps.llm.complete(input.prompt, {
+        systemPrompt: input.systemPrompt,
+        abortSignal: input.abortSignal,
+        onProgress: (event) => {
+          const text = event.text.trim();
+          if (!text) {
+            return;
+          }
+          this.emit(input.run, event.type === "delta" ? `LLM> ${text}` : text);
         }
-        this.emit(input.run, event.type === "delta" ? `LLM> ${text}` : text);
+      });
+      const completedAt = new Date().toISOString();
+      input.trace?.push({
+        stage: input.stage,
+        mode: input.mode,
+        threadId: input.threadId,
+        fallbackUsed: false,
+        startedAt,
+        completedAt,
+        preview: previewText(completion.text)
+      });
+      this.emit(input.run, `Paper writer stage "${input.stage}" completed.`);
+      return {
+        text: completion.text,
+        threadId: input.threadId
+      };
+    } catch (error) {
+      if (input.abortSignal?.aborted) {
+        throw error;
       }
-    });
-    const completedAt = new Date().toISOString();
-    input.trace?.push({
-      stage: input.stage,
-      mode: input.mode,
-      threadId: input.threadId,
-      fallbackUsed: false,
-      startedAt,
-      completedAt,
-      preview: previewText(completion.text)
-    });
-    this.emit(input.run, `Paper writer stage "${input.stage}" completed.`);
-    return {
-      text: completion.text,
-      threadId: input.threadId
-    };
+      const message = error instanceof Error ? error.message : String(error);
+      const completedAt = new Date().toISOString();
+      input.trace?.push({
+        stage: input.stage,
+        mode: input.mode,
+        threadId: input.threadId,
+        fallbackUsed: true,
+        startedAt,
+        completedAt,
+        preview: "",
+        error: message
+      });
+      this.emit(
+        input.run,
+        `Paper writer stage "${input.stage}" failed in staged_llm mode: ${message}. Falling back to staged defaults for this stage.`
+      );
+      return {
+        text: "",
+        threadId: input.threadId
+      };
+    }
   }
 
   private async persistStageArtifacts(

@@ -86,6 +86,115 @@ Last updated: 2026-03-19 · 971 tests pass, 2 skipped
 
 ## Live validation issues
 
+### LV-060 — fallback paper drafting leaks internal artifact paths into submission prose
+- Status: FIXED (same-flow live revalidation no longer dies at `fetch failed`; manuscript artifacts now materialize, and deterministic submission sanitization removes `.autolabos/` leakage from fallback drafting)
+- Taxonomy: `in_memory_projection_bug`
+- Validation target: `test/` run `81820c46-d1b6-4080-8575-a35c60583480` at `write_paper` after staged LLM fetch failures trigger deterministic fallback drafting
+- Environment: `test/` workspace, existing paper-scale run, `providers.llm_mode=openai_api`
+- Reproduction:
+  1. Retry `write_paper` on the existing run after staged LLM `fetch failed` fallback is enabled
+  2. Let deterministic fallback draft/manuscript generation proceed
+  3. Observe `submission_validation.json` fail because prose copied a raw constraint mentioning ``test/.autolabos/`` and `test/output/`
+- Expected: submission prose may mention auditability and governed artifacts, but it should not leak internal run directories or local file paths
+- Actual: fallback draft/manuscript copied the raw constraint text, so submission validation blocked PDF build with `Submission text leaked an absolute or internal file path. (.autolabos/`)`
+- Fresh vs existing: Reproduced on the existing run in the same `write_paper` retry loop; the failing boundary is the fallback writing path, not run creation
+- Persisted artifact vs UI: TUI showed only a submission-validation failure, while persisted `paper/draft.json`, `paper/manuscript.session.json`, and `paper/main.tex` made it clear the manuscript path had otherwise succeeded and only the internal-path leak was blocking progression
+- Root cause hypothesis: `buildFallbackPaperDraft()` and the writing/polish prompt payloads carried raw run constraints directly into submission-facing prose, so fallback writing preserved backticked internal paths such as ``test/.autolabos/``
+- Code/test changes:
+  - `src/core/analysis/paperWriting.ts` now sanitizes narrative constraint text before using it in fallback paper drafting and writing prompts
+  - `src/core/analysis/paperManuscript.ts` now passes sanitized constraints into the polish prompt payload
+  - regression added in `tests/paperSubmissionSanitization.test.ts`
+- Regression status:
+  - deterministic sanitization regression pending validation below
+  - pending same-flow live retry from `test/` after patch
+- Remaining risks: The manuscript is still below paper-ready evidence quality; this fix only removes internal-path leakage from fallback submission prose
+
+### LV-059 — `write_paper` hard-fails on staged LLM fetch errors instead of degrading to stage-level fallback
+- Status: FIXED (same failure no longer kills the node in staged LLM mode after the session-manager fallback patch)
+- Taxonomy: `in_memory_projection_bug`
+- Validation target: `test/` live run `81820c46-d1b6-4080-8575-a35c60583480` at `review -> write_paper` with `providers.llm_mode=openai_api`
+- Environment: `test/` workspace, existing resumed run, staged paper-writing path
+- Reproduction:
+  1. Resume the existing run after `review` advances to `write_paper`
+  2. Let `PaperWriterSessionManager` enter `staged_llm` mode because `providers.llm_mode=openai_api`
+  3. Hit a provider/network fetch failure during one of the writing stages
+  4. Observe the node fail with the raw message `fetch failed`
+- Expected: `write_paper` should preserve an honest manuscript/evidence ceiling, but a staged LLM transport failure should fall back to the deterministic staged defaults already available to the session manager instead of aborting the whole node immediately
+- Actual: The staged LLM path propagated `fetch failed` directly, so `write_paper` failed before it could finish the fallback draft/manuscript path
+- Fresh vs existing: Reproduced on the existing paper-scale run after real experiments and review had already completed; the failing boundary is the staged LLM paper-writer session path itself rather than fresh run creation
+- Persisted artifact vs UI: The failure checkpoint recorded only `fetch failed`, while the run had already produced `paper/input_validation.json`, `paper/outline.json`, and review artifacts that were sufficient to continue into a conservative fallback manuscript path
+- Root cause hypothesis: `PaperWriterSessionManager.runStage()` handled codex-session timeouts with a per-stage fallback, but the `staged_llm` branch awaited `llm.complete()` without any recovery wrapper, so transport/provider failures escaped as node-level write-paper failures
+- Code/test changes:
+  - `src/core/agents/paperWriterSessionManager.ts` now catches staged LLM stage failures, records trace/error metadata, emits a fallback message, and returns empty stage text so the existing fallback outline/draft/review/manuscript builders can continue
+  - regression added in `tests/paperWriterSessionManager.test.ts`
+- Regression status:
+  - targeted staged-LLM fetch-failure regression passed
+  - pending same-flow live revalidation from `test/` after patch
+- Remaining risks: This keeps paper drafting honest and auditable under provider failure, but it does not create stronger experimental evidence; manuscript classification must still remain under the review/claim ceiling
+
+### LV-058 — `run_experiments` can monopolize host responsiveness during heavy local model execution
+- Status: FIXED (not reproduced in short same-flow revalidation after the safety patch)
+- Taxonomy: `race_timing_bug`
+- Validation target: `test/` live validation loop while `run_experiments` launches the governed local Python runner
+- Environment: `test/` workspace, existing run `81820c46-d1b6-4080-8575-a35c60583480`, server rebooted at `2026-03-19 18:49 KST`
+- Reproduction:
+  1. Resume the same run through `implement_experiments`
+  2. Let the workflow auto-handoff into `run_experiments`
+  3. Observe persisted state reach `currentNode=run_experiments` at `2026-03-19T09:44:51Z`
+  4. Shortly after, the server becomes unresponsive and needs a hard reboot
+- Expected: A governed local experiment may be slow, but it should not monopolize the host to the point that the server stops responding
+- Actual: The last persisted workload before reboot was the local Python command in `run_experiments`, with heavy model-loading stderr already present; the host stopped responding before the workflow could converge
+- Fresh vs existing: Observed on the existing resumed run after multiple backtrack cycles; the failing boundary is the local execution surface itself, not fresh-run startup
+- Persisted artifact vs UI: `runs.json` shows `currentNode=run_experiments` with checkpoint `1094`; `run_experiments_panel/execution_plan.json` shows a real local Python runner command with `--pilot-size 16`; the reboot cut the UI before a new verifier artifact could be written for that cycle
+- Root cause hypothesis: `LocalAciAdapter.runCommand()` launches heavy local shell commands with default process priority and unconstrained BLAS/tokenizer thread settings, so a model-loading experiment can saturate host resources and tank server responsiveness
+- Code/test changes:
+  - `src/tools/aciLocalAdapter.ts` now launches local shell commands with conservative execution env caps (`OMP_NUM_THREADS=1`, `MKL_NUM_THREADS=1`, `OPENBLAS_NUM_THREADS=1`, `NUMEXPR_NUM_THREADS=1`, `TOKENIZERS_PARALLELISM=false`, `MALLOC_ARENA_MAX=2`) and best-effort lower child priority
+  - regression test added in `tests/aciLocalAdapter.test.ts`
+- Regression status:
+  - `npm run build` passed
+  - `npm test` passed
+  - `npm run validate:harness` passed
+  - same `test/` run resumed into `run_experiments`, and concurrent `date` / `python3 -c 'print(1)'` probes returned immediately while the node remained active
+- Remaining risks: This was a short live revalidation rather than a full long-run stress test, so host-responsiveness risk is reduced but not mathematically eliminated
+
+### LV-057 — `implement_experiments` reuses a stale Codex thread after run feedback changes the repair target
+- Status: OPEN (reproduced in the same `test/` live run before patching)
+- Taxonomy: `persisted_state_bug`
+- Validation target: `test/` live repair cycle after `run_experiments` fails with new runner feedback
+- Environment: `test/` workspace, existing run `81820c46-d1b6-4080-8575-a35c60583480`, cycle 10, `implement_experiments`
+- Reproduction:
+  1. Resume the run after `run_experiments` reports `NameError: name 'false' is not defined`
+  2. Let `implement_experiments` start from the repaired design cycle
+  3. Observe the same prior `threadId` reused in `progress.jsonl`
+  4. Observe live tool activity repeatedly inspect the same runner lines instead of converging on a fresh repair turn
+- Expected: A new runner failure should start a fresh implement thread so the repair prompt is anchored on the new governed feedback
+- Actual: `implement_experiments` reuses the old thread even though the repair target changed, and live progress stalls while the old thread repeats read-only inspection commands
+- Fresh vs existing: Reproduced on the existing resumed run; the evidence points to stale thread continuity across cycles rather than fresh-run startup
+- Persisted artifact vs UI: TUI shows repeated `sed` / `rg` / `py_compile` tool activity, while persisted `status.json` and `progress.jsonl` remain stuck at the initial `localize` entries for the cycle
+- Root cause hypothesis: thread reset only occurs when the experiment plan hash changes; new `run_experiments` feedback does not clear the stale thread, so Codex keeps the old repair context
+- Code/test changes: Pending
+- Regression status: Pending same-flow revalidation after forcing a fresh implement thread whenever runner feedback is present
+- Remaining risks: Need to verify the same run now starts with no carried-over thread and progresses into a fresh repair attempt
+
+### LV-056 — Supervisor stops after auto-approved design instead of executing the new pending node
+- Status: OPEN (reproduced in the same `test/` live run before patching)
+- Taxonomy: `persisted_state_bug`
+- Validation target: `test/` live TUI continuation after `design_experiments` completes and auto-approves into `implement_experiments`
+- Environment: `test/` workspace, existing run `81820c46-d1b6-4080-8575-a35c60583480`, cycle 10, interactive TUI session
+- Reproduction:
+  1. Backtrack the failed run to `design_experiments`
+  2. Let `design_experiments` complete and auto-approve
+  3. Observe persisted state advance to `currentNode=implement_experiments`
+  4. Observe `implement_experiments` node state remain `pending` and never start
+- Expected: Once `design_experiments` auto-approves, the supervised run should continue and execute the new pending `implement_experiments` node in the same loop
+- Actual: The run advances to `currentNode=implement_experiments`, but the supervisor returns early and leaves the new node pending with no live execution
+- Fresh vs existing: Reproduced on the existing resumed run; the symptom is tied to supervised continuation after a backtrack cycle rather than initial run creation
+- Persisted artifact vs UI: `runs.json` and checkpoint `1089-implement_experiments-after.json` both show `currentNode=implement_experiments` while `graph.nodeStates.implement_experiments.status=pending`; the UI stays parked instead of starting implementation
+- Root cause hypothesis: `InteractiveRunSupervisor.runUntilStop()` only invokes `runCurrentAgentWithOptions()` once and treats any still-running result as paused, even when the run has advanced to a fresh pending node that should execute immediately
+- Code/test changes: Pending
+- Regression status: Pending same-flow revalidation after the minimal supervisor-loop patch
+- Remaining risks: Need to confirm the loop continues exactly once into the new pending node without creating a self-loop when no progress occurs
+
 ### LV-030 — TUI crashes with unhandled EIO when stdout disconnects during render
 - Status: FIXED (not reproduced in re-validation of the same flow)
 - Taxonomy: `race_timing_bug`
@@ -730,3 +839,24 @@ Last updated: 2026-03-19 · 971 tests pass, 2 skipped
   - `tests/runStore.test.ts`
   - `tests/naturalAssistant.test.ts`
 - Update (2026-03-19): patched `RunStore` to recover `pendingTransition` from `transition_recommendation.json` when the run record lacks one, and patched `naturalAssistant` so failed runs prefer `apply transition` guidance over blind retry when a recorded transition exists. Deterministic regressions passed (`hydrates a missing pendingTransition from transition_recommendation.json`, `prefers an apply-transition recommendation for failed runs when a pending transition exists`). Same-flow live revalidation in `test/` now proposes `/agent apply 81820c46-d1b6-4080-8575-a35c60583480`, successfully applies `backtrack_to_design -> design_experiments`, and advances the run into a new `design_experiments` cycle instead of retrying the failed `run_experiments` node.
+
+## LV-055 implement_experiments local verification can miss Python-invalid JSON booleans, letting a broken runner reach run_experiments
+- Category: live validation issue
+- Status: active
+- Validation target: `test/` run `81820c46-d1b6-4080-8575-a35c60583480` on the revived `design_experiments -> implement_experiments -> run_experiments` cycle
+- Execution mode: fresh interactive TUI in `test/`, resumed existing governed run
+- Reproduction:
+  1. Reopen the failed run in `test/` and backtrack it to `design_experiments`.
+  2. Let the revived cycle proceed through `implement_experiments`.
+  3. Observe that local verification passes via `python -m py_compile`, then `run_experiments` launches the generated runner.
+  4. Observe the runtime failure in the generated Python file: `NameError: name 'false' is not defined. Did you mean: 'False'?`
+- Expected behavior: `implement_experiments` local verification should fail before handoff when a generated Python runner contains JSON literals like `false`, `true`, or `null` in executable code.
+- Actual behavior: `py_compile` passed, `implement_experiments` completed, and the broken runner only failed later in `run_experiments` after loading model weights.
+- Fresh vs existing: reproduced from a fresh `test/` TUI reopen of the existing governed run; the broken literal is persisted in the generated public runner, not a session-only projection issue.
+- Persisted artifact vs UI: `implement_experiments` reported successful local verification and second-stage handoff readiness, but the persisted runner source at `test/outputs/.../run_gsm8k_budget_reasoning.py:919` still contained `"paper_ready": false`, which is invalid in Python runtime code.
+- Dominant taxonomy: `persisted_state_bug`
+- Root-cause hypothesis: local verification relies on `python -m py_compile`, which catches syntax errors but not runtime NameErrors caused by JSON literals embedded in otherwise syntactically valid Python dicts.
+- Code/test changes:
+  - `src/core/agents/implementSessionManager.ts`
+  - `tests/implementSessionManager.test.ts`
+- Update (2026-03-19): patched `ImplementSessionManager` to scan verified Python source for leaked JSON literals (`false`, `true`, `null`) after `py_compile` passes and convert them into an `implementation` verification failure before handoff. Added deterministic regression coverage in `tests/implementSessionManager.test.ts` (`fails local verification when a Python runner leaks JSON booleans into source`). Live same-flow revalidation is next: the same run should now stop at `implement_experiments` instead of failing later in `run_experiments`.

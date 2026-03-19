@@ -2098,6 +2098,77 @@ describe("ImplementSessionManager", () => {
     expect(await memory.get("implement_experiments.pending_handoff_to_run_experiments")).toBe(false);
   });
 
+  it("fails local verification when a Python runner leaks JSON booleans into source", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-json-bool-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "JSON Boolean Leak",
+      topic: "agent reasoning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const scriptPath = path.join(runDir, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "def main():",
+        "    metrics_payload = {",
+        '        "paper_ready": false,',
+        "    }",
+        "    return metrics_payload",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexCliClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        workingDir: runDir,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    expect(report.status).toBe("fail");
+    expect(report.failure_type).toBe("implementation");
+    expect(report.summary).toContain("JSON literal false");
+  });
+
   it("recovers a materialized public bundle when Codex disconnects before returning structured output", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-recover-bundle-"));
     tempDirs.push(workspace);
@@ -2385,6 +2456,207 @@ describe("ImplementSessionManager", () => {
     expect(callCount).toBe(1);
     expect(result.summary).toContain("Re-implemented the bounded retry with a larger scope.");
     expect(result.runCommand).toContain("--pilot-size 16 --repeats 2");
+  });
+
+  it("does not reuse an existing public bundle before Codex when runner feedback changes the repair target", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-runner-feedback-reuse-gate-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Runner Feedback Reuse Gate",
+      topic: "repair broken python runner",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+    mkdirSync(path.dirname(run.memoryRefs.episodePath), { recursive: true });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - repair_invalid_python_literal\n", "utf8");
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const scriptPath = path.join(publicDir, "run_gsm8k_budget_reasoning.py");
+    const configPath = path.join(publicDir, "frozen_config.json");
+    const readmePath = path.join(publicDir, "README.md");
+    const metricsPath = path.join(runDir, "metrics.json");
+    const artifactPath = path.join(publicDir, "artifacts", "pilot", "metrics.public.json");
+    const baselinePath = path.join(publicDir, "baseline_summary.json");
+
+    mkdirSync(path.dirname(artifactPath), { recursive: true });
+    mkdirSync(publicDir, { recursive: true });
+    writeFileSync(scriptPath, "print('stale reused bundle')\n", "utf8");
+    writeFileSync(configPath, "{\"pilot_size\": 16}\n", "utf8");
+    writeFileSync(baselinePath, "{\"baseline\":\"greedy\"}\n", "utf8");
+    writeFileSync(metricsPath, "{\"status\":\"ok\"}\n", "utf8");
+    writeFileSync(artifactPath, "{\"accuracy\":0.5}\n", "utf8");
+    writeFileSync(
+      readmePath,
+      [
+        "# Existing Bundle",
+        "",
+        "```bash",
+        `python outputs/${path.basename(path.dirname(publicDir))}/experiment/${path.basename(scriptPath)} \\`,
+        `  --config outputs/${path.basename(path.dirname(publicDir))}/experiment/${path.basename(configPath)} \\`,
+        `  --public-dir outputs/${path.basename(path.dirname(publicDir))}/experiment \\`,
+        `  --run-dir .autolabos/runs/${run.id} \\`,
+        `  --metrics-path .autolabos/runs/${run.id}/metrics.json`,
+        "```"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put("implement_experiments.runner_feedback", {
+      source: "run_experiments",
+      status: "fail",
+      trigger: "auto_handoff",
+      stage: "runtime",
+      summary: "fatal: name 'false' is not defined",
+      command: `python3 ${JSON.stringify(scriptPath)}`,
+      metrics_path: metricsPath,
+      suggested_next_action: "Replace JSON booleans with Python booleans before rerunning.",
+      recorded_at: "2026-03-19T09:59:46.400Z"
+    });
+
+    let callCount = 0;
+    const codex = {
+      runTurnStream: async () => {
+        callCount += 1;
+        writeFileSync(scriptPath, "print(False)\n", "utf8");
+        return {
+          threadId: "thread-fresh-after-runner-feedback",
+          finalText: JSON.stringify({
+            summary: "Fresh repair turn after runner feedback.",
+            run_command: `python3 ${JSON.stringify(scriptPath)}`,
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            experiment_mode: "real_execution"
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexCliClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+
+    expect(callCount).toBe(1);
+    expect(result.threadId).toBe("thread-fresh-after-runner-feedback");
+    expect(result.rawResponse).toContain("Fresh repair turn after runner feedback");
+  });
+
+  it("does not reuse an existing public bundle before Codex when write_paper critique requires additional experiments", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-paper-critique-reuse-gate-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Paper Critique Reuse Gate",
+      topic: "strengthen experimental evidence",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+    mkdirSync(path.dirname(run.memoryRefs.episodePath), { recursive: true });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - add confirmatory repeats\n", "utf8");
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const scriptPath = path.join(publicDir, "run_gsm8k_budget_reasoning.py");
+    const configPath = path.join(publicDir, "frozen_config.json");
+    const readmePath = path.join(publicDir, "README.md");
+    const metricsPath = path.join(runDir, "metrics.json");
+    const artifactPath = path.join(publicDir, "artifacts", "pilot", "metrics.public.json");
+    const baselinePath = path.join(publicDir, "baseline_summary.json");
+
+    mkdirSync(path.dirname(artifactPath), { recursive: true });
+    mkdirSync(publicDir, { recursive: true });
+    writeFileSync(scriptPath, "print('stale reused bundle')\n", "utf8");
+    writeFileSync(configPath, "{\"pilot_size\": 16, \"repeats\": 1}\n", "utf8");
+    writeFileSync(baselinePath, "{\"baseline\":\"greedy\"}\n", "utf8");
+    writeFileSync(metricsPath, "{\"status\":\"ok\"}\n", "utf8");
+    writeFileSync(artifactPath, "{\"accuracy\":0.5}\n", "utf8");
+    writeFileSync(
+      readmePath,
+      [
+        "# Existing Bundle",
+        "",
+        "```bash",
+        `python outputs/${path.basename(path.dirname(publicDir))}/experiment/${path.basename(scriptPath)} \\`,
+        `  --config outputs/${path.basename(path.dirname(publicDir))}/experiment/${path.basename(configPath)} \\`,
+        `  --public-dir outputs/${path.basename(path.dirname(publicDir))}/experiment \\`,
+        `  --run-dir .autolabos/runs/${run.id} \\`,
+        `  --metrics-path .autolabos/runs/${run.id}/metrics.json`,
+        "```"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put("write_paper.paper_critique", {
+      overall_decision: "backtrack_to_implement",
+      manuscript_type: "research_memo",
+      needs_additional_experiments: true,
+      manuscript_claim_risk_summary: "evidence insufficiency detected; additional experiments are required.",
+      blocking_issues: [
+        {
+          summary: "Section 'Results' is thin on evidence.",
+          recommended_fix: "Add confirmatory or repeated runs before finalizing claims."
+        }
+      ]
+    });
+
+    let callCount = 0;
+    const codex = {
+      runTurnStream: async () => {
+        callCount += 1;
+        writeFileSync(scriptPath, "print('fresh after paper critique')\n", "utf8");
+        return {
+          threadId: "thread-fresh-after-paper-critique",
+          finalText: JSON.stringify({
+            summary: "Fresh implementation turn after write_paper critique.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --repeats 2`,
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            experiment_mode: "real_execution"
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexCliClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+
+    expect(callCount).toBe(1);
+    expect(result.threadId).toBe("thread-fresh-after-paper-critique");
+    expect(result.rawResponse).toContain("Fresh implementation turn after write_paper critique");
   });
 
   it("pauses for approval after an unrecoverable Codex transport failure instead of triggering graph-level auto-retries", async () => {
@@ -3170,5 +3442,95 @@ describe("ImplementSessionManager", () => {
     expect(updatedRun?.nodeThreads.implement_experiments).toBe("thread-fresh-impl");
     expect(await memory.get("implement_experiments.thread_id")).toBe("thread-fresh-impl");
     expect(progressText).toContain("starting a fresh implementation thread");
+  });
+
+  it("starts a fresh implement thread when runner feedback is present", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-fresh-thread-feedback-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Fresh Thread After Runner Feedback",
+      topic: "repair broken experiment runner",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - repair python runner\n", "utf8");
+
+    const scriptPath = path.join(runDir, "experiment.py");
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put("implement_experiments.thread_id", "thread-stale-impl");
+    await memory.put("implement_experiments.runner_feedback", {
+      source: "run_experiments",
+      status: "fail",
+      trigger: "auto_handoff",
+      stage: "runtime",
+      summary: "fatal: name 'false' is not defined",
+      command: `python3 ${JSON.stringify(scriptPath)}`,
+      metrics_path: path.join(runDir, "metrics.json"),
+      suggested_next_action: "Replace JSON booleans with Python booleans before rerunning.",
+      recorded_at: "2026-03-19T09:39:06.484Z"
+    });
+    const seededRun = (await runStore.getRun(run.id)) || run;
+    seededRun.nodeThreads.implement_experiments = "thread-stale-impl";
+    await runStore.updateRun(seededRun);
+
+    const contract = buildExperimentComparisonContract({
+      run,
+      selectedDesign: {
+        id: "plan_runner_feedback",
+        hypothesis_ids: ["h_1"],
+        baselines: ["baseline_runner"]
+      },
+      objectiveProfile: buildHeuristicObjectiveMetricProfile(run.objectiveMetric),
+      managedBundleSupported: false
+    });
+    await storeExperimentGovernanceDecision(run, memory, { contract, entries: [] });
+
+    let seenThreadId: string | undefined = "uninitialized";
+    const codex = {
+      runTurnStream: async ({ threadId }: { threadId?: string }) => {
+        seenThreadId = threadId;
+        writeFileSync(scriptPath, "print(False)\n", "utf8");
+        return {
+          threadId: "thread-fresh-after-feedback",
+          finalText: JSON.stringify({
+            summary: "Repaired the Python runner from fresh feedback.",
+            run_command: `python3 ${JSON.stringify(scriptPath)}`,
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: path.join(runDir, "metrics.json"),
+            experiment_mode: "real_execution"
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexCliClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const updatedRun = await runStore.getRun(run.id);
+    const progressText = readFileSync(path.join(runDir, "implement_experiments", "progress.jsonl"), "utf8");
+
+    expect(seenThreadId).toBeUndefined();
+    expect(result.threadId).toBe("thread-fresh-after-feedback");
+    expect(updatedRun?.nodeThreads.implement_experiments).toBe("thread-fresh-after-feedback");
+    expect(await memory.get("implement_experiments.thread_id")).toBe("thread-fresh-after-feedback");
+    expect(progressText).toContain("Runner feedback changed the repair target");
   });
 });

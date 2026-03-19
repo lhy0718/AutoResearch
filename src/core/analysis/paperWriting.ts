@@ -239,7 +239,7 @@ export function buildPaperWriterPrompt(input: {
       title: input.bundle.runTitle,
       topic: input.bundle.topic,
       objective_metric: input.bundle.objectiveMetric,
-      constraints: input.bundle.constraints
+      constraints: input.bundle.constraints.map((item) => sanitizePaperNarrativeText(item))
     },
     title_guidance: {
       suggested_paper_title: buildSuggestedPaperTitle(input.bundle),
@@ -513,6 +513,12 @@ export function normalizePaperDraft(input: {
 }
 
 export function buildFallbackPaperDraft(bundle: PaperWritingBundle): PaperDraft {
+  const safeTopic = sanitizePaperNarrativeText(bundle.topic) || "the current study";
+  const safeConstraints = bundle.constraints
+    .map((item) => sanitizePaperNarrativeText(item))
+    .filter(Boolean);
+  const safePlanSummary = sanitizePaperNarrativeText(bundle.experimentPlan?.selectedSummary || "");
+  const safeHypothesis = sanitizePaperNarrativeText(bundle.hypotheses[0]?.text || "");
   const topEvidence = bundle.evidenceRows
     .slice()
     .sort((left, right) => right.confidence - left.confidence)
@@ -525,12 +531,12 @@ export function buildFallbackPaperDraft(bundle: PaperWritingBundle): PaperDraft 
     ].filter(Boolean)
   );
   const introductionParagraph = [
-    `This draft studies ${bundle.topic}.`,
+    `This draft studies ${safeTopic}.`,
     bundle.paperSummaries.length > 0
       ? `It synthesizes ${bundle.paperSummaries.length} analyzed paper summaries and ${bundle.evidenceRows.length} extracted evidence items.`
       : "It is grounded in the configured research workflow outputs.",
-    bundle.constraints.length > 0
-      ? `The writing is scoped by these constraints: ${bundle.constraints.join(", ")}.`
+    safeConstraints.length > 0
+      ? `The writing is scoped by these constraints: ${safeConstraints.join(", ")}.`
       : ""
   ].filter(Boolean).join(" ");
   const fallbackRelatedWorkSection = buildFallbackRelatedWorkSection(
@@ -539,11 +545,11 @@ export function buildFallbackPaperDraft(bundle: PaperWritingBundle): PaperDraft 
     topEvidence.slice(0, 2).map((item) => item.evidence_id)
   );
   const methodParagraph = [
-    bundle.experimentPlan?.selectedSummary
-      ? `The selected experimental design is ${bundle.experimentPlan.selectedTitle || "the current plan"}: ${bundle.experimentPlan.selectedSummary}.`
+    safePlanSummary
+      ? `The selected experimental design is ${bundle.experimentPlan?.selectedTitle || "the current plan"}: ${safePlanSummary}.`
       : "The method section is based on the current experiment plan and implementation artifacts.",
-    bundle.hypotheses.length > 0
-      ? `Key hypothesis focus: ${bundle.hypotheses[0]?.text}.`
+    safeHypothesis
+      ? `Key hypothesis focus: ${safeHypothesis}.`
       : ""
   ].filter(Boolean).join(" ");
   const resultsParagraph = [
@@ -625,7 +631,7 @@ export function buildFallbackPaperDraft(bundle: PaperWritingBundle): PaperDraft 
   return {
     title: buildSuggestedPaperTitle(bundle),
     abstract: [
-      `We study ${bundle.topic}.`,
+      `We study ${safeTopic}.`,
       `The draft integrates literature analysis, hypothesis generation, experiment design, and experimental results around the objective metric ${describeObjectiveMetricForNarrative(bundle.objectiveMetric)}.`,
       bundle.resultAnalysis?.objective_metric?.evaluation?.summary || ""
     ].filter(Boolean).join(" "),
@@ -2324,6 +2330,24 @@ function cleanString(value: unknown): string {
     return "";
   }
   return value.replace(/\s+/g, " ").trim();
+}
+
+export function sanitizePaperNarrativeText(value: unknown): string {
+  const cleaned = cleanString(value);
+  if (!cleaned) {
+    return "";
+  }
+
+  return cleaned
+    .replace(/`[^`]*\.autolabos\/[^`]*`/giu, "the governed run artifact directory")
+    .replace(/`[^`]*test\/outputs?\/[^`]*`/giu, "the public output directory")
+    .replace(/`[^`]*outputs\/[^`]*`/giu, "the public output bundle")
+    .replace(/\/(?:Users|home|tmp|var|private|Volumes)\/[^\s,.;)`]+/gu, "the local workspace")
+    .replace(/\.autolabos\/[^\s,.;)`]+/giu, "the governed run artifact directory")
+    .replace(/\btest\/outputs?\/[^\s,.;)`]+/giu, "the public output directory")
+    .replace(/\boutputs\/[^\s,.;)`]+/giu, "the public output bundle")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function describeObjectiveMetricForNarrative(value: unknown): string {

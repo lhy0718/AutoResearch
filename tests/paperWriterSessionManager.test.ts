@@ -568,4 +568,161 @@ describe("PaperWriterSessionManager", () => {
     expect(modeMsg).toContain("staged_llm");
     expect(modeMsg).not.toContain("codex_session");
   });
+
+  it("falls back stage-by-stage when staged_llm paper writing hits fetch failed", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-openai-fallback-"));
+    process.chdir(root);
+
+    const runId = "run-openai-paper-fallback";
+    const run = makeRun(runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(
+      path.join(runDir, "memory", "run_context.json"),
+      JSON.stringify({ version: 1, items: [] }),
+      "utf8"
+    );
+
+    const events: string[] = [];
+    const eventStream = new InMemoryEventStream();
+    eventStream.subscribe((evt: any) => {
+      if (typeof evt?.payload?.text === "string") events.push(evt.payload.text);
+    });
+
+    const manager = new PaperWriterSessionManager({
+      config: {
+        providers: {
+          llm_mode: "openai_api"
+        }
+      } as any,
+      codex: new CodexCliClient(root),
+      llm: {
+        async complete() {
+          throw new Error("fetch failed");
+        }
+      } as any,
+      eventStream,
+      runStore: {
+        async getRun(id: string) {
+          return id === run.id ? run : undefined;
+        },
+        async updateRun() {}
+      } as any,
+      workspaceRoot: root
+    });
+
+    const result = await manager.run({
+      run,
+      bundle: {
+        runTitle: run.title,
+        topic: run.topic,
+        objectiveMetric: run.objectiveMetric,
+        constraints: run.constraints,
+        paperSummaries: [
+          {
+            paper_id: "paper_1",
+            title: "Schema Bench",
+            source_type: "full_text",
+            summary: "Schema-backed coordination improves reproducibility.",
+            key_findings: ["Structured coordination improves reproducibility."],
+            limitations: [],
+            datasets: ["AgentBench-mini"],
+            metrics: ["reproducibility_score"],
+            novelty: "Persistent coordination state",
+            reproducibility_notes: ["Repeated trials are reported."]
+          }
+        ],
+        evidenceRows: [
+          {
+            evidence_id: "ev_1",
+            paper_id: "paper_1",
+            claim: "Structured coordination improves reproducibility.",
+            method_slot: "shared state schema",
+            result_slot: "higher reproducibility_score",
+            limitation_slot: "small benchmark",
+            dataset_slot: "AgentBench-mini",
+            metric_slot: "reproducibility_score",
+            evidence_span: "Repeated trials improved reproducibility_score.",
+            source_type: "full_text",
+            confidence: 0.9
+          }
+        ],
+        hypotheses: [
+          {
+            hypothesis_id: "h_1",
+            text: "Persistent coordination improves reproducibility.",
+            evidence_links: ["ev_1"]
+          }
+        ],
+        corpus: [
+          {
+            paper_id: "paper_1",
+            title: "Schema Bench",
+            abstract: "Schema-backed coordination improves reproducibility.",
+            authors: ["Alice Doe"],
+            year: 2025,
+            venue: "ACL"
+          }
+        ],
+        experimentPlan: {
+          selectedTitle: "Schema benchmark",
+          selectedSummary: "Compare persistent schemas with a baseline.",
+          rawText: ""
+        },
+        resultAnalysis: {
+          objective_metric: {
+            evaluation: {
+              summary: "Objective metric met: reproducibility_score=0.88 >= 0.8."
+            }
+          }
+        }
+      },
+      constraintProfile: {
+        source: "heuristic_fallback",
+        collect: {
+          dateRange: null,
+          year: null,
+          lastYears: null,
+          fieldsOfStudy: [],
+          venues: [],
+          publicationTypes: [],
+          minCitationCount: null,
+          openAccessPdf: null
+        },
+        writing: {
+          targetVenue: "ACL",
+          toneHint: "formal academic",
+          lengthHint: "short paper"
+        },
+        experiment: {
+          designNotes: [],
+          implementationNotes: [],
+          evaluationNotes: []
+        },
+        assumptions: []
+      },
+      objectiveMetricProfile: {
+        source: "heuristic_fallback",
+        raw: run.objectiveMetric,
+        primaryMetric: "reproducibility_score",
+        preferredMetricKeys: ["reproducibility_score"],
+        direction: "maximize",
+        comparator: ">=",
+        targetValue: 0.8,
+        targetDescription: ">= 0.8",
+        analysisFocus: ["Center the results analysis on reproducibility_score."],
+        paperEmphasis: ["Highlight reproducibility improvements."],
+        assumptions: []
+      }
+    });
+
+    expect(result.source).toBe("fallback");
+    expect(result.stageFallbacks).toBe(5);
+    expect(result.trace).toHaveLength(5);
+    expect(result.trace.every((entry) => entry.fallbackUsed)).toBe(true);
+    expect(result.errors).toEqual([]);
+    expect(events.some((line) => line.includes('failed in staged_llm mode: fetch failed'))).toBe(true);
+    expect(await readFile(path.join(runDir, "paper", "draft.json"), "utf8")).toContain('"sections"');
+    expect(await readFile(path.join(runDir, "paper", "manuscript.session.json"), "utf8")).toContain('"sections"');
+  });
 });

@@ -43,6 +43,8 @@ export type AnswerHumanInterventionResult =
     };
 
 export class InteractiveRunSupervisor {
+  private static readonly MAX_AUTO_CONTINUATIONS = 16;
+
   constructor(
     private readonly workspaceRoot: string,
     private readonly runStore: RunStore,
@@ -53,37 +55,71 @@ export class InteractiveRunSupervisor {
     runId: string,
     opts?: { abortSignal?: AbortSignal }
   ): Promise<InteractiveSupervisorOutcome> {
-    const response = await this.orchestrator.runCurrentAgentWithOptions(runId, {
-      abortSignal: opts?.abortSignal
-    });
-    const run = response.run;
-    if (run.status === "completed") {
-      return {
-        status: "completed",
+    const seenPendingFingerprints = new Set<string>();
+    let lastOutcome: InteractiveSupervisorOutcome | undefined;
+
+    for (let step = 0; step < InteractiveRunSupervisor.MAX_AUTO_CONTINUATIONS; step += 1) {
+      const response = await this.orchestrator.runCurrentAgentWithOptions(runId, {
+        abortSignal: opts?.abortSignal
+      });
+      const run = response.run;
+      if (run.status === "completed") {
+        return {
+          status: "completed",
+          run,
+          summary: response.result.summary
+        };
+      }
+      if (run.status === "failed") {
+        return {
+          status: "failed",
+          run,
+          summary: response.result.error || response.result.summary
+        };
+      }
+      const pendingRequest = await this.getActiveRequest(run);
+      if (pendingRequest) {
+        return {
+          status: "awaiting_human",
+          run,
+          request: pendingRequest
+        };
+      }
+
+      lastOutcome = {
+        status: "paused",
         run,
-        summary: response.result.summary
+        reason: run.graph.pendingTransition?.reason || response.result.summary || "Run paused."
       };
-    }
-    if (run.status === "failed") {
-      return {
-        status: "failed",
-        run,
-        summary: response.result.error || response.result.summary
-      };
-    }
-    const pendingRequest = await this.getActiveRequest(run);
-    if (pendingRequest) {
-      return {
-        status: "awaiting_human",
-        run,
-        request: pendingRequest
-      };
+
+      if (!this.shouldAutoContinue(run)) {
+        return lastOutcome;
+      }
+
+      const fingerprint = this.buildPendingExecutionFingerprint(run);
+      if (!fingerprint || seenPendingFingerprints.has(fingerprint)) {
+        return {
+          status: "paused",
+          run,
+          reason:
+            "Run remained on the same pending node without additional progress; pausing to avoid a supervisor loop."
+        };
+      }
+      seenPendingFingerprints.add(fingerprint);
     }
 
+    if (lastOutcome) {
+      return lastOutcome;
+    }
+
+    const run = await this.runStore.getRun(runId);
+    if (!run) {
+      throw new Error(`Run not found: ${runId}`);
+    }
     return {
       status: "paused",
       run,
-      reason: run.graph.pendingTransition?.reason || response.result.summary || "Run paused."
+      reason: "Run paused."
     };
   }
 
@@ -171,5 +207,18 @@ export class InteractiveRunSupervisor {
 
   private resolveRunContextPath(runId: string): string {
     return path.join(this.workspaceRoot, ".autolabos", "runs", runId, "memory", "run_context.json");
+  }
+
+  private shouldAutoContinue(run: RunRecord): boolean {
+    const nodeState = run.graph.nodeStates[run.currentNode];
+    return run.status === "running" && nodeState?.status === "pending";
+  }
+
+  private buildPendingExecutionFingerprint(run: RunRecord): string | undefined {
+    const nodeState = run.graph.nodeStates[run.currentNode];
+    if (!nodeState) {
+      return undefined;
+    }
+    return [run.currentNode, nodeState.status, run.graph.checkpointSeq, run.updatedAt].join(":");
   }
 }
