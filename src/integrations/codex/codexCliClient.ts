@@ -157,21 +157,8 @@ export class CodexCliClient {
     includeModelCapacity?: boolean;
   }): Promise<CodexEnvironmentCheck[]> {
     const checks: CodexEnvironmentCheck[] = [];
-    const codexHome = this.resolveCodexHomePath();
-    checks.push(
-      await this.checkWritableDirectory(
-        "codex-home",
-        codexHome,
-        "Codex home directory is writable."
-      )
-    );
-    checks.push(
-      await this.checkWritableDirectory(
-        "codex-shell-snapshots",
-        path.join(codexHome, "shell_snapshots"),
-        "Codex shell snapshot directory is writable."
-      )
-    );
+    const runtimeHome = await this.resolveRuntimeCodexHome();
+    checks.push(...runtimeHome.checks);
 
     if (opts?.includeModelCapacity) {
       const riskyModels = Array.from(
@@ -251,8 +238,7 @@ export class CodexCliClient {
     let finalText = "";
     let deltaBuffer = "";
     let aborted = false;
-
-    await this.ensureRuntimeDirectories();
+    const runtimeEnv = await this.ensureRuntimeDirectories();
 
     const workingDirectory = presentCodexPath(opts.workingDirectory || this.defaultWorkingDirectory);
     const args = [
@@ -298,7 +284,7 @@ export class CodexCliClient {
 
     const child = spawn("codex", args, {
       cwd: workingDirectory,
-      env: process.env
+      env: runtimeEnv
     });
 
     let forcedKillTimer: NodeJS.Timeout | undefined;
@@ -405,15 +391,73 @@ export class CodexCliClient {
     return path.join(os.homedir(), ".codex");
   }
 
-  private async ensureRuntimeDirectories(): Promise<void> {
-    const checks = await this.checkEnvironmentReadiness();
-    const blockingFailures = checks.filter((check) => !check.ok && check.blocking);
-    if (blockingFailures.length === 0) {
-      return;
+  private resolveWorkspaceFallbackCodexHomePath(): string {
+    return path.join(this.defaultWorkingDirectory, ".autolabos", "runtime", "codex-home");
+  }
+
+  private async ensureRuntimeDirectories(): Promise<NodeJS.ProcessEnv> {
+    const runtimeHome = await this.resolveRuntimeCodexHome();
+    const blockingFailures = runtimeHome.checks.filter((check) => !check.ok && check.blocking);
+    if (blockingFailures.length > 0) {
+      throw new Error(
+        blockingFailures.map((check) => `${check.name}: ${check.detail}`).join("\n")
+      );
     }
-    throw new Error(
-      blockingFailures.map((check) => `${check.name}: ${check.detail}`).join("\n")
+    return {
+      ...process.env,
+      CODEX_HOME: runtimeHome.codexHome
+    };
+  }
+
+  private async resolveRuntimeCodexHome(): Promise<{
+    codexHome: string;
+    checks: CodexEnvironmentCheck[];
+  }> {
+    const configured = process.env.CODEX_HOME?.trim();
+    const primaryHome = this.resolveCodexHomePath();
+    const primaryChecks = await this.checkCodexHomeReadiness(primaryHome);
+    if (primaryChecks.every((check) => check.ok) || configured) {
+      return {
+        codexHome: primaryHome,
+        checks: primaryChecks
+      };
+    }
+
+    const fallbackHome = this.resolveWorkspaceFallbackCodexHomePath();
+    const fallbackChecks = await this.checkCodexHomeReadiness(
+      fallbackHome,
+      `Using workspace-local fallback because ${primaryHome} is not writable.`
     );
+    if (fallbackChecks.every((check) => check.ok)) {
+      return {
+        codexHome: fallbackHome,
+        checks: fallbackChecks
+      };
+    }
+
+    return {
+      codexHome: primaryHome,
+      checks: [...primaryChecks, ...fallbackChecks]
+    };
+  }
+
+  private async checkCodexHomeReadiness(
+    codexHome: string,
+    detailPrefix?: string
+  ): Promise<CodexEnvironmentCheck[]> {
+    const prefix = detailPrefix ? `${detailPrefix} ` : "";
+    return [
+      await this.checkWritableDirectory(
+        "codex-home",
+        codexHome,
+        `${prefix}Codex home directory is writable.`
+      ),
+      await this.checkWritableDirectory(
+        "codex-shell-snapshots",
+        path.join(codexHome, "shell_snapshots"),
+        `${prefix}Codex shell snapshot directory is writable.`
+      )
+    ];
   }
 
   private async checkWritableDirectory(

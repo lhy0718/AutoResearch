@@ -50,6 +50,7 @@ class BlockingQueueJsonLLMClient extends MockLLMClient {
 }
 
 afterEach(() => {
+  delete process.env.AUTOLABOS_HYPOTHESIS_TIMEOUT_MS;
   process.chdir(ORIGINAL_CWD);
 });
 
@@ -423,6 +424,132 @@ describe("normalizeGenerateHypothesesRequest", () => {
     const result = await execution;
 
     expect(result.status).toBe("success");
+  });
+
+  it("falls back to single-pass hypothesis generation when a staged LLM call exceeds the timeout", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-hypothesis-timeout-"));
+    process.chdir(root);
+    process.env.AUTOLABOS_HYPOTHESIS_TIMEOUT_MS = "10";
+
+    const runId = "run-hypothesis-timeout";
+    const run = makeRun(runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "evidence_store.jsonl"),
+      [
+        JSON.stringify({
+          evidence_id: "ev_1",
+          paper_id: "paper_1",
+          claim: "Structured communication reduces ambiguity.",
+          evidence_span: "Structured communication reduces ambiguity by forcing typed handoffs.",
+          limitation_slot: "Not isolated against routing alone.",
+          dataset_slot: "HumanEval",
+          metric_slot: "pass@1 variance",
+          confidence: 0.95
+        }),
+        JSON.stringify({
+          evidence_id: "ev_2",
+          paper_id: "paper_2",
+          claim: "Execution feedback improves iterative correction.",
+          evidence_span: "Execution feedback improves iterative correction through repeated test-repair loops.",
+          limitation_slot: "Adds validator cost.",
+          dataset_slot: "MBPP",
+          metric_slot: "executability",
+          confidence: 0.94
+        })
+      ].join("\n") + "\n",
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "corpus.jsonl"),
+      [
+        JSON.stringify({ paper_id: "paper_1", title: "Paper One" }),
+        JSON.stringify({ paper_id: "paper_2", title: "Paper Two" })
+      ].join("\n") + "\n",
+      "utf8"
+    );
+
+    const gate = createDeferred();
+    const llm = new BlockingQueueJsonLLMClient(
+      [
+        JSON.stringify({ summary: "Unreachable staged axes output.", axes: [{ id: "ax_1", label: "unused", mechanism: "unused", intervention: "unused" }] }),
+        JSON.stringify({
+          summary: "Single-pass fallback selected two bounded hypotheses.",
+          candidates: [
+            {
+              id: "cand_1",
+              text: "A disagreement-triggered second pass will improve exact match at equal average token budget.",
+              novelty: 4,
+              feasibility: 5,
+              testability: 5,
+              cost: 2,
+              expected_gain: 4,
+              evidence_links: ["ev_1", "ev_2"],
+              rationale: "This is directly testable with a matched-budget baseline.",
+              reproducibility_signals: ["run_to_run_variance"],
+              measurement_hint: "Compare exact match, average tokens, and run-to-run variance under a matched-budget trigger.",
+              boundary_condition: "The effect may vanish when disagreement is a noisy trigger."
+            },
+            {
+              id: "cand_2",
+              text: "A correction stage only helps if wrong-to-right edits exceed right-to-wrong damage.",
+              novelty: 3,
+              feasibility: 5,
+              testability: 5,
+              cost: 2,
+              expected_gain: 3,
+              evidence_links: ["ev_2", "ev_1"],
+              rationale: "This turns the negative result into a measurable gating hypothesis.",
+              reproducibility_signals: ["answer_change_rate", "run_to_run_variance"],
+              measurement_hint: "Track correction rate, damage rate, and repeated-run variance.",
+              boundary_condition: "The effect reverses when the model is weak at self-critique."
+            }
+          ],
+          selected_ids: ["cand_1", "cand_2"]
+        })
+      ],
+      0,
+      gate.promise
+    );
+
+    const eventStream = new InMemoryEventStream();
+    const node = createGenerateHypothesesNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream,
+      llm,
+      pdfTextLlm: llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+    gate.resolve();
+
+    expect(result.status).toBe("success");
+    expect(result.summary).toContain("Single-pass fallback selected two bounded hypotheses.");
+
+    const status = JSON.parse(await readFile(path.join(runDir, "hypothesis_generation", "status.json"), "utf8")) as {
+      status?: string;
+      pipeline?: string;
+      fallbackReason?: string;
+      source?: string;
+    };
+    const trace = await readFile(path.join(runDir, "hypothesis_generation", "llm_trace.json"), "utf8");
+    const progress = await readFile(path.join(runDir, "hypothesis_generation", "progress.jsonl"), "utf8");
+    const hypotheses = await readFile(path.join(runDir, "hypotheses.jsonl"), "utf8");
+
+    expect(status.status).toBe("completed");
+    expect(status.pipeline).toBe("single_pass");
+    expect(status.source).toBe("llm");
+    expect(status.fallbackReason).toContain("hypothesis_axes_timeout:10ms");
+    expect(trace).toContain('"single_pass"');
+    expect(progress).toContain("Staged hypothesis pipeline failed, retrying single-pass generation");
+    expect(hypotheses).toContain('"candidate_id":"single_pass_1"');
   });
 
   it("down-weights abstract-only or caveated evidence during hypothesis selection", async () => {

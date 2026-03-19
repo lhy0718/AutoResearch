@@ -20,6 +20,12 @@ class QueueJsonLLMClient extends MockLLMClient {
   }
 }
 
+class HangingLLMClient extends MockLLMClient {
+  override async complete(): Promise<{ text: string }> {
+    return await new Promise<{ text: string }>(() => {});
+  }
+}
+
 describe("researchPlanning helpers", () => {
   it("generates structured hypothesis candidates from LLM JSON", async () => {
     const llm = new QueueJsonLLMClient([
@@ -947,5 +953,65 @@ describe("researchPlanning helpers", () => {
     expect(result.selected.metrics).toContain("run_to_run_variance");
     expect(result.selected.baselines).toContain("free_form_chat_baseline");
     expect(result.selected.evaluation_steps.some((step) => step.includes("repeated runs"))).toBe(true);
+  });
+
+  it("falls back deterministically when experiment design llm exceeds the timeout", async () => {
+    const result = await designExperimentsFromHypotheses({
+      llm: new HangingLLMClient(),
+      runTitle: "Budget-aware reasoning",
+      runTopic: "Budget-aware reasoning",
+      objectiveMetric: "accuracy_delta_vs_baseline",
+      hypotheses: [
+        {
+          hypothesis_id: "h_1",
+          text: "Adaptive stopping improves budget-aware reasoning quality.",
+          reproducibility_signals: ["run_to_run_variance"],
+          measurement_hint: "Compare accuracy_delta_vs_baseline across repeated bounded runs."
+        }
+      ],
+      constraintProfile: {
+        source: "heuristic_fallback",
+        collect: {},
+        writing: {},
+        experiment: {
+          designNotes: [],
+          implementationNotes: [],
+          evaluationNotes: []
+        },
+        assumptions: []
+      },
+      objectiveProfile: {
+        source: "heuristic_fallback",
+        raw: "accuracy_delta_vs_baseline",
+        primaryMetric: "accuracy_delta_vs_baseline",
+        preferredMetricKeys: ["accuracy_delta_vs_baseline"],
+        analysisFocus: [],
+        paperEmphasis: [],
+        assumptions: []
+      },
+      retryContext: {
+        previous_pilot_size: 8,
+        previous_repeats: 1,
+        registered_pilot_size: 200,
+        registered_repeats: 5,
+        previous_primary_metric_name: "accuracy_delta_vs_baseline",
+        previous_primary_metric_value: -0.125,
+        previous_baseline_name: "fixed_cot_256",
+        previous_objective_status: "not_met",
+        transition_action: "backtrack_to_design",
+        retry_directives: [
+          "Move the next bounded local branch materially closer to the registered pilot scope while keeping the run locally executable.",
+          "Revise the treatment or stopping policy because the previous accuracy_delta_vs_baseline did not improve over fixed_cot_256."
+        ]
+      },
+      timeoutMs: 5
+    });
+
+    expect(result.source).toBe("fallback");
+    expect(result.fallbackReason).toContain("experiment_design_timeout:5ms");
+    expect(result.selected.plan_summary).toContain("did not improve accuracy_delta_vs_baseline");
+    expect(result.selected.evaluation_steps).toContain(
+      "Move the next bounded local branch materially closer to the registered pilot scope while keeping the run locally executable."
+    );
   });
 });

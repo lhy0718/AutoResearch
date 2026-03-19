@@ -487,6 +487,164 @@ describe("review node", () => {
     expect(packet.suggested_actions).toContain("/agent jump design_experiments --force");
   });
 
+  it("keeps explicit baseline names in pre_review_summary when they come from analysis metrics instead of comparison labels", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-review-node-pre-summary-"));
+    process.chdir(root);
+
+    const run = makeRun("run-review-pre-summary");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await mkdir(path.join(runDir, "figures"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ accuracy: 0.08 }, null, 2), "utf8");
+    await writeFile(path.join(runDir, "figures", "performance.svg"), "<svg></svg>\n", "utf8");
+    await writeFile(path.join(runDir, "corpus.jsonl"), `${JSON.stringify({ paper_id: "paper_1" })}\n`, "utf8");
+    await writeFile(path.join(runDir, "paper_summaries.jsonl"), `${JSON.stringify({ paper_id: "paper_1" })}\n`, "utf8");
+    await writeFile(path.join(runDir, "evidence_store.jsonl"), `${JSON.stringify({ evidence_id: "ev_1" })}\n`, "utf8");
+    await writeFile(path.join(runDir, "hypotheses.jsonl"), `${JSON.stringify({ hypothesis_id: "h_1" })}\n`, "utf8");
+    await writeFile(
+      path.join(runDir, "experiment_plan.yaml"),
+      ['selected_design:', '  title: "Baseline-aware retry"', '  summary: "Retry with the locked baseline comparison."', '  baselines:', '    - "current_best_baseline"'].join("\n"),
+      "utf8"
+    );
+    await writeFile(path.join(runDir, "baseline_summary.json"), JSON.stringify({ baseline: "current_best_baseline" }, null, 2), "utf8");
+    await writeFile(path.join(runDir, "result_table.json"), JSON.stringify({ summary: "baseline vs treatment" }, null, 2), "utf8");
+    await writeFile(
+      path.join(runDir, "result_analysis.json"),
+      `${JSON.stringify(
+        {
+          analysis_version: 1,
+          generated_at: new Date().toISOString(),
+          mean_score: 3.1,
+          metrics: {
+            accuracy_delta_vs_baseline: -0.25,
+            comparison_contract: {
+              baseline_binding: {
+                source_arm_name: "fixed_cot_256"
+              }
+            },
+            current_best_baseline: {
+              arm_name: "current_best_baseline",
+              accuracy: 0.333333
+            }
+          },
+          objective_metric: {
+            raw: "accuracy_delta_vs_baseline",
+            evaluation: {
+              status: "not_met",
+              summary: "Objective metric not met: accuracy_delta_vs_baseline=-0.25 does not satisfy > 0."
+            },
+            profile: {
+              source: "llm",
+              primary_metric: "accuracy_delta_vs_baseline",
+              preferred_metric_keys: ["accuracy_delta_vs_baseline"],
+              analysis_focus: [],
+              paper_emphasis: [],
+              assumptions: []
+            }
+          },
+          overview: {
+            objective_status: "not_met",
+            objective_summary: "Objective metric not met: accuracy_delta_vs_baseline=-0.25 does not satisfy > 0.",
+            execution_runs: 1
+          },
+          plan_context: {
+            selected_design: {
+              id: "design_1",
+              title: "Baseline-aware retry",
+              summary: "Retry with the locked baseline comparison.",
+              selected_hypothesis_ids: ["h_1"],
+              metrics: ["accuracy_delta_vs_baseline"],
+              baselines: ["current_best_baseline"],
+              evaluation_steps: ["rerun against the locked baseline"],
+              risks: ["still only one repeat"],
+              resource_notes: ["bounded local run"]
+            },
+            shortlisted_designs: [],
+            design_notes: [],
+            implementation_notes: [],
+            evaluation_notes: [],
+            assumptions: []
+          },
+          metric_table: [],
+          condition_comparisons: [],
+          execution_summary: {
+            observation_count: 1,
+            commands: ["python run.py"],
+            sources: ["local_python"],
+            stderr_excerpts: []
+          },
+          primary_findings: ["The treatment underperformed the baseline."],
+          limitations: [],
+          warnings: [],
+          paper_claims: [],
+          figure_specs: [
+            {
+              id: "perf",
+              title: "Performance overview",
+              path: "figures/performance.svg",
+              metric_keys: ["accuracy_delta_vs_baseline"],
+              summary: "The treatment underperformed the baseline."
+            }
+          ],
+          supplemental_runs: [],
+          external_comparisons: [],
+          statistical_summary: {
+            total_trials: 1,
+            executed_trials: 1,
+            cached_trials: 0,
+            confidence_intervals: [],
+            stability_metrics: [],
+            effect_estimates: [],
+            notes: []
+          },
+          failure_taxonomy: [],
+          synthesis: {
+            source: "fallback",
+            discussion_points: ["The treatment underperformed the baseline."],
+            failure_analysis: ["Revise the design before another run."],
+            follow_up_actions: ["Backtrack to design."],
+            confidence_statement: "Confidence is limited because only one bounded run exists."
+          },
+          transition_recommendation: {
+            action: "backtrack_to_design",
+            sourceNode: "analyze_results",
+            targetNode: "review",
+            reason: "Review the bounded negative result before the next retry.",
+            confidence: 0.8,
+            autoExecutable: true,
+            evidence: ["accuracy_delta_vs_baseline=-0.25"],
+            suggestedCommands: ["/approve"],
+            generatedAt: new Date().toISOString()
+          }
+        },
+        null,
+        2
+      )}\n`,
+      "utf8"
+    );
+
+    const node = createReviewNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: new LocalAciAdapter({ allowNetwork: false }),
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+
+    const preReviewRaw = await readFile(path.join(runDir, "review", "pre_review_summary.json"), "utf8");
+    const preReview = JSON.parse(preReviewRaw) as { baseline: string };
+    expect(preReview.baseline).toContain("current_best_baseline");
+    expect(preReview.baseline).toContain("fixed_cot_256");
+  });
+
   it("recommends a hypothesis reset when review finds unsupported claims", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-review-node-hypothesis-"));
     process.chdir(root);

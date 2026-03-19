@@ -1,8 +1,8 @@
 import path from "node:path";
-import { tmpdir } from "node:os";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os, { tmpdir } from "node:os";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   CodexCliClient,
@@ -23,6 +23,7 @@ describe("CodexCliClient fake response sequence", () => {
     } else {
       process.env.CODEX_HOME = originalCodexHome;
     }
+    vi.restoreAllMocks();
     while (tempDirs.length > 0) {
       const dir = tempDirs.pop();
       if (dir) {
@@ -82,6 +83,36 @@ describe("CodexCliClient fake response sequence", () => {
     expect(checks.find((check) => check.name === "codex-model-capacity")).toMatchObject({
       ok: true,
       blocking: false
+    });
+  });
+
+  it("falls back to a workspace-local Codex home when the default home is not writable", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-codex-home-fallback-"));
+    const workspace = await mkdtemp(path.join(tmpdir(), "autolabos-codex-workspace-"));
+    tempDirs.push(root, workspace);
+    const readonlyCodexHome = path.join(root, ".codex");
+    await writeFile(path.join(root, ".placeholder"), "keep", "utf8");
+    await rm(path.join(root, ".placeholder"), { force: true });
+    await mkdir(readonlyCodexHome, { recursive: true });
+    await chmod(readonlyCodexHome, 0o555);
+    vi.spyOn(os, "homedir").mockReturnValue(root);
+    delete process.env.CODEX_HOME;
+
+    const client = new CodexCliClient(workspace);
+    const checks = await client.checkEnvironmentReadiness();
+
+    const fallbackHome = path.join(workspace, ".autolabos", "runtime", "codex-home");
+    expect(checks.find((check) => check.name === "codex-home")).toMatchObject({
+      ok: true,
+      blocking: true
+    });
+    expect(checks.find((check) => check.name === "codex-home")?.detail).toContain(fallbackHome);
+    expect(checks.find((check) => check.name === "codex-home")?.detail).toContain(
+      "Using workspace-local fallback"
+    );
+    expect(checks.find((check) => check.name === "codex-shell-snapshots")).toMatchObject({
+      ok: true,
+      blocking: true
     });
   });
 

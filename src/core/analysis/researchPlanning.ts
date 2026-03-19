@@ -163,6 +163,22 @@ export interface ExperimentDesignResult {
   fallbackReason?: string;
 }
 
+export interface DesignRetryContext {
+  previous_selected_design_title?: string;
+  previous_pilot_size?: number;
+  previous_repeats?: number;
+  registered_pilot_size?: number;
+  registered_repeats?: number;
+  previous_primary_metric_name?: string;
+  previous_primary_metric_value?: number;
+  previous_baseline_name?: string;
+  previous_objective_status?: string;
+  transition_action?: string;
+  transition_reason?: string;
+  transition_evidence?: string[];
+  retry_directives: string[];
+}
+
 const HYPOTHESIS_SYSTEM_PROMPT = [
   "You are the AutoLabOS hypothesis agent.",
   "Generate multiple research hypotheses from structured evidence.",
@@ -287,16 +303,19 @@ export async function generateHypothesesFromEvidence(args: {
   evidenceSeeds: HypothesisEvidenceSeed[];
   branchCount?: number;
   topK?: number;
+  timeoutMs?: number;
   onProgress?: (message: string) => void;
 }): Promise<HypothesisPlanningResult> {
   const branchCount = Math.max(2, args.branchCount ?? 6);
   const topK = Math.max(1, args.topK ?? 2);
+  const timeoutMs = Math.max(1, args.timeoutMs ?? 45_000);
 
   try {
     return await runStagedHypothesisPipeline({
       ...args,
       branchCount,
-      topK
+      topK,
+      timeoutMs
     });
   } catch (stagedError) {
     const stagedReason = stagedError instanceof Error ? stagedError.message : String(stagedError);
@@ -312,12 +331,16 @@ export async function generateHypothesesFromEvidence(args: {
         branchCount,
         topK
       );
-      const completion = await args.llm.complete(
-        singlePassPrompt,
-        {
-          systemPrompt: HYPOTHESIS_SYSTEM_PROMPT,
-          onProgress: (event) => emitProgress(args.onProgress, "Hypothesis LLM", event)
-        }
+      const completion = await withTimeout(
+        args.llm.complete(
+          singlePassPrompt,
+          {
+            systemPrompt: HYPOTHESIS_SYSTEM_PROMPT,
+            onProgress: (event) => emitProgress(args.onProgress, "Hypothesis LLM", event)
+          }
+        ),
+        timeoutMs,
+        "hypothesis_single_pass_timeout"
       );
       args.onProgress?.("Received single-pass hypothesis generation output. Parsing JSON.");
       const parsed = parseHypothesisJson(completion.text);
@@ -422,6 +445,7 @@ async function runStagedHypothesisPipeline(args: {
   evidenceSeeds: HypothesisEvidenceSeed[];
   branchCount: number;
   topK: number;
+  timeoutMs: number;
   onProgress?: (message: string) => void;
 }): Promise<HypothesisPlanningResult> {
   const evidencePanel = selectHypothesisEvidencePanel(args.evidenceSeeds, 24);
@@ -432,12 +456,16 @@ async function runStagedHypothesisPipeline(args: {
 
   args.onProgress?.(`Synthesizing evidence axes from ${evidencePanel.length} curated evidence item(s).`);
   const axesPrompt = buildHypothesisAxesPrompt(args.runTitle, args.runTopic, args.objectiveMetric, evidencePanel);
-  const axesCompletion = await args.llm.complete(
-    axesPrompt,
-    {
-      systemPrompt: HYPOTHESIS_AXIS_SYSTEM_PROMPT,
-      onProgress: (event) => emitProgress(args.onProgress, "Hypothesis axes", event)
-    }
+  const axesCompletion = await withTimeout(
+    args.llm.complete(
+      axesPrompt,
+      {
+        systemPrompt: HYPOTHESIS_AXIS_SYSTEM_PROMPT,
+        onProgress: (event) => emitProgress(args.onProgress, "Hypothesis axes", event)
+      }
+    ),
+    args.timeoutMs,
+    "hypothesis_axes_timeout"
   );
   toolCallsUsed += 1;
   llmTrace.axes = {
@@ -473,12 +501,16 @@ async function runStagedHypothesisPipeline(args: {
       evidencePanel,
       role.count
     );
-    const completion = await args.llm.complete(
-      rolePrompt,
-      {
-        systemPrompt: HYPOTHESIS_SYSTEM_PROMPT,
-        onProgress: (event) => emitProgress(args.onProgress, `${roleLabel(role.kind)} drafts`, event)
-      }
+    const completion = await withTimeout(
+      args.llm.complete(
+        rolePrompt,
+        {
+          systemPrompt: HYPOTHESIS_SYSTEM_PROMPT,
+          onProgress: (event) => emitProgress(args.onProgress, `${roleLabel(role.kind)} drafts`, event)
+        }
+      ),
+      args.timeoutMs,
+      `hypothesis_${role.kind}_timeout`
     );
     toolCallsUsed += 1;
     llmTrace.drafts.push({
@@ -507,12 +539,16 @@ async function runStagedHypothesisPipeline(args: {
     drafts,
     args.topK
   );
-  const reviewCompletion = await args.llm.complete(
-    reviewPrompt,
-    {
-      systemPrompt: HYPOTHESIS_REVIEW_SYSTEM_PROMPT,
-      onProgress: (event) => emitProgress(args.onProgress, "Hypothesis review", event)
-    }
+  const reviewCompletion = await withTimeout(
+    args.llm.complete(
+      reviewPrompt,
+      {
+        systemPrompt: HYPOTHESIS_REVIEW_SYSTEM_PROMPT,
+        onProgress: (event) => emitProgress(args.onProgress, "Hypothesis review", event)
+      }
+    ),
+    args.timeoutMs,
+    "hypothesis_review_timeout"
   );
   toolCallsUsed += 1;
   llmTrace.review = {
@@ -585,27 +621,35 @@ export async function designExperimentsFromHypotheses(args: {
   hypotheses: DesignInputHypothesis[];
   constraintProfile: ConstraintProfile;
   objectiveProfile: ObjectiveMetricProfile;
+  retryContext?: DesignRetryContext;
   candidateCount?: number;
+  timeoutMs?: number;
   onProgress?: (message: string) => void;
 }): Promise<ExperimentDesignResult> {
   const candidateCount = Math.max(2, args.candidateCount ?? 3);
+  const timeoutMs = Math.max(1, args.timeoutMs ?? 45_000);
 
   try {
     args.onProgress?.(`Submitting experiment design request for ${args.hypotheses.length} hypothesis/hypotheses.`);
-    const completion = await args.llm.complete(
-      buildDesignPrompt(
-        args.runTitle,
-        args.runTopic,
-        args.objectiveMetric,
-        args.hypotheses,
-        args.constraintProfile,
-        args.objectiveProfile,
-        candidateCount
+    const completion = await withTimeout(
+      args.llm.complete(
+        buildDesignPrompt(
+          args.runTitle,
+          args.runTopic,
+          args.objectiveMetric,
+          args.hypotheses,
+          args.constraintProfile,
+          args.objectiveProfile,
+          args.retryContext,
+          candidateCount
+        ),
+        {
+          systemPrompt: DESIGN_SYSTEM_PROMPT,
+          onProgress: (event) => emitProgress(args.onProgress, "Design LLM", event)
+        }
       ),
-      {
-        systemPrompt: DESIGN_SYSTEM_PROMPT,
-        onProgress: (event) => emitProgress(args.onProgress, "Design LLM", event)
-      }
+      timeoutMs,
+      "experiment_design_timeout"
     );
     args.onProgress?.("Received experiment design output. Parsing JSON.");
     const parsed = parseDesignJson(completion.text);
@@ -631,6 +675,7 @@ export async function designExperimentsFromHypotheses(args: {
       args.constraintProfile,
       args.objectiveMetric,
       args.objectiveProfile,
+      args.retryContext,
       candidateCount
     );
     return {
@@ -899,6 +944,7 @@ function buildDesignPrompt(
   hypotheses: DesignInputHypothesis[],
   constraintProfile: ConstraintProfile,
   objectiveProfile: ObjectiveMetricProfile,
+  retryContext: DesignRetryContext | undefined,
   candidateCount: number
 ): string {
   const lines = [
@@ -937,6 +983,11 @@ function buildDesignPrompt(
     isReproducibilityObjective(objectiveMetric)
       ? "Design emphasis: operationalize reproducibility using repeated-run variance, consistency, stability, or agreement metrics in addition to raw task performance."
       : "Design emphasis: align metrics and baselines tightly to the objective profile.",
+    retryContext
+      ? "Retry discipline: this is a redesign after a bounded local run. Preserve explicit comparators, do not repeat the same underpowered scope, and satisfy the retry directives below."
+      : "Retry discipline: none.",
+    retryContext ? "Retry context:" : undefined,
+    retryContext ? JSON.stringify(retryContext, null, 2) : undefined,
     "Hypotheses:"
   ];
 
@@ -973,6 +1024,22 @@ function buildDesignPrompt(
   });
 
   return lines.join("\n");
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(`${label}:${timeoutMs}ms`)), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
 }
 
 function parseHypothesisJson(text: string): RawHypothesisJson {
@@ -1610,6 +1677,7 @@ function buildFallbackDesigns(
   constraintProfile: ConstraintProfile,
   objectiveMetric: string,
   objectiveProfile: ObjectiveMetricProfile,
+  retryContext: DesignRetryContext | undefined,
   candidateCount: number
 ): { candidates: ExperimentDesignCandidate[]; selected: ExperimentDesignCandidate } {
   const base =
@@ -1618,11 +1686,13 @@ function buildFallbackDesigns(
       : [{ hypothesis_id: "h_1", text: "Baseline hypothesis placeholder." }];
   const candidates = base.map((hypothesis, index) => {
     const guidance = buildHypothesisDesignGuidance(hypothesis, objectiveProfile);
+    const retryNotes = retryContext?.retry_directives ?? [];
+    const retrySummary = buildRetrySummary(retryContext, objectiveMetric);
     return {
       id: `plan_${index + 1}`,
       title: `Plan ${index + 1}: ${truncateText(hypothesis.text, 72)}`,
       hypothesis_ids: [hypothesis.hypothesis_id],
-      plan_summary: `Test ${hypothesis.text} against configured baselines and evaluate with ${objectiveMetric || "the run objective metric"}.`,
+      plan_summary: `Test ${hypothesis.text} against configured baselines and evaluate with ${objectiveMetric || "the run objective metric"}.${retrySummary ? ` ${retrySummary}` : ""}`,
       datasets:
         (constraintProfile.collect.fieldsOfStudy?.length ?? 0) > 0
           ? [...(constraintProfile.collect.fieldsOfStudy || [])]
@@ -1632,19 +1702,63 @@ function buildFallbackDesigns(
       implementation_notes: [
         ...constraintProfile.experiment.implementationNotes,
         ...guidance.implementationNotes,
+        ...retryNotes,
         "Keep the implementation minimal and reproducible."
       ],
       evaluation_steps: [
         ...constraintProfile.experiment.evaluationNotes,
         ...guidance.evaluationSteps,
+        ...buildRetryEvaluationSteps(retryContext),
         "Compare the hypothesis-driven change against the baseline."
       ],
-      risks: ["Specification may be underspecified and require narrower scope."],
-      resource_notes: buildDefaultResourceNotes(constraintProfile)
+      risks: dedupeStrings([
+        "Specification may be underspecified and require narrower scope.",
+        ...(retryContext?.transition_evidence?.slice(0, 2) ?? [])
+      ]),
+      resource_notes: dedupeStrings([
+        ...buildDefaultResourceNotes(constraintProfile),
+        ...buildRetryResourceNotes(retryContext)
+      ])
     };
   });
   const selected = candidates[0]!;
   return { candidates, selected };
+}
+
+function buildRetrySummary(retryContext: DesignRetryContext | undefined, objectiveMetric: string): string {
+  if (!retryContext) {
+    return "";
+  }
+  const metric = retryContext.previous_primary_metric_name || objectiveMetric || "the primary metric";
+  const value =
+    typeof retryContext.previous_primary_metric_value === "number"
+      ? `${retryContext.previous_primary_metric_value}`
+      : "unmet";
+  return `The previous bounded run did not improve ${metric} (${value}), so revise the design instead of repeating the same tiny pilot.`;
+}
+
+function buildRetryEvaluationSteps(retryContext: DesignRetryContext | undefined): string[] {
+  if (!retryContext) {
+    return [];
+  }
+  return dedupeStrings([
+    ...retryContext.retry_directives,
+    "Use the prior bounded-run outcome as a negative control when comparing the revised design."
+  ]);
+}
+
+function buildRetryResourceNotes(retryContext: DesignRetryContext | undefined): string[] {
+  if (!retryContext) {
+    return [];
+  }
+  const previousPilot = retryContext.previous_pilot_size;
+  const previousRepeats = retryContext.previous_repeats;
+  if (typeof previousPilot === "number" || typeof previousRepeats === "number") {
+    return [
+      `The next bounded local retry must materially exceed the previous scope (pilot_size=${previousPilot ?? "unknown"}, repeats=${previousRepeats ?? "unknown"}) while staying locally runnable.`
+    ];
+  }
+  return [];
 }
 
 interface DesignGuidance {

@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { EventStream } from "../events.js";
 import { RunStore } from "../runs/runStore.js";
 import { AppConfig, RunRecord } from "../../types.js";
-import { CodexCliClient, CodexEvent } from "../../integrations/codex/codexCliClient.js";
+import { CodexCliClient, CodexEvent, RunTurnResult } from "../../integrations/codex/codexCliClient.js";
 import { mapCodexEventToAutoLabOSEvents } from "../../integrations/codex/codexEventMapper.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { EpisodeMemory, EpisodeRecord } from "../memory/episodeMemory.js";
@@ -52,6 +52,13 @@ export interface ImplementSessionSummary {
   verifyReport: VerifyReport;
   autoHandoffToRunExperiments: boolean;
   handoffReason?: string;
+}
+
+export class ImplementSessionStopError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ImplementSessionStopError";
+  }
 }
 
 interface ImplementSessionDeps {
@@ -442,7 +449,12 @@ export class ImplementSessionManager {
       );
       latestSearchLocalization = searchLocalization;
       await writeJsonFile(path.join(runDir, "localization_search_result.json"), latestSearchLocalization || {});
-      const branchPlan = chooseBranchPlan(searchLocalization, attemptRecords, branchContextFiles);
+      const branchPlan = chooseBranchPlan(
+        searchLocalization,
+        attemptRecords,
+        branchContextFiles,
+        await buildDefaultImplementFocusFiles(taskSpec)
+      );
       const isolation = await createAttemptIsolationContext({
         config: this.deps.config,
         workspaceRoot: this.deps.workspaceRoot,
@@ -510,62 +522,144 @@ export class ImplementSessionManager {
         });
       });
 
-      const result = await this.deps.codex.runTurnStream({
-        prompt: this.buildAttemptPrompt({
-          taskSpec: promptTaskSpec,
-          searchLocalization: promptSearchLocalization,
-          branchPlan: promptBranchPlan,
-          recentReflections,
-          attempt,
-          previousAttempt: promptPreviousAttempt,
-          existingChangedFiles: translatePathsBetweenWorkspaces([...changedFiles], {
-            fromWorkspaceRoot: this.deps.workspaceRoot,
-            toWorkspaceRoot: isolation.workspaceRoot
+      let result: RunTurnResult;
+      const recoveredBeforeTurn = await recoverStructuredResultFromPublicBundle({
+        publicDir: isolation.publicDir,
+        runDir: isolation.runDir,
+        metricsPath: isolation.metricsPath,
+        workspaceRoot: isolation.workspaceRoot,
+        errorMessage: "Recovered an already materialized governed experiment bundle before re-entering Codex.",
+        requireFreshPlanAlignment: promptTaskSpec.context.plan_changed
+      });
+      if (recoveredBeforeTurn && (await hasRecoverableExecutionEvidence(isolation.publicDir, isolation.metricsPath))) {
+        emitImplementObservation(
+          "codex",
+          "Reused the existing governed experiment bundle and execution evidence instead of re-entering Codex.",
+          {
+            attempt,
+            threadId: activeThreadId,
+            publicDir: isolation.publicDir
+          }
+        );
+        result = recoveredBeforeTurn;
+      } else {
+        try {
+          result = await this.deps.codex.runTurnStream({
+          prompt: this.buildAttemptPrompt({
+            taskSpec: promptTaskSpec,
+            searchLocalization: promptSearchLocalization,
+            branchPlan: promptBranchPlan,
+            recentReflections,
+            attempt,
+            previousAttempt: promptPreviousAttempt,
+            existingChangedFiles: translatePathsBetweenWorkspaces([...changedFiles], {
+              fromWorkspaceRoot: this.deps.workspaceRoot,
+              toWorkspaceRoot: isolation.workspaceRoot
+            }),
+            historicalChangedFiles: translatePathsBetweenWorkspaces([...historicalChangedFiles], {
+              fromWorkspaceRoot: this.deps.workspaceRoot,
+              toWorkspaceRoot: isolation.workspaceRoot
+            })
           }),
-          historicalChangedFiles: translatePathsBetweenWorkspaces([...historicalChangedFiles], {
-            fromWorkspaceRoot: this.deps.workspaceRoot,
-            toWorkspaceRoot: isolation.workspaceRoot
-          })
-        }),
-        threadId: activeThreadId,
-        agentId: `implementer:${run.id}`,
-        systemPrompt: this.buildSystemPrompt(
-          isolation.runDir,
-          isolation.publicDir,
-          isolation.metricsPath,
-          experimentLlmProfile
-        ),
-        sandboxMode: "workspace-write",
-        approvalPolicy: "never",
-        workingDirectory: toSandboxFriendlyWorkspaceRoot(isolation.workspaceRoot),
-        abortSignal,
-        onEvent: (event) => {
-          rawEvents.push(event);
-          streamProgress.onEvent(event);
-          const mapped = mapCodexEventToAutoLabOSEvents({
-            event,
-            runId: run.id,
-            node: "implement_experiments",
-            agentRole: "implementer",
-            workspaceRoot: isolation.workspaceRoot
-          });
-          for (const item of mapped) {
-            const nextItem = translateMappedCodexEventToPrimaryWorkspace(item, {
-              fromWorkspaceRoot: isolation.workspaceRoot,
-              toWorkspaceRoot: this.deps.workspaceRoot
+          threadId: activeThreadId,
+          agentId: `implementer:${run.id}`,
+          systemPrompt: this.buildSystemPrompt(
+            isolation.runDir,
+            isolation.publicDir,
+            isolation.metricsPath,
+            experimentLlmProfile
+          ),
+          sandboxMode: "workspace-write",
+          approvalPolicy: "never",
+          workingDirectory: toSandboxFriendlyWorkspaceRoot(isolation.workspaceRoot),
+          abortSignal,
+          onEvent: (event) => {
+            rawEvents.push(event);
+            streamProgress.onEvent(event);
+            const mapped = mapCodexEventToAutoLabOSEvents({
+              event,
+              runId: run.id,
+              node: "implement_experiments",
+              agentRole: "implementer",
+              workspaceRoot: isolation.workspaceRoot
             });
-            if (item.type === "PATCH_APPLIED" && !shouldTrackPatchEvent(item.payload)) {
-              continue;
-            }
-            this.deps.eventStream.emit(nextItem);
-            const fileValue = typeof item.payload.file === "string" ? item.payload.file : undefined;
-            if (fileValue && item.type === "PATCH_APPLIED") {
-              attemptChangedFiles.add(fileValue);
-              attemptArtifacts.add(fileValue);
+            for (const item of mapped) {
+              const nextItem = translateMappedCodexEventToPrimaryWorkspace(item, {
+                fromWorkspaceRoot: isolation.workspaceRoot,
+                toWorkspaceRoot: this.deps.workspaceRoot
+              });
+              if (item.type === "PATCH_APPLIED" && !shouldTrackPatchEvent(item.payload)) {
+                continue;
+              }
+              this.deps.eventStream.emit(nextItem);
+              const fileValue = typeof item.payload.file === "string" ? item.payload.file : undefined;
+              if (fileValue && item.type === "PATCH_APPLIED") {
+                attemptChangedFiles.add(fileValue);
+                attemptArtifacts.add(fileValue);
+              }
             }
           }
+          });
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          const recovered = await recoverStructuredResultFromPublicBundle({
+            publicDir: isolation.publicDir,
+            runDir: isolation.runDir,
+            metricsPath: isolation.metricsPath,
+            workspaceRoot: isolation.workspaceRoot,
+            errorMessage,
+            requireFreshPlanAlignment: promptTaskSpec.context.plan_changed
+          });
+          if (!recovered) {
+            const verifyReport = buildCodexTurnFailureReport(errorMessage);
+            attemptRecords.push({
+              attempt,
+              summary: verifyReport.summary,
+              branch_plan: branchPlan,
+              localization: actualSearchLocalization,
+              search_localization: searchLocalization,
+              verify_report: verifyReport,
+              changed_files: [],
+              artifacts: [],
+              public_artifacts: [],
+              raw_response: ""
+            });
+            await writeJsonFile(path.join(runDir, "verify_report.json"), verifyReport);
+            await writeJsonFile(path.join(runDir, "implement_attempts.json"), {
+              attempts: attemptRecords
+            });
+            emitImplementObservation("failed", verifyReport.summary, {
+              attempt,
+              threadId: activeThreadId,
+              publicDir: isolation.publicDir
+            });
+            await flushProgressUpdates();
+            await writeImplementProgressStatus(runDir, {
+              status: "failed",
+              stage: "failed",
+              message: verifyReport.summary,
+              startedAt,
+              updatedAt: new Date().toISOString(),
+              progressCount,
+              maxAttempts: MAX_IMPLEMENT_ATTEMPTS,
+              threadId: activeThreadId,
+              attempt,
+              publicDir: isolation.publicDir
+            });
+            throw new ImplementSessionStopError(verifyReport.summary);
+          }
+          emitImplementObservation(
+            "codex",
+            "Recovered implement result from a materialized public bundle after Codex stream failure.",
+            {
+              attempt,
+              threadId: activeThreadId,
+              publicDir: isolation.publicDir
+            }
+          );
+          result = recovered;
         }
-      });
+      }
       streamProgress.flush();
 
       activeThreadId = result.threadId || activeThreadId;
@@ -2224,6 +2318,246 @@ function inferRunCommand(scriptPath: string | undefined, workspaceRoot: string, 
   return `python3 ${JSON.stringify(fallback)}`;
 }
 
+async function recoverStructuredResultFromPublicBundle(params: {
+  publicDir: string;
+  runDir: string;
+  metricsPath: string;
+  workspaceRoot: string;
+  errorMessage: string;
+  requireFreshPlanAlignment?: boolean;
+}): Promise<RunTurnResult | undefined> {
+  const entries = await fs.readdir(params.publicDir).catch(() => []);
+  const scriptName = entries.find((entry) => /\.(py|js|sh|mjs|cjs)$/i.test(entry));
+  if (!scriptName) {
+    return undefined;
+  }
+
+  const scriptPath = path.join(params.publicDir, scriptName);
+  const readmePath = path.join(params.publicDir, "README.md");
+  const frozenConfigPath = path.join(params.publicDir, "frozen_config.json");
+  const baselineSummaryPath = path.join(params.publicDir, "baseline_summary.json");
+  const experimentPlanPath = path.join(params.publicDir, "experiment_plan.yaml");
+  if (
+    !(await recoveredBundleMatchesCurrentPlan({
+      runDir: params.runDir,
+      publicDir: params.publicDir,
+      scriptPath,
+      readmePath,
+      frozenConfigPath
+    }))
+  ) {
+    return undefined;
+  }
+  const publicArtifacts = await filterExistingFiles([
+    scriptPath,
+    readmePath,
+    frozenConfigPath,
+    baselineSummaryPath,
+    experimentPlanPath
+  ]);
+  if (publicArtifacts.length === 0) {
+    return undefined;
+  }
+
+  const runCommand =
+    normalizeRecoveredBundleRunCommand(
+      (await readRunnableCommandFromReadme(readmePath)) ||
+        inferRecoveredBundleRunCommand({
+          scriptPath,
+          frozenConfigPath,
+          publicDir: params.publicDir,
+          runDir: params.runDir,
+          metricsPath: params.metricsPath
+        }),
+      params.workspaceRoot
+    );
+  if (!runCommand) {
+    return undefined;
+  }
+
+  return {
+    finalText: JSON.stringify({
+      summary: "Recovered implement result from a materialized public experiment bundle after Codex stream failure.",
+      experiment_mode: "real_execution",
+      run_command: runCommand,
+      test_command: deriveFallbackTestCommand(scriptPath),
+      working_dir: params.publicDir,
+      changed_files: publicArtifacts,
+      artifacts: publicArtifacts,
+      public_dir: params.publicDir,
+      public_artifacts: publicArtifacts,
+      script_path: scriptPath,
+      metrics_path: params.metricsPath,
+      localization: {
+        summary: "Recovered localization from the materialized public experiment bundle after stream failure.",
+        selected_files: publicArtifacts,
+        candidate_files: publicArtifacts.map((filePath) => ({
+          path: filePath,
+          reason: "Recovered from an existing public experiment bundle artifact.",
+          confidence: 0.7
+        }))
+      },
+      assumptions: [
+        `Recovered from materialized public artifacts because Codex stream ended with: ${params.errorMessage}`
+      ]
+    }),
+    events: []
+  };
+}
+
+async function hasRecoverableExecutionEvidence(publicDir: string, metricsPath: string): Promise<boolean> {
+  if (await fileExists(metricsPath)) {
+    return true;
+  }
+  const artifactsDir = path.join(publicDir, "artifacts");
+  try {
+    const stack = [artifactsDir];
+    while (stack.length > 0) {
+      const current = stack.pop();
+      if (!current) {
+        continue;
+      }
+      const entries = await fs.readdir(current, { withFileTypes: true }).catch(() => []);
+      for (const entry of entries) {
+        const fullPath = path.join(current, entry.name);
+        if (entry.isFile()) {
+          return true;
+        }
+        if (entry.isDirectory()) {
+          stack.push(fullPath);
+        }
+      }
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+async function recoveredBundleMatchesCurrentPlan(args: {
+  runDir: string;
+  publicDir: string;
+  scriptPath: string;
+  readmePath: string;
+  frozenConfigPath: string;
+}): Promise<boolean> {
+  const planMtimeMs = await latestMtimeMs([
+    path.join(args.runDir, "experiment_plan.yaml"),
+    path.join(args.publicDir, "experiment_plan.yaml")
+  ]);
+  if (planMtimeMs === undefined) {
+    return false;
+  }
+  const implementationMtimeMs = await latestMtimeMs([
+    args.scriptPath,
+    args.readmePath,
+    args.frozenConfigPath
+  ]);
+  if (implementationMtimeMs === undefined) {
+    return false;
+  }
+  return implementationMtimeMs >= planMtimeMs;
+}
+
+async function latestMtimeMs(paths: string[]): Promise<number | undefined> {
+  let latest: number | undefined;
+  for (const candidatePath of paths) {
+    try {
+      const stat = await fs.stat(candidatePath);
+      latest = latest === undefined ? stat.mtimeMs : Math.max(latest, stat.mtimeMs);
+    } catch {
+      continue;
+    }
+  }
+  return latest;
+}
+
+async function readRunnableCommandFromReadme(readmePath: string): Promise<string | undefined> {
+  if (!(await fileExists(readmePath))) {
+    return undefined;
+  }
+  const content = await fs.readFile(readmePath, "utf8").catch(() => "");
+  if (!content) {
+    return undefined;
+  }
+  const match = content.match(/```(?:bash|sh)?\n([\s\S]*?)```/u);
+  if (!match?.[1]) {
+    return undefined;
+  }
+  const collapsed = match[1]
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s*\\\s*/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  return collapsed || undefined;
+}
+
+function normalizeRecoveredBundleRunCommand(
+  command: string | undefined,
+  workspaceRoot: string
+): string | undefined {
+  if (!command) {
+    return undefined;
+  }
+  let tokenIndex = 0;
+  return command.replace(/"[^"]+"|'[^']+'|\S+/g, (rawToken) => {
+    const token = unquoteShellToken(rawToken);
+    const currentIndex = tokenIndex;
+    tokenIndex += 1;
+    if (currentIndex === 0 || token.startsWith("-") || !looksLikeWorkspacePathToken(token)) {
+      return rawToken;
+    }
+    return JSON.stringify(path.resolve(workspaceRoot, token));
+  });
+}
+
+function looksLikeWorkspacePathToken(token: string): boolean {
+  if (!token || path.isAbsolute(token)) {
+    return false;
+  }
+  return (
+    token.startsWith("./") ||
+    token.startsWith("../") ||
+    token.startsWith(".autolabos/") ||
+    token.startsWith("outputs/") ||
+    /\.(py|js|sh|mjs|cjs|json|ya?ml)$/i.test(token)
+  );
+}
+
+function unquoteShellToken(token: string): string {
+  if (token.length >= 2) {
+    const first = token[0];
+    const last = token[token.length - 1];
+    if ((first === "\"" && last === "\"") || (first === "'" && last === "'")) {
+      return token.slice(1, -1);
+    }
+  }
+  return token;
+}
+
+function inferRecoveredBundleRunCommand(params: {
+  scriptPath: string;
+  frozenConfigPath: string;
+  publicDir: string;
+  runDir: string;
+  metricsPath: string;
+}): string {
+  if (/\.py$/i.test(params.scriptPath)) {
+    const segments = [`python3 ${JSON.stringify(params.scriptPath)}`];
+    if (path.basename(params.frozenConfigPath) && params.frozenConfigPath !== params.scriptPath) {
+      segments.push(`--config ${JSON.stringify(params.frozenConfigPath)}`);
+    }
+    segments.push(`--public-dir ${JSON.stringify(params.publicDir)}`);
+    segments.push(`--run-dir ${JSON.stringify(params.runDir)}`);
+    segments.push(`--metrics-path ${JSON.stringify(params.metricsPath)}`);
+    return segments.join(" ");
+  }
+  return inferRunCommand(params.scriptPath, params.publicDir, path.basename(params.runDir));
+}
+
 function normalizeExperimentMode(mode: string | undefined, summary: string | undefined): string {
   const normalized = (mode || "").trim().toLowerCase();
   if (normalized === "real_execution" || normalized === "hybrid_validation" || normalized === "synthetic_validation") {
@@ -3276,15 +3610,38 @@ function emptyLocalizationResult(): LocalizationResult {
   };
 }
 
+async function buildDefaultImplementFocusFiles(taskSpec: ImplementTaskSpec): Promise<string[]> {
+  const publicScripts = await listImplementationScripts(taskSpec.workspace.public_dir);
+  return dedupeStrings([
+    ...publicScripts,
+    path.join(taskSpec.workspace.public_dir, "experiment.py"),
+    path.join(taskSpec.workspace.run_dir, "experiment_plan.yaml")
+  ]);
+}
+
+async function listImplementationScripts(publicDir: string): Promise<string[]> {
+  try {
+    const entries = await fs.readdir(publicDir, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile() && /\.(py|js|sh|mjs|cjs)$/i.test(entry.name))
+      .map((entry) => path.join(publicDir, entry.name))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
 function chooseBranchPlan(
   searchLocalization: LocalizationResult,
   attemptRecords: AttemptRecord[],
-  changedFiles: string[]
+  changedFiles: string[],
+  defaultFocusFiles: string[]
 ): BranchPlan {
   const focusPool = dedupeStrings([
     ...searchLocalization.selected_files,
     ...searchLocalization.candidates.map((candidate) => candidate.path),
-    ...changedFiles
+    ...changedFiles,
+    ...defaultFocusFiles
   ]).filter(isLikelyBranchFocusFile);
   const triedPaths = new Set(
     attemptRecords.flatMap((record) => record.branch_plan.focus_files)
@@ -3294,7 +3651,8 @@ function chooseBranchPlan(
     : dedupeStrings([
         ...searchLocalization.selected_files,
         ...searchLocalization.candidates.map((candidate) => candidate.path),
-        ...changedFiles
+        ...changedFiles,
+        ...defaultFocusFiles
       ]);
   const untried = primaryPool.filter((filePath) => !triedPaths.has(filePath));
 
@@ -3669,6 +4027,16 @@ function buildMissingArtifactVerifyReport(
     summary: isStructured
       ? "Implementer did not return a runnable artifact or run_command."
       : "Implementer did not return the required JSON result or any runnable artifact."
+  };
+}
+
+function buildCodexTurnFailureReport(errorMessage: string): VerifyReport {
+  return {
+    status: "fail",
+    failure_type: "environment",
+    next_action: "stop_for_environment",
+    stderr_excerpt: trimBlock(errorMessage, 1200) || errorMessage,
+    summary: `Codex execution failed before any runnable implementation was produced: ${errorMessage}`
   };
 }
 

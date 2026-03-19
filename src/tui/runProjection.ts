@@ -41,6 +41,7 @@ export interface ImplementProjectionHints {
   status?: string;
   stage?: string;
   message?: string;
+  updatedAt?: string;
   attempt?: number;
   maxAttempts?: number;
   progressCount?: number;
@@ -194,6 +195,7 @@ export function resolveFailedNode(run: RunRecord): GraphNodeId {
 
 export function projectRunForDisplay(run: RunRecord, hints?: RunProjectionHints): RunDisplayProjection {
   const normalized = normalizeRunForDisplay(run, hints);
+  const effectiveHints = sanitizeProjectionHints(normalized, hints);
   const actionableNode = resolveActionableNode(normalized);
   const actionableState = normalized.graph.nodeStates[actionableNode];
   const currentState = normalized.graph.nodeStates[normalized.currentNode];
@@ -201,26 +203,27 @@ export function projectRunForDisplay(run: RunRecord, hints?: RunProjectionHints)
   const retryLimit = normalized.graph.retryPolicy.maxAttemptsPerNode;
   const blockedByUpstream = actionableNode !== normalized.currentNode;
   const pausedRetry = (normalized.status === "paused" || normalized.status === "failed") && retryCount > 0;
-  const staleLatestSummary = isLatestSummaryStale(normalized, hints);
-  const suppressStaleLatestSummaryDetail = shouldSuppressStaleLatestSummaryDetail(normalized, hints);
+  const staleLatestSummary = isLatestSummaryStale(normalized, effectiveHints);
+  const suppressStaleLatestSummaryDetail = shouldSuppressStaleLatestSummaryDetail(normalized, effectiveHints);
   const usageLimitDetail = resolveUsageLimitDetail([
-    hints?.analyze?.selectedPaperLastError,
-    hints?.analyze?.rerankFallbackReason,
+    effectiveHints?.analyze?.selectedPaperLastError,
+    effectiveHints?.analyze?.rerankFallbackReason,
     actionableState?.lastError,
     normalized.graph.nodeStates[normalized.currentNode]?.lastError
   ]);
   const usageLimitBlocked = Boolean(usageLimitDetail);
-  const rerankFallback = hints?.analyze?.rerankApplied === false && Boolean(hints?.analyze?.rerankFallbackReason);
+  const rerankFallback =
+    effectiveHints?.analyze?.rerankApplied === false && Boolean(effectiveHints?.analyze?.rerankFallbackReason);
   const noArtifactProgress =
     actionableNode === "analyze_papers" &&
-    (hints?.analyze?.selectedCount ?? 0) > 0 &&
-    (hints?.analyze?.summaryCount ?? 0) === 0 &&
-    (hints?.analyze?.evidenceCount ?? 0) === 0;
+    (effectiveHints?.analyze?.selectedCount ?? 0) > 0 &&
+    (effectiveHints?.analyze?.summaryCount ?? 0) === 0 &&
+    (effectiveHints?.analyze?.evidenceCount ?? 0) === 0;
   const lastError = usageLimitDetail || actionableState?.lastError || normalized.graph.nodeStates[normalized.currentNode]?.lastError;
 
   let headline: string | undefined;
   if (blockedByUpstream) {
-    headline = buildBlockedByUpstreamHeadline(normalized.currentNode, actionableNode, hints);
+    headline = buildBlockedByUpstreamHeadline(normalized.currentNode, actionableNode, effectiveHints);
   } else if (usageLimitBlocked && pausedRetry) {
     headline = `${actionableNode} is paused after retry ${retryCount}/${retryLimit} because a model usage limit blocked progress.`;
   } else if (usageLimitBlocked) {
@@ -231,8 +234,8 @@ export function projectRunForDisplay(run: RunRecord, hints?: RunProjectionHints)
     headline = `${actionableNode} is paused after retry ${retryCount}/${retryLimit}.`;
   } else if (noArtifactProgress) {
     headline = `${actionableNode} has started but no summaries or evidence are persisted yet.`;
-  } else if (actionableNode === "implement_experiments" && hints?.implement?.message) {
-    headline = toOneLine(hints.implement.message);
+  } else if (actionableNode === "implement_experiments" && effectiveHints?.implement?.message) {
+    headline = toOneLine(effectiveHints.implement.message);
   } else if (actionableState?.lastError) {
     headline = `${actionableNode} error: ${toOneLine(actionableState.lastError)}`;
   } else if (actionableState?.note && !staleLatestSummary) {
@@ -256,14 +259,14 @@ export function projectRunForDisplay(run: RunRecord, hints?: RunProjectionHints)
   }
   const analyzeSelectionDetail =
     actionableNode === "analyze_papers" || normalized.currentNode === "analyze_papers"
-      ? buildAnalyzeSelectionDetail(hints?.analyze)
+      ? buildAnalyzeSelectionDetail(effectiveHints?.analyze)
       : undefined;
   if (analyzeSelectionDetail) {
     detailParts.push(analyzeSelectionDetail);
   }
   const implementProgressDetail =
     actionableNode === "implement_experiments" || normalized.currentNode === "implement_experiments"
-      ? buildImplementProgressDetail(hints?.implement)
+      ? buildImplementProgressDetail(effectiveHints?.implement)
       : undefined;
   if (implementProgressDetail) {
     detailParts.push(implementProgressDetail);
@@ -273,15 +276,15 @@ export function projectRunForDisplay(run: RunRecord, hints?: RunProjectionHints)
   }
   if (usageLimitDetail) {
     detailParts.push(`${usageLimitDetail}; switch models or wait for quota reset before retrying.`);
-  } else if (actionableNode === "analyze_papers" && hints?.analyze?.selectedPaperFallbackReason) {
-    const sourceType = hints.analyze.selectedPaperSourceType === "abstract" ? "abstract fallback" : "fallback";
-    detailParts.push(`${sourceType} was used for the selected paper (${toOneLine(hints.analyze.selectedPaperFallbackReason)}).`);
+  } else if (actionableNode === "analyze_papers" && effectiveHints?.analyze?.selectedPaperFallbackReason) {
+    const sourceType = effectiveHints.analyze.selectedPaperSourceType === "abstract" ? "abstract fallback" : "fallback";
+    detailParts.push(`${sourceType} was used for the selected paper (${toOneLine(effectiveHints.analyze.selectedPaperFallbackReason)}).`);
   }
   if (!staleLatestSummary && !headline && normalized.latestSummary) {
     detailParts.push(toOneLine(normalized.latestSummary));
   }
   // Surface paper critique state when available
-  const critiqueHints = hints?.paperCritique;
+  const critiqueHints = effectiveHints?.paperCritique;
   if (critiqueHints?.manuscriptType && critiqueHints.manuscriptType !== "paper_ready") {
     detailParts.push(`Manuscript: ${critiqueHints.manuscriptType}${critiqueHints.targetVenueStyle ? ` (${critiqueHints.targetVenueStyle})` : ""}.`);
   }
@@ -305,6 +308,21 @@ export function projectRunForDisplay(run: RunRecord, hints?: RunProjectionHints)
     lastError,
     paperCritique: critiqueHints
   };
+}
+
+function sanitizeProjectionHints(run: RunRecord, hints?: RunProjectionHints): RunProjectionHints | undefined {
+  if (!hints?.implement) {
+    return hints;
+  }
+
+  if (!isFreshImplementHint(run, hints.implement)) {
+    return {
+      ...hints,
+      implement: undefined
+    };
+  }
+
+  return hints;
 }
 
 export function mergeProjectedRunState(run: RunRecord, projected?: RunRecord): RunRecord {
@@ -374,6 +392,23 @@ function resolveDisplayRunStatus(runStatus: RunStatus, nodeStatus: NodeStatus | 
     return "paused";
   }
   return runStatus;
+}
+
+function isFreshImplementHint(run: RunRecord, hints: ImplementProjectionHints): boolean {
+  const implementState = run.graph.nodeStates.implement_experiments;
+  const implementActive =
+    run.currentNode === "implement_experiments" || ACTIVE_NODE_STATUSES.has(implementState?.status);
+  if (!implementActive) {
+    return true;
+  }
+
+  const hintUpdatedAt = updatedAtMs(hints.updatedAt);
+  const stateUpdatedAt = updatedAtMs(implementState?.updatedAt);
+  if (hintUpdatedAt === Number.NEGATIVE_INFINITY || stateUpdatedAt === Number.NEGATIVE_INFINITY) {
+    return true;
+  }
+
+  return hintUpdatedAt >= stateUpdatedAt;
 }
 
 function updateProjectedRun(

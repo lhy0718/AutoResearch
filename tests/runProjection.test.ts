@@ -262,6 +262,7 @@ describe("runProjection", () => {
     const projection = projectRunForDisplay(run, {
       implement: {
         stage: "verify",
+        updatedAt: "2026-03-13T11:44:05.000Z",
         message:
           "Starting local verification via python outputs/demo/experiment/run_experiment.py --metrics-path .autolabos/runs/run-1/metrics.json.",
         attempt: 1,
@@ -278,6 +279,39 @@ describe("runProjection", () => {
     expect(projection.detail).toBe(
       "Attempt 1/3. 6 persisted progress update(s). Verification: python outputs/demo/experiment/run_experiment.py --metrics-path .autolabos/runs/run-1/metrics.json."
     );
+  });
+
+  it("ignores stale implement progress hints from a previous implement cycle", () => {
+    const run = makeRun({
+      status: "running",
+      currentNode: "implement_experiments",
+      latestSummary:
+        'Three executable CPU-only experiment designs operationalize reproducibility. Selected "Fixed Split Holdout Reproducibility Stress Test" via best_non_blocked.'
+    });
+    run.graph.currentNode = "implement_experiments";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    run.graph.nodeStates.design_experiments.updatedAt = "2026-03-19T05:35:53.000Z";
+    run.graph.nodeStates.implement_experiments.status = "running";
+    run.graph.nodeStates.implement_experiments.updatedAt = "2026-03-19T05:36:53.000Z";
+    run.graph.nodeStates.implement_experiments.note = "Implementation task spec prepared.";
+
+    const projection = projectRunForDisplay(run, {
+      implement: {
+        status: "completed",
+        stage: "completed",
+        updatedAt: "2026-03-19T04:43:33.742Z",
+        message:
+          "Reimplemented the public GSM8K experiment bundle from the old adaptive-stop design to the new equal-budget draft-check-final plan.",
+        attempt: 1,
+        maxAttempts: 3,
+        progressCount: 10,
+        verificationCommand:
+          "python -m py_compile outputs/demo/experiment/run_experiment.py"
+      }
+    });
+
+    expect(projection.headline).toBe("Implementation task spec prepared.");
+    expect(projection.detail).toBeUndefined();
   });
 
   it("resolves the actual failed node from the latest failed state", () => {

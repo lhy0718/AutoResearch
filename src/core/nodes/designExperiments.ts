@@ -12,6 +12,7 @@ import { ObjectiveMetricProfile, resolveObjectiveMetricProfile } from "../object
 import {
   designExperimentsFromHypotheses,
   DesignInputHypothesis,
+  DesignRetryContext,
   ExperimentDesignCandidate
 } from "../analysis/researchPlanning.js";
 import { supportsRealExecutionBundle } from "../experiments/realExecutionBundle.js";
@@ -145,6 +146,19 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         );
       }
 
+      const retryContext = await loadDesignRetryContext(run.id);
+      if (retryContext) {
+        emitLog(
+          `Loaded design retry context from prior results: pilot_size=${retryContext.previous_pilot_size ?? "unknown"}, repeats=${retryContext.previous_repeats ?? "unknown"}, objective_status=${retryContext.previous_objective_status ?? "unknown"}.`
+        );
+        await writeRunArtifact(
+          run,
+          "design_experiments_panel/retry_context.json",
+          `${JSON.stringify(retryContext, null, 2)}\n`
+        );
+        await runContextMemory.put("design_experiments.retry_context", retryContext);
+      }
+
       emitLog(`Designing experiments from ${filtered.kept.length} hypothesis/hypotheses.`);
       const design = await designExperimentsFromHypotheses({
         llm: deps.llm,
@@ -154,6 +168,7 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         hypotheses: filtered.kept,
         constraintProfile,
         objectiveProfile: objectiveMetricProfile,
+        retryContext,
         candidateCount: 3,
         onProgress: emitLog
       });
@@ -177,7 +192,8 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         candidates: normalizedCandidates,
         constraintProfile,
         objectiveProfile: objectiveMetricProfile,
-        source: design.source
+        source: design.source,
+        retryContext
       });
 
       const outputPath = await writeRunArtifact(run, "experiment_plan.yaml", planYaml);
@@ -439,6 +455,7 @@ function buildPlanYaml(args: {
   constraintProfile: Awaited<ReturnType<typeof resolveConstraintProfile>>;
   objectiveProfile: Awaited<ReturnType<typeof resolveObjectiveMetricProfile>>;
   source: "llm" | "fallback";
+  retryContext?: DesignRetryContext;
 }): string {
   const collectDefaults = args.constraintProfile.collect;
   const paperProfile = args.constraintProfile.writing;
@@ -502,6 +519,28 @@ function buildPlanYaml(args: {
     `  objective_sensitive: ${isReproducibilityObjective(args.objectiveProfile) ? "true" : "false"}`,
     "dropped_hypotheses:",
     ...renderDroppedHypotheses(args.droppedHypotheses),
+    "retry_context:",
+    `  present: ${args.retryContext ? "true" : "false"}`,
+    ...(args.retryContext
+      ? renderYamlKeyValueObject(
+          {
+            previous_selected_design_title: args.retryContext.previous_selected_design_title,
+            previous_pilot_size: args.retryContext.previous_pilot_size,
+            previous_repeats: args.retryContext.previous_repeats,
+            registered_pilot_size: args.retryContext.registered_pilot_size,
+            registered_repeats: args.retryContext.registered_repeats,
+            previous_primary_metric_name: args.retryContext.previous_primary_metric_name,
+            previous_primary_metric_value: args.retryContext.previous_primary_metric_value,
+            previous_baseline_name: args.retryContext.previous_baseline_name,
+            previous_objective_status: args.retryContext.previous_objective_status,
+            transition_action: args.retryContext.transition_action,
+            transition_reason: args.retryContext.transition_reason
+          },
+          1
+        )
+      : []),
+    "  retry_directives:",
+    ...renderYamlStringList(args.retryContext?.retry_directives || [], 2),
     "selected_hypothesis_ids:",
     ...renderYamlStringList(args.selected.hypothesis_ids, 1),
     "selected_design:",
@@ -626,6 +665,144 @@ function renderShortlistedDesigns(candidates: ExperimentDesignCandidate[]): stri
     lines.push(`    summary: "${escapeQuote(candidate.plan_summary)}"`);
   }
   return lines;
+}
+
+async function loadDesignRetryContext(runId: string): Promise<DesignRetryContext | undefined> {
+  const runDir = path.join(".autolabos", "runs", runId);
+  const [resultRaw, transitionRaw] = await Promise.all([
+    safeRead(path.join(runDir, "result_analysis.json")),
+    safeRead(path.join(runDir, "transition_recommendation.json"))
+  ]);
+  if (!resultRaw && !transitionRaw) {
+    return undefined;
+  }
+
+  const resultAnalysis = parseJsonRecord(resultRaw);
+  const transition = parseJsonRecord(transitionRaw);
+  const transitionAction = stringValue(transition?.action);
+  const transitionTarget = stringValue(transition?.targetNode);
+  if (transitionAction && transitionAction !== "backtrack_to_design" && transitionTarget && transitionTarget !== "design_experiments") {
+    return undefined;
+  }
+
+  const metrics = recordValue(resultAnalysis?.metrics);
+  const scope = recordValue(metrics?.scope);
+  const primaryMetric = recordValue(metrics?.primary_metric);
+  const objectiveMetric = recordValue(resultAnalysis?.objective_metric);
+  const objectiveEvaluation = recordValue(objectiveMetric?.evaluation);
+  const planContext = recordValue(resultAnalysis?.plan_context);
+  const selectedDesign = recordValue(planContext?.selected_design);
+
+  const context: DesignRetryContext = {
+    previous_selected_design_title: stringValue(selectedDesign?.title),
+    previous_pilot_size: numberValue(scope?.pilot_size),
+    previous_repeats: numberValue(scope?.repeats),
+    registered_pilot_size: numberValue(scope?.registered_pilot_size),
+    registered_repeats: numberValue(scope?.registered_repeats),
+    previous_primary_metric_name: stringValue(primaryMetric?.name),
+    previous_primary_metric_value: numberValue(primaryMetric?.value),
+    previous_baseline_name: stringValue(primaryMetric?.baseline_name),
+    previous_objective_status: stringValue(objectiveEvaluation?.status) || inferObjectiveStatus(primaryMetric?.value),
+    transition_action: transitionAction,
+    transition_reason: stringValue(transition?.reason),
+    transition_evidence: stringArrayValue(transition?.evidence),
+    retry_directives: buildRetryDirectives({
+      previousPilotSize: numberValue(scope?.pilot_size),
+      previousRepeats: numberValue(scope?.repeats),
+      registeredPilotSize: numberValue(scope?.registered_pilot_size),
+      registeredRepeats: numberValue(scope?.registered_repeats),
+      previousPrimaryMetricName: stringValue(primaryMetric?.name),
+      previousPrimaryMetricValue: numberValue(primaryMetric?.value),
+      previousBaselineName: stringValue(primaryMetric?.baseline_name)
+    })
+  };
+
+  return context.retry_directives.length > 0 || context.transition_reason || context.transition_evidence?.length
+    ? context
+    : undefined;
+}
+
+function buildRetryDirectives(args: {
+  previousPilotSize?: number;
+  previousRepeats?: number;
+  registeredPilotSize?: number;
+  registeredRepeats?: number;
+  previousPrimaryMetricName?: string;
+  previousPrimaryMetricValue?: number;
+  previousBaselineName?: string;
+}): string[] {
+  const directives: string[] = [];
+  if (
+    typeof args.previousPilotSize === "number" &&
+    args.previousPilotSize <= 1 &&
+    typeof args.previousRepeats === "number" &&
+    args.previousRepeats <= 1
+  ) {
+    directives.push("Do not repeat a bounded-local design with pilot_size=1 and repeats=1.");
+    directives.push("Use at least tens of examples and repeated runs in the next bounded local pilot if the workstation budget allows it.");
+  }
+  if (
+    typeof args.registeredPilotSize === "number" &&
+    typeof args.previousPilotSize === "number" &&
+    args.registeredPilotSize > args.previousPilotSize
+  ) {
+    directives.push("Move the next bounded local branch materially closer to the registered pilot scope while keeping the run locally executable.");
+  }
+  if (
+    typeof args.previousPrimaryMetricValue === "number" &&
+    args.previousPrimaryMetricValue <= 0
+  ) {
+    directives.push(
+      `Revise the treatment or stopping policy because the previous ${args.previousPrimaryMetricName || "primary metric"} did not improve over ${args.previousBaselineName || "the locked baseline"}.`
+    );
+  }
+  directives.push("Keep the explicit comparator discipline and preserve the locked baselines unless there is direct evidence to replace them.");
+  return uniqueStrings(directives);
+}
+
+function parseJsonRecord(raw: string | undefined): Record<string, unknown> | undefined {
+  if (!raw) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return recordValue(parsed);
+  } catch {
+    return undefined;
+  }
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function stringArrayValue(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const normalized = value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function inferObjectiveStatus(metricValue: unknown): string | undefined {
+  if (typeof metricValue !== "number" || !Number.isFinite(metricValue)) {
+    return undefined;
+  }
+  if (metricValue > 0) {
+    return "met";
+  }
+  if (metricValue < 0) {
+    return "not_met";
+  }
+  return "inconclusive";
 }
 
 function renderDroppedHypotheses(items: FilteredHypothesis[]): string[] {

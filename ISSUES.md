@@ -6,7 +6,19 @@ Last updated: 2026-03-19 · 944/944 tests pass
 
 ## Active issues
 
-None — all tracked issues are resolved or mitigated. See sections below for historical records.
+### LV-039 — `smoke.yml` fails in build before CI smoke can start
+- Status: OPEN (reproduced locally on the same `npm run build` path used by GitHub smoke)
+- Taxonomy: `persisted_state_bug`
+- Validation target: `.github/workflows/smoke.yml` build gate before `npm run test:smoke:ci`
+- Environment: project root, local reproduction of the workflow steps on 2026-03-19
+- Reproduction: `npm run build`
+- Expected: TypeScript build completes so the smoke job can reach `npm run test:smoke:ci`
+- Actual: Build fails first with `src/core/agents/implementSessionManager.ts(445,26): TS2554 Expected 4 arguments, but got 3` and `src/core/nodes/analyzePapers.ts(847,19): TS2322 Type '"running"' is not assignable to type '"pending" | "completed" | "failed" | "skipped"'`
+- Fresh vs existing: Same in both fresh and existing workspaces because the failure is in compile-time code paths, not persisted runtime state
+- Root cause hypothesis: `chooseBranchPlan()` gained a fourth `defaultFocusFiles` argument and one caller was not updated; `AnalysisManifestEntry.status` drifted behind runtime behavior that persists `"running"` while analysis is in progress
+- Code/test changes: Pending
+- Regression status: Pending re-validation after the minimal compile fix
+- Remaining risks: Need to rerun `npm run build` and the CI smoke path after patching
 
 ### LV-028 — Harness validation misses ISSUES.md when workspace is a subdirectory
 - Status: FIXED (not reproduced in re-validation of the same flow)
@@ -400,3 +412,202 @@ None — all tracked issues are resolved or mitigated. See sections below for hi
 | Tests | Added deterministic regression coverage that starts with two completed analyzed papers, changes the corpus to a smaller different shortlist under the same selection request, and asserts the original artifacts remain preserved instead of being pruned to the new shortlist. |
 | Status | 🔄 Reproduced and narrowed; deterministic fix added |
 | Regression | Targeted deterministic revalidation passed. Clean same-flow live revalidation is still pending because the currently running TUI process was started before the patch and continued mutating the same run. |
+
+---
+
+### LV-039 — `implement_experiments` starts with an empty branch focus when localization misses the governed experiment workspace
+
+| Field | Value |
+|---|---|
+| Validation target | `implement_experiments` startup in governed run `81820c46-d1b6-4080-8575-a35c60583480` from `test/` |
+| Execution mode | Interactive TUI, resumed existing run in `test/` |
+| Environment | AutoLabOS launched from `test/`; run had already advanced through `design_experiments` and entered `implement_experiments` |
+| Reproduction | 1. Resume run `81820c46-d1b6-4080-8575-a35c60583480` in `test/`. 2. Let `implement_experiments` start. 3. Inspect `implement_experiments/progress.jsonl` and live TUI status. |
+| Expected | When search-backed localization cannot find concrete repo files yet, the implementer should still receive a deterministic public experiment target so the first attempt can create a governed runnable artifact. |
+| Actual | `implement_experiments` repeatedly logged `Search-backed localization: Localization did not identify any concrete files.` followed by `Branch focus branch_primary: (no explicit file focus)`, which left the implementer without a concrete file target in the governed public experiment directory. |
+| Fresh vs existing | Existing resumed run reproduced the failure directly at the first implementation attempt. Fresh paper-scale run would hit the same logic because the failure depended on missing localization candidates, not resume state. |
+| Persisted artifact vs UI | Persisted `implement_experiments/progress.jsonl` and the TUI both showed the same empty-focus symptom; there was no divergence between UI projection and disk state. |
+| Root-cause class | `in_memory_projection_bug` |
+| Hypothesis | `chooseBranchPlan()` only considered localized candidates and prior changed files. For a new governed experiment workspace both sets were empty, so the primary branch emitted no explicit focus files. |
+| Fix | Added deterministic default branch focus files when localization is empty: `<public_dir>/experiment.py` and `<run_dir>/experiment_plan.yaml`, while still preferring search-derived candidates when available. |
+| Files changed | `src/core/agents/implementSessionManager.ts`; `tests/implementSessionManager.test.ts` |
+| Tests | Added prompt-level deterministic coverage asserting that the implementation prompt includes the governed public experiment script path in `branch_primary.focus_files` when localization misses. |
+| Status | ✅ Fixed |
+| Regression | Live same-flow revalidation in `test/` passed: resumed `implement_experiments` now persisted `Branch focus branch_primary: /home/hanyong/AutoLabOS/test/outputs/budget-aware-adaptive-and-structured-test-time-r-81820c46/experiment/experiment.py` instead of `(no explicit file focus)`. |
+
+---
+
+### LV-040 — Codex runtime blocks governed implementation when default `~/.codex` is not writable under the sandbox
+
+| Field | Value |
+|---|---|
+| Validation target | `implement_experiments` Codex runtime preflight in governed run `81820c46-d1b6-4080-8575-a35c60583480` |
+| Execution mode | Interactive TUI in `test/`, forced jump back to `implement_experiments` after design completed |
+| Environment | AutoLabOS launched from `test/`; sandboxed Codex runtime could not write `/home/hanyong/.codex` or `/home/hanyong/.codex/shell_snapshots` |
+| Reproduction | 1. Run `implement_experiments` from the governed `test/` workspace. 2. Observe the node fail immediately before actual implementation. 3. Compare the persisted node error with the live TUI failure text. |
+| Expected | If the default home-based Codex directory is not writable inside the sandbox, the client should fall back to a governed workspace-local runtime home so live implementation can still proceed. |
+| Actual | `implement_experiments` failed three times with blocking readiness errors: `codex-home: /home/hanyong/.codex: EROFS` and `codex-shell-snapshots: /home/hanyong/.codex/shell_snapshots: EROFS`, then auto-rolled back. |
+| Fresh vs existing | Existing resumed run exposed the failure immediately once `implement_experiments` began. Fresh runs under the same sandbox would hit the same blocker because it was environment/writeability driven rather than run-history driven. |
+| Persisted artifact vs UI | Persisted `runs.json`/node state and the live TUI showed the same blocking error text. The failure was fully represented on disk and in the UI. |
+| Root-cause class | `persisted_state_bug` |
+| Hypothesis | `CodexCliClient` always validated and used `~/.codex` when `CODEX_HOME` was unset, even under sandboxed executions where that path was read-only. |
+| Fix | Added runtime fallback to `test/.autolabos/runtime/codex-home` when `CODEX_HOME` is unset and the default home path is not writable; both home and `shell_snapshots` readiness now resolve against that workspace-local fallback. |
+| Files changed | `src/integrations/codex/codexCliClient.ts`; `tests/codexCliClient.test.ts` |
+| Tests | Added deterministic Codex client coverage that mocks an unwritable home directory and asserts readiness falls back to a workspace-local runtime home. |
+| Status | ✅ Fixed |
+| Regression | Live same-flow revalidation in `test/` passed this layer: after the patch, `implement_experiments` no longer failed with `codex-home` / `codex-shell-snapshots` EROFS and progressed to actual Codex execution. |
+
+---
+
+### LV-041 — `implement_experiments` still pauses because Codex API streaming disconnects before completion in the sandboxed validation environment
+
+| Field | Value |
+|---|---|
+| Validation target | Same governed `implement_experiments` live flow after LV-039 and LV-040 fixes |
+| Execution mode | Interactive TUI in `test/`; resumed and force-jumped existing run `81820c46-d1b6-4080-8575-a35c60583480` |
+| Environment | Patched TUI; Codex client reached network execution, but the validation environment repeatedly disconnected while streaming `https://api.openai.com/v1/responses` |
+| Reproduction | 1. Relaunch AutoLabOS from `test/` with LV-039 and LV-040 fixes applied. 2. Force-run `implement_experiments` on run `81820c46-d1b6-4080-8575-a35c60583480`. 3. Observe the live TUI retry loop and persisted `lastError`. |
+| Expected | After branch-focus and runtime-home fixes, `implement_experiments` should complete or fail for experiment-code reasons, not for infrastructure connectivity. |
+| Actual | The node advanced past branch planning and Codex runtime-home preflight, then repeatedly failed with streaming/network errors (`stream disconnected before completion: error sending request for url (https://api.openai.com/v1/responses)`), surfacing as `codex exec failed (exit 1)`. |
+| Fresh vs existing | Existing resumed run reproduced the failure after the earlier blockers were fixed. Fresh runs in the same sandboxed environment are expected to hit the same network restriction because the failure is transport-layer rather than state-history driven. |
+| Persisted artifact vs UI | The live TUI showed the full reconnect/disconnect sequence; persisted node state kept the summarized `codex exec failed (exit 1)` error and left the node pending/paused after cancellation. |
+| Root-cause class | `race_timing_bug` |
+| Hypothesis | The current validation environment still prevents or destabilizes long-lived Codex streaming requests, so the governed run cannot yet finish `implement_experiments` even though the local execution contract and writable runtime directories are now correct. |
+| Fix | No repo-code fix yet. This is the current highest-value blocker after LV-039 and LV-040. |
+| Files changed | none yet |
+| Tests | none yet; this is currently a live environment blocker rather than a deterministic repo regression. |
+| Status | 🔄 Active blocker |
+| Regression | Live same-flow revalidation confirmed the previous blockers are gone and narrowed the remaining failure to Codex API stream disconnects during actual implementation execution. |
+
+---
+
+### LV-042 — `implement_experiments` can materialize and even execute the governed bundle, but the live turn does not complete and leaves workflow state behind the artifacts
+
+| Field | Value |
+|---|---|
+| Validation target | Same governed `implement_experiments` flow in `test/` after LV-039/LV-040 fixes and bundle-recovery hardening |
+| Execution mode | Interactive TUI in `test/`, resumed existing run `81820c46-d1b6-4080-8575-a35c60583480` |
+| Environment | Escalated live TUI; public experiment bundle already existed and local verification / runner commands were observed in the live tool stream |
+| Reproduction | 1. Relaunch AutoLabOS from `test/` with the latest implementer patches. 2. Retry `implement_experiments` on run `81820c46-d1b6-4080-8575-a35c60583480`. 3. Observe the live tool stream and compare it with the persisted run state and generated artifacts. |
+| Expected | Once the governed experiment bundle is materialized and the local verification / runnable command is executed, the node should persist a completed implement result and advance toward `run_experiments` or a verified handoff state. |
+| Actual | The live tool stream showed real work on the governed bundle: reads from the materialized experiment script/README plus `python -m py_compile` and the bounded experiment command. Public artifacts and experiment-run outputs were present on disk (`artifacts/smoke-real-4ex-1r/...`, `metrics.json` path exists), but workflow state remained at `implement_experiments` with `pending/running` and did not advance to `run_experiments`. |
+| Fresh vs existing | Existing resumed run reproduced the issue because it already had a materialized bundle to reuse. A fresh run reaching the same bundle state would likely hit the same completion gap if the implementer turn remains open after producing artifacts and metrics. |
+| Persisted artifact vs UI | Persisted artifacts show a runnable bundle plus real generated experiment outputs, while `runs.json` still reports `currentNode = implement_experiments` and does not transition to `run_experiments`. This is a direct workflow-state vs artifact mismatch. |
+| Root-cause class | `persisted_state_bug` |
+| Hypothesis | The implementer turn can continue reading docs / re-inspecting bundle files after enough evidence already exists to finish, so the node never commits the recovered/materialized result into final implement state before the operator interrupts or retries. |
+| Fix | Not fixed yet. Next candidate fix is to add a bounded completion shortcut after recovered/materialized bundle verification succeeds so the node can finalize from persisted artifacts instead of waiting for a long Codex turn to voluntarily emit the terminal JSON. |
+| Files changed | none yet |
+| Tests | none yet |
+| Status | 🔄 Active blocker |
+| Regression | Live same-flow revalidation confirmed that branch-focus and Codex-home blockers are resolved and that real bundle artifacts are produced, but the workflow still fails to converge to a completed `implement_experiments` state. |
+
+## LV-043 design retry ignores bounded failure evidence
+- Category: live validation issue
+- Status: active
+- Validation target: `test/` substantive run `81820c46-d1b6-4080-8575-a35c60583480` after `analyze_results -> backtrack_to_design`.
+- Execution mode: fresh/resumed TUI in `test/`, real governed run.
+- Reproduction:
+  1. Resume the run after `analyze_results` emits `transition_recommendation.json` with `backtrack_to_design`.
+  2. Observe `design_experiments` restart.
+  3. Inspect `result_analysis.json` and `transition_recommendation.json` showing `pilot_size=1`, `repeats=1`, objective miss, and explicit recommendation to revise design.
+  4. Inspect current design node input path in `src/core/nodes/designExperiments.ts`; it reads hypotheses/constraints/objective but not prior result-analysis feedback.
+- Expected behavior: design retry should ingest prior bounded-run evidence and explicitly avoid repeating the same underpowered scope; revised panel artifacts should reflect stronger bounded-local design.
+- Actual behavior: backtracked design restart is driven by the original hypotheses/constraints path, so the retry can repeat an underpowered design despite existing negative evidence.
+- Fresh vs existing: reproduced on the existing governed run after a real backtrack; risk applies equally to fresh runs once they reach the same boundary.
+- Persisted artifact vs UI: persisted `result_analysis.json` and `transition_recommendation.json` clearly demand design revision; UI shows `Retrying design_experiments`, but persisted design panel artifacts remain from the original attempt until a new selection is emitted.
+- Dominant taxonomy: `persisted_state_bug`
+- Root-cause hypothesis: `design_experiments` does not load prior analysis feedback into the design request, so backtrack context is not preserved across node reruns.
+- Planned fix: wire prior result-analysis and transition evidence into design retry input, persist a retry context artifact, and add deterministic regression coverage.
+
+## LV-044 run_experiments omits required runner arguments after governed bundle generation
+- Category: live validation issue
+- Status: active
+- Validation target: `test/` live run `81820c46-d1b6-4080-8575-a35c60583480` at `run_experiments`.
+- Execution mode: resumed TUI in `test/` using the real operator flow.
+- Reproduction:
+  1. Launch the real TUI from `test/` and resume the run.
+  2. Observe the status panel after the governed bundle has already been generated.
+  3. The TUI shows `run_experiments error` with `run_gsm8k_budget_reasoning.py` usage output.
+- Expected behavior: the governed runner command should always include `--run-dir` and `--metrics-path` when AutoLabOS invokes the generated experiment bundle.
+- Actual behavior: the command reaches the runner without those required arguments, so the Python CLI exits immediately and the workflow stalls at `run_experiments`.
+- Fresh vs existing: reproduced on the existing governed run via `/resume`; a fresh session reopening the same run shows the same persisted command-assembly failure.
+- Persisted artifact vs UI: the TUI error matches the persisted run note/lastError exactly, so this is not a projection-only bug.
+- Dominant taxonomy: `persisted_state_bug`
+- Root-cause hypothesis: the `run_experiments` command assembly or argument forwarding path loses required execution paths even though the bundle and config already exist.
+- Planned fix: patch the runner invocation builder to always materialize `--run-dir` and `--metrics-path`, add deterministic regression coverage, and rerun the same live flow.
+
+- Update (2026-03-19): patched `implementSessionManager` recovered-bundle command normalization and revalidated in `test/`. The same live run now produces `run_experiments_panel/execution_plan.json` with the full absolute command, executes a real `pilot-8ex-1r-20260319-125038` bundle, and no longer reproduces the missing `--run-dir/--metrics-path` usage failure. Deterministic coverage: `tests/implementSessionManager.test.ts`; repo validation: `npm run build`, `npm test`, `npm run validate:harness`. Regression status: fixed for the original CLI-argument loss path.
+- Update (2026-03-19): after the new 8-example bounded run, patched `design_experiments` live retry now writes `design_experiments_panel/retry_context.json` with `pilot_size=8`, `repeats=1`, `accuracy_delta_vs_baseline=-0.125`, and the transition evidence, and the fresh TUI log shows `Loaded design retry context from prior results`. Deterministic coverage: `tests/constraintPropagation.test.ts`; regression status: fixed for retry-context loss.
+
+## LV-045 design_experiments retry can hang after loading retry context without committing a new panel
+- Category: live validation issue
+- Status: active
+- Validation target: `test/` run `81820c46-d1b6-4080-8575-a35c60583480` after `pilot-8ex-1r-20260319-125038` backtracks to `design_experiments`.
+- Execution mode: fresh TUI in `test/`, real resumed governed run.
+- Reproduction:
+  1. Let the same run execute the new 8-example bounded pilot and auto-backtrack from `analyze_results` to `design_experiments`.
+  2. Observe the fresh TUI log: `Loaded design retry context from prior results`, `Submitting experiment design request`, `Designing experiments`, `Codex analysis session started`.
+  3. Wait while `design_experiments` remains running.
+  4. Persisted `design_experiments_panel/retry_context.json` updates, but `candidates.json`, `reviews.json`, and `selection.json` remain stale from the old attempt.
+- Expected behavior: design retry should either commit a new panel selection in bounded time or fail over deterministically with an auditable fallback instead of hanging indefinitely.
+- Actual behavior: the node can remain running with no new panel artifacts and queued steering unconsumed, blocking the next loop iteration.
+- Fresh vs existing: reproduced in a fresh TUI reopen of the existing run; persisted retry_context agrees with the UI that the retry started, but the rest of the panel remains stale.
+- Persisted artifact vs UI: UI shows active design retry; persisted retry_context confirms start; panel selection artifacts do not advance.
+- Dominant taxonomy: `race_timing_bug`
+- Root-cause hypothesis: `designExperimentsFromHypotheses` waits indefinitely on the LLM/Codex-backed completion path without a bounded timeout/fallback handoff, so retry context is loaded but no downstream panel artifacts are ever committed.
+- Planned fix: bound the design LLM request with a timeout that degrades to deterministic fallback, add regression coverage, and rerun the same live retry flow.
+- Update (2026-03-19): patched `src/core/analysis/researchPlanning.ts` to bound `designExperimentsFromHypotheses(...)` with a 45s timeout and deterministic fallback. Deterministic coverage: `tests/researchPlanning.test.ts` (`falls back deterministically when experiment design llm exceeds the timeout`). Live same-flow revalidation in `test/` passed: rerunning `design_experiments` on run `81820c46-d1b6-4080-8575-a35c60583480` updated `design_experiments_panel/candidates.json`, `reviews.json`, `selection.json`, and `brief_design_consistency.json` at `2026-03-19 13:03:57 +0900`, then advanced to the next cycle. Regression status: fixed for the hung design-panel boundary.
+
+## LV-046 implement_experiments reuses a stale public bundle after design retry changes the plan
+- Category: live validation issue
+- Status: active
+- Validation target: `test/` run `81820c46-d1b6-4080-8575-a35c60583480` after LV-045 fix, specifically the `design_experiments -> implement_experiments -> run_experiments` handoff.
+- Execution mode: fresh TUI in `test/`, same governed run after a real negative pilot and design retry.
+- Reproduction:
+  1. Let the run finish `pilot-8ex-1r-20260319-125850` and backtrack to `design_experiments`.
+  2. Retry `design_experiments`; observe new `experiment_plan.yaml` and `design_experiments_panel/*` artifacts written around `2026-03-19 13:03:57 +0900`.
+  3. Observe `implement_result.json` immediately afterward.
+  4. Compare the updated plan with the recovered bundle command and public bundle mtimes.
+- Expected behavior: once the experiment plan changes, `implement_experiments` should only reuse a public bundle if the runnable implementation artifacts were regenerated for the current plan; otherwise it must re-implement or fail honestly rather than reusing the old bounded pilot.
+- Actual behavior: `implement_result.json` was recovered from the pre-existing public bundle even though `context.plan_changed=true`. The recovered `run_command` still used the old `frozen_config.json` and `--pilot-size 8 --repeats 1`, and a new artifact directory `pilot-8ex-1r-20260319-130402` was started from that stale bundle.
+- Fresh vs existing: reproduced in a fresh TUI reopen of the existing run. The persisted plan and implement result disagree even though the live UI shows the workflow continuing.
+- Persisted artifact vs UI: persisted `experiment_plan.yaml` contains retry directives to materially exceed the previous 8x1 scope, but persisted `implement_result.json` and public `frozen_config.json` still reflect the old bundle. This is a direct persisted handoff mismatch that can silently flatten paper-quality gains.
+- Dominant taxonomy: `persisted_state_bug`
+- Root-cause hypothesis: recovered-bundle reuse/recovery logic in `implementSessionManager` only checks that a materialized bundle exists, not that its script/config/README were regenerated after the latest plan update.
+- Planned fix: refuse stale bundle reuse/recovery when `plan_changed=true` and the recovered implementation artifacts predate the current plan, add deterministic regression coverage, and rerun the same live flow.
+
+## LV-047 review pre-summary drops baseline/comparator information even when result_analysis and review_packet already have it
+- Category: live validation issue
+- Status: active
+- Validation target: `test/` run `81820c46-d1b6-4080-8575-a35c60583480` at `review`, specifically `review/pre_review_summary.json`
+- Execution mode: fresh TUI in `test/` and persisted artifact comparison on the same governed run
+- Reproduction:
+  1. Run the governed flow in `test/` through `analyze_results -> review`.
+  2. Compare `review/pre_review_summary.json` with `result_analysis.json`, `result_table.json`, and `review/review_packet.json`.
+  3. Observe the baseline/comparator fields.
+- Expected behavior: pre-review summary should surface the explicit baseline/comparator already present in the analysis artifacts so review and paper-facing summaries stay coherent.
+- Actual behavior: `pre_review_summary.json` reports `baseline: "(no explicit baseline identified)"` even though `result_analysis.json` includes `current_best_baseline`, `comparison_contract.baseline_binding.source_arm_name`, and `review_packet.json` clearly reasons about explicit baseline comparison.
+- Fresh vs existing: reproduced from a fresh TUI reopen of the existing run; the mismatch is persisted on disk, not a session-only projection issue.
+- Persisted artifact vs UI: persisted review pre-summary disagrees with persisted result-analysis/review-packet artifacts. The UI review outcome is conservative and correct, but one review-facing artifact underreports comparator discipline.
+- Dominant taxonomy: `persisted_state_bug`
+- Root-cause hypothesis: `buildPreReviewSummary()` only derives baselines from `report.condition_comparisons[*].label`, so runs that encode the baseline under `metrics.current_best_baseline`, `metrics.comparison_contract.baseline_binding`, or selected-design baselines lose the explicit comparator in the pre-summary.
+- Planned fix: expand baseline extraction in `buildPreReviewSummary()` to include structured metric/report fields already present in `result_analysis.json`, add deterministic review-node coverage, then rerun the same review flow in `test/`.
+- Update (2026-03-19): patched `src/core/nodes/review.ts` so `pre_review_summary.json` derives explicit baselines from `condition_comparisons`, `metrics.current_best_baseline.arm_name`, `metrics.comparison_contract.baseline_binding.source_arm_name`, and selected-design baselines. Added deterministic coverage in `tests/reviewNode.test.ts`. Revalidated with `npm run build`, `npm test`, `npm run validate:harness`, and a fresh TUI rerun of `review` in `test/`; the same run now rewrites `review/pre_review_summary.json` with `baseline: "current_best_baseline, fixed_cot_256"`. Status: fixed for review pre-summary baseline underreporting.
+
+## LV-048 generate_hypotheses can hang after review-driven backtrack_to_hypotheses because staged LLM calls have no timeout/fallback boundary
+- Category: live validation issue
+- Status: active
+- Validation target: `test/` run `81820c46-d1b6-4080-8575-a35c60583480` after review rerun applies `backtrack_to_hypotheses -> generate_hypotheses`
+- Execution mode: fresh TUI in `test/`, same governed run after approving the review transition
+- Reproduction:
+  1. Rerun `review` and approve its `backtrack_to_hypotheses` transition.
+  2. Run `generate_hypotheses` on the same run.
+  3. Compare the live TUI status with `hypothesis_generation/status.json`, `hypothesis_generation/progress.jsonl`, and `hypotheses.jsonl`.
+- Expected behavior: hypothesis generation should either advance through staged draft/review phases in bounded time or fail over to single-pass/deterministic fallback, eventually rewriting hypothesis artifacts for the new cycle.
+- Actual behavior: the live TUI shows `Generating hypotheses...`, while the persisted current-cycle progress stops at `Codex analysis session started.` and the selected hypotheses artifacts remain from the old pre-review cycle.
+- Fresh vs existing: reproduced in a fresh TUI reopen of the existing run after review backtracked to `generate_hypotheses`; this is a persisted execution gap rather than a stale session-only render issue.
+- Persisted artifact vs UI: the UI shows active hypothesis generation, but persisted current-cycle artifacts only reach the first staged LLM call and do not advance to new drafts/selection. `hypotheses.jsonl` stays on the previous timestamp.
+- Dominant taxonomy: `race_timing_bug`
+- Root-cause hypothesis: `generateHypothesesFromEvidence()` does not bound its staged `llm.complete(...)` calls, so a stalled Codex/LLM completion can keep the node in `running` forever instead of dropping into the existing single-pass or deterministic fallback path.
+- Planned fix: add bounded timeouts around staged and single-pass hypothesis generation LLM calls, add deterministic regression coverage, and rerun the same `review -> generate_hypotheses` flow in `test/`.
+- Update (2026-03-19): patched `src/core/analysis/researchPlanning.ts` and `src/core/nodes/generateHypotheses.ts` so staged and single-pass hypothesis generation calls use bounded timeouts and fall through to the existing fallback path. Added deterministic coverage in `tests/generateHypothesesNode.test.ts`. Revalidated with `npm run build`, `npm test`, `npm run validate:harness`, and a fresh TUI rerun in `test/`. The same run now records `hypothesis_axes_timeout:45000ms`, falls through `single_pass`, then completes with fallback instead of remaining `running`; current-cycle `hypotheses.jsonl`, `hypothesis_generation/selection.json`, and `hypothesis_generation/llm_trace.json` were rewritten at `2026-03-19 14:35:13`. Status: fixed for bounded completion of review-driven hypothesis regeneration.

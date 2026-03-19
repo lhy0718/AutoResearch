@@ -67,7 +67,7 @@ interface AnalysisManifest {
 interface AnalysisManifestEntry {
   paper_id: string;
   title: string;
-  status: "pending" | "completed" | "failed" | "skipped";
+  status: "pending" | "running" | "completed" | "failed" | "skipped";
   selected: boolean;
   rank?: number;
   source_type?: "full_text" | "abstract";

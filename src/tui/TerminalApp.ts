@@ -6684,6 +6684,7 @@ function parseImplementStatusProjectionHints(raw: string): RunProjectionHints | 
         status,
         stage,
         message,
+        updatedAt: readString(parsed.updatedAt),
         attempt: readNumber(parsed.attempt),
         maxAttempts: readNumber(parsed.maxAttempts),
         progressCount: readNumber(parsed.progressCount),

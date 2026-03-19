@@ -611,9 +611,7 @@ function buildPreReviewSummary(input: {
     ? `Attempt ${keptDecisions[keptDecisions.length - 1].attempt} (${keptDecisions[keptDecisions.length - 1].verdict})`
     : "No kept attempts";
 
-  const baselines = (report.condition_comparisons ?? [])
-    .filter((c: AnalysisConditionComparison) => c.label.toLowerCase().includes("baseline"))
-    .map((c: AnalysisConditionComparison) => c.label);
+  const baselines = extractPreReviewBaselineLabels(report);
 
   const uncertainties: string[] = [];
   if (report.overview?.objective_status === "unknown") {
@@ -684,6 +682,45 @@ function buildPreReviewSummary(input: {
       Object.entries(input.rollbackCounters).filter(([, v]) => v !== undefined)
     ) as Record<string, number>
   };
+}
+
+function extractPreReviewBaselineLabels(report: AnalysisReport): string[] {
+  const labels = new Set<string>();
+
+  for (const comparison of report.condition_comparisons ?? []) {
+    if (comparison.label.toLowerCase().includes("baseline")) {
+      labels.add(comparison.label);
+    }
+  }
+
+  const metrics = asRecord(report.metrics);
+  const currentBestBaseline = asRecord(metrics.current_best_baseline);
+  const comparisonContract = asRecord(metrics.comparison_contract);
+  const baselineBinding = asRecord(comparisonContract.baseline_binding);
+  const selectedDesignBaselines = report.plan_context?.selected_design?.baselines ?? [];
+
+  addBaselineLabel(labels, currentBestBaseline.arm_name);
+  addBaselineLabel(labels, baselineBinding.source_arm_name);
+  for (const baseline of selectedDesignBaselines) {
+    addBaselineLabel(labels, baseline);
+  }
+
+  return Array.from(labels);
+}
+
+function addBaselineLabel(labels: Set<string>, value: unknown): void {
+  if (typeof value !== "string") {
+    return;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return;
+  }
+  labels.add(trimmed);
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? value as Record<string, unknown> : {};
 }
 
 function buildClaimCeilingDetail(input: {

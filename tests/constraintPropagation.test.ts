@@ -32,6 +32,16 @@ class CountingJsonLLMClient extends MockLLMClient {
   }
 }
 
+class ThrowingLLMClient extends MockLLMClient {
+  constructor(private readonly message: string) {
+    super();
+  }
+
+  override async complete(): Promise<{ text: string }> {
+    throw new Error(this.message);
+  }
+}
+
 afterEach(() => {
   process.chdir(ORIGINAL_CWD);
 });
@@ -515,6 +525,119 @@ describe("constraint propagation", () => {
     expect(selection).toMatchObject({
       mode: "all_blocked_fallback",
       selected_candidate_id: "plan_less_bad"
+    });
+  });
+
+  it("preserves prior bounded-run feedback when design retries after analyze_results", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-design-retry-context-"));
+    process.chdir(root);
+
+    const runId = "run-design-retry-context";
+    const run = makeRun(root, runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "hypotheses.jsonl"),
+      `${JSON.stringify({
+        hypothesis_id: "h_1",
+        text: "Adaptive stopping improves budget-aware reasoning quality.",
+        reproducibility_signals: ["run_to_run_variance"],
+        measurement_hint: "Compare accuracy_delta_vs_baseline across repeated bounded runs."
+      })}\n`,
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "result_analysis.json"),
+      JSON.stringify(
+        {
+          metrics: {
+            scope: {
+              pilot_size: 1,
+              registered_pilot_size: 200,
+              repeats: 1,
+              registered_repeats: 5
+            },
+            primary_metric: {
+              name: "accuracy_delta_vs_baseline",
+              value: -1,
+              baseline_name: "fixed_cot_256"
+            }
+          },
+          plan_context: {
+            selected_design: {
+              title: "Adaptive stopping budget frontier"
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "transition_recommendation.json"),
+      JSON.stringify(
+        {
+          action: "backtrack_to_design",
+          targetNode: "design_experiments",
+          reason: "Objective not met under the bounded local pilot.",
+          evidence: [
+            "Objective metric not met: accuracy_delta_vs_baseline=-1.",
+            "Total recorded trials: 1."
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const node = createDesignExperimentsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new ThrowingLLMClient("design llm unavailable"),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const retryContext = JSON.parse(
+      await readFile(path.join(runDir, "design_experiments_panel", "retry_context.json"), "utf8")
+    ) as {
+      previous_pilot_size?: number;
+      previous_repeats?: number;
+      transition_action?: string;
+      retry_directives?: string[];
+    };
+    expect(retryContext).toMatchObject({
+      previous_pilot_size: 1,
+      previous_repeats: 1,
+      transition_action: "backtrack_to_design"
+    });
+    expect(retryContext.retry_directives).toContain("Do not repeat a bounded-local design with pilot_size=1 and repeats=1.");
+    expect(retryContext.retry_directives).toContain(
+      "Use at least tens of examples and repeated runs in the next bounded local pilot if the workstation budget allows it."
+    );
+
+    const plan = await readFile(path.join(runDir, "experiment_plan.yaml"), "utf8");
+    expect(plan).toContain("retry_context:");
+    expect(plan).toContain("previous_pilot_size: 1");
+    expect(plan).toContain("previous_repeats: 1");
+    expect(plan).toContain('transition_action: "backtrack_to_design"');
+    expect(plan).toContain('  - "Do not repeat a bounded-local design with pilot_size=1 and repeats=1."');
+    expect(plan).toContain('  - "Use at least tens of examples and repeated runs in the next bounded local pilot if the workstation budget allows it."');
+    expect(plan).toContain('  - "The next bounded local retry must materially exceed the previous scope (pilot_size=1, repeats=1) while staying locally runnable."');
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    expect(await memory.get("design_experiments.retry_context")).toMatchObject({
+      previous_pilot_size: 1,
+      previous_repeats: 1,
+      transition_action: "backtrack_to_design"
     });
   });
 

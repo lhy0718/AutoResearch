@@ -1,7 +1,7 @@
 import path from "node:path";
 
 import { GraphNodeHandler } from "../stateGraph/types.js";
-import { ImplementSessionManager } from "../agents/implementSessionManager.js";
+import { ImplementSessionManager, ImplementSessionStopError } from "../agents/implementSessionManager.js";
 import { NodeExecutionDeps } from "./types.js";
 
 export function createImplementExperimentsNode(deps: NodeExecutionDeps): GraphNodeHandler {
@@ -17,7 +17,20 @@ export function createImplementExperimentsNode(deps: NodeExecutionDeps): GraphNo
   return {
     id: "implement_experiments",
     async execute({ run, abortSignal }) {
-      const result = await sessions.run(run, abortSignal);
+      let result;
+      try {
+        result = await sessions.run(run, abortSignal);
+      } catch (error) {
+        if (error instanceof ImplementSessionStopError) {
+          return {
+            status: "success",
+            summary: error.message,
+            needsApproval: true,
+            toolCallsUsed: 1
+          };
+        }
+        throw error;
+      }
       const publicOutputRoot = path.relative(process.cwd(), result.publicDir).replace(/\\/g, "/");
       return {
         status: "success",

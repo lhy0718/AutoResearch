@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 
 import { ensureScaffold, resolveAppPaths } from "../src/config.js";
 import { InMemoryEventStream } from "../src/core/events.js";
 import { ImplementSessionManager } from "../src/core/agents/implementSessionManager.js";
+import { createImplementExperimentsNode } from "../src/core/nodes/implementExperiments.js";
 import {
   buildExperimentComparisonContract,
   storeExperimentGovernanceDecision
@@ -731,6 +733,7 @@ describe("ImplementSessionManager", () => {
 
     const scriptPath = path.join(runDir, "experiment.py");
     const publicDir = buildPublicExperimentDir(workspace, run);
+    const defaultFocusScript = path.join(publicDir, "experiment.py");
     let capturedPrompt = "";
     let capturedSystemPrompt = "";
     const codex = {
@@ -830,11 +833,72 @@ describe("ImplementSessionManager", () => {
       .map((event) => event.payload.text);
     expect(obs).toContain("Writing experiment script now.");
     expect(capturedPrompt).toContain(`"public_dir": "${publicDir}"`);
+    expect(capturedPrompt).toContain('"focus_files": [');
+    expect(capturedPrompt).toContain(defaultFocusScript);
     expect(capturedPrompt).toContain("Implementation protocol:");
     expect(capturedPrompt).toContain("Search-backed localization hints:");
     expect(capturedSystemPrompt).toContain(`Preferred public experiment directory: ${publicDir}`);
     expect(capturedSystemPrompt).toContain("Use a synthetic validation harness only as a fallback");
     expect(capturedSystemPrompt).toContain("Configured real-execution LLM: provider=codex, model=gpt-5.4, reasoning=xhigh");
+  });
+
+  it("prefers an existing public runner script over placeholder experiment.py in the default branch focus", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-public-focus-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Public Script Focus",
+      topic: "agent reasoning",
+      constraints: [],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const publicScriptPath = path.join(publicDir, "run_gsm8k_budget_reasoning.py");
+    writeFileSync(publicScriptPath, "print('ok')\n", "utf8");
+
+    let capturedPrompt = "";
+    const codex = {
+      runTurnStream: async ({ prompt }: { prompt?: string }) => {
+        capturedPrompt = prompt || "";
+        return {
+          threadId: "thread-public-focus",
+          finalText: JSON.stringify({
+            summary: "Updated the public runner.",
+            run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
+            changed_files: [publicScriptPath],
+            artifacts: [publicScriptPath],
+            script_path: publicScriptPath,
+            metrics_path: path.join(runDir, "metrics.json")
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexCliClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+
+    expect(capturedPrompt).toContain(publicScriptPath);
+    expect(capturedPrompt).toContain(`"focus_files": [\n    ${JSON.stringify(publicScriptPath)}`);
+    expect(result.scriptPath).toBe(publicScriptPath);
   });
 
   it("reuses long-term implementation memory and saves a durable lesson", async () => {
@@ -2032,6 +2096,346 @@ describe("ImplementSessionManager", () => {
     });
     expect(await memory.get("implement_experiments.auto_handoff_to_run_experiments")).toBe(false);
     expect(await memory.get("implement_experiments.pending_handoff_to_run_experiments")).toBe(false);
+  });
+
+  it("recovers a materialized public bundle when Codex disconnects before returning structured output", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-recover-bundle-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Recovered Bundle Run",
+      topic: "agent reasoning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const scriptPath = path.join(publicDir, "run_gsm8k_budget_reasoning.py");
+    const configPath = path.join(publicDir, "frozen_config.json");
+    const readmePath = path.join(publicDir, "README.md");
+    const baselinePath = path.join(publicDir, "baseline_summary.json");
+    const metricsPath = path.join(runDir, "metrics.json");
+
+    const codex = {
+      runTurnStream: async () => {
+        mkdirSync(publicDir, { recursive: true });
+        writeFileSync(scriptPath, "print('ok')\n", "utf8");
+        writeFileSync(configPath, "{\"pilot_size\": 8}\n", "utf8");
+        writeFileSync(baselinePath, "{\"baseline\":\"greedy\"}\n", "utf8");
+    writeFileSync(
+      readmePath,
+      [
+        "# Recovered Bundle",
+        "",
+        "```bash",
+        `python outputs/${path.basename(path.dirname(publicDir))}/experiment/${path.basename(scriptPath)} \\`,
+        `  --config outputs/${path.basename(path.dirname(publicDir))}/experiment/${path.basename(configPath)} \\`,
+        `  --public-dir outputs/${path.basename(path.dirname(publicDir))}/experiment \\`,
+        `  --run-dir .autolabos/runs/${run.id} \\`,
+        `  --metrics-path .autolabos/runs/${run.id}/metrics.json`,
+        "```"
+      ].join("\n"),
+      "utf8"
+    );
+        throw new Error("codex exec failed (exit 1)");
+      }
+    } as unknown as CodexCliClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+
+    expect(result.scriptPath).toBe(scriptPath);
+    expect(result.runCommand).toContain(scriptPath);
+    expect(result.runCommand).toContain("--config");
+    expect(result.runCommand).toContain(JSON.stringify(runDir));
+    expect(result.runCommand).toContain(JSON.stringify(metricsPath));
+    expect(result.verifyReport).toMatchObject({ status: "pass" });
+    expect(existsSync(readmePath)).toBe(true);
+  });
+
+  it("reuses an existing public bundle with execution evidence before re-entering Codex", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-reuse-bundle-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Reuse Bundle Run",
+      topic: "agent reasoning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+    mkdirSync(path.dirname(run.memoryRefs.episodePath), { recursive: true });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const scriptPath = path.join(publicDir, "run_gsm8k_budget_reasoning.py");
+    const configPath = path.join(publicDir, "frozen_config.json");
+    const readmePath = path.join(publicDir, "README.md");
+    const metricsPath = path.join(runDir, "metrics.json");
+    const artifactPath = path.join(publicDir, "artifacts", "pilot", "metrics.public.json");
+    const baselinePath = path.join(publicDir, "baseline_summary.json");
+
+    mkdirSync(path.dirname(artifactPath), { recursive: true });
+    mkdirSync(publicDir, { recursive: true });
+    writeFileSync(scriptPath, "print('ok')\n", "utf8");
+    writeFileSync(configPath, "{\"pilot_size\": 8}\n", "utf8");
+    writeFileSync(baselinePath, "{\"baseline\":\"greedy\"}\n", "utf8");
+    writeFileSync(metricsPath, "{\"status\":\"ok\"}\n", "utf8");
+    writeFileSync(artifactPath, "{\"accuracy\":0.5}\n", "utf8");
+    writeFileSync(
+      readmePath,
+      [
+        "# Existing Bundle",
+        "",
+        "```bash",
+        `python outputs/${path.basename(path.dirname(publicDir))}/experiment/${path.basename(scriptPath)} \\`,
+        `  --config outputs/${path.basename(path.dirname(publicDir))}/experiment/${path.basename(configPath)} \\`,
+        `  --public-dir outputs/${path.basename(path.dirname(publicDir))}/experiment \\`,
+        `  --run-dir .autolabos/runs/${run.id} \\`,
+        `  --metrics-path .autolabos/runs/${run.id}/metrics.json`,
+        "```"
+      ].join("\n"),
+      "utf8"
+    );
+
+    let callCount = 0;
+    const codex = {
+      runTurnStream: async () => {
+        callCount += 1;
+        throw new Error("Codex should not have been called");
+      }
+    } as unknown as CodexCliClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+
+    expect(callCount).toBe(0);
+    expect(result.scriptPath).toBe(scriptPath);
+    expect(result.runCommand).toContain(scriptPath);
+    expect(result.runCommand).toContain(JSON.stringify(runDir));
+    expect(result.runCommand).toContain(JSON.stringify(metricsPath));
+    expect(result.verifyReport).toMatchObject({ status: "pass" });
+  });
+
+  it("pauses for approval after an unrecoverable Codex transport failure instead of triggering graph-level auto-retries", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-stop-error-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Implementation Stop Run",
+      topic: "agent reasoning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const codex = {
+      runTurnStream: async () => {
+        throw new Error("codex exec failed (exit 1)");
+      }
+    } as unknown as CodexCliClient;
+
+    const node = createImplementExperimentsNode({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace,
+      llm: {} as any,
+      pdfTextLlm: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: {} as any
+    } as any);
+
+    const result = await node.execute({ run });
+    const status = JSON.parse(readFileSync(path.join(runDir, "implement_experiments", "status.json"), "utf8")) as {
+      status: string;
+      stage: string;
+      message: string;
+      attempt?: number;
+    };
+    const attempts = JSON.parse(readFileSync(path.join(runDir, "implement_attempts.json"), "utf8")) as {
+      attempts: Array<{ attempt: number; verify_report: { next_action: string; failure_type: string; summary: string } }>;
+    };
+
+    expect(result).toMatchObject({
+      status: "success",
+      needsApproval: true
+    });
+    expect(result.summary).toContain("Codex execution failed before any runnable implementation was produced");
+    expect(status).toMatchObject({
+      status: "failed",
+      stage: "failed",
+      attempt: 1
+    });
+    expect(status.message).toContain("codex exec failed (exit 1)");
+    expect(attempts.attempts).toHaveLength(1);
+    expect(attempts.attempts[0]).toMatchObject({
+      attempt: 1,
+      verify_report: {
+        next_action: "stop_for_environment",
+        failure_type: "environment"
+      }
+    });
+    expect(attempts.attempts[0]?.verify_report.summary).toContain("codex exec failed (exit 1)");
+  });
+
+  it("does not recover or reuse a stale public bundle after the experiment plan changes", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-stale-bundle-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Stale Bundle Run",
+      topic: "plan-aware rerun",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const scriptPath = path.join(publicDir, "run_gsm8k_budget_reasoning.py");
+    const configPath = path.join(publicDir, "frozen_config.json");
+    const readmePath = path.join(publicDir, "README.md");
+    const metricsPath = path.join(runDir, "metrics.json");
+    const artifactPath = path.join(publicDir, "artifacts", "pilot", "metrics.public.json");
+    const baselinePath = path.join(publicDir, "baseline_summary.json");
+
+    mkdirSync(path.dirname(artifactPath), { recursive: true });
+    mkdirSync(publicDir, { recursive: true });
+    writeFileSync(scriptPath, "print('old bundle')\n", "utf8");
+    writeFileSync(configPath, "{\"pilot_size\":8,\"repeats\":1}\n", "utf8");
+    writeFileSync(baselinePath, "{\"baseline\":\"fixed_cot_256\"}\n", "utf8");
+    writeFileSync(metricsPath, "{\"status\":\"ok\"}\n", "utf8");
+    writeFileSync(artifactPath, "{\"accuracy\":0.5}\n", "utf8");
+    writeFileSync(
+      readmePath,
+      [
+        "# Existing Bundle",
+        "",
+        "```bash",
+        `python outputs/${path.basename(path.dirname(publicDir))}/experiment/${path.basename(scriptPath)} \\`,
+        `  --config outputs/${path.basename(path.dirname(publicDir))}/experiment/${path.basename(configPath)} \\`,
+        `  --public-dir outputs/${path.basename(path.dirname(publicDir))}/experiment \\`,
+        `  --run-dir .autolabos/runs/${run.id} \\`,
+        `  --metrics-path .autolabos/runs/${run.id}/metrics.json`,
+        "```"
+      ].join("\n"),
+      "utf8"
+    );
+    const staleBundleTime = new Date("2026-03-19T03:00:00.000Z");
+    utimesSync(scriptPath, staleBundleTime, staleBundleTime);
+    utimesSync(configPath, staleBundleTime, staleBundleTime);
+    utimesSync(readmePath, staleBundleTime, staleBundleTime);
+
+    const oldPlan = "hypotheses:\n  - old_design_v1\n";
+    const newPlan = "hypotheses:\n  - revised_design_v2\n  - stronger_scope\n";
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), newPlan, "utf8");
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    const oldPlanHash = createHash("sha256").update(oldPlan).digest("hex").slice(0, 16);
+    await memory.put("implement_experiments.plan_hash", oldPlanHash);
+
+    const contract = buildExperimentComparisonContract({
+      run,
+      selectedDesign: {
+        id: "plan_new",
+        hypothesis_ids: ["h_1"],
+        baselines: ["fixed_cot_256"]
+      },
+      objectiveProfile: buildHeuristicObjectiveMetricProfile(run.objectiveMetric),
+      managedBundleSupported: false
+    });
+    await storeExperimentGovernanceDecision(run, memory, { contract, entries: [] });
+
+    let callCount = 0;
+    const codex = {
+      runTurnStream: async () => {
+        callCount += 1;
+        writeFileSync(scriptPath, "print('new bundle')\n", "utf8");
+        writeFileSync(configPath, "{\"pilot_size\":16,\"repeats\":2}\n", "utf8");
+        return {
+          threadId: "thread-stale-bundle-refresh",
+          finalText: JSON.stringify({
+            summary: "Re-implemented the bundle for the new plan.",
+            experiment_mode: "real_execution",
+            run_command: `python ${JSON.stringify(scriptPath)} --config ${JSON.stringify(configPath)} --run-dir ${JSON.stringify(runDir)} --metrics-path ${JSON.stringify(metricsPath)} --pilot-size 16 --repeats 2`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            changed_files: [scriptPath, configPath],
+            artifacts: [scriptPath, configPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath, configPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Updated the experiment bundle after the plan changed.",
+              selected_files: [scriptPath, configPath],
+              candidate_files: [
+                { path: scriptPath, reason: "Updated script for the new plan.", confidence: 0.9 },
+                { path: configPath, reason: "Updated config for the new plan.", confidence: 0.9 }
+              ]
+            },
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexCliClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    expect(callCount).toBeGreaterThan(0);
+    expect(result.summary).toContain("Re-implemented the bundle for the new plan.");
+    expect(result.runCommand).toContain("--pilot-size 16 --repeats 2");
   });
 
   it("fails when the implementer response provides no structured result or runnable artifact", async () => {
