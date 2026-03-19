@@ -245,6 +245,13 @@ export function buildLiteratureQueryCandidates(input: {
 
   const requested = normalizeLiteratureQuery(input.requestedQuery);
   const llmGeneratedQueries = sanitizeSemanticScholarQueryList(input.llmGeneratedQueries || []);
+  const topicSeed = normalizeLiteratureQuery(input.briefTopic || input.extractedBriefTopic || input.runTopic);
+  const topicReason: LiteratureQueryCandidate["reason"] = input.briefTopic
+    ? "brief_topic"
+    : input.extractedBriefTopic
+      ? "brief_topic"
+      : "run_topic";
+  const strippedTopic = stripLiteratureConstraintPhrases(topicSeed);
 
   pushCandidate(requested, "requested_query");
   if (requested) {
@@ -252,6 +259,28 @@ export function buildLiteratureQueryCandidates(input: {
   }
   for (const query of llmGeneratedQueries) {
     pushCandidate(query, "llm_generated");
+  }
+
+  for (const query of buildDeterministicPhraseBundleQueries(topicSeed)) {
+    pushCandidate(query, topicReason);
+  }
+
+  if (strippedTopic && strippedTopic !== topicSeed) {
+    for (const query of buildDeterministicPhraseBundleQueries(strippedTopic)) {
+      pushCandidate(query, "constraint_stripped");
+    }
+  }
+
+  const keywordAnchor = buildKeywordAnchorQuery(strippedTopic || topicSeed);
+  if (isSpecificKeywordAnchorQuery(keywordAnchor)) {
+    pushCandidate(keywordAnchor, "keyword_anchor");
+  }
+
+  if (candidates.length === 0) {
+    pushCandidate(topicSeed, topicReason);
+    if (strippedTopic && strippedTopic !== topicSeed) {
+      pushCandidate(strippedTopic, "constraint_stripped");
+    }
   }
 
   return candidates;
@@ -450,6 +479,129 @@ function buildKeywordAnchorQuery(value: string | undefined): string | undefined 
     return undefined;
   }
   return normalizeLiteratureQuery(limited.join(" "));
+}
+
+function buildDeterministicPhraseBundleQueries(value: string | undefined): string[] {
+  const phrases = collectDeterministicResearchPhrases(value);
+  if (phrases.length === 0) {
+    return [];
+  }
+
+  const queries: string[] = [];
+  const seen = new Set<string>();
+  const pushQuery = (query: string | undefined) => {
+    const normalized = normalizeLiteratureQuery(query);
+    if (!normalized) {
+      return;
+    }
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    queries.push(normalized);
+  };
+  const quoted = (phrase: string): string => `"${phrase}"`;
+  const anchor = phrases.find((phrase) => /language models?$/iu.test(phrase)) || phrases[0];
+  const reasoning =
+    phrases.find((phrase) => /test-time|reasoning|reasoners?|math reasoning/iu.test(phrase)) || undefined;
+  const adaptive = phrases.find((phrase) => /^adaptive\b/iu.test(phrase)) || undefined;
+  const structured = phrases.find((phrase) => /^structured\b/iu.test(phrase)) || undefined;
+  const budget = phrases.find((phrase) => /budget|inference/iu.test(phrase)) || undefined;
+
+  if (anchor && reasoning && anchor !== reasoning) {
+    pushQuery(`+${quoted(anchor)} +${quoted(reasoning)}`);
+  }
+
+  const alternatives = Array.from(new Set([adaptive, structured].filter((candidate): candidate is string => Boolean(candidate))));
+  if (anchor && alternatives.length === 1) {
+    pushQuery(`+${quoted(alternatives[0])} +${quoted(anchor)}`);
+  } else if (anchor && alternatives.length > 1) {
+    pushQuery(`(${alternatives.map((phrase) => quoted(phrase)).join(" | ")}) +${quoted(anchor)}`);
+  }
+
+  if (anchor && budget) {
+    const third = reasoning && reasoning !== budget ? ` +${quoted(reasoning)}` : "";
+    pushQuery(`+${quoted(budget)} +${quoted(anchor)}${third}`);
+  }
+
+  if (queries.length === 0 && phrases.length >= 2) {
+    pushQuery(`+${quoted(phrases[0])} +${quoted(phrases[1])}`);
+  }
+  if (queries.length === 0 && phrases.length >= 1) {
+    pushQuery(`+${quoted(phrases[0])}`);
+  }
+
+  return queries.slice(0, 4);
+}
+
+function collectDeterministicResearchPhrases(value: string | undefined): string[] {
+  const text = normalizeLiteratureQuery(value)?.toLowerCase();
+  if (!text) {
+    return [];
+  }
+
+  const phrases: string[] = [];
+  const pushPhrase = (phrase: string | undefined) => {
+    const normalized = normalizeLiteratureQuery(phrase)?.toLowerCase();
+    if (!normalized) {
+      return;
+    }
+    if (normalized.split(/\s+/u).length > 3) {
+      return;
+    }
+    if (!phrases.includes(normalized)) {
+      phrases.push(normalized);
+    }
+  };
+
+  if (/\bsmall\s+language\s+models?\b/u.test(text)) {
+    pushPhrase("small language models");
+  } else if (/\blanguage\s+models?\b/u.test(text)) {
+    pushPhrase("language models");
+  }
+
+  if (/\btest[-\s]?time\b/u.test(text) && /\breason/u.test(text)) {
+    pushPhrase("test-time reasoning");
+  } else if (/\btest[-\s]?time\b/u.test(text) && /\bstrateg/u.test(text)) {
+    pushPhrase("test-time strategies");
+  } else if (/\breason/u.test(text)) {
+    pushPhrase("reasoning");
+  }
+
+  if (/\badaptive\b/u.test(text) && (/\btest[-\s]?time\b/u.test(text) || /\breason/u.test(text) || /\binference\b/u.test(text))) {
+    pushPhrase("adaptive reasoning");
+  }
+  if (/\bstructured\b/u.test(text) && (/\btest[-\s]?time\b/u.test(text) || /\breason/u.test(text) || /\binference\b/u.test(text))) {
+    pushPhrase("structured reasoning");
+  }
+  if (/\b(?:budget[-\s]?aware|inference\s+budgets?|constrained\s+inference)\b/u.test(text)) {
+    pushPhrase("inference budget");
+  }
+  if (/\bgsm8k\b/u.test(text)) {
+    pushPhrase("GSM8K");
+  } else if (/\bmath\b/u.test(text) && /\breason/u.test(text)) {
+    pushPhrase("math reasoning");
+  }
+
+  return phrases.slice(0, 6);
+}
+
+function isSpecificKeywordAnchorQuery(value: string | undefined): boolean {
+  const text = normalizeLiteratureQuery(value)?.toLowerCase();
+  if (!text) {
+    return false;
+  }
+
+  const groups =
+    Number(/\blanguage\s+models?\b|\bllms?\b/u.test(text)) +
+    Number(/\btest\b|\btest-time\b/u.test(text)) +
+    Number(/\breason(?:ing|er|ers)?\b/u.test(text)) +
+    Number(/\badaptive\b|\bstructured\b|\bgated\b|\breflection\b|\brevise\b/u.test(text)) +
+    Number(/\bbudget\b|\binference\b|\bcost\b|\blatency\b|\btokens?\b/u.test(text)) +
+    Number(/\bgsm8k\b|\bmath\b/u.test(text));
+
+  return groups >= 2;
 }
 
 function detectToneHint(text: string): string | undefined {

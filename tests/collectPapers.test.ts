@@ -1452,7 +1452,7 @@ describe("collectPapers bibtex", () => {
     await waitForCollectEnrichmentJob(runId);
   });
 
-  it("fails instead of falling back to extracted or run topics when llm query generation is unavailable", async () => {
+  it("falls back to deterministic brief-topic phrase bundles when llm query generation is unavailable", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-extracted-brief-topic-"));
     process.chdir(root);
 
@@ -1545,9 +1545,9 @@ describe("collectPapers bibtex", () => {
       graph: run.graph
     });
 
-    expect(result.status).toBe("failure");
-    expect(result.error).toContain("Automatic topic fallback is disabled");
-    expect(streamSearchPapers).not.toHaveBeenCalled();
+    expect(result.status).toBe("success");
+    expect(streamSearchPapers).toHaveBeenCalledTimes(1);
+    expect(streamSearchPapers.mock.calls[0]?.[0]?.query).toContain("tabular classification");
   });
 
   it("does not broaden a narrow requested query after zero results", async () => {

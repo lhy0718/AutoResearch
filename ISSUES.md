@@ -312,3 +312,25 @@ None — all tracked issues are resolved or mitigated. See sections below for hi
 | Tests | Added/updated deterministic coverage in `tests/briefValidation.test.ts` and `tests/terminalAppPlanExecution.test.ts`; focused rerun passed; full `npm test` and `npm run validate:harness` passed. |
 | Status | ✅ Fixed |
 | Regression | Same-flow live rerun in `test/`: `/new` now writes a paper-scale brief template, and `/brief start --latest` leaves `test/.autolabos/runs/runs.json` empty when the template is untouched. Adjacent valid-brief start paths still pass. |
+
+---
+
+### LV-035 — Brief-driven collect fallback collapses a paper-scale topic into a generic Semantic Scholar query
+
+| Field | Value |
+|---|---|
+| Validation target | substantive brief -> `collect_papers` -> `analyze_papers` in `test/` |
+| Execution mode | Interactive TUI, fresh/existing `test/` workspace |
+| Environment | `../node_modules/.bin/tsx ../src/cli/main.ts` launched from `test/`; existing run `800dab9d-c116-428d-be05-3466968e8fc6` |
+| Reproduction | 1. Launch AutoLabOS with `test/` as the actual workspace root. 2. Observe existing run `800dab9d...` loaded at `analyze_papers needs_approval`. 3. Inspect persisted `run_context.json` / `collect_result.json` for the run. 4. Compare the fixed brief topic with `collect_papers.last_result.query` and the selected top-N titles in `analysis_manifest.json`. |
+| Expected | When LLM literature-query generation fails or is unavailable, `collect_papers` should still preserve the fixed brief topic using short, topic-faithful Semantic Scholar phrase-bundle queries. The resulting corpus should stay aligned with test-time reasoning for small language models. |
+| Actual | The persisted collect query collapsed to a generic fallback (`investigate how language models can improve`), and the selected analysis shortlist drifted off topic. The governed run therefore carried a paper-scale-invalid evidence base into `analyze_papers`. |
+| Fresh vs existing | Fresh session: the same brief-driven collect path would use the same deterministic fallback logic because the failure is file/topic driven. Existing session: reproduced from the persisted run state in `test/`, where the off-topic query and corpus were already stored. Divergence: none in the underlying failure class. |
+| Persisted artifact vs UI | Persisted artifacts showed the drift explicitly in `collect_papers.last_result.query`, `queryAttempts`, and off-topic selected papers. The TUI summary only surfaced the downstream `analyze_papers` pause, so the operator-visible state underreported the topic-drift root cause. |
+| Root-cause class | `persisted_state_bug` |
+| Hypothesis | `buildLiteratureQueryCandidates()` had no deterministic topic-preserving fallback path after `llm_generated`, so a paper-scale brief could degrade into a generic keyword anchor query when the LLM planner failed. |
+| Fix | Added deterministic short-phrase Semantic Scholar fallback queries derived from the brief topic: anchor pairs such as `+"small language models" +"test-time reasoning"` and method bundles such as `("adaptive reasoning" | "structured reasoning") +"small language models"`. Generic keyword anchors are now only allowed when they still preserve enough topic-signal groups. |
+| Files changed | `src/core/runConstraints.ts`; `tests/collectPapersDeterministicFallback.test.ts` |
+| Tests | Added deterministic regression coverage for phrase-bundle fallback and retry behavior in `tests/collectPapersDeterministicFallback.test.ts`. |
+| Status | ✅ Fixed |
+| Regression | Fresh-session live revalidation in `test/` created run `81820c46-d1b6-4080-8575-a35c60583480` and persisted `collect_papers.last_result.query = +"small language models" +"test-time reasoning"` with `reason = brief_topic`; the observed stop was an operator abort during Semantic Scholar fetch, not a fallback-query regression. |
