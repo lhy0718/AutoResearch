@@ -19,36 +19,22 @@ describe("normalizeConstraintProfile", () => {
     expect(profile.collect.publicationTypes).toEqual(["Review"]);
   });
 
-  it("prefers stripped run-topic candidates before the raw run topic", () => {
+  it("returns no automatic topic-derived candidates when llm queries are absent", () => {
     const candidates = buildLiteratureQueryCandidates({
       runTopic: "Resource-aware baselines for tabular classification on small public datasets"
     });
 
-    expect(candidates[0]).toEqual({
-      query: "baselines for tabular classification",
-      reason: "constraint_stripped"
-    });
-    expect(
-      candidates.findIndex(
-        (candidate) => candidate.query === "Resource-aware baselines for tabular classification on small public datasets"
-      )
-    ).toBeGreaterThan(0);
+    expect(candidates).toEqual([]);
   });
 
-  it("keeps domain anchors in keyword fallback instead of generic research-planning tokens", () => {
+  it("prefers an explicit requested query and does not append llm-generated fallbacks", () => {
     const candidates = buildLiteratureQueryCandidates({
-      runTopic:
-        "Research-grade literature review and reproducible benchmarking plan for classical and lightweight modern baselines for tabular classification on public datasets"
+      requestedQuery: '"tabular classification" +baseline',
+      runTopic: "Classical machine learning baselines for tabular classification",
+      llmGeneratedQueries: ['"tabular classification" +(baseline | benchmark)']
     });
 
-    expect(candidates).toContainEqual({
-      query: "classical modern baselines tabular classification datasets",
-      reason: "keyword_anchor"
-    });
-    expect(candidates).not.toContainEqual({
-      query: "research grade literature review benchmarking plan",
-      reason: "keyword_anchor"
-    });
+    expect(candidates).toEqual([{ query: '"tabular classification" +baseline', reason: "requested_query" }]);
   });
 
   it("sanitizes llm-generated queries to Semantic Scholar-friendly bulk syntax and prioritizes them", () => {

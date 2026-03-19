@@ -245,45 +245,14 @@ export function buildLiteratureQueryCandidates(input: {
 
   const requested = normalizeLiteratureQuery(input.requestedQuery);
   const llmGeneratedQueries = sanitizeSemanticScholarQueryList(input.llmGeneratedQueries || []);
-  const extractedBriefTopic = normalizeLiteratureQuery(input.extractedBriefTopic);
-  const briefTopic = normalizeLiteratureQuery(input.briefTopic);
-  const runTopic = normalizeLiteratureQuery(input.runTopic);
-  const strippedRequested = stripLiteratureConstraintPhrases(requested);
-  const strippedLlmGeneratedQueries = sanitizeSemanticScholarQueryList(
-    llmGeneratedQueries.map((query) => stripLiteratureConstraintPhrases(query))
-  );
-  const strippedExtractedBriefTopic = stripLiteratureConstraintPhrases(extractedBriefTopic);
-  const strippedBriefTopic = stripLiteratureConstraintPhrases(briefTopic);
-  const strippedRunTopic = stripLiteratureConstraintPhrases(runTopic);
 
   pushCandidate(requested, "requested_query");
+  if (requested) {
+    return candidates;
+  }
   for (const query of llmGeneratedQueries) {
     pushCandidate(query, "llm_generated");
   }
-  pushCandidate(extractedBriefTopic, "brief_topic");
-  pushCandidate(briefTopic, "brief_topic");
-  pushCandidate(strippedRequested, "constraint_stripped");
-  for (const query of strippedLlmGeneratedQueries) {
-    pushCandidate(query, "constraint_stripped");
-  }
-  pushCandidate(strippedExtractedBriefTopic, "constraint_stripped");
-  pushCandidate(strippedBriefTopic, "constraint_stripped");
-  pushCandidate(strippedRunTopic, "constraint_stripped");
-  pushCandidate(runTopic, "run_topic");
-  pushCandidate(
-    buildKeywordAnchorQuery(
-      strippedRequested ||
-        strippedLlmGeneratedQueries[0] ||
-        strippedExtractedBriefTopic ||
-        strippedBriefTopic ||
-        llmGeneratedQueries[0] ||
-        extractedBriefTopic ||
-        briefTopic ||
-        strippedRunTopic ||
-        runTopic
-    ),
-    "keyword_anchor"
-  );
 
   return candidates;
 }

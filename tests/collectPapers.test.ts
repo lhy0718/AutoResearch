@@ -844,6 +844,7 @@ describe("collectPapers bibtex", () => {
           {
             key: "collect_papers.request",
             value: {
+              query: "AI agent automation",
               limit: 1,
               sort: { field: "relevance", order: "desc" }
             },
@@ -1052,6 +1053,7 @@ describe("collectPapers bibtex", () => {
           {
             key: "collect_papers.request",
             value: {
+              query: "tabular classification baselines",
               limit: 10,
               sort: { field: "relevance", order: "desc" }
             },
@@ -1144,7 +1146,24 @@ describe("collectPapers bibtex", () => {
 
     const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
     await mkdir(memoryDir, { recursive: true });
-    await writeFile(path.join(memoryDir, "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "collect_papers.request",
+            value: {
+              query: "Multi-Agent Collaboration",
+              limit: 20,
+              sort: { field: "relevance", order: "desc" }
+            },
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
 
     const streamSearchPapers = vi.fn(async function* (request: any) {
       expect(request.filters?.publicationTypes).toBeUndefined();
@@ -1189,7 +1208,7 @@ describe("collectPapers bibtex", () => {
     const result = await node.execute({ run, graph: run.graph });
 
     expect(result.status).toBe("failure");
-    expect(result.error).toContain("Semantic Scholar returned 0 papers after automatic fallback broadening.");
+    expect(result.error).toContain("Semantic Scholar returned 0 papers for the configured query plan.");
     expect(streamSearchPapers.mock.calls.length).toBeGreaterThan(0);
   });
 
@@ -1334,7 +1353,7 @@ describe("collectPapers bibtex", () => {
     expect(await readRunContextValue(root, runId, "collect_papers.enrichment_last_error")).toBeNull();
   });
 
-  it("prefers the explicit brief topic over a narrowed run topic for the first literature query", async () => {
+  it("uses llm-generated queries derived from the explicit brief topic instead of raw topic fallback", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-brief-topic-"));
     process.chdir(root);
 
@@ -1402,7 +1421,12 @@ describe("collectPapers bibtex", () => {
       } as any,
       runStore: {} as any,
       eventStream: new InMemoryEventStream(),
-      llm: new MockLLMClient(),
+      llm: new JsonLLMClient(
+        JSON.stringify({
+          queries: ['"tabular classification" +("classical machine learning" | baseline)'],
+          assumptions: ["Used the explicit brief topic as the search seed."]
+        })
+      ),
       codex: {} as any,
       aci: {} as any,
       semanticScholar: {
@@ -1423,12 +1447,12 @@ describe("collectPapers bibtex", () => {
     expect(result.status).toBe("success");
     expect(streamSearchPapers).toHaveBeenCalledTimes(1);
     expect(streamSearchPapers.mock.calls[0]?.[0]).toMatchObject({
-      query: "Classical machine learning baselines for tabular classification"
+      query: '"tabular classification" +("classical machine learning" | baseline)'
     });
     await waitForCollectEnrichmentJob(runId);
   });
 
-  it("prefers the extracted broad brief topic over a narrowed run topic for unlabeled auto-start briefs", async () => {
+  it("fails instead of falling back to extracted or run topics when llm query generation is unavailable", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-extracted-brief-topic-"));
     process.chdir(root);
 
@@ -1521,15 +1545,12 @@ describe("collectPapers bibtex", () => {
       graph: run.graph
     });
 
-    expect(result.status).toBe("success");
-    expect(streamSearchPapers).toHaveBeenCalledTimes(1);
-    expect(streamSearchPapers.mock.calls[0]?.[0]).toMatchObject({
-      query: "classical machine learning baselines for tabular classification"
-    });
-    await waitForCollectEnrichmentJob(runId);
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("Automatic topic fallback is disabled");
+    expect(streamSearchPapers).not.toHaveBeenCalled();
   });
 
-  it("falls back from a narrow requested query to the broader brief topic after zero results", async () => {
+  it("does not broaden a narrow requested query after zero results", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-query-fallback-"));
     process.chdir(root);
 
@@ -1588,21 +1609,7 @@ describe("collectPapers bibtex", () => {
       "utf8"
     );
 
-    const streamSearchPapers = vi.fn(async function* (request: { query: string }) {
-      if (request.query === "Resource-aware baselines for tabular classification on small public datasets") {
-        yield [];
-        return;
-      }
-      if (request.query === "Classical machine learning baselines for tabular classification") {
-        yield [
-          {
-            paperId: "paper-1",
-            title: "Classical tabular baseline survey",
-            authors: ["Alice Kim"]
-          }
-        ];
-        return;
-      }
+    const streamSearchPapers = vi.fn(async function* () {
       yield [];
     });
 
@@ -1619,18 +1626,11 @@ describe("collectPapers bibtex", () => {
       aci: {} as any,
       semanticScholar: {
         streamSearchPapers,
-        getLastSearchDiagnostics: vi
-          .fn()
-          .mockReturnValueOnce({
-            attemptCount: 1,
-            lastStatus: 200,
-            attempts: [{ attempt: 1, ok: true, status: 200, endpoint: "search" }]
-          })
-          .mockReturnValueOnce({
-            attemptCount: 1,
-            lastStatus: 200,
-            attempts: [{ attempt: 1, ok: true, status: 200, endpoint: "search" }]
-          })
+        getLastSearchDiagnostics: vi.fn(() => ({
+          attemptCount: 1,
+          lastStatus: 200,
+          attempts: [{ attempt: 1, ok: true, status: 200, endpoint: "search" }]
+        }))
       } as any
     });
 
@@ -1639,10 +1639,9 @@ describe("collectPapers bibtex", () => {
       graph: run.graph
     });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("failure");
     expect(streamSearchPapers.mock.calls.map((call) => call[0]?.query)).toEqual([
-      "Resource-aware baselines for tabular classification on small public datasets",
-      "Classical machine learning baselines for tabular classification"
+      "Resource-aware baselines for tabular classification on small public datasets"
     ]);
 
     const lastResult = (await readRunContextValue(root, runId, "collect_papers.last_result")) as {
@@ -1650,23 +1649,18 @@ describe("collectPapers bibtex", () => {
       queryAttempts?: Array<{ query?: string; fetched?: number }>;
       enrichment?: { blocking?: boolean; status?: string };
     } | undefined;
-    expect(lastResult?.query).toBe("Classical machine learning baselines for tabular classification");
+    expect(lastResult?.query).toBe("Resource-aware baselines for tabular classification on small public datasets");
     expect(lastResult?.queryAttempts).toEqual([
       expect.objectContaining({
         query: "Resource-aware baselines for tabular classification on small public datasets",
         fetched: 0
-      }),
-      expect.objectContaining({
-        query: "Classical machine learning baselines for tabular classification",
-        fetched: 1
       })
     ]);
     expect(lastResult?.enrichment).toMatchObject({
       blocking: false,
-      status: "pending"
+      status: "not_needed"
     });
-
-    await waitForCollectEnrichmentJob(runId);
+    expect(result.error).toContain("Semantic Scholar returned 0 papers for the configured query plan.");
   });
 
   it("filters obvious off-topic tail papers from a lightweight tabular raw corpus before selection", async () => {

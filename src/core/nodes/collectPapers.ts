@@ -179,7 +179,7 @@ interface PlannedCollectSearch {
 }
 
 interface PreparedCollectRequestPlan {
-  primaryRequest: SemanticScholarSearchRequest;
+  primaryRequest?: SemanticScholarSearchRequest;
   searchPlan: PlannedCollectSearch[];
   requestedQuery?: string;
 }
@@ -239,6 +239,22 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         constraintProfile,
         configuredLimit: deps.config.papers.max_results
       });
+      if (!normalizedRequest.primaryRequest || normalizedRequest.searchPlan.length === 0) {
+        const queryPlanningFailure = buildCollectQueryPlanningFailureMessage(requestFromContext?.query);
+        await runContextMemory.put("collect_papers.last_request", null);
+        await runContextMemory.put("collect_papers.last_result", null);
+        await runContextMemory.put("collect_papers.last_attempt_count", 0);
+        await runContextMemory.put("collect_papers.count", 0);
+        await runContextMemory.put("collect_papers.source", "semantic_scholar");
+        await runContextMemory.put("collect_papers.last_error", queryPlanningFailure);
+        await runContextMemory.put("collect_papers.enrichment_last_error", null);
+        return {
+          status: "failure",
+          error: queryPlanningFailure,
+          summary: queryPlanningFailure,
+          toolCallsUsed: 0
+        };
+      }
       const mode: "replace" | "additional" =
         typeof requestFromContext?.additional === "number" && requestFromContext.additional > 0
           ? "additional"
@@ -636,18 +652,16 @@ function normalizeCollectRequest(input: {
   const sortField = request?.sort?.field ?? "relevance";
   const sortOrder = request?.sort?.order ?? (sortField === "paperId" ? "asc" : "desc");
   const requestedQuery = request?.query?.trim() || undefined;
-  const briefTopic = extractResearchBriefTopic(input.rawBrief);
   const queryCandidates = buildLiteratureQueryCandidates({
     requestedQuery,
     runTopic: input.topic,
     llmGeneratedQueries: input.llmGeneratedQueries,
     extractedBriefTopic: input.extractedBriefTopic,
-    briefTopic
+    briefTopic: extractResearchBriefTopic(input.rawBrief)
   });
   const mergedFilters = buildSemanticScholarFilters(
     mergeCollectConstraintDefaults(request?.filters, input.constraintProfile.collect)
   );
-  const explicitFilters = buildSemanticScholarFilters(request?.filters);
   const sort = {
     field: sortField,
     order: sortOrder
@@ -685,17 +699,9 @@ function normalizeCollectRequest(input: {
   for (const candidate of queryCandidates) {
     pushSearch(candidate.query, candidate.reason, mergedFilters, false);
   }
-  if (!sameSearchFilters(mergedFilters, explicitFilters)) {
-    for (const candidate of queryCandidates) {
-      pushSearch(candidate.query, candidate.reason, explicitFilters, true);
-    }
-  }
-  if (searchPlan.length === 0) {
-    pushSearch(input.topic.trim(), "run_topic", mergedFilters, false);
-  }
 
   return {
-    primaryRequest: searchPlan[0].request,
+    primaryRequest: searchPlan[0]?.request,
     searchPlan: searchPlan.slice(0, 8),
     requestedQuery
   };
@@ -1309,7 +1315,14 @@ function buildCollectZeroResultsMessage(
     .join(", ");
   const requested = requestedQuery ? ` Requested query was "${requestedQuery}".` : "";
   const queries = attempted ? ` Tried ${queryAttempts.length} query variant(s): ${attempted}.` : "";
-  return `Semantic Scholar returned 0 papers after automatic fallback broadening.${requested}${queries}`;
+  return `Semantic Scholar returned 0 papers for the configured query plan.${requested}${queries}`;
+}
+
+function buildCollectQueryPlanningFailureMessage(requestedQuery?: string): string {
+  if (requestedQuery?.trim()) {
+    return `collect_papers could not build a Semantic Scholar query plan from the explicit query "${requestedQuery}".`;
+  }
+  return "collect_papers could not build a Semantic Scholar query plan. Automatic topic fallback is disabled, so provide an explicit query or ensure LLM query generation succeeds.";
 }
 
 function startDetachedEnrichment(input: {
