@@ -1696,3 +1696,83 @@ zed and the local verification / runnable command is executed, the node should p
   - full validation:
     - `npm run build`
     - `npm test`
+
+
+## Issue: LV-065 recovered `implement_experiments` bundles can preserve `--dry-run` and hand them off as real execution, causing resumed `run_experiments` state to collapse into `missing_metrics`
+
+- Status: `in_progress`
+- Validation target: `test/` live run `98987fc4-6ce2-4d39-8623-6dacbcb1508d`, specifically `implement_experiments -> run_experiments` after a recovered public bundle
+- Environment/session context: repo head on `2026-03-20`; `test/` workspace; `providers.llm_mode: openai_api`; fresh TUI reopen after server reboot; canonical public bundle at `test/outputs/experiment`
+
+- Reproduction steps:
+  1. Resume run `98987fc4-6ce2-4d39-8623-6dacbcb1508d` in `test/`.
+  2. Observe that `implement_result.json` recovers a materialized bundle after an implementation stream failure.
+  3. Inspect the recovered `run_command` and then `run_experiments_panel/execution_plan.json`.
+  4. Let `run_experiments` execute the recovered command and inspect `run_experiments_verify_report.json` / `triage.json`.
+
+- Expected behavior: recovered real-execution bundles should only hand off runnable commands that can emit governed metrics; a recovered command that still contains `--dry-run` should be rejected and force a fresh implementation turn instead of entering `run_experiments`.
+- Actual behavior: the recovered bundle encoded `python3 .../experiment.py ... --pilot-size 4 --dry-run` in `implement_result.json`, `execution_plan.json`, and `triage.json`, so `run_experiments` ran a dry-run command, exited `0`, emitted no metrics, and the persisted failed state collapsed into `missing_metrics`.
+- Fresh vs existing session comparison:
+  - Fresh session: a fresh TUI reopen of the existing run shows the persisted dry-run handoff and the same `missing_metrics` triage.
+  - Existing session: the earlier session history also shows the same recovered command being used after rollback.
+  - Divergence: no; the bug is persisted in the recovered artifacts, not a frame-local projection.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: recovered-bundle validation checks plan freshness and retry scope, but it does not reject a recovered `run_command` that still includes `--dry-run`; local verification then treats the bundle as passable and auto-hands off a non-runnable real-execution command to `run_experiments`.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: `yes` — `tests/implementSessionManager.test.ts`
+  - Re-validation result: `pending`
+
+- Follow-up risks: the historical `401 invalid_api_key` entries in the same run happened earlier and are not currently reproducible with the exact `test/.env` key; after this dry-run fix, the next live blocker may return to the original implementation/auth path rather than `missing_metrics`.
+- Evidence/artifacts:
+  - `test/.autolabos/runs/98987fc4-6ce2-4d39-8623-6dacbcb1508d/implement_result.json`
+  - `test/.autolabos/runs/98987fc4-6ce2-4d39-8623-6dacbcb1508d/run_experiments_panel/execution_plan.json`
+  - `test/.autolabos/runs/98987fc4-6ce2-4d39-8623-6dacbcb1508d/run_experiments_panel/triage.json`
+  - `test/.autolabos/runs/98987fc4-6ce2-4d39-8623-6dacbcb1508d/run_experiments_verify_report.json`
+  - `test/.autolabos/runs/98987fc4-6ce2-4d39-8623-6dacbcb1508d/failure_memory.jsonl`
+
+
+## Issue: LV-066 staged `implement_experiments` provider calls can hang indefinitely in `staged_llm` mode
+
+- Status: `in_progress`
+- Validation target: `test/` live rerun of `98987fc4-6ce2-4d39-8623-6dacbcb1508d` after forcing `implement_experiments` from the failed `run_experiments` boundary
+- Environment/session context: repo head on `2026-03-20`; `test/` workspace; `providers.llm_mode: openai_api`; built TUI launched from `test/`; same run resumed after LV-065 patch
+
+- Reproduction steps:
+  1. Launch the real TUI from `test/` and run `/doctor`.
+  2. Force the failed run back to `implement_experiments`.
+  3. Observe `implement_experiments/status.json`, `implement_experiments/progress.jsonl`, and the live TUI detail panel.
+
+- Expected behavior: staged OpenAI/Ollama implementation turns should either complete or fail within a bounded provider timeout so the TUI can progress to retry/backtrack instead of waiting indefinitely.
+- Actual behavior: after the LV-065 rerun crossed the stale recovered-bundle boundary, `implement_experiments` remained stuck at `Submitting request to OpenAI Responses API.` with `status.json.updatedAt` frozen and no further progress persisted.
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced from a fresh built-TUI relaunch in `test/`.
+  - Existing session: the same run remained in the same stalled provider call when reopened.
+  - Divergence: no meaningful divergence; the stall is in the node-owned provider call path itself.
+
+- Root cause hypothesis:
+  - Type: `race_timing_bug`
+  - Hypothesis: the staged LLM implementation path forwards the run abort signal but has no node-local timeout shorter than the client’s 10-minute safety timeout, so a hung provider call leaves `implement_experiments` waiting with no bounded recovery path.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: `yes` — `tests/implementSessionManager.test.ts`
+  - Re-validation result: `pending`
+
+- Follow-up risks: once the staged-LLM timeout is bounded, the next live blocker may expose the underlying provider error or a fresh implementation failure instead of a hang.
+- Evidence/artifacts:
+  - `test/.autolabos/runs/98987fc4-6ce2-4d39-8623-6dacbcb1508d/implement_experiments/status.json`
+  - `test/.autolabos/runs/98987fc4-6ce2-4d39-8623-6dacbcb1508d/implement_experiments/progress.jsonl`

@@ -200,6 +200,45 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
         critique_summary: candidate.critique_summary
       }));
 
+      const fallbackQualityBlock = evaluateFallbackHypothesisQualityBlock(hypotheses);
+      if (fallbackQualityBlock) {
+        emitLog(fallbackQualityBlock);
+        await flushProgressUpdates();
+        await runContextMemory.put("generate_hypotheses.top_k", 0);
+        await runContextMemory.put("generate_hypotheses.candidate_count", planning.candidates.length);
+        await runContextMemory.put("generate_hypotheses.source", "blocked_low_quality_fallback");
+        await runContextMemory.put("generate_hypotheses.pipeline", planning.artifacts.pipeline);
+        await runContextMemory.put("generate_hypotheses.summary", fallbackQualityBlock);
+        await writeHypothesisProgressStatus(run, runContextMemory, {
+          status: "failed",
+          stage: "gating",
+          message: fallbackQualityBlock,
+          startedAt,
+          updatedAt: new Date().toISOString(),
+          evidenceCount: evidenceRows.length,
+          weakEvidenceCount,
+          request,
+          progressCount,
+          pipeline: planning.artifacts.pipeline,
+          source: planning.source,
+          fallbackReason: planning.fallbackReason,
+          candidateCount: planning.candidates.length,
+          selectedCount: 0,
+          artifactPaths: [
+            HYPOTHESIS_PROGRESS_STATUS_ARTIFACT,
+            HYPOTHESIS_PROGRESS_LOG_ARTIFACT,
+            "hypothesis_generation/selection.json",
+            "hypothesis_generation/llm_trace.json"
+          ]
+        });
+        return {
+          status: "failure",
+          summary: fallbackQualityBlock,
+          error: fallbackQualityBlock,
+          toolCallsUsed: Math.max(1, planning.toolCallsUsed)
+        };
+      }
+
       await appendJsonl(run, "hypotheses.jsonl", hypotheses);
       if (planning.artifacts.evidence_axes.length > 0) {
         await writeRunArtifact(
@@ -509,6 +548,42 @@ function estimateEvidenceAdjustment(evidence: EvidenceRow): number {
   }
 
   return Number(adjustment.toFixed(3));
+}
+
+function evaluateFallbackHypothesisQualityBlock(
+  hypotheses: Array<{
+    generator_kind?: string;
+    evidence_quality_adjustment?: number;
+    evidence_quality_notes?: string[];
+    paper_titles?: string[];
+  }>
+): string | undefined {
+  if (hypotheses.length === 0) {
+    return undefined;
+  }
+
+  if (!hypotheses.every((hypothesis) => hypothesis.generator_kind === "fallback")) {
+    return undefined;
+  }
+
+  const supportingPapers = new Set(
+    hypotheses.flatMap((hypothesis) => (hypothesis.paper_titles || []).map((title) => title.trim()).filter(Boolean))
+  );
+  const allSeverelyCaveated = hypotheses.every((hypothesis) => {
+    const notes = new Set(hypothesis.evidence_quality_notes || []);
+    return (
+      (hypothesis.evidence_quality_adjustment ?? 0) <= -1.25 &&
+      notes.has("low_confidence") &&
+      notes.has("limited_generalizability") &&
+      notes.has("all_support_caveated")
+    );
+  });
+
+  if (supportingPapers.size >= 2 || !allSeverelyCaveated) {
+    return undefined;
+  }
+
+  return "Hypothesis generation blocked: the selected fallback hypotheses are supported by a single low-confidence, caveated paper. Strengthen analyze_papers before designing experiments.";
 }
 
 function isWeakEvidenceSeed(evidence: EvidenceRow): boolean {

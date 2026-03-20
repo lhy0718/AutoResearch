@@ -612,8 +612,10 @@ export class ImplementSessionManager {
         errorMessage: "Recovered an already materialized governed experiment bundle before re-entering Codex.",
         requireFreshPlanAlignment:
           promptTaskSpec.context.plan_changed ||
-          Boolean(promptTaskSpec.context.runner_feedback) ||
-          Boolean(promptTaskSpec.context.paper_critique_feedback)
+          (Boolean(promptTaskSpec.context.runner_feedback) &&
+            !isRecoverableBundleCommandRepairFeedback(promptTaskSpec.context.runner_feedback)) ||
+          Boolean(promptTaskSpec.context.paper_critique_feedback),
+        runnerFeedback: promptTaskSpec.context.runner_feedback
       });
       if (recoveredBeforeTurn && (await hasRecoverableExecutionEvidence(isolation.publicDir, isolation.metricsPath))) {
         emitImplementObservation(
@@ -669,26 +671,41 @@ export class ImplementSessionManager {
             if (!this.deps.llm) {
               throw new Error("implement_experiments is configured for staged_llm mode, but no LLM client is available.");
             }
-            const completion = await this.deps.llm.complete(attemptPrompt, {
-              systemPrompt: attemptSystemPrompt,
-              abortSignal,
-              onProgress: (event) => {
-                const text = event.text.trim();
-                if (!text) {
-                  return;
+            const llmTimeoutMs = getImplementLlmTimeoutMs();
+            const timeoutController = new AbortController();
+            const timeoutId = setTimeout(() => timeoutController.abort(), llmTimeoutMs);
+            const llmAbortSignal = abortSignal
+              ? AbortSignal.any([abortSignal, timeoutController.signal])
+              : timeoutController.signal;
+            try {
+              const completion = await this.deps.llm.complete(attemptPrompt, {
+                systemPrompt: attemptSystemPrompt,
+                abortSignal: llmAbortSignal,
+                onProgress: (event) => {
+                  const text = event.text.trim();
+                  if (!text) {
+                    return;
+                  }
+                  emitImplementObservation("codex", event.type === "delta" ? `LLM> ${text}` : text, {
+                    attempt,
+                    threadId: activeThreadId,
+                    publicDir: defaultPublicDir
+                  });
                 }
-                emitImplementObservation("codex", event.type === "delta" ? `LLM> ${text}` : text, {
-                  attempt,
-                  threadId: activeThreadId,
-                  publicDir: defaultPublicDir
-                });
+              });
+              result = {
+                threadId: activeThreadId,
+                finalText: completion.text,
+                events: []
+              };
+            } catch (error) {
+              if (timeoutController.signal.aborted && !abortSignal?.aborted) {
+                throw new Error(`implement_experiments staged_llm request timed out after ${llmTimeoutMs}ms`);
               }
-            });
-            result = {
-              threadId: activeThreadId,
-              finalText: completion.text,
-              events: []
-            };
+              throw error;
+            } finally {
+              clearTimeout(timeoutId);
+            }
           }
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
@@ -700,7 +717,10 @@ export class ImplementSessionManager {
             errorMessage,
             requireFreshPlanAlignment:
               promptTaskSpec.context.plan_changed ||
-              Boolean(promptTaskSpec.context.paper_critique_feedback)
+              Boolean(promptTaskSpec.context.paper_critique_feedback) ||
+              (Boolean(promptTaskSpec.context.runner_feedback) &&
+                !isRecoverableBundleCommandRepairFeedback(promptTaskSpec.context.runner_feedback)),
+            runnerFeedback: promptTaskSpec.context.runner_feedback
           });
           if (!recovered) {
             const verifyReport = buildImplementationTurnFailureReport(errorMessage);
@@ -2025,6 +2045,39 @@ export class ImplementSessionManager {
       return report;
     }
 
+    if (attempt.experimentMode === "real_execution" && commandRequestsDryRun(attempt.runCommand)) {
+      const dryRunSummary =
+        "Real-execution handoff is blocked because the generated run_command still includes --dry-run and would never emit governed metrics.";
+      const report: VerifyReport = {
+        status: "fail",
+        command: attempt.runCommand,
+        cwd: attempt.workingDir,
+        exit_code: 0,
+        failure_type: "implementation",
+        next_action: "retry_patch",
+        stderr_excerpt: dryRunSummary,
+        summary: buildVerificationFailureSummary(attempt.runCommand, "implementation", dryRunSummary)
+      };
+      this.deps.eventStream.emit({
+        type: "TEST_FAILED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          command: attempt.runCommand,
+          cwd: attempt.workingDir,
+          failure_type: report.failure_type,
+          stderr: report.stderr_excerpt || report.summary,
+          attempt: attemptNumber
+        }
+      });
+      onProgress?.(report.summary, {
+        verificationCommand: attempt.runCommand,
+        verifyStatus: report.status
+      });
+      return report;
+    }
+
     this.deps.eventStream.emit({
       type: "OBS_RECEIVED",
       runId,
@@ -2552,6 +2605,7 @@ async function recoverStructuredResultFromPublicBundle(params: {
   workspaceRoot: string;
   errorMessage: string;
   requireFreshPlanAlignment?: boolean;
+  runnerFeedback?: RunVerifierReport;
 }): Promise<RunTurnResult | undefined> {
   if (params.requireFreshPlanAlignment) {
     return undefined;
@@ -2589,22 +2643,41 @@ async function recoverStructuredResultFromPublicBundle(params: {
     return undefined;
   }
 
-  const runCommand =
-    normalizeRecoveredBundleRunCommand(
-      (await readRunnableCommandFromReadme(readmePath)) ||
-        inferRecoveredBundleRunCommand({
-          scriptPath,
-          frozenConfigPath,
-          publicDir: params.publicDir,
-          runDir: params.runDir,
-          metricsPath: params.metricsPath
-        }),
-      params.workspaceRoot
-    );
+  const inferredRunCommand = normalizeRecoveredBundleRunCommand(
+    inferRecoveredBundleRunCommand({
+      scriptPath,
+      frozenConfigPath,
+      publicDir: params.publicDir,
+      runDir: params.runDir,
+      metricsPath: params.metricsPath
+    }),
+    params.workspaceRoot
+  );
+  const readmeRunCommand = normalizeRecoveredBundleRunCommand(
+    await readRunnableCommandFromReadme(readmePath),
+    params.workspaceRoot
+  );
+  let runCommand = readmeRunCommand || inferredRunCommand;
   if (!runCommand) {
     return undefined;
   }
-  if (!(await recoveredBundleSatisfiesRetryScope({ frozenConfigPath, runCommand }))) {
+  if (commandRequestsDryRun(runCommand)) {
+    if (!isDryRunMetricsRepairFeedback(params.runnerFeedback)) {
+      return undefined;
+    }
+    const promotedReadmeCommand = stripDryRunFlag(runCommand);
+    if (promotedReadmeCommand) {
+      runCommand = promotedReadmeCommand;
+    } else if (inferredRunCommand && !commandRequestsDryRun(inferredRunCommand)) {
+      runCommand = inferredRunCommand;
+    } else {
+      return undefined;
+    }
+  }
+  if (
+    !isDryRunMetricsRepairFeedback(params.runnerFeedback) &&
+    !(await recoveredBundleSatisfiesRetryScope({ frozenConfigPath, runCommand }))
+  ) {
     return undefined;
   }
 
@@ -2713,11 +2786,28 @@ async function readRunnableCommandFromReadme(readmePath: string): Promise<string
   if (!content) {
     return undefined;
   }
-  const match = content.match(/```(?:bash|sh)?\n([\s\S]*?)```/u);
-  if (!match?.[1]) {
+  const matches = [...content.matchAll(/```(?:bash|sh)?\n([\s\S]*?)```/gu)];
+  if (matches.length === 0) {
     return undefined;
   }
-  const collapsed = match[1]
+  const commands = matches
+    .map((match) => collapseRunnableCommandBlock(match[1]))
+    .filter((value): value is string => Boolean(value));
+  if (commands.length === 0) {
+    return undefined;
+  }
+  return (
+    commands.find((command) => command.includes("--metrics-path") && !commandRequestsDryRun(command)) ||
+    commands.find((command) => !commandRequestsDryRun(command)) ||
+    commands[0]
+  );
+}
+
+function collapseRunnableCommandBlock(block: string | undefined): string | undefined {
+  if (!block) {
+    return undefined;
+  }
+  const collapsed = block
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean)
@@ -2857,6 +2947,48 @@ function asFiniteNumber(value: unknown): number | undefined {
     return Number.isFinite(parsed) ? parsed : undefined;
   }
   return undefined;
+}
+
+function commandRequestsDryRun(command: string | undefined): boolean {
+  if (!command) {
+    return false;
+  }
+  return /(^|\s)--dry-run(?=\s|$)/u.test(command);
+}
+
+function stripDryRunFlag(command: string | undefined): string | undefined {
+  if (!command) {
+    return undefined;
+  }
+  const stripped = command.replace(/(^|\s)--dry-run(?=\s|$)/gu, '$1').replace(/\s+/gu, ' ').trim();
+  return stripped || undefined;
+}
+
+function getImplementLlmTimeoutMs(): number {
+  const parsed = Number.parseInt(process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 60_000;
+}
+
+function isDryRunMetricsRepairFeedback(report: RunVerifierReport | undefined): boolean {
+  if (!report) {
+    return false;
+  }
+  if (!commandRequestsDryRun(report.command)) {
+    return false;
+  }
+  const summary = `${report.summary || ""} ${report.suggested_next_action || ""}`.toLowerCase();
+  return report.stage === "metrics" || /without metrics output|writes? json metrics|emit governed metrics|metrics.json/u.test(summary);
+}
+
+function isRecoverableBundleCommandRepairFeedback(report: RunVerifierReport | undefined): boolean {
+  if (isDryRunMetricsRepairFeedback(report)) {
+    return true;
+  }
+  if (!report) {
+    return false;
+  }
+  const summary = `${report.summary || ""} ${report.suggested_next_action || ""}`.toLowerCase();
+  return /--metrics-path is required for a live run|repair the experiment command|required for a live run/u.test(summary);
 }
 
 function normalizeExperimentMode(mode: string | undefined, summary: string | undefined): string {

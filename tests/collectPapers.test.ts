@@ -1528,6 +1528,16 @@ describe("collectPapers bibtex", () => {
           paperId: "paper-1",
           title: "Adaptive Test-Time Reasoning for Small Language Models",
           authors: ["Alice Kim"]
+        },
+        {
+          paperId: "paper-2",
+          title: "Structured Test-Time Reasoning for Small Language Models",
+          authors: ["Bob Lee"]
+        },
+        {
+          paperId: "paper-3",
+          title: "Budget-Aware Test-Time Reasoning on GSM8K",
+          authors: ["Cara Park"]
         }
       ];
     });
@@ -2240,6 +2250,16 @@ describe("collectPapers bibtex", () => {
           paperId: "paper-1",
           title: "Adaptive Test-Time Reasoning for Small Language Models",
           authors: ["Alice Kim"]
+        },
+        {
+          paperId: "paper-2",
+          title: "Structured Test-Time Reasoning for Small Language Models",
+          authors: ["Bob Lee"]
+        },
+        {
+          paperId: "paper-3",
+          title: "Budget-Aware Test-Time Reasoning on GSM8K",
+          authors: ["Cara Park"]
         }
       ];
     });
@@ -2290,6 +2310,96 @@ describe("collectPapers bibtex", () => {
       query: '("adaptive test-time reasoning" | "structured test-time reasoning") +"small language models"',
       reason: "llm_generated"
     });
+
+    await waitForCollectEnrichmentJob(runId);
+  });
+
+  it("falls through to a broader deterministic query when a strict llm-generated query returns too few papers", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-low-yield-llm-query-"));
+    process.chdir(root);
+
+    const runId = "run-collect-low-yield-llm-query";
+    const run: RunRecord = {
+      version: 3,
+      workflowVersion: 3,
+      id: runId,
+      title: "Low Yield Query Generation",
+      topic: "Efficient test-time reasoning for small language models on GSM8K",
+      constraints: [],
+      objectiveMetric: "accuracy",
+      status: "running",
+      currentNode: "collect_papers",
+      latestSummary: undefined,
+      nodeThreads: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      graph: createDefaultGraphState(),
+      memoryRefs: {
+        runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
+      }
+    };
+
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(path.join(memoryDir, "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+
+    const strictQuery = '+("test-time scaling" | "inference-time scaling" | "test-time compute") +("small language model" | "small language models") +("math word problems" | "arithmetic reasoning" | "GSM8K")';
+    const broaderQuery = '+"small language models" +"test-time reasoning"';
+    const streamSearchPapers = vi.fn(async function* (request: { query: string }) {
+      if (request.query === strictQuery) {
+        yield [{ paperId: "paper-1", title: "Strict query singleton", authors: ["Alice Kim"] }];
+        return;
+      }
+      if (request.query === broaderQuery) {
+        yield [
+          { paperId: "paper-2", title: "Small language models and test-time reasoning", authors: ["Bob"] },
+          { paperId: "paper-3", title: "Budget-aware test-time reasoning for GSM8K", authors: ["Cara"] },
+          { paperId: "paper-4", title: "Adaptive reasoning control for small LMs", authors: ["Dana"] }
+        ];
+        return;
+      }
+      throw new Error(`unexpected query: ${request.query}`);
+    });
+
+    const node = createCollectPapersNode({
+      config: { papers: { max_results: 200 } } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new JsonLLMClient(JSON.stringify({
+        queries: [strictQuery],
+        assumptions: ["Use a strict boolean query first."]
+      })),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {
+        streamSearchPapers,
+        getLastSearchDiagnostics: vi.fn(() => ({
+          attemptCount: 1,
+          lastStatus: 200,
+          attempts: [{ attempt: 1, ok: true, status: 200, endpoint: "search" }]
+        }))
+      } as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(streamSearchPapers).toHaveBeenCalledTimes(2);
+    expect(streamSearchPapers.mock.calls.map((call) => call[0]?.query)).toEqual([strictQuery, broaderQuery]);
+
+    const lastResult = (await readRunContextValue(root, runId, "collect_papers.last_result")) as {
+      query?: string;
+      stored?: number;
+      queryAttempts?: Array<{ query?: string; reason?: string; fetched?: number }>;
+    } | undefined;
+    expect(lastResult?.query).toBe(broaderQuery);
+    expect(lastResult?.stored).toBe(4);
+    expect(lastResult?.queryAttempts).toEqual([
+      expect.objectContaining({ query: strictQuery, reason: "llm_generated", fetched: 1 }),
+      expect.objectContaining({ query: broaderQuery, reason: "run_topic", fetched: 3 })
+    ]);
 
     await waitForCollectEnrichmentJob(runId);
   });

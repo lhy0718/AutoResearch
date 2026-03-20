@@ -93,6 +93,10 @@ describe("StateGraphRuntime", () => {
 
     const checkpoints = await checkpointStore.list(run.id);
     expect(checkpoints.map((item) => item.seq)).toEqual([1, 2]);
+    expect(checkpoints.map((item) => `${item.node}:${item.phase}`)).toEqual([
+      "collect_papers:before",
+      "collect_papers:after"
+    ]);
 
     const runsFile = await readJsonFile<{
       runs: Array<{
@@ -105,6 +109,55 @@ describe("StateGraphRuntime", () => {
     expect(persisted?.currentNode).toBe("analyze_papers");
     expect(persisted?.graph.currentNode).toBe("analyze_papers");
     expect(persisted?.graph.checkpointSeq).toBe(2);
+  });
+
+
+  it("keeps the completed node summary when advancing into a pending next node with a stale reset note", async () => {
+    const registry = new Registry({
+      run_experiments: {
+        id: "run_experiments",
+        execute: async () => ({
+          status: "success",
+          summary: "run_experiments completed with pilot_size=10 and objective not met",
+          needsApproval: false,
+          toolCallsUsed: 1
+        })
+      }
+    });
+    const { store, runtime, checkpointStore } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Latest summary alignment",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "run_experiments";
+    run.graph.currentNode = "run_experiments";
+    run.status = "running";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    run.graph.nodeStates.implement_experiments.status = "completed";
+    run.graph.nodeStates.analyze_results.status = "pending";
+    run.graph.nodeStates.analyze_results.note = "Reset by backward jump (cycle 4)";
+    run.graph.nodeStates.analyze_results.updatedAt = "2026-03-20T00:33:33.470Z";
+    await store.updateRun(run);
+
+    const updated = await runtime.step(run.id);
+    expect(updated.currentNode).toBe("analyze_results");
+    expect(updated.graph.nodeStates.run_experiments.status).toBe("completed");
+    expect(updated.latestSummary).toBe("run_experiments completed with pilot_size=10 and objective not met");
+
+    const persisted = await store.getRun(run.id);
+    expect(persisted?.currentNode).toBe("analyze_results");
+    expect(persisted?.latestSummary).toBe("run_experiments completed with pilot_size=10 and objective not met");
+
+    const latestCheckpoint = await checkpointStore.latest(run.id);
+    expect(latestCheckpoint?.node).toBe("run_experiments");
+    expect(latestCheckpoint?.phase).toBe("after");
   });
 
   it("keeps rollback note, latestSummary, currentNode, and counters aligned on implement_experiments rollback", async () => {
@@ -198,6 +251,52 @@ describe("StateGraphRuntime", () => {
     expect(latestCheckpoint?.seq).toBe(4);
     expect(latestCheckpoint?.runSnapshot.currentNode).toBe("design_experiments");
   });
+
+  it("rolls back generate_hypotheses immediately when low-quality fallback evidence cannot support another identical retry", async () => {
+    const registry = new Registry({
+      generate_hypotheses: {
+        id: "generate_hypotheses",
+        execute: async () => ({
+          status: "failure",
+          error:
+            "Hypothesis generation blocked: the selected fallback hypotheses are supported by a single low-confidence, caveated paper. Strengthen analyze_papers before designing experiments.",
+          toolCallsUsed: 1
+        })
+      }
+    });
+    const { store, runtime } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Hypothesis rollback",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "generate_hypotheses";
+    run.graph.currentNode = "generate_hypotheses";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 3;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 2;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    await store.updateRun(run);
+
+    const updated = await runtime.step(run.id);
+
+    expect(updated.currentNode).toBe("analyze_papers");
+    expect(updated.status).toBe("running");
+    expect(updated.graph.retryCounters.generate_hypotheses).toBe(0);
+    expect(updated.graph.rollbackCounters.generate_hypotheses).toBe(1);
+    expect(updated.graph.nodeStates.analyze_papers.status).toBe("running");
+    expect(updated.graph.nodeStates.analyze_papers.note).toContain(
+      "Auto rollback from generate_hypotheses after 3/3 failed attempts"
+    );
+    expect(updated.latestSummary).toContain(
+      "Auto rollback from generate_hypotheses after 3/3 failed attempts"
+    );
+  });
+
 
   it("preserves a successful generate_hypotheses result when abort arrives after artifacts are written", async () => {
     const controller = new AbortController();

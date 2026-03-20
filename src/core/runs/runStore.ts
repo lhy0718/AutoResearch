@@ -790,8 +790,9 @@ function normalizeCurrentRunPointer(run: RunRecord): RunRecord {
 }
 
 function pickLatestSummary(run: RunRecord): string | undefined {
+  const currentStatus = run.graph.nodeStates[run.currentNode]?.status;
   const currentNote = run.graph.nodeStates[run.currentNode]?.note?.trim();
-  if (currentNote) {
+  if (currentNote && currentStatus && currentStatus !== "pending") {
     return currentNote;
   }
 

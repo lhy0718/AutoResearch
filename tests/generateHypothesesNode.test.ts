@@ -766,6 +766,65 @@ describe("normalizeGenerateHypothesesRequest", () => {
     expect(logs.some((line) => line.includes("Evidence-quality guardrail"))).toBe(true);
   });
 
+  it("blocks low-quality single-paper fallback hypotheses before experiment design", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-hypothesis-node-gating-"));
+    process.chdir(root);
+
+    const runId = "run-hypothesis-gating";
+    const run = makeRun(runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "evidence_store.jsonl"),
+      `${JSON.stringify({
+        evidence_id: "ev_1",
+        paper_id: "paper_1",
+        claim: "In the default three-model benchmark, SLM-MUX beats the discussion baselines on all three tasks, but on GPQA it is slightly below Single-Best-SC.",
+        dataset_slot: "MATH, GPQA, GSM8K",
+        metric_slot: "Accuracy (%)",
+        limitation_slot: "Single-Best-SC is 42.4 on GPQA",
+        source_type: "full_text",
+        confidence: 0.35,
+        confidence_reason: "Direct Table 1 values; the GPQA caveat comes from the same table."
+      })}
+`,
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "corpus.jsonl"),
+      `${JSON.stringify({ paper_id: "paper_1", title: "Slm-mux: Orchestrating small language models for reasoning" })}
+`,
+      "utf8"
+    );
+
+    const llm = new QueueJsonLLMClient(["", "", "", "", ""]);
+    const eventStream = new InMemoryEventStream();
+    const node = createGenerateHypothesesNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream,
+      llm,
+      pdfTextLlm: llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    const statusText = await readFile(path.join(runDir, "hypothesis_generation", "status.json"), "utf8");
+    const logText = await readFile(path.join(runDir, "hypothesis_generation", "progress.jsonl"), "utf8");
+
+    expect(result.status).toBe("failure");
+    expect(result.summary).toContain("single low-confidence, caveated paper");
+    await expect(access(path.join(runDir, "hypotheses.jsonl"))).rejects.toThrow();
+    await expect(runContext.get("generate_hypotheses.source")).resolves.toBe("blocked_low_quality_fallback");
+    expect(statusText).toContain("single low-confidence, caveated paper");
+    expect(logText).toContain("single low-confidence, caveated paper");
+  });
+
   it("fails fast when no evidence items are available", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-hypothesis-node-empty-"));
     process.chdir(root);

@@ -142,7 +142,7 @@ export class StateGraphRuntime {
       }
 
       this.syncLatestSummary(run, node);
-      const after = await this.saveCheckpointAndPersist(run, "after");
+      const after = await this.saveCheckpointAndPersist(run, "after", undefined, node);
       this.eventStream.emit({
         type: "CHECKPOINT_SAVED",
         runId: run.id,
@@ -375,7 +375,7 @@ export class StateGraphRuntime {
     }
 
     this.syncLatestSummary(run, node);
-    await this.saveCheckpointAndPersist(run, "after", "approved");
+    await this.saveCheckpointAndPersist(run, "after", "approved", node);
     if (!next || !opts?.continueAfterApprove) {
       return this.getRunOrThrow(runId);
     }
@@ -591,6 +591,19 @@ export class StateGraphRuntime {
       });
     }
 
+    if (shouldSkipAutoRetryForFailure(node, errorMessage) && nextRetry < maxAttempts) {
+      nextRetry = maxAttempts;
+      run.graph.retryCounters[node] = nextRetry;
+      this.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId: run.id,
+        node,
+        payload: {
+          text: `Skipping auto retries for ${node}: the failure requires upstream evidence strengthening rather than another identical attempt.`
+        }
+      });
+    }
+
     this.syncLatestSummary(run, node);
     const failCheckpoint = await this.saveCheckpointAndPersist(run, "fail", errorMessage);
     this.eventStream.emit({
@@ -748,14 +761,15 @@ export class StateGraphRuntime {
   private async saveCheckpointAndPersist(
     run: RunRecord,
     phase: CheckpointPhase,
-    reason?: string
+    reason?: string,
+    checkpointNode?: GraphNodeId
   ) {
     const records = await this.checkpointStore.list(run.id);
     const highestSeq = records.reduce((max, record) => Math.max(max, record.seq), 0);
     run.graph.checkpointSeq = Math.max(run.graph.checkpointSeq ?? 0, highestSeq);
     run.updatedAt = new Date().toISOString();
     this.syncLatestSummary(run);
-    const checkpoint = await this.checkpointStore.save(run, phase, reason);
+    const checkpoint = await this.checkpointStore.save(run, phase, reason, checkpointNode);
     await this.runStore.updateRun(run);
     return checkpoint;
   }
@@ -819,6 +833,20 @@ export class StateGraphRuntime {
     return query;
   }
 }
+
+function shouldSkipAutoRetryForFailure(node: GraphNodeId, errorMessage: string): boolean {
+  if (node !== "generate_hypotheses") {
+    return false;
+  }
+
+  const normalized = errorMessage.trim().toLowerCase();
+  return (
+    normalized.includes("hypothesis generation blocked:") &&
+    normalized.includes("single low-confidence, caveated paper") &&
+    normalized.includes("strengthen analyze_papers before designing experiments")
+  );
+}
+
 
 function isAbortError(error: unknown): boolean {
   if (!(error instanceof Error)) {

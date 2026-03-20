@@ -15,6 +15,7 @@ import { BibtexMode } from "../commands/collectOptions.js";
 import {
   buildLiteratureQueryCandidates,
   extractResearchBriefTopic,
+  hasSemanticScholarSpecialSyntax,
   LiteratureQueryCandidate,
   mergeCollectConstraintDefaults
 } from "../runConstraints.js";
@@ -28,6 +29,7 @@ const ENRICHMENT_CONCURRENCY = 6;
 const ENRICHMENT_PROGRESS_INTERVAL = 10;
 const LIGHTWEIGHT_TAIL_MIN_ROWS = 6;
 const LIGHTWEIGHT_TAIL_MAX_ROWS = 12;
+const LOW_YIELD_QUERY_MIN_RESULTS = 3;
 
 const COLLECT_STOPWORDS = new Set([
   "a",
@@ -447,6 +449,25 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             lastStatus: searchDiagnostics.lastStatus,
             retryAfterMs: searchDiagnostics.retryAfterMs
           });
+
+          if (shouldRetryBroaderAfterLowYieldCollect({
+            fetched: searchFetched,
+            candidate: { query: plannedSearch.request.query, reason: plannedSearch.reason },
+            requestedQuery: normalizedRequest.requestedQuery,
+            hasMoreCandidates: searchIndex < normalizedRequest.searchPlan.length - 1
+          })) {
+            deps.eventStream.emit({
+              type: "OBS_RECEIVED",
+              runId: run.id,
+              node: "collect_papers",
+              payload: {
+                text:
+                  `Only ${searchFetched} paper(s) matched the strict query "${effectiveRequest.query}". ` +
+                  `Trying the next broader literature query candidate.`
+              }
+            });
+            continue;
+          }
 
           if (searchFetched > 0) {
             break;
@@ -1299,6 +1320,24 @@ function formatAttemptSummary(diagnostics: SemanticScholarSearchDiagnostics): st
       return `req${index + 1} attempt${attempt.attempt}=${status} ${outcome}${retry}`;
     })
     .join(", ");
+}
+
+function shouldRetryBroaderAfterLowYieldCollect(input: {
+  fetched: number;
+  candidate: { query: string; reason: LiteratureQueryCandidate["reason"] };
+  requestedQuery?: string;
+  hasMoreCandidates: boolean;
+}): boolean {
+  if (input.fetched >= LOW_YIELD_QUERY_MIN_RESULTS || input.fetched <= 0) {
+    return false;
+  }
+  if (input.requestedQuery?.trim()) {
+    return false;
+  }
+  if (!input.hasMoreCandidates) {
+    return false;
+  }
+  return input.candidate.reason === "llm_generated" && hasSemanticScholarSpecialSyntax(input.candidate.query);
 }
 
 function countEnrichmentAttempts(entries: Map<string, CollectEnrichmentLogEntry>): number {

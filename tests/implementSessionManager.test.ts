@@ -2447,6 +2447,231 @@ describe("ImplementSessionManager", () => {
     expect(result.runCommand).toContain("--pilot-size 16 --repeats 2");
   });
 
+  it("does not reuse a recovered bundle when its runnable command is still dry-run only", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-dry-run-bundle-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Dry Run Bundle Gate Run",
+      topic: "agent reasoning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+    mkdirSync(path.dirname(run.memoryRefs.episodePath), { recursive: true });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - fresh_real_run\n", "utf8");
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const scriptPath = path.join(publicDir, "run_gsm8k_budget_reasoning.py");
+    const configPath = path.join(publicDir, "frozen_config.json");
+    const readmePath = path.join(publicDir, "README.md");
+    const metricsPath = path.join(runDir, "metrics.json");
+    const baselinePath = path.join(publicDir, "baseline_summary.json");
+
+    mkdirSync(publicDir, { recursive: true });
+    writeFileSync(scriptPath, "print('stale dry run bundle')\n", "utf8");
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          split: {
+            default_local_pilot_size: 10
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    writeFileSync(baselinePath, "{\"baseline\":\"greedy\"}\n", "utf8");
+    writeFileSync(
+      readmePath,
+      [
+        "# Existing Bundle",
+        "",
+        "```bash",
+        `python outputs/experiment/${path.basename(scriptPath)} \\`,
+        `  --config outputs/experiment/${path.basename(configPath)} \\`,
+        `  --public-dir outputs/experiment \\`,
+        `  --run-dir .autolabos/runs/${run.id} \\`,
+        `  --metrics-path .autolabos/runs/${run.id}/metrics.json \\`,
+        "  --pilot-size 4 --dry-run",
+        "```"
+      ].join("\n"),
+      "utf8"
+    );
+
+    let callCount = 0;
+    const codex = {
+      runTurnStream: async () => {
+        callCount += 1;
+        writeFileSync(scriptPath, "print('fresh real execution bundle')\n", "utf8");
+        return {
+          threadId: "thread-dry-run-refresh",
+          finalText: JSON.stringify({
+            summary: "Re-implemented the bundle without dry-run handoff.",
+            experiment_mode: "real_execution",
+            run_command: `python ${JSON.stringify(scriptPath)} --config ${JSON.stringify(configPath)} --run-dir ${JSON.stringify(runDir)} --metrics-path ${JSON.stringify(metricsPath)} --pilot-size 10`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            changed_files: [scriptPath, configPath],
+            artifacts: [scriptPath, configPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath, configPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexCliClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+
+    expect(callCount).toBe(1);
+    expect(result.summary).toContain("Re-implemented the bundle without dry-run handoff.");
+    expect(result.runCommand).not.toContain("--dry-run");
+    expect(result.verifyReport).toMatchObject({ status: "pass" });
+  });
+
+  it("promotes a recovered dry-run bundle to a real run when runner feedback only reports missing metrics", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-dry-run-feedback-recover-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Dry Run Feedback Recovery Run",
+      topic: "agent reasoning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+    mkdirSync(path.dirname(run.memoryRefs.episodePath), { recursive: true });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - repair_metrics_only\n", "utf8");
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const scriptPath = path.join(publicDir, "run_gsm8k_budget_reasoning.py");
+    const configPath = path.join(publicDir, "frozen_config.json");
+    const readmePath = path.join(publicDir, "README.md");
+    const metricsPath = path.join(runDir, "metrics.json");
+    const baselinePath = path.join(publicDir, "baseline_summary.json");
+    const artifactPath = path.join(publicDir, "artifacts", "pilot", "metrics.public.json");
+
+    mkdirSync(path.dirname(artifactPath), { recursive: true });
+    mkdirSync(publicDir, { recursive: true });
+    writeFileSync(scriptPath, "print('existing real bundle runner')\n", "utf8");
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          split: {
+            default_local_pilot_size: 10
+          },
+          negative_control: {
+            previous_scope: {
+              pilot_size: 4,
+              repeats: 1
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    writeFileSync(baselinePath, '{"baseline":"greedy"}\n', "utf8");
+    writeFileSync(artifactPath, '{"accuracy":0.5}\n', "utf8");
+    writeFileSync(
+      readmePath,
+      [
+        "# Existing Bundle",
+        "",
+        "Offline dry-run:",
+        "",
+        "```bash",
+        `python outputs/experiment/${path.basename(scriptPath)}`,
+        `--config outputs/experiment/${path.basename(configPath)}`,
+        "--public-dir outputs/experiment",
+        `--run-dir .autolabos/runs/${run.id}`,
+        "--pilot-size 4",
+        "--dry-run",
+        "```",
+        "",
+        "Live run:",
+        "",
+        "```bash",
+        `python outputs/experiment/${path.basename(scriptPath)}`,
+        `--config outputs/experiment/${path.basename(configPath)}`,
+        "--public-dir outputs/experiment",
+        `--run-dir .autolabos/runs/${run.id}`,
+        `--metrics-path .autolabos/runs/${run.id}/metrics.json`,
+        "--pilot-size 10",
+        "--repeats 1",
+        "--run-label recovered-live-run",
+        "```"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put("run_experiments.feedback_for_implementer", {
+      source: "run_experiments",
+      status: "fail",
+      trigger: "manual",
+      stage: "metrics",
+      summary: `Experiment finished without metrics output at ${metricsPath}`,
+      command: `python3 ${JSON.stringify(scriptPath)} --config ${JSON.stringify(configPath)} --public-dir ${JSON.stringify(publicDir)} --run-dir ${JSON.stringify(runDir)} --metrics-path ${JSON.stringify(metricsPath)} --pilot-size 4 --dry-run`,
+      cwd: publicDir,
+      metrics_path: metricsPath,
+      exit_code: 0,
+      suggested_next_action: "Ensure the experiment writes JSON metrics to the required metrics path before finishing."
+    });
+
+    let callCount = 0;
+    const codex = {
+      runTurnStream: async () => {
+        callCount += 1;
+        throw new Error("Codex should not be used for dry-run metrics-only recovery");
+      }
+    } as unknown as CodexCliClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+
+    expect(callCount).toBe(0);
+    expect(result.summary).toContain("Recovered implement result from a materialized public experiment bundle");
+    expect(result.runCommand).not.toContain("--dry-run");
+    expect(result.runCommand).toContain(`--metrics-path ${JSON.stringify(metricsPath)}`);
+    expect(result.verifyReport).toMatchObject({ status: "pass" });
+  });
+
   it("does not reuse an existing public bundle before Codex when runner feedback changes the repair target", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-runner-feedback-reuse-gate-"));
     tempDirs.push(workspace);
@@ -2718,6 +2943,89 @@ describe("ImplementSessionManager", () => {
       }
     });
     expect(attempts.attempts[0]?.verify_report.summary).toContain("codex exec failed (exit 1)");
+  });
+
+
+  it("fails the staged_llm implementation turn when the provider request exceeds the bounded timeout", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-openai-timeout-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const originalTimeout = process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS;
+    process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS = "10";
+
+    try {
+      const runStore = new RunStore(paths);
+      const run = await runStore.createRun({
+        title: "Implementation OpenAI Timeout Run",
+        topic: "small model reasoning",
+        constraints: ["recent"],
+        objectiveMetric: "accuracy"
+      });
+
+      const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+      mkdirSync(runDir, { recursive: true });
+      writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+      let codexCalls = 0;
+      const codex = {
+        runTurnStream: async () => {
+          codexCalls += 1;
+          throw new Error("Codex should not be used when llm_mode=openai_api");
+        }
+      } as unknown as CodexCliClient;
+      const llm = {
+        complete: async (_prompt: string, opts?: { abortSignal?: AbortSignal }) =>
+          await new Promise((_, reject) => {
+            const signal = opts?.abortSignal;
+            if (!signal) {
+              return;
+            }
+            signal.addEventListener(
+              "abort",
+              () => reject(new Error("aborted by timeout")),
+              { once: true }
+            );
+          })
+      };
+
+      const config = createTestConfig();
+      config.providers.llm_mode = "openai_api";
+      const manager = new ImplementSessionManager({
+        config,
+        codex,
+        llm: llm as any,
+        aci: new LocalAciAdapter(),
+        eventStream: new InMemoryEventStream(),
+        runStore,
+        workspaceRoot: workspace
+      });
+
+      await expect(manager.run(run)).rejects.toThrow(
+        "implement_experiments staged_llm request timed out after 10ms"
+      );
+      const status = JSON.parse(readFileSync(path.join(runDir, "implement_experiments", "status.json"), "utf8")) as {
+        status: string;
+        stage: string;
+        message: string;
+      };
+      const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+      expect(codexCalls).toBe(0);
+      expect(status).toMatchObject({
+        status: "failed",
+        stage: "failed"
+      });
+      expect(status.message).toContain("timed out after 10ms");
+      expect(await memory.get("implement_experiments.auto_handoff_to_run_experiments")).not.toBe(true);
+    } finally {
+      if (originalTimeout === undefined) {
+        delete process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS;
+      } else {
+        process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS = originalTimeout;
+      }
+    }
   });
 
   it("obeys openai_api mode and materializes staged LLM file edits without invoking Codex", async () => {

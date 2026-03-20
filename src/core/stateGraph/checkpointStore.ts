@@ -2,7 +2,7 @@ import path from "node:path";
 
 import { promises as fs } from "node:fs";
 
-import { RunRecord } from "../../types.js";
+import { GraphNodeId, RunRecord } from "../../types.js";
 import { ensureDir, readJsonFile, writeJsonFile } from "../../utils/fs.js";
 import { AppPaths } from "../../config.js";
 import { CheckpointPhase, CheckpointRecord } from "./types.js";
@@ -10,14 +10,20 @@ import { CheckpointPhase, CheckpointRecord } from "./types.js";
 export class CheckpointStore {
   constructor(private readonly paths: AppPaths) {}
 
-  async save(run: RunRecord, phase: CheckpointPhase, reason?: string): Promise<CheckpointRecord> {
+  async save(
+    run: RunRecord,
+    phase: CheckpointPhase,
+    reason?: string,
+    checkpointNode?: GraphNodeId
+  ): Promise<CheckpointRecord> {
     const seq = run.graph.checkpointSeq + 1;
     run.graph.checkpointSeq = seq;
+    const node = checkpointNode || run.currentNode;
 
     const record: CheckpointRecord = {
       seq,
       runId: run.id,
-      node: run.currentNode,
+      node,
       phase,
       reason,
       createdAt: new Date().toISOString(),
@@ -27,7 +33,7 @@ export class CheckpointStore {
     const dir = this.runCheckpointDir(run.id);
     await ensureDir(dir);
 
-    const checkpointFile = path.join(dir, `${String(seq).padStart(4, "0")}-${run.currentNode}-${phase}.json`);
+    const checkpointFile = path.join(dir, `${String(seq).padStart(4, "0")}-${node}-${phase}.json`);
     await writeJsonFile(checkpointFile, record);
 
     const latestFile = path.join(dir, "latest.json");
