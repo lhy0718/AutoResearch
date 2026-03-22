@@ -173,7 +173,6 @@ export interface AppConfig {
       model: string;
       chat_model?: string;
       experiment_model?: string;
-      pdf_model?: string;
       reasoning_effort: "minimal" | "low" | "medium" | "high" | "xhigh";
       chat_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
       experiment_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -181,14 +180,12 @@ export interface AppConfig {
       fast_mode: boolean;
       chat_fast_mode?: boolean;
       experiment_fast_mode?: boolean;
-      pdf_fast_mode?: boolean;
       auth_required: true;
     };
     openai: {
       model: string;
       chat_model?: string;
       experiment_model?: string;
-      pdf_model?: string;
       reasoning_effort: "minimal" | "low" | "medium" | "high" | "xhigh";
       chat_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
       experiment_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -204,10 +201,6 @@ export interface AppConfig {
       chat_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
       research_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
     };
-  };
-  analysis: {
-    responses_model: string;
-    responses_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
   };
   papers: {
     max_results: number;

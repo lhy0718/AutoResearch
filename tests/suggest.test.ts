@@ -34,7 +34,7 @@ describe("buildSuggestions", () => {
         suggestions.some((suggestion) => suggestion.applyValue === expectedApplyValue(command.name))
       )
     ).toBe(true);
-    expect(suggestions.some((suggestion) => suggestion.applyValue === "/model ")).toBe(false);
+    expect(suggestions.some((suggestion) => suggestion.applyValue === "/model ")).toBe(true);
   });
 
   it("filters commands fuzzily", () => {
@@ -127,9 +127,9 @@ describe("buildSuggestions", () => {
     expect(enumSuggestions.some((s) => s.applyValue === "/agent collect --sort citationCount ")).toBe(true);
   });
 
-  it("keeps hidden commands out of root suggestions while still supporting direct /model editing", () => {
+  it("shows /model in root suggestions while still supporting direct /model editing", () => {
     const rootSuggestions = buildSuggestions({ input: "/mod", runs, activeRunId: "run-alpha-123" });
-    expect(rootSuggestions.some((s) => s.applyValue.startsWith("/model"))).toBe(false);
+    expect(rootSuggestions.some((s) => s.applyValue.startsWith("/model"))).toBe(true);
 
     const selectorSuggestions = buildSuggestions({ input: "/model effort x", runs, activeRunId: "run-alpha-123" });
     expect(selectorSuggestions.some((s) => s.applyValue === "/model ")).toBe(true);

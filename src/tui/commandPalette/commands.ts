@@ -25,7 +25,7 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
   { name: "resume", usage: "/resume <run>", description: "Resume a run", category: "run", argHint: "<run>" },
   { name: "title", usage: "/title <new title>", description: "Rename the active run", category: "run", argHint: "<title>" },
   { name: "agent", usage: "/agent <subcommand>", description: "Run and inspect state graph nodes", category: "workflow", argHint: "<subcommand>" },
-  { name: "model", usage: "/model", description: "Open model and reasoning selector", category: "session" },
+  { name: "model", usage: "/model", description: "Open model and reasoning selector", category: "session", visible: true },
   { name: "approve", usage: "/approve", description: "Approve the current step", category: "workflow", visible: true },
   { name: "retry", usage: "/retry", description: "Retry current node", category: "workflow" },
   { name: "settings", usage: "/settings", description: "Edit configuration", category: "system" },

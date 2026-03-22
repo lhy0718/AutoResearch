@@ -236,8 +236,8 @@ describe("config .env overrides", () => {
     );
 
     expect(getDefaultPdfAnalysisModeForLlmMode(config.providers.llm_mode)).toBe("responses_api_pdf");
-    expect(config.analysis.responses_model).toBe("gpt-5-mini");
-    expect(config.providers.openai.pdf_model).toBe("gpt-5-mini");
+    expect(config.providers.openai.model).toBe("gpt-5-mini");
+    expect(config.providers.openai.reasoning_effort).toBe("xhigh");
     await expect(resolveOpenAiApiKey(cwd)).resolves.toBe("openai-key");
     await expect(fs.readFile(path.join(cwd, ".env"), "utf8")).resolves.toContain('OPENAI_API_KEY="openai-key"');
   });
@@ -264,9 +264,8 @@ describe("config .env overrides", () => {
     expect(config.providers.openai.command_reasoning_effort).toBe("low");
     expect(config.providers.openai.model).toBe("gpt-5.4");
     expect(config.providers.openai.reasoning_effort).toBe("high");
-    expect(config.providers.openai.pdf_model).toBe("gpt-5.4");
-    expect(config.analysis.responses_model).toBe("gpt-5.4");
-    expect(config.analysis.responses_reasoning_effort).toBe("high");
+    expect(config.providers.openai.experiment_model).toBe("gpt-5.4");
+    expect(config.providers.openai.experiment_reasoning_effort).toBe("high");
   });
 
   it("asks OpenAI setup models before reasoning efforts and only once per slot", async () => {
@@ -435,33 +434,38 @@ describe("config .env overrides", () => {
 
   it("normalizes Responses API PDF model to the OpenAI backend model", async () => {
     const { paths } = await createWorkspace();
-    const config = makeConfig();
+    const config = makeConfig() as ReturnType<typeof makeConfig> & {
+      analysis?: { responses_model?: string };
+    };
     config.providers.llm_mode = "openai_api";
     config.providers.openai.model = "gpt-5-mini";
-    config.analysis.responses_model = "unsupported-model";
-    await saveConfig(paths, config);
+    config.analysis = { responses_model: "unsupported-model" };
+    await saveConfig(paths, config as ReturnType<typeof makeConfig>);
 
     const loaded = await loadConfig(paths);
 
-    expect(loaded.analysis.responses_model).toBe("gpt-5-mini");
-    expect(loaded.providers.openai.pdf_model).toBe("gpt-5-mini");
     expect(loaded.providers.openai.model).toBe("gpt-5-mini");
+    expect((loaded as typeof loaded & { analysis?: unknown }).analysis).toBeUndefined();
   });
 
   it("collapses a separate OpenAI PDF slot back to the backend model when Responses PDF mode is enabled", async () => {
     const { paths } = await createWorkspace();
-    const config = makeConfig();
+    const config = makeConfig() as ReturnType<typeof makeConfig> & {
+      analysis?: { responses_model?: string; responses_reasoning_effort?: string };
+      providers: ReturnType<typeof makeConfig>["providers"] & {
+        openai: ReturnType<typeof makeConfig>["providers"]["openai"] & { pdf_model?: string };
+      };
+    };
     config.providers.llm_mode = "openai_api";
-    config.analysis.responses_model = "gpt-4o";
-    config.analysis.responses_reasoning_effort = "xhigh";
+    config.analysis = { responses_model: "gpt-4o", responses_reasoning_effort: "xhigh" };
     config.providers.openai.pdf_model = "gpt-5-mini";
-    await saveConfig(paths, config);
+    await saveConfig(paths, config as ReturnType<typeof makeConfig>);
 
     const loaded = await loadConfig(paths);
 
-    expect(loaded.providers.openai.pdf_model).toBe(loaded.providers.openai.model);
-    expect(loaded.analysis.responses_model).toBe(loaded.providers.openai.model);
-    expect(loaded.analysis.responses_reasoning_effort).toBe(loaded.providers.openai.reasoning_effort);
+    expect(loaded.providers.openai.model).toBe(config.providers.openai.model);
+    expect((loaded.providers.openai as typeof loaded.providers.openai & { pdf_model?: unknown }).pdf_model).toBeUndefined();
+    expect((loaded as typeof loaded & { analysis?: unknown }).analysis).toBeUndefined();
   });
 
   it("saves config without persisting a separate provider pdf mode or derived analysis block", async () => {

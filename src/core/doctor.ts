@@ -16,7 +16,6 @@ export interface DoctorRunOptions {
   pdfAnalysisMode?: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
   openAiApiKeyConfigured?: boolean;
   codexResearchModel?: string;
-  codexPdfModel?: string;
   ollamaBaseUrl?: string;
   ollamaChatModel?: string;
   ollamaResearchModel?: string;
@@ -74,9 +73,6 @@ export async function runDoctorReport(
 
   if (opts?.llmMode === "codex_chatgpt_only" && opts.codexResearchModel) {
     checks.push(buildCodexModelCheck("codex-research-model", "research", opts.codexResearchModel));
-  }
-  if (opts?.pdfAnalysisMode === "codex_text_image_hybrid" && opts.codexPdfModel) {
-    checks.push(buildCodexModelCheck("codex-pdf-model", "PDF analysis", opts.codexPdfModel));
   }
 
   checks.push(await runBinaryCheck("python3", ["--version"], "python"));

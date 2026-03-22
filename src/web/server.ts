@@ -71,15 +71,12 @@ interface SetupRequestBody {
   codexTaskReasoningEffort?: string;
   codexExperimentModelChoice?: string;
   codexExperimentReasoningEffort?: string;
-  codexPdfModelChoice?: string;
   openAiChatModel?: string;
   openAiChatReasoningEffort?: string;
   openAiTaskModel?: string;
   openAiReasoningEffort?: string;
   openAiExperimentModel?: string;
   openAiExperimentReasoningEffort?: string;
-  openAiPdfModel?: string;
-  responsesPdfModel?: string;
   ollamaBaseUrl?: string;
   ollamaChatModel?: string;
   ollamaResearchModel?: string;
@@ -204,15 +201,12 @@ class AutoLabOSWebController {
           codexTaskReasoningEffort: body.codexTaskReasoningEffort as any,
           codexExperimentModelChoice: body.codexExperimentModelChoice,
           codexExperimentReasoningEffort: body.codexExperimentReasoningEffort as any,
-          codexPdfModelChoice: body.codexPdfModelChoice,
           openAiChatModel: body.openAiChatModel,
           openAiChatReasoningEffort: body.openAiChatReasoningEffort as any,
           openAiTaskModel: body.openAiTaskModel,
           openAiReasoningEffort: body.openAiReasoningEffort as any,
           openAiExperimentModel: body.openAiExperimentModel,
           openAiExperimentReasoningEffort: body.openAiExperimentReasoningEffort as any,
-          openAiPdfModel: body.openAiPdfModel,
-          responsesPdfModel: body.responsesPdfModel,
           ollamaBaseUrl: body.ollamaBaseUrl,
           ollamaChatModel: body.ollamaChatModel,
           ollamaResearchModel: body.ollamaResearchModel,
@@ -245,7 +239,6 @@ class AutoLabOSWebController {
           pdfAnalysisMode: getPdfAnalysisModeForConfig(this.runtime.config),
           openAiApiKeyConfigured: await hasOpenAiApiKey(this.cwd),
           codexResearchModel: this.runtime.config.providers.codex.model,
-          codexPdfModel: this.runtime.config.providers.codex.pdf_model || this.runtime.config.providers.codex.model,
           ollamaBaseUrl: this.runtime.config.providers.ollama?.base_url,
           ollamaChatModel: this.runtime.config.providers.ollama?.chat_model,
           ollamaResearchModel: this.runtime.config.providers.ollama?.research_model,
@@ -621,14 +614,6 @@ function summarizeConfig(config: AutoLabOSRuntime["config"]): ConfigSummary {
         : config.providers.llm_mode === "ollama"
           ? config.providers.ollama?.experiment_model || config.providers.ollama?.research_model || "ollama"
           : config.providers.codex.experiment_model || config.providers.codex.model,
-    pdfModel:
-      pdfMode === "responses_api_pdf"
-        ? config.analysis.responses_model
-        : config.providers.llm_mode === "openai_api"
-          ? config.providers.openai.pdf_model || config.providers.openai.model
-          : config.providers.llm_mode === "ollama"
-            ? config.providers.ollama?.vision_model || config.providers.ollama?.research_model || "ollama"
-            : config.providers.codex.pdf_model || config.providers.codex.model,
     taskReasoning:
       config.providers.llm_mode === "openai_api"
         ? config.providers.openai.reasoning_effort
@@ -646,15 +631,7 @@ function summarizeConfig(config: AutoLabOSRuntime["config"]): ConfigSummary {
         ? config.providers.openai.experiment_reasoning_effort || config.providers.openai.reasoning_effort
         : config.providers.llm_mode === "ollama"
           ? undefined
-          : config.providers.codex.experiment_reasoning_effort || config.providers.codex.reasoning_effort,
-    pdfReasoning:
-      pdfMode === "responses_api_pdf"
-        ? config.providers.openai.reasoning_effort || "xhigh"
-        : config.providers.llm_mode === "openai_api"
-          ? config.providers.openai.reasoning_effort
-          : config.providers.llm_mode === "ollama"
-            ? undefined
-            : config.providers.codex.reasoning_effort
+          : config.providers.codex.experiment_reasoning_effort || config.providers.codex.reasoning_effort
   };
 }
 
@@ -688,7 +665,6 @@ function buildConfigFormData(
     ),
     codexExperimentReasoningEffort:
       config?.providers.codex.experiment_reasoning_effort || config?.providers.codex.reasoning_effort || "xhigh",
-    codexPdfModelChoice: getCurrentCodexModelSelectionValue(codexModel, config?.providers.codex.fast_mode),
     openAiChatModel,
     openAiChatReasoningEffort:
       config?.providers.openai.chat_reasoning_effort || config?.providers.openai.reasoning_effort || "low",
@@ -697,8 +673,6 @@ function buildConfigFormData(
     openAiExperimentModel,
     openAiExperimentReasoningEffort:
       config?.providers.openai.experiment_reasoning_effort || config?.providers.openai.reasoning_effort || "medium",
-    openAiPdfModel: openAiModel,
-    responsesPdfModel: openAiModel,
     ollamaBaseUrl: config?.providers.ollama?.base_url || DEFAULT_OLLAMA_BASE_URL,
     ollamaChatModel: config?.providers.ollama?.chat_model || DEFAULT_OLLAMA_CHAT_MODEL,
     ollamaResearchModel: config?.providers.ollama?.research_model || DEFAULT_OLLAMA_RESEARCH_MODEL,
@@ -724,8 +698,6 @@ function buildConfigOptions(config?: AutoLabOSRuntime["config"]): WebConfigOptio
     codexReasoningByModel,
     openAiModels,
     openAiReasoningByModel,
-    responsesPdfModels: [...openAiModels],
-    responsesPdfReasoning: [...buildOpenAiResponsesReasoningChoices(config?.analysis.responses_model || "gpt-5.4")],
     ollamaChatModels: buildOllamaChatModelChoices(),
     ollamaResearchModels: buildOllamaResearchModelChoices(),
     ollamaExperimentModels: buildOllamaExperimentModelChoices(),

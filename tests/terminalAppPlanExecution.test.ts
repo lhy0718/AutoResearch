@@ -223,7 +223,7 @@ describe("TerminalApp pending natural plan execution", () => {
       expect.any(Array),
       "codex_chatgpt_only"
     );
-    expect(app.config.providers.codex.pdf_model).toBe("gpt-5.3-codex");
+    expect(app.config.providers.codex.model).toBe("gpt-5.3-codex");
     expect(getDefaultPdfAnalysisModeForLlmMode(app.config.providers.llm_mode)).toBe("codex_text_image_hybrid");
     expect(app.selectCodexSlot).toHaveBeenCalledTimes(2);
     expect(saveConfig).toHaveBeenCalledTimes(1);
@@ -307,14 +307,11 @@ describe("TerminalApp pending natural plan execution", () => {
     ).toBe(true);
     expect(
       app.logs.some((line: string) =>
-        line.includes("- analysis/hypothesis:") && line.includes("Recommended: gpt-5.4 + high")
+        line.includes("- research backend:") && line.includes("Recommended:")
       )
     ).toBe(true);
-    expect(
-      app.logs.some((line: string) =>
-        line.includes("- PDF analysis:") && line.includes("Recommended: gpt-5.4 + high")
-      )
-    ).toBe(true);
+    expect(app.logs.some((line: string) => line.includes("- analysis/hypothesis:"))).toBe(false);
+    expect(app.logs.some((line: string) => line.includes("- PDF analysis:"))).toBe(false);
     expect(app.openSelectionMenu).toHaveBeenNthCalledWith(
       1,
       "Select model backend",
@@ -331,15 +328,20 @@ describe("TerminalApp pending natural plan execution", () => {
         }),
         expect.objectContaining({
           value: "backend",
-          description: expect.stringContaining("Codex text + image hybrid")
-        }),
-        expect.objectContaining({
-          value: "task",
           description: expect.stringContaining("Recommended: gpt-5.4 + high")
         })
       ]),
       "backend"
     );
+    expect((app.openSelectionMenu as any).mock.calls[1][1]).toHaveLength(2);
+  });
+
+  it("builds a compact banner model label with chat and backend slots", () => {
+    const app = makeApp();
+
+    expect((app as any).getCompactModelLabel()).toContain("chat ");
+    expect((app as any).getCompactModelLabel()).toContain("backend ");
+    expect((app as any).getCompactModelLabel()).toContain("gpt-5.3-codex");
   });
 
   it("lets /model switch the active backend before choosing a slot", async () => {
@@ -404,9 +406,8 @@ describe("TerminalApp pending natural plan execution", () => {
       model: "gpt-5-mini",
       reasoningEffort: "high"
     });
-    expect(app.config.providers.openai.pdf_model).toBe("gpt-5-mini");
-    expect(app.config.analysis.responses_model).toBe("gpt-5-mini");
-    expect(app.config.analysis.responses_reasoning_effort).toBe("high");
+    expect(app.config.providers.openai.model).toBe("gpt-5-mini");
+    expect(app.config.providers.openai.reasoning_effort).toBe("high");
     expect(getDefaultPdfAnalysisModeForLlmMode(app.config.providers.llm_mode)).toBe("responses_api_pdf");
     expect(app.logs).toContain("Model backend updated to OpenAI API.");
     delete process.env.OPENAI_API_KEY;
@@ -1522,6 +1523,28 @@ describe("TerminalApp pending natural plan execution", () => {
 
     app.handleRawKeyboardData(Buffer.from("2u", "utf8"));
     expect(app.input).toBe("first line\n");
+  });
+
+  it("suppresses OSC 11 terminal background responses so they do not leak into the composer", async () => {
+    vi.useFakeTimers();
+    const app = makeApp();
+
+    try {
+      app.handleRawKeyboardData(Buffer.from("\x1b]11;rgb:1818/1818/1818\x07", "utf8"));
+
+      await app.handleKeypress("1", { sequence: "1", name: "1" });
+      await app.handleKeypress(";", { sequence: ";", name: undefined });
+      await app.handleKeypress("r", { sequence: "r", name: "r" });
+
+      expect(app.input).toBe("");
+
+      vi.advanceTimersByTime(121);
+      await app.handleKeypress("a", { sequence: "a", name: "a" });
+
+      expect(app.input).toBe("a");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("renders with screen clear instead of terminal reset so keyboard enhancement survives", () => {

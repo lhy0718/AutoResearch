@@ -18,7 +18,7 @@ const RELATED_WORK_ENRICHMENT_MAX_PAPERS = 2;
 interface RelatedWorkEnrichmentAnalysisSignature {
   pdf_mode: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
   llm_mode?: "codex_chatgpt_only" | "openai_api" | "ollama";
-  backend: "responses_api_pdf" | "codex_pdf_model" | "openai_pdf_model" | "ollama_pdf_model";
+  backend: "openai_research_backend" | "codex_research_backend" | "ollama_research_backend";
   model?: string;
   reasoning_effort?: string;
 }
@@ -147,8 +147,8 @@ export async function maybeEnrichRelatedWorkScout(input: {
             client: input.responsesPdfAnalysis,
             paper: analysisPaper,
             pdfUrl,
-            model: input.config.analysis.responses_model,
-            reasoningEffort: input.config.analysis.responses_reasoning_effort,
+            model: input.config.providers.openai?.model || "gpt-5.4",
+            reasoningEffort: input.config.providers.openai?.reasoning_effort || "high",
             maxAttempts: 2,
             abortSignal: input.abortSignal,
             onProgress: (text) => input.emitLog?.(`[${row.paper_id}] ${text}`)
@@ -386,23 +386,14 @@ function parseJsonl<T>(raw: string): T[] {
 
 function buildEnrichmentAnalysisSignature(config: AppConfig): RelatedWorkEnrichmentAnalysisSignature {
   const pdfMode = getPdfAnalysisModeForConfig(config);
-  if (pdfMode === "responses_api_pdf") {
-    return {
-      pdf_mode: pdfMode,
-      backend: "responses_api_pdf",
-      model: config.analysis?.responses_model,
-      reasoning_effort: config.analysis?.responses_reasoning_effort
-    };
-  }
-
   const llmMode = config.providers?.llm_mode || "codex_chatgpt_only";
   if (llmMode === "openai_api") {
     return {
       pdf_mode: pdfMode,
       llm_mode: llmMode,
-      backend: "openai_pdf_model",
-      model: config.providers?.openai?.pdf_model || config.providers?.openai?.model,
-      reasoning_effort: config.providers?.openai?.reasoning_effort
+      backend: "openai_research_backend",
+      model: config.providers?.openai?.model || "gpt-5.4",
+      reasoning_effort: config.providers?.openai?.reasoning_effort || "high"
     };
   }
 
@@ -410,7 +401,7 @@ function buildEnrichmentAnalysisSignature(config: AppConfig): RelatedWorkEnrichm
     return {
       pdf_mode: pdfMode,
       llm_mode: llmMode,
-      backend: "ollama_pdf_model",
+      backend: "ollama_research_backend",
       model: config.providers?.ollama?.chat_model,
       reasoning_effort: undefined
     };
@@ -419,21 +410,18 @@ function buildEnrichmentAnalysisSignature(config: AppConfig): RelatedWorkEnrichm
   return {
     pdf_mode: pdfMode,
     llm_mode: llmMode,
-    backend: "codex_pdf_model",
-    model: config.providers?.codex?.pdf_model || config.providers?.codex?.model,
+    backend: "codex_research_backend",
+    model: config.providers?.codex?.model,
     reasoning_effort: config.providers?.codex?.reasoning_effort
   };
 }
 
 function describeAnalysisSignature(signature: RelatedWorkEnrichmentAnalysisSignature): string {
-  if (signature.backend === "responses_api_pdf") {
-    return `Responses API PDF mode${signature.model ? ` (${signature.model})` : ""}`;
+  if (signature.backend === "openai_research_backend") {
+    return `PDF mode with OpenAI research backend${signature.model ? ` (${signature.model})` : ""}`;
   }
-  if (signature.backend === "openai_pdf_model") {
-    return `local/full-text PDF mode with OpenAI PDF model${signature.model ? ` (${signature.model})` : ""}`;
+  if (signature.backend === "ollama_research_backend") {
+    return `PDF mode with Ollama research backend${signature.model ? ` (${signature.model})` : ""}`;
   }
-  if (signature.backend === "ollama_pdf_model") {
-    return `local/full-text PDF mode with Ollama${signature.model ? ` (${signature.model})` : ""}`;
-  }
-  return `local/full-text PDF mode with Codex PDF model${signature.model ? ` (${signature.model})` : ""}`;
+  return `PDF mode with Codex research backend${signature.model ? ` (${signature.model})` : ""}`;
 }

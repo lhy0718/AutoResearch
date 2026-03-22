@@ -10,11 +10,9 @@ export interface ConfigSummary {
   taskModel: string;
   chatModel: string;
   experimentModel: string;
-  pdfModel: string;
   taskReasoning: string | undefined;
   chatReasoning: string | undefined;
   experimentReasoning: string | undefined;
-  pdfReasoning: string | undefined;
 }
 
 export interface WebConfigFormData {
@@ -29,15 +27,12 @@ export interface WebConfigFormData {
   codexTaskReasoningEffort: string;
   codexExperimentModelChoice: string;
   codexExperimentReasoningEffort: string;
-  codexPdfModelChoice: string;
   openAiChatModel: string;
   openAiChatReasoningEffort: string;
   openAiTaskModel: string;
   openAiReasoningEffort: string;
   openAiExperimentModel: string;
   openAiExperimentReasoningEffort: string;
-  openAiPdfModel: string;
-  responsesPdfModel: string;
   ollamaBaseUrl: string;
   ollamaChatModel: string;
   ollamaResearchModel: string;
@@ -50,8 +45,6 @@ export interface WebConfigOptions {
   codexReasoningByModel: Record<string, string[]>;
   openAiModels: string[];
   openAiReasoningByModel: Record<string, string[]>;
-  responsesPdfModels: string[];
-  responsesPdfReasoning: string[];
   ollamaChatModels: string[];
   ollamaResearchModels: string[];
   ollamaExperimentModels: string[];

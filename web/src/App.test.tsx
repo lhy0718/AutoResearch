@@ -143,11 +143,9 @@ describe("App", () => {
         taskModel: "gpt-5.4",
         chatModel: "gpt-5.3-codex",
         experimentModel: "gpt-5.4",
-        pdfModel: "gpt-5.4",
         taskReasoning: "xhigh",
         chatReasoning: "low",
-        experimentReasoning: "xhigh",
-        pdfReasoning: "xhigh"
+        experimentReasoning: "xhigh"
       },
       configForm: {
         projectName: "AutoLabOS",
@@ -161,15 +159,12 @@ describe("App", () => {
         codexTaskReasoningEffort: "xhigh",
         codexExperimentModelChoice: "gpt-5.4",
         codexExperimentReasoningEffort: "xhigh",
-        codexPdfModelChoice: "gpt-5.4",
         openAiChatModel: "gpt-5.4",
         openAiChatReasoningEffort: "low",
         openAiTaskModel: "gpt-5.4",
         openAiReasoningEffort: "medium",
         openAiExperimentModel: "gpt-5.4",
-        openAiExperimentReasoningEffort: "medium",
-        openAiPdfModel: "gpt-5.4",
-        responsesPdfModel: "gpt-5.4"
+        openAiExperimentReasoningEffort: "medium"
       }
     };
 
@@ -186,14 +181,14 @@ describe("App", () => {
         expect(body.pdfAnalysisMode).toBeUndefined();
         expect(body.codexChatModelChoice).toBe("gpt-5.4");
         expect(body.codexChatReasoningEffort).toBe("high");
-        expect(body.responsesPdfModel).toBe("gpt-5.4");
         expect(body.codexTaskModelChoice).toBeDefined();
         expect(body.codexExperimentModelChoice).toBeDefined();
-        expect(body.codexPdfModelChoice).toBeDefined();
         expect(body.openAiChatModel).toBeDefined();
         expect(body.openAiTaskModel).toBeDefined();
         expect(body.openAiExperimentModel).toBeDefined();
-        expect(body.openAiPdfModel).toBeDefined();
+        expect(body.responsesPdfModel).toBeUndefined();
+        expect(body.codexPdfModelChoice).toBeUndefined();
+        expect(body.openAiPdfModel).toBeUndefined();
         return new Response(JSON.stringify({ bootstrap: bootstrapPayload }), { status: 200 });
       }
       throw new Error(`Unexpected fetch: ${url}`);

@@ -133,9 +133,9 @@ export async function runCompareAnalysisCli(options: CompareAnalysisCliOptions):
   }
 
   const codexPdfLlm = new CodexLLMClient(bootstrap.runtime.codex, {
-    model: bootstrap.config.providers.codex.pdf_model || bootstrap.config.providers.codex.model,
+    model: bootstrap.config.providers.codex.model,
     reasoningEffort: bootstrap.config.providers.codex.reasoning_effort,
-    fastMode: bootstrap.config.providers.codex.pdf_fast_mode
+    fastMode: bootstrap.config.providers.codex.fast_mode
   });
 
   const results: ComparisonArtifactPaper[] = [];
@@ -147,8 +147,8 @@ export async function runCompareAnalysisCli(options: CompareAnalysisCliOptions):
       `Selection source: ${selection.selectionSource}`,
       `Papers selected: ${selection.papers.length}`,
       `Judge enabled: ${options.judge ? "yes" : "no"}`,
-      `Codex PDF model: ${bootstrap.config.providers.codex.pdf_model || bootstrap.config.providers.codex.model}`,
-      `Responses PDF model: ${bootstrap.config.analysis.responses_model}`,
+      `Codex research backend model: ${bootstrap.config.providers.codex.model}`,
+      `OpenAI research backend model: ${bootstrap.config.providers.openai.model}`,
       ""
     ].join("\n")
   );
@@ -201,8 +201,8 @@ export async function runCompareAnalysisCli(options: CompareAnalysisCliOptions):
         client: responsesClient,
         paper,
         pdfUrl,
-        model: bootstrap.config.analysis.responses_model,
-        reasoningEffort: bootstrap.config.analysis.responses_reasoning_effort,
+        model: bootstrap.config.providers.openai.model,
+        reasoningEffort: bootstrap.config.providers.openai.reasoning_effort,
         maxAttempts: 2
       });
       comparison.api = {
@@ -227,9 +227,9 @@ export async function runCompareAnalysisCli(options: CompareAnalysisCliOptions):
           ? buildAnalysisResultDigest(codexResult)
           : buildAnalysisResultDigest(apiResult);
         const judgeRaw = await responsesClient.analyzePdf({
-          model: bootstrap.config.analysis.responses_model,
+          model: bootstrap.config.providers.openai.model,
           pdfUrl,
-          reasoningEffort: bootstrap.config.analysis.responses_reasoning_effort,
+          reasoningEffort: bootstrap.config.providers.openai.reasoning_effort,
           prompt: buildPaperAnalysisComparisonJudgePrompt({
             paper,
             candidateA,
@@ -270,7 +270,7 @@ export async function runCompareAnalysisCli(options: CompareAnalysisCliOptions):
     },
     judge: {
       enabled: options.judge,
-      model: options.judge ? bootstrap.config.analysis.responses_model : undefined
+      model: options.judge ? bootstrap.config.providers.openai.model : undefined
     },
     aggregate,
     evaluation_context: evaluationContext,

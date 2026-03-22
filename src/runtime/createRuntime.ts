@@ -100,9 +100,9 @@ export async function createAutoLabOSRuntime(
     fastMode: config.providers.codex.experiment_fast_mode ?? config.providers.codex.fast_mode
   });
   const codexPdfLlm = new CodexLLMClient(codex, {
-    model: config.providers.codex.pdf_model || config.providers.codex.model,
+    model: config.providers.codex.model,
     reasoningEffort: config.providers.codex.reasoning_effort,
-    fastMode: config.providers.codex.pdf_fast_mode
+    fastMode: config.providers.codex.fast_mode
   });
   const openAiTaskLlm = new OpenAiResponsesLLMClient(openAiText, {
     model: config.providers.openai.model,
@@ -114,7 +114,7 @@ export async function createAutoLabOSRuntime(
       config.providers.openai.experiment_reasoning_effort || config.providers.openai.reasoning_effort
   });
   const openAiPdfLlm = new OpenAiResponsesLLMClient(openAiText, {
-    model: config.providers.openai.pdf_model || config.providers.openai.model,
+    model: config.providers.openai.model,
     reasoningEffort: config.providers.openai.reasoning_effort
   });
 

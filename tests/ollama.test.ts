@@ -704,7 +704,7 @@ describe("Ollama end-to-end provider coexistence", () => {
     expect(config.providers.openai.model).toBe("gpt-5.4");
     expect(config.providers.openai.api_key_required).toBe(true);
     expect(config.providers.ollama).toBeDefined();
-    expect(config.analysis.responses_model).toBeTruthy();
+    expect(getDefaultPdfAnalysisModeForLlmMode(config.providers.llm_mode)).toBe("ollama_vision");
   });
 
   it("codex setup is unaffected by ollama having been used previously", async () => {

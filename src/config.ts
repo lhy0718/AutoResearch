@@ -16,10 +16,6 @@ import {
 } from "./integrations/codex/modelCatalog.js";
 import { CodexCliClient } from "./integrations/codex/codexCliClient.js";
 import {
-  DEFAULT_RESPONSES_PDF_MODEL,
-  normalizeResponsesPdfModel
-} from "./integrations/openai/pdfModelCatalog.js";
-import {
   DEFAULT_OPENAI_RESPONSES_MODEL,
   DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT,
   OPENAI_RESPONSES_MODEL_OPTIONS,
@@ -95,15 +91,12 @@ export interface NonInteractiveSetupInput {
   codexTaskReasoningEffort?: AppConfig["providers"]["codex"]["reasoning_effort"];
   codexExperimentModelChoice?: string;
   codexExperimentReasoningEffort?: AppConfig["providers"]["codex"]["reasoning_effort"];
-  codexPdfModelChoice?: string;
   openAiChatModel?: string;
   openAiChatReasoningEffort?: AppConfig["providers"]["openai"]["reasoning_effort"];
   openAiTaskModel?: string;
   openAiReasoningEffort?: AppConfig["providers"]["openai"]["reasoning_effort"];
   openAiExperimentModel?: string;
   openAiExperimentReasoningEffort?: AppConfig["providers"]["openai"]["reasoning_effort"];
-  openAiPdfModel?: string;
-  responsesPdfModel?: string;
   ollamaBaseUrl?: string;
   ollamaChatModel?: string;
   ollamaResearchModel?: string;
@@ -144,8 +137,31 @@ export async function loadConfig(paths: AppPaths): Promise<AppConfig> {
 export async function saveConfig(paths: AppPaths, config: AppConfig): Promise<void> {
   await ensureDir(paths.rootDir);
   const normalized = normalizeLoadedConfig(config);
-  const { analysis: _omittedAnalysis, ...serialized } = normalized;
+  const serialized = stripLegacyPdfConfig(normalized);
   await fs.writeFile(paths.configFile, YAML.stringify(serialized), "utf8");
+}
+
+function stripLegacyPdfConfig(config: AppConfig): AppConfig {
+  const sanitized = {
+    ...config,
+    providers: {
+      ...config.providers,
+      codex: { ...config.providers.codex },
+      openai: { ...config.providers.openai }
+    }
+  } as AppConfig & {
+    analysis?: unknown;
+    providers: {
+      codex: AppConfig["providers"]["codex"] & { pdf_model?: unknown; pdf_fast_mode?: unknown };
+      openai: AppConfig["providers"]["openai"] & { pdf_model?: unknown };
+    };
+  };
+
+  delete sanitized.analysis;
+  delete sanitized.providers.codex.pdf_model;
+  delete sanitized.providers.codex.pdf_fast_mode;
+  delete sanitized.providers.openai.pdf_model;
+  return sanitized;
 }
 
 function buildConfigFromWizardAnswers(answers: {
@@ -160,15 +176,12 @@ function buildConfigFromWizardAnswers(answers: {
   codexTaskReasoningEffort: AppConfig["providers"]["codex"]["reasoning_effort"];
   codexExperimentModelChoice: string;
   codexExperimentReasoningEffort: AppConfig["providers"]["codex"]["reasoning_effort"];
-  codexPdfModelChoice: string;
   openAiChatModel: string;
   openAiChatReasoningEffort: AppConfig["providers"]["openai"]["reasoning_effort"];
   openAiTaskModel: string;
   openAiReasoningEffort: AppConfig["providers"]["openai"]["reasoning_effort"];
   openAiExperimentModel: string;
   openAiExperimentReasoningEffort: AppConfig["providers"]["openai"]["reasoning_effort"];
-  openAiPdfModel: string;
-  responsesPdfModel: string;
   ollamaBaseUrl?: string;
   ollamaChatModel?: string;
   ollamaResearchModel?: string;
@@ -178,11 +191,6 @@ function buildConfigFromWizardAnswers(answers: {
   const codexChatSelection = resolveCodexModelSelection(answers.codexChatModelChoice);
   const codexTaskSelection = resolveCodexModelSelection(answers.codexTaskModelChoice);
   const codexExperimentSelection = resolveCodexModelSelection(answers.codexExperimentModelChoice);
-  const codexPdfSelection = codexTaskSelection;
-  const pdfAnalysisMode = getDefaultPdfAnalysisModeForLlmMode(answers.llmMode);
-  const openAiPdfModel = answers.openAiTaskModel;
-  const responsesPdfModel =
-    answers.llmMode === "openai_api" ? answers.openAiTaskModel : answers.responsesPdfModel;
   return {
     version: 1,
     project_name: answers.projectName,
@@ -192,7 +200,6 @@ function buildConfigFromWizardAnswers(answers: {
         model: codexTaskSelection.model,
         chat_model: codexChatSelection.model,
         experiment_model: codexExperimentSelection.model,
-        pdf_model: codexPdfSelection.model,
         reasoning_effort: answers.codexTaskReasoningEffort,
         chat_reasoning_effort: answers.codexChatReasoningEffort,
         experiment_reasoning_effort: answers.codexExperimentReasoningEffort,
@@ -200,14 +207,12 @@ function buildConfigFromWizardAnswers(answers: {
         fast_mode: codexTaskSelection.fastMode,
         chat_fast_mode: codexChatSelection.fastMode,
         experiment_fast_mode: codexExperimentSelection.fastMode,
-        pdf_fast_mode: codexPdfSelection.fastMode,
         auth_required: true
       },
       openai: {
         model: answers.openAiTaskModel,
         chat_model: answers.openAiChatModel,
         experiment_model: answers.openAiExperimentModel,
-        pdf_model: openAiPdfModel,
         reasoning_effort: answers.openAiReasoningEffort,
         chat_reasoning_effort: answers.openAiChatReasoningEffort,
         experiment_reasoning_effort: answers.openAiExperimentReasoningEffort,
@@ -225,13 +230,6 @@ function buildConfigFromWizardAnswers(answers: {
             }
           }
         : {})
-    },
-    analysis: {
-      responses_model: responsesPdfModel,
-      responses_reasoning_effort:
-        answers.llmMode === "openai_api"
-          ? answers.openAiReasoningEffort
-          : DEFAULT_BACKEND_REASONING_EFFORT
     },
     papers: {
       max_results: 200,
@@ -392,11 +390,6 @@ export async function runSetupWizard(
       : (DEFAULT_BACKEND_REASONING_EFFORT as AppConfig["providers"]["openai"]["reasoning_effort"]);
   const openAiExperimentModel = openAiTaskModel;
   const openAiExperimentReasoningEffort = openAiReasoningEffort;
-  const pdfAnalysisMode = getDefaultPdfAnalysisModeForLlmMode(llmMode);
-  const codexPdfModelChoice = codexTaskModelChoice;
-  const openAiPdfModel = openAiTaskModel;
-  const responsesPdfModel =
-    pdfAnalysisMode === "responses_api_pdf" ? openAiTaskModel : DEFAULT_RESPONSES_PDF_MODEL;
   const existingOpenAiApiKey = await resolveOpenAiApiKey(paths.cwd);
   const openAiApiKey = llmMode === "openai_api" ? await askApiKey("OpenAI API key", existingOpenAiApiKey, promptReader) : undefined;
 
@@ -412,15 +405,12 @@ export async function runSetupWizard(
     codexTaskReasoningEffort,
     codexExperimentModelChoice,
     codexExperimentReasoningEffort,
-    codexPdfModelChoice,
     openAiChatModel,
     openAiChatReasoningEffort,
     openAiTaskModel,
     openAiReasoningEffort,
     openAiExperimentModel,
     openAiExperimentReasoningEffort,
-    openAiPdfModel,
-    responsesPdfModel,
     ollamaBaseUrl,
     ollamaChatModel,
     ollamaResearchModel,
@@ -458,7 +448,6 @@ export async function runNonInteractiveSetup(
       input.codexExperimentModelChoice || input.codexTaskModelChoice || RECOMMENDED_CODEX_MODEL,
     codexExperimentReasoningEffort:
       input.codexExperimentReasoningEffort || input.codexTaskReasoningEffort || DEFAULT_BACKEND_REASONING_EFFORT,
-    codexPdfModelChoice: input.codexPdfModelChoice || input.codexTaskModelChoice || RECOMMENDED_CODEX_MODEL,
     openAiChatModel: input.openAiChatModel || DEFAULT_OPENAI_RESPONSES_MODEL,
     openAiChatReasoningEffort: input.openAiChatReasoningEffort || "low",
     openAiTaskModel: input.openAiTaskModel || DEFAULT_OPENAI_RESPONSES_MODEL,
@@ -470,8 +459,6 @@ export async function runNonInteractiveSetup(
       input.openAiExperimentReasoningEffort ||
       input.openAiReasoningEffort ||
       (DEFAULT_BACKEND_REASONING_EFFORT as AppConfig["providers"]["openai"]["reasoning_effort"]),
-    openAiPdfModel: input.openAiTaskModel || input.openAiPdfModel || DEFAULT_OPENAI_RESPONSES_MODEL,
-    responsesPdfModel: input.openAiTaskModel || input.responsesPdfModel || DEFAULT_RESPONSES_PDF_MODEL,
     ollamaBaseUrl: input.ollamaBaseUrl,
     ollamaChatModel: input.ollamaChatModel,
     ollamaResearchModel: input.ollamaResearchModel,
@@ -516,6 +503,17 @@ export async function ensureScaffold(paths: AppPaths): Promise<void> {
 }
 
 function normalizeLoadedConfig(config: AppConfig): AppConfig {
+  const legacyConfig = config as AppConfig & {
+    analysis?: unknown;
+    providers: {
+      codex?: AppConfig["providers"]["codex"] & { pdf_model?: unknown; pdf_fast_mode?: unknown };
+      openai?: AppConfig["providers"]["openai"] & { pdf_model?: unknown };
+    };
+  };
+  delete legacyConfig.analysis;
+  delete legacyConfig.providers?.codex?.pdf_model;
+  delete legacyConfig.providers?.codex?.pdf_fast_mode;
+  delete legacyConfig.providers?.openai?.pdf_model;
   if (!config.providers) {
     throw new Error("Invalid config: providers is missing");
   }
@@ -524,7 +522,6 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
       model: RECOMMENDED_CODEX_MODEL,
       chat_model: DEFAULT_CODEX_CHAT_SETUP_MODEL,
       experiment_model: RECOMMENDED_CODEX_MODEL,
-      pdf_model: RECOMMENDED_CODEX_MODEL,
       reasoning_effort: DEFAULT_BACKEND_REASONING_EFFORT,
       chat_reasoning_effort: DEFAULT_CODEX_CHAT_SETUP_REASONING_EFFORT,
       experiment_reasoning_effort: DEFAULT_BACKEND_REASONING_EFFORT,
@@ -532,7 +529,6 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
       fast_mode: false,
       chat_fast_mode: false,
       experiment_fast_mode: false,
-      pdf_fast_mode: false,
       auth_required: true
     };
   }
@@ -541,7 +537,6 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
       model: DEFAULT_OPENAI_RESPONSES_MODEL,
       chat_model: DEFAULT_OPENAI_RESPONSES_MODEL,
       experiment_model: DEFAULT_OPENAI_RESPONSES_MODEL,
-      pdf_model: DEFAULT_OPENAI_RESPONSES_MODEL,
       reasoning_effort: DEFAULT_BACKEND_REASONING_EFFORT as AppConfig["providers"]["openai"]["reasoning_effort"],
       chat_reasoning_effort: "low",
       experiment_reasoning_effort:
@@ -570,12 +565,6 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
   if (!config.papers) {
     throw new Error("Invalid config: papers is missing");
   }
-  if (!config.analysis) {
-    config.analysis = {
-      responses_model: DEFAULT_RESPONSES_PDF_MODEL,
-      responses_reasoning_effort: DEFAULT_BACKEND_REASONING_EFFORT
-    };
-  }
   if (!config.workflow) {
     config.workflow = {
       mode: "agent_approval",
@@ -586,16 +575,13 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
 
   const codex = config.providers.codex;
   const openai = config.providers.openai;
-  const analysis = config.analysis;
   const papers = config.papers;
   config.providers.llm_mode = normalizePrimaryLlmMode(config.providers.llm_mode);
-  const normalizedPdfMode = normalizePdfAnalysisMode(getDefaultPdfAnalysisModeForLlmMode(config.providers.llm_mode));
   if (!codex.model) {
     codex.model = DEFAULT_CODEX_MODEL;
   }
   codex.chat_model = codex.chat_model?.trim() || codex.model;
   codex.experiment_model = codex.experiment_model?.trim() || codex.model;
-  codex.pdf_model = codex.model;
   if (!codex.reasoning_effort) {
     codex.reasoning_effort = "xhigh";
   }
@@ -621,7 +607,6 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
   if (typeof codex.experiment_fast_mode !== "boolean") {
     codex.experiment_fast_mode = false;
   }
-  codex.pdf_fast_mode = codex.fast_mode;
   if (codex.model !== "gpt-5.4") {
     codex.fast_mode = false;
   }
@@ -642,7 +627,6 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
   openai.model = normalizeOpenAiResponsesModel(openai.model);
   openai.chat_model = normalizeOpenAiResponsesModel(openai.chat_model || openai.model);
   openai.experiment_model = normalizeOpenAiResponsesModel(openai.experiment_model || openai.model);
-  openai.pdf_model = openai.model;
   openai.reasoning_effort = normalizeOpenAiResponsesReasoningEffort(
     openai.model,
     openai.reasoning_effort
@@ -665,7 +649,6 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
     model: codex.model,
     chat_model: codex.chat_model,
     experiment_model: codex.experiment_model,
-    pdf_model: codex.pdf_model,
     reasoning_effort: codex.reasoning_effort,
     chat_reasoning_effort: codex.chat_reasoning_effort,
     experiment_reasoning_effort: codex.experiment_reasoning_effort,
@@ -673,14 +656,12 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
     fast_mode: codex.fast_mode,
     chat_fast_mode: codex.chat_fast_mode,
     experiment_fast_mode: codex.experiment_fast_mode,
-    pdf_fast_mode: codex.pdf_fast_mode,
     auth_required: true
   };
   config.providers.openai = {
     model: openai.model,
     chat_model: openai.chat_model,
     experiment_model: openai.experiment_model,
-    pdf_model: openai.pdf_model,
     reasoning_effort: openai.reasoning_effort,
     chat_reasoning_effort: openai.chat_reasoning_effort,
     experiment_reasoning_effort: openai.experiment_reasoning_effort,
@@ -690,19 +671,6 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
   config.papers = {
     max_results: Math.max(1, papers.max_results || 200),
     per_second_limit: Math.max(1, papers.per_second_limit || 1)
-  };
-  config.analysis = {
-    responses_model:
-      normalizedPdfMode === "responses_api_pdf"
-        ? openai.model
-        : normalizeResponsesPdfModel(analysis.responses_model),
-    responses_reasoning_effort:
-      (normalizedPdfMode === "responses_api_pdf"
-        ? openai.reasoning_effort
-        : normalizeOpenAiResponsesReasoningEffort(
-            normalizeResponsesPdfModel(analysis.responses_model),
-            analysis.responses_reasoning_effort || DEFAULT_BACKEND_REASONING_EFFORT
-          )) as AppConfig["analysis"]["responses_reasoning_effort"]
   };
   config.workflow = {
     mode: "agent_approval",

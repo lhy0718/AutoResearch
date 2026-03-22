@@ -332,18 +332,19 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       const includePageImages =
         deps.config.providers?.llm_mode === "codex_chatgpt_only" ||
         analysisMode === "ollama_vision";
+      const openAiModel = deps.config.providers?.openai?.model || "gpt-5.4";
+      const openAiReasoningEffort = deps.config.providers?.openai?.reasoning_effort || "high";
       const analysisFingerprint = buildAnalysisFingerprint({
         analysisMode,
-        responsesModel: deps.config.analysis.responses_model,
-        responsesReasoningEffort: deps.config.analysis.responses_reasoning_effort,
+        responsesModel: openAiModel,
+        responsesReasoningEffort: openAiReasoningEffort,
         includePageImages
       });
       const codexPreflightFailures = await runAnalyzeCodexPreflight({
         codex: deps.codex,
         llmMode: deps.config.providers?.llm_mode,
         analysisMode,
-        researchModel: deps.config.providers?.codex?.model,
-        pdfModel: deps.config.providers?.codex?.pdf_model || deps.config.providers?.codex?.model
+        researchModel: deps.config.providers?.codex?.model
       });
       if (codexPreflightFailures.length > 0) {
         for (const check of codexPreflightFailures) {
@@ -880,8 +881,8 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                     client: deps.responsesPdfAnalysis,
                     paper: row,
                     pdfUrl,
-                    model: deps.config.analysis.responses_model,
-                    reasoningEffort: deps.config.analysis.responses_reasoning_effort,
+                    model: deps.config.providers?.openai?.model || "gpt-5.4",
+                    reasoningEffort: deps.config.providers?.openai?.reasoning_effort || "high",
                     maxAttempts: 2,
                     abortSignal,
                     onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
@@ -3031,7 +3032,6 @@ async function runAnalyzeCodexPreflight(input: {
   llmMode: NodeExecutionDeps["config"]["providers"]["llm_mode"] | undefined;
   analysisMode: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
   researchModel: string | undefined;
-  pdfModel: string | undefined;
 }): Promise<DoctorCheck[]> {
   if (input.llmMode !== "codex_chatgpt_only") {
     return [];
@@ -3060,14 +3060,11 @@ async function runAnalyzeCodexPreflight(input: {
   if (input.researchModel) {
     checks.push(buildAnalyzeCodexModelCheck("codex-research-model", "research", input.researchModel));
   }
-  if ((input.analysisMode === "codex_text_image_hybrid" || input.analysisMode === "ollama_vision") && input.pdfModel) {
-    checks.push(buildAnalyzeCodexModelCheck("codex-pdf-model", "PDF analysis", input.pdfModel));
-  }
   return checks.filter((check) => !check.ok);
 }
 
 function isCodexModelCheck(name: string): boolean {
-  return name === "codex-research-model" || name === "codex-pdf-model";
+  return name === "codex-research-model";
 }
 
 function buildAnalyzeCodexModelCheck(name: string, label: string, model: string): DoctorCheck {

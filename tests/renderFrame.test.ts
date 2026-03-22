@@ -794,7 +794,7 @@ describe("buildFrame", () => {
       suggestions: [],
       selectedSuggestion: 0,
       colorEnabled: false,
-      modelLabel: "gpt-5.4 + low",
+      modelLabel: "chat gpt-5.4 + low | backend gpt-5.4 + high",
       footerItems: ["running", "collect_papers pending"]
     });
 
@@ -802,7 +802,7 @@ describe("buildFrame", () => {
     expect(footer.startsWith("running")).toBe(true);
     expect(footer).toContain("running");
     expect(footer).toContain("collect_papers pending");
-    expect(footer).toContain("gpt-5.4 + low");
+    expect(footer).toContain("chat gpt-5.4 + low | backend gpt-5.4 + high");
     expect(footer).toContain("v1.2.3");
   });
 
@@ -820,7 +820,7 @@ describe("buildFrame", () => {
       suggestions,
       selectedSuggestion: 0,
       colorEnabled: false,
-      modelLabel: "gpt-5.4 + low",
+      modelLabel: "chat gpt-5.4 + low | backend gpt-5.4 + high",
       footerItems: ["idle"]
     });
 
@@ -828,8 +828,8 @@ describe("buildFrame", () => {
     expect(footer.startsWith("↑↓ navigate")).toBe(true);
     expect(footer).toContain("↑↓ navigate");
     expect(footer).toContain("Tab complete");
-    expect(footer).toContain("Enter run");
-    expect(footer).toContain("gpt-5.4 + low");
+    expect(footer).not.toContain("Enter run");
+    expect(footer).toContain("chat gpt-5.4 + low | backend gpt-5.4 + high");
     expect(footer).toContain("v1.2.3");
   });
 });

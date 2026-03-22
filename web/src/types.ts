@@ -92,11 +92,9 @@ export interface ConfigSummary {
   taskModel: string;
   chatModel: string;
   experimentModel: string;
-  pdfModel: string;
   taskReasoning: string;
   chatReasoning: string;
   experimentReasoning: string;
-  pdfReasoning: string;
 }
 
 export interface WebConfigFormData {
@@ -111,15 +109,12 @@ export interface WebConfigFormData {
   codexTaskReasoningEffort: string;
   codexExperimentModelChoice: string;
   codexExperimentReasoningEffort: string;
-  codexPdfModelChoice: string;
   openAiChatModel: string;
   openAiChatReasoningEffort: string;
   openAiTaskModel: string;
   openAiReasoningEffort: string;
   openAiExperimentModel: string;
   openAiExperimentReasoningEffort: string;
-  openAiPdfModel: string;
-  responsesPdfModel: string;
 }
 
 export interface WebConfigOptions {
@@ -127,8 +122,6 @@ export interface WebConfigOptions {
   codexReasoningByModel: Record<string, string[]>;
   openAiModels: string[];
   openAiReasoningByModel: Record<string, string[]>;
-  responsesPdfModels: string[];
-  responsesPdfReasoning: string[];
 }
 
 export interface ArtifactEntry {

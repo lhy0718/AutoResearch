@@ -1448,15 +1448,12 @@ function createDefaultConfigForm(): WebConfigFormData {
     codexTaskReasoningEffort: "xhigh",
     codexExperimentModelChoice: "gpt-5.3-codex",
     codexExperimentReasoningEffort: "xhigh",
-    codexPdfModelChoice: "gpt-5.3-codex",
     openAiChatModel: "gpt-5.4",
     openAiChatReasoningEffort: "low",
     openAiTaskModel: "gpt-5.4",
     openAiReasoningEffort: "medium",
     openAiExperimentModel: "gpt-5.4",
-    openAiExperimentReasoningEffort: "medium",
-    openAiPdfModel: "gpt-5.4",
-    responsesPdfModel: "gpt-5.4"
+    openAiExperimentReasoningEffort: "medium"
   };
 }
 
@@ -1498,9 +1495,7 @@ function createDefaultConfigOptions(): WebConfigOptions {
       "gpt-4.1": ["medium"],
       "gpt-4o": ["medium"],
       "gpt-4o-mini": ["medium"]
-    },
-    responsesPdfModels: ["gpt-5.4", "gpt-5", "gpt-5-mini", "gpt-4.1", "gpt-4o", "gpt-4o-mini"],
-    responsesPdfReasoning: ["minimal", "low", "medium", "high", "xhigh"]
+    }
   };
 }
 
@@ -1541,8 +1536,7 @@ function updateCodexTaskModelAndDerivedPdf(
     return {
       ...current,
       codexTaskModelChoice: nextModel,
-      codexTaskReasoningEffort: nextTaskEffort,
-      codexPdfModelChoice: nextModel
+      codexTaskReasoningEffort: nextTaskEffort
     };
   });
 }
@@ -1569,9 +1563,7 @@ function updateOpenAiTaskModelAndDerivedPdf(
     return {
       ...current,
       openAiTaskModel: nextModel,
-      openAiReasoningEffort: nextTaskEffort,
-      openAiPdfModel: nextModel,
-      responsesPdfModel: nextModel
+      openAiReasoningEffort: nextTaskEffort
     };
   });
 }

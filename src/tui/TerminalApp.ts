@@ -20,10 +20,6 @@ import {
   resolveCodexModelSelection
 } from "../integrations/codex/modelCatalog.js";
 import {
-  RESPONSES_PDF_MODEL_OPTIONS,
-  normalizeResponsesPdfModel
-} from "../integrations/openai/pdfModelCatalog.js";
-import {
   OPENAI_RESPONSES_MODEL_OPTIONS,
   getOpenAiResponsesReasoningOptions,
   normalizeOpenAiResponsesModel,
@@ -291,7 +287,10 @@ export class TerminalApp {
   private guidanceLanguage: GuidanceLanguage = detectInitialGuidanceLanguage();
   private enhancedNewlineSupported = detectLikelyEnhancedNewlineSupport();
   private suppressEnhancedEnterUntil = 0;
+  private suppressTerminalQueryKeypressesUntil = 0;
   private rawKeyboardSequenceBuffer = "";
+  private rawTerminalQueryBuffer = "";
+  private mouseTrackingEnabled = false;
   private commandModeDraft?: { input: string; cursor: number };
   private suppressMouseKeypresses = false;
 
@@ -351,7 +350,10 @@ export class TerminalApp {
       applyCodexSurfaceTheme(await resolveTerminalBackground(process.stdin, process.stdout));
       process.stdout.write(ENABLE_KEYBOARD_ENHANCEMENT);
       process.stdout.write(ENABLE_MODIFY_OTHER_KEYS);
-      process.stdout.write(ENABLE_MOUSE_SGR);
+      this.mouseTrackingEnabled = this.shouldEnableMouseTracking();
+      if (this.mouseTrackingEnabled) {
+        process.stdout.write(ENABLE_MOUSE_SGR);
+      }
     }
 
     readline.emitKeypressEvents(process.stdin);
@@ -363,7 +365,9 @@ export class TerminalApp {
     process.stdin.off("keypress", this.keypressHandler);
     process.stdin.off("data", this.rawInputHandler);
     if (process.stdout.isTTY) {
-      process.stdout.write(DISABLE_MOUSE_SGR);
+      if (this.mouseTrackingEnabled) {
+        process.stdout.write(DISABLE_MOUSE_SGR);
+      }
       process.stdout.write(DISABLE_MODIFY_OTHER_KEYS);
       process.stdout.write(DISABLE_KEYBOARD_ENHANCEMENT);
     }
@@ -371,6 +375,13 @@ export class TerminalApp {
       process.stdin.setRawMode(false);
     }
     this.rawKeyboardSequenceBuffer = "";
+    this.mouseTrackingEnabled = false;
+  }
+
+  private shouldEnableMouseTracking(): boolean {
+    const term = (process.env.TERM ?? "").toLowerCase();
+    const termProgram = (process.env.TERM_PROGRAM ?? "").toLowerCase();
+    return !(process.env.TMUX || termProgram === "tmux" || term.startsWith("screen"));
   }
 
   private isReturnKey(key: readline.Key): boolean {
@@ -433,6 +444,25 @@ export class TerminalApp {
     if (X10_MOUSE_RE.test(text)) {
       this.suppressMouseKeypresses = true;
       process.nextTick(() => { this.suppressMouseKeypresses = false; });
+      return;
+    }
+
+    const terminalQueryStart = `${this.rawTerminalQueryBuffer}${text}`.slice(-512);
+    const osc11Index = terminalQueryStart.lastIndexOf("\x1b]11;");
+    if (osc11Index !== -1) {
+      this.rawTerminalQueryBuffer = terminalQueryStart.slice(osc11Index);
+      this.suppressTerminalQueryKeypressesUntil = Date.now() + 120;
+      if (parseTerminalBackgroundResponse(this.rawTerminalQueryBuffer)) {
+        this.rawTerminalQueryBuffer = "";
+      }
+      return;
+    }
+    if (this.rawTerminalQueryBuffer) {
+      this.rawTerminalQueryBuffer = `${this.rawTerminalQueryBuffer}${text}`.slice(-512);
+      this.suppressTerminalQueryKeypressesUntil = Date.now() + 120;
+      if (parseTerminalBackgroundResponse(this.rawTerminalQueryBuffer)) {
+        this.rawTerminalQueryBuffer = "";
+      }
       return;
     }
 
@@ -559,8 +589,8 @@ export class TerminalApp {
       return;
     }
 
-    // Suppress keypress events generated from mouse escape sequences
-    if (this.suppressMouseKeypresses) {
+    // Suppress keypress events generated from raw terminal escape sequences.
+    if (this.suppressMouseKeypresses || Date.now() <= this.suppressTerminalQueryKeypressesUntil) {
       return;
     }
 
@@ -1896,7 +1926,7 @@ export class TerminalApp {
     this.pushTransientLog(`  active run: ${run ? `${run.id} (${run.title})` : "none"}`);
     this.pushTransientLog(`  current node: ${run ? `${run.currentNode} ${run.graph.nodeStates[run.currentNode]?.status ?? ""}` : "n/a"}`);
     this.pushTransientLog(`  pending approval: ${this.pendingHumanIntervention ? "yes" : "no"}`);
-    this.pushTransientLog(`  model: ${this.getCurrentSlotPreset("chat") || "default"}`);
+    this.pushTransientLog(`  model: ${this.getCompactModelLabel() || "default"}`);
     this.pushTransientLog(`  queue: ${this.queuedInputs.length}`);
     this.pushTransientLog(`  terminal: ${termWidth}×${termHeight}`);
     this.pushTransientLog(`  tmux: ${process.env.TMUX ? "yes" : "no"}`);
@@ -2257,7 +2287,6 @@ export class TerminalApp {
       pdfAnalysisMode: getPdfAnalysisModeForConfig(this.config),
       openAiApiKeyConfigured: await resolveOpenAiApiKey(process.cwd()).then(Boolean),
       codexResearchModel: this.config.providers.codex.model,
-      codexPdfModel: this.config.providers.codex.pdf_model || this.config.providers.codex.model,
       ollamaBaseUrl: this.config.providers.ollama?.base_url,
       ollamaChatModel: this.config.providers.ollama?.chat_model,
       ollamaResearchModel: this.config.providers.ollama?.research_model,
@@ -3127,9 +3156,7 @@ export class TerminalApp {
     await this.saveConfigFn(this.config);
     const pdfAnalysisMode = getPdfAnalysisModeForConfig(this.config);
     const analysisSummary =
-      pdfAnalysisMode === "responses_api_pdf"
-        ? `${this.describePdfAnalysisMode(pdfAnalysisMode)} (${this.config.analysis.responses_model})`
-        : pdfAnalysisMode === "ollama_vision"
+      pdfAnalysisMode === "ollama_vision"
           ? `${this.describePdfAnalysisMode(pdfAnalysisMode)} (${this.config.providers.ollama?.vision_model || DEFAULT_OLLAMA_VISION_MODEL})`
           : this.describePdfAnalysisMode(pdfAnalysisMode);
     const approvalSummary = this.config.workflow?.approval_mode === "manual" ? "Manual" : "Minimal";
@@ -3177,14 +3204,14 @@ export class TerminalApp {
     }
 
     if (this.config.providers.llm_mode === "ollama") {
-      await this.handleOllamaModelSelection(slot as "chat" | "task");
+      await this.handleOllamaModelSelection(slot as "chat");
       return;
     }
     if (this.config.providers.llm_mode === "openai_api") {
-      await this.handleOpenAiApiModelSelection(slot as "chat" | "task");
+      await this.handleOpenAiApiModelSelection(slot as "chat");
       return;
     }
-    await this.handleCodexModelSelection(slot as "chat" | "task");
+    await this.handleCodexModelSelection(slot as "chat");
   }
 
   private async applyModelBackendSelection(
@@ -3223,13 +3250,13 @@ export class TerminalApp {
     return true;
   }
 
-  private async handleCodexModelSelection(slot: "chat" | "task" | "pdf"): Promise<void> {
+  private async handleCodexModelSelection(slot: "chat" | "task"): Promise<void> {
     this.pushCurrentModelDefaults();
     const selected = await this.selectCodexSlot(
-      slot === "chat" ? "general chat" : slot === "pdf" ? "PDF analysis" : "analysis/hypothesis",
+      slot === "chat" ? "general chat" : "analysis/hypothesis",
       this.getCurrentCodexSlotSelection(slot),
       this.getCurrentCodexSlotReasoning(slot),
-      slot === "chat" ? "command" : slot === "pdf" ? "pdf" : "task"
+      slot === "chat" ? "command" : "task"
     );
     if (!selected) {
       this.pushLog("Model selection canceled.");
@@ -3237,9 +3264,6 @@ export class TerminalApp {
     }
 
     this.applyCodexSlotSelection(slot, selected.selection, selected.effort);
-    if (slot === "task") {
-      this.applyCodexSlotSelection("pdf", selected.selection, selected.effort);
-    }
     this.codex?.updateDefaults?.({
       model: this.config.providers.codex.model,
       reasoningEffort: this.config.providers.codex.reasoning_effort,
@@ -3250,7 +3274,7 @@ export class TerminalApp {
     this.pushCurrentModelDefaults();
   }
 
-  private async handleOpenAiApiModelSelection(slot: "chat" | "task" | "pdf"): Promise<void> {
+  private async handleOpenAiApiModelSelection(slot: "chat" | "task"): Promise<void> {
     this.pushCurrentModelDefaults();
     if (!(await resolveOpenAiApiKey(process.cwd()))) {
       const openAiApiKey = await this.askWithinTui("OpenAI API key", "");
@@ -3262,10 +3286,10 @@ export class TerminalApp {
     }
 
     const selected = await this.selectOpenAiSlot(
-      slot === "chat" ? "general chat" : slot === "pdf" ? "PDF text analysis" : "analysis/hypothesis",
+      slot === "chat" ? "general chat" : "analysis/hypothesis",
       this.getCurrentOpenAiSlotModel(slot),
       this.getCurrentOpenAiSlotReasoning(slot),
-      slot === "chat" ? "command" : slot === "pdf" ? "pdf" : "task"
+      slot === "chat" ? "command" : "task"
     );
     if (!selected) {
       this.pushLog("Model selection canceled.");
@@ -3273,10 +3297,6 @@ export class TerminalApp {
     }
 
     this.applyOpenAiSlotSelection(slot, selected.model, selected.effort);
-    if (slot === "task") {
-      this.applyOpenAiSlotSelection("pdf", selected.model, selected.effort);
-      this.applyResponsesPdfSlotSelection(selected.model, selected.effort);
-    }
     this.openAiTextClient?.updateDefaults({
       model: this.config.providers.openai.model,
       reasoningEffort: this.config.providers.openai.reasoning_effort
@@ -3346,7 +3366,6 @@ export class TerminalApp {
         return false;
       }
       this.applyOpenAiSlotSelection("task", taskSlot.model, taskSlot.effort);
-      this.applyOpenAiSlotSelection("pdf", taskSlot.model, taskSlot.effort);
     } else {
       const taskSlot = await this.selectCodexSlot(
         "research backend",
@@ -3359,7 +3378,6 @@ export class TerminalApp {
         return false;
       }
       this.applyCodexSlotSelection("task", taskSlot.selection, taskSlot.effort);
-      this.applyCodexSlotSelection("pdf", taskSlot.selection, taskSlot.effort);
     }
 
     const pdfMode = getDefaultPdfAnalysisModeForLlmMode(llmMode);
@@ -3371,14 +3389,6 @@ export class TerminalApp {
       }
       await upsertEnvVar(path.join(process.cwd(), ".env"), "OPENAI_API_KEY", openAiApiKey.trim());
     }
-
-    if (pdfMode === "responses_api_pdf") {
-      this.applyResponsesPdfSlotSelection(
-        this.config.providers.openai.model,
-        this.config.providers.openai.reasoning_effort
-      );
-    }
-
     return true;
   }
 
@@ -3393,7 +3403,7 @@ export class TerminalApp {
     );
   }
 
-  private buildModelSelectionOptions(slot: "chat" | "task" | "pdf"): SelectionMenuOption[] {
+  private buildModelSelectionOptions(slot: "chat" | "task"): SelectionMenuOption[] {
     const recommended = this.getRecommendedCodexSelection(slot);
     return this.buildModelSelectionChoices().map((value) => ({
       value,
@@ -3425,18 +3435,6 @@ export class TerminalApp {
     ];
   }
 
-  private buildResponsesPdfModelOptions(): SelectionMenuOption[] {
-    const recommended = this.getRecommendedResponsesPdfModel();
-    return RESPONSES_PDF_MODEL_OPTIONS.map((option) => ({
-      value: option.value,
-      label: option.label,
-      description: this.annotateRecommendedDescription(
-        option.description,
-        option.value === recommended
-      )
-    }));
-  }
-
   private buildPrimaryLlmProviderOptions(): SelectionMenuOption[] {
     return [
       {
@@ -3457,7 +3455,7 @@ export class TerminalApp {
     ];
   }
 
-  private buildOpenAiModelOptions(slot: "chat" | "task" | "pdf"): SelectionMenuOption[] {
+  private buildOpenAiModelOptions(slot: "chat" | "task"): SelectionMenuOption[] {
     const recommended = this.getRecommendedOpenAiModel(slot);
     return OPENAI_RESPONSES_MODEL_OPTIONS.map((option) => ({
       value: option.value,
@@ -3471,7 +3469,7 @@ export class TerminalApp {
 
   private buildOpenAiReasoningEffortOptions(
     model: string,
-    recommended: "command" | "task" | "pdf"
+    recommended: "command" | "task"
   ): SelectionMenuOption[] {
     return getOpenAiResponsesReasoningOptions(model).map((option) => ({
       value: option.value,
@@ -3483,7 +3481,7 @@ export class TerminalApp {
   private async selectOpenAiReasoningEffortOrDefault(
     model: string,
     currentEffort: AppConfig["providers"]["openai"]["reasoning_effort"],
-    recommended: "command" | "task" | "pdf"
+    recommended: "command" | "task"
   ): Promise<AppConfig["providers"]["openai"]["reasoning_effort"] | undefined> {
     const normalizedEffort = normalizeOpenAiResponsesReasoningEffort(
       model,
@@ -3495,9 +3493,7 @@ export class TerminalApp {
     const selected = await this.openSelectionMenu(
       recommended === "command"
         ? "Select command/query reasoning effort"
-        : recommended === "task"
-          ? "Select analysis/hypothesis reasoning effort"
-          : "Select PDF analysis reasoning effort",
+        : "Select analysis/hypothesis reasoning effort",
       this.buildOpenAiReasoningEffortOptions(model, recommended),
       normalizedEffort
     );
@@ -3507,15 +3503,13 @@ export class TerminalApp {
   private async selectCodexReasoningEffort(
     model: string,
     currentEffort: CodexReasoningEffort,
-    recommended: "command" | "task" | "pdf"
+    recommended: "command" | "task"
   ): Promise<CodexReasoningEffort | undefined> {
     const normalizedEffort = normalizeReasoningEffortForModel(model, currentEffort);
     const selected = await this.openSelectionMenu(
       recommended === "command"
         ? "Select command/query reasoning effort"
-        : recommended === "task"
-          ? "Select analysis/hypothesis reasoning effort"
-          : "Select PDF analysis reasoning effort",
+        : "Select analysis/hypothesis reasoning effort",
       getReasoningEffortChoicesForModel(model).map((value) => ({
         value,
         label: value,
@@ -3529,20 +3523,16 @@ export class TerminalApp {
   private describeReasoningEffort(
     baseDescription: string,
     value: string,
-    recommended: "command" | "task" | "pdf"
+    recommended: "command" | "task"
   ): string {
     const recommendation =
       recommended === "command"
         ? value === "medium"
           ? "recommended for commands"
           : ""
-        : recommended === "task"
-          ? value === "xhigh"
-            ? "recommended for analysis/hypothesis"
-            : ""
-          : value === "xhigh"
-            ? "recommended for PDF analysis"
-            : "";
+        : value === "xhigh"
+          ? "recommended for analysis/hypothesis"
+          : "";
     const parts = [baseDescription, recommendation].map((part) => part.trim()).filter(Boolean);
     return parts.join(" | ");
   }
@@ -3766,37 +3756,24 @@ export class TerminalApp {
         value: "backend",
         label: "research_backend",
         description: `Current: ${this.getCurrentResearchBackendPreset()} | Recommended: ${this.getRecommendedResearchBackendPreset()}`
-      },
-      {
-        value: "task",
-        label: "analysis_hypothesis",
-        description: `Current: ${this.getCurrentSlotPreset("task")} | Recommended: ${this.getRecommendedSlotPreset("task")}`
       }
     ];
   }
 
-  private describeModelSlot(slot: "chat" | "task" | "pdf"): string {
+  private describeModelSlot(slot: "chat" | "task"): string {
     switch (slot) {
       case "chat":
         return "general chat";
-      case "pdf":
-        return "PDF analysis";
       default:
         return "analysis/hypothesis";
     }
   }
 
-  private getCurrentCodexSlotSelection(slot: "chat" | "task" | "pdf"): string {
+  private getCurrentCodexSlotSelection(slot: "chat" | "task"): string {
     if (slot === "chat") {
       return getCurrentCodexModelSelectionValue(
         this.config.providers.codex.chat_model || this.config.providers.codex.model,
         this.config.providers.codex.chat_fast_mode
-      );
-    }
-    if (slot === "pdf") {
-      return getCurrentCodexModelSelectionValue(
-        this.config.providers.codex.pdf_model || this.config.providers.codex.model,
-        this.config.providers.codex.pdf_fast_mode
       );
     }
     return getCurrentCodexModelSelectionValue(
@@ -3805,14 +3782,11 @@ export class TerminalApp {
     );
   }
 
-  private getCurrentCodexSlotReasoning(slot: "chat" | "task" | "pdf"): CodexReasoningEffort {
+  private getCurrentCodexSlotReasoning(slot: "chat" | "task"): CodexReasoningEffort {
     if (slot === "chat") {
       return (this.config.providers.codex.chat_reasoning_effort ||
         this.config.providers.codex.command_reasoning_effort ||
         "low") as CodexReasoningEffort;
-    }
-    if (slot === "pdf") {
-      return this.config.providers.codex.reasoning_effort as CodexReasoningEffort;
     }
     return this.config.providers.codex.reasoning_effort;
   }
@@ -3821,13 +3795,11 @@ export class TerminalApp {
     label: string,
     currentSelection: string,
     currentEffort: CodexReasoningEffort,
-    recommended: "command" | "task" | "pdf"
+    recommended: "command" | "task"
   ): Promise<{ selection: string; effort: CodexReasoningEffort } | undefined> {
     const selectedSelection = await this.openSelectionMenu(
       `Select ${label} model`,
-      this.buildModelSelectionOptions(
-        recommended === "command" ? "chat" : recommended === "pdf" ? "pdf" : "task"
-      ),
+      this.buildModelSelectionOptions(recommended === "command" ? "chat" : "task"),
       currentSelection
     );
     if (!selectedSelection) {
@@ -3845,7 +3817,7 @@ export class TerminalApp {
   }
 
   private applyCodexSlotSelection(
-    slot: "chat" | "task" | "pdf",
+    slot: "chat" | "task",
     selection: string,
     effort: CodexReasoningEffort
   ): void {
@@ -3857,40 +3829,27 @@ export class TerminalApp {
       this.config.providers.codex.chat_fast_mode = resolved.model === "gpt-5.4" ? resolved.fastMode : false;
       return;
     }
-    if (slot === "pdf") {
-      this.config.providers.codex.pdf_model = resolved.model;
-      this.config.providers.codex.pdf_fast_mode = resolved.model === "gpt-5.4" ? resolved.fastMode : false;
-      return;
-    }
     this.config.providers.codex.model = resolved.model;
     this.config.providers.codex.reasoning_effort = effort;
     this.config.providers.codex.fast_mode = resolved.model === "gpt-5.4" ? resolved.fastMode : false;
   }
 
-  private getCurrentOpenAiSlotModel(slot: "chat" | "task" | "pdf"): string {
+  private getCurrentOpenAiSlotModel(slot: "chat" | "task"): string {
     if (slot === "chat") {
       return normalizeOpenAiResponsesModel(
         this.config.providers.openai.chat_model || this.config.providers.openai.model
-      );
-    }
-    if (slot === "pdf") {
-      return normalizeOpenAiResponsesModel(
-        this.config.providers.openai.pdf_model || this.config.providers.openai.model
       );
     }
     return normalizeOpenAiResponsesModel(this.config.providers.openai.model);
   }
 
   private getCurrentOpenAiSlotReasoning(
-    slot: "chat" | "task" | "pdf"
+    slot: "chat" | "task"
   ): AppConfig["providers"]["openai"]["reasoning_effort"] {
     if (slot === "chat") {
       return (this.config.providers.openai.chat_reasoning_effort ||
         this.config.providers.openai.command_reasoning_effort ||
         "low") as AppConfig["providers"]["openai"]["reasoning_effort"];
-    }
-    if (slot === "pdf") {
-      return this.config.providers.openai.reasoning_effort as AppConfig["providers"]["openai"]["reasoning_effort"];
     }
     return this.config.providers.openai.reasoning_effort;
   }
@@ -3899,13 +3858,11 @@ export class TerminalApp {
     label: string,
     currentModel: string,
     currentEffort: AppConfig["providers"]["openai"]["reasoning_effort"],
-    recommended: "command" | "task" | "pdf"
+    recommended: "command" | "task"
   ): Promise<{ model: string; effort: AppConfig["providers"]["openai"]["reasoning_effort"] } | undefined> {
     const selectedModel = await this.openSelectionMenu(
       `Select ${label} model`,
-      this.buildOpenAiModelOptions(
-        recommended === "command" ? "chat" : recommended === "pdf" ? "pdf" : "task"
-      ),
+      this.buildOpenAiModelOptions(recommended === "command" ? "chat" : "task"),
       normalizeOpenAiResponsesModel(currentModel)
     );
     if (!selectedModel) {
@@ -3923,7 +3880,7 @@ export class TerminalApp {
   }
 
   private applyOpenAiSlotSelection(
-    slot: "chat" | "task" | "pdf",
+    slot: "chat" | "task",
     model: string,
     effort: AppConfig["providers"]["openai"]["reasoning_effort"]
   ): void {
@@ -3933,117 +3890,57 @@ export class TerminalApp {
       this.config.providers.openai.command_reasoning_effort = effort;
       return;
     }
-    if (slot === "pdf") {
-      this.config.providers.openai.pdf_model = model;
-      return;
-    }
     this.config.providers.openai.model = model;
     this.config.providers.openai.reasoning_effort = effort;
-  }
-
-  private getCurrentResponsesPdfModel(): string {
-    return normalizeResponsesPdfModel(
-      this.config.providers.openai.pdf_model ||
-        this.config.analysis.responses_model ||
-        this.config.providers.openai.model
-    );
-  }
-
-  private getCurrentResponsesPdfReasoning(): AppConfig["analysis"]["responses_reasoning_effort"] {
-    return (
-      this.config.providers.openai.reasoning_effort ||
-      this.config.analysis.responses_reasoning_effort ||
-      "xhigh"
-    ) as AppConfig["analysis"]["responses_reasoning_effort"];
-  }
-
-  private applyResponsesPdfSlotSelection(
-    model: string,
-    effort: AppConfig["analysis"]["responses_reasoning_effort"]
-  ): void {
-    this.config.providers.openai.pdf_model = model;
-    this.config.analysis.responses_model = model;
-    this.config.analysis.responses_reasoning_effort = effort;
-  }
-
-  private async selectResponsesPdfSlot(
-    currentModel: string,
-    currentEffort: AppConfig["analysis"]["responses_reasoning_effort"]
-  ): Promise<{ model: string; effort: AppConfig["analysis"]["responses_reasoning_effort"] } | undefined> {
-    const model = await this.openSelectionMenu(
-      "Select Responses API PDF model",
-      this.buildResponsesPdfModelOptions(),
-      normalizeResponsesPdfModel(currentModel)
-    );
-    if (!model) {
-      return undefined;
-    }
-    const effort = await this.selectOpenAiReasoningEffortOrDefault(model, currentEffort || "xhigh", "pdf");
-    if (!effort) {
-      return undefined;
-    }
-    return {
-      model,
-      effort: effort as AppConfig["analysis"]["responses_reasoning_effort"]
-    };
   }
 
   private pushModelSlotSummary(): void {
     this.pushLog("Current model slots:");
     this.pushLog(`- ${this.describeModelSlot("chat")}: ${this.getCurrentSlotPreset("chat")} | Recommended: ${this.getRecommendedSlotPreset("chat")}`);
-    this.pushLog(`- ${this.describeModelSlot("task")}: ${this.getCurrentSlotPreset("task")} | Recommended: ${this.getRecommendedSlotPreset("task")}`);
-    this.pushLog(`- ${this.describeModelSlot("pdf")}: ${this.getCurrentSlotPreset("pdf")} | Recommended: ${this.getRecommendedSlotPreset("pdf")}`);
+    this.pushLog(`- research backend: ${this.getCurrentResearchBackendPreset()} | Recommended: ${this.getRecommendedResearchBackendPreset()}`);
   }
 
-  private getCurrentSlotPreset(slot: "chat" | "task" | "pdf"): string {
+  private getCompactModelLabel(): string {
+    return `chat ${this.getCurrentSlotPreset("chat")} | backend ${this.getCurrentSlotPreset("task")}`;
+  }
+
+  private getCurrentSlotPreset(slot: "chat" | "task"): string {
     if (this.config.providers.llm_mode === "ollama") {
       return this.getCurrentOllamaSlotModel(slot);
     }
     if (this.config.providers.llm_mode === "openai_api") {
-      if (slot === "pdf" && getPdfAnalysisModeForConfig(this.config) === "responses_api_pdf") {
-        return `${this.getCurrentResponsesPdfModel()} + ${this.getCurrentResponsesPdfReasoning()}`;
-      }
       return `${this.getCurrentOpenAiSlotModel(slot)} + ${this.getCurrentOpenAiSlotReasoning(slot)}`;
     }
     return `${this.getCurrentCodexSlotSelection(slot)} + ${this.getCurrentCodexSlotReasoning(slot)}`;
   }
 
-  private getRecommendedSlotPreset(slot: "chat" | "task" | "pdf"): string {
+  private getRecommendedSlotPreset(slot: "chat" | "task"): string {
     if (this.config.providers.llm_mode === "ollama") {
       return this.getRecommendedOllamaModel(slot);
     }
     if (this.config.providers.llm_mode === "openai_api") {
-      if (slot === "pdf" && getPdfAnalysisModeForConfig(this.config) === "responses_api_pdf") {
-        return `${this.getRecommendedResponsesPdfModel()} + high`;
-      }
       return `${this.getRecommendedOpenAiModel(slot)} + ${slot === "chat" ? "low" : "high"}`;
     }
     return `${this.getRecommendedCodexSelection(slot)} + ${slot === "chat" ? "low" : "high"}`;
   }
 
-  private getRecommendedCodexSelection(slot: "chat" | "task" | "pdf"): string {
+  private getRecommendedCodexSelection(slot: "chat" | "task"): string {
     return "gpt-5.4";
   }
 
-  private getRecommendedOpenAiModel(slot: "chat" | "task" | "pdf"): string {
+  private getRecommendedOpenAiModel(slot: "chat" | "task"): string {
     return "gpt-5.4";
   }
 
-  private getRecommendedResponsesPdfModel(): string {
-    return "gpt-5.4";
-  }
-
-  private getCurrentOllamaSlotModel(slot: "chat" | "task" | "pdf"): string {
+  private getCurrentOllamaSlotModel(slot: "chat" | "task"): string {
     const ollama = this.config.providers.ollama;
     if (!ollama) return "(not configured)";
     if (slot === "chat") return ollama.chat_model || DEFAULT_OLLAMA_CHAT_MODEL;
-    if (slot === "pdf") return ollama.vision_model || DEFAULT_OLLAMA_VISION_MODEL;
     return ollama.research_model || DEFAULT_OLLAMA_RESEARCH_MODEL;
   }
 
-  private getRecommendedOllamaModel(slot: "chat" | "task" | "pdf"): string {
+  private getRecommendedOllamaModel(slot: "chat" | "task"): string {
     if (slot === "chat") return DEFAULT_OLLAMA_CHAT_MODEL;
-    if (slot === "pdf") return DEFAULT_OLLAMA_VISION_MODEL;
     return DEFAULT_OLLAMA_RESEARCH_MODEL;
   }
 
@@ -4104,12 +4001,10 @@ export class TerminalApp {
     );
   }
 
-  private async handleOllamaModelSelection(slot: "chat" | "task" | "pdf"): Promise<void> {
+  private async handleOllamaModelSelection(slot: "chat" | "task"): Promise<void> {
     this.pushCurrentModelDefaults();
     this.ensureOllamaConfig();
-    const slotType = slot === "chat" ? "chat" as const
-      : slot === "pdf" ? "vision" as const
-      : "research" as const;
+    const slotType = slot === "chat" ? "chat" as const : "research" as const;
     const selected = await this.selectOllamaSlot(slotType);
     if (!selected) {
       this.pushLog("Model selection canceled.");
@@ -4126,21 +4021,11 @@ export class TerminalApp {
   }
 
   private getCurrentResearchBackendPreset(): string {
-    const pdfMode = getPdfAnalysisModeForConfig(this.config);
-    const pdfSummary =
-      pdfMode === "responses_api_pdf"
-        ? `${this.describePdfAnalysisMode(pdfMode)} (${this.config.analysis?.responses_model || "gpt-5.4"} + ${this.config.providers.openai.reasoning_effort || "xhigh"})`
-        : pdfMode === "ollama_vision"
-          ? `${this.describePdfAnalysisMode(pdfMode)} (${this.config.providers.ollama?.vision_model || DEFAULT_OLLAMA_VISION_MODEL})`
-          : this.describePdfAnalysisMode(pdfMode);
-    return `${this.getCurrentSlotPreset("task")} | ${pdfSummary}`;
+    return this.getCurrentSlotPreset("task");
   }
 
   private getRecommendedResearchBackendPreset(): string {
-    if (this.config.providers.llm_mode === "ollama") {
-      return `${this.getRecommendedSlotPreset("task")} | ${this.describePdfAnalysisMode("ollama_vision")}`;
-    }
-    return `${this.getRecommendedSlotPreset("task")} | ${this.describePdfAnalysisMode("codex_text_image_hybrid")}`;
+    return this.getRecommendedSlotPreset("task");
   }
 
   private annotateRecommendedDescription(
@@ -4691,7 +4576,7 @@ export class TerminalApp {
       thinkingFrame: this.thinkingFrame,
       terminalWidth,
       terminalHeight,
-      modelLabel: this.getCurrentSlotPreset("chat"),
+      modelLabel: this.getCompactModelLabel(),
       workspaceLabel: this.getWorkspaceLabel(),
       footerItems: this.buildFooterItems(run),
       queueLength: this.queuedInputs.length,
@@ -4725,7 +4610,7 @@ export class TerminalApp {
         thinkingFrame: this.thinkingFrame,
         terminalWidth,
         terminalHeight,
-        modelLabel: this.getCurrentSlotPreset("chat"),
+        modelLabel: this.getCompactModelLabel(),
         workspaceLabel: this.getWorkspaceLabel(),
         footerItems: this.buildFooterItems(run),
         queueLength: this.queuedInputs.length,

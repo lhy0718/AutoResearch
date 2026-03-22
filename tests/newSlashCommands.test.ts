@@ -40,6 +40,7 @@ describe("new slash commands", () => {
     expect(suggestions.some((s) => s.key === "cmd:stats")).toBe(true);
     expect(suggestions.some((s) => s.key === "cmd:terminal-setup")).toBe(true);
     expect(suggestions.some((s) => s.key === "cmd:theme")).toBe(true);
+    expect(suggestions.some((s) => s.key === "cmd:model")).toBe(true);
   });
 
   it("resolves /terminal-setup alias ts", () => {
@@ -78,9 +79,8 @@ describe("new slash commands", () => {
     expect(suggestions.some((s) => s.key === "cmd:approve")).toBe(true);
   });
 
-  it("backward-compatible: hidden commands stay hidden in root suggestions", () => {
+  it("keeps doctor hidden in root suggestions", () => {
     const suggestions = buildSuggestions({ input: "/", runs, activeRunId: "run-1" });
-    expect(suggestions.some((s) => s.key === "cmd:model")).toBe(false);
     expect(suggestions.some((s) => s.key === "cmd:doctor")).toBe(false);
   });
 });
@@ -198,5 +198,22 @@ describe("mouse event suppression", () => {
     app.lastRenderedFrame = { maxTranscriptScrollOffset: 100 } as any;
     app.handleRawKeyboardData(Buffer.from("\x1b[<65;10;5M"));
     expect(app.transcriptScrollOffset).toBe(7);
+  });
+
+  it("disables mouse tracking under tmux-style terminals", () => {
+    const previousTmux = process.env.TMUX;
+    const previousTerm = process.env.TERM;
+    process.env.TMUX = "/tmp/tmux-1000/default,123,0";
+    process.env.TERM = "screen-256color";
+
+    try {
+      const app = makeApp();
+      expect((app as any).shouldEnableMouseTracking()).toBe(false);
+    } finally {
+      if (previousTmux === undefined) delete process.env.TMUX;
+      else process.env.TMUX = previousTmux;
+      if (previousTerm === undefined) delete process.env.TERM;
+      else process.env.TERM = previousTerm;
+    }
   });
 });
