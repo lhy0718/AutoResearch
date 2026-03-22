@@ -1220,6 +1220,9 @@ interface ConfigEditorFormProps {
 }
 
 function ConfigEditorForm(props: ConfigEditorFormProps) {
+  const isCodexMode = props.form.llmMode === "codex_chatgpt_only";
+  const isOpenAiMode = props.form.llmMode === "openai_api";
+
   return (
     <form className={props.className} onSubmit={props.onSubmit}>
       <div className="section-heading">
@@ -1263,7 +1266,7 @@ function ConfigEditorForm(props: ConfigEditorFormProps) {
           </select>
         </label>
       </div>
-      <p className="form-help">PDF analysis backend follows the selected primary provider automatically.</p>
+      <p className="form-help">Only the selected provider's model slots are shown. PDF analysis backend follows that provider automatically.</p>
 
       <div className="section-heading">
         <div>
@@ -1272,109 +1275,85 @@ function ConfigEditorForm(props: ConfigEditorFormProps) {
         </div>
       </div>
       <p className="form-help">
-        Pick the model and reasoning effort independently for chat, research, experiment, and PDF flows.
+        Pick the model and reasoning effort independently for chat, research, and experiment. PDF flows reuse the
+        research backend model and reasoning automatically.
       </p>
 
-      <ConfigModelSection
-        title="Codex chat"
-        description="General chat, titles, and lightweight interactive turns."
-        disabled={props.disabled}
-        modelValue={props.form.codexChatModelChoice}
-        effortValue={props.form.codexChatReasoningEffort}
-        modelOptions={props.options.codexModels}
-        effortOptions={getEffortOptions(props.options.codexReasoningByModel, props.form.codexChatModelChoice)}
-        onModelChange={(value) => updateModelAndEffort(props.onChange, "codexChatModelChoice", "codexChatReasoningEffort", value, props.options.codexReasoningByModel)}
-        onEffortChange={(value) => patchSetupForm(props.onChange, { codexChatReasoningEffort: value })}
-      />
-      <ConfigModelSection
-        title="Codex task"
-        description="Analysis, hypothesis, and planning tasks."
-        disabled={props.disabled}
-        modelValue={props.form.codexTaskModelChoice}
-        effortValue={props.form.codexTaskReasoningEffort}
-        modelOptions={props.options.codexModels}
-        effortOptions={getEffortOptions(props.options.codexReasoningByModel, props.form.codexTaskModelChoice)}
-        onModelChange={(value) => updateModelAndEffort(props.onChange, "codexTaskModelChoice", "codexTaskReasoningEffort", value, props.options.codexReasoningByModel)}
-        onEffortChange={(value) => patchSetupForm(props.onChange, { codexTaskReasoningEffort: value })}
-      />
-      <ConfigModelSection
-        title="Codex experiment"
-        description="Used when a real_execution runner needs model calls during experiment execution."
-        disabled={props.disabled}
-        modelValue={props.form.codexExperimentModelChoice}
-        effortValue={props.form.codexExperimentReasoningEffort}
-        modelOptions={props.options.codexModels}
-        effortOptions={getEffortOptions(props.options.codexReasoningByModel, props.form.codexExperimentModelChoice)}
-        onModelChange={(value) => updateModelAndEffort(props.onChange, "codexExperimentModelChoice", "codexExperimentReasoningEffort", value, props.options.codexReasoningByModel)}
-        onEffortChange={(value) => patchSetupForm(props.onChange, { codexExperimentReasoningEffort: value })}
-      />
-      <ConfigModelSection
-        title="Codex PDF"
-        description="Local text-extract PDF analysis when Codex mode is selected."
-        disabled={props.disabled}
-        modelValue={props.form.codexPdfModelChoice}
-        effortValue={props.form.codexPdfReasoningEffort}
-        modelOptions={props.options.codexModels}
-        effortOptions={getEffortOptions(props.options.codexReasoningByModel, props.form.codexPdfModelChoice)}
-        onModelChange={(value) => updateModelAndEffort(props.onChange, "codexPdfModelChoice", "codexPdfReasoningEffort", value, props.options.codexReasoningByModel)}
-        onEffortChange={(value) => patchSetupForm(props.onChange, { codexPdfReasoningEffort: value })}
-      />
+      {isCodexMode ? (
+        <>
+          <ConfigModelSection
+            title="Codex chat"
+            description="General chat, titles, and lightweight interactive turns."
+            disabled={props.disabled}
+            modelValue={props.form.codexChatModelChoice}
+            effortValue={props.form.codexChatReasoningEffort}
+            modelOptions={props.options.codexModels}
+            effortOptions={getEffortOptions(props.options.codexReasoningByModel, props.form.codexChatModelChoice)}
+            onModelChange={(value) => updateModelAndEffort(props.onChange, "codexChatModelChoice", "codexChatReasoningEffort", value, props.options.codexReasoningByModel)}
+            onEffortChange={(value) => patchSetupForm(props.onChange, { codexChatReasoningEffort: value })}
+          />
+          <ConfigModelSection
+            title="Codex task"
+            description="Analysis, hypothesis, and planning tasks."
+            disabled={props.disabled}
+            modelValue={props.form.codexTaskModelChoice}
+            effortValue={props.form.codexTaskReasoningEffort}
+            modelOptions={props.options.codexModels}
+            effortOptions={getEffortOptions(props.options.codexReasoningByModel, props.form.codexTaskModelChoice)}
+            onModelChange={(value) => updateCodexTaskModelAndDerivedPdf(props.onChange, value, props.options.codexReasoningByModel)}
+            onEffortChange={(value) => updateCodexTaskEffortAndDerivedPdf(props.onChange, value)}
+          />
+          <ConfigModelSection
+            title="Codex experiment"
+            description="Used when a real_execution runner needs model calls during experiment execution."
+            disabled={props.disabled}
+            modelValue={props.form.codexExperimentModelChoice}
+            effortValue={props.form.codexExperimentReasoningEffort}
+            modelOptions={props.options.codexModels}
+            effortOptions={getEffortOptions(props.options.codexReasoningByModel, props.form.codexExperimentModelChoice)}
+            onModelChange={(value) => updateModelAndEffort(props.onChange, "codexExperimentModelChoice", "codexExperimentReasoningEffort", value, props.options.codexReasoningByModel)}
+            onEffortChange={(value) => patchSetupForm(props.onChange, { codexExperimentReasoningEffort: value })}
+          />
+        </>
+      ) : null}
 
-      <ConfigModelSection
-        title="OpenAI chat"
-        description="General chat model and reasoning for API mode."
-        disabled={props.disabled}
-        modelValue={props.form.openAiChatModel}
-        effortValue={props.form.openAiChatReasoningEffort}
-        modelOptions={props.options.openAiModels}
-        effortOptions={getEffortOptions(props.options.openAiReasoningByModel, props.form.openAiChatModel)}
-        onModelChange={(value) => updateModelAndEffort(props.onChange, "openAiChatModel", "openAiChatReasoningEffort", value, props.options.openAiReasoningByModel)}
-        onEffortChange={(value) => patchSetupForm(props.onChange, { openAiChatReasoningEffort: value })}
-      />
-      <ConfigModelSection
-        title="OpenAI task"
-        description="Analysis and hypothesis model for API mode."
-        disabled={props.disabled}
-        modelValue={props.form.openAiTaskModel}
-        effortValue={props.form.openAiReasoningEffort}
-        modelOptions={props.options.openAiModels}
-        effortOptions={getEffortOptions(props.options.openAiReasoningByModel, props.form.openAiTaskModel)}
-        onModelChange={(value) => updateModelAndEffort(props.onChange, "openAiTaskModel", "openAiReasoningEffort", value, props.options.openAiReasoningByModel)}
-        onEffortChange={(value) => patchSetupForm(props.onChange, { openAiReasoningEffort: value })}
-      />
-      <ConfigModelSection
-        title="OpenAI experiment"
-        description="Used when a real_execution runner should call the OpenAI API."
-        disabled={props.disabled}
-        modelValue={props.form.openAiExperimentModel}
-        effortValue={props.form.openAiExperimentReasoningEffort}
-        modelOptions={props.options.openAiModels}
-        effortOptions={getEffortOptions(props.options.openAiReasoningByModel, props.form.openAiExperimentModel)}
-        onModelChange={(value) => updateModelAndEffort(props.onChange, "openAiExperimentModel", "openAiExperimentReasoningEffort", value, props.options.openAiReasoningByModel)}
-        onEffortChange={(value) => patchSetupForm(props.onChange, { openAiExperimentReasoningEffort: value })}
-      />
-      <ConfigModelSection
-        title="OpenAI PDF"
-        description="Text-based PDF analysis when API mode is selected."
-        disabled={props.disabled}
-        modelValue={props.form.openAiPdfModel}
-        effortValue={props.form.openAiPdfReasoningEffort}
-        modelOptions={props.options.openAiModels}
-        effortOptions={getEffortOptions(props.options.openAiReasoningByModel, props.form.openAiPdfModel)}
-        onModelChange={(value) => updateModelAndEffort(props.onChange, "openAiPdfModel", "openAiPdfReasoningEffort", value, props.options.openAiReasoningByModel)}
-        onEffortChange={(value) => patchSetupForm(props.onChange, { openAiPdfReasoningEffort: value })}
-      />
-      <ConfigModelSection
-        title="Responses PDF"
-        description="Vision-capable PDF analysis when Responses API PDF mode is selected."
-        disabled={props.disabled}
-        modelValue={props.form.responsesPdfModel}
-        effortValue={props.form.responsesPdfReasoningEffort}
-        modelOptions={props.options.responsesPdfModels}
-        effortOptions={getEffortOptions(props.options.openAiReasoningByModel, props.form.responsesPdfModel)}
-        onModelChange={(value) => updateModelAndEffort(props.onChange, "responsesPdfModel", "responsesPdfReasoningEffort", value, props.options.openAiReasoningByModel)}
-        onEffortChange={(value) => patchSetupForm(props.onChange, { responsesPdfReasoningEffort: value })}
-      />
+      {isOpenAiMode ? (
+        <>
+          <ConfigModelSection
+            title="OpenAI chat"
+            description="General chat model and reasoning for API mode."
+            disabled={props.disabled}
+            modelValue={props.form.openAiChatModel}
+            effortValue={props.form.openAiChatReasoningEffort}
+            modelOptions={props.options.openAiModels}
+            effortOptions={getEffortOptions(props.options.openAiReasoningByModel, props.form.openAiChatModel)}
+            onModelChange={(value) => updateModelAndEffort(props.onChange, "openAiChatModel", "openAiChatReasoningEffort", value, props.options.openAiReasoningByModel)}
+            onEffortChange={(value) => patchSetupForm(props.onChange, { openAiChatReasoningEffort: value })}
+          />
+          <ConfigModelSection
+            title="OpenAI task"
+            description="Analysis and hypothesis model for API mode."
+            disabled={props.disabled}
+            modelValue={props.form.openAiTaskModel}
+            effortValue={props.form.openAiReasoningEffort}
+            modelOptions={props.options.openAiModels}
+            effortOptions={getEffortOptions(props.options.openAiReasoningByModel, props.form.openAiTaskModel)}
+            onModelChange={(value) => updateOpenAiTaskModelAndDerivedPdf(props.onChange, value, props.options.openAiReasoningByModel)}
+            onEffortChange={(value) => updateOpenAiTaskEffortAndDerivedPdf(props.onChange, value)}
+          />
+          <ConfigModelSection
+            title="OpenAI experiment"
+            description="Used when a real_execution runner should call the OpenAI API."
+            disabled={props.disabled}
+            modelValue={props.form.openAiExperimentModel}
+            effortValue={props.form.openAiExperimentReasoningEffort}
+            modelOptions={props.options.openAiModels}
+            effortOptions={getEffortOptions(props.options.openAiReasoningByModel, props.form.openAiExperimentModel)}
+            onModelChange={(value) => updateModelAndEffort(props.onChange, "openAiExperimentModel", "openAiExperimentReasoningEffort", value, props.options.openAiReasoningByModel)}
+            onEffortChange={(value) => patchSetupForm(props.onChange, { openAiExperimentReasoningEffort: value })}
+          />
+        </>
+      ) : null}
 
       <label>
         Semantic Scholar API key
@@ -1470,7 +1449,6 @@ function createDefaultConfigForm(): WebConfigFormData {
     codexExperimentModelChoice: "gpt-5.3-codex",
     codexExperimentReasoningEffort: "xhigh",
     codexPdfModelChoice: "gpt-5.3-codex",
-    codexPdfReasoningEffort: "xhigh",
     openAiChatModel: "gpt-5.4",
     openAiChatReasoningEffort: "low",
     openAiTaskModel: "gpt-5.4",
@@ -1478,9 +1456,7 @@ function createDefaultConfigForm(): WebConfigFormData {
     openAiExperimentModel: "gpt-5.4",
     openAiExperimentReasoningEffort: "medium",
     openAiPdfModel: "gpt-5.4",
-    openAiPdfReasoningEffort: "medium",
-    responsesPdfModel: "gpt-5.4",
-    responsesPdfReasoningEffort: "xhigh"
+    responsesPdfModel: "gpt-5.4"
   };
 }
 
@@ -1551,6 +1527,63 @@ function updateModelAndEffort(
       [effortKey]: effortOptions.includes(currentEffort) ? currentEffort : effortOptions[0]
     };
   });
+}
+
+function updateCodexTaskModelAndDerivedPdf(
+  setter: Dispatch<SetStateAction<SetupFormState>>,
+  nextModel: string,
+  optionsByModel: Record<string, string[]>
+) {
+  setter((current) => {
+    const effortOptions = getEffortOptions(optionsByModel, nextModel);
+    const currentTaskEffort = String(current.codexTaskReasoningEffort || "");
+    const nextTaskEffort = effortOptions.includes(currentTaskEffort) ? currentTaskEffort : effortOptions[0];
+    return {
+      ...current,
+      codexTaskModelChoice: nextModel,
+      codexTaskReasoningEffort: nextTaskEffort,
+      codexPdfModelChoice: nextModel
+    };
+  });
+}
+
+function updateCodexTaskEffortAndDerivedPdf(
+  setter: Dispatch<SetStateAction<SetupFormState>>,
+  nextEffort: string
+) {
+  setter((current) => ({
+    ...current,
+    codexTaskReasoningEffort: nextEffort
+  }));
+}
+
+function updateOpenAiTaskModelAndDerivedPdf(
+  setter: Dispatch<SetStateAction<SetupFormState>>,
+  nextModel: string,
+  optionsByModel: Record<string, string[]>
+) {
+  setter((current) => {
+    const effortOptions = getEffortOptions(optionsByModel, nextModel);
+    const currentTaskEffort = String(current.openAiReasoningEffort || "");
+    const nextTaskEffort = effortOptions.includes(currentTaskEffort) ? currentTaskEffort : effortOptions[0];
+    return {
+      ...current,
+      openAiTaskModel: nextModel,
+      openAiReasoningEffort: nextTaskEffort,
+      openAiPdfModel: nextModel,
+      responsesPdfModel: nextModel
+    };
+  });
+}
+
+function updateOpenAiTaskEffortAndDerivedPdf(
+  setter: Dispatch<SetStateAction<SetupFormState>>,
+  nextEffort: string
+) {
+  setter((current) => ({
+    ...current,
+    openAiReasoningEffort: nextEffort
+  }));
 }
 
 function getEffortOptions(optionsByModel: Record<string, string[]>, model: string): string[] {

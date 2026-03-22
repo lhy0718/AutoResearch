@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-03-19 · 993 tests pass, 0 skipped
+Last updated: 2026-03-22 · 1008 tests pass, 0 skipped
 
 ---
 
@@ -157,6 +157,60 @@ zePapers.ts(847,19): TS2322 Type '"running"' is not assignable to type '"pending
 ---
 
 ## Live validation issues
+
+### LV-064 — Ctrl+C inside an active TUI selection menu canceled only the menu instead of exiting the app
+- Status: FIXED
+- Taxonomy: `refresh_render_bug`
+- Validation target: live TUI selection menu opened from `/model`
+- Environment/session context: fresh configured temp workspace `/tmp/autolabos-ctrlc-live`, live tmux TUI session on 2026-03-22
+- Reproduction steps:
+  1. Start the TUI in a configured workspace.
+  2. Run `/model` to open the in-app selection menu.
+  3. Press Ctrl+C while the selector is still open.
+- Expected behavior: Ctrl+C should act as a global abort/exit shortcut and terminate the TUI immediately, regardless of whether a selector is open.
+- Actual behavior: the selector intercepted Ctrl+C as a menu-cancel action, resolved the menu promise, and left the app running, which made Ctrl+C appear unresponsive.
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in a fresh configured workspace after opening the `/model` selection menu.
+  - Existing session: same risk applies because the behavior was in the shared `TerminalApp` key handler, not in persisted run state.
+  - Divergence: none.
+- Root cause hypothesis:
+  - Type: `refresh_render_bug`
+  - Hypothesis: `handleKeypress()` gave the active selection menu first right of refusal and mapped Ctrl+C to `cancelSelectionMenu()` instead of forwarding it to the global shutdown path.
+- Code/test changes:
+  - Code: `src/tui/TerminalApp.ts` now routes Ctrl+C in active selection menus to `shutdown({ abortActive: true })`; Escape remains the explicit menu-cancel key.
+  - Tests: `tests/terminalAppPlanExecution.test.ts` now verifies Ctrl+C shuts down even with an active selection menu and adds an Escape regression to preserve cancel behavior.
+- Regression status:
+  - Automated regression test linked: yes — `tests/terminalAppPlanExecution.test.ts`
+  - Re-validation result: pass — `npm run build`, `npm test`, and live tmux revalidation in `/tmp/autolabos-ctrlc-live` (`/model` -> Ctrl+C => session exited)
+- Follow-up risks: busy operations still honor the shutdown abort grace window so persisted run state can be paused cleanly; this change only removes the menu-specific interception.
+- Evidence/artifacts: `src/tui/TerminalApp.ts`, `tests/terminalAppPlanExecution.test.ts`
+
+### LV-063 — OpenAI first-run setup asked reasoning effort before the relevant model was chosen
+- Status: FIXED
+- Taxonomy: `in_memory_projection_bug`
+- Validation target: fresh first-run setup wizard under `providers.llm_mode=openai_api`
+- Environment/session context: project root, fresh setup flow reproduced via `runSetupWizard()` prompt sequence on 2026-03-22
+- Reproduction steps:
+  1. Start a fresh workspace with no existing config and enter the first-run setup wizard.
+  2. Select `api` for `Primary LLM provider (codex/api/ollama)`.
+  3. Observe the prompt sequence before choosing OpenAI chat/task models.
+- Expected behavior: each reasoning effort prompt appears only after the corresponding model has been selected, and only for the active provider path.
+- Actual behavior: the wizard previously projected Codex defaults into the OpenAI path, so `General chat reasoning effort` and `Research backend reasoning effort` could be asked before the relevant OpenAI model choices were completed; PDF analysis also exposed separate PDF model and reasoning controls instead of following the selected research backend model and reasoning.
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced and revalidated in fresh first-run TUI flows for OpenAI, Codex, and Ollama, plus a fresh web bootstrap session.
+  - Existing session: not applicable because the issue is on first-run onboarding before any saved session exists.
+  - Divergence: no existing-session variant.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: provider gating for wizard prompts and setup-form projection was too broad, so OpenAI onboarding could inherit Codex-first sequencing and the web form exposed inactive-provider slots instead of projecting only the selected provider's configuration path.
+- Code/test changes:
+  - Code: `src/config.ts` now asks the OpenAI chat model before any OpenAI reasoning effort, only asks Codex reasoning effort in the `codex_chatgpt_only` branch, and collapses both PDF model and PDF reasoning onto the selected research backend model/effort; `web/src/App.tsx` now renders only the selected provider's model/effort sections during setup and workspace editing, with PDF behavior derived from the research backend instead of exposing separate controls.
+  - Tests: regressions in `tests/configEnv.test.ts` verify OpenAI models are prompted before reasoning, the separate Responses PDF prompt is gone, and PDF model/reasoning config collapses to the backend model/effort; `web/src/App.test.tsx` verifies provider-specific section visibility in onboarding and workspace settings.
+- Regression status:
+  - Automated regression test linked: yes — `tests/configEnv.test.ts`
+  - Re-validation result: pass — `npm run build`, `npm test`, focused config/web regressions, fresh live TUI first-run checks for OpenAI, Codex, and Ollama, and fresh web onboarding bootstrap rechecks all confirmed model-before-effort ordering and removal of separate PDF model/reasoning selectors.
+- Follow-up risks: existing-session comparison is not applicable because the symptom exists before any saved session; live web validation confirmed bootstrap state and page load, but not browser-side DOM introspection because browser chat tools were unavailable.
+- Evidence/artifacts: `src/config.ts`, `tests/configEnv.test.ts`, `web/src/App.tsx`, `web/src/App.test.tsx`
 
 ### LV-062 — Fresh paper-scale runs can hang indefinitely in `analyze_papers` because Responses PDF planner/extractor/reviewer timeouts default to unbounded waits
 - Status: FIXED

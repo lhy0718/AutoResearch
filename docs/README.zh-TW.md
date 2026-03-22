@@ -155,8 +155,8 @@ autolabos        # 以終端為主的斜線指令工作流程
 | 項目 | 何時需要 | 說明 |
 |---|---|---|
 | `SEMANTIC_SCHOLAR_API_KEY` | 一律需要 | 論文探索與中繼資料 |
-| `OPENAI_API_KEY` | 當 provider 或 PDF mode 為 `api` | OpenAI API 模型執行 |
-| Codex CLI 登入 | 當 provider 或 PDF mode 為 `codex` | 使用本機 Codex session |
+| `OPENAI_API_KEY` | 當 provider 為 `api` | OpenAI API 模型執行 |
+| Codex CLI 登入 | 當 provider 為 `codex` | 使用本機 Codex session |
 
 ---
 

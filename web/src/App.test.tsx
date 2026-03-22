@@ -55,9 +55,68 @@ describe("App", () => {
 
     const codexChatSection = screen.getByText("Codex chat").closest("section");
     expect(codexChatSection).not.toBeNull();
+    expect(screen.queryByText("OpenAI chat")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("PDF mode")).not.toBeInTheDocument();
     expect(within(codexChatSection as HTMLElement).getAllByRole("combobox")[0]).toHaveValue("gpt-5.3-codex-spark");
     expect(within(codexChatSection as HTMLElement).getAllByRole("combobox")[1]).toHaveValue("medium");
+  });
+
+  it("switches the onboarding form to the selected provider's model sections", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/bootstrap")) {
+          return new Response(
+            JSON.stringify({
+              configured: false,
+              setupDefaults: {
+                projectName: "AutoLabOS",
+                defaultTopic: "Multi-agent collaboration",
+                defaultConstraints: ["recent papers", "last 5 years"],
+                defaultObjectiveMetric: "state-of-the-art reproducibility"
+              },
+              session: {
+                busy: false,
+                logs: [],
+                canCancel: false
+              },
+              runs: []
+            }),
+            { status: 200 }
+          );
+        }
+        return new Response(JSON.stringify({ configured: false, checks: [] }), { status: 200 });
+      })
+    );
+    vi.stubGlobal(
+      "EventSource",
+      class {
+        addEventListener() {}
+        close() {}
+      } as unknown as typeof EventSource
+    );
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Initial setup")).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByLabelText("Primary provider"), {
+      target: { value: "openai_api" }
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("OpenAI chat")).toBeInTheDocument();
+      expect(screen.getByText("OpenAI task")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText("OpenAI PDF")).not.toBeInTheDocument();
+    expect(screen.queryByText("Responses PDF")).not.toBeInTheDocument();
+
+    expect(screen.queryByText("Codex chat")).not.toBeInTheDocument();
+    expect(screen.queryByText("Codex task")).not.toBeInTheDocument();
   });
 
   it("shows per-slot model and reasoning selectors in workspace settings and submits them", async () => {
@@ -103,7 +162,6 @@ describe("App", () => {
         codexExperimentModelChoice: "gpt-5.4",
         codexExperimentReasoningEffort: "xhigh",
         codexPdfModelChoice: "gpt-5.4",
-        codexPdfReasoningEffort: "xhigh",
         openAiChatModel: "gpt-5.4",
         openAiChatReasoningEffort: "low",
         openAiTaskModel: "gpt-5.4",
@@ -111,9 +169,7 @@ describe("App", () => {
         openAiExperimentModel: "gpt-5.4",
         openAiExperimentReasoningEffort: "medium",
         openAiPdfModel: "gpt-5.4",
-        openAiPdfReasoningEffort: "medium",
-        responsesPdfModel: "gpt-5.4",
-        responsesPdfReasoningEffort: "xhigh"
+        responsesPdfModel: "gpt-5.4"
       }
     };
 
@@ -130,8 +186,7 @@ describe("App", () => {
         expect(body.pdfAnalysisMode).toBeUndefined();
         expect(body.codexChatModelChoice).toBe("gpt-5.4");
         expect(body.codexChatReasoningEffort).toBe("high");
-        expect(body.responsesPdfModel).toBe("gpt-4o");
-        expect(body.responsesPdfReasoningEffort).toBe("medium");
+        expect(body.responsesPdfModel).toBe("gpt-5.4");
         expect(body.codexTaskModelChoice).toBeDefined();
         expect(body.codexExperimentModelChoice).toBeDefined();
         expect(body.codexPdfModelChoice).toBeDefined();
@@ -166,26 +221,18 @@ describe("App", () => {
       expect(screen.getByText("Model and reasoning by slot")).toBeInTheDocument();
       expect(screen.getByText("Codex chat")).toBeInTheDocument();
       expect(screen.getByText("Codex task")).toBeInTheDocument();
-      expect(screen.getByText("OpenAI experiment")).toBeInTheDocument();
-      expect(screen.getByText("Responses PDF")).toBeInTheDocument();
     });
 
     const codexChatSection = screen.getByText("Codex chat").closest("section");
-    const responsesPdfSection = screen.getByText("Responses PDF").closest("section");
     expect(codexChatSection).not.toBeNull();
-    expect(responsesPdfSection).not.toBeNull();
+    expect(screen.queryByText("OpenAI experiment")).not.toBeInTheDocument();
+    expect(screen.queryByText("Responses PDF")).not.toBeInTheDocument();
 
     fireEvent.change(within(codexChatSection as HTMLElement).getAllByRole("combobox")[0], {
       target: { value: "gpt-5.4" }
     });
     fireEvent.change(within(codexChatSection as HTMLElement).getAllByRole("combobox")[1], {
       target: { value: "high" }
-    });
-    fireEvent.change(within(responsesPdfSection as HTMLElement).getAllByRole("combobox")[0], {
-      target: { value: "gpt-4o" }
-    });
-    fireEvent.change(within(responsesPdfSection as HTMLElement).getAllByRole("combobox")[1], {
-      target: { value: "medium" }
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));

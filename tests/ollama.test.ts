@@ -65,7 +65,6 @@ function makeBaseConfig(): AppConfig {
         reasoning_effort: "high",
         chat_reasoning_effort: "low",
         experiment_reasoning_effort: "high",
-        pdf_reasoning_effort: "high",
         command_reasoning_effort: "low",
         fast_mode: false,
         chat_fast_mode: false,
@@ -81,7 +80,6 @@ function makeBaseConfig(): AppConfig {
         reasoning_effort: "high",
         chat_reasoning_effort: "low",
         experiment_reasoning_effort: "high",
-        pdf_reasoning_effort: "high",
         command_reasoning_effort: "low",
         api_key_required: true
       }

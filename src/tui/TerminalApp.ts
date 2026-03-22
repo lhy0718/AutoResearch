@@ -570,7 +570,7 @@ export class TerminalApp {
 
     if (this.activeSelectionMenu) {
       if (key.ctrl && key.name === "c") {
-        this.cancelSelectionMenu();
+        await this.shutdown({ abortActive: true });
         return;
       }
       if (key.name === "up" || (key.ctrl && key.name === "p")) {
@@ -3177,14 +3177,14 @@ export class TerminalApp {
     }
 
     if (this.config.providers.llm_mode === "ollama") {
-      await this.handleOllamaModelSelection(slot as "chat" | "task" | "pdf");
+      await this.handleOllamaModelSelection(slot as "chat" | "task");
       return;
     }
     if (this.config.providers.llm_mode === "openai_api") {
-      await this.handleOpenAiApiModelSelection(slot as "chat" | "task" | "pdf");
+      await this.handleOpenAiApiModelSelection(slot as "chat" | "task");
       return;
     }
-    await this.handleCodexModelSelection(slot as "chat" | "task" | "pdf");
+    await this.handleCodexModelSelection(slot as "chat" | "task");
   }
 
   private async applyModelBackendSelection(
@@ -3237,6 +3237,9 @@ export class TerminalApp {
     }
 
     this.applyCodexSlotSelection(slot, selected.selection, selected.effort);
+    if (slot === "task") {
+      this.applyCodexSlotSelection("pdf", selected.selection, selected.effort);
+    }
     this.codex?.updateDefaults?.({
       model: this.config.providers.codex.model,
       reasoningEffort: this.config.providers.codex.reasoning_effort,
@@ -3258,22 +3261,6 @@ export class TerminalApp {
       await upsertEnvVar(path.join(process.cwd(), ".env"), "OPENAI_API_KEY", openAiApiKey.trim());
     }
 
-    if (slot === "pdf" && getPdfAnalysisModeForConfig(this.config) === "responses_api_pdf") {
-      const selectedResponsesSlot = await this.selectResponsesPdfSlot(
-        this.getCurrentResponsesPdfModel(),
-        this.getCurrentResponsesPdfReasoning()
-      );
-      if (!selectedResponsesSlot) {
-        this.pushLog("Model selection canceled.");
-        return;
-      }
-      this.applyResponsesPdfSlotSelection(selectedResponsesSlot.model, selectedResponsesSlot.effort);
-      await this.saveConfigFn(this.config);
-      this.pushLog("Responses API PDF model updated.");
-      this.pushCurrentModelDefaults();
-      return;
-    }
-
     const selected = await this.selectOpenAiSlot(
       slot === "chat" ? "general chat" : slot === "pdf" ? "PDF text analysis" : "analysis/hypothesis",
       this.getCurrentOpenAiSlotModel(slot),
@@ -3286,6 +3273,10 @@ export class TerminalApp {
     }
 
     this.applyOpenAiSlotSelection(slot, selected.model, selected.effort);
+    if (slot === "task") {
+      this.applyOpenAiSlotSelection("pdf", selected.model, selected.effort);
+      this.applyResponsesPdfSlotSelection(selected.model, selected.effort);
+    }
     this.openAiTextClient?.updateDefaults({
       model: this.config.providers.openai.model,
       reasoningEffort: this.config.providers.openai.reasoning_effort
@@ -3382,15 +3373,10 @@ export class TerminalApp {
     }
 
     if (pdfMode === "responses_api_pdf") {
-      const selectedResponsesSlot = await this.selectResponsesPdfSlot(
-        this.getCurrentResponsesPdfModel(),
-        this.getCurrentResponsesPdfReasoning()
+      this.applyResponsesPdfSlotSelection(
+        this.config.providers.openai.model,
+        this.config.providers.openai.reasoning_effort
       );
-      if (!selectedResponsesSlot) {
-        this.pushLog(cancelMessage);
-        return false;
-      }
-      this.applyResponsesPdfSlotSelection(selectedResponsesSlot.model, selectedResponsesSlot.effort);
     }
 
     return true;
@@ -3785,11 +3771,6 @@ export class TerminalApp {
         value: "task",
         label: "analysis_hypothesis",
         description: `Current: ${this.getCurrentSlotPreset("task")} | Recommended: ${this.getRecommendedSlotPreset("task")}`
-      },
-      {
-        value: "pdf",
-        label: "pdf_analysis",
-        description: `Current: ${this.getCurrentSlotPreset("pdf")} | Recommended: ${this.getRecommendedSlotPreset("pdf")}`
       }
     ];
   }
@@ -3831,8 +3812,7 @@ export class TerminalApp {
         "low") as CodexReasoningEffort;
     }
     if (slot === "pdf") {
-      return (this.config.providers.codex.pdf_reasoning_effort ||
-        this.config.providers.codex.reasoning_effort) as CodexReasoningEffort;
+      return this.config.providers.codex.reasoning_effort as CodexReasoningEffort;
     }
     return this.config.providers.codex.reasoning_effort;
   }
@@ -3879,7 +3859,6 @@ export class TerminalApp {
     }
     if (slot === "pdf") {
       this.config.providers.codex.pdf_model = resolved.model;
-      this.config.providers.codex.pdf_reasoning_effort = effort;
       this.config.providers.codex.pdf_fast_mode = resolved.model === "gpt-5.4" ? resolved.fastMode : false;
       return;
     }
@@ -3911,8 +3890,7 @@ export class TerminalApp {
         "low") as AppConfig["providers"]["openai"]["reasoning_effort"];
     }
     if (slot === "pdf") {
-      return (this.config.providers.openai.pdf_reasoning_effort ||
-        this.config.providers.openai.reasoning_effort) as AppConfig["providers"]["openai"]["reasoning_effort"];
+      return this.config.providers.openai.reasoning_effort as AppConfig["providers"]["openai"]["reasoning_effort"];
     }
     return this.config.providers.openai.reasoning_effort;
   }
@@ -3957,7 +3935,6 @@ export class TerminalApp {
     }
     if (slot === "pdf") {
       this.config.providers.openai.pdf_model = model;
-      this.config.providers.openai.pdf_reasoning_effort = effort;
       return;
     }
     this.config.providers.openai.model = model;
@@ -3974,7 +3951,7 @@ export class TerminalApp {
 
   private getCurrentResponsesPdfReasoning(): AppConfig["analysis"]["responses_reasoning_effort"] {
     return (
-      this.config.providers.openai.pdf_reasoning_effort ||
+      this.config.providers.openai.reasoning_effort ||
       this.config.analysis.responses_reasoning_effort ||
       "xhigh"
     ) as AppConfig["analysis"]["responses_reasoning_effort"];
@@ -3985,8 +3962,6 @@ export class TerminalApp {
     effort: AppConfig["analysis"]["responses_reasoning_effort"]
   ): void {
     this.config.providers.openai.pdf_model = model;
-    this.config.providers.openai.pdf_reasoning_effort =
-      effort as AppConfig["providers"]["openai"]["reasoning_effort"];
     this.config.analysis.responses_model = model;
     this.config.analysis.responses_reasoning_effort = effort;
   }
@@ -4154,7 +4129,7 @@ export class TerminalApp {
     const pdfMode = getPdfAnalysisModeForConfig(this.config);
     const pdfSummary =
       pdfMode === "responses_api_pdf"
-        ? `${this.describePdfAnalysisMode(pdfMode)} (${this.config.analysis?.responses_model || "gpt-5.4"} + ${this.config.analysis?.responses_reasoning_effort || "xhigh"})`
+        ? `${this.describePdfAnalysisMode(pdfMode)} (${this.config.analysis?.responses_model || "gpt-5.4"} + ${this.config.providers.openai.reasoning_effort || "xhigh"})`
         : pdfMode === "ollama_vision"
           ? `${this.describePdfAnalysisMode(pdfMode)} (${this.config.providers.ollama?.vision_model || DEFAULT_OLLAMA_VISION_MODEL})`
           : this.describePdfAnalysisMode(pdfMode);

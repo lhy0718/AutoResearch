@@ -155,8 +155,8 @@ autolabos        # Workflow por comandos slash no terminal
 | Item | Quando necessário | Observações |
 |---|---|---|
 | `SEMANTIC_SCHOLAR_API_KEY` | Sempre | Descoberta de artigos e metadados |
-| `OPENAI_API_KEY` | Quando o provider ou modo PDF é `api` | Execução de modelo via API OpenAI |
-| Login no Codex CLI | Quando o provider ou modo PDF é `codex` | Usa sua sessão local do Codex |
+| `OPENAI_API_KEY` | Quando o provider é `api` | Execução de modelo via API OpenAI |
+| Login no Codex CLI | Quando o provider é `codex` | Usa sua sessão local do Codex |
 
 ---
 

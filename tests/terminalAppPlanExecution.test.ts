@@ -224,7 +224,6 @@ describe("TerminalApp pending natural plan execution", () => {
       "codex_chatgpt_only"
     );
     expect(app.config.providers.codex.pdf_model).toBe("gpt-5.3-codex");
-    expect(app.config.providers.codex.pdf_reasoning_effort).toBe("xhigh");
     expect(getDefaultPdfAnalysisModeForLlmMode(app.config.providers.llm_mode)).toBe("codex_text_image_hybrid");
     expect(app.selectCodexSlot).toHaveBeenCalledTimes(2);
     expect(saveConfig).toHaveBeenCalledTimes(1);
@@ -337,10 +336,6 @@ describe("TerminalApp pending natural plan execution", () => {
         expect.objectContaining({
           value: "task",
           description: expect.stringContaining("Recommended: gpt-5.4 + high")
-        }),
-        expect.objectContaining({
-          value: "pdf",
-          description: expect.stringContaining("Recommended: gpt-5.4 + high")
         })
       ]),
       "backend"
@@ -387,9 +382,7 @@ describe("TerminalApp pending natural plan execution", () => {
       .mockResolvedValueOnce("openai_api")
       .mockResolvedValueOnce("backend")
       .mockResolvedValueOnce("gpt-5-mini")
-      .mockResolvedValueOnce("high")
-      .mockResolvedValueOnce("gpt-5.4")
-      .mockResolvedValueOnce("medium");
+      .mockResolvedValueOnce("high");
 
     await app.handleModel([]);
 
@@ -411,8 +404,9 @@ describe("TerminalApp pending natural plan execution", () => {
       model: "gpt-5-mini",
       reasoningEffort: "high"
     });
-    expect(app.config.providers.openai.pdf_model).toBe("gpt-5.4");
-    expect(app.config.providers.openai.pdf_reasoning_effort).toBe("medium");
+    expect(app.config.providers.openai.pdf_model).toBe("gpt-5-mini");
+    expect(app.config.analysis.responses_model).toBe("gpt-5-mini");
+    expect(app.config.analysis.responses_reasoning_effort).toBe("high");
     expect(getDefaultPdfAnalysisModeForLlmMode(app.config.providers.llm_mode)).toBe("responses_api_pdf");
     expect(app.logs).toContain("Model backend updated to OpenAI API.");
     delete process.env.OPENAI_API_KEY;
@@ -1624,7 +1618,7 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(app.getRenderableLogs(run)).toEqual([]);
   });
 
-  it("cancels an active selection menu on ctrl+c without shutting down", async () => {
+  it("shuts down on ctrl+c even when an active selection menu is open", async () => {
     const app = makeApp();
     const resolve = vi.fn();
     app.activeSelectionMenu = {
@@ -1639,9 +1633,27 @@ describe("TerminalApp pending natural plan execution", () => {
 
     await app.handleKeypress("", { ctrl: true, name: "c" });
 
+    expect(app.cancelCurrentBusyOperation).not.toHaveBeenCalled();
+    expect(app.shutdown).toHaveBeenCalledTimes(1);
+    expect(app.shutdown).toHaveBeenCalledWith({ abortActive: true });
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it("still cancels an active selection menu on escape without shutting down", async () => {
+    const app = makeApp();
+    const resolve = vi.fn();
+    app.activeSelectionMenu = {
+      title: "Select model slot",
+      options: [{ value: "chat", label: "general_chat" }],
+      selectedIndex: 0,
+      resolve
+    };
+    app.shutdown = vi.fn();
+
+    await app.handleKeypress("", { name: "escape" });
+
     expect(resolve).toHaveBeenCalledWith(undefined);
     expect(app.activeSelectionMenu).toBeUndefined();
-    expect(app.cancelCurrentBusyOperation).not.toHaveBeenCalled();
     expect(app.shutdown).not.toHaveBeenCalled();
   });
 

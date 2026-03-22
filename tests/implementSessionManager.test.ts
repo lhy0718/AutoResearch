@@ -65,7 +65,6 @@ function createTestConfig(candidateIsolation: "attempt_snapshot_restore" | "atte
         reasoning_effort: "xhigh" as const,
         chat_reasoning_effort: "low" as const,
         experiment_reasoning_effort: "xhigh" as const,
-        pdf_reasoning_effort: "xhigh" as const,
         command_reasoning_effort: "low" as const,
         fast_mode: false,
         chat_fast_mode: false,
@@ -81,7 +80,6 @@ function createTestConfig(candidateIsolation: "attempt_snapshot_restore" | "atte
         reasoning_effort: "medium" as const,
         chat_reasoning_effort: "low" as const,
         experiment_reasoning_effort: "medium" as const,
-        pdf_reasoning_effort: "medium" as const,
         command_reasoning_effort: "low" as const,
         api_key_required: true
       }
@@ -191,7 +189,6 @@ describe("ImplementSessionManager", () => {
             reasoning_effort: "xhigh",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "xhigh",
-            pdf_reasoning_effort: "xhigh",
             command_reasoning_effort: "low",
             fast_mode: false,
             chat_fast_mode: false,
@@ -207,7 +204,6 @@ describe("ImplementSessionManager", () => {
             reasoning_effort: "medium",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "medium",
-            pdf_reasoning_effort: "medium",
             command_reasoning_effort: "low",
             api_key_required: true
           }
@@ -423,7 +419,6 @@ describe("ImplementSessionManager", () => {
             reasoning_effort: "xhigh",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "xhigh",
-            pdf_reasoning_effort: "xhigh",
             command_reasoning_effort: "low",
             fast_mode: false,
             chat_fast_mode: false,
@@ -439,7 +434,6 @@ describe("ImplementSessionManager", () => {
             reasoning_effort: "medium",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "medium",
-            pdf_reasoning_effort: "medium",
             command_reasoning_effort: "low",
             api_key_required: true
           }
@@ -778,7 +772,6 @@ describe("ImplementSessionManager", () => {
             reasoning_effort: "xhigh",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "xhigh",
-            pdf_reasoning_effort: "xhigh",
             command_reasoning_effort: "low",
             fast_mode: false,
             chat_fast_mode: false,
@@ -794,7 +787,6 @@ describe("ImplementSessionManager", () => {
             reasoning_effort: "medium",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "medium",
-            pdf_reasoning_effort: "medium",
             command_reasoning_effort: "low",
             api_key_required: true
           }
@@ -968,7 +960,6 @@ describe("ImplementSessionManager", () => {
             reasoning_effort: "xhigh",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "xhigh",
-            pdf_reasoning_effort: "xhigh",
             command_reasoning_effort: "low",
             fast_mode: false,
             chat_fast_mode: false,
@@ -984,7 +975,6 @@ describe("ImplementSessionManager", () => {
             reasoning_effort: "medium",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "medium",
-            pdf_reasoning_effort: "medium",
             command_reasoning_effort: "low",
             api_key_required: true
           }
@@ -1109,7 +1099,6 @@ describe("ImplementSessionManager", () => {
             reasoning_effort: "xhigh",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "xhigh",
-            pdf_reasoning_effort: "xhigh",
             command_reasoning_effort: "low",
             fast_mode: false,
             chat_fast_mode: false,
@@ -1125,7 +1114,6 @@ describe("ImplementSessionManager", () => {
             reasoning_effort: "medium",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "medium",
-            pdf_reasoning_effort: "medium",
             command_reasoning_effort: "low",
             api_key_required: true
           }
@@ -1220,7 +1208,6 @@ describe("ImplementSessionManager", () => {
             reasoning_effort: "xhigh",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "xhigh",
-            pdf_reasoning_effort: "xhigh",
             command_reasoning_effort: "low",
             fast_mode: false,
             chat_fast_mode: false,
@@ -1236,7 +1223,6 @@ describe("ImplementSessionManager", () => {
             reasoning_effort: "medium",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "medium",
-            pdf_reasoning_effort: "medium",
             command_reasoning_effort: "low",
             api_key_required: true
           }
@@ -1341,7 +1327,6 @@ describe("ImplementSessionManager", () => {
             reasoning_effort: "xhigh",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "xhigh",
-            pdf_reasoning_effort: "xhigh",
             command_reasoning_effort: "low",
             fast_mode: false,
             chat_fast_mode: false,
@@ -1357,7 +1342,6 @@ describe("ImplementSessionManager", () => {
             reasoning_effort: "medium",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "medium",
-            pdf_reasoning_effort: "medium",
             command_reasoning_effort: "low",
             api_key_required: true
           }
@@ -1479,7 +1463,6 @@ describe("ImplementSessionManager", () => {
             reasoning_effort: "xhigh",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "xhigh",
-            pdf_reasoning_effort: "xhigh",
             command_reasoning_effort: "low",
             fast_mode: false,
             chat_fast_mode: false,
@@ -1495,7 +1478,6 @@ describe("ImplementSessionManager", () => {
             reasoning_effort: "medium",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "medium",
-            pdf_reasoning_effort: "medium",
             command_reasoning_effort: "low",
             api_key_required: true
           }
@@ -1642,7 +1624,6 @@ describe("ImplementSessionManager", () => {
             reasoning_effort: "xhigh",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "xhigh",
-            pdf_reasoning_effort: "xhigh",
             command_reasoning_effort: "low",
             fast_mode: false,
             chat_fast_mode: false,
@@ -1658,7 +1639,6 @@ describe("ImplementSessionManager", () => {
             reasoning_effort: "medium",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "medium",
-            pdf_reasoning_effort: "medium",
             command_reasoning_effort: "low",
             api_key_required: true
           }
@@ -2032,7 +2012,6 @@ describe("ImplementSessionManager", () => {
             reasoning_effort: "xhigh",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "xhigh",
-            pdf_reasoning_effort: "xhigh",
             command_reasoning_effort: "low",
             fast_mode: false,
             chat_fast_mode: false,
@@ -2048,7 +2027,6 @@ describe("ImplementSessionManager", () => {
             reasoning_effort: "medium",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "medium",
-            pdf_reasoning_effort: "medium",
             command_reasoning_effort: "low",
             api_key_required: true
           }
@@ -3274,7 +3252,6 @@ describe("ImplementSessionManager", () => {
             reasoning_effort: "xhigh",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "xhigh",
-            pdf_reasoning_effort: "xhigh",
             command_reasoning_effort: "low",
             fast_mode: false,
             chat_fast_mode: false,
@@ -3290,7 +3267,6 @@ describe("ImplementSessionManager", () => {
             reasoning_effort: "medium",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "medium",
-            pdf_reasoning_effort: "medium",
             command_reasoning_effort: "low",
             api_key_required: true
           }
@@ -3393,7 +3369,6 @@ describe("ImplementSessionManager", () => {
             reasoning_effort: "xhigh",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "xhigh",
-            pdf_reasoning_effort: "xhigh",
             command_reasoning_effort: "low",
             fast_mode: false,
             chat_fast_mode: false,
@@ -3409,7 +3384,6 @@ describe("ImplementSessionManager", () => {
             reasoning_effort: "medium",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "medium",
-            pdf_reasoning_effort: "medium",
             command_reasoning_effort: "low",
             api_key_required: true
           }
@@ -3599,7 +3573,6 @@ describe("ImplementSessionManager", () => {
             reasoning_effort: "xhigh",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "xhigh",
-            pdf_reasoning_effort: "xhigh",
             command_reasoning_effort: "low",
             fast_mode: false,
             chat_fast_mode: false,
@@ -3615,7 +3588,6 @@ describe("ImplementSessionManager", () => {
             reasoning_effort: "medium",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "medium",
-            pdf_reasoning_effort: "medium",
             command_reasoning_effort: "low",
             api_key_required: true
           }

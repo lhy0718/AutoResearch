@@ -101,7 +101,7 @@ export async function createAutoLabOSRuntime(
   });
   const codexPdfLlm = new CodexLLMClient(codex, {
     model: config.providers.codex.pdf_model || config.providers.codex.model,
-    reasoningEffort: config.providers.codex.pdf_reasoning_effort || config.providers.codex.reasoning_effort,
+    reasoningEffort: config.providers.codex.reasoning_effort,
     fastMode: config.providers.codex.pdf_fast_mode
   });
   const openAiTaskLlm = new OpenAiResponsesLLMClient(openAiText, {
@@ -115,7 +115,7 @@ export async function createAutoLabOSRuntime(
   });
   const openAiPdfLlm = new OpenAiResponsesLLMClient(openAiText, {
     model: config.providers.openai.pdf_model || config.providers.openai.model,
-    reasoningEffort: config.providers.openai.pdf_reasoning_effort || config.providers.openai.reasoning_effort
+    reasoningEffort: config.providers.openai.reasoning_effort
   });
 
   // Ollama clients

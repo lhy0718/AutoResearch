@@ -177,7 +177,6 @@ export interface AppConfig {
       reasoning_effort: "minimal" | "low" | "medium" | "high" | "xhigh";
       chat_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
       experiment_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
-      pdf_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
       command_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
       fast_mode: boolean;
       chat_fast_mode?: boolean;
@@ -193,7 +192,6 @@ export interface AppConfig {
       reasoning_effort: "minimal" | "low" | "medium" | "high" | "xhigh";
       chat_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
       experiment_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
-      pdf_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
       command_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
       api_key_required: true;
     };

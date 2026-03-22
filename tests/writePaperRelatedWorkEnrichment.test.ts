@@ -218,8 +218,7 @@ describe("writePaper related-work enrichment", () => {
           codex: {
             model: "gpt-5.3-codex",
             pdf_model: "gpt-5.4",
-            reasoning_effort: "medium",
-            pdf_reasoning_effort: "medium"
+            reasoning_effort: "medium"
           }
         },
         analysis: {
@@ -240,8 +239,7 @@ describe("writePaper related-work enrichment", () => {
           codex: {
             model: "gpt-5.3-codex",
             pdf_model: "gpt-5.4",
-            reasoning_effort: "medium",
-            pdf_reasoning_effort: "medium"
+            reasoning_effort: "medium"
           }
         },
         analysis: {

@@ -155,8 +155,8 @@ autolabos        # 터미널 중심 슬래시 명령 워크플로
 | 항목 | 필요한 경우 | 비고 |
 |---|---|---|
 | `SEMANTIC_SCHOLAR_API_KEY` | 항상 | 논문 탐색 및 메타데이터 수집 |
-| `OPENAI_API_KEY` | provider 또는 PDF 모드가 `api`일 때 | OpenAI API 모델 실행 |
-| Codex CLI 로그인 | provider 또는 PDF 모드가 `codex`일 때 | 로컬 Codex 세션 사용 |
+| `OPENAI_API_KEY` | provider가 `api`일 때 | OpenAI API 모델 실행 |
+| Codex CLI 로그인 | provider가 `codex`일 때 | 로컬 Codex 세션 사용 |
 
 ---
 
@@ -575,7 +575,7 @@ flowchart LR
 
 `autolabos web`은 `http://127.0.0.1:4317`에서 로컬 브라우저 UI를 시작합니다.
 
-- **온보딩**: TUI와 동일한 설정을 수행하고 `.autolabos/config.yaml`을 작성합니다.
+- **온보딩**: TUI와 동일한 설정을 수행하고, 선택한 provider의 모델 슬롯만 보여 주며 `.autolabos/config.yaml`을 작성합니다.
 - **대시보드**: 실행 검색, 9노드 워크플로 뷰, 노드 액션, 실시간 로그를 제공합니다.
 - **아티팩트**: 실행을 둘러보고 텍스트, 이미지, PDF를 인라인으로 미리 봅니다.
 - **컴포저**: 슬래시 명령과 자연어를 모두 지원하며 단계별 계획 제어가 가능합니다.

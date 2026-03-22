@@ -112,7 +112,6 @@ export interface WebConfigFormData {
   codexExperimentModelChoice: string;
   codexExperimentReasoningEffort: string;
   codexPdfModelChoice: string;
-  codexPdfReasoningEffort: string;
   openAiChatModel: string;
   openAiChatReasoningEffort: string;
   openAiTaskModel: string;
@@ -120,9 +119,7 @@ export interface WebConfigFormData {
   openAiExperimentModel: string;
   openAiExperimentReasoningEffort: string;
   openAiPdfModel: string;
-  openAiPdfReasoningEffort: string;
   responsesPdfModel: string;
-  responsesPdfReasoningEffort: string;
 }
 
 export interface WebConfigOptions {

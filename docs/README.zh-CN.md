@@ -150,8 +150,8 @@ autolabos        # 终端优先的 slash-command 工作流
 | 项目 | 何时需要 | 说明 |
 |---|---|---|
 | `SEMANTIC_SCHOLAR_API_KEY` | 始终 | 论文发现与元数据获取 |
-| `OPENAI_API_KEY` | 当 provider 或 PDF mode 为 `api` | OpenAI API 模型执行 |
-| Codex CLI 登录 | 当 provider 或 PDF mode 为 `codex` | 使用本地 Codex 会话 |
+| `OPENAI_API_KEY` | 当 provider 为 `api` | OpenAI API 模型执行 |
+| Codex CLI 登录 | 当 provider 为 `codex` | 使用本地 Codex 会话 |
 
 ---
 

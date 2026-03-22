@@ -134,8 +134,7 @@ export async function runCompareAnalysisCli(options: CompareAnalysisCliOptions):
 
   const codexPdfLlm = new CodexLLMClient(bootstrap.runtime.codex, {
     model: bootstrap.config.providers.codex.pdf_model || bootstrap.config.providers.codex.model,
-    reasoningEffort:
-      bootstrap.config.providers.codex.pdf_reasoning_effort || bootstrap.config.providers.codex.reasoning_effort,
+    reasoningEffort: bootstrap.config.providers.codex.reasoning_effort,
     fastMode: bootstrap.config.providers.codex.pdf_fast_mode
   });
 

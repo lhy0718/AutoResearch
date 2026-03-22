@@ -18,7 +18,6 @@ import {
   saveConfig,
   upsertEnvVar
 } from "../src/config.js";
-import { DEFAULT_RESPONSES_PDF_MODEL } from "../src/integrations/openai/pdfModelCatalog.js";
 import { AppConfig } from "../src/types.js";
 
 const ORIGINAL_SEMANTIC_SCHOLAR_API_KEY = process.env.SEMANTIC_SCHOLAR_API_KEY;
@@ -60,7 +59,6 @@ function makeConfig(): AppConfig {
         reasoning_effort: "xhigh",
         chat_reasoning_effort: "low",
         experiment_reasoning_effort: "xhigh",
-        pdf_reasoning_effort: "xhigh",
         command_reasoning_effort: "low",
         fast_mode: false,
         chat_fast_mode: false,
@@ -76,7 +74,6 @@ function makeConfig(): AppConfig {
         reasoning_effort: "medium",
         chat_reasoning_effort: "low",
         experiment_reasoning_effort: "medium",
-        pdf_reasoning_effort: "medium",
         command_reasoning_effort: "low",
         api_key_required: true
       }
@@ -234,16 +231,13 @@ describe("config .env overrides", () => {
         "General chat reasoning effort": "low",
         "Research backend selection": "gpt-5-mini",
         "Research backend reasoning effort": "xhigh",
-        "Research backend Responses API PDF model": "gpt-4o",
-        "Research backend PDF reasoning effort": "xhigh",
         "OpenAI API key": "openai-key"
       })
     );
 
     expect(getDefaultPdfAnalysisModeForLlmMode(config.providers.llm_mode)).toBe("responses_api_pdf");
-    expect(config.analysis.responses_model).toBe("gpt-4o");
-    expect(config.providers.openai.pdf_model).toBe("gpt-4o");
-    expect(config.providers.openai.pdf_reasoning_effort).toBe("medium");
+    expect(config.analysis.responses_model).toBe("gpt-5-mini");
+    expect(config.providers.openai.pdf_model).toBe("gpt-5-mini");
     await expect(resolveOpenAiApiKey(cwd)).resolves.toBe("openai-key");
     await expect(fs.readFile(path.join(cwd, ".env"), "utf8")).resolves.toContain('OPENAI_API_KEY="openai-key"');
   });
@@ -260,8 +254,6 @@ describe("config .env overrides", () => {
         "General chat reasoning effort": "",
         "Research backend selection": "",
         "Research backend reasoning effort": "",
-        "Research backend Responses API PDF model": "",
-        "Research backend PDF reasoning effort": "",
         "OpenAI API key": "openai-key"
       })
     );
@@ -273,9 +265,34 @@ describe("config .env overrides", () => {
     expect(config.providers.openai.model).toBe("gpt-5.4");
     expect(config.providers.openai.reasoning_effort).toBe("high");
     expect(config.providers.openai.pdf_model).toBe("gpt-5.4");
-    expect(config.providers.openai.pdf_reasoning_effort).toBe("high");
     expect(config.analysis.responses_model).toBe("gpt-5.4");
     expect(config.analysis.responses_reasoning_effort).toBe("high");
+  });
+
+  it("asks OpenAI setup models before reasoning efforts and only once per slot", async () => {
+    delete process.env.OPENAI_API_KEY;
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autolabos-setup-openai-order-"));
+    const paths = resolveAppPaths(cwd);
+    const asked: string[] = [];
+
+    await runSetupWizard(paths, async (question, defaultValue = "") => {
+      asked.push(question);
+      return makePromptReaderFromQuestionMap({
+        "Primary LLM provider (codex/api/ollama)": "api",
+        "OpenAI API general chat model": "gpt-5.4",
+        "General chat reasoning effort": "low",
+        "Research backend selection": "gpt-5-mini",
+        "Research backend reasoning effort": "high",
+        "OpenAI API key": "openai-key"
+      })(question, defaultValue);
+    });
+
+    expect(asked.filter((question) => question.startsWith("General chat reasoning effort"))).toHaveLength(1);
+    expect(asked.filter((question) => question.startsWith("Research backend reasoning effort"))).toHaveLength(1);
+    expect(asked.indexOf("OpenAI API general chat model")).toBeLessThan(asked.indexOf("General chat reasoning effort"));
+    expect(asked.indexOf("Research backend selection")).toBeLessThan(asked.indexOf("Research backend reasoning effort"));
+    expect(asked).not.toContain("Research backend PDF reasoning effort");
+    expect(asked).not.toContain("Research backend Responses API PDF model");
   });
 
   it("guides the user to sign in later when Codex login is missing during setup", async () => {
@@ -377,8 +394,6 @@ describe("config .env overrides", () => {
         "General chat reasoning effort": "low",
         "Research backend selection": "gpt-5-mini",
         "Research backend reasoning effort": "high",
-        "Research backend Responses API PDF model": "gpt-4o",
-        "Research backend PDF reasoning effort": "xhigh",
         "OpenAI API key": ""
       })(question, defaultValue);
     });
@@ -407,8 +422,6 @@ describe("config .env overrides", () => {
         "General chat reasoning effort": "low",
         "Research backend selection": "gpt-5-mini",
         "Research backend reasoning effort": "xhigh",
-        "Research backend Responses API PDF model": "gpt-5.4",
-        "Research backend PDF reasoning effort": "xhigh",
         "OpenAI API key": "openai-key"
       })
     );
@@ -420,38 +433,38 @@ describe("config .env overrides", () => {
     await expect(resolveOpenAiApiKey(cwd)).resolves.toBe("openai-key");
   });
 
-  it("normalizes unsupported Responses API PDF models to the default", async () => {
+  it("normalizes Responses API PDF model to the OpenAI backend model", async () => {
     const { paths } = await createWorkspace();
     const config = makeConfig();
+    config.providers.llm_mode = "openai_api";
+    config.providers.openai.model = "gpt-5-mini";
     config.analysis.responses_model = "unsupported-model";
     await saveConfig(paths, config);
 
     const loaded = await loadConfig(paths);
 
-    expect(loaded.analysis.responses_model).toBe(DEFAULT_RESPONSES_PDF_MODEL);
-    expect(loaded.providers.openai.pdf_model).toBe(DEFAULT_RESPONSES_PDF_MODEL);
-    expect(loaded.providers.openai.model).toBe("gpt-5.4");
+    expect(loaded.analysis.responses_model).toBe("gpt-5-mini");
+    expect(loaded.providers.openai.pdf_model).toBe("gpt-5-mini");
+    expect(loaded.providers.openai.model).toBe("gpt-5-mini");
   });
 
-  it("preserves an explicitly configured OpenAI PDF slot and mirrors it into analysis when Responses PDF mode is enabled", async () => {
+  it("collapses a separate OpenAI PDF slot back to the backend model when Responses PDF mode is enabled", async () => {
     const { paths } = await createWorkspace();
     const config = makeConfig();
     config.providers.llm_mode = "openai_api";
     config.analysis.responses_model = "gpt-4o";
     config.analysis.responses_reasoning_effort = "xhigh";
     config.providers.openai.pdf_model = "gpt-5-mini";
-    config.providers.openai.pdf_reasoning_effort = "medium";
     await saveConfig(paths, config);
 
     const loaded = await loadConfig(paths);
 
-    expect(loaded.providers.openai.pdf_model).toBe("gpt-5-mini");
-    expect(loaded.providers.openai.pdf_reasoning_effort).toBe("medium");
-    expect(loaded.analysis.responses_model).toBe("gpt-5-mini");
-    expect(loaded.analysis.responses_reasoning_effort).toBe("medium");
+    expect(loaded.providers.openai.pdf_model).toBe(loaded.providers.openai.model);
+    expect(loaded.analysis.responses_model).toBe(loaded.providers.openai.model);
+    expect(loaded.analysis.responses_reasoning_effort).toBe(loaded.providers.openai.reasoning_effort);
   });
 
-  it("saves config without persisting a separate provider pdf mode or legacy analysis block", async () => {
+  it("saves config without persisting a separate provider pdf mode or derived analysis block", async () => {
     const { paths } = await createWorkspace();
     const config = makeConfig();
     config.providers.llm_mode = "openai_api";

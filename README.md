@@ -155,8 +155,8 @@ autolabos        # Terminal-first slash-command workflow
 | Item | When needed | Notes |
 |---|---|---|
 | `SEMANTIC_SCHOLAR_API_KEY` | Always | Paper discovery and metadata |
-| `OPENAI_API_KEY` | When provider or PDF mode is `api` | OpenAI API model execution |
-| Codex CLI login | When provider or PDF mode is `codex` | Uses your local Codex session |
+| `OPENAI_API_KEY` | When provider is `api` | OpenAI API model execution |
+| Codex CLI login | When provider is `codex` | Uses your local Codex session |
 
 ---
 
@@ -575,7 +575,7 @@ Every internal automation has an explicit bound.
 
 `autolabos web` starts a local browser UI at `http://127.0.0.1:4317`.
 
-- **Onboarding** — same setup as TUI, writes `.autolabos/config.yaml`
+- **Onboarding** — same setup as TUI, shows only the selected provider's model slots, writes `.autolabos/config.yaml`
 - **Dashboard** — run search, 9-node workflow view, node actions, live logs
 - **Artifacts** — browse runs, preview text/images/PDFs inline
 - **Composer** — slash commands and natural language, with step-by-step plan control

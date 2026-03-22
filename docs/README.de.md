@@ -155,8 +155,8 @@ autolabos        # Terminal-zentrierter Slash-Command-Workflow
 | Element | Wann benötigt | Hinweise |
 |---|---|---|
 | `SEMANTIC_SCHOLAR_API_KEY` | Immer | Paper-Erkennung und Metadaten |
-| `OPENAI_API_KEY` | Wenn Provider oder PDF-Modus `api` ist | OpenAI-API-Modellausführung |
-| Codex-CLI-Login | Wenn Provider oder PDF-Modus `codex` ist | Nutzt Ihre lokale Codex-Sitzung |
+| `OPENAI_API_KEY` | Wenn der Provider `api` ist | OpenAI-API-Modellausführung |
+| Codex-CLI-Login | Wenn der Provider `codex` ist | Nutzt Ihre lokale Codex-Sitzung |
 
 ---
 

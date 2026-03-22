@@ -402,8 +402,7 @@ function buildEnrichmentAnalysisSignature(config: AppConfig): RelatedWorkEnrichm
       llm_mode: llmMode,
       backend: "openai_pdf_model",
       model: config.providers?.openai?.pdf_model || config.providers?.openai?.model,
-      reasoning_effort:
-        config.providers?.openai?.pdf_reasoning_effort || config.providers?.openai?.reasoning_effort
+      reasoning_effort: config.providers?.openai?.reasoning_effort
     };
   }
 
@@ -422,8 +421,7 @@ function buildEnrichmentAnalysisSignature(config: AppConfig): RelatedWorkEnrichm
     llm_mode: llmMode,
     backend: "codex_pdf_model",
     model: config.providers?.codex?.pdf_model || config.providers?.codex?.model,
-    reasoning_effort:
-      config.providers?.codex?.pdf_reasoning_effort || config.providers?.codex?.reasoning_effort
+    reasoning_effort: config.providers?.codex?.reasoning_effort
   };
 }
 
