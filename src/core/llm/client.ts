@@ -80,7 +80,7 @@ export class CodexLLMClient implements LLMClient {
 export class OpenAiResponsesLLMClient implements LLMClient {
   constructor(
     private readonly openai: OpenAiResponsesTextClient,
-    private readonly defaults: { model?: string; reasoningEffort?: string } = {}
+    private readonly defaults: { model?: string; reasoningEffort?: string; background?: boolean } = {}
   ) {}
 
   async complete(
@@ -94,7 +94,11 @@ export class OpenAiResponsesLLMClient implements LLMClient {
       systemPrompt: opts?.systemPrompt,
       model: opts?.model || this.defaults.model,
       reasoningEffort: opts?.reasoningEffort || this.defaults.reasoningEffort,
-      abortSignal: opts?.abortSignal
+      background: this.defaults.background,
+      abortSignal: opts?.abortSignal,
+      onProgress: (message) => {
+        opts?.onProgress?.({ type: "status", text: message });
+      }
     });
     opts?.onProgress?.({ type: "status", text: "Received Responses API output." });
 

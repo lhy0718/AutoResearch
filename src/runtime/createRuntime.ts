@@ -111,7 +111,8 @@ export async function createAutoLabOSRuntime(
   const openAiExperimentLlm = new OpenAiResponsesLLMClient(openAiText, {
     model: config.providers.openai.experiment_model || config.providers.openai.model,
     reasoningEffort:
-      config.providers.openai.experiment_reasoning_effort || config.providers.openai.reasoning_effort
+      config.providers.openai.experiment_reasoning_effort || config.providers.openai.reasoning_effort,
+    background: true
   });
   const openAiPdfLlm = new OpenAiResponsesLLMClient(openAiText, {
     model: config.providers.openai.model,

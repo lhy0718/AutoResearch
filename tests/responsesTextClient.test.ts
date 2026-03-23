@@ -86,4 +86,90 @@ describe("OpenAiResponsesTextClient", () => {
       instructions: "system two"
     });
   });
+
+  it("surfaces the underlying network cause when fetch fails before an HTTP response arrives", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("fetch failed", {
+          cause: {
+            message: "connect ECONNRESET 10.0.0.5:443",
+            code: "ECONNRESET",
+            errno: -104,
+            syscall: "connect"
+          }
+        });
+      })
+    );
+
+    const client = new OpenAiResponsesTextClient(async () => "test-key", { model: "gpt-5.4" });
+
+    await expect(client.runForText({ prompt: "hello" })).rejects.toThrow(
+      "Responses API network request failed before receiving an HTTP response: fetch failed | cause: connect ECONNRESET 10.0.0.5:443, code=ECONNRESET, errno=-104, syscall=connect"
+    );
+  });
+
+  it("creates long-running responses in background mode and polls until completion", async () => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "https://api.openai.com/v1/responses") {
+        expect(JSON.parse(String(init?.body || "{}"))).toMatchObject({
+          background: true,
+          store: true
+        });
+        return new Response(
+          JSON.stringify({
+            id: "resp_bg_1",
+            status: "queued",
+            model: "gpt-5.4"
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" }
+          }
+        );
+      }
+
+      expect(url).toBe("https://api.openai.com/v1/responses/resp_bg_1");
+      const callIndex = fetchMock.mock.calls.length;
+      const status = callIndex < 3 ? "in_progress" : "completed";
+      return new Response(
+        JSON.stringify({
+          id: "resp_bg_1",
+          status,
+          model: "gpt-5.4",
+          output:
+            status === "completed"
+              ? [
+                  {
+                    type: "message",
+                    content: [{ type: "output_text", text: "background reply" }]
+                  }
+                ]
+              : []
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        }
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    process.env.AUTOLABOS_OPENAI_BACKGROUND_POLL_MS = "1";
+
+    const progress: string[] = [];
+    const client = new OpenAiResponsesTextClient(async () => "test-key", {
+      model: "gpt-5.4",
+      background: true
+    });
+
+    const result = await client.complete({
+      prompt: "long request",
+      onProgress: (message) => progress.push(message)
+    });
+
+    expect(result.text).toBe("background reply");
+    expect(result.responseId).toBe("resp_bg_1");
+    expect(progress).toContain("OpenAI accepted background response resp_bg_1; polling for completion.");
+    expect(progress.some((message) => message.includes("is in_progress"))).toBe(true);
+  });
 });

@@ -3246,6 +3246,82 @@ describe("ImplementSessionManager", () => {
     });
   });
 
+  it("uses a compact staged_llm prompt in openai_api mode", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-openai-compact-prompt-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Implementation OpenAI Compact Prompt Run",
+      topic: "small model reasoning under strict budget",
+      constraints: ["recent", "budgeted"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const longPlan = `hypotheses:\n  - baseline\nnotes: ${"plan-token ".repeat(900)}`;
+    const longHypotheses = `${"hypothesis-token ".repeat(900)}\n`;
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), longPlan, "utf8");
+    writeFileSync(path.join(runDir, "hypotheses.jsonl"), longHypotheses, "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "experiment.py");
+    let capturedPrompt = "";
+    const codex = {
+      runTurnStream: async () => {
+        throw new Error("Codex should not be used when llm_mode=openai_api");
+      }
+    } as unknown as CodexCliClient;
+    const llm = {
+      complete: async (prompt: string) => {
+        capturedPrompt = prompt;
+        return {
+          text: JSON.stringify({
+            summary: "Implemented a runnable experiment script through the configured API provider.",
+            run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+            changed_files: [publicScriptPath],
+            artifacts: [publicScriptPath],
+            public_artifacts: [publicScriptPath],
+            script_path: publicScriptPath,
+            metrics_path: path.join(runDir, "metrics.json"),
+            experiment_mode: "real_execution",
+            file_edits: [
+              {
+                path: publicScriptPath,
+                content: "print('ok')"
+              }
+            ]
+          })
+        };
+      }
+    };
+
+    const config = createTestConfig();
+    config.providers.llm_mode = "openai_api";
+    const manager = new ImplementSessionManager({
+      config,
+      codex,
+      llm: llm as any,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await manager.run(run);
+
+    expect(capturedPrompt).toContain("The API-mode context below is compacted to the highest-signal fields only");
+    expect(capturedPrompt).toContain('"plan_excerpt":');
+    expect(capturedPrompt).toContain("...<truncated>");
+    expect(capturedPrompt).not.toContain('"repo_listing":');
+    expect(capturedPrompt).not.toContain('"resolved_constraint_profile":');
+  });
+
   it("chains OpenAI API implement retries through response thread ids", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-openai-retry-"));
     tempDirs.push(workspace);

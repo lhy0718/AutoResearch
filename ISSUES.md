@@ -8,6 +8,32 @@ This file was compacted on 2026-03-22 to remove duplicated template fragments, m
 
 ## Active issues
 
+### LV-070 — OpenAI Responses implement calls can collapse into opaque fetch failed errors with no actionable network cause
+- Status: FIXED
+- Validation target: `test/` live `implement_experiments` rerun under `providers.llm_mode=openai_api`
+- Environment/session context: repo head on 2026-03-23, `test/` workspace, run `411d5215-b03a-46e4-bf89-ea5a42513288`, fresh patched tmux TUI session `autolabos-api-retry`.
+- Reproduction steps:
+  1. Resume run `411d5215-b03a-46e4-bf89-ea5a42513288` into `implement_experiments` from a fresh TUI session rooted at `test/`.
+  2. Observe `Submitting request to OpenAI Responses API.` in the TUI.
+  3. Wait for the request to resolve and inspect `implement_experiments/status.json` plus the live pane.
+- Expected behavior: if the OpenAI request fails before an HTTP response arrives, the error should include actionable transport details such as the underlying cause code, errno, or syscall rather than only `fetch failed`.
+- Actual behavior: before the fix, the run terminated with `Implementation execution failed before any runnable implementation was produced: fetch failed`, which hid the network failure class and made live triage guesswork.
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in a freshly relaunched `test/` TUI after restarting from the latest build.
+  - Existing session: the earlier `autolabos-normal` session showed the same terminal summary, but without distinguishing whether the failure came from DNS, connect reset, TLS, or another pre-HTTP transport path.
+- Root cause hypothesis:
+  - Type: `race_timing_bug`
+  - Hypothesis: `responsesTextClient` forwarded raw fetch exceptions directly, so staged implement failures collapsed into the undifferentiated Node fetch message `fetch failed`.
+- Code/test changes:
+  - `src/integrations/openai/networkError.ts`
+  - `src/integrations/openai/responsesTextClient.ts`
+  - `src/integrations/openai/responsesPdfAnalysisClient.ts`
+  - `tests/responsesTextClient.test.ts`
+- Regression status:
+  - Automated regression test linked: yes, `tests/responsesTextClient.test.ts`.
+  - Re-validation result: pass — focused `tests/responsesTextClient.test.ts`, full `npm test`, `npm run build`, and a fresh live rerun in `test/` all confirmed that the same implement failure now resolves to `Responses API network request failed before receiving an HTTP response: fetch failed | cause: Headers Timeout Error, code=UND_ERR_HEADERS_TIMEOUT` in both the TUI and persisted run artifacts.
+- Remaining risks: the logging fix is in place, and a follow-up transport fix now routes long-running OpenAI experiment requests through Responses background mode with polling. Same-flow live revalidation on run `411d5215-b03a-46e4-bf89-ea5a42513288` confirmed that the prior ~300s `UND_ERR_HEADERS_TIMEOUT` boundary no longer reproduces: the TUI accepted background response `resp_03173fca9888c7bd0069c100536ba881a196e3217057c15131` and kept polling past the former failure window. Final implement completion is still pending, so the remaining risk has shifted from pre-HTTP headers timeout to whether the provider-side background job eventually reaches a terminal state that yields a runnable artifact.
+
 ### LV-068 — failed implement_experiments stop can be auto-approved into run_experiments without a runnable artifact
 - Status: FIXED
 - Validation target: `test/` live minimal-approval continuation from `implement_experiments` into `run_experiments`

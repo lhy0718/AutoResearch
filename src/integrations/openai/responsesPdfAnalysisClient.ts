@@ -2,6 +2,7 @@ import {
   normalizeOpenAiResponsesReasoningEffort,
   supportsOpenAiResponsesReasoning
 } from "./modelCatalog.js";
+import { describeOpenAiFetchError, isAbortLikeError } from "./networkError.js";
 
 export interface ResponsesPdfAnalysisResult {
   text: string;
@@ -94,6 +95,13 @@ export class ResponsesPdfAnalysisClient {
         signal: combinedSignal,
         body: JSON.stringify(body)
       });
+    } catch (error) {
+      if (isAbortLikeError(error)) {
+        throw error;
+      }
+      throw new Error(
+        describeOpenAiFetchError("Responses API PDF request failed before receiving an HTTP response", error)
+      );
     } finally {
       if (timeoutId) {
         clearTimeout(timeoutId);

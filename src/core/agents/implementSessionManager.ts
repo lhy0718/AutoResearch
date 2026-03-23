@@ -1478,6 +1478,7 @@ export class ImplementSessionManager {
     historicalChangedFiles: string[];
     sessionMode: "codex_session" | "staged_llm";
   }): string {
+    const useCompactApiPrompt = params.sessionMode === "staged_llm";
     const sandboxTaskSpec = rewriteWorkspacePathsForSandbox(params.taskSpec, this.deps.workspaceRoot);
     const sandboxSearchLocalization = rewriteWorkspacePathsForSandbox(params.searchLocalization, this.deps.workspaceRoot);
     const sandboxBranchPlan = rewriteWorkspacePathsForSandbox(params.branchPlan, this.deps.workspaceRoot);
@@ -1508,10 +1509,40 @@ export class ImplementSessionManager {
           this.deps.workspaceRoot
         )
       : undefined;
+    const promptTaskSpec = useCompactApiPrompt
+      ? compactTaskSpecForStagedLlmPrompt(sandboxTaskSpec)
+      : sandboxTaskSpec;
+    const promptSearchLocalization = useCompactApiPrompt
+      ? compactLocalizationForStagedLlmPrompt(sandboxSearchLocalization)
+      : sandboxSearchLocalization;
+    const promptBranchPlan = useCompactApiPrompt
+      ? compactBranchPlanForStagedLlmPrompt(sandboxBranchPlan)
+      : sandboxBranchPlan;
+    const promptLongTermMemory = useCompactApiPrompt
+      ? compactLongTermMemoryForStagedLlmPrompt(sandboxTaskSpec.context.long_term_memory)
+      : sandboxTaskSpec.context.long_term_memory;
+    const promptRunnerFeedback = useCompactApiPrompt
+      ? compactRunnerFeedbackForStagedLlmPrompt(sandboxTaskSpec.context.runner_feedback)
+      : sandboxTaskSpec.context.runner_feedback;
+    const promptPaperCritiqueFeedback = useCompactApiPrompt
+      ? compactPaperCritiqueForStagedLlmPrompt(sandboxTaskSpec.context.paper_critique_feedback)
+      : sandboxTaskSpec.context.paper_critique_feedback;
+    const promptRecentReflections = useCompactApiPrompt
+      ? compactReflectionsForStagedLlmPrompt(sandboxRecentReflections)
+      : sandboxRecentReflections;
+    const promptExistingChangedFiles = useCompactApiPrompt
+      ? compactStringListForStagedLlmPrompt(sandboxExistingChangedFiles, 8)
+      : sandboxExistingChangedFiles;
+    const promptHistoricalChangedFiles = useCompactApiPrompt
+      ? compactStringListForStagedLlmPrompt(sandboxHistoricalChangedFiles, 8)
+      : sandboxHistoricalChangedFiles;
+    const promptPreviousAttempt = useCompactApiPrompt
+      ? compactPreviousAttemptForStagedLlmPrompt(sandboxPreviousAttempt)
+      : sandboxPreviousAttempt;
     const lines = [
       `Implementation attempt ${params.attempt}/${MAX_IMPLEMENT_ATTEMPTS}.`,
       "Task spec:",
-      JSON.stringify(sandboxTaskSpec, null, 2),
+      JSON.stringify(promptTaskSpec, null, 2),
       "",
       "Implementation protocol:",
       "1. Localize the smallest set of files you need to inspect or edit.",
@@ -1537,29 +1568,30 @@ export class ImplementSessionManager {
     ];
     if (params.sessionMode === "staged_llm") {
       lines.splice(10, 0, "6. Include file_edits entries with the full UTF-8 contents for every created or modified text file.");
+      lines.splice(11, 0, "7. The API-mode context below is compacted to the highest-signal fields only; do not assume omitted fields are required.");
     }
 
-    lines.push("", "Search-backed localization hints:", JSON.stringify(sandboxSearchLocalization, null, 2));
-    lines.push("", "Branch focus:", JSON.stringify(sandboxBranchPlan, null, 2));
-    if (sandboxTaskSpec.context.long_term_memory.retrieved.length > 0) {
+    lines.push("", "Search-backed localization hints:", JSON.stringify(promptSearchLocalization, null, 2));
+    lines.push("", "Branch focus:", JSON.stringify(promptBranchPlan, null, 2));
+    if (promptLongTermMemory.retrieved.length > 0) {
       lines.push(
         "",
         "Long-term implementation memory:",
-        JSON.stringify(sandboxTaskSpec.context.long_term_memory, null, 2)
+        JSON.stringify(promptLongTermMemory, null, 2)
       );
     }
-    if (sandboxTaskSpec.context.runner_feedback) {
+    if (promptRunnerFeedback) {
       lines.push(
         "",
         "Runner feedback from run_experiments:",
-        JSON.stringify(sandboxTaskSpec.context.runner_feedback, null, 2)
+        JSON.stringify(promptRunnerFeedback, null, 2)
       );
     }
-    if (sandboxTaskSpec.context.paper_critique_feedback) {
+    if (promptPaperCritiqueFeedback) {
       lines.push(
         "",
         "Post-draft critique requiring stronger experimental evidence:",
-        JSON.stringify(sandboxTaskSpec.context.paper_critique_feedback, null, 2),
+        JSON.stringify(promptPaperCritiqueFeedback, null, 2),
         "",
         "Treat this as a fresh implementation target. Do NOT reuse the previous script unchanged.",
         "Expand the implementation so the next governed run can add the missing evidence categories called out by the critique when possible within budget."
@@ -1587,36 +1619,36 @@ export class ImplementSessionManager {
       );
     }
 
-    if (params.recentReflections.length > 0) {
-      lines.push("", "Recent failure reflections:", JSON.stringify(sandboxRecentReflections, null, 2));
+    if (promptRecentReflections.length > 0) {
+      lines.push("", "Recent failure reflections:", JSON.stringify(promptRecentReflections, null, 2));
     }
 
-    if (sandboxExistingChangedFiles.length > 0) {
-      lines.push("", "Files already changed in this workspace:", sandboxExistingChangedFiles.join("\n"));
+    if (promptExistingChangedFiles.length > 0) {
+      lines.push("", "Files already changed in this workspace:", promptExistingChangedFiles.join("\n"));
     }
-    if (sandboxHistoricalChangedFiles.length > 0) {
+    if (promptHistoricalChangedFiles.length > 0) {
       lines.push(
         "",
         "Files touched in previous attempts (now restored unless reintroduced):",
-        sandboxHistoricalChangedFiles.join("\n")
+        promptHistoricalChangedFiles.join("\n")
       );
     }
 
-    if (sandboxPreviousAttempt) {
+    if (promptPreviousAttempt) {
       lines.push(
         "",
         "Previous local verification:",
-        JSON.stringify(sandboxPreviousAttempt.verify_report, null, 2),
+        JSON.stringify(promptPreviousAttempt.verify_report, null, 2),
         "",
         "Previous localization:",
-        JSON.stringify(sandboxPreviousAttempt.localization, null, 2),
+        JSON.stringify(promptPreviousAttempt.localization, null, 2),
         "",
         "Previous summary:",
-        sandboxPreviousAttempt.summary
+        promptPreviousAttempt.summary
       );
-      if (sandboxPreviousAttempt.verify_report.failure_type === "localization") {
+      if (promptPreviousAttempt.verify_report.failure_type === "localization") {
         lines.push("Revisit which files you edit before making another patch.");
-      } else if (sandboxPreviousAttempt.verify_report.failure_type === "implementation") {
+      } else if (promptPreviousAttempt.verify_report.failure_type === "implementation") {
         lines.push("Keep the fix focused and address the verification failure directly.");
       }
     }
@@ -2405,6 +2437,175 @@ function trimBlock(text: string, limit: number): string {
     return trimmed;
   }
   return `${trimmed.slice(0, limit)}\n...<truncated>`;
+}
+
+function compactTaskSpecForStagedLlmPrompt(taskSpec: ImplementTaskSpec): Record<string, unknown> {
+  return {
+    goal: trimBlock(taskSpec.goal, 320),
+    acceptance_criteria: taskSpec.acceptance_criteria.slice(0, 4).map((item) => trimBlock(item, 220)),
+    non_goals: taskSpec.non_goals.slice(0, 3).map((item) => trimBlock(item, 180)),
+    constraints: taskSpec.constraints.slice(0, 6).map((item) => trimBlock(item, 220)),
+    workspace: {
+      public_dir: taskSpec.workspace.public_dir,
+      metrics_path: taskSpec.workspace.metrics_path
+    },
+    context: {
+      topic: trimBlock(taskSpec.context.topic, 480),
+      objective_metric: trimBlock(taskSpec.context.objective_metric, 280),
+      plan_excerpt: trimBlock(taskSpec.context.plan_excerpt, 3200),
+      hypotheses_excerpt: trimBlock(taskSpec.context.hypotheses_excerpt, 1200),
+      previous_summary: trimBlock(taskSpec.context.previous_summary || "", 320) || undefined,
+      previous_run_command: trimBlock(taskSpec.context.previous_run_command || "", 220) || undefined,
+      previous_script: taskSpec.context.previous_script,
+      comparison_contract: taskSpec.context.comparison_contract
+        ? {
+            plan_id: taskSpec.context.comparison_contract.plan_id,
+            comparison_mode: taskSpec.context.comparison_contract.comparison_mode,
+            baseline_first_required: taskSpec.context.comparison_contract.baseline_first_required,
+            baseline_candidate_ids: taskSpec.context.comparison_contract.baseline_candidate_ids.slice(0, 3),
+            budget_profile: taskSpec.context.comparison_contract.budget_profile,
+            evaluator_contract_id: taskSpec.context.comparison_contract.evaluator_contract_id
+          }
+        : undefined,
+      plan_changed: taskSpec.context.plan_changed,
+      plan_hash: taskSpec.context.plan_hash
+    }
+  };
+}
+
+function compactLocalizationForStagedLlmPrompt(localization: LocalizationResult): Record<string, unknown> {
+  return {
+    summary: trimBlock(localization.summary || "", 220) || undefined,
+    strategy: localization.strategy,
+    reasoning: trimBlock(localization.reasoning || "", 320) || undefined,
+    selected_files: localization.selected_files.slice(0, 6),
+    candidate_files: localization.candidates.slice(0, 6).map((candidate) => ({
+      path: candidate.path,
+      symbol: candidate.symbol,
+      reason: trimBlock(candidate.reason || "", 180) || undefined,
+      confidence: candidate.confidence
+    })),
+    search_queries: localization.search_queries?.slice(0, 4),
+    confidence: localization.confidence
+  };
+}
+
+function compactBranchPlanForStagedLlmPrompt(branchPlan: BranchPlan): Record<string, unknown> {
+  return {
+    branch_id: branchPlan.branch_id,
+    source: branchPlan.source,
+    summary: trimBlock(branchPlan.summary, 220),
+    rationale: trimBlock(branchPlan.rationale, 240),
+    focus_files: branchPlan.focus_files.slice(0, 4),
+    candidate_pool: branchPlan.candidate_pool.slice(0, 6)
+  };
+}
+
+function compactLongTermMemoryForStagedLlmPrompt(snapshot: LongTermMemorySnapshot): LongTermMemorySnapshot {
+  return {
+    search_queries: snapshot.search_queries.slice(0, 3).map((item) => trimBlock(item, 120)),
+    retrieved: snapshot.retrieved.slice(0, 2).map((entry) => ({
+      ...entry,
+      text: trimBlock(entry.text, 220),
+      tags: entry.tags.slice(0, 4)
+    })),
+    saved: snapshot.saved
+      ? {
+          ...snapshot.saved,
+          text: trimBlock(snapshot.saved.text, 220),
+          tags: snapshot.saved.tags.slice(0, 4)
+        }
+      : undefined
+  };
+}
+
+function compactRunnerFeedbackForStagedLlmPrompt(
+  feedback: RunVerifierReport | undefined
+): Record<string, unknown> | undefined {
+  if (!feedback) {
+    return undefined;
+  }
+  return {
+    source: feedback.source,
+    status: feedback.status,
+    trigger: feedback.trigger,
+    stage: feedback.stage,
+    summary: trimBlock(feedback.summary || "", 320) || undefined,
+    command: trimBlock(feedback.command || "", 220) || undefined,
+    metrics_path: feedback.metrics_path,
+    suggested_next_action: trimBlock(feedback.suggested_next_action || "", 220) || undefined,
+    recorded_at: feedback.recorded_at
+  };
+}
+
+function compactPaperCritiqueForStagedLlmPrompt(
+  critique:
+    | {
+        overall_decision?: string;
+        manuscript_type?: string;
+        needs_additional_experiments?: boolean;
+        blocking_issue_summaries: string[];
+        recommended_fixes: string[];
+        summary?: string;
+      }
+    | undefined
+): Record<string, unknown> | undefined {
+  if (!critique) {
+    return undefined;
+  }
+  return {
+    overall_decision: critique.overall_decision,
+    manuscript_type: critique.manuscript_type,
+    needs_additional_experiments: critique.needs_additional_experiments,
+    blocking_issue_summaries: critique.blocking_issue_summaries.slice(0, 4).map((item) => trimBlock(item, 180)),
+    recommended_fixes: critique.recommended_fixes.slice(0, 4).map((item) => trimBlock(item, 180)),
+    summary: trimBlock(critique.summary || "", 280) || undefined
+  };
+}
+
+function compactReflectionsForStagedLlmPrompt(reflections: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  return reflections.slice(0, 2).map((item) => ({
+    ...item,
+    lesson: trimBlock(String(item.lesson || ""), 220),
+    next_try_instruction: trimBlock(String(item.next_try_instruction || ""), 220)
+  }));
+}
+
+function compactStringListForStagedLlmPrompt(values: string[], limit: number): string[] {
+  return values.slice(0, limit);
+}
+
+function compactPreviousAttemptForStagedLlmPrompt(
+  attempt:
+    | {
+        verify_report: VerifyReport;
+        localization: LocalizationResult;
+        summary: string;
+      }
+    | undefined
+):
+  | {
+      verify_report: Record<string, unknown>;
+      localization: Record<string, unknown>;
+      summary: string;
+    }
+  | undefined {
+  if (!attempt) {
+    return undefined;
+  }
+  return {
+    verify_report: {
+      status: attempt.verify_report.status,
+      failure_type: attempt.verify_report.failure_type,
+      next_action: attempt.verify_report.next_action,
+      summary: trimBlock(attempt.verify_report.summary || "", 320),
+      command: trimBlock(attempt.verify_report.command || "", 220) || undefined,
+      stdout_excerpt: trimBlock(attempt.verify_report.stdout_excerpt || "", 240) || undefined,
+      stderr_excerpt: trimBlock(attempt.verify_report.stderr_excerpt || "", 240) || undefined
+    },
+    localization: compactLocalizationForStagedLlmPrompt(attempt.localization),
+    summary: trimBlock(attempt.summary, 280)
+  };
 }
 
 function toSandboxFriendlyWorkspaceRoot(workspaceRoot: string): string {
