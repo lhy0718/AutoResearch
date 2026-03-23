@@ -9,6 +9,10 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+function expectVisibleText(text: string): void {
+  expect(screen.getByText(text)).toBeInTheDocument();
+}
+
 describe("App", () => {
   it("renders onboarding without a PDF mode prompt when the workspace is not configured", async () => {
     vi.stubGlobal(
@@ -120,8 +124,9 @@ describe("App", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("OpenAI chat")).toBeInTheDocument();
-      expect(screen.getByText("OpenAI task")).toBeInTheDocument();
+      expectVisibleText("OpenAI chat");
+      expectVisibleText("OpenAI task");
+      expectVisibleText("Research backend model and reasoning for API mode.");
     });
 
     expect(screen.queryByText("OpenAI PDF")).not.toBeInTheDocument();
@@ -230,10 +235,11 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "Workspace" }));
 
     await waitFor(() => {
-      expect(screen.getByText("Workspace settings")).toBeInTheDocument();
-      expect(screen.getByText("Model and reasoning by slot")).toBeInTheDocument();
-      expect(screen.getByText("Codex chat")).toBeInTheDocument();
-      expect(screen.getByText("Codex task")).toBeInTheDocument();
+      expectVisibleText("Workspace settings");
+      expectVisibleText("Model and reasoning by slot");
+      expectVisibleText("Codex chat");
+      expectVisibleText("Codex task");
+      expectVisibleText("Research backend, analysis, and planning tasks.");
     });
 
     const codexChatSection = screen.getByText("Codex chat").closest("section");

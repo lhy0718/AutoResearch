@@ -8,6 +8,7 @@ import { AnalysisConditionComparison, AnalysisReport } from "./resultAnalysis.js
 import { RunContextMemory } from "./memory/runContextMemory.js";
 import { safeRead, writeRunArtifact } from "./nodes/helpers.js";
 import { normalizeFsPath } from "../utils/fs.js";
+import type { ExperimentDesignImplementationValidationReport } from "./experiments/designImplementationValidator.js";
 
 export const EXPERIMENT_GOVERNANCE_CONTRACT_KEY = "experiment_governance.comparison_contract";
 export const EXPERIMENT_GOVERNANCE_IMPLEMENTATION_CONTEXT_KEY =
@@ -20,6 +21,8 @@ export const EXPERIMENT_GOVERNANCE_MANAGED_BUNDLE_LOCK_KEY =
 export const EXPERIMENT_GOVERNANCE_DRIFT_REPORT_KEY = "experiment_governance.drift_report";
 export const EXPERIMENT_GOVERNANCE_CANDIDATE_ISOLATION_REPORT_KEY =
   "experiment_governance.candidate_isolation_report";
+export const EXPERIMENT_GOVERNANCE_DESIGN_IMPLEMENTATION_VALIDATION_KEY =
+  "experiment_governance.design_implementation_validation";
 
 export const EXPERIMENT_GOVERNANCE_DIR = "experiment_governance";
 export const EXPERIMENT_GOVERNANCE_CONTRACT_ARTIFACT = path.join(
@@ -49,6 +52,10 @@ export const EXPERIMENT_GOVERNANCE_DRIFT_REPORT_ARTIFACT = path.join(
 export const EXPERIMENT_GOVERNANCE_CANDIDATE_ISOLATION_REPORT_ARTIFACT = path.join(
   EXPERIMENT_GOVERNANCE_DIR,
   "candidate_isolation_report.json"
+);
+export const EXPERIMENT_GOVERNANCE_DESIGN_IMPLEMENTATION_VALIDATION_ARTIFACT = path.join(
+  EXPERIMENT_GOVERNANCE_DIR,
+  "design_implementation_validation.json"
 );
 
 export type CandidateIsolationStrategy = "attempt_snapshot_restore" | "attempt_worktree";
@@ -731,6 +738,7 @@ export async function storeExperimentGovernanceDecision(
     managedBundleLock?: ExperimentManagedBundleLock;
     driftReport?: ExperimentManagedBundleDriftReport;
     candidateIsolationReport?: CandidateIsolationReport;
+    designImplementationValidation?: ExperimentDesignImplementationValidationReport;
     entries: ExperimentLedgerEntry[];
   }
 ): Promise<void> {
@@ -779,6 +787,17 @@ export async function storeExperimentGovernanceDecision(
     await runContext.put(
       EXPERIMENT_GOVERNANCE_CANDIDATE_ISOLATION_REPORT_KEY,
       input.candidateIsolationReport
+    );
+  }
+  if (input.designImplementationValidation) {
+    await writeExperimentGovernanceJson(
+      run,
+      EXPERIMENT_GOVERNANCE_DESIGN_IMPLEMENTATION_VALIDATION_ARTIFACT,
+      input.designImplementationValidation
+    );
+    await runContext.put(
+      EXPERIMENT_GOVERNANCE_DESIGN_IMPLEMENTATION_VALIDATION_KEY,
+      input.designImplementationValidation
     );
   }
   const ledger = await appendExperimentLedgerEntries(run, input.entries);

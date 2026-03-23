@@ -43,6 +43,13 @@ import {
   buildOllamaExperimentModelChoices,
   buildOllamaVisionModelChoices
 } from "./integrations/ollama/modelCatalog.js";
+import {
+  GENERAL_CHAT_MODEL_PROMPT,
+  GENERAL_CHAT_REASONING_PROMPT,
+  OPENAI_API_GENERAL_CHAT_MODEL_PROMPT,
+  RESEARCH_BACKEND_MODEL_PROMPT,
+  RESEARCH_BACKEND_REASONING_PROMPT
+} from "./modelSlotText.js";
 
 export const DEFAULT_PRIMARY_LLM_MODE = "openai_api" as const;
 export const DEFAULT_PDF_ANALYSIS_MODE = "codex_text_image_hybrid" as const;
@@ -303,7 +310,7 @@ export async function runSetupWizard(
   if (llmMode === "ollama") {
     ollamaBaseUrl = await askOllamaBaseUrl(promptReader);
     ollamaChatModel = await askOllamaModel("Chat model", OLLAMA_CHAT_MODEL_OPTIONS, DEFAULT_OLLAMA_CHAT_MODEL, promptReader);
-    ollamaResearchModel = await askOllamaModel("Research model", OLLAMA_RESEARCH_MODEL_OPTIONS, DEFAULT_OLLAMA_RESEARCH_MODEL, promptReader);
+    ollamaResearchModel = await askOllamaModel(RESEARCH_BACKEND_MODEL_PROMPT, OLLAMA_RESEARCH_MODEL_OPTIONS, DEFAULT_OLLAMA_RESEARCH_MODEL, promptReader);
     ollamaExperimentModel = await askOllamaModel("Experiment/code model", OLLAMA_EXPERIMENT_MODEL_OPTIONS, DEFAULT_OLLAMA_EXPERIMENT_MODEL, promptReader);
     ollamaVisionModel = await askOllamaModel("Vision/PDF model", OLLAMA_VISION_MODEL_OPTIONS, DEFAULT_OLLAMA_VISION_MODEL, promptReader);
   }
@@ -313,7 +320,7 @@ export async function runSetupWizard(
   const openAiChatModel =
     llmMode === "openai_api"
       ? await askOpenAiResponsesModel(
-          "OpenAI API general chat model",
+          OPENAI_API_GENERAL_CHAT_MODEL_PROMPT,
           DEFAULT_OPENAI_RESPONSES_MODEL,
           promptReader
         )
@@ -321,7 +328,7 @@ export async function runSetupWizard(
   const codexChatModelChoice =
     llmMode === "codex_chatgpt_only"
       ? await askCodexModel(
-          "General chat model",
+          GENERAL_CHAT_MODEL_PROMPT,
           defaultCodexChatSetupModel,
           promptReader,
           DEFAULT_CODEX_CHAT_SETUP_MODEL
@@ -330,7 +337,7 @@ export async function runSetupWizard(
   const codexChatReasoningEffort =
     llmMode === "codex_chatgpt_only"
       ? await askCodexReasoningEffort(
-          "General chat reasoning effort",
+          GENERAL_CHAT_REASONING_PROMPT,
           resolveCodexModelSelection(codexChatModelChoice).model,
           DEFAULT_CODEX_CHAT_SETUP_REASONING_EFFORT,
           DEFAULT_CODEX_CHAT_SETUP_REASONING_EFFORT,
@@ -340,7 +347,7 @@ export async function runSetupWizard(
   const openAiChatReasoningEffort =
     llmMode === "openai_api"
       ? await askOpenAiResponsesReasoningEffort(
-          "General chat reasoning effort",
+          GENERAL_CHAT_REASONING_PROMPT,
           openAiChatModel,
           "low",
           "low",
@@ -350,13 +357,13 @@ export async function runSetupWizard(
   const researchBackendModelChoice =
     llmMode === "codex_chatgpt_only"
       ? await askCodexModel(
-          "Research backend selection",
+          RESEARCH_BACKEND_MODEL_PROMPT,
           defaultCodexBackendSetupModel,
           promptReader,
           RECOMMENDED_CODEX_MODEL
         )
       : llmMode === "openai_api"
-        ? await askOpenAiResponsesModel("Research backend selection", DEFAULT_OPENAI_RESPONSES_MODEL, promptReader)
+        ? await askOpenAiResponsesModel(RESEARCH_BACKEND_MODEL_PROMPT, DEFAULT_OPENAI_RESPONSES_MODEL, promptReader)
         : DEFAULT_CODEX_MODEL;
   const codexTaskModelChoice =
     llmMode === "codex_chatgpt_only"
@@ -365,7 +372,7 @@ export async function runSetupWizard(
   const codexTaskReasoningEffort =
     llmMode === "codex_chatgpt_only"
       ? await askCodexReasoningEffort(
-        "Research backend reasoning effort",
+        RESEARCH_BACKEND_REASONING_PROMPT,
         resolveCodexModelSelection(codexTaskModelChoice).model,
           DEFAULT_BACKEND_REASONING_EFFORT,
           DEFAULT_BACKEND_REASONING_EFFORT,
@@ -381,7 +388,7 @@ export async function runSetupWizard(
   const openAiReasoningEffort =
     llmMode === "openai_api"
       ? await askOpenAiResponsesReasoningEffort(
-        "Research backend reasoning effort",
+        RESEARCH_BACKEND_REASONING_PROMPT,
         openAiTaskModel,
           DEFAULT_BACKEND_REASONING_EFFORT,
           DEFAULT_BACKEND_REASONING_EFFORT,

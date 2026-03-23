@@ -18,10 +18,46 @@ import {
   saveConfig,
   upsertEnvVar
 } from "../src/config.js";
+import {
+  DEFAULT_OLLAMA_BASE_URL,
+  DEFAULT_OLLAMA_CHAT_MODEL,
+  DEFAULT_OLLAMA_EXPERIMENT_MODEL,
+  DEFAULT_OLLAMA_RESEARCH_MODEL,
+  DEFAULT_OLLAMA_VISION_MODEL
+} from "../src/integrations/ollama/modelCatalog.js";
 import { AppConfig } from "../src/types.js";
 
 const ORIGINAL_SEMANTIC_SCHOLAR_API_KEY = process.env.SEMANTIC_SCHOLAR_API_KEY;
 const ORIGINAL_OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+
+async function recordWizardQuestions(
+  paths: ReturnType<typeof resolveAppPaths>,
+  questionMap: Record<string, string>
+): Promise<string[]> {
+  const asked: string[] = [];
+  await runSetupWizard(paths, async (question, defaultValue = "") => {
+    asked.push(question);
+    return makePromptReaderFromQuestionMap(questionMap)(question, defaultValue);
+  });
+  return asked;
+}
+
+function findQuestionIndex(asked: string[], prefix: string): number {
+  return asked.findIndex((question) => question.startsWith(prefix));
+}
+
+function expectPromptOrder(asked: string[], prefixes: string[]): void {
+  let previousIndex = -1;
+  for (const prefix of prefixes) {
+    const index = findQuestionIndex(asked, prefix);
+    expect(index).toBeGreaterThan(previousIndex);
+    previousIndex = index;
+  }
+}
+
+function expectPromptAsked(asked: string[], prefix: string): void {
+  expect(asked.some((question) => question.startsWith(prefix))).toBe(true);
+}
 
 function makePromptReaderFromAnswers(answers: string[]) {
   return async (_question: string, defaultValue = "") => {
@@ -192,7 +228,7 @@ describe("config .env overrides", () => {
         "Primary LLM provider (codex/api/ollama)": "codex",
         "General chat model": "gpt-5.3-codex",
         "General chat reasoning effort": "low",
-        "Research backend selection": "gpt-5.3-codex",
+        "Research backend model": "gpt-5.3-codex",
         "Research backend reasoning effort": "xhigh"
       })
     );
@@ -229,7 +265,7 @@ describe("config .env overrides", () => {
         "Primary LLM provider (codex/api/ollama)": "api",
         "OpenAI API general chat model": "gpt-5.4",
         "General chat reasoning effort": "low",
-        "Research backend selection": "gpt-5-mini",
+        "Research backend model": "gpt-5-mini",
         "Research backend reasoning effort": "xhigh",
         "OpenAI API key": "openai-key"
       })
@@ -252,7 +288,7 @@ describe("config .env overrides", () => {
         "Primary LLM provider (codex/api/ollama)": "",
         "OpenAI API general chat model": "",
         "General chat reasoning effort": "",
-        "Research backend selection": "",
+        "Research backend model": "",
         "Research backend reasoning effort": "",
         "OpenAI API key": "openai-key"
       })
@@ -272,26 +308,84 @@ describe("config .env overrides", () => {
     delete process.env.OPENAI_API_KEY;
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autolabos-setup-openai-order-"));
     const paths = resolveAppPaths(cwd);
-    const asked: string[] = [];
-
-    await runSetupWizard(paths, async (question, defaultValue = "") => {
-      asked.push(question);
-      return makePromptReaderFromQuestionMap({
+    const asked = await recordWizardQuestions(paths, {
         "Primary LLM provider (codex/api/ollama)": "api",
         "OpenAI API general chat model": "gpt-5.4",
         "General chat reasoning effort": "low",
-        "Research backend selection": "gpt-5-mini",
+        "Research backend model": "gpt-5-mini",
         "Research backend reasoning effort": "high",
         "OpenAI API key": "openai-key"
-      })(question, defaultValue);
-    });
+      });
 
     expect(asked.filter((question) => question.startsWith("General chat reasoning effort"))).toHaveLength(1);
     expect(asked.filter((question) => question.startsWith("Research backend reasoning effort"))).toHaveLength(1);
-    expect(asked.indexOf("OpenAI API general chat model")).toBeLessThan(asked.indexOf("General chat reasoning effort"));
-    expect(asked.indexOf("Research backend selection")).toBeLessThan(asked.indexOf("Research backend reasoning effort"));
+    expectPromptAsked(asked, "OpenAI API general chat model");
+    expectPromptAsked(asked, "Research backend model");
+    expectPromptAsked(asked, "Research backend reasoning effort");
+    expectPromptOrder(asked, [
+      "OpenAI API general chat model",
+      "General chat reasoning effort",
+      "Research backend model",
+      "Research backend reasoning effort"
+    ]);
     expect(asked).not.toContain("Research backend PDF reasoning effort");
     expect(asked).not.toContain("Research backend Responses API PDF model");
+  });
+
+  it("asks Codex setup models before reasoning efforts and keeps research backend after chat", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autolabos-setup-codex-order-"));
+    const paths = resolveAppPaths(cwd);
+    const asked = await recordWizardQuestions(paths, {
+        "Primary LLM provider (codex/api/ollama)": "codex",
+        "General chat model": "gpt-5.3-codex",
+        "General chat reasoning effort": "low",
+        "Research backend model": "gpt-5.4",
+        "Research backend reasoning effort": "xhigh"
+      });
+
+    expect(asked.filter((question) => question.startsWith("General chat model"))).toHaveLength(1);
+    expect(asked.filter((question) => question.startsWith("General chat reasoning effort"))).toHaveLength(1);
+    expect(asked.filter((question) => question.startsWith("Research backend model"))).toHaveLength(1);
+    expect(asked.filter((question) => question.startsWith("Research backend reasoning effort"))).toHaveLength(1);
+    expectPromptAsked(asked, "General chat model");
+    expectPromptAsked(asked, "Research backend model");
+    expectPromptAsked(asked, "Research backend reasoning effort");
+    expectPromptOrder(asked, [
+      "General chat model",
+      "General chat reasoning effort",
+      "Research backend model",
+      "Research backend reasoning effort"
+    ]);
+    expect(asked).not.toContain("OpenAI API key");
+  });
+
+  it("asks Ollama setup prompts in base-url then chat then research then experiment then vision order", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autolabos-setup-ollama-order-"));
+    const paths = resolveAppPaths(cwd);
+    const asked = await recordWizardQuestions(paths, {
+        "Primary LLM provider (codex/api/ollama)": "ollama",
+        "Ollama base URL": DEFAULT_OLLAMA_BASE_URL,
+        "Chat model": DEFAULT_OLLAMA_CHAT_MODEL,
+        "Research backend model": DEFAULT_OLLAMA_RESEARCH_MODEL,
+        "Experiment/code model": DEFAULT_OLLAMA_EXPERIMENT_MODEL,
+        "Vision/PDF model": DEFAULT_OLLAMA_VISION_MODEL
+      });
+
+    expect(asked.filter((question) => question.startsWith("Ollama base URL"))).toHaveLength(1);
+    expect(asked.filter((question) => question.startsWith("Chat model"))).toHaveLength(1);
+    expect(asked.filter((question) => question.startsWith("Research backend model"))).toHaveLength(1);
+    expect(asked.filter((question) => question.startsWith("Experiment/code model"))).toHaveLength(1);
+    expect(asked.filter((question) => question.startsWith("Vision/PDF model"))).toHaveLength(1);
+    expectPromptAsked(asked, "Research backend model");
+    expectPromptOrder(asked, [
+      "Ollama base URL",
+      "Chat model",
+      "Research backend model",
+      "Experiment/code model",
+      "Vision/PDF model"
+    ]);
+    expect(asked).not.toContain("General chat reasoning effort");
+    expect(asked).not.toContain("Research backend reasoning effort");
   });
 
   it("guides the user to sign in later when Codex login is missing during setup", async () => {
@@ -309,7 +403,7 @@ describe("config .env overrides", () => {
         "Primary LLM provider (codex/api/ollama)": "codex",
         "General chat model": "gpt-5.3-codex-spark",
         "General chat reasoning effort": "low",
-        "Research backend selection": "gpt-5.4",
+        "Research backend model": "gpt-5.4",
         "Research backend reasoning effort": "xhigh"
       }),
       {
@@ -391,7 +485,7 @@ describe("config .env overrides", () => {
         "Primary LLM provider (codex/api/ollama)": "api",
         "OpenAI API general chat model": "gpt-5.4",
         "General chat reasoning effort": "low",
-        "Research backend selection": "gpt-5-mini",
+        "Research backend model": "gpt-5-mini",
         "Research backend reasoning effort": "high",
         "OpenAI API key": ""
       })(question, defaultValue);
@@ -419,7 +513,7 @@ describe("config .env overrides", () => {
         "Primary LLM provider (codex/api/ollama)": "api",
         "OpenAI API general chat model": "gpt-5-mini",
         "General chat reasoning effort": "low",
-        "Research backend selection": "gpt-5-mini",
+        "Research backend model": "gpt-5-mini",
         "Research backend reasoning effort": "xhigh",
         "OpenAI API key": "openai-key"
       })

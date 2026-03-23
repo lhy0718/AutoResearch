@@ -72,6 +72,32 @@ describe("naturalDeterministic", () => {
     expect(result?.pendingCommand).toBe(`/agent count analyze_results ${run.id}`);
   });
 
+  it("prioritizes /model over generic settings when the prompt explicitly asks about model settings", () => {
+    const run = makeRun({ id: "run-model-order" });
+
+    const korean = resolveDeterministicPendingCommand("모델 설정 바꿔줘", {
+      runs: [run],
+      activeRunId: run.id
+    });
+    const english = resolveDeterministicPendingCommand("open model settings", {
+      runs: [run],
+      activeRunId: run.id
+    });
+
+    expect(korean?.pendingCommand).toBe("/model");
+    expect(english?.pendingCommand).toBe("/model");
+  });
+
+  it("keeps generic settings prompts routed to /settings", () => {
+    const run = makeRun({ id: "run-settings-order" });
+    const result = resolveDeterministicPendingCommand("설정 열어줘", {
+      runs: [run],
+      activeRunId: run.id
+    });
+
+    expect(result?.pendingCommand).toBe("/settings");
+  });
+
   it("extracts collect requests with filters", () => {
     const request = extractCollectRequestFromNatural("최근 5년 관련도 순으로 AI agent reasoning 100개 수집해줘");
     expect(request).toBeDefined();

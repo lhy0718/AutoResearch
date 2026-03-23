@@ -223,7 +223,7 @@ describe("Ollama setup wizard", () => {
         "Primary LLM provider (codex/api/ollama)": "ollama",
         "Ollama base URL": "",
         "Chat model": DEFAULT_OLLAMA_CHAT_MODEL,
-        "Research model": DEFAULT_OLLAMA_RESEARCH_MODEL,
+        "Research backend model": DEFAULT_OLLAMA_RESEARCH_MODEL,
         "Experiment/code model": DEFAULT_OLLAMA_EXPERIMENT_MODEL,
         "Vision/PDF model": DEFAULT_OLLAMA_VISION_MODEL
       })
@@ -254,7 +254,7 @@ describe("Ollama setup wizard", () => {
         "Primary LLM provider (codex/api/ollama)": "ollama",
         "Ollama base URL": "",
         "Chat model": "",
-        "Research model": "",
+        "Research backend model": "",
         "Experiment/code model": "",
         "Vision/PDF model": ""
       }),

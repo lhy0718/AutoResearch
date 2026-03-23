@@ -125,7 +125,7 @@ export class LocalAciAdapter implements AgentComputerInterface {
     if (!decision.allowed) {
       return blockedObservation(decision);
     }
-    return runShell(command, cwd, signal);
+    return runShell(command, cwd, signal, this.options.allowNetwork === true);
   }
 
   async runTests(command: string, cwd?: string, signal?: AbortSignal): Promise<AciObservation> {
@@ -136,7 +136,7 @@ export class LocalAciAdapter implements AgentComputerInterface {
     if (!decision.allowed) {
       return blockedObservation(decision);
     }
-    return runShell(command, cwd, signal);
+    return runShell(command, cwd, signal, this.options.allowNetwork === true);
   }
 
   async tailLogs(filePath: string, lines = 40): Promise<AciObservation> {
@@ -254,12 +254,17 @@ export class LocalAciAdapter implements AgentComputerInterface {
   }
 }
 
-function runShell(command: string, cwd?: string, signal?: AbortSignal): Promise<AciObservation> {
+function runShell(
+  command: string,
+  cwd?: string,
+  signal?: AbortSignal,
+  allowNetwork = false
+): Promise<AciObservation> {
   const started = Date.now();
   return new Promise((resolve) => {
     const child = spawn(process.env.SHELL || "/bin/sh", ["-lc", command], {
       cwd: cwd || process.cwd(),
-      env: buildManagedExecutionEnv(process.env),
+      env: buildManagedExecutionEnv(process.env, allowNetwork),
       stdio: ["ignore", "pipe", "pipe"],
       signal
     });
@@ -301,8 +306,8 @@ function runShell(command: string, cwd?: string, signal?: AbortSignal): Promise<
   });
 }
 
-function buildManagedExecutionEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return {
+function buildManagedExecutionEnv(baseEnv: NodeJS.ProcessEnv, allowNetwork: boolean): NodeJS.ProcessEnv {
+  const managedEnv: NodeJS.ProcessEnv = {
     ...baseEnv,
     OMP_NUM_THREADS: baseEnv.OMP_NUM_THREADS || "1",
     MKL_NUM_THREADS: baseEnv.MKL_NUM_THREADS || "1",
@@ -311,6 +316,14 @@ function buildManagedExecutionEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv
     TOKENIZERS_PARALLELISM: baseEnv.TOKENIZERS_PARALLELISM || "false",
     MALLOC_ARENA_MAX: baseEnv.MALLOC_ARENA_MAX || "2"
   };
+
+  if (!allowNetwork) {
+    managedEnv.HF_HUB_OFFLINE = baseEnv.HF_HUB_OFFLINE || "1";
+    managedEnv.TRANSFORMERS_OFFLINE = baseEnv.TRANSFORMERS_OFFLINE || "1";
+    managedEnv.HF_DATASETS_OFFLINE = baseEnv.HF_DATASETS_OFFLINE || "1";
+  }
+
+  return managedEnv;
 }
 
 function lowerChildPriority(pid?: number): void {

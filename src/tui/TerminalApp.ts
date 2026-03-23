@@ -100,6 +100,14 @@ import { applyCodexSurfaceTheme, parseTerminalBackgroundResponse, supportsColor,
 import { OpenAiResponsesTextClient } from "../integrations/openai/responsesTextClient.js";
 import { OllamaClient } from "../integrations/ollama/ollamaClient.js";
 import { OllamaLLMClient } from "../core/llm/client.js";
+import {
+  GENERAL_CHAT_SLOT_LABEL,
+  RECOMMENDED_FOR_RESEARCH_BACKEND,
+  RESEARCH_BACKEND_SLOT_LABEL,
+  RESEARCH_BACKEND_UPDATED_LOG,
+  SELECT_RESEARCH_BACKEND_REASONING_PROMPT,
+  getSelectModelPrompt
+} from "../modelSlotText.js";
 import { buildContextualGuidance, detectGuidanceLanguageFromText, GuidanceLanguage } from "./contextualGuidance.js";
 import {
   AnalyzeProgressState,
@@ -3309,7 +3317,7 @@ export class TerminalApp {
   private async handleCodexModelSelection(slot: "chat" | "task"): Promise<void> {
     this.pushCurrentModelDefaults();
     const selected = await this.selectCodexSlot(
-      slot === "chat" ? "general chat" : "analysis/hypothesis",
+      slot === "chat" ? GENERAL_CHAT_SLOT_LABEL : RESEARCH_BACKEND_SLOT_LABEL,
       this.getCurrentCodexSlotSelection(slot),
       this.getCurrentCodexSlotReasoning(slot),
       slot === "chat" ? "command" : "task"
@@ -3342,7 +3350,7 @@ export class TerminalApp {
     }
 
     const selected = await this.selectOpenAiSlot(
-      slot === "chat" ? "general chat" : "analysis/hypothesis",
+      slot === "chat" ? GENERAL_CHAT_SLOT_LABEL : RESEARCH_BACKEND_SLOT_LABEL,
       this.getCurrentOpenAiSlotModel(slot),
       this.getCurrentOpenAiSlotReasoning(slot),
       slot === "chat" ? "command" : "task"
@@ -3380,7 +3388,7 @@ export class TerminalApp {
       });
     }
     await this.saveConfigFn(this.config);
-    this.pushLog("Research backend updated.");
+    this.pushLog(RESEARCH_BACKEND_UPDATED_LOG);
     this.pushCurrentModelDefaults();
   }
 
@@ -3412,7 +3420,7 @@ export class TerminalApp {
       this.config.providers.ollama!.vision_model = visionModel;
     } else if (llmMode === "openai_api") {
       const taskSlot = await this.selectOpenAiSlot(
-        "research backend",
+        RESEARCH_BACKEND_SLOT_LABEL,
         this.config.providers.openai.model,
         this.config.providers.openai.reasoning_effort,
         "task"
@@ -3424,7 +3432,7 @@ export class TerminalApp {
       this.applyOpenAiSlotSelection("task", taskSlot.model, taskSlot.effort);
     } else {
       const taskSlot = await this.selectCodexSlot(
-        "research backend",
+        RESEARCH_BACKEND_SLOT_LABEL,
         this.getCurrentCodexSlotSelection("task"),
         this.config.providers.codex.reasoning_effort,
         "task"
@@ -3549,7 +3557,7 @@ export class TerminalApp {
     const selected = await this.openSelectionMenu(
       recommended === "command"
         ? "Select command/query reasoning effort"
-        : "Select analysis/hypothesis reasoning effort",
+        : SELECT_RESEARCH_BACKEND_REASONING_PROMPT,
       this.buildOpenAiReasoningEffortOptions(model, recommended),
       normalizedEffort
     );
@@ -3565,7 +3573,7 @@ export class TerminalApp {
     const selected = await this.openSelectionMenu(
       recommended === "command"
         ? "Select command/query reasoning effort"
-        : "Select analysis/hypothesis reasoning effort",
+        : SELECT_RESEARCH_BACKEND_REASONING_PROMPT,
       getReasoningEffortChoicesForModel(model).map((value) => ({
         value,
         label: value,
@@ -3587,7 +3595,7 @@ export class TerminalApp {
           ? "recommended for commands"
           : ""
         : value === "xhigh"
-          ? "recommended for analysis/hypothesis"
+          ? RECOMMENDED_FOR_RESEARCH_BACKEND
           : "";
     const parts = [baseDescription, recommendation].map((part) => part.trim()).filter(Boolean);
     return parts.join(" | ");
@@ -3819,9 +3827,9 @@ export class TerminalApp {
   private describeModelSlot(slot: "chat" | "task"): string {
     switch (slot) {
       case "chat":
-        return "general chat";
+        return GENERAL_CHAT_SLOT_LABEL;
       default:
-        return "analysis/hypothesis";
+        return RESEARCH_BACKEND_SLOT_LABEL;
     }
   }
 
@@ -3854,7 +3862,7 @@ export class TerminalApp {
     recommended: "command" | "task"
   ): Promise<{ selection: string; effort: CodexReasoningEffort } | undefined> {
     const selectedSelection = await this.openSelectionMenu(
-      `Select ${label} model`,
+      getSelectModelPrompt(label),
       this.buildModelSelectionOptions(recommended === "command" ? "chat" : "task"),
       currentSelection
     );
@@ -3917,7 +3925,7 @@ export class TerminalApp {
     recommended: "command" | "task"
   ): Promise<{ model: string; effort: AppConfig["providers"]["openai"]["reasoning_effort"] } | undefined> {
     const selectedModel = await this.openSelectionMenu(
-      `Select ${label} model`,
+      getSelectModelPrompt(label),
       this.buildOpenAiModelOptions(recommended === "command" ? "chat" : "task"),
       normalizeOpenAiResponsesModel(currentModel)
     );
@@ -3953,7 +3961,7 @@ export class TerminalApp {
   private pushModelSlotSummary(): void {
     this.pushLog("Current model slots:");
     this.pushLog(`- ${this.describeModelSlot("chat")}: ${this.getCurrentSlotPreset("chat")} | Recommended: ${this.getRecommendedSlotPreset("chat")}`);
-    this.pushLog(`- research backend: ${this.getCurrentResearchBackendPreset()} | Recommended: ${this.getRecommendedResearchBackendPreset()}`);
+    this.pushLog(`- ${RESEARCH_BACKEND_SLOT_LABEL}: ${this.getCurrentResearchBackendPreset()} | Recommended: ${this.getRecommendedResearchBackendPreset()}`);
   }
 
   private getCompactModelLabel(): string {
@@ -4047,7 +4055,7 @@ export class TerminalApp {
       vision: ollama.vision_model || DEFAULT_OLLAMA_VISION_MODEL
     };
     const label = slotType === "chat" ? "general chat"
-      : slotType === "research" ? "research/analysis"
+      : slotType === "research" ? RESEARCH_BACKEND_SLOT_LABEL
       : slotType === "experiment" ? "experiment/code"
       : "vision/PDF";
     return this.openSelectionMenu(

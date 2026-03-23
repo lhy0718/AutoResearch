@@ -28,6 +28,7 @@ import {
 } from "../core/analysis/paperAnalysisComparison.js";
 import { EvalHarnessRunReport, generateEvalHarnessReport } from "../core/evaluation/evalHarness.js";
 import { writeRunArtifact, safeRead } from "../core/nodes/helpers.js";
+import { formatResearchBackendModelSummary } from "../modelSlotText.js";
 import { RunRecord } from "../types.js";
 
 interface CompareAnalysisCliOptions {
@@ -147,8 +148,8 @@ export async function runCompareAnalysisCli(options: CompareAnalysisCliOptions):
       `Selection source: ${selection.selectionSource}`,
       `Papers selected: ${selection.papers.length}`,
       `Judge enabled: ${options.judge ? "yes" : "no"}`,
-      `Codex research backend model: ${bootstrap.config.providers.codex.model}`,
-      `OpenAI research backend model: ${bootstrap.config.providers.openai.model}`,
+      formatResearchBackendModelSummary("Codex", bootstrap.config.providers.codex.model),
+      formatResearchBackendModelSummary("OpenAI", bootstrap.config.providers.openai.model),
       ""
     ].join("\n")
   );

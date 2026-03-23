@@ -39,6 +39,14 @@ function makeApp(): any {
   return app;
 }
 
+function expectNthMenuPrompt(menuMock: ReturnType<typeof vi.fn>, index: number, prompt: string): void {
+  expect(menuMock).toHaveBeenNthCalledWith(index, prompt, expect.any(Array), expect.anything());
+}
+
+function expectLogContaining(logs: string[], fragment: string): void {
+  expect(logs.some((line) => line.includes(fragment))).toBe(true);
+}
+
 function makeRun(id = "run-1"): any {
   const now = new Date().toISOString();
   const graph = createDefaultGraphState();
@@ -173,7 +181,7 @@ function makeValidResearchBriefMarkdown(topic = "Multi-agent code repair on SWE-
 }
 
 describe("TerminalApp pending natural plan execution", () => {
-  it("uses selection menus for provider and PDF mode in settings", async () => {
+  it("uses selection menus for provider and slot updates in settings", async () => {
     const saveConfig = vi.fn().mockResolvedValue(undefined);
     const app = new TerminalApp({
       config: {
@@ -205,10 +213,7 @@ describe("TerminalApp pending natural plan execution", () => {
     app.render = () => {};
     app.updateSuggestions = () => {};
     app.drainQueuedInputs = async () => {};
-    app.openSelectionMenu = vi
-      .fn()
-      .mockResolvedValueOnce("codex_chatgpt_only")
-      .mockResolvedValueOnce("codex_text_image_hybrid");
+    app.openSelectionMenu = vi.fn().mockResolvedValueOnce("codex_chatgpt_only");
     app.selectCodexSlot = vi
       .fn()
       .mockResolvedValueOnce({ selection: "gpt-5.3-codex", effort: "low" })
@@ -227,6 +232,159 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(getDefaultPdfAnalysisModeForLlmMode(app.config.providers.llm_mode)).toBe("codex_text_image_hybrid");
     expect(app.selectCodexSlot).toHaveBeenCalledTimes(2);
     expect(saveConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks codex settings prompts in provider then chat then research-backend order", async () => {
+    const saveConfig = vi.fn().mockResolvedValue(undefined);
+    const app = new TerminalApp({
+      config: {
+        papers: { max_results: 100 },
+        providers: {
+          llm_mode: "codex_chatgpt_only",
+          codex: {
+            model: "gpt-5.3-codex",
+            chat_model: "gpt-5.3-codex",
+            reasoning_effort: "xhigh",
+            chat_reasoning_effort: "low",
+            command_reasoning_effort: "low",
+            fast_mode: false
+          },
+          openai: { model: "gpt-5.4", reasoning_effort: "medium" }
+        },
+        analysis: {
+          responses_model: "gpt-5.4"
+        },
+        research: {
+          default_topic: "Multi-agent collaboration",
+          default_constraints: ["recent papers", "last 5 years"],
+          default_objective_metric: "state-of-the-art reproducibility"
+        }
+      } as any,
+      runStore: {} as any,
+      titleGenerator: {} as any,
+      codex: {} as any,
+      eventStream: { subscribe: () => () => {} } as any,
+      orchestrator: {} as any,
+      semanticScholarApiKeyConfigured: false,
+      onQuit: () => {},
+      saveConfig
+    }) as any;
+
+    app.render = () => {};
+    app.updateSuggestions = () => {};
+    app.drainQueuedInputs = async () => {};
+    app.openSelectionMenu = vi.fn().mockResolvedValueOnce("codex_chatgpt_only");
+    app.selectCodexSlot = vi
+      .fn()
+      .mockResolvedValueOnce({ selection: "gpt-5.3-codex", effort: "low" })
+      .mockResolvedValueOnce({ selection: "gpt-5.4", effort: "xhigh" });
+
+    await app.handleSettings();
+
+    expect(app.openSelectionMenu).toHaveBeenCalledTimes(1);
+    expect(app.openSelectionMenu).toHaveBeenNthCalledWith(
+      1,
+      "Select primary LLM provider",
+      expect.any(Array),
+      "codex_chatgpt_only"
+    );
+    expect(app.selectCodexSlot).toHaveBeenCalledTimes(2);
+    expect(app.selectCodexSlot).toHaveBeenNthCalledWith(
+      1,
+      "general chat",
+      expect.any(String),
+      "low",
+      "command"
+    );
+    expect(app.selectCodexSlot).toHaveBeenNthCalledWith(
+      2,
+      "research backend",
+      expect.any(String),
+      expect.any(String),
+      "task"
+    );
+    expect(app.selectCodexSlot.mock.calls[1]?.[0]).toBe("research backend");
+    expect(saveConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks openai settings prompts in provider then chat then research-backend order", async () => {
+    process.env.OPENAI_API_KEY = "test-openai-key";
+    const saveConfig = vi.fn().mockResolvedValue(undefined);
+    const openAiTextClient = { updateDefaults: vi.fn() };
+    const app = new TerminalApp({
+      config: {
+        papers: { max_results: 100 },
+        providers: {
+          llm_mode: "openai_api",
+          codex: { model: "gpt-5.3-codex", reasoning_effort: "xhigh", fast_mode: false },
+          openai: {
+            model: "gpt-5.4",
+            chat_model: "gpt-5.4",
+            reasoning_effort: "medium",
+            chat_reasoning_effort: "low",
+            command_reasoning_effort: "low"
+          }
+        },
+        analysis: {
+          responses_model: "gpt-5.4"
+        },
+        research: {
+          default_topic: "Multi-agent collaboration",
+          default_constraints: ["recent papers", "last 5 years"],
+          default_objective_metric: "state-of-the-art reproducibility"
+        }
+      } as any,
+      runStore: {} as any,
+      titleGenerator: {} as any,
+      codex: {} as any,
+      openAiTextClient: openAiTextClient as any,
+      eventStream: { subscribe: () => () => {} } as any,
+      orchestrator: {} as any,
+      semanticScholarApiKeyConfigured: false,
+      onQuit: () => {},
+      saveConfig
+    }) as any;
+
+    app.render = () => {};
+    app.updateSuggestions = () => {};
+    app.drainQueuedInputs = async () => {};
+    app.openSelectionMenu = vi.fn().mockResolvedValueOnce("openai_api");
+    app.selectOpenAiSlot = vi
+      .fn()
+      .mockResolvedValueOnce({ model: "gpt-5.4", effort: "low" })
+      .mockResolvedValueOnce({ model: "gpt-5-mini", effort: "high" });
+
+    await app.handleSettings();
+
+    expect(app.openSelectionMenu).toHaveBeenCalledTimes(1);
+    expect(app.openSelectionMenu).toHaveBeenNthCalledWith(
+      1,
+      "Select primary LLM provider",
+      expect.any(Array),
+      "openai_api"
+    );
+    expect(app.selectOpenAiSlot).toHaveBeenCalledTimes(2);
+    expect(app.selectOpenAiSlot).toHaveBeenNthCalledWith(
+      1,
+      "general chat",
+      "gpt-5.4",
+      "low",
+      "command"
+    );
+    expect(app.selectOpenAiSlot).toHaveBeenNthCalledWith(
+      2,
+      "research backend",
+      "gpt-5.4",
+      "medium",
+      "task"
+    );
+    expect(app.selectOpenAiSlot.mock.calls[1]?.[0]).toBe("research backend");
+    expect(openAiTextClient.updateDefaults).toHaveBeenCalledWith({
+      model: "gpt-5-mini",
+      reasoningEffort: "high"
+    });
+    expect(saveConfig).toHaveBeenCalledTimes(1);
+    delete process.env.OPENAI_API_KEY;
   });
 
   it("asks for OpenAI API reasoning effort when selecting a GPT-5 API model", async () => {
@@ -268,18 +426,10 @@ describe("TerminalApp pending natural plan execution", () => {
 
     await app.handleOpenAiApiModelSelection("task");
 
-    expect(app.openSelectionMenu).toHaveBeenNthCalledWith(
-      1,
-      "Select analysis/hypothesis model",
-      expect.any(Array),
-      "gpt-5.4"
-    );
-    expect(app.openSelectionMenu).toHaveBeenNthCalledWith(
-      2,
-      "Select analysis/hypothesis reasoning effort",
-      expect.any(Array),
-      "medium"
-    );
+    expectNthMenuPrompt(app.openSelectionMenu, 1, "Select research backend model");
+    expectNthMenuPrompt(app.openSelectionMenu, 2, "Select research backend reasoning effort");
+    expect(app.openSelectionMenu.mock.calls[0]?.[0]).toBe("Select research backend model");
+    expect(app.openSelectionMenu.mock.calls[1]?.[0]).toBe("Select research backend reasoning effort");
     expect(openAiTextClient.updateDefaults).toHaveBeenCalledWith({
       model: "gpt-5-mini",
       reasoningEffort: "high"
@@ -300,16 +450,10 @@ describe("TerminalApp pending natural plan execution", () => {
 
     expect(app.logs).toContain("Current model backend: Codex CLI");
     expect(app.logs).toContain("Current model slots:");
-    expect(
-      app.logs.some((line: string) =>
-        line.includes("- general chat:") && line.includes("Recommended: gpt-5.4 + low")
-      )
-    ).toBe(true);
-    expect(
-      app.logs.some((line: string) =>
-        line.includes("- research backend:") && line.includes("Recommended:")
-      )
-    ).toBe(true);
+    expectLogContaining(app.logs, "- general chat:");
+    expectLogContaining(app.logs, "Recommended: gpt-5.4 + low");
+    expectLogContaining(app.logs, "- research backend:");
+    expectLogContaining(app.logs, "Recommended:");
     expect(app.logs.some((line: string) => line.includes("- analysis/hypothesis:"))).toBe(false);
     expect(app.logs.some((line: string) => line.includes("- PDF analysis:"))).toBe(false);
     expect(app.openSelectionMenu).toHaveBeenNthCalledWith(
@@ -841,6 +985,32 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(app.logs).toContain(
       "Cannot clear paper artifacts while the target run is still running. Stop or pause the run first."
     );
+  });
+
+  it("uses research backend wording for the Ollama research slot prompt", async () => {
+    const app = makeApp({
+      providers: {
+        llm_mode: "ollama",
+        codex: { model: "gpt-5.3-codex", reasoning_effort: "xhigh", fast_mode: false },
+        openai: { model: "gpt-5.4", reasoning_effort: "medium" },
+        ollama: {
+          base_url: "http://localhost:11434",
+          chat_model: "qwen2.5:7b",
+          research_model: "qwen3.5:35b-a3b",
+          experiment_model: "qwen2.5-coder:14b",
+          vision_model: "llava:13b"
+        }
+      }
+    } as any);
+
+    app.render = () => {};
+    app.updateSuggestions = () => {};
+    app.drainQueuedInputs = async () => {};
+    app.openSelectionMenu = vi.fn().mockResolvedValueOnce("qwen3.5:35b-a3b");
+
+    await app.handleOllamaModelSelection("task");
+
+    expectNthMenuPrompt(app.openSelectionMenu, 1, "Select Ollama research backend model");
   });
 
   it("summarizes an existing review packet through /agent review", async () => {

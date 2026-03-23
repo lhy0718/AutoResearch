@@ -703,6 +703,201 @@ describe("ImplementSessionManager", () => {
     ).toBe(false);
   });
 
+  it("blocks auto-handoff when the implemented run_command drifts from the published script path", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-design-contract-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Design Contract Drift Run",
+      topic: "agent reasoning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy_delta_vs_baseline"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    const contract = buildExperimentComparisonContract({
+      run,
+      selectedDesign: {
+        id: "plan_impl_contract",
+        hypothesis_ids: ["h_1"],
+        baselines: ["baseline_runner"]
+      },
+      objectiveProfile: buildHeuristicObjectiveMetricProfile(run.objectiveMetric),
+      managedBundleSupported: false
+    });
+    await storeExperimentGovernanceDecision(run, memory, {
+      contract,
+      entries: []
+    });
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const driftedScriptPath = path.join(publicDir, "other_experiment.py");
+    let callCount = 0;
+    const codex = {
+      runTurnStream: async ({ onEvent }: { onEvent?: (event: Record<string, unknown>) => void }) => {
+        callCount += 1;
+        writeFileSync(scriptPath, "print('baseline evaluation ready')\n", "utf8");
+        onEvent?.({ type: "file.changed", path: scriptPath });
+        return {
+          threadId: `thread-impl-design-contract-${callCount}`,
+          finalText: JSON.stringify({
+            summary: "Implemented the public experiment script.",
+            run_command: `python3 ${JSON.stringify(driftedScriptPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: path.join(runDir, "metrics.json"),
+            experiment_mode: "real_execution"
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexCliClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow("Design-to-implementation contract validation failed");
+
+    expect(callCount).toBe(3);
+    expect(
+      await memory.get<{ status: string; failure_type: string; next_action: string }>(
+        "implement_experiments.verify_report"
+      )
+    ).toMatchObject({
+      status: "fail",
+      failure_type: "spec",
+      next_action: "retry_patch"
+    });
+    expect(
+      await memory.get<{ verdict: string; findings: Array<{ code: string }> }>(
+        "experiment_governance.design_implementation_validation"
+      )
+    ).toMatchObject({
+      verdict: "block",
+      findings: expect.arrayContaining([
+        expect.objectContaining({
+          code: "RUN_COMMAND_SCRIPT_MISMATCH"
+        })
+      ])
+    });
+    expect(
+      existsSync(path.join(runDir, "experiment_governance", "design_implementation_validation.json"))
+    ).toBe(true);
+  });
+
+  it("blocks local verification when the verification command drifts from the published script path", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-verify-contract-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Verification Contract Drift Run",
+      topic: "agent reasoning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy_delta_vs_baseline"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    const contract = buildExperimentComparisonContract({
+      run,
+      selectedDesign: {
+        id: "plan_verify_contract",
+        hypothesis_ids: ["h_1"],
+        baselines: ["baseline_runner"]
+      },
+      objectiveProfile: buildHeuristicObjectiveMetricProfile(run.objectiveMetric),
+      managedBundleSupported: false
+    });
+    await storeExperimentGovernanceDecision(run, memory, {
+      contract,
+      entries: []
+    });
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const driftedScriptPath = path.join(publicDir, "other_experiment.py");
+    const eventStream = new InMemoryEventStream();
+    let callCount = 0;
+    const codex = {
+      runTurnStream: async ({ onEvent }: { onEvent?: (event: Record<string, unknown>) => void }) => {
+        callCount += 1;
+        writeFileSync(scriptPath, "print('baseline evaluation ready')\n", "utf8");
+        writeFileSync(driftedScriptPath, "print('stale verification target')\n", "utf8");
+        onEvent?.({ type: "file.changed", path: scriptPath });
+        return {
+          threadId: `thread-impl-verify-contract-${callCount}`,
+          finalText: JSON.stringify({
+            summary: "Implemented the public experiment script.",
+            run_command: `python3 ${JSON.stringify(scriptPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(driftedScriptPath)}`,
+            changed_files: [scriptPath, driftedScriptPath],
+            artifacts: [scriptPath, driftedScriptPath],
+            public_artifacts: [scriptPath, driftedScriptPath],
+            script_path: scriptPath,
+            metrics_path: path.join(runDir, "metrics.json"),
+            experiment_mode: "real_execution"
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexCliClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream,
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow("VERIFY_COMMAND_SCRIPT_MISMATCH");
+
+    expect(callCount).toBe(3);
+    expect(
+      await memory.get<{ status: string; failure_type: string; next_action: string; summary: string }>(
+        "implement_experiments.verify_report"
+      )
+    ).toMatchObject({
+      status: "fail",
+      failure_type: "spec",
+      next_action: "retry_patch"
+    });
+    expect(
+      eventStream.history().some(
+        (event) =>
+          event.type === "TOOL_CALLED" &&
+          event.node === "implement_experiments" &&
+          (event.payload as { source?: string } | undefined)?.source === "local_verification"
+      )
+    ).toBe(false);
+  });
+
   it("emits coalesced intermediate Codex output", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-stream-"));
     tempDirs.push(workspace);

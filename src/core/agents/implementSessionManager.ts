@@ -18,13 +18,20 @@ import { safeRead } from "../nodes/helpers.js";
 import { buildPublicExperimentDir } from "../publicArtifacts.js";
 import { publishPublicRunOutputs } from "../publicOutputPublisher.js";
 import { resolveExperimentLlmProfile } from "../experimentLlmProfile.js";
+import {
+  ExperimentDesignImplementationValidationReport,
+  validateDesignImplementationAlignment,
+  validateVerificationCommandSurface
+} from "../experiments/designImplementationValidator.js";
 import { supportsRealExecutionBundle, writeRealExecutionBundle } from "../experiments/realExecutionBundle.js";
 import { RunVerifierReport } from "../experiments/runVerifierFeedback.js";
 import { AgentComputerInterface, AciObservation } from "../../tools/aci.js";
 import {
+  ExperimentComparisonContract,
   buildExperimentImplementationContext,
   CandidateIsolationAttemptReport,
   CandidateIsolationReport,
+  EXPERIMENT_GOVERNANCE_DESIGN_IMPLEMENTATION_VALIDATION_KEY,
   EXPERIMENT_GOVERNANCE_IMPLEMENTATION_CONTEXT_KEY,
   loadExperimentComparisonContract,
   storeExperimentGovernanceDecision
@@ -242,6 +249,7 @@ interface AttemptRecord {
 interface PreparedImplementAttempt {
   threadId?: string;
   branchPlan: BranchPlan;
+  comparisonContract?: ExperimentComparisonContract;
   workspaceRoot: string;
   rawResponse: string;
   summary: string;
@@ -485,6 +493,7 @@ export class ImplementSessionManager {
     }
     let finalAttempt: PreparedImplementAttempt | undefined;
     let finalIsolation: AttemptIsolationContext | undefined;
+    let finalDesignImplementationValidation: ExperimentDesignImplementationValidationReport | undefined;
     const attemptRecords: AttemptRecord[] = [];
     let latestSearchLocalization: LocalizationResult | undefined;
     let recentReflections = await episodeMemory.recent(run.id, "implement_experiments", 3);
@@ -797,6 +806,28 @@ export class ImplementSessionManager {
         runCommand: prepared.runCommand,
         testCommand: prepared.testCommand
       });
+
+      const comparisonContract = await loadExperimentComparisonContract(run, runContext);
+      const designImplementationValidation = await validateDesignImplementationAlignment({
+        comparisonContract,
+        attempt: {
+          runCommand: prepared.runCommand,
+          testCommand: prepared.testCommand,
+          scriptPath: prepared.scriptPath,
+          metricsPath: prepared.metricsPath,
+          workingDir: prepared.workingDir,
+          publicDir: prepared.publicDir,
+          changedFiles: prepared.changedFiles,
+          publicArtifacts: prepared.publicArtifacts
+        }
+      });
+      prepared.comparisonContract = comparisonContract;
+      finalDesignImplementationValidation = designImplementationValidation;
+      if (designImplementationValidation.verdict === "block") {
+        prepared.verifyReport = buildDesignImplementationValidationVerifyReport(
+          designImplementationValidation
+        );
+      }
 
       const verifyReport = await this.verifyAttempt(prepared, abortSignal, run.id, attempt, (text, extras) => {
         queueProgressUpdate("verify", text, {
@@ -1132,6 +1163,10 @@ export class ImplementSessionManager {
     await runContext.put("implement_experiments.last_summary", summary);
     await runContext.put("implement_experiments.raw_response", finalAttempt.rawResponse);
     await runContext.put("implement_experiments.assumptions", finalAttempt.assumptions);
+    await runContext.put(
+      "implement_experiments.design_implementation_validation",
+      finalDesignImplementationValidation
+    );
     const candidateIsolationReport: CandidateIsolationReport = {
       version: 1,
       run_id: run.id,
@@ -1171,15 +1206,21 @@ export class ImplementSessionManager {
       await storeExperimentGovernanceDecision(run, runContext, {
         implementationContext,
         candidateIsolationReport,
+        designImplementationValidation: finalDesignImplementationValidation,
         entries: []
       });
       await runContext.put(EXPERIMENT_GOVERNANCE_IMPLEMENTATION_CONTEXT_KEY, implementationContext);
     } else {
       await storeExperimentGovernanceDecision(run, runContext, {
         candidateIsolationReport,
+        designImplementationValidation: finalDesignImplementationValidation,
         entries: []
       });
     }
+    await runContext.put(
+      EXPERIMENT_GOVERNANCE_DESIGN_IMPLEMENTATION_VALIDATION_KEY,
+      finalDesignImplementationValidation
+    );
 
     await ensureDir(runDir);
     await writeJsonFile(path.join(runDir, "implement_task_spec.json"), taskSpec);
@@ -1221,6 +1262,7 @@ export class ImplementSessionManager {
       localization: finalLocalization,
       assumptions: finalAttempt.assumptions,
       verify_report: finalVerifyReport,
+      design_implementation_validation: finalDesignImplementationValidation,
       auto_handoff_to_run_experiments: autoHandoffToRunExperiments,
       handoff_reason: handoffReason,
       attempt_count: attemptRecords.length,
@@ -2053,6 +2095,32 @@ export class ImplementSessionManager {
         missingArtifacts,
         workspaceRoot: attempt.workspaceRoot
       });
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text: report.summary
+        }
+      });
+      onProgress?.(report.summary, {
+        verificationCommand: command,
+        verifyStatus: report.status
+      });
+      return report;
+    }
+
+    const verificationSurfaceReport = validateVerificationCommandSurface({
+      comparisonContract: attempt.comparisonContract,
+      verificationCommand: command,
+      workingDir: attempt.workingDir,
+      scriptPath: attempt.scriptPath,
+      metricsPath: attempt.metricsPath,
+      runCommand: attempt.runCommand
+    });
+    if (verificationSurfaceReport.verdict === "block") {
+      const report = buildDesignImplementationValidationVerifyReport(verificationSurfaceReport);
       this.deps.eventStream.emit({
         type: "OBS_RECEIVED",
         runId,
@@ -4729,6 +4797,24 @@ function buildMissingArtifactVerifyReport(
     summary: isStructured
       ? "Implementer did not return a runnable artifact or run_command."
       : "Implementer did not return the required JSON result or any runnable artifact."
+  };
+}
+
+function buildDesignImplementationValidationVerifyReport(
+  report: ExperimentDesignImplementationValidationReport
+): VerifyReport {
+  const blockingFindings = report.findings.filter((finding) => finding.severity === "block");
+  const renderedFinding = blockingFindings
+    .map((finding) => `${finding.code}: ${finding.message}${finding.evidence ? ` (${finding.evidence})` : ""}`)
+    .join("; ");
+  return {
+    status: "fail",
+    failure_type: "spec",
+    next_action: "retry_patch",
+    stderr_excerpt: renderedFinding || report.summary,
+    summary: renderedFinding
+      ? `Design-to-implementation contract validation failed: ${renderedFinding}`
+      : report.summary
   };
 }
 

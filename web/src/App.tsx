@@ -19,6 +19,10 @@ import {
   WebConfigOptions,
   WebSessionState
 } from "./types";
+import {
+  CODEX_TASK_MODEL_DESCRIPTION,
+  OPENAI_TASK_MODEL_DESCRIPTION
+} from "../../src/modelSlotText.js";
 
 const NODE_ORDER = [
   "collect_papers",
@@ -1514,7 +1518,7 @@ function ConfigEditorForm(props: ConfigEditorFormProps) {
           />
           <ConfigModelSection
             title="Codex task"
-            description="Analysis, hypothesis, and planning tasks."
+            description={CODEX_TASK_MODEL_DESCRIPTION}
             disabled={props.disabled}
             modelValue={props.form.codexTaskModelChoice}
             effortValue={props.form.codexTaskReasoningEffort}
@@ -1552,7 +1556,7 @@ function ConfigEditorForm(props: ConfigEditorFormProps) {
           />
           <ConfigModelSection
             title="OpenAI task"
-            description="Analysis and hypothesis model for API mode."
+            description={OPENAI_TASK_MODEL_DESCRIPTION}
             disabled={props.disabled}
             modelValue={props.form.openAiTaskModel}
             effortValue={props.form.openAiReasoningEffort}

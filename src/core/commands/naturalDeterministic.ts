@@ -195,11 +195,11 @@ export function resolveDeterministicPendingCommand(
   if (matchesAny(lower, [/doctor/i, /환경.*점검/u, /환경.*체크/u, /check.*environment/i])) {
     return buildPending(language, "/doctor", targetRun?.id, "Running environment checks.", "환경 점검을 실행합니다.");
   }
-  if (matchesAny(lower, [/settings?/i, /설정/u])) {
-    return buildPending(language, "/settings", targetRun?.id, "Opening settings.", "설정을 엽니다.");
-  }
   if (matchesAny(lower, [/model/i, /reasoning effort/i, /모델/u, /리저닝/u])) {
     return buildPending(language, "/model", targetRun?.id, "Opening model selector.", "모델 선택기를 엽니다.");
+  }
+  if (matchesAny(lower, [/settings?/i, /설정/u])) {
+    return buildPending(language, "/settings", targetRun?.id, "Opening settings.", "설정을 엽니다.");
   }
   if (matchesAny(lower, [/quit/i, /\bexit\b/i, /종료/u, /끝내/u])) {
     return buildPending(language, "/quit", targetRun?.id, "Preparing to quit.", "종료를 준비합니다.");
