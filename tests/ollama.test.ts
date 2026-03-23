@@ -374,7 +374,7 @@ describe("Ollama model catalog", () => {
     expect(choices.length).toBeGreaterThan(0);
   });
 
-  it("provides research model choices", () => {
+  it("provides research backend model choices", () => {
     const choices = buildOllamaResearchModelChoices();
     expect(choices).toContain(DEFAULT_OLLAMA_RESEARCH_MODEL);
   });
@@ -392,6 +392,7 @@ describe("Ollama model catalog", () => {
   it("returns descriptions for known models", () => {
     expect(getOllamaModelDescription(DEFAULT_OLLAMA_CHAT_MODEL)).not.toBe("Ollama model.");
     expect(getOllamaModelDescription(DEFAULT_OLLAMA_RESEARCH_MODEL)).not.toBe("Ollama model.");
+    expect(getOllamaModelDescription(DEFAULT_OLLAMA_RESEARCH_MODEL)).toContain("research backend");
   });
 
   it("returns generic description for unknown models", () => {

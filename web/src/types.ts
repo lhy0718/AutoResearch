@@ -87,14 +87,14 @@ export interface ConfigSummary {
   projectName: string;
   workflowMode: "agent_approval";
   approvalMode: "manual" | "minimal";
-  llmMode: "codex_chatgpt_only" | "openai_api";
-  pdfMode: "codex_text_image_hybrid" | "responses_api_pdf";
-  taskModel: string;
+  llmMode: "codex_chatgpt_only" | "openai_api" | "ollama";
+  pdfMode: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
+  researchBackendModel: string;
   chatModel: string;
   experimentModel: string;
-  taskReasoning: string;
-  chatReasoning: string;
-  experimentReasoning: string;
+  researchBackendReasoning: string | undefined;
+  chatReasoning: string | undefined;
+  experimentReasoning: string | undefined;
 }
 
 export interface WebConfigFormData {
@@ -102,17 +102,17 @@ export interface WebConfigFormData {
   defaultTopic: string;
   defaultConstraints: string;
   defaultObjectiveMetric: string;
-  llmMode: "codex_chatgpt_only" | "openai_api";
+  llmMode: "codex_chatgpt_only" | "openai_api" | "ollama";
   codexChatModelChoice: string;
   codexChatReasoningEffort: string;
-  codexTaskModelChoice: string;
-  codexTaskReasoningEffort: string;
+  codexResearchBackendModelChoice: string;
+  codexResearchBackendReasoningEffort: string;
   codexExperimentModelChoice: string;
   codexExperimentReasoningEffort: string;
   openAiChatModel: string;
   openAiChatReasoningEffort: string;
-  openAiTaskModel: string;
-  openAiReasoningEffort: string;
+  openAiResearchBackendModel: string;
+  openAiResearchBackendReasoningEffort: string;
   openAiExperimentModel: string;
   openAiExperimentReasoningEffort: string;
 }

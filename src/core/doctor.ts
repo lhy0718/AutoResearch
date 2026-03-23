@@ -72,7 +72,7 @@ export async function runDoctorReport(
   }
 
   if (opts?.llmMode === "codex_chatgpt_only" && opts.codexResearchModel) {
-    checks.push(buildCodexModelCheck("codex-research-model", "research", opts.codexResearchModel));
+    checks.push(buildCodexModelCheck("codex-research-backend-model", "research backend", opts.codexResearchModel));
   }
 
   checks.push(await runBinaryCheck("python3", ["--version"], "python"));

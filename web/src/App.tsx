@@ -489,7 +489,7 @@ export function App() {
               <span className="chip">{labelPdfMode(bootstrap.configSummary?.pdfMode)}</span>
             </div>
             <small>Autonomy preset: Overnight safe policy on demand via <code>/agent overnight</code>.</small>
-            <small>Task: {bootstrap.configSummary?.taskModel} · {bootstrap.configSummary?.taskReasoning}</small>
+            <small>Research backend: {bootstrap.configSummary?.researchBackendModel} · {bootstrap.configSummary?.researchBackendReasoning}</small>
             <small>Experiment: {bootstrap.configSummary?.experimentModel} · {bootstrap.configSummary?.experimentReasoning}</small>
           </div>
         </div>
@@ -1517,15 +1517,17 @@ function ConfigEditorForm(props: ConfigEditorFormProps) {
             onEffortChange={(value) => patchSetupForm(props.onChange, { codexChatReasoningEffort: value })}
           />
           <ConfigModelSection
-            title="Codex task"
+            title="Codex research backend"
             description={CODEX_TASK_MODEL_DESCRIPTION}
             disabled={props.disabled}
-            modelValue={props.form.codexTaskModelChoice}
-            effortValue={props.form.codexTaskReasoningEffort}
+            modelValue={props.form.codexResearchBackendModelChoice}
+            effortValue={props.form.codexResearchBackendReasoningEffort}
             modelOptions={props.options.codexModels}
-            effortOptions={getEffortOptions(props.options.codexReasoningByModel, props.form.codexTaskModelChoice)}
-            onModelChange={(value) => updateCodexTaskModelAndDerivedPdf(props.onChange, value, props.options.codexReasoningByModel)}
-            onEffortChange={(value) => updateCodexTaskEffortAndDerivedPdf(props.onChange, value)}
+            effortOptions={getEffortOptions(props.options.codexReasoningByModel, props.form.codexResearchBackendModelChoice)}
+            onModelChange={(value) =>
+              updateCodexResearchBackendModel(props.onChange, value, props.options.codexReasoningByModel)
+            }
+            onEffortChange={(value) => updateCodexResearchBackendEffort(props.onChange, value)}
           />
           <ConfigModelSection
             title="Codex experiment"
@@ -1555,15 +1557,17 @@ function ConfigEditorForm(props: ConfigEditorFormProps) {
             onEffortChange={(value) => patchSetupForm(props.onChange, { openAiChatReasoningEffort: value })}
           />
           <ConfigModelSection
-            title="OpenAI task"
+            title="OpenAI research backend"
             description={OPENAI_TASK_MODEL_DESCRIPTION}
             disabled={props.disabled}
-            modelValue={props.form.openAiTaskModel}
-            effortValue={props.form.openAiReasoningEffort}
+            modelValue={props.form.openAiResearchBackendModel}
+            effortValue={props.form.openAiResearchBackendReasoningEffort}
             modelOptions={props.options.openAiModels}
-            effortOptions={getEffortOptions(props.options.openAiReasoningByModel, props.form.openAiTaskModel)}
-            onModelChange={(value) => updateOpenAiTaskModelAndDerivedPdf(props.onChange, value, props.options.openAiReasoningByModel)}
-            onEffortChange={(value) => updateOpenAiTaskEffortAndDerivedPdf(props.onChange, value)}
+            effortOptions={getEffortOptions(props.options.openAiReasoningByModel, props.form.openAiResearchBackendModel)}
+            onModelChange={(value) =>
+              updateOpenAiResearchBackendModel(props.onChange, value, props.options.openAiReasoningByModel)
+            }
+            onEffortChange={(value) => updateOpenAiResearchBackendEffort(props.onChange, value)}
           />
           <ConfigModelSection
             title="OpenAI experiment"
@@ -1668,14 +1672,14 @@ function createDefaultConfigForm(): WebConfigFormData {
     llmMode: "codex_chatgpt_only",
     codexChatModelChoice: "gpt-5.3-codex-spark",
     codexChatReasoningEffort: "medium",
-    codexTaskModelChoice: "gpt-5.3-codex",
-    codexTaskReasoningEffort: "xhigh",
+    codexResearchBackendModelChoice: "gpt-5.3-codex",
+    codexResearchBackendReasoningEffort: "xhigh",
     codexExperimentModelChoice: "gpt-5.3-codex",
     codexExperimentReasoningEffort: "xhigh",
     openAiChatModel: "gpt-5.4",
     openAiChatReasoningEffort: "low",
-    openAiTaskModel: "gpt-5.4",
-    openAiReasoningEffort: "medium",
+    openAiResearchBackendModel: "gpt-5.4",
+    openAiResearchBackendReasoningEffort: "medium",
     openAiExperimentModel: "gpt-5.4",
     openAiExperimentReasoningEffort: "medium"
   };
@@ -1748,57 +1752,61 @@ function updateModelAndEffort(
   });
 }
 
-function updateCodexTaskModelAndDerivedPdf(
+function updateCodexResearchBackendModel(
   setter: Dispatch<SetStateAction<SetupFormState>>,
   nextModel: string,
   optionsByModel: Record<string, string[]>
 ) {
   setter((current) => {
     const effortOptions = getEffortOptions(optionsByModel, nextModel);
-    const currentTaskEffort = String(current.codexTaskReasoningEffort || "");
-    const nextTaskEffort = effortOptions.includes(currentTaskEffort) ? currentTaskEffort : effortOptions[0];
+    const currentResearchBackendEffort = String(current.codexResearchBackendReasoningEffort || "");
+    const nextResearchBackendEffort = effortOptions.includes(currentResearchBackendEffort)
+      ? currentResearchBackendEffort
+      : effortOptions[0];
     return {
       ...current,
-      codexTaskModelChoice: nextModel,
-      codexTaskReasoningEffort: nextTaskEffort
+      codexResearchBackendModelChoice: nextModel,
+      codexResearchBackendReasoningEffort: nextResearchBackendEffort
     };
   });
 }
 
-function updateCodexTaskEffortAndDerivedPdf(
+function updateCodexResearchBackendEffort(
   setter: Dispatch<SetStateAction<SetupFormState>>,
   nextEffort: string
 ) {
   setter((current) => ({
     ...current,
-    codexTaskReasoningEffort: nextEffort
+    codexResearchBackendReasoningEffort: nextEffort
   }));
 }
 
-function updateOpenAiTaskModelAndDerivedPdf(
+function updateOpenAiResearchBackendModel(
   setter: Dispatch<SetStateAction<SetupFormState>>,
   nextModel: string,
   optionsByModel: Record<string, string[]>
 ) {
   setter((current) => {
     const effortOptions = getEffortOptions(optionsByModel, nextModel);
-    const currentTaskEffort = String(current.openAiReasoningEffort || "");
-    const nextTaskEffort = effortOptions.includes(currentTaskEffort) ? currentTaskEffort : effortOptions[0];
+    const currentResearchBackendEffort = String(current.openAiResearchBackendReasoningEffort || "");
+    const nextResearchBackendEffort = effortOptions.includes(currentResearchBackendEffort)
+      ? currentResearchBackendEffort
+      : effortOptions[0];
     return {
       ...current,
-      openAiTaskModel: nextModel,
-      openAiReasoningEffort: nextTaskEffort
+      openAiResearchBackendModel: nextModel,
+      openAiResearchBackendReasoningEffort: nextResearchBackendEffort
     };
   });
 }
 
-function updateOpenAiTaskEffortAndDerivedPdf(
+function updateOpenAiResearchBackendEffort(
   setter: Dispatch<SetStateAction<SetupFormState>>,
   nextEffort: string
 ) {
   setter((current) => ({
     ...current,
-    openAiReasoningEffort: nextEffort
+    openAiResearchBackendReasoningEffort: nextEffort
   }));
 }
 

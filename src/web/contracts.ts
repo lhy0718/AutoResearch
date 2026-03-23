@@ -9,10 +9,10 @@ export interface ConfigSummary {
   approvalMode: "manual" | "minimal";
   llmMode: "codex_chatgpt_only" | "openai_api" | "ollama";
   pdfMode: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
-  taskModel: string;
+  researchBackendModel: string;
   chatModel: string;
   experimentModel: string;
-  taskReasoning: string | undefined;
+  researchBackendReasoning: string | undefined;
   chatReasoning: string | undefined;
   experimentReasoning: string | undefined;
 }
@@ -25,14 +25,14 @@ export interface WebConfigFormData {
   llmMode: "codex_chatgpt_only" | "openai_api" | "ollama";
   codexChatModelChoice: string;
   codexChatReasoningEffort: string;
-  codexTaskModelChoice: string;
-  codexTaskReasoningEffort: string;
+  codexResearchBackendModelChoice: string;
+  codexResearchBackendReasoningEffort: string;
   codexExperimentModelChoice: string;
   codexExperimentReasoningEffort: string;
   openAiChatModel: string;
   openAiChatReasoningEffort: string;
-  openAiTaskModel: string;
-  openAiReasoningEffort: string;
+  openAiResearchBackendModel: string;
+  openAiResearchBackendReasoningEffort: string;
   openAiExperimentModel: string;
   openAiExperimentReasoningEffort: string;
   ollamaBaseUrl: string;

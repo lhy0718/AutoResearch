@@ -354,14 +354,14 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         return {
           status: "success",
           summary: modelBlocked
-            ? "analyze_papers paused before starting because the configured Codex research model is not approved for long-running rerank or paper analysis."
+            ? "analyze_papers paused before starting because the configured Codex research backend model is not approved for long-running rerank or paper analysis."
             : "analyze_papers paused before starting because the Codex CLI environment is not writable or ready for rerank/paper analysis.",
           needsApproval: true,
           toolCallsUsed: 0,
           transitionRecommendation: createAnalyzePapersManualReviewRecommendation({
             runId: run.id,
             reason: modelBlocked
-              ? "analyze_papers requires a non-Spark Codex research model for long-running rerank and paper analysis work, so the current model selection must be changed before continuing."
+              ? "analyze_papers requires a non-Spark Codex research backend model for long-running rerank and paper analysis work, so the current model selection must be changed before continuing."
               : "analyze_papers is blocked by the current Codex CLI environment, so rerank and paper analysis should not start until /doctor passes.",
             confidence: 0.98,
             evidence: codexPreflightFailures.map((check) => `${check.name}: ${check.detail}`),
@@ -3059,13 +3059,15 @@ async function runAnalyzeCodexPreflight(input: {
     );
   }
   if (input.researchModel) {
-    checks.push(buildAnalyzeCodexModelCheck("codex-research-model", "research", input.researchModel));
+    checks.push(
+      buildAnalyzeCodexModelCheck("codex-research-backend-model", "research backend", input.researchModel)
+    );
   }
   return checks.filter((check) => !check.ok);
 }
 
 function isCodexModelCheck(name: string): boolean {
-  return name === "codex-research-model";
+  return name === "codex-research-backend-model";
 }
 
 function buildAnalyzeCodexModelCheck(name: string, label: string, model: string): DoctorCheck {

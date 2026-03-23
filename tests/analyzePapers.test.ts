@@ -1533,7 +1533,7 @@ describe("analyzePapers node", () => {
     expect(loggedTexts.some((text) => text.includes("Codex preflight failed [codex-home]"))).toBe(true);
   });
 
-  it("pauses before starting when the configured Codex research model is Spark", async () => {
+  it("pauses before starting when the configured Codex research backend model is Spark", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-spark-preflight-"));
     tempDirs.push(root);
     process.chdir(root);
@@ -1573,12 +1573,13 @@ describe("analyzePapers node", () => {
     const result = await node.execute({ run, graph: run.graph });
     expect(result.status).toBe("success");
     expect(result.needsApproval).toBe(true);
-    expect(result.summary).toContain("configured Codex research model");
+    expect(result.summary).toContain("configured Codex research backend model");
     expect(result.transitionRecommendation?.action).toBe("pause_for_human");
+    expect(result.transitionRecommendation?.reason).toContain("research backend model");
     expect(llm.callCount).toBe(0);
 
     const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
-    expect(loggedTexts.some((text) => text.includes("Codex preflight failed [codex-research-model]"))).toBe(true);
+    expect(loggedTexts.some((text) => text.includes("Codex preflight failed [codex-research-backend-model]"))).toBe(true);
   });
 
   it("preserves partial analysis and pauses when later papers hit environment permission errors", async () => {

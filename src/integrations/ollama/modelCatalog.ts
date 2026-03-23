@@ -37,12 +37,12 @@ export const OLLAMA_RESEARCH_MODEL_OPTIONS: OllamaModelOption[] = [
   {
     value: "qwen3.5:35b-a3b",
     label: "qwen3.5:35b-a3b",
-    description: "MoE research model with strong reasoning for main workflow nodes."
+    description: "MoE research backend model with strong reasoning for main workflow nodes."
   },
   {
     value: "qwen3:32b",
     label: "qwen3:32b",
-    description: "Dense 32B model for research tasks."
+    description: "Dense 32B model for research backend tasks."
   },
   {
     value: "deepseek-r1:32b",
@@ -52,7 +52,7 @@ export const OLLAMA_RESEARCH_MODEL_OPTIONS: OllamaModelOption[] = [
   {
     value: "llama3.3:70b",
     label: "llama3.3:70b",
-    description: "Llama 3.3 70B for research (requires >40GB VRAM)."
+    description: "Llama 3.3 70B for research backend tasks (requires >40GB VRAM)."
   }
 ];
 

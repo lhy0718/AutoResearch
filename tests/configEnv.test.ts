@@ -456,8 +456,8 @@ describe("config .env overrides", () => {
       defaultObjectiveMetric: "sample efficiency",
       llmMode: "codex_chatgpt_only",
       semanticScholarApiKey: "semantic-key",
-      codexTaskModelChoice: "gpt-5.3-codex",
-      codexTaskReasoningEffort: "high",
+      codexResearchBackendModelChoice: "gpt-5.3-codex",
+      codexResearchBackendReasoningEffort: "high",
       codexExperimentModelChoice: "gpt-5.4 (fast)",
       codexExperimentReasoningEffort: "xhigh"
     });

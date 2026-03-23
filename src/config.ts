@@ -94,14 +94,14 @@ export interface NonInteractiveSetupInput {
   openAiApiKey?: string;
   codexChatModelChoice?: string;
   codexChatReasoningEffort?: AppConfig["providers"]["codex"]["reasoning_effort"];
-  codexTaskModelChoice?: string;
-  codexTaskReasoningEffort?: AppConfig["providers"]["codex"]["reasoning_effort"];
+  codexResearchBackendModelChoice?: string;
+  codexResearchBackendReasoningEffort?: AppConfig["providers"]["codex"]["reasoning_effort"];
   codexExperimentModelChoice?: string;
   codexExperimentReasoningEffort?: AppConfig["providers"]["codex"]["reasoning_effort"];
   openAiChatModel?: string;
   openAiChatReasoningEffort?: AppConfig["providers"]["openai"]["reasoning_effort"];
-  openAiTaskModel?: string;
-  openAiReasoningEffort?: AppConfig["providers"]["openai"]["reasoning_effort"];
+  openAiResearchBackendModel?: string;
+  openAiResearchBackendReasoningEffort?: AppConfig["providers"]["openai"]["reasoning_effort"];
   openAiExperimentModel?: string;
   openAiExperimentReasoningEffort?: AppConfig["providers"]["openai"]["reasoning_effort"];
   ollamaBaseUrl?: string;
@@ -179,14 +179,14 @@ function buildConfigFromWizardAnswers(answers: {
   llmMode: "codex_chatgpt_only" | "openai_api" | "ollama";
   codexChatModelChoice: string;
   codexChatReasoningEffort: AppConfig["providers"]["codex"]["reasoning_effort"];
-  codexTaskModelChoice: string;
-  codexTaskReasoningEffort: AppConfig["providers"]["codex"]["reasoning_effort"];
+  codexResearchBackendModelChoice: string;
+  codexResearchBackendReasoningEffort: AppConfig["providers"]["codex"]["reasoning_effort"];
   codexExperimentModelChoice: string;
   codexExperimentReasoningEffort: AppConfig["providers"]["codex"]["reasoning_effort"];
   openAiChatModel: string;
   openAiChatReasoningEffort: AppConfig["providers"]["openai"]["reasoning_effort"];
-  openAiTaskModel: string;
-  openAiReasoningEffort: AppConfig["providers"]["openai"]["reasoning_effort"];
+  openAiResearchBackendModel: string;
+  openAiResearchBackendReasoningEffort: AppConfig["providers"]["openai"]["reasoning_effort"];
   openAiExperimentModel: string;
   openAiExperimentReasoningEffort: AppConfig["providers"]["openai"]["reasoning_effort"];
   ollamaBaseUrl?: string;
@@ -196,7 +196,7 @@ function buildConfigFromWizardAnswers(answers: {
   ollamaVisionModel?: string;
 }): AppConfig {
   const codexChatSelection = resolveCodexModelSelection(answers.codexChatModelChoice);
-  const codexTaskSelection = resolveCodexModelSelection(answers.codexTaskModelChoice);
+  const codexResearchBackendSelection = resolveCodexModelSelection(answers.codexResearchBackendModelChoice);
   const codexExperimentSelection = resolveCodexModelSelection(answers.codexExperimentModelChoice);
   return {
     version: 1,
@@ -204,23 +204,23 @@ function buildConfigFromWizardAnswers(answers: {
     providers: {
       llm_mode: answers.llmMode,
       codex: {
-        model: codexTaskSelection.model,
+        model: codexResearchBackendSelection.model,
         chat_model: codexChatSelection.model,
         experiment_model: codexExperimentSelection.model,
-        reasoning_effort: answers.codexTaskReasoningEffort,
+        reasoning_effort: answers.codexResearchBackendReasoningEffort,
         chat_reasoning_effort: answers.codexChatReasoningEffort,
         experiment_reasoning_effort: answers.codexExperimentReasoningEffort,
         command_reasoning_effort: answers.codexChatReasoningEffort,
-        fast_mode: codexTaskSelection.fastMode,
+        fast_mode: codexResearchBackendSelection.fastMode,
         chat_fast_mode: codexChatSelection.fastMode,
         experiment_fast_mode: codexExperimentSelection.fastMode,
         auth_required: true
       },
       openai: {
-        model: answers.openAiTaskModel,
+        model: answers.openAiResearchBackendModel,
         chat_model: answers.openAiChatModel,
         experiment_model: answers.openAiExperimentModel,
-        reasoning_effort: answers.openAiReasoningEffort,
+        reasoning_effort: answers.openAiResearchBackendReasoningEffort,
         chat_reasoning_effort: answers.openAiChatReasoningEffort,
         experiment_reasoning_effort: answers.openAiExperimentReasoningEffort,
         command_reasoning_effort: answers.openAiChatReasoningEffort,
@@ -365,38 +365,38 @@ export async function runSetupWizard(
       : llmMode === "openai_api"
         ? await askOpenAiResponsesModel(RESEARCH_BACKEND_MODEL_PROMPT, DEFAULT_OPENAI_RESPONSES_MODEL, promptReader)
         : DEFAULT_CODEX_MODEL;
-  const codexTaskModelChoice =
+  const codexResearchBackendModelChoice =
     llmMode === "codex_chatgpt_only"
       ? researchBackendModelChoice
       : DEFAULT_CODEX_MODEL;
-  const codexTaskReasoningEffort =
+  const codexResearchBackendReasoningEffort =
     llmMode === "codex_chatgpt_only"
       ? await askCodexReasoningEffort(
         RESEARCH_BACKEND_REASONING_PROMPT,
-        resolveCodexModelSelection(codexTaskModelChoice).model,
+        resolveCodexModelSelection(codexResearchBackendModelChoice).model,
           DEFAULT_BACKEND_REASONING_EFFORT,
           DEFAULT_BACKEND_REASONING_EFFORT,
           promptReader
         )
       : (DEFAULT_BACKEND_REASONING_EFFORT as AppConfig["providers"]["codex"]["reasoning_effort"]);
-  const codexExperimentModelChoice = codexTaskModelChoice;
-  const codexExperimentReasoningEffort = codexTaskReasoningEffort;
-  const openAiTaskModel =
+  const codexExperimentModelChoice = codexResearchBackendModelChoice;
+  const codexExperimentReasoningEffort = codexResearchBackendReasoningEffort;
+  const openAiResearchBackendModel =
     llmMode === "openai_api"
       ? researchBackendModelChoice
       : DEFAULT_OPENAI_RESPONSES_MODEL;
-  const openAiReasoningEffort =
+  const openAiResearchBackendReasoningEffort =
     llmMode === "openai_api"
       ? await askOpenAiResponsesReasoningEffort(
         RESEARCH_BACKEND_REASONING_PROMPT,
-        openAiTaskModel,
+        openAiResearchBackendModel,
           DEFAULT_BACKEND_REASONING_EFFORT,
           DEFAULT_BACKEND_REASONING_EFFORT,
           promptReader
         )
       : (DEFAULT_BACKEND_REASONING_EFFORT as AppConfig["providers"]["openai"]["reasoning_effort"]);
-  const openAiExperimentModel = openAiTaskModel;
-  const openAiExperimentReasoningEffort = openAiReasoningEffort;
+  const openAiExperimentModel = openAiResearchBackendModel;
+  const openAiExperimentReasoningEffort = openAiResearchBackendReasoningEffort;
   const existingOpenAiApiKey = await resolveOpenAiApiKey(paths.cwd);
   const openAiApiKey = llmMode === "openai_api" ? await askApiKey("OpenAI API key", existingOpenAiApiKey, promptReader) : undefined;
 
@@ -408,14 +408,14 @@ export async function runSetupWizard(
     llmMode,
     codexChatModelChoice,
     codexChatReasoningEffort,
-    codexTaskModelChoice,
-    codexTaskReasoningEffort,
+    codexResearchBackendModelChoice,
+    codexResearchBackendReasoningEffort,
     codexExperimentModelChoice,
     codexExperimentReasoningEffort,
     openAiChatModel,
     openAiChatReasoningEffort,
-    openAiTaskModel,
-    openAiReasoningEffort,
+    openAiResearchBackendModel,
+    openAiResearchBackendReasoningEffort,
     openAiExperimentModel,
     openAiExperimentReasoningEffort,
     ollamaBaseUrl,
@@ -449,22 +449,26 @@ export async function runNonInteractiveSetup(
     llmMode,
     codexChatModelChoice: input.codexChatModelChoice || DEFAULT_CODEX_CHAT_SETUP_MODEL,
     codexChatReasoningEffort: input.codexChatReasoningEffort || DEFAULT_CODEX_CHAT_SETUP_REASONING_EFFORT,
-    codexTaskModelChoice: input.codexTaskModelChoice || RECOMMENDED_CODEX_MODEL,
-    codexTaskReasoningEffort: input.codexTaskReasoningEffort || DEFAULT_BACKEND_REASONING_EFFORT,
+    codexResearchBackendModelChoice: input.codexResearchBackendModelChoice || RECOMMENDED_CODEX_MODEL,
+    codexResearchBackendReasoningEffort:
+      input.codexResearchBackendReasoningEffort || DEFAULT_BACKEND_REASONING_EFFORT,
     codexExperimentModelChoice:
-      input.codexExperimentModelChoice || input.codexTaskModelChoice || RECOMMENDED_CODEX_MODEL,
+      input.codexExperimentModelChoice || input.codexResearchBackendModelChoice || RECOMMENDED_CODEX_MODEL,
     codexExperimentReasoningEffort:
-      input.codexExperimentReasoningEffort || input.codexTaskReasoningEffort || DEFAULT_BACKEND_REASONING_EFFORT,
+      input.codexExperimentReasoningEffort ||
+      input.codexResearchBackendReasoningEffort ||
+      DEFAULT_BACKEND_REASONING_EFFORT,
     openAiChatModel: input.openAiChatModel || DEFAULT_OPENAI_RESPONSES_MODEL,
     openAiChatReasoningEffort: input.openAiChatReasoningEffort || "low",
-    openAiTaskModel: input.openAiTaskModel || DEFAULT_OPENAI_RESPONSES_MODEL,
-    openAiReasoningEffort:
-      input.openAiReasoningEffort ||
+    openAiResearchBackendModel: input.openAiResearchBackendModel || DEFAULT_OPENAI_RESPONSES_MODEL,
+    openAiResearchBackendReasoningEffort:
+      input.openAiResearchBackendReasoningEffort ||
       (DEFAULT_BACKEND_REASONING_EFFORT as AppConfig["providers"]["openai"]["reasoning_effort"]),
-    openAiExperimentModel: input.openAiExperimentModel || input.openAiTaskModel || DEFAULT_OPENAI_RESPONSES_MODEL,
+    openAiExperimentModel:
+      input.openAiExperimentModel || input.openAiResearchBackendModel || DEFAULT_OPENAI_RESPONSES_MODEL,
     openAiExperimentReasoningEffort:
       input.openAiExperimentReasoningEffort ||
-      input.openAiReasoningEffort ||
+      input.openAiResearchBackendReasoningEffort ||
       (DEFAULT_BACKEND_REASONING_EFFORT as AppConfig["providers"]["openai"]["reasoning_effort"]),
     ollamaBaseUrl: input.ollamaBaseUrl,
     ollamaChatModel: input.ollamaChatModel,

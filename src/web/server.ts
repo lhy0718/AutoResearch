@@ -72,14 +72,14 @@ interface SetupRequestBody {
   llmMode?: "codex_chatgpt_only" | "openai_api" | "ollama";
   codexChatModelChoice?: string;
   codexChatReasoningEffort?: string;
-  codexTaskModelChoice?: string;
-  codexTaskReasoningEffort?: string;
+  codexResearchBackendModelChoice?: string;
+  codexResearchBackendReasoningEffort?: string;
   codexExperimentModelChoice?: string;
   codexExperimentReasoningEffort?: string;
   openAiChatModel?: string;
   openAiChatReasoningEffort?: string;
-  openAiTaskModel?: string;
-  openAiReasoningEffort?: string;
+  openAiResearchBackendModel?: string;
+  openAiResearchBackendReasoningEffort?: string;
   openAiExperimentModel?: string;
   openAiExperimentReasoningEffort?: string;
   ollamaBaseUrl?: string;
@@ -202,14 +202,14 @@ class AutoLabOSWebController {
           openAiApiKey,
           codexChatModelChoice: body.codexChatModelChoice,
           codexChatReasoningEffort: body.codexChatReasoningEffort as any,
-          codexTaskModelChoice: body.codexTaskModelChoice,
-          codexTaskReasoningEffort: body.codexTaskReasoningEffort as any,
+          codexResearchBackendModelChoice: body.codexResearchBackendModelChoice,
+          codexResearchBackendReasoningEffort: body.codexResearchBackendReasoningEffort as any,
           codexExperimentModelChoice: body.codexExperimentModelChoice,
           codexExperimentReasoningEffort: body.codexExperimentReasoningEffort as any,
           openAiChatModel: body.openAiChatModel,
           openAiChatReasoningEffort: body.openAiChatReasoningEffort as any,
-          openAiTaskModel: body.openAiTaskModel,
-          openAiReasoningEffort: body.openAiReasoningEffort as any,
+          openAiResearchBackendModel: body.openAiResearchBackendModel,
+          openAiResearchBackendReasoningEffort: body.openAiResearchBackendReasoningEffort as any,
           openAiExperimentModel: body.openAiExperimentModel,
           openAiExperimentReasoningEffort: body.openAiExperimentReasoningEffort as any,
           ollamaBaseUrl: body.ollamaBaseUrl,
@@ -621,18 +621,25 @@ function buildSessionInputResponse(
 
 function summarizeConfig(config: AutoLabOSRuntime["config"]): ConfigSummary {
   const pdfMode = getPdfAnalysisModeForConfig(config);
+  const researchBackendModel =
+    config.providers.llm_mode === "openai_api"
+      ? config.providers.openai.model
+      : config.providers.llm_mode === "ollama"
+        ? config.providers.ollama?.research_model || config.providers.ollama?.chat_model || "ollama"
+        : config.providers.codex.model;
+  const researchBackendReasoning =
+    config.providers.llm_mode === "openai_api"
+      ? config.providers.openai.reasoning_effort
+      : config.providers.llm_mode === "ollama"
+        ? undefined
+        : config.providers.codex.reasoning_effort;
   return {
     projectName: config.project_name,
     workflowMode: config.workflow.mode,
     approvalMode: config.workflow.approval_mode || "minimal",
     llmMode: config.providers.llm_mode,
     pdfMode,
-    taskModel:
-      config.providers.llm_mode === "openai_api"
-        ? config.providers.openai.model
-        : config.providers.llm_mode === "ollama"
-          ? config.providers.ollama?.research_model || config.providers.ollama?.chat_model || "ollama"
-          : config.providers.codex.model,
+    researchBackendModel,
     chatModel:
       config.providers.llm_mode === "openai_api"
         ? config.providers.openai.chat_model || config.providers.openai.model
@@ -645,12 +652,7 @@ function summarizeConfig(config: AutoLabOSRuntime["config"]): ConfigSummary {
         : config.providers.llm_mode === "ollama"
           ? config.providers.ollama?.experiment_model || config.providers.ollama?.research_model || "ollama"
           : config.providers.codex.experiment_model || config.providers.codex.model,
-    taskReasoning:
-      config.providers.llm_mode === "openai_api"
-        ? config.providers.openai.reasoning_effort
-        : config.providers.llm_mode === "ollama"
-          ? undefined
-          : config.providers.codex.reasoning_effort,
+    researchBackendReasoning,
     chatReasoning:
       config.providers.llm_mode === "openai_api"
         ? config.providers.openai.chat_reasoning_effort || config.providers.openai.reasoning_effort
@@ -688,8 +690,11 @@ function buildConfigFormData(
       config?.providers.codex.chat_reasoning_effort ||
       config?.providers.codex.reasoning_effort ||
       DEFAULT_CODEX_CHAT_SETUP_REASONING_EFFORT,
-    codexTaskModelChoice: getCurrentCodexModelSelectionValue(codexModel, config?.providers.codex.fast_mode),
-    codexTaskReasoningEffort: config?.providers.codex.reasoning_effort || "xhigh",
+    codexResearchBackendModelChoice: getCurrentCodexModelSelectionValue(
+      codexModel,
+      config?.providers.codex.fast_mode
+    ),
+    codexResearchBackendReasoningEffort: config?.providers.codex.reasoning_effort || "xhigh",
     codexExperimentModelChoice: getCurrentCodexModelSelectionValue(
       codexExperimentModel,
       config?.providers.codex.experiment_fast_mode
@@ -699,8 +704,8 @@ function buildConfigFormData(
     openAiChatModel,
     openAiChatReasoningEffort:
       config?.providers.openai.chat_reasoning_effort || config?.providers.openai.reasoning_effort || "low",
-    openAiTaskModel: openAiModel,
-    openAiReasoningEffort: config?.providers.openai.reasoning_effort || "medium",
+    openAiResearchBackendModel: openAiModel,
+    openAiResearchBackendReasoningEffort: config?.providers.openai.reasoning_effort || "medium",
     openAiExperimentModel,
     openAiExperimentReasoningEffort:
       config?.providers.openai.experiment_reasoning_effort || config?.providers.openai.reasoning_effort || "medium",

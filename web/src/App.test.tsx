@@ -125,7 +125,7 @@ describe("App", () => {
 
     await waitFor(() => {
       expectVisibleText("OpenAI chat");
-      expectVisibleText("OpenAI task");
+      expectVisibleText("OpenAI research backend");
       expectVisibleText("Research backend model and reasoning for API mode.");
     });
 
@@ -133,7 +133,7 @@ describe("App", () => {
     expect(screen.queryByText("Responses PDF")).not.toBeInTheDocument();
 
     expect(screen.queryByText("Codex chat")).not.toBeInTheDocument();
-    expect(screen.queryByText("Codex task")).not.toBeInTheDocument();
+    expect(screen.queryByText("Codex research backend")).not.toBeInTheDocument();
   });
 
   it("shows per-slot model and reasoning selectors in workspace settings and submits them", async () => {
@@ -157,10 +157,10 @@ describe("App", () => {
         approvalMode: "minimal",
         llmMode: "codex_chatgpt_only",
         pdfMode: "codex_text_image_hybrid",
-        taskModel: "gpt-5.4",
+        researchBackendModel: "gpt-5.4",
         chatModel: "gpt-5.3-codex",
         experimentModel: "gpt-5.4",
-        taskReasoning: "xhigh",
+        researchBackendReasoning: "xhigh",
         chatReasoning: "low",
         experimentReasoning: "xhigh"
       },
@@ -172,14 +172,14 @@ describe("App", () => {
         llmMode: "codex_chatgpt_only",
         codexChatModelChoice: "gpt-5.3-codex",
         codexChatReasoningEffort: "low",
-        codexTaskModelChoice: "gpt-5.4",
-        codexTaskReasoningEffort: "xhigh",
+        codexResearchBackendModelChoice: "gpt-5.4",
+        codexResearchBackendReasoningEffort: "xhigh",
         codexExperimentModelChoice: "gpt-5.4",
         codexExperimentReasoningEffort: "xhigh",
         openAiChatModel: "gpt-5.4",
         openAiChatReasoningEffort: "low",
-        openAiTaskModel: "gpt-5.4",
-        openAiReasoningEffort: "medium",
+        openAiResearchBackendModel: "gpt-5.4",
+        openAiResearchBackendReasoningEffort: "medium",
         openAiExperimentModel: "gpt-5.4",
         openAiExperimentReasoningEffort: "medium"
       }
@@ -204,10 +204,10 @@ describe("App", () => {
         expect(body.pdfAnalysisMode).toBeUndefined();
         expect(body.codexChatModelChoice).toBe("gpt-5.4");
         expect(body.codexChatReasoningEffort).toBe("high");
-        expect(body.codexTaskModelChoice).toBeDefined();
+        expect(body.codexResearchBackendModelChoice).toBeDefined();
         expect(body.codexExperimentModelChoice).toBeDefined();
         expect(body.openAiChatModel).toBeDefined();
-        expect(body.openAiTaskModel).toBeDefined();
+        expect(body.openAiResearchBackendModel).toBeDefined();
         expect(body.openAiExperimentModel).toBeDefined();
         expect(body.responsesPdfModel).toBeUndefined();
         expect(body.codexPdfModelChoice).toBeUndefined();
@@ -232,13 +232,15 @@ describe("App", () => {
       expect(screen.getByRole("button", { name: "Workspace" })).toBeInTheDocument();
     });
 
+    expectVisibleText("Research backend: gpt-5.4 · xhigh");
+
     fireEvent.click(screen.getByRole("button", { name: "Workspace" }));
 
     await waitFor(() => {
       expectVisibleText("Workspace settings");
       expectVisibleText("Model and reasoning by slot");
       expectVisibleText("Codex chat");
-      expectVisibleText("Codex task");
+      expectVisibleText("Codex research backend");
       expectVisibleText("Research backend, analysis, and planning tasks.");
     });
 
