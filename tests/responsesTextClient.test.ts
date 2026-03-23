@@ -39,4 +39,51 @@ describe("OpenAiResponsesTextClient", () => {
       "OPENAI_API_KEY is required for OpenAI API provider mode."
     );
   });
+
+  it("chains retries with previous_response_id when a thread id is provided", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        requestBodies.push(JSON.parse(String(init?.body || "{}")) as Record<string, unknown>);
+        const responseIndex = requestBodies.length;
+        return new Response(
+          JSON.stringify({
+            id: `resp_${responseIndex}`,
+            model: "gpt-5.4",
+            output: [
+              {
+                type: "message",
+                content: [{ type: "output_text", text: `reply ${responseIndex}` }]
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" }
+          }
+        );
+      })
+    );
+
+    const client = new OpenAiResponsesTextClient(async () => "test-key", { model: "gpt-5.4" });
+
+    const first = await client.complete({
+      prompt: "first request",
+      systemPrompt: "system one"
+    });
+    const second = await client.complete({
+      prompt: "repair request",
+      systemPrompt: "system two",
+      threadId: first.responseId
+    });
+
+    expect(first.responseId).toBe("resp_1");
+    expect(second.responseId).toBe("resp_2");
+    expect(requestBodies[0]).not.toHaveProperty("previous_response_id");
+    expect(requestBodies[1]).toMatchObject({
+      previous_response_id: "resp_1",
+      instructions: "system two"
+    });
+  });
 });

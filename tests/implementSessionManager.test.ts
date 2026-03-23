@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { ensureScaffold, resolveAppPaths } from "../src/config.js";
 import { InMemoryEventStream } from "../src/core/events.js";
-import { ImplementSessionManager } from "../src/core/agents/implementSessionManager.js";
+import { getImplementLlmTimeoutMs, ImplementSessionManager } from "../src/core/agents/implementSessionManager.js";
 import { createImplementExperimentsNode } from "../src/core/nodes/implementExperiments.js";
 import {
   buildExperimentComparisonContract,
@@ -1039,6 +1039,9 @@ describe("ImplementSessionManager", () => {
       constraints: ["recent"],
       objectiveMetric: "accuracy"
     });
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    run.graph.nodeStates.run_experiments.status = "failed";
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
     mkdirSync(path.join(workspace, "src"), { recursive: true });
@@ -1151,6 +1154,142 @@ describe("ImplementSessionManager", () => {
         String(event.payload.text || "").includes("Loaded runner feedback from run_experiments")
       )
     ).toBe(true);
+  });
+
+  it("ignores stale runner feedback after design_experiments reruns", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-stale-runner-feedback-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Stale Runner Feedback Run",
+      topic: "metrics runner",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+    run.currentNode = "design_experiments";
+    run.graph.currentNode = "design_experiments";
+    run.graph.nodeStates.design_experiments.status = "pending";
+    run.graph.nodeStates.design_experiments.updatedAt = "2026-03-10T00:10:00.000Z";
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(path.join(workspace, "src"), { recursive: true });
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - fix metrics writer\n", "utf8");
+
+    const targetScript = path.join(workspace, "src", "metrics_runner.py");
+    writeFileSync(targetScript, "def main():\n    print('runner')\n", "utf8");
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put("implement_experiments.runner_feedback", {
+      source: "run_experiments",
+      status: "fail",
+      trigger: "manual",
+      stage: "command",
+      summary: "No runnable experiment artifact found for a stale run_experiments attempt.",
+      suggested_next_action: "Publish a runnable experiment command before retrying.",
+      recorded_at: "2026-03-10T00:00:00.000Z"
+    });
+    await memory.put("run_experiments.feedback_for_implementer", {
+      source: "run_experiments",
+      status: "fail",
+      trigger: "manual",
+      stage: "command",
+      summary: "No runnable experiment artifact found for a stale run_experiments attempt.",
+      suggested_next_action: "Publish a runnable experiment command before retrying.",
+      recorded_at: "2026-03-10T00:00:00.000Z"
+    });
+
+    let capturedPrompt = "";
+    const codex = {
+      runTurnStream: async ({ prompt }: { prompt?: string }) => {
+        capturedPrompt = prompt || "";
+        writeFileSync(targetScript, "def main():\n    return {'accuracy': 1.0}\n", "utf8");
+        return {
+          threadId: "thread-stale-runner-feedback",
+          finalText: JSON.stringify({
+            summary: "Updated the metrics runner without using stale verifier feedback.",
+            run_command: `python3 ${JSON.stringify(targetScript)}`,
+            changed_files: [targetScript],
+            artifacts: [targetScript],
+            script_path: targetScript,
+            metrics_path: path.join(runDir, "metrics.json"),
+            experiment_mode: "real_execution"
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexCliClient;
+
+    const eventStream = new InMemoryEventStream();
+    const manager = new ImplementSessionManager({
+      config: {
+        version: 1,
+        project_name: "test",
+        providers: {
+          llm_mode: "codex_chatgpt_only",
+          codex: {
+            model: "gpt-5.4",
+            chat_model: "gpt-5.4",
+            experiment_model: "gpt-5.4",
+            pdf_model: "gpt-5.4",
+            reasoning_effort: "xhigh",
+            chat_reasoning_effort: "low",
+            experiment_reasoning_effort: "xhigh",
+            command_reasoning_effort: "low",
+            fast_mode: false,
+            chat_fast_mode: false,
+            experiment_fast_mode: false,
+            pdf_fast_mode: false,
+            auth_required: true
+          },
+          openai: {
+            model: "gpt-5.4",
+            chat_model: "gpt-5.4",
+            experiment_model: "gpt-5.4",
+            pdf_model: "gpt-5.4",
+            reasoning_effort: "medium",
+            chat_reasoning_effort: "low",
+            experiment_reasoning_effort: "medium",
+            command_reasoning_effort: "low",
+            api_key_required: true
+          }
+        },
+        analysis: {
+          responses_model: "gpt-5.4",
+          responses_reasoning_effort: "xhigh"
+        },
+        papers: { max_results: 200, per_second_limit: 1 },
+        research: {
+          default_topic: "Multi-agent collaboration",
+          default_constraints: ["recent papers"],
+          default_objective_metric: "reproducibility"
+        },
+        workflow: { mode: "agent_approval", wizard_enabled: true },
+        experiments: { runner: "local_python", timeout_sec: 3600, allow_network: false },
+        paper: { template: "acl", build_pdf: true, latex_engine: "auto_install" },
+        paths: { runs_dir: ".autolabos/runs", logs_dir: ".autolabos/logs" }
+      },
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream,
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await manager.run(run);
+
+    expect(capturedPrompt).not.toContain("Runner feedback from run_experiments:");
+    expect(
+      eventStream.history().some((event) =>
+        String(event.payload.text || "").includes("Loaded runner feedback from run_experiments")
+      )
+    ).toBe(false);
+    expect(await memory.get("implement_experiments.runner_feedback")).toBeNull();
+    expect(await memory.get("run_experiments.feedback_for_implementer")).toBeNull();
   });
 
   it("promotes synthetic reproducibility runs to the reusable real_execution bundle", async () => {
@@ -2664,6 +2803,9 @@ describe("ImplementSessionManager", () => {
       constraints: ["recent"],
       objectiveMetric: "accuracy"
     });
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    run.graph.nodeStates.run_experiments.status = "failed";
     mkdirSync(path.dirname(run.memoryRefs.episodePath), { recursive: true });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -2902,10 +3044,10 @@ describe("ImplementSessionManager", () => {
     };
 
     expect(result).toMatchObject({
-      status: "success",
-      needsApproval: true
+      status: "failure"
     });
     expect(result.summary).toContain("Implementation execution failed before any runnable implementation was produced");
+    expect(result.error).toContain("Implementation execution failed before any runnable implementation was produced");
     expect(status).toMatchObject({
       status: "failed",
       stage: "failed",
@@ -3006,6 +3148,25 @@ describe("ImplementSessionManager", () => {
     }
   });
 
+  it("does not apply a default staged_llm timeout unless explicitly configured", () => {
+    const config = createTestConfig();
+    config.providers.llm_mode = "openai_api";
+    config.providers.openai.experiment_model = "gpt-5.4";
+    config.providers.openai.experiment_reasoning_effort = "high";
+
+    const originalTimeout = process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS;
+    delete process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS;
+    try {
+      expect(getImplementLlmTimeoutMs(config)).toBe(0);
+    } finally {
+      if (originalTimeout === undefined) {
+        delete process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS;
+      } else {
+        process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS = originalTimeout;
+      }
+    }
+  });
+
   it("obeys openai_api mode and materializes staged LLM file edits without invoking Codex", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-openai-mode-"));
     tempDirs.push(workspace);
@@ -3083,6 +3244,113 @@ describe("ImplementSessionManager", () => {
       status: "completed",
       stage: "completed"
     });
+  });
+
+  it("chains OpenAI API implement retries through response thread ids", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-openai-retry-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Implementation OpenAI Retry Run",
+      topic: "small model reasoning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const brokenScriptPath = path.join(publicDir, "broken_experiment.py");
+    const fixedScriptPath = path.join(publicDir, "fixed_experiment.py");
+    const seenThreadIds: Array<string | undefined> = [];
+    const prompts: string[] = [];
+    let codexCalls = 0;
+    const codex = {
+      runTurnStream: async () => {
+        codexCalls += 1;
+        throw new Error("Codex should not be used when llm_mode=openai_api");
+      }
+    } as unknown as CodexCliClient;
+    const llm = {
+      complete: async (prompt: string, opts?: { threadId?: string }) => {
+        prompts.push(prompt);
+        seenThreadIds.push(opts?.threadId);
+        if (seenThreadIds.length === 1) {
+          return {
+            threadId: "response-1",
+            text: JSON.stringify({
+              summary: "Implemented an initial draft through the API provider.",
+              run_command: `python3 ${JSON.stringify(brokenScriptPath)}`,
+              changed_files: [brokenScriptPath],
+              artifacts: [brokenScriptPath],
+              public_artifacts: [brokenScriptPath],
+              script_path: brokenScriptPath,
+              metrics_path: path.join(runDir, "metrics.json"),
+              experiment_mode: "real_execution",
+              file_edits: [
+                {
+                  path: brokenScriptPath,
+                  content: "print(\n"
+                }
+              ]
+            })
+          };
+        }
+
+        return {
+          threadId: "response-2",
+          text: JSON.stringify({
+            summary: "Fixed the syntax issue through the API provider retry loop.",
+            run_command: `python3 ${JSON.stringify(fixedScriptPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(fixedScriptPath)}`,
+            changed_files: [fixedScriptPath],
+            artifacts: [fixedScriptPath],
+            public_artifacts: [fixedScriptPath],
+            script_path: fixedScriptPath,
+            metrics_path: path.join(runDir, "metrics.json"),
+            experiment_mode: "real_execution",
+            file_edits: [
+              {
+                path: fixedScriptPath,
+                content: "print('ok')\n"
+              }
+            ]
+          })
+        };
+      }
+    };
+
+    const config = createTestConfig();
+    config.providers.llm_mode = "openai_api";
+    const manager = new ImplementSessionManager({
+      config,
+      codex,
+      llm: llm as any,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    const updatedRun = await runStore.getRun(run.id);
+
+    expect(codexCalls).toBe(0);
+    expect(seenThreadIds).toEqual([undefined, "response-1"]);
+    expect(prompts[1]).toContain("Previous local verification:");
+    expect(result.verifyReport).toMatchObject({ status: "pass" });
+    expect(result.threadId).toBe("response-2");
+    expect(result.scriptPath).toBe(fixedScriptPath);
+    expect(readFileSync(fixedScriptPath, "utf8")).toBe("print('ok')\n");
+    expect(updatedRun?.nodeThreads.implement_experiments).toBe("response-2");
+    expect(await memory.get("implement_experiments.thread_id")).toBe("response-2");
   });
 
   it("does not recover or reuse a stale public bundle after the experiment plan changes", async () => {
@@ -3804,6 +4072,9 @@ describe("ImplementSessionManager", () => {
       constraints: ["recent"],
       objectiveMetric: "accuracy"
     });
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    run.graph.nodeStates.run_experiments.status = "failed";
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
     mkdirSync(runDir, { recursive: true });

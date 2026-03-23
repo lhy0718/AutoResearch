@@ -74,16 +74,14 @@ export class ResponsesPdfAnalysisClient {
       };
     }
 
-    // Combine user abort signal with a 10-minute safety timeout
-    const timeoutMs = 10 * 60 * 1000;
-    const timeoutController = new AbortController();
-    const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
-    let combinedSignal: AbortSignal;
-    if (args.abortSignal) {
-      combinedSignal = AbortSignal.any([args.abortSignal, timeoutController.signal]);
-    } else {
-      combinedSignal = timeoutController.signal;
-    }
+    const timeoutMs = getOpenAiResponsesTimeoutMs();
+    const timeoutController = timeoutMs > 0 ? new AbortController() : undefined;
+    const timeoutId = timeoutController ? setTimeout(() => timeoutController.abort(), timeoutMs) : undefined;
+    const combinedSignal = timeoutController
+      ? args.abortSignal
+        ? AbortSignal.any([args.abortSignal, timeoutController.signal])
+        : timeoutController.signal
+      : args.abortSignal;
 
     let response: Response;
     try {
@@ -97,7 +95,9 @@ export class ResponsesPdfAnalysisClient {
         body: JSON.stringify(body)
       });
     } finally {
-      clearTimeout(timeoutId);
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
     }
 
     if (!response.ok) {
@@ -124,6 +124,11 @@ export class ResponsesPdfAnalysisClient {
       model: payload.model
     };
   }
+}
+
+function getOpenAiResponsesTimeoutMs(): number {
+  const parsed = Number.parseInt(process.env.AUTOLABOS_OPENAI_RESPONSES_TIMEOUT_MS || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
 function extractOutputText(payload: ResponsesApiResponse): string {

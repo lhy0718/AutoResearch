@@ -671,41 +671,22 @@ export class ImplementSessionManager {
             if (!this.deps.llm) {
               throw new Error("implement_experiments is configured for staged_llm mode, but no LLM client is available.");
             }
-            const llmTimeoutMs = getImplementLlmTimeoutMs();
-            const timeoutController = new AbortController();
-            const timeoutId = setTimeout(() => timeoutController.abort(), llmTimeoutMs);
-            const llmAbortSignal = abortSignal
-              ? AbortSignal.any([abortSignal, timeoutController.signal])
-              : timeoutController.signal;
-            try {
-              const completion = await this.deps.llm.complete(attemptPrompt, {
-                systemPrompt: attemptSystemPrompt,
-                abortSignal: llmAbortSignal,
-                onProgress: (event) => {
-                  const text = event.text.trim();
-                  if (!text) {
-                    return;
-                  }
-                  emitImplementObservation("codex", event.type === "delta" ? `LLM> ${text}` : text, {
-                    attempt,
-                    threadId: activeThreadId,
-                    publicDir: defaultPublicDir
-                  });
-                }
-              });
-              result = {
-                threadId: activeThreadId,
-                finalText: completion.text,
-                events: []
-              };
-            } catch (error) {
-              if (timeoutController.signal.aborted && !abortSignal?.aborted) {
-                throw new Error(`implement_experiments staged_llm request timed out after ${llmTimeoutMs}ms`);
-              }
-              throw error;
-            } finally {
-              clearTimeout(timeoutId);
-            }
+            const llmTimeoutMs = getImplementLlmTimeoutMs(this.deps.config);
+            const completion = await this.completeStagedLlmRequest({
+              prompt: attemptPrompt,
+              systemPrompt: attemptSystemPrompt,
+              timeoutMs: llmTimeoutMs,
+              abortSignal,
+              attempt,
+              threadId: activeThreadId,
+              publicDir: defaultPublicDir,
+              emitImplementObservation
+            });
+            result = {
+              threadId: completion.threadId || activeThreadId,
+              finalText: completion.text,
+              events: []
+            };
           }
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
@@ -1368,9 +1349,7 @@ export class ImplementSessionManager {
     const previousSummary = await runContext.get<string>("implement_experiments.last_summary");
     const previousRunCommand = await runContext.get<string>("implement_experiments.run_command");
     const previousScript = await runContext.get<string>("implement_experiments.script");
-    const runnerFeedback =
-      (await runContext.get<RunVerifierReport>("implement_experiments.runner_feedback")) ||
-      (await runContext.get<RunVerifierReport>("run_experiments.feedback_for_implementer"));
+    const runnerFeedback = await this.loadApplicableRunnerFeedback(run, runContext);
     const paperCritique = await runContext.get<{
       overall_decision?: string;
       manuscript_type?: string;
@@ -1459,6 +1438,33 @@ export class ImplementSessionManager {
         plan_hash: planHash
       }
     };
+  }
+
+  private async loadApplicableRunnerFeedback(
+    run: RunRecord,
+    runContext: RunContextMemory
+  ): Promise<RunVerifierReport | undefined> {
+    const runnerFeedback =
+      (await runContext.get<RunVerifierReport>("implement_experiments.runner_feedback")) ||
+      (await runContext.get<RunVerifierReport>("run_experiments.feedback_for_implementer"));
+    if (!runnerFeedback) {
+      return undefined;
+    }
+    if (run.graph.nodeStates.run_experiments?.status === "failed") {
+      return runnerFeedback;
+    }
+    const feedbackRecordedAt = Date.parse(runnerFeedback.recorded_at || "");
+    const designUpdatedAt = Date.parse(run.graph.nodeStates.design_experiments?.updatedAt || "");
+    if (
+      Number.isFinite(feedbackRecordedAt) &&
+      Number.isFinite(designUpdatedAt) &&
+      designUpdatedAt > feedbackRecordedAt
+    ) {
+      await runContext.put("implement_experiments.runner_feedback", null);
+      await runContext.put("run_experiments.feedback_for_implementer", null);
+      return undefined;
+    }
+    return runnerFeedback;
   }
 
   private buildAttemptPrompt(params: {
@@ -1616,6 +1622,64 @@ export class ImplementSessionManager {
     }
 
     return lines.join("\n");
+  }
+
+  private async completeStagedLlmRequest(input: {
+    prompt: string;
+    systemPrompt: string;
+    timeoutMs: number;
+    abortSignal?: AbortSignal;
+    attempt: number;
+    threadId?: string;
+    publicDir: string;
+    emitImplementObservation: (
+      stage: ImplementProgressStage,
+      message: string,
+      extras?: Partial<ImplementProgressStatus>
+    ) => void;
+    reasoningEffort?: string;
+  }): Promise<{ text: string; threadId?: string }> {
+    const timeoutController = input.timeoutMs > 0 ? new AbortController() : undefined;
+    const timeoutId = timeoutController
+      ? setTimeout(() => timeoutController.abort(), input.timeoutMs)
+      : undefined;
+    const llmAbortSignal = timeoutController
+      ? input.abortSignal
+        ? AbortSignal.any([input.abortSignal, timeoutController.signal])
+        : timeoutController.signal
+      : input.abortSignal;
+    try {
+      const completion = await this.deps.llm!.complete(input.prompt, {
+        threadId: input.threadId,
+        systemPrompt: input.systemPrompt,
+        reasoningEffort: input.reasoningEffort,
+        abortSignal: llmAbortSignal,
+        onProgress: (event) => {
+          const text = event.text.trim();
+          if (!text) {
+            return;
+          }
+          input.emitImplementObservation("codex", event.type === "delta" ? `LLM> ${text}` : text, {
+            attempt: input.attempt,
+            threadId: input.threadId,
+            publicDir: input.publicDir
+          });
+        }
+      });
+      return {
+        text: completion.text,
+        threadId: completion.threadId
+      };
+    } catch (error) {
+      if (timeoutController?.signal.aborted && !input.abortSignal?.aborted) {
+        throw new Error(`implement_experiments staged_llm request timed out after ${input.timeoutMs}ms`);
+      }
+      throw error;
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    }
   }
 
   private buildLocalizerInput(
@@ -2964,9 +3028,13 @@ function stripDryRunFlag(command: string | undefined): string | undefined {
   return stripped || undefined;
 }
 
-function getImplementLlmTimeoutMs(): number {
+export function getImplementLlmTimeoutMs(config: AppConfig): number {
   const parsed = Number.parseInt(process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS || "", 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 60_000;
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return parsed;
+  }
+  void config;
+  return 0;
 }
 
 function isDryRunMetricsRepairFeedback(report: RunVerifierReport | undefined): boolean {

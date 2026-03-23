@@ -10,6 +10,7 @@ export interface LLMCompletionUsage {
 
 export interface LLMCompletion {
   text: string;
+  threadId?: string;
   usage?: LLMCompletionUsage;
 }
 
@@ -22,6 +23,8 @@ export interface LLMCompleteOptions {
   threadId?: string;
   systemPrompt?: string;
   inputImagePaths?: string[];
+  model?: string;
+  reasoningEffort?: string;
   onProgress?: (event: LLMProgressEvent) => void;
   abortSignal?: AbortSignal;
 }
@@ -54,8 +57,8 @@ export class CodexLLMClient implements LLMClient {
       inputImagePaths: opts?.inputImagePaths,
       sandboxMode: "read-only",
       approvalPolicy: "never",
-      model: this.defaults.model,
-      reasoningEffort: this.defaults.reasoningEffort as never,
+      model: opts?.model || this.defaults.model,
+      reasoningEffort: (opts?.reasoningEffort || this.defaults.reasoningEffort) as never,
       fastMode: this.defaults.fastMode,
       abortSignal: opts?.abortSignal,
       onEvent: (event) => {
@@ -66,6 +69,7 @@ export class CodexLLMClient implements LLMClient {
 
     return {
       text: result.finalText,
+      threadId: result.threadId,
       usage: {
         costUsd: undefined
       }
@@ -86,15 +90,17 @@ export class OpenAiResponsesLLMClient implements LLMClient {
     opts?.onProgress?.({ type: "status", text: "Submitting request to OpenAI Responses API." });
     const text = await this.openai.runForText({
       prompt,
+      threadId: opts?.threadId,
       systemPrompt: opts?.systemPrompt,
-      model: this.defaults.model,
-      reasoningEffort: this.defaults.reasoningEffort,
+      model: opts?.model || this.defaults.model,
+      reasoningEffort: opts?.reasoningEffort || this.defaults.reasoningEffort,
       abortSignal: opts?.abortSignal
     });
     opts?.onProgress?.({ type: "status", text: "Received Responses API output." });
 
     return {
       text,
+      threadId: this.openai.lastResponseId(),
       usage: {
         costUsd: undefined
       }
@@ -116,7 +122,7 @@ export class OllamaLLMClient implements LLMClient {
     prompt: string,
     opts?: LLMCompleteOptions
   ): Promise<LLMCompletion> {
-    const model = this.defaults.model || "qwen3.5:35b-a3b";
+    const model = opts?.model || this.defaults.model || "qwen3.5:35b-a3b";
     opts?.onProgress?.({ type: "status", text: `Submitting request to Ollama (${model}).` });
 
     const hasImages = opts?.inputImagePaths && opts.inputImagePaths.length > 0;

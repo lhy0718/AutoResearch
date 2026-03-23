@@ -24,9 +24,9 @@ export function createImplementExperimentsNode(deps: NodeExecutionDeps): GraphNo
       } catch (error) {
         if (error instanceof ImplementSessionStopError) {
           return {
-            status: "success",
+            status: "failure",
             summary: error.message,
-            needsApproval: true,
+            error: error.message,
             toolCallsUsed: 1
           };
         }

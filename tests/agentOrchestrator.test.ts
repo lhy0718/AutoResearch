@@ -194,6 +194,51 @@ describe("AgentOrchestrator (state graph)", () => {
     expect(approved.graph.nodeStates.generate_hypotheses.note).toBe("generate_hypotheses ok");
   });
 
+  it("preserves partial analyze provenance when a suggested manual run advances to generate_hypotheses", async () => {
+    const { store, orchestrator } = await setup(new DeterministicRegistry({}), {
+      approvalMode: "manual"
+    });
+
+    const run = await store.createRun({
+      title: "Run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "analyze_papers";
+    run.graph.currentNode = "analyze_papers";
+    run.status = "paused";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "needs_approval";
+    run.graph.nodeStates.analyze_papers.note = "Preserved partial analysis (1 summaries, 4 evidence item(s)) after 4 paper(s) failed.";
+    run.graph.pendingTransition = {
+      action: "pause_for_human",
+      sourceNode: "analyze_papers",
+      targetNode: "generate_hypotheses",
+      reason: "analyze_papers preserved a usable evidence set and is waiting for operator confirmation before synthesis.",
+      confidence: 0.92,
+      autoExecutable: false,
+      evidence: ["1 summary row and 4 evidence rows are already persisted."],
+      suggestedCommands: [`/agent run generate_hypotheses ${run.id}`],
+      generatedAt: new Date().toISOString()
+    };
+    await store.updateRun(run);
+
+    const result = await orchestrator.runAgentWithOptions(run.id, "generate_hypotheses");
+
+    expect(result.result.status).toBe("success");
+
+    const latest = await store.getRun(run.id);
+    expect(latest?.currentNode).toBe("generate_hypotheses");
+    expect(latest?.graph.nodeStates.analyze_papers.status).toBe("completed");
+    expect(latest?.graph.nodeStates.analyze_papers.note).toBe(
+      "Preserved partial analysis (1 summaries, 4 evidence item(s)) after 4 paper(s) failed."
+    );
+    expect(latest?.graph.nodeStates.generate_hypotheses.status).toBe("needs_approval");
+    expect(latest?.latestSummary).not.toContain("Skipped by jump");
+  });
+
   it("auto advances from implement_experiments to run_experiments when approval is not required", async () => {
     const registry = new DeterministicRegistry({
       implement_experiments: {

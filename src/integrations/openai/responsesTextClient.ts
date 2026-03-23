@@ -34,6 +34,7 @@ interface ResponsesApiResponse {
 
 export class OpenAiResponsesTextClient {
   private defaults: Required<OpenAiResponsesTextDefaults>;
+  private mostRecentResponseId?: string;
 
   constructor(
     private readonly resolveApiKey: () => Promise<string | undefined>,
@@ -62,18 +63,28 @@ export class OpenAiResponsesTextClient {
     sandboxMode?: string;
     approvalPolicy?: string;
     threadId?: string;
+    previousResponseId?: string;
     agentId?: string;
     systemPrompt?: string;
     model?: string;
     reasoningEffort?: string;
     abortSignal?: AbortSignal;
   }): Promise<string> {
-    const result = await this.complete(opts);
+    const result = await this.complete({
+      ...opts,
+      previousResponseId: opts.previousResponseId || opts.threadId
+    });
     return result.text;
+  }
+
+  lastResponseId(): string | undefined {
+    return this.mostRecentResponseId;
   }
 
   async complete(opts: {
     prompt: string;
+    threadId?: string;
+    previousResponseId?: string;
     systemPrompt?: string;
     model?: string;
     reasoningEffort?: string;
@@ -119,16 +130,19 @@ export class OpenAiResponsesTextClient {
       body.reasoning = { effort: reasoningEffort };
     }
 
-    // Combine user abort signal with a 10-minute safety timeout
-    const timeoutMs = 10 * 60 * 1000;
-    const timeoutController = new AbortController();
-    const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
-    let combinedSignal: AbortSignal;
-    if (opts.abortSignal) {
-      combinedSignal = AbortSignal.any([opts.abortSignal, timeoutController.signal]);
-    } else {
-      combinedSignal = timeoutController.signal;
+    const previousResponseId = opts.previousResponseId || opts.threadId;
+    if (previousResponseId) {
+      body.previous_response_id = previousResponseId;
     }
+
+    const timeoutMs = getOpenAiResponsesTimeoutMs();
+    const timeoutController = timeoutMs > 0 ? new AbortController() : undefined;
+    const timeoutId = timeoutController ? setTimeout(() => timeoutController.abort(), timeoutMs) : undefined;
+    const combinedSignal = timeoutController
+      ? opts.abortSignal
+        ? AbortSignal.any([opts.abortSignal, timeoutController.signal])
+        : timeoutController.signal
+      : opts.abortSignal;
 
     let response: Response;
     try {
@@ -142,7 +156,9 @@ export class OpenAiResponsesTextClient {
         body: JSON.stringify(body)
       });
     } finally {
-      clearTimeout(timeoutId);
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
     }
 
     if (!response.ok) {
@@ -160,12 +176,19 @@ export class OpenAiResponsesTextClient {
       throw new Error("Responses API returned no output text.");
     }
 
+    this.mostRecentResponseId = payload.id;
+
     return {
       text,
       responseId: payload.id,
       model: payload.model || model
     };
   }
+}
+
+function getOpenAiResponsesTimeoutMs(): number {
+  const parsed = Number.parseInt(process.env.AUTOLABOS_OPENAI_RESPONSES_TIMEOUT_MS || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
 function extractOutputText(payload: ResponsesApiResponse): string {

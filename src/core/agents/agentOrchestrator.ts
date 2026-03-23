@@ -40,9 +40,26 @@ export class AgentOrchestrator {
     }
 
     if (current.currentNode !== nodeId) {
-      await this.runtime.jumpToNode(runId, nodeId, "force", "manual node run");
+      if (shouldTreatManualRunAsApprovalHandoff(current, nodeId)) {
+        await this.runtime.approveCurrent(runId, { continueAfterApprove: false });
+      } else {
+        await this.runtime.jumpToNode(runId, nodeId, "force", "manual node run");
+      }
     }
 
+
+function shouldTreatManualRunAsApprovalHandoff(run: RunRecord, nodeId: GraphNodeId): boolean {
+  const recommendation = run.graph.pendingTransition;
+  if (!recommendation || recommendation.action !== "pause_for_human") {
+    return false;
+  }
+  if (recommendation.targetNode !== nodeId) {
+    return false;
+  }
+  const currentIdx = GRAPH_NODE_ORDER.indexOf(run.currentNode);
+  const targetIdx = GRAPH_NODE_ORDER.indexOf(nodeId);
+  return currentIdx >= 0 && targetIdx === currentIdx + 1;
+}
     await this.runtime.runUntilPause(runId, {
       abortSignal: opts?.abortSignal,
       stopAfterApprovalBoundary: true,
