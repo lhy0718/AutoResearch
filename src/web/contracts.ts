@@ -1,4 +1,5 @@
 import { DoctorCheck, PendingPlan, RunRecord, WebSessionState } from "../types.js";
+import type { RunLiteratureIndex } from "../core/literatureIndex.js";
 import type { HarnessValidationReport } from "../core/validation/harnessValidationService.js";
 import type { RepositoryKnowledgeEntry } from "../core/repositoryKnowledge.js";
 
@@ -76,6 +77,15 @@ export interface DoctorResponse {
 
 export interface KnowledgeResponse {
   entries: RepositoryKnowledgeEntry[];
+}
+
+export interface KnowledgeFileResponse {
+  path: string;
+  content: string;
+}
+
+export interface LiteratureResponse {
+  literature: RunLiteratureIndex;
 }
 
 export interface SessionInputResponse {

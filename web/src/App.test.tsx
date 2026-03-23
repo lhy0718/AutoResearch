@@ -35,8 +35,11 @@ describe("App", () => {
             { status: 200 }
           );
         }
-        if (url.includes("/api/knowledge")) {
+        if (url.includes("/api/knowledge") && !url.includes("/api/knowledge/file")) {
           return new Response(JSON.stringify({ entries: [] }), { status: 200 });
+        }
+        if (url.includes("/api/runs/") && url.includes("/literature")) {
+          return new Response(JSON.stringify({ literature: emptyLiterature("run-1") }), { status: 200 });
         }
         return new Response(JSON.stringify({ configured: false, checks: [] }), { status: 200 });
       })
@@ -89,8 +92,11 @@ describe("App", () => {
             { status: 200 }
           );
         }
-        if (url.includes("/api/knowledge")) {
+        if (url.includes("/api/knowledge") && !url.includes("/api/knowledge/file")) {
           return new Response(JSON.stringify({ entries: [] }), { status: 200 });
+        }
+        if (url.includes("/api/runs/") && url.includes("/literature")) {
+          return new Response(JSON.stringify({ literature: emptyLiterature("run-1") }), { status: 200 });
         }
         return new Response(JSON.stringify({ configured: false, checks: [] }), { status: 200 });
       })
@@ -182,8 +188,11 @@ describe("App", () => {
       if (url.includes("/api/doctor")) {
         return new Response(JSON.stringify({ configured: true, checks: [] }), { status: 200 });
       }
-      if (url.includes("/api/knowledge")) {
+      if (url.includes("/api/knowledge") && !url.includes("/api/knowledge/file")) {
         return new Response(JSON.stringify({ entries: [] }), { status: 200 });
+      }
+      if (url.includes("/api/runs/") && url.includes("/literature")) {
+        return new Response(JSON.stringify({ literature: emptyLiterature("run-1") }), { status: 200 });
       }
       if (url.includes("/api/setup")) {
         const body = JSON.parse(String(init?.body));
@@ -307,7 +316,7 @@ describe("App", () => {
       if (url.includes("/api/doctor")) {
         return new Response(JSON.stringify({ configured: true, checks: [] }), { status: 200 });
       }
-      if (url.includes("/api/knowledge")) {
+      if (url.includes("/api/knowledge") && !url.includes("/api/knowledge/file")) {
         return new Response(
           JSON.stringify({
             entries: [
@@ -342,6 +351,51 @@ describe("App", () => {
           }),
           { status: 200 }
         );
+      }
+      if (url.includes("/api/knowledge/file?path=.autolabos%2Fknowledge%2Fruns%2Frun-1.md")) {
+        return new Response(
+          JSON.stringify({
+            path: ".autolabos/knowledge/runs/run-1.md",
+            content: "# Run one\n\n## Research Question\n\nDoes the treatment outperform the baseline?\n"
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.includes("/api/knowledge/file?path=outputs%2Frun-1%2Fmanifest.json") || url.includes("/api/knowledge/file?path=outputs%2Fmanifest.json")) {
+        return new Response(
+          JSON.stringify({
+            path: "outputs/run-1/manifest.json",
+            content: '{\n  "version": 1\n}\n'
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.includes("/api/knowledge/file?path=.autolabos%2Fruns%2Frun-1%2Fliterature_index.json")) {
+        return new Response(
+          JSON.stringify({
+            path: ".autolabos/runs/run-1/literature_index.json",
+            content: '{\n  "version": 1,\n  "run_id": "run-1"\n}\n'
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.includes("/api/runs/run-1/literature")) {
+        return new Response(JSON.stringify({ literature: populatedLiterature("run-1") }), { status: 200 });
+      }
+      if (url.includes("/api/runs/run-1/artifact?path=.autolabos%2Fruns%2Frun-1%2Fcollect_result.json")) {
+        return new Response('{"status":"completed","paper_count":40}\n', { status: 200 });
+      }
+      if (url.includes("/api/runs/run-1/artifact?path=.autolabos%2Fruns%2Frun-1%2Fcorpus.jsonl")) {
+        return new Response('{"paper_id":"p1","title":"Corpus paper"}\n', { status: 200 });
+      }
+      if (url.includes("/api/runs/run-1/artifact?path=.autolabos%2Fruns%2Frun-1%2Fbibtex.bib")) {
+        return new Response('@article{p1,title={Corpus paper}}\n', { status: 200 });
+      }
+      if (url.includes("/api/runs/run-1/artifact?path=.autolabos%2Fruns%2Frun-1%2Fpaper_summaries.jsonl")) {
+        return new Response('{"paper_id":"p1","summary":"Summary row"}\n', { status: 200 });
+      }
+      if (url.includes("/api/runs/run-1/artifact?path=.autolabos%2Fruns%2Frun-1%2Fevidence_store.jsonl")) {
+        return new Response('{"paper_id":"p1","quote":"Evidence row"}\n', { status: 200 });
       }
       if (url.includes("/api/runs/run-1/artifacts")) {
         return new Response(JSON.stringify({ artifacts: [] }), { status: 200 });
@@ -409,6 +463,67 @@ describe("App", () => {
       expect(screen.getAllByText("Treatment improved accuracy over baseline.").length).toBeGreaterThan(0);
       expect(screen.getByText("paper_scale_candidate")).toBeInTheDocument();
       expect(screen.getByText("outputs/run-1/manifest.json")).toBeInTheDocument();
+      expect(screen.getByText("40 papers")).toBeInTheDocument();
+      expect(screen.getByText("32 with PDF / 8 missing")).toBeInTheDocument();
+      expect(screen.getByText("35 with BibTeX / 12 enriched")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Preview note" }));
+
+    await waitFor(() => {
+      expect(screen.getAllByText(".autolabos/knowledge/runs/run-1.md").length).toBeGreaterThan(0);
+      expect(
+        fetchMock.mock.calls.some(([url]) =>
+          String(url).includes("/api/knowledge/file?path=.autolabos%2Fknowledge%2Fruns%2Frun-1.md")
+        )
+      ).toBe(true);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Preview literature index" }));
+
+    await waitFor(() => {
+      expect(screen.getByText(".autolabos/runs/run-1/literature_index.json")).toBeInTheDocument();
+      expect(screen.getAllByText(/"run_id": "run-1"/i).length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Open collect result" }));
+
+    await waitFor(() => {
+      expect(screen.getByText('{"status":"completed","paper_count":40}')).toBeInTheDocument();
+      expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/runs/run-1/artifact?path=.autolabos%2Fruns%2Frun-1%2Fcollect_result.json"))).toBe(true);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Knowledge" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Open corpus" }));
+
+    await waitFor(() => {
+      expect(screen.getByText('{"paper_id":"p1","title":"Corpus paper"}')).toBeInTheDocument();
+      expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/runs/run-1/artifact?path=.autolabos%2Fruns%2Frun-1%2Fcorpus.jsonl"))).toBe(true);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Knowledge" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open bibtex" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("@article{p1,title={Corpus paper}}")).toBeInTheDocument();
+      expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/runs/run-1/artifact?path=.autolabos%2Fruns%2Frun-1%2Fbibtex.bib"))).toBe(true);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Knowledge" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open summaries" }));
+
+    await waitFor(() => {
+      expect(screen.getByText('{"paper_id":"p1","summary":"Summary row"}')).toBeInTheDocument();
+      expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/runs/run-1/artifact?path=.autolabos%2Fruns%2Frun-1%2Fpaper_summaries.jsonl"))).toBe(true);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Knowledge" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open evidence" }));
+
+    await waitFor(() => {
+      expect(screen.getByText('{"paper_id":"p1","quote":"Evidence row"}')).toBeInTheDocument();
+      expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/runs/run-1/artifact?path=.autolabos%2Fruns%2Frun-1%2Fevidence_store.jsonl"))).toBe(true);
     });
   });
 
@@ -548,8 +663,11 @@ describe("App", () => {
       if (url.includes("/api/doctor")) {
         return new Response(JSON.stringify({ configured: true, checks: [] }), { status: 200 });
       }
-      if (url.includes("/api/knowledge")) {
+      if (url.includes("/api/knowledge") && !url.includes("/api/knowledge/file")) {
         return new Response(JSON.stringify({ entries: [] }), { status: 200 });
+      }
+      if (url.includes("/api/runs/") && url.includes("/literature")) {
+        return new Response(JSON.stringify({ literature: emptyLiterature("run-1") }), { status: 200 });
       }
       if (url.includes("/api/runs/run-1/artifacts")) {
         return new Response(
@@ -817,7 +935,7 @@ describe("App", () => {
       if (url.includes("/api/doctor")) {
         return new Response(JSON.stringify({ configured: true, checks: [] }), { status: 200 });
       }
-      if (url.includes("/api/knowledge")) {
+      if (url.includes("/api/knowledge") && !url.includes("/api/knowledge/file")) {
         return new Response(JSON.stringify({ entries: [] }), { status: 200 });
       }
       if (url.includes("/api/runs/run-1/artifacts")) {
@@ -1043,8 +1161,11 @@ describe("App", () => {
       if (url.includes("/api/doctor")) {
         return Promise.resolve(new Response(JSON.stringify({ configured: true, checks: [] }), { status: 200 }));
       }
-      if (url.includes("/api/knowledge")) {
+      if (url.includes("/api/knowledge") && !url.includes("/api/knowledge/file")) {
         return Promise.resolve(new Response(JSON.stringify({ entries: [] }), { status: 200 }));
+      }
+      if (url.includes("/api/runs/") && url.includes("/literature")) {
+        return Promise.resolve(new Response(JSON.stringify({ literature: emptyLiterature("run-1") }), { status: 200 }));
       }
       if (url.includes("/api/runs/run-1/artifacts")) {
         return Promise.resolve(new Response(JSON.stringify({ artifacts: [] }), { status: 200 }));
@@ -1196,6 +1317,9 @@ describe("App", () => {
       if (url.includes("/api/knowledge")) {
         return new Response(JSON.stringify({ entries: [] }), { status: 200 });
       }
+      if (url.includes("/api/runs/") && url.includes("/literature")) {
+        return new Response(JSON.stringify({ literature: emptyLiterature(createdRun?.id || "run-brief-1") }), { status: 200 });
+      }
       if (url === "/api/runs") {
         const body = JSON.parse(String(init?.body));
         expect(body).toMatchObject({
@@ -1291,3 +1415,83 @@ describe("App", () => {
     expect(screen.getByText("collect_papers started")).toBeInTheDocument();
   });
 });
+
+function emptyLiterature(runId: string) {
+  return {
+    version: 1,
+    run_id: runId,
+    updated_at: "2026-03-10T10:00:00.000Z",
+    corpus: {
+      paper_count: 0,
+      papers_with_pdf: 0,
+      missing_pdf_count: 0,
+      papers_with_bibtex: 0,
+      enriched_bibtex_count: 0,
+      top_venues: []
+    },
+    citations: {
+      total: 0,
+      average: 0
+    },
+    enrichment: {
+      pdf_recovered: 0,
+      bibtex_enriched: 0
+    },
+    analysis: {
+      summary_count: 0,
+      evidence_count: 0,
+      covered_paper_count: 0,
+      full_text_summary_count: 0,
+      abstract_summary_count: 0
+    },
+    artifacts: {
+      literature_index_path: `.autolabos/runs/${runId}/literature_index.json`,
+      corpus_path: `.autolabos/runs/${runId}/corpus.jsonl`,
+      bibtex_path: `.autolabos/runs/${runId}/bibtex.bib`,
+      collect_result_path: `.autolabos/runs/${runId}/collect_result.json`,
+      summaries_path: `.autolabos/runs/${runId}/paper_summaries.jsonl`,
+      evidence_path: `.autolabos/runs/${runId}/evidence_store.jsonl`
+    },
+    warnings: []
+  };
+}
+
+function populatedLiterature(runId: string) {
+  return {
+    ...emptyLiterature(runId),
+    corpus: {
+      paper_count: 40,
+      papers_with_pdf: 32,
+      missing_pdf_count: 8,
+      papers_with_bibtex: 35,
+      enriched_bibtex_count: 12,
+      top_venues: ["NeurIPS (8)", "ICLR (5)", "ACL (4)"],
+      year_range: {
+        min: 2021,
+        max: 2026
+      }
+    },
+    citations: {
+      total: 800,
+      average: 20,
+      top_paper: {
+        title: "Top cited paper",
+        citation_count: 180
+      }
+    },
+    enrichment: {
+      bibtex_mode: "hybrid",
+      pdf_recovered: 7,
+      bibtex_enriched: 12,
+      status: "completed"
+    },
+    analysis: {
+      summary_count: 18,
+      evidence_count: 126,
+      covered_paper_count: 18,
+      full_text_summary_count: 14,
+      abstract_summary_count: 4
+    },
+    warnings: ["8 collected paper(s) are still missing PDF links."]
+  };
+}

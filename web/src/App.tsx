@@ -8,9 +8,12 @@ import {
   DoctorCheck,
   DoctorResponse,
   HarnessValidationReport,
+  KnowledgeFileResponse,
   KnowledgeResponse,
   RepositoryKnowledgeEntry,
+  LiteratureResponse,
   RunRecord,
+  RunLiteratureIndex,
   RunInsightCard,
   WebConfigFormData,
   WebConfigOptions,
@@ -91,6 +94,9 @@ export function App() {
   const [expandedInsightReferenceKey, setExpandedInsightReferenceKey] = useState<string | null>(null);
   const [checkpoints, setCheckpoints] = useState<CheckpointEntry[]>([]);
   const [knowledgeEntries, setKnowledgeEntries] = useState<RepositoryKnowledgeEntry[]>([]);
+  const [literature, setLiterature] = useState<RunLiteratureIndex | null>(null);
+  const [knowledgePreviewPath, setKnowledgePreviewPath] = useState<string | null>(null);
+  const [knowledgePreviewContent, setKnowledgePreviewContent] = useState<string | null>(null);
   const [doctorChecks, setDoctorChecks] = useState<DoctorCheck[]>([]);
   const [doctorHarness, setDoctorHarness] = useState<HarnessValidationReport | null>(null);
   const [commandInput, setCommandInput] = useState("");
@@ -119,7 +125,11 @@ export function App() {
       return;
     }
     setExpandedInsightReferenceKey(null);
+    setKnowledgePreviewPath(null);
+    setKnowledgePreviewContent(null);
+    setLiterature(null);
     void refreshRunDetails(selectedRunId);
+    void refreshLiterature(selectedRunId);
   }, [selectedRunId]);
 
   useEffect(() => {
@@ -248,6 +258,17 @@ export function App() {
     setKnowledgeEntries(response.entries);
   }
 
+  async function refreshLiterature(runId: string) {
+    const response = await api<LiteratureResponse>(`/api/runs/${encodeURIComponent(runId)}/literature`);
+    setLiterature(response.literature);
+  }
+
+  async function loadKnowledgePreview(relativePath: string) {
+    const response = await api<KnowledgeFileResponse>(`/api/knowledge/file?path=${encodeURIComponent(relativePath)}`);
+    setKnowledgePreviewPath(response.path);
+    setKnowledgePreviewContent(response.content);
+  }
+
   async function loadArtifactPreview(runId: string, artifact: ArtifactEntry) {
     setSelectedArtifact(artifact);
     if (!artifact.previewable || artifact.kind === "directory") {
@@ -271,6 +292,10 @@ export function App() {
       artifacts.find((item) => item.path === referencePath) || buildFallbackArtifactEntry(referencePath);
     setActiveTab("artifacts");
     await loadArtifactPreview(runId, artifact);
+  }
+
+  async function openKnowledgeArtifact(referencePath: string) {
+    await openInsightReference(referencePath);
   }
 
   async function runSlashSelection(runId: string) {
@@ -1126,6 +1151,31 @@ export function App() {
                   ) : null}
                   <article className="meta-row"><span>Knowledge note</span><strong>{selectedKnowledgeEntry.knowledge_note}</strong></article>
                   <article className="meta-row"><span>Manifest</span><strong>{selectedKnowledgeEntry.public_manifest}</strong></article>
+                  <div className="pending-actions">
+                    <button
+                      className="button button-secondary button-small"
+                      type="button"
+                      onClick={() => void loadKnowledgePreview(selectedKnowledgeEntry.knowledge_note)}
+                    >
+                      Preview note
+                    </button>
+                    <button
+                      className="button button-secondary button-small"
+                      type="button"
+                      onClick={() => void loadKnowledgePreview(selectedKnowledgeEntry.public_manifest)}
+                    >
+                      Preview manifest
+                    </button>
+                    {literature ? (
+                      <button
+                        className="button button-secondary button-small"
+                        type="button"
+                        onClick={() => void loadKnowledgePreview(literature.artifacts.literature_index_path)}
+                      >
+                        Preview literature index
+                      </button>
+                    ) : null}
+                  </div>
                   <div className="chip-list">
                     {selectedKnowledgeEntry.sections.map((section) => (
                       <span key={`${selectedKnowledgeEntry.run_id}-${section.name}`} className="chip">
@@ -1136,6 +1186,88 @@ export function App() {
                 </article>
               ) : (
                 <div className="inline-empty">No repository knowledge is available for the selected run yet.</div>
+              )}
+
+              {literature ? (
+                <article className="meta-card">
+                  <article className="meta-row"><span>Corpus</span><strong>{literature.corpus.paper_count} papers</strong></article>
+                  <article className="meta-row"><span>PDF coverage</span><strong>{literature.corpus.papers_with_pdf} with PDF / {literature.corpus.missing_pdf_count} missing</strong></article>
+                  <article className="meta-row"><span>BibTeX coverage</span><strong>{literature.corpus.papers_with_bibtex} with BibTeX / {literature.corpus.enriched_bibtex_count} enriched</strong></article>
+                  <article className="meta-row"><span>Citations</span><strong>{literature.citations.total} total / avg {literature.citations.average}</strong></article>
+                  <article className="meta-row"><span>Analysis coverage</span><strong>{literature.analysis.summary_count} summaries / {literature.analysis.evidence_count} evidence</strong></article>
+                  <article className="meta-row"><span>Source detail</span><strong>{literature.analysis.full_text_summary_count} full text / {literature.analysis.abstract_summary_count} abstract</strong></article>
+                  {literature.citations.top_paper ? (
+                    <article className="meta-row"><span>Top cited</span><strong>{literature.citations.top_paper.title} ({literature.citations.top_paper.citation_count})</strong></article>
+                  ) : null}
+                  {literature.corpus.year_range ? (
+                    <article className="meta-row"><span>Year range</span><strong>{literature.corpus.year_range.min} - {literature.corpus.year_range.max}</strong></article>
+                  ) : null}
+                  {literature.corpus.top_venues.length > 0 ? (
+                    <div className="chip-list">
+                      {literature.corpus.top_venues.map((venue) => (
+                        <span key={venue} className="chip">{venue}</span>
+                      ))}
+                    </div>
+                  ) : null}
+                  <div className="pending-actions">
+                    <button
+                      className="button button-secondary button-small"
+                      type="button"
+                      onClick={() => void openKnowledgeArtifact(literature.artifacts.collect_result_path)}
+                    >
+                      Open collect result
+                    </button>
+                    <button
+                      className="button button-secondary button-small"
+                      type="button"
+                      onClick={() => void openKnowledgeArtifact(literature.artifacts.corpus_path)}
+                    >
+                      Open corpus
+                    </button>
+                    <button
+                      className="button button-secondary button-small"
+                      type="button"
+                      onClick={() => void openKnowledgeArtifact(literature.artifacts.bibtex_path)}
+                    >
+                      Open bibtex
+                    </button>
+                    <button
+                      className="button button-secondary button-small"
+                      type="button"
+                      onClick={() => void openKnowledgeArtifact(literature.artifacts.summaries_path)}
+                    >
+                      Open summaries
+                    </button>
+                    <button
+                      className="button button-secondary button-small"
+                      type="button"
+                      onClick={() => void openKnowledgeArtifact(literature.artifacts.evidence_path)}
+                    >
+                      Open evidence
+                    </button>
+                  </div>
+                  {literature.warnings.length > 0 ? (
+                    <div className="doctor-harness-findings">
+                      {literature.warnings.map((warning) => (
+                        <article key={warning} className="doctor-harness-finding">
+                          <strong>Warning</strong>
+                          <p>{warning}</p>
+                        </article>
+                      ))}
+                    </div>
+                  ) : null}
+                </article>
+              ) : selectedRunId ? (
+                <div className="inline-empty">Literature summary is loading for the selected run.</div>
+              ) : null}
+
+              {knowledgePreviewPath ? (
+                <article className="meta-card">
+                  <article className="meta-row"><span>Preview</span><strong>{knowledgePreviewPath}</strong></article>
+                  <pre>{knowledgePreviewContent}</pre>
+                </article>
+              ) : (
+                <div className="inline-empty">Choose note, manifest, or literature index to preview the underlying file.</div>
               )}
 
               {knowledgeEntries.length === 0 ? (

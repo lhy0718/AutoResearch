@@ -89,7 +89,32 @@ describe("InteractionSession", () => {
       constraints: [],
       objectiveMetric: "metric"
     });
+    const runDir = path.join(cwd, ".autolabos", "runs", run.id);
+    await fs.mkdir(runDir, { recursive: true });
     await fs.mkdir(path.join(cwd, ".autolabos", "knowledge"), { recursive: true });
+    await fs.writeFile(
+      path.join(runDir, "corpus.jsonl"),
+      [
+        JSON.stringify({ paper_id: "p1", title: "Paper one", citation_count: 12, pdf_url: "https://example.com/p1.pdf", bibtex: "@article{p1}", venue: "NeurIPS", year: 2024 }),
+        JSON.stringify({ paper_id: "p2", title: "Paper two", citation_count: 4, venue: "ICLR", year: 2025 })
+      ].join("\n") + "\n",
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(runDir, "collect_result.json"),
+      JSON.stringify({ bibtexMode: "hybrid", pdfRecovered: 1, bibtexEnriched: 1, enrichment: { status: "completed" } }, null, 2),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(runDir, "paper_summaries.jsonl"),
+      JSON.stringify({ paper_id: "p1", title: "Paper one", source_type: "full_text", summary: "summary", key_findings: [], limitations: [], datasets: [], metrics: [], novelty: "", reproducibility_notes: [] }) + "\n",
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(runDir, "evidence_store.jsonl"),
+      JSON.stringify({ evidence_id: "e1", paper_id: "p1", claim: "claim", method_slot: "", result_slot: "", limitation_slot: "", dataset_slot: "", metric_slot: "", evidence_span: "span", source_type: "full_text", confidence: 0.9 }) + "\n",
+      "utf8"
+    );
     await fs.writeFile(
       path.join(cwd, ".autolabos", "knowledge", "index.json"),
       JSON.stringify(
@@ -152,6 +177,8 @@ describe("InteractionSession", () => {
     expect(result.logs.some((line) => line.includes(`Knowledge entry: ${run.id}`))).toBe(true);
     expect(result.logs.some((line) => line.includes("Research question: Does the treatment outperform the baseline?"))).toBe(true);
     expect(result.logs.some((line) => line.includes("Analysis summary: Treatment improved accuracy over baseline."))).toBe(true);
+    expect(result.logs.some((line) => line.includes("Literature corpus: 2 paper(s), 1 with PDF, 1 with BibTeX"))).toBe(true);
+    expect(result.logs.some((line) => line.includes("Analysis coverage: 1 summaries, 1 evidence rows"))).toBe(true);
   });
 
   it("cancels a pending plan without executing any step", async () => {

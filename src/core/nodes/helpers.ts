@@ -1,8 +1,17 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
 
+import { writeRunLiteratureIndex } from "../literatureIndex.js";
 import { RunRecord } from "../../types.js";
 import { ensureDir, normalizeFsPath } from "../../utils/fs.js";
+
+const LITERATURE_INDEX_TRIGGER_PATHS = new Set([
+  "collect_result.json",
+  "corpus.jsonl",
+  "bibtex.bib",
+  "paper_summaries.jsonl",
+  "evidence_store.jsonl"
+]);
 
 export function runArtifactsDir(run: RunRecord): string {
   return path.join(".autolabos", "runs", run.id);
@@ -28,6 +37,7 @@ export async function writeRunArtifact(run: RunRecord, relativePath: string, con
   const outputPath = resolveRunArtifactPath(run, relativePath);
   const artifactPath = path.join(runArtifactsDir(run), relativePath);
   await writeTextArtifactAtomic(outputPath, content);
+  await syncRunLiteratureIndexIfNeeded(run, relativePath);
   return artifactPath;
 }
 
@@ -37,6 +47,7 @@ export async function appendJsonl(run: RunRecord, relativePath: string, items: u
   const lines = items.map((item) => JSON.stringify(item)).join("\n");
   const trailing = lines ? `${lines}\n` : "";
   await writeTextArtifactAtomic(outputPath, trailing);
+  await syncRunLiteratureIndexIfNeeded(run, relativePath);
   return artifactPath;
 }
 
@@ -49,7 +60,12 @@ export async function appendJsonlItems(run: RunRecord, relativePath: string, ite
     return artifactPath;
   }
   await fs.appendFile(outputPath, `${lines}\n`, "utf8");
+  await syncRunLiteratureIndexIfNeeded(run, relativePath);
   return artifactPath;
+}
+
+export async function syncRunLiteratureIndex(run: RunRecord): Promise<void> {
+  await writeRunLiteratureIndex(process.cwd(), run.id);
 }
 
 export async function safeRead(filePath: string): Promise<string> {
@@ -58,4 +74,11 @@ export async function safeRead(filePath: string): Promise<string> {
   } catch {
     return "";
   }
+}
+
+async function syncRunLiteratureIndexIfNeeded(run: RunRecord, relativePath: string): Promise<void> {
+  if (!LITERATURE_INDEX_TRIGGER_PATHS.has(relativePath)) {
+    return;
+  }
+  await syncRunLiteratureIndex(run);
 }

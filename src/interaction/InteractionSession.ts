@@ -45,6 +45,7 @@ import {
   buildRepositoryKnowledgeOverviewLines,
   readRepositoryKnowledgeIndex
 } from "../core/repositoryKnowledge.js";
+import { buildRunLiteratureIndexLines, writeRunLiteratureIndex } from "../core/literatureIndex.js";
 import { CodexCliClient, CodexReasoningEffort } from "../integrations/codex/codexCliClient.js";
 import { OpenAiResponsesTextClient } from "../integrations/openai/responsesTextClient.js";
 import { OllamaClient } from "../integrations/ollama/ollamaClient.js";
@@ -1082,9 +1083,12 @@ export class InteractionSession {
       const entry = index.entries.find((item) => item.run_id === run.id);
       if (!entry) {
         this.pushLog(`No repository knowledge entry has been published for ${run.id} yet.`);
-        return;
+      } else {
+        for (const line of buildRepositoryKnowledgeEntryLines(entry)) {
+          this.pushLog(line);
+        }
       }
-      for (const line of buildRepositoryKnowledgeEntryLines(entry)) {
+      for (const line of buildRunLiteratureIndexLines(await writeRunLiteratureIndex(this.workspaceRoot, run.id))) {
         this.pushLog(line);
       }
       return;
@@ -1097,8 +1101,11 @@ export class InteractionSession {
         for (const line of buildRepositoryKnowledgeEntryLines(activeEntry)) {
           this.pushLog(line);
         }
-        return;
       }
+      for (const line of buildRunLiteratureIndexLines(await writeRunLiteratureIndex(this.workspaceRoot, activeRun.id))) {
+        this.pushLog(line);
+      }
+      return;
     }
 
     for (const line of buildRepositoryKnowledgeOverviewLines(index.entries)) {

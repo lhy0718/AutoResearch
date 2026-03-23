@@ -37,6 +37,7 @@ import {
   runNonInteractiveSetup
 } from "../config.js";
 import { runDoctorReport } from "../core/doctor.js";
+import { writeRunLiteratureIndex } from "../core/literatureIndex.js";
 import { readRepositoryKnowledgeIndex } from "../core/repositoryKnowledge.js";
 import { bootstrapAutoLabOSRuntime, AutoLabOSRuntime } from "../runtime/createRuntime.js";
 import { GraphNodeId, PendingPlan, RunRecord, WebSessionState } from "../types.js";
@@ -46,7 +47,9 @@ import {
   BootstrapResponse,
   ConfigSummary,
   DoctorResponse,
+  KnowledgeFileResponse,
   KnowledgeResponse,
+  LiteratureResponse,
   SessionInputResponse,
   WebConfigFormData,
   WebConfigOptions
@@ -262,6 +265,12 @@ class AutoLabOSWebController {
         return jsonResponse(res, 200, { entries: knowledge.entries } satisfies KnowledgeResponse);
       }
 
+      if (pathname === "/api/knowledge/file" && method === "GET") {
+        const relativePath = url.searchParams.get("path") || "";
+        const preview = await readKnowledgeWorkspaceFile(this.cwd, relativePath);
+        return jsonResponse(res, 200, preview satisfies KnowledgeFileResponse);
+      }
+
       if (pathname === "/api/runs" && method === "GET") {
         const runtime = this.requireRuntime(res);
         if (!runtime) {
@@ -325,6 +334,21 @@ class AutoLabOSWebController {
           return jsonResponse(res, 404, { error: "Run not found." });
         }
         return jsonResponse(res, 200, { run });
+      }
+
+      const literatureMatch = pathname.match(/^\/api\/runs\/([^/]+)\/literature$/u);
+      if (literatureMatch && method === "GET") {
+        const runtime = this.requireRuntime(res);
+        if (!runtime) {
+          return;
+        }
+        const runId = decodeURIComponent(literatureMatch[1] || "");
+        const run = await runtime.runStore.getRun(runId);
+        if (!run) {
+          return jsonResponse(res, 404, { error: "Run not found." });
+        }
+        const literature = await writeRunLiteratureIndex(this.cwd, runId);
+        return jsonResponse(res, 200, { literature } satisfies LiteratureResponse);
       }
 
       const checkpointsMatch = pathname.match(/^\/api\/runs\/([^/]+)\/checkpoints$/u);
@@ -724,6 +748,28 @@ function emptySessionState(): WebSessionState {
   };
 }
 
+
+async function readKnowledgeWorkspaceFile(
+  workspaceRoot: string,
+  relativePath: string
+): Promise<KnowledgeFileResponse> {
+  const normalized = path.posix.normalize(relativePath.replace(/\\/g, "/")).replace(/^\/+/, "");
+  if (!normalized || normalized.startsWith("..") || path.isAbsolute(relativePath)) {
+    throw new Error("Invalid knowledge path.");
+  }
+  const allowedRoots = [".autolabos/knowledge/", "outputs/"];
+  if (!allowedRoots.some((prefix) => normalized === prefix.slice(0, -1) || normalized.startsWith(prefix))) {
+    throw new Error("Knowledge preview path is outside the allowed roots.");
+  }
+  const absolutePath = path.resolve(workspaceRoot, normalized);
+  const workspaceResolved = path.resolve(workspaceRoot);
+  if (!absolutePath.startsWith(`${workspaceResolved}${path.sep}`) && absolutePath !== workspaceResolved) {
+    throw new Error("Knowledge preview path escapes the workspace.");
+  }
+  const raw = await fs.readFile(absolutePath, "utf8");
+  const content = normalized.toLowerCase().endsWith(".json") ? `${JSON.stringify(JSON.parse(raw), null, 2)}\n` : raw;
+  return { path: normalized, content };
+}
 async function readJsonBody(req: IncomingMessage): Promise<JsonBody> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) {

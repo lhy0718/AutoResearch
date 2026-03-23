@@ -93,6 +93,7 @@ import {
   buildRepositoryKnowledgeOverviewLines,
   readRepositoryKnowledgeIndex
 } from "../core/repositoryKnowledge.js";
+import { buildRunLiteratureIndexLines, writeRunLiteratureIndex } from "../core/literatureIndex.js";
 import { getAppVersion } from "./version.js";
 import { buildAnimatedStatusText, buildFrame, buildThinkingText, RenderFrameOutput, SelectionMenuOption } from "./renderFrame.js";
 import { applyCodexSurfaceTheme, parseTerminalBackgroundResponse, supportsColor, TUI_THEME, type RgbColor } from "./theme.js";
@@ -1977,10 +1978,12 @@ export class TerminalApp {
       const entry = index.entries.find((item) => item.run_id === run.id);
       if (!entry) {
         this.pushTransientLog(`No repository knowledge entry has been published for ${run.id} yet.`);
-        this.render();
-        return;
+      } else {
+        for (const line of buildRepositoryKnowledgeEntryLines(entry)) {
+          this.pushTransientLog(line);
+        }
       }
-      for (const line of buildRepositoryKnowledgeEntryLines(entry)) {
+      for (const line of buildRunLiteratureIndexLines(await writeRunLiteratureIndex(process.cwd(), run.id))) {
         this.pushTransientLog(line);
       }
       this.render();
@@ -1994,9 +1997,12 @@ export class TerminalApp {
         for (const line of buildRepositoryKnowledgeEntryLines(activeEntry)) {
           this.pushTransientLog(line);
         }
-        this.render();
-        return;
       }
+      for (const line of buildRunLiteratureIndexLines(await writeRunLiteratureIndex(process.cwd(), run.id))) {
+        this.pushTransientLog(line);
+      }
+      this.render();
+      return;
     }
 
     for (const line of buildRepositoryKnowledgeOverviewLines(index.entries)) {

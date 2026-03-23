@@ -219,6 +219,64 @@ export interface KnowledgeResponse {
   entries: RepositoryKnowledgeEntry[];
 }
 
+export interface KnowledgeFileResponse {
+  path: string;
+  content: string;
+}
+
+export interface RunLiteratureIndex {
+  version: 1;
+  run_id: string;
+  updated_at: string;
+  corpus: {
+    paper_count: number;
+    papers_with_pdf: number;
+    missing_pdf_count: number;
+    papers_with_bibtex: number;
+    enriched_bibtex_count: number;
+    top_venues: string[];
+    year_range?: {
+      min: number;
+      max: number;
+    };
+  };
+  citations: {
+    total: number;
+    average: number;
+    top_paper?: {
+      title: string;
+      citation_count: number;
+    };
+  };
+  enrichment: {
+    bibtex_mode?: string;
+    pdf_recovered: number;
+    bibtex_enriched: number;
+    status?: string;
+    last_error?: string;
+  };
+  analysis: {
+    summary_count: number;
+    evidence_count: number;
+    covered_paper_count: number;
+    full_text_summary_count: number;
+    abstract_summary_count: number;
+  };
+  artifacts: {
+    literature_index_path: string;
+    corpus_path: string;
+    bibtex_path: string;
+    collect_result_path: string;
+    summaries_path: string;
+    evidence_path: string;
+  };
+  warnings: string[];
+}
+
+export interface LiteratureResponse {
+  literature: RunLiteratureIndex;
+}
+
 export interface BootstrapResponse {
   configured: boolean;
   setupDefaults: {

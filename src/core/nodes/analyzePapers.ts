@@ -3,7 +3,7 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 
 import { GraphNodeHandler } from "../stateGraph/types.js";
-import { appendJsonl, appendJsonlItems, runArtifactsDir, safeRead, writeRunArtifact } from "./helpers.js";
+import { appendJsonl, appendJsonlItems, runArtifactsDir, safeRead, syncRunLiteratureIndex, writeRunArtifact } from "./helpers.js";
 import { NodeExecutionDeps } from "./types.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { readJsonFile, writeJsonFile } from "../../utils/fs.js";
@@ -38,7 +38,7 @@ import {
   selectPapersForAnalysis
 } from "../analysis/paperSelection.js";
 import { CollectEnrichmentLogEntry } from "../collection/types.js";
-import { DoctorCheck, TransitionRecommendation } from "../../types.js";
+import { DoctorCheck, RunRecord, TransitionRecommendation } from "../../types.js";
 import { RECOMMENDED_CODEX_MODEL } from "../../integrations/codex/modelCatalog.js";
 import { CodexLLMClient } from "../llm/client.js";
 
@@ -665,7 +665,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           } else if (resetReason === "analysis_config_changed") {
             emitLog("Analysis settings changed since the previous run. Resetting summaries/evidence and re-analyzing the selected papers.");
           }
-          await resetAnalysisOutputs(summaryPath, evidencePath);
+          await resetAnalysisOutputs(run, summaryPath, evidencePath);
           existingSummaryRows = [];
           existingEvidenceRows = [];
           manifest = createFreshManifest(selection, analysisFingerprint, selectionRequestFingerprint, corpusFingerprint);
@@ -2245,9 +2245,10 @@ function createFreshManifest(
   };
 }
 
-async function resetAnalysisOutputs(summaryPath: string, evidencePath: string): Promise<void> {
+async function resetAnalysisOutputs(run: { id: string }, summaryPath: string, evidencePath: string): Promise<void> {
   await fs.rm(summaryPath, { force: true });
   await fs.rm(evidencePath, { force: true });
+  await syncRunLiteratureIndex(run as RunRecord);
 }
 
 async function bootstrapManifestFromExistingOutputs(
