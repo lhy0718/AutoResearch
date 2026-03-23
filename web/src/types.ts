@@ -192,6 +192,33 @@ export interface DoctorResponse {
   harness?: HarnessValidationReport;
 }
 
+export interface RepositoryKnowledgeSectionEntry {
+  name: string;
+  generated_files: string[];
+  updated_at: string;
+}
+
+export interface RepositoryKnowledgeEntry {
+  run_id: string;
+  title: string;
+  topic: string;
+  objective_metric: string;
+  latest_summary?: string;
+  latest_published_section: string;
+  updated_at: string;
+  public_output_root: string;
+  public_manifest: string;
+  knowledge_note: string;
+  research_question?: string;
+  analysis_summary?: string;
+  manuscript_type?: string;
+  sections: RepositoryKnowledgeSectionEntry[];
+}
+
+export interface KnowledgeResponse {
+  entries: RepositoryKnowledgeEntry[];
+}
+
 export interface BootstrapResponse {
   configured: boolean;
   setupDefaults: {

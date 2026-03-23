@@ -8,6 +8,8 @@ import {
   DoctorCheck,
   DoctorResponse,
   HarnessValidationReport,
+  KnowledgeResponse,
+  RepositoryKnowledgeEntry,
   RunRecord,
   RunInsightCard,
   WebConfigFormData,
@@ -27,12 +29,13 @@ const NODE_ORDER = [
   "write_paper"
 ] as const;
 
-type TabId = "logs" | "artifacts" | "checkpoints" | "meta" | "workspace" | "doctor";
+type TabId = "logs" | "artifacts" | "checkpoints" | "knowledge" | "meta" | "workspace" | "doctor";
 
 const DETAIL_TABS: Array<{ id: TabId; label: string }> = [
   { id: "logs", label: "Live logs" },
   { id: "artifacts", label: "Artifacts" },
   { id: "checkpoints", label: "Checkpoints" },
+  { id: "knowledge", label: "Knowledge" },
   { id: "meta", label: "Metadata" },
   { id: "workspace", label: "Workspace" },
   { id: "doctor", label: "Doctor" }
@@ -87,6 +90,7 @@ export function App() {
   const [artifactPreview, setArtifactPreview] = useState<string | null>(null);
   const [expandedInsightReferenceKey, setExpandedInsightReferenceKey] = useState<string | null>(null);
   const [checkpoints, setCheckpoints] = useState<CheckpointEntry[]>([]);
+  const [knowledgeEntries, setKnowledgeEntries] = useState<RepositoryKnowledgeEntry[]>([]);
   const [doctorChecks, setDoctorChecks] = useState<DoctorCheck[]>([]);
   const [doctorHarness, setDoctorHarness] = useState<HarnessValidationReport | null>(null);
   const [commandInput, setCommandInput] = useState("");
@@ -107,6 +111,7 @@ export function App() {
   useEffect(() => {
     void refreshBootstrap();
     void refreshDoctor();
+    void refreshKnowledge();
   }, []);
 
   useEffect(() => {
@@ -162,10 +167,14 @@ export function App() {
           void refreshRunDetails(selectedRunId);
         });
       }
+      startTransition(() => {
+        void refreshKnowledge();
+      });
     });
     source.addEventListener("bootstrap", () => {
       startTransition(() => {
         void refreshBootstrap();
+        void refreshKnowledge();
       });
     });
     return () => {
@@ -195,6 +204,8 @@ export function App() {
     selectedArtifact?.path === "review/review_packet.json" && artifactPreview
       ? parseReviewPacketPreview(artifactPreview)
       : null;
+  const selectedKnowledgeEntry =
+    knowledgeEntries.find((entry) => entry.run_id === (selectedRunId || session?.activeRunId)) || null;
   const activityRun =
     selectedRun ||
     (bootstrap?.runs || []).find((run) => run.id === (session?.activeRunId || selectedRunId));
@@ -230,6 +241,11 @@ export function App() {
     const response = await api<DoctorResponse>("/api/doctor");
     setDoctorChecks(response.checks);
     setDoctorHarness(response.harness || null);
+  }
+
+  async function refreshKnowledge() {
+    const response = await api<KnowledgeResponse>("/api/knowledge");
+    setKnowledgeEntries(response.entries);
   }
 
   async function loadArtifactPreview(runId: string, artifact: ArtifactEntry) {
@@ -1081,6 +1097,78 @@ export function App() {
                     <span>{formatStatusLabel(checkpoint.phase)}</span>
                     <small>{formatTimestamp(checkpoint.createdAt)}</small>
                     {checkpoint.reason ? <small>{checkpoint.reason}</small> : null}
+                  </article>
+                ))
+              )}
+            </div>
+          ) : null}
+
+          {activeTab === "knowledge" ? (
+            <div className="checkpoint-list">
+              {selectedKnowledgeEntry ? (
+                <article className="meta-card">
+                  <article className="meta-row"><span>Run</span><strong>{selectedKnowledgeEntry.run_id}</strong></article>
+                  <article className="meta-row"><span>Title</span><strong>{selectedKnowledgeEntry.title}</strong></article>
+                  <article className="meta-row"><span>Latest section</span><strong>{selectedKnowledgeEntry.latest_published_section}</strong></article>
+                  <article className="meta-row"><span>Updated</span><strong>{formatTimestamp(selectedKnowledgeEntry.updated_at)}</strong></article>
+                  <article className="meta-row"><span>Objective</span><strong>{selectedKnowledgeEntry.objective_metric}</strong></article>
+                  {selectedKnowledgeEntry.research_question ? (
+                    <article className="meta-row"><span>Question</span><strong>{selectedKnowledgeEntry.research_question}</strong></article>
+                  ) : null}
+                  {selectedKnowledgeEntry.analysis_summary ? (
+                    <article className="meta-row"><span>Analysis</span><strong>{selectedKnowledgeEntry.analysis_summary}</strong></article>
+                  ) : null}
+                  {selectedKnowledgeEntry.latest_summary ? (
+                    <article className="meta-row"><span>Summary</span><strong>{selectedKnowledgeEntry.latest_summary}</strong></article>
+                  ) : null}
+                  {selectedKnowledgeEntry.manuscript_type ? (
+                    <article className="meta-row"><span>Manuscript</span><strong>{selectedKnowledgeEntry.manuscript_type}</strong></article>
+                  ) : null}
+                  <article className="meta-row"><span>Knowledge note</span><strong>{selectedKnowledgeEntry.knowledge_note}</strong></article>
+                  <article className="meta-row"><span>Manifest</span><strong>{selectedKnowledgeEntry.public_manifest}</strong></article>
+                  <div className="chip-list">
+                    {selectedKnowledgeEntry.sections.map((section) => (
+                      <span key={`${selectedKnowledgeEntry.run_id}-${section.name}`} className="chip">
+                        {section.name}
+                      </span>
+                    ))}
+                  </div>
+                </article>
+              ) : (
+                <div className="inline-empty">No repository knowledge is available for the selected run yet.</div>
+              )}
+
+              {knowledgeEntries.length === 0 ? (
+                <div className="inline-empty">Repository knowledge will appear after public outputs are published.</div>
+              ) : (
+                knowledgeEntries.map((entry) => (
+                  <article key={entry.run_id} className="checkpoint-item">
+                    <div className="checkpoint-row">
+                      <strong>{entry.title}</strong>
+                      <span className={`status-pill ${entry.run_id === (selectedRunId || session?.activeRunId) ? "is-success" : "is-neutral"}`}>
+                        {entry.latest_published_section}
+                      </span>
+                    </div>
+                    <span>{entry.run_id}</span>
+                    <small>{entry.analysis_summary || entry.latest_summary || entry.topic}</small>
+                    <small>{formatTimestamp(entry.updated_at)}</small>
+                    <div className="pending-actions">
+                      <button
+                        className="button button-secondary button-small"
+                        type="button"
+                        onClick={() => setSelectedRunId(entry.run_id)}
+                      >
+                        Select run
+                      </button>
+                      <button
+                        className="button button-secondary button-small"
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => void runSessionCommand(`/knowledge ${entry.run_id}`, "Refreshing repository knowledge")}
+                      >
+                        Refresh in composer
+                      </button>
+                    </div>
                   </article>
                 ))
               )}

@@ -82,6 +82,78 @@ describe("InteractionSession", () => {
     expect(session.snapshot().logs.some((line) => line.includes(`Created run ${run.id}`))).toBe(true);
   });
 
+  it("reads repository knowledge for the active run via /knowledge", async () => {
+    const run = await runStore.createRun({
+      title: "Knowledge run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    await fs.mkdir(path.join(cwd, ".autolabos", "knowledge"), { recursive: true });
+    await fs.writeFile(
+      path.join(cwd, ".autolabos", "knowledge", "index.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          updated_at: "2026-03-23T00:00:00.000Z",
+          entries: [
+            {
+              run_id: run.id,
+              title: run.title,
+              topic: run.topic,
+              objective_metric: run.objectiveMetric,
+              latest_summary: "Review ready.",
+              latest_published_section: "review",
+              updated_at: "2026-03-23T00:00:00.000Z",
+              public_output_root: `outputs/${run.id}`,
+              public_manifest: `outputs/${run.id}/manifest.json`,
+              knowledge_note: `.autolabos/knowledge/runs/${run.id}.md`,
+              research_question: "Does the treatment outperform the baseline?",
+              analysis_summary: "Treatment improved accuracy over baseline.",
+              manuscript_type: "paper_scale_candidate",
+              sections: [
+                {
+                  name: "review",
+                  generated_files: ["review/review_packet.json"],
+                  updated_at: "2026-03-23T00:00:00.000Z"
+                }
+              ]
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const session = new InteractionSession({
+      workspaceRoot: cwd,
+      config: {
+        research: {
+          defaultTopic: "topic",
+          defaultConstraints: ["recent papers"],
+          default_objective_metric: "metric"
+        }
+      } as any,
+      runStore,
+      titleGenerator: {} as any,
+      codex: {} as any,
+      openAiTextClient: undefined,
+      eventStream: new InMemoryEventStream(),
+      orchestrator: {} as any,
+      semanticScholarApiKeyConfigured: true
+    });
+    await session.start();
+    await session.selectRun(run.id);
+
+    const result = await session.submitInput("/knowledge");
+
+    expect(result.logs.some((line) => line.includes(`Knowledge entry: ${run.id}`))).toBe(true);
+    expect(result.logs.some((line) => line.includes("Research question: Does the treatment outperform the baseline?"))).toBe(true);
+    expect(result.logs.some((line) => line.includes("Analysis summary: Treatment improved accuracy over baseline."))).toBe(true);
+  });
+
   it("cancels a pending plan without executing any step", async () => {
     const session = new InteractionSession({
       workspaceRoot: cwd,

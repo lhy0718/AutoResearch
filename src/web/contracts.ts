@@ -1,5 +1,6 @@
 import { DoctorCheck, PendingPlan, RunRecord, WebSessionState } from "../types.js";
 import type { HarnessValidationReport } from "../core/validation/harnessValidationService.js";
+import type { RepositoryKnowledgeEntry } from "../core/repositoryKnowledge.js";
 
 export interface ConfigSummary {
   projectName: string;
@@ -71,6 +72,10 @@ export interface DoctorResponse {
   configured: boolean;
   checks: DoctorCheck[];
   harness?: HarnessValidationReport;
+}
+
+export interface KnowledgeResponse {
+  entries: RepositoryKnowledgeEntry[];
 }
 
 export interface SessionInputResponse {

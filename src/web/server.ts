@@ -37,6 +37,7 @@ import {
   runNonInteractiveSetup
 } from "../config.js";
 import { runDoctorReport } from "../core/doctor.js";
+import { readRepositoryKnowledgeIndex } from "../core/repositoryKnowledge.js";
 import { bootstrapAutoLabOSRuntime, AutoLabOSRuntime } from "../runtime/createRuntime.js";
 import { GraphNodeId, PendingPlan, RunRecord, WebSessionState } from "../types.js";
 import { InteractionSession } from "../interaction/InteractionSession.js";
@@ -45,6 +46,7 @@ import {
   BootstrapResponse,
   ConfigSummary,
   DoctorResponse,
+  KnowledgeResponse,
   SessionInputResponse,
   WebConfigFormData,
   WebConfigOptions
@@ -253,6 +255,11 @@ class AutoLabOSWebController {
           200,
           { configured: true, checks: report.checks, harness: report.harness } satisfies DoctorResponse
         );
+      }
+
+      if (pathname === "/api/knowledge" && method === "GET") {
+        const knowledge = await readRepositoryKnowledgeIndex(this.cwd);
+        return jsonResponse(res, 200, { entries: knowledge.entries } satisfies KnowledgeResponse);
       }
 
       if (pathname === "/api/runs" && method === "GET") {

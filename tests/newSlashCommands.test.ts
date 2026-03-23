@@ -31,12 +31,18 @@ describe("new slash commands", () => {
     expect(suggestions.some((s) => s.applyValue === "/inspect ")).toBe(true);
   });
 
+  it("includes /knowledge in suggestions when typing /kn", () => {
+    const suggestions = buildSuggestions({ input: "/kn", runs, activeRunId: "run-1" });
+    expect(suggestions.some((s) => s.applyValue === "/knowledge ")).toBe(true);
+  });
+
   it("shows all new visible commands in root suggestions", () => {
     const suggestions = buildSuggestions({ input: "/", runs, activeRunId: "run-1" });
     expect(suggestions.some((s) => s.key === "cmd:clear")).toBe(true);
     expect(suggestions.some((s) => s.key === "cmd:queue")).toBe(true);
     expect(suggestions.some((s) => s.key === "cmd:inspect")).toBe(true);
     expect(suggestions.some((s) => s.key === "cmd:session")).toBe(true);
+    expect(suggestions.some((s) => s.key === "cmd:knowledge")).toBe(true);
     expect(suggestions.some((s) => s.key === "cmd:stats")).toBe(true);
     expect(suggestions.some((s) => s.key === "cmd:terminal-setup")).toBe(true);
     expect(suggestions.some((s) => s.key === "cmd:theme")).toBe(true);
@@ -61,6 +67,9 @@ describe("new slash commands", () => {
 
     const inspectCmd = SLASH_COMMANDS.find((c) => c.name === "inspect");
     expect(inspectCmd?.preserveDraftOnRun).toBe(true);
+
+    const knowledgeCmd = SLASH_COMMANDS.find((c) => c.name === "knowledge");
+    expect(knowledgeCmd?.preserveDraftOnRun).toBe(true);
 
     const helpCmd = SLASH_COMMANDS.find((c) => c.name === "help");
     expect(helpCmd?.preserveDraftOnRun).toBeFalsy();

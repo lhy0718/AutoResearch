@@ -35,6 +35,9 @@ describe("App", () => {
             { status: 200 }
           );
         }
+        if (url.includes("/api/knowledge")) {
+          return new Response(JSON.stringify({ entries: [] }), { status: 200 });
+        }
         return new Response(JSON.stringify({ configured: false, checks: [] }), { status: 200 });
       })
     );
@@ -85,6 +88,9 @@ describe("App", () => {
             }),
             { status: 200 }
           );
+        }
+        if (url.includes("/api/knowledge")) {
+          return new Response(JSON.stringify({ entries: [] }), { status: 200 });
         }
         return new Response(JSON.stringify({ configured: false, checks: [] }), { status: 200 });
       })
@@ -176,6 +182,9 @@ describe("App", () => {
       if (url.includes("/api/doctor")) {
         return new Response(JSON.stringify({ configured: true, checks: [] }), { status: 200 });
       }
+      if (url.includes("/api/knowledge")) {
+        return new Response(JSON.stringify({ entries: [] }), { status: 200 });
+      }
       if (url.includes("/api/setup")) {
         const body = JSON.parse(String(init?.body));
         expect(body.pdfAnalysisMode).toBeUndefined();
@@ -239,6 +248,167 @@ describe("App", () => {
           method: "POST"
         })
       );
+    });
+  });
+
+  it("renders repository knowledge in the inspector tab", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/bootstrap")) {
+        return new Response(
+          JSON.stringify({
+            configured: true,
+            setupDefaults: {
+              projectName: "AutoLabOS",
+              defaultTopic: "Multi-agent collaboration",
+              defaultConstraints: ["recent papers", "last 5 years"],
+              defaultObjectiveMetric: "state-of-the-art reproducibility"
+            },
+            session: {
+              activeRunId: "run-1",
+              busy: false,
+              logs: [],
+              canCancel: false
+            },
+            runs: [
+              {
+                id: "run-1",
+                title: "Run one",
+                topic: "topic",
+                constraints: ["recent papers"],
+                objectiveMetric: "accuracy",
+                status: "paused",
+                currentNode: "review",
+                latestSummary: "Review ready.",
+                updatedAt: "2026-03-10T10:00:00.000Z",
+                graph: {
+                  currentNode: "review",
+                  checkpointSeq: 4,
+                  retryCounters: {},
+                  rollbackCounters: {},
+                  nodeStates: {
+                    collect_papers: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    analyze_papers: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    generate_hypotheses: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    design_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    implement_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    run_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    analyze_results: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    review: { status: "needs_approval", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    write_paper: { status: "pending", updatedAt: "2026-03-10T10:00:00.000Z" }
+                  }
+                }
+              }
+            ]
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.includes("/api/doctor")) {
+        return new Response(JSON.stringify({ configured: true, checks: [] }), { status: 200 });
+      }
+      if (url.includes("/api/knowledge")) {
+        return new Response(
+          JSON.stringify({
+            entries: [
+              {
+                run_id: "run-1",
+                title: "Run one",
+                topic: "topic",
+                objective_metric: "accuracy",
+                latest_summary: "Review ready.",
+                latest_published_section: "review",
+                updated_at: "2026-03-10T10:00:00.000Z",
+                public_output_root: "outputs/run-1",
+                public_manifest: "outputs/run-1/manifest.json",
+                knowledge_note: ".autolabos/knowledge/runs/run-1.md",
+                research_question: "Does the treatment outperform the baseline?",
+                analysis_summary: "Treatment improved accuracy over baseline.",
+                manuscript_type: "paper_scale_candidate",
+                sections: [
+                  {
+                    name: "analysis",
+                    generated_files: ["analysis/summary.md"],
+                    updated_at: "2026-03-10T10:00:00.000Z"
+                  },
+                  {
+                    name: "review",
+                    generated_files: ["review/review_packet.json"],
+                    updated_at: "2026-03-10T10:00:00.000Z"
+                  }
+                ]
+              }
+            ]
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.includes("/api/runs/run-1/artifacts")) {
+        return new Response(JSON.stringify({ artifacts: [] }), { status: 200 });
+      }
+      if (url.includes("/api/runs/run-1/checkpoints")) {
+        return new Response(JSON.stringify({ checkpoints: [] }), { status: 200 });
+      }
+      if (url.includes("/api/runs/run-1") && !url.includes("/actions")) {
+        return new Response(
+          JSON.stringify({
+            run: {
+              id: "run-1",
+              title: "Run one",
+              topic: "topic",
+              constraints: ["recent papers"],
+              objectiveMetric: "accuracy",
+              status: "paused",
+              currentNode: "review",
+              latestSummary: "Review ready.",
+              updatedAt: "2026-03-10T10:00:00.000Z",
+              graph: {
+                currentNode: "review",
+                checkpointSeq: 4,
+                retryCounters: {},
+                rollbackCounters: {},
+                nodeStates: {
+                  collect_papers: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  analyze_papers: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  generate_hypotheses: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  design_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  implement_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  run_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  analyze_results: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  review: { status: "needs_approval", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  write_paper: { status: "pending", updatedAt: "2026-03-10T10:00:00.000Z" }
+                }
+              }
+            }
+          }),
+          { status: 200 }
+        );
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal(
+      "EventSource",
+      class {
+        addEventListener() {}
+        close() {}
+      } as unknown as typeof EventSource
+    );
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Knowledge" })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Knowledge" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Does the treatment outperform the baseline?")).toBeInTheDocument();
+      expect(screen.getAllByText("Treatment improved accuracy over baseline.").length).toBeGreaterThan(0);
+      expect(screen.getByText("paper_scale_candidate")).toBeInTheDocument();
+      expect(screen.getByText("outputs/run-1/manifest.json")).toBeInTheDocument();
     });
   });
 
@@ -377,6 +547,9 @@ describe("App", () => {
       }
       if (url.includes("/api/doctor")) {
         return new Response(JSON.stringify({ configured: true, checks: [] }), { status: 200 });
+      }
+      if (url.includes("/api/knowledge")) {
+        return new Response(JSON.stringify({ entries: [] }), { status: 200 });
       }
       if (url.includes("/api/runs/run-1/artifacts")) {
         return new Response(
@@ -644,6 +817,9 @@ describe("App", () => {
       if (url.includes("/api/doctor")) {
         return new Response(JSON.stringify({ configured: true, checks: [] }), { status: 200 });
       }
+      if (url.includes("/api/knowledge")) {
+        return new Response(JSON.stringify({ entries: [] }), { status: 200 });
+      }
       if (url.includes("/api/runs/run-1/artifacts")) {
         return new Response(
           JSON.stringify({
@@ -867,6 +1043,9 @@ describe("App", () => {
       if (url.includes("/api/doctor")) {
         return Promise.resolve(new Response(JSON.stringify({ configured: true, checks: [] }), { status: 200 }));
       }
+      if (url.includes("/api/knowledge")) {
+        return Promise.resolve(new Response(JSON.stringify({ entries: [] }), { status: 200 }));
+      }
       if (url.includes("/api/runs/run-1/artifacts")) {
         return Promise.resolve(new Response(JSON.stringify({ artifacts: [] }), { status: 200 }));
       }
@@ -1013,6 +1192,9 @@ describe("App", () => {
       }
       if (url.includes("/api/doctor")) {
         return new Response(JSON.stringify({ configured: true, checks: [] }), { status: 200 });
+      }
+      if (url.includes("/api/knowledge")) {
+        return new Response(JSON.stringify({ entries: [] }), { status: 200 });
       }
       if (url === "/api/runs") {
         const body = JSON.parse(String(init?.body));

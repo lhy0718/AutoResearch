@@ -4,6 +4,7 @@ import { promises as fs } from "node:fs";
 import { RunRecord } from "../types.js";
 import { ensureDir, fileExists, writeJsonFile } from "../utils/fs.js";
 import { RunContextMemory } from "./memory/runContextMemory.js";
+import { updateRepositoryKnowledgeIndex } from "./repositoryKnowledge.js";
 import {
   buildPublicRunManifestPath,
   buildPublicRunOutputDir,
@@ -36,7 +37,7 @@ export interface PublishPublicRunOutputFile {
 
 export interface PublishPublicRunOutputsInput {
   workspaceRoot: string;
-  run: Pick<RunRecord, "id" | "title">;
+  run: Pick<RunRecord, "id" | "title" | "topic" | "objectiveMetric" | "latestSummary">;
   section: PublicRunOutputSection;
   files: PublishPublicRunOutputFile[];
   workspaceChangedFiles?: string[];
@@ -111,6 +112,21 @@ export async function publishPublicRunOutputs(
   manifest.generated_files = collectGeneratedFiles(manifest.sections);
   manifest.updated_at = now;
   await writeJsonFile(manifestPath, manifest);
+
+  if (input.runContext) {
+    await updateRepositoryKnowledgeIndex({
+      workspaceRoot: input.workspaceRoot,
+      run: {
+        id: input.run.id,
+        title: input.run.title,
+        topic: input.run.topic,
+        objectiveMetric: input.run.objectiveMetric,
+        latestSummary: input.run.latestSummary
+      },
+      manifest,
+      runContext: input.runContext
+    });
+  }
 
   if (input.runContext) {
     await input.runContext.put("public_outputs.root", normalizeRelativePath(path.relative(input.workspaceRoot, outputRoot)));

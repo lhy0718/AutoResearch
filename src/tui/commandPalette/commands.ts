@@ -33,6 +33,7 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
   { name: "queue", usage: "/queue", description: "Show queued inputs", category: "session", visible: true, preserveDraftOnRun: true },
   { name: "inspect", usage: "/inspect", description: "Show session diagnostics", category: "session", visible: true, preserveDraftOnRun: true },
   { name: "session", usage: "/session", description: "Show active run summary", category: "session", visible: true, preserveDraftOnRun: true },
+  { name: "knowledge", usage: "/knowledge [run]", description: "Show repository knowledge for the active or selected run", category: "session", visible: true, preserveDraftOnRun: true },
   { name: "stats", usage: "/stats", description: "Show local session metrics", category: "session", visible: true, preserveDraftOnRun: true },
   { name: "terminal-setup", usage: "/terminal-setup", description: "Show terminal capabilities", category: "system", visible: true, aliases: ["ts"], preserveDraftOnRun: true },
   { name: "theme", usage: "/theme", description: "Show current theme info", category: "system", visible: true, preserveDraftOnRun: true },

@@ -40,6 +40,11 @@ import {
   buildAnalyzeResultsInsightCard,
   formatAnalyzeResultsArtifactLines
 } from "../core/resultAnalysisPresentation.js";
+import {
+  buildRepositoryKnowledgeEntryLines,
+  buildRepositoryKnowledgeOverviewLines,
+  readRepositoryKnowledgeIndex
+} from "../core/repositoryKnowledge.js";
 import { CodexCliClient, CodexReasoningEffort } from "../integrations/codex/codexCliClient.js";
 import { OpenAiResponsesTextClient } from "../integrations/openai/responsesTextClient.js";
 import { OllamaClient } from "../integrations/ollama/ollamaClient.js";
@@ -1034,6 +1039,9 @@ export class InteractionSession {
         return this.handleRunSelect(args, true);
       case "title":
         return this.handleTitle(args);
+      case "knowledge":
+        await this.handleKnowledge(args);
+        return { ok: true };
       case "agent":
         return this.handleAgent(args, abortSignal);
       case "approve":
@@ -1054,11 +1062,48 @@ export class InteractionSession {
   private printHelp(): void {
     this.pushLog("Web composer commands:");
     this.pushLog("/help | /runs | /run <run> | /resume <run> | /title <new title>");
+    this.pushLog("/knowledge [run]");
     this.pushLog("/doctor | /approve | /retry");
     this.pushLog("/agent list | /agent status [run] | /agent graph [run]");
     this.pushLog("/agent review [run] | /agent transition [run] | /agent apply [run] | /agent overnight [run] | /agent autonomous [run]");
     this.pushLog("/agent run <node> [run] [--top-n <n> | --top-k <n> --branch-count <n>]");
     this.pushLog("/agent collect [query] [options] | /agent jump <node> [run] [--force]");
+  }
+
+  private async handleKnowledge(args: string[]): Promise<void> {
+    const index = await readRepositoryKnowledgeIndex(this.workspaceRoot);
+    const query = args.join(" ").trim() || undefined;
+
+    if (query) {
+      const run = await this.resolveTargetRun(query);
+      if (!run) {
+        return;
+      }
+      const entry = index.entries.find((item) => item.run_id === run.id);
+      if (!entry) {
+        this.pushLog(`No repository knowledge entry has been published for ${run.id} yet.`);
+        return;
+      }
+      for (const line of buildRepositoryKnowledgeEntryLines(entry)) {
+        this.pushLog(line);
+      }
+      return;
+    }
+
+    const activeRun = this.getActiveIndexedRun();
+    if (activeRun) {
+      const activeEntry = index.entries.find((item) => item.run_id === activeRun.id);
+      if (activeEntry) {
+        for (const line of buildRepositoryKnowledgeEntryLines(activeEntry)) {
+          this.pushLog(line);
+        }
+        return;
+      }
+    }
+
+    for (const line of buildRepositoryKnowledgeOverviewLines(index.entries)) {
+      this.pushLog(line);
+    }
   }
 
   private async handleDoctor(): Promise<void> {

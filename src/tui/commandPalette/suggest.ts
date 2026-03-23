@@ -137,7 +137,7 @@ function defaultApplyValueForCommand(name: string): string {
 }
 
 function limitSuggestions(items: SuggestionItem[]): SuggestionItem[] {
-  return items.slice(0, 12);
+  return items.slice(0, 16);
 }
 
 function briefSuggestions(parsed: ParsedInput): SuggestionItem[] {

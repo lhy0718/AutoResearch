@@ -88,6 +88,11 @@ import {
   buildAnalyzeResultsInsightCard,
   formatAnalyzeResultsArtifactLines
 } from "../core/resultAnalysisPresentation.js";
+import {
+  buildRepositoryKnowledgeEntryLines,
+  buildRepositoryKnowledgeOverviewLines,
+  readRepositoryKnowledgeIndex
+} from "../core/repositoryKnowledge.js";
 import { getAppVersion } from "./version.js";
 import { buildAnimatedStatusText, buildFrame, buildThinkingText, RenderFrameOutput, SelectionMenuOption } from "./renderFrame.js";
 import { applyCodexSurfaceTheme, parseTerminalBackgroundResponse, supportsColor, TUI_THEME, type RgbColor } from "./theme.js";
@@ -1844,6 +1849,9 @@ export class TerminalApp {
       case "session":
         this.handleSession();
         return { ok: true };
+      case "knowledge":
+        await this.handleKnowledge(args);
+        return { ok: true };
       case "stats":
         this.handleStats();
         return { ok: true };
@@ -1869,6 +1877,7 @@ export class TerminalApp {
     this.pushLog("/new");
     this.pushLog("/brief start <path|--latest>");
     this.pushLog("/approve");
+    this.pushLog("/knowledge [run]");
     this.pushLog("");
     this.pushLog("Controls:");
     this.pushLog("Press Tab when the input is empty to insert the suggested next step.");
@@ -1952,6 +1961,47 @@ export class TerminalApp {
     }
     this.pushTransientLog(`  draft: ${this.input.length > 0 ? `${this.input.length} chars` : "empty"}`);
     this.pushTransientLog(`  interaction: ${this.busy ? "busy" : this.thinking ? "thinking" : "idle"}`);
+    this.render();
+  }
+
+  private async handleKnowledge(args: string[]): Promise<void> {
+    const index = await readRepositoryKnowledgeIndex(process.cwd());
+    const query = args.join(" ").trim() || undefined;
+
+    if (query) {
+      const run = await this.resolveTargetRun(query);
+      if (!run) {
+        this.render();
+        return;
+      }
+      const entry = index.entries.find((item) => item.run_id === run.id);
+      if (!entry) {
+        this.pushTransientLog(`No repository knowledge entry has been published for ${run.id} yet.`);
+        this.render();
+        return;
+      }
+      for (const line of buildRepositoryKnowledgeEntryLines(entry)) {
+        this.pushTransientLog(line);
+      }
+      this.render();
+      return;
+    }
+
+    const run = this.getRenderableRun();
+    if (run) {
+      const activeEntry = index.entries.find((item) => item.run_id === run.id);
+      if (activeEntry) {
+        for (const line of buildRepositoryKnowledgeEntryLines(activeEntry)) {
+          this.pushTransientLog(line);
+        }
+        this.render();
+        return;
+      }
+    }
+
+    for (const line of buildRepositoryKnowledgeOverviewLines(index.entries)) {
+      this.pushTransientLog(line);
+    }
     this.render();
   }
 
