@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-03-23
+Last updated: 2026-03-24
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
@@ -110,7 +110,7 @@ This file was compacted on 2026-03-22 to remove duplicated template fragments, m
 - Remaining risks: the next live blocker has moved downstream to long-running `generate_hypotheses` completion quality; non-adjacent manual force-jumps and explicit backtracks still rely on the existing skip semantics and should be validated separately if touched.
 
 ### LV-039 — `smoke.yml` fails in build before CI smoke can start
-- Status: OPEN
+- Status: FIXED
 - Validation target: `.github/workflows/smoke.yml` build gate before `npm run test:smoke:ci`
 - Environment/session context: project root, local reproduction of the GitHub Actions smoke workflow build gate on 2026-03-19.
 - Reproduction steps:
@@ -124,14 +124,16 @@ This file was compacted on 2026-03-22 to remove duplicated template fragments, m
 - Root cause hypothesis:
   - Type: `persisted_state_bug`
   - Hypothesis: one compile path missed the fourth `defaultFocusFiles` argument and the analysis manifest typing drifted behind persisted runtime behavior.
-- Code/test changes: pending
+- Code/test changes:
+  - `src/core/agents/implementSessionManager.ts`
+  - `src/core/nodes/analyzePapers.ts`
 - Regression status:
-  - Automated regression test linked: no.
-  - Re-validation result: pending re-validation after the minimal compile fix.
-- Remaining risks: rerun both `npm run build` and the CI-smoke path after patching.
+  - Automated regression test linked: no narrow unit regression; the compile/smoke gates are the effective regression surface for this issue.
+  - Re-validation result: pass — `npm run build` and `npm run test:smoke:ci` both pass on the current tree, so the prior compile-time mismatch no longer reproduces.
+- Remaining risks: keep the build/smoke gate in routine validation because this issue is guarded primarily by compile coverage rather than a focused unit test.
 
 ### LV-056 — Supervisor stops after auto-approved design instead of executing the new pending node
-- Status: OPEN
+- Status: FIX IMPLEMENTED, LIVE REVALIDATION PENDING
 - Validation target: `test/` live TUI continuation after `design_experiments` auto-approves into `implement_experiments`
 - Environment/session context: `test/` workspace, resumed governed run `81820c46-d1b6-4080-8575-a35c60583480`, cycle 10, minimal approval mode.
 - Reproduction steps:
@@ -146,14 +148,16 @@ This file was compacted on 2026-03-22 to remove duplicated template fragments, m
 - Root cause hypothesis:
   - Type: `persisted_state_bug`
   - Hypothesis: `InteractiveRunSupervisor.runUntilStop()` treats the first continuation result as terminal even when the workflow has advanced to a fresh pending node that should execute immediately.
-- Code/test changes: pending
+- Code/test changes:
+  - `src/core/runs/interactiveRunSupervisor.ts`
+  - `tests/interactiveRunSupervisor.test.ts`
 - Regression status:
-  - Automated regression test linked: no.
-  - Re-validation result: pending same-flow live revalidation after the minimal supervisor-loop patch.
+  - Automated regression test linked: yes, `tests/interactiveRunSupervisor.test.ts`.
+  - Re-validation result: focused regression passes locally; same-flow live revalidation on the cycle-10 boundary is still pending.
 - Remaining risks: confirm the loop continues exactly once into the new pending node without creating a self-loop when no progress occurs.
 
 ### LV-057 — `implement_experiments` reuses a stale Codex thread after run feedback changes the repair target
-- Status: OPEN
+- Status: FIX IMPLEMENTED, LIVE REVALIDATION PENDING
 - Validation target: `test/` live repair cycle after `run_experiments` fails with new runner feedback
 - Environment/session context: `test/` workspace, resumed governed run `81820c46-d1b6-4080-8575-a35c60583480`, repair cycle after a new `run_experiments` failure.
 - Reproduction steps:
@@ -168,10 +172,12 @@ This file was compacted on 2026-03-22 to remove duplicated template fragments, m
 - Root cause hypothesis:
   - Type: `persisted_state_bug`
   - Hypothesis: thread reset depends on plan-hash changes only; fresh runner feedback does not clear the stale thread.
-- Code/test changes: pending
+- Code/test changes:
+  - `src/core/agents/implementSessionManager.ts`
+  - `tests/implementSessionManager.test.ts`
 - Regression status:
-  - Automated regression test linked: no.
-  - Re-validation result: pending same-flow revalidation after forcing a fresh implement thread whenever runner feedback is present.
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`.
+  - Re-validation result: focused regressions pass locally, including the fresh-thread runner-feedback case; same-flow live revalidation on the resumed repair cycle is still pending.
 - Remaining risks: verify the same run now starts with no carried-over thread and progresses into a fresh repair attempt.
 
 ### LV-055 — `implement_experiments` local verification can miss Python-invalid JSON booleans, letting a broken runner reach `run_experiments`

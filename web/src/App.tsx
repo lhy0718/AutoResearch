@@ -23,6 +23,17 @@ import {
   CODEX_TASK_MODEL_DESCRIPTION,
   OPENAI_TASK_MODEL_DESCRIPTION
 } from "../../src/modelSlotText.js";
+import {
+  buildOllamaChatModelChoices,
+  buildOllamaExperimentModelChoices,
+  buildOllamaResearchModelChoices,
+  buildOllamaVisionModelChoices,
+  DEFAULT_OLLAMA_BASE_URL,
+  DEFAULT_OLLAMA_CHAT_MODEL,
+  DEFAULT_OLLAMA_EXPERIMENT_MODEL,
+  DEFAULT_OLLAMA_RESEARCH_MODEL,
+  DEFAULT_OLLAMA_VISION_MODEL
+} from "../../src/integrations/ollama/modelCatalog.js";
 
 const NODE_ORDER = [
   "collect_papers",
@@ -1446,6 +1457,7 @@ interface ConfigEditorFormProps {
 function ConfigEditorForm(props: ConfigEditorFormProps) {
   const isCodexMode = props.form.llmMode === "codex_chatgpt_only";
   const isOpenAiMode = props.form.llmMode === "openai_api";
+  const isOllamaMode = props.form.llmMode === "ollama";
 
   return (
     <form className={props.className} onSubmit={props.onSubmit}>
@@ -1487,6 +1499,7 @@ function ConfigEditorForm(props: ConfigEditorFormProps) {
           >
             <option value="codex_chatgpt_only">Codex ChatGPT (Default)</option>
             <option value="openai_api">OpenAI API</option>
+            <option value="ollama">Ollama</option>
           </select>
         </label>
       </div>
@@ -1583,14 +1596,62 @@ function ConfigEditorForm(props: ConfigEditorFormProps) {
         </>
       ) : null}
 
+      {isOllamaMode ? (
+        <>
+          <label>
+            Ollama base URL
+            <input
+              disabled={props.disabled}
+              value={props.form.ollamaBaseUrl}
+              onChange={(event) => patchSetupForm(props.onChange, { ollamaBaseUrl: event.target.value })}
+            />
+          </label>
+          <p className="form-help">The web setup will use this local Ollama endpoint for chat, research backend, experiment, and vision flows.</p>
+          <ConfigModelSection
+            title="Ollama chat"
+            description="Fast local chat model for interactive turns and lightweight assistance."
+            disabled={props.disabled}
+            modelValue={props.form.ollamaChatModel}
+            modelOptions={props.options.ollamaChatModels}
+            onModelChange={(value) => patchSetupForm(props.onChange, { ollamaChatModel: value })}
+          />
+          <ConfigModelSection
+            title="Ollama research backend"
+            description="Primary local model for research backend, analysis, and planning tasks."
+            disabled={props.disabled}
+            modelValue={props.form.ollamaResearchModel}
+            modelOptions={props.options.ollamaResearchModels}
+            onModelChange={(value) => patchSetupForm(props.onChange, { ollamaResearchModel: value })}
+          />
+          <ConfigModelSection
+            title="Ollama experiment"
+            description="Local model used for experiment implementation and code-oriented execution work."
+            disabled={props.disabled}
+            modelValue={props.form.ollamaExperimentModel}
+            modelOptions={props.options.ollamaExperimentModels}
+            onModelChange={(value) => patchSetupForm(props.onChange, { ollamaExperimentModel: value })}
+          />
+          <ConfigModelSection
+            title="Ollama vision"
+            description="Vision/PDF model used when the pipeline analyzes page images locally."
+            disabled={props.disabled}
+            modelValue={props.form.ollamaVisionModel}
+            modelOptions={props.options.ollamaVisionModels}
+            onModelChange={(value) => patchSetupForm(props.onChange, { ollamaVisionModel: value })}
+          />
+        </>
+      ) : null}
+
       <label>
         Semantic Scholar API key
         <input disabled={props.disabled} type="password" value={props.form.semanticScholarApiKey} onChange={(event) => patchSetupForm(props.onChange, { semanticScholarApiKey: event.target.value })} />
       </label>
-      <label>
-        OpenAI API key
-        <input disabled={props.disabled} type="password" value={props.form.openAiApiKey} onChange={(event) => patchSetupForm(props.onChange, { openAiApiKey: event.target.value })} />
-      </label>
+      {isOpenAiMode ? (
+        <label>
+          OpenAI API key
+          <input disabled={props.disabled} type="password" value={props.form.openAiApiKey} onChange={(event) => patchSetupForm(props.onChange, { openAiApiKey: event.target.value })} />
+        </label>
+      ) : null}
       <p className="form-help">{props.apiKeyHelp}</p>
 
       <div className="form-actions">
@@ -1605,11 +1666,11 @@ interface ConfigModelSectionProps {
   description: string;
   disabled?: boolean;
   modelValue: string;
-  effortValue: string;
   modelOptions: string[];
-  effortOptions: string[];
+  effortValue?: string;
+  effortOptions?: string[];
   onModelChange: (value: string) => void;
-  onEffortChange: (value: string) => void;
+  onEffortChange?: (value: string) => void;
 }
 
 function ConfigModelSection(props: ConfigModelSectionProps) {
@@ -1628,14 +1689,16 @@ function ConfigModelSection(props: ConfigModelSectionProps) {
             ))}
           </select>
         </label>
-        <label>
-          Reasoning effort
-          <select disabled={props.disabled} value={props.effortValue} onChange={(event) => props.onEffortChange(event.target.value)}>
-            {props.effortOptions.map((option) => (
-              <option key={option} value={option}>{option}</option>
-            ))}
-          </select>
-        </label>
+        {props.effortOptions && props.onEffortChange ? (
+          <label>
+            Reasoning effort
+            <select disabled={props.disabled} value={props.effortValue} onChange={(event) => props.onEffortChange?.(event.target.value)}>
+              {props.effortOptions.map((option) => (
+                <option key={option} value={option}>{option}</option>
+              ))}
+            </select>
+          </label>
+        ) : null}
       </div>
     </section>
   );
@@ -1681,7 +1744,12 @@ function createDefaultConfigForm(): WebConfigFormData {
     openAiResearchBackendModel: "gpt-5.4",
     openAiResearchBackendReasoningEffort: "medium",
     openAiExperimentModel: "gpt-5.4",
-    openAiExperimentReasoningEffort: "medium"
+    openAiExperimentReasoningEffort: "medium",
+    ollamaBaseUrl: DEFAULT_OLLAMA_BASE_URL,
+    ollamaChatModel: DEFAULT_OLLAMA_CHAT_MODEL,
+    ollamaResearchModel: DEFAULT_OLLAMA_RESEARCH_MODEL,
+    ollamaExperimentModel: DEFAULT_OLLAMA_EXPERIMENT_MODEL,
+    ollamaVisionModel: DEFAULT_OLLAMA_VISION_MODEL
   };
 }
 
@@ -1723,7 +1791,11 @@ function createDefaultConfigOptions(): WebConfigOptions {
       "gpt-4.1": ["medium"],
       "gpt-4o": ["medium"],
       "gpt-4o-mini": ["medium"]
-    }
+    },
+    ollamaChatModels: buildOllamaChatModelChoices(),
+    ollamaResearchModels: buildOllamaResearchModelChoices(),
+    ollamaExperimentModels: buildOllamaExperimentModelChoices(),
+    ollamaVisionModels: buildOllamaVisionModelChoices()
   };
 }
 

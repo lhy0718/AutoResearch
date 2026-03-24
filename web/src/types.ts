@@ -122,6 +122,10 @@ export interface WebConfigOptions {
   codexReasoningByModel: Record<string, string[]>;
   openAiModels: string[];
   openAiReasoningByModel: Record<string, string[]>;
+  ollamaChatModels: string[];
+  ollamaResearchModels: string[];
+  ollamaExperimentModels: string[];
+  ollamaVisionModels: string[];
 }
 
 export interface ArtifactEntry {

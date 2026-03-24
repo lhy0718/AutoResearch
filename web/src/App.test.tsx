@@ -134,6 +134,144 @@ describe("App", () => {
 
     expect(screen.queryByText("Codex chat")).not.toBeInTheDocument();
     expect(screen.queryByText("Codex research backend")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Primary provider"), {
+      target: { value: "ollama" }
+    });
+
+    await waitFor(() => {
+      expectVisibleText("Ollama chat");
+      expectVisibleText("Ollama research backend");
+      expectVisibleText("Ollama experiment");
+      expectVisibleText("Ollama vision");
+      expect(screen.getByDisplayValue("http://127.0.0.1:11434")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText("OpenAI chat")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("OpenAI API key")).not.toBeInTheDocument();
+  });
+
+  it("shows Ollama settings and submits Ollama-specific fields", async () => {
+    const bootstrapPayload = {
+      configured: true,
+      setupDefaults: {
+        projectName: "AutoLabOS",
+        defaultTopic: "Multi-agent collaboration",
+        defaultConstraints: ["recent papers", "last 5 years"],
+        defaultObjectiveMetric: "state-of-the-art reproducibility"
+      },
+      session: {
+        busy: false,
+        logs: [],
+        canCancel: false
+      },
+      runs: [],
+      configSummary: {
+        projectName: "AutoLabOS",
+        workflowMode: "agent_approval",
+        approvalMode: "minimal",
+        llmMode: "ollama",
+        pdfMode: "ollama_vision",
+        researchBackendModel: "qwen3.5:35b-a3b",
+        chatModel: "qwen3.5:27b",
+        experimentModel: "qwen2.5-coder:32b",
+        researchBackendReasoning: undefined,
+        chatReasoning: undefined,
+        experimentReasoning: undefined
+      },
+      configForm: {
+        projectName: "AutoLabOS",
+        defaultTopic: "Multi-agent collaboration",
+        defaultConstraints: "recent papers, last 5 years",
+        defaultObjectiveMetric: "state-of-the-art reproducibility",
+        llmMode: "ollama",
+        codexChatModelChoice: "gpt-5.3-codex",
+        codexChatReasoningEffort: "low",
+        codexResearchBackendModelChoice: "gpt-5.4",
+        codexResearchBackendReasoningEffort: "xhigh",
+        codexExperimentModelChoice: "gpt-5.4",
+        codexExperimentReasoningEffort: "xhigh",
+        openAiChatModel: "gpt-5.4",
+        openAiChatReasoningEffort: "low",
+        openAiResearchBackendModel: "gpt-5.4",
+        openAiResearchBackendReasoningEffort: "medium",
+        openAiExperimentModel: "gpt-5.4",
+        openAiExperimentReasoningEffort: "medium",
+        ollamaBaseUrl: "http://127.0.0.1:11434",
+        ollamaChatModel: "qwen3.5:27b",
+        ollamaResearchModel: "qwen3.5:35b-a3b",
+        ollamaExperimentModel: "qwen2.5-coder:32b",
+        ollamaVisionModel: "qwen3.5:35b-a3b"
+      }
+    };
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/bootstrap")) {
+        return new Response(JSON.stringify(bootstrapPayload), { status: 200 });
+      }
+      if (url.includes("/api/doctor")) {
+        return new Response(JSON.stringify({ configured: true, checks: [] }), { status: 200 });
+      }
+      if (url.includes("/api/knowledge") && !url.includes("/api/knowledge/file")) {
+        return new Response(JSON.stringify({ entries: [] }), { status: 200 });
+      }
+      if (url.includes("/api/runs/") && url.includes("/literature")) {
+        return new Response(JSON.stringify({ literature: emptyLiterature("run-1") }), { status: 200 });
+      }
+      if (url.includes("/api/setup")) {
+        const body = JSON.parse(String(init?.body));
+        expect(body.llmMode).toBe("ollama");
+        expect(body.ollamaBaseUrl).toBe("http://127.0.0.1:22434");
+        expect(body.ollamaChatModel).toBeDefined();
+        expect(body.ollamaResearchModel).toBeDefined();
+        expect(body.ollamaExperimentModel).toBeDefined();
+        expect(body.ollamaVisionModel).toBeDefined();
+        expect(body.openAiApiKey).toBe("");
+        return new Response(JSON.stringify({ bootstrap: bootstrapPayload }), { status: 200 });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal(
+      "EventSource",
+      class {
+        addEventListener() {}
+        close() {}
+      } as unknown as typeof EventSource
+    );
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Workspace" })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Workspace" }));
+
+    await waitFor(() => {
+      expectVisibleText("Ollama chat");
+      expectVisibleText("Ollama research backend");
+      expectVisibleText("Ollama experiment");
+      expectVisibleText("Ollama vision");
+      expect(screen.getByLabelText("Ollama base URL")).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByLabelText("Ollama base URL"), {
+      target: { value: "http://127.0.0.1:22434" }
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/setup",
+        expect.objectContaining({
+          method: "POST"
+        })
+      );
+    });
   });
 
   it("shows per-slot model and reasoning selectors in workspace settings and submits them", async () => {
