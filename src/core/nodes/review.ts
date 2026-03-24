@@ -21,6 +21,7 @@ import { loadExperimentContract } from "../experiments/experimentContract.js";
 import { FailureMemory } from "../experiments/failureMemory.js";
 import { evaluateMinimumGate } from "../analysis/paperMinimumGate.js";
 import { runLLMPaperQualityEvaluation } from "../analysis/llmPaperQualityEvaluator.js";
+import type { BriefEvidenceAssessment } from "../analysis/briefEvidenceValidator.js";
 
 export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
@@ -88,7 +89,9 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         presence,
         report,
         topic: run.topic,
-        objectiveMetric: run.objectiveMetric
+        objectiveMetric: run.objectiveMetric,
+        briefEvidenceAssessment:
+          (await runContextMemory.get<BriefEvidenceAssessment>("analyze_results.brief_evidence_assessment")) ?? undefined
       });
       await writeRunArtifact(
         run,
@@ -135,7 +138,13 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
 
       // Use critique + minimum gate + LLM evaluation to build transition recommendation
       const transitionRecommendation = buildReviewTransitionRecommendation(
-        panel, packet, preDraftCritique, minimumGate, llmEvalResult.evaluation, run.graph.researchCycle
+        panel,
+        packet,
+        preDraftCritique,
+        minimumGate,
+        llmEvalResult.evaluation,
+        run.graph.researchCycle,
+        (await runContextMemory.get<BriefEvidenceAssessment>("analyze_results.brief_evidence_assessment")) ?? undefined
       );
       const markdown = renderReviewChecklist(run, packet, panel);
 
@@ -250,7 +259,8 @@ function buildReviewTransitionRecommendation(
   critique: PaperCritique,
   minimumGate?: ReturnType<typeof evaluateMinimumGate>,
   llmEval?: { recommended_action: string; paper_worthiness: string; overall_score_1_to_10: number },
-  researchCycle?: number
+  researchCycle?: number,
+  briefEvidenceAssessment?: BriefEvidenceAssessment
 ): TransitionRecommendation | undefined {
   const action = panel.decision.outcome;
   const confidence = Number(panel.decision.confidence.toFixed(2));
@@ -276,6 +286,22 @@ function buildReviewTransitionRecommendation(
       evidence: [
         `Gate ceiling: ${minimumGate.ceiling_type}`,
         `Blockers: ${gateBlockers}`,
+        ...evidence.slice(0, 2)
+      ],
+      suggestedCommands: packet.suggested_actions
+    });
+  }
+
+  if (briefEvidenceAssessment?.enabled && briefEvidenceAssessment.status === "fail") {
+    return createReviewTransition({
+      action: "backtrack_to_design",
+      targetNode: "design_experiments",
+      reason: `Brief evidence gate failed: ${briefEvidenceAssessment.summary}`,
+      confidence: 0.92,
+      autoExecutable: true,
+      evidence: [
+        `Brief ceiling: ${briefEvidenceAssessment.ceiling_type}`,
+        ...briefEvidenceAssessment.failures.slice(0, 2),
         ...evidence.slice(0, 2)
       ],
       suggestedCommands: packet.suggested_actions
@@ -322,7 +348,9 @@ function buildReviewTransitionRecommendation(
     !cycleCappedAdvance &&
     critique.overall_decision !== "advance" &&
     critique.overall_decision !== "repair_then_retry" &&
-    (critique.manuscript_type === "blocked_for_paper_scale" || critique.manuscript_type === "system_validation_note")
+    (critique.manuscript_type === "blocked_for_paper_scale" ||
+      critique.manuscript_type === "system_validation_note" ||
+      critique.manuscript_type === "research_memo")
   ) {
     const critiqueAction = critiqueDecisionToTransitionAction(critique.overall_decision);
     const critiqueTarget = critiqueDecisionToTargetNode(critique.overall_decision);

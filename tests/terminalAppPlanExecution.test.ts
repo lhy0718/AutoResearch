@@ -3376,4 +3376,33 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(app.setActiveRunId).toHaveBeenCalledWith(run.id);
     expect(app.continueSupervisedRun).toHaveBeenCalledWith(run.id);
   });
+
+  it("auto-recovers a recently updated running node on reopen after replacing a stale TUI session lock (LV-072)", async () => {
+    const app = makeApp();
+    const run = makeRun("run-recent-stale-lock");
+    const now = new Date().toISOString();
+    run.status = "running";
+    run.currentNode = "analyze_papers";
+    run.graph.currentNode = "analyze_papers";
+    run.updatedAt = now;
+    run.graph.nodeStates.analyze_papers = {
+      ...run.graph.nodeStates.analyze_papers,
+      status: "running",
+      updatedAt: now,
+      note: "in progress before crash"
+    };
+    app.runIndex = [run];
+    app.orchestrator = { retryCurrent: vi.fn().mockResolvedValue(run) };
+    app.refreshRunIndex = vi.fn();
+    app.setActiveRunId = vi.fn();
+    app.continueSupervisedRun = vi.fn();
+
+    await app.recoverStaleRunningNode(run.id, true);
+
+    expect(app.orchestrator.retryCurrent).toHaveBeenCalledWith(run.id, "analyze_papers");
+    expect(app.refreshRunIndex).toHaveBeenCalled();
+    expect(app.setActiveRunId).toHaveBeenCalledWith(run.id);
+    expect(app.continueSupervisedRun).toHaveBeenCalledWith(run.id);
+    expect(app.logs.some((line: string) => line.includes("Recovering stale running node"))).toBe(true);
+  });
 });

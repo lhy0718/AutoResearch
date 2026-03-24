@@ -113,7 +113,8 @@ describe("ExperimentContract", () => {
       confounded: false,
       expected_metric_effect: "Positive effect",
       abort_condition: "Abort if degraded",
-      keep_or_discard_rule: "Keep if improved"
+      keep_or_discard_rule: "Keep if improved",
+      baselines: ["current-system"]
     };
 
     const result = validateExperimentContract(contract);

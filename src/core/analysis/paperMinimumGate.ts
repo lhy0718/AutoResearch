@@ -14,6 +14,7 @@
 
 import type { ReviewArtifactPresence } from "../reviewSystem.js";
 import type { AnalysisReport } from "../resultAnalysis.js";
+import type { BriefEvidenceAssessment, BriefEvidenceCeiling } from "./briefEvidenceValidator.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -50,6 +51,7 @@ export interface MinimumGateInput {
   /** Run topic / title for context */
   topic: string;
   objectiveMetric: string;
+  briefEvidenceAssessment?: BriefEvidenceAssessment;
 }
 
 // ---------------------------------------------------------------------------
@@ -150,6 +152,19 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
           : "Missing objective metric"
   });
 
+  if (
+    input.briefEvidenceAssessment &&
+    input.briefEvidenceAssessment.enabled &&
+    input.briefEvidenceAssessment.status !== "not_applicable"
+  ) {
+    checks.push({
+      id: "brief_minimum_evidence",
+      label: "Brief minimum evidence requirements satisfied",
+      passed: input.briefEvidenceAssessment.status !== "fail",
+      detail: input.briefEvidenceAssessment.summary
+    });
+  }
+
   // Compute blockers and ceiling
   const blockers = checks.filter(c => !c.passed).map(c => c.label);
   const failCount = blockers.length;
@@ -166,6 +181,10 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
     ceiling = "research_memo";
   }
 
+  if (input.briefEvidenceAssessment?.enabled) {
+    ceiling = moreRestrictiveCeiling(ceiling, input.briefEvidenceAssessment.ceiling_type);
+  }
+
   const passed = failCount === 0;
   const summary = passed
     ? "Minimum evidence gate passed — all structural prerequisites met."
@@ -179,4 +198,17 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
     ceiling_type: ceiling,
     summary
   };
+}
+
+function moreRestrictiveCeiling(
+  left: MinimumGateCeiling,
+  right: MinimumGateCeiling | BriefEvidenceCeiling
+): MinimumGateCeiling {
+  const ranking: Record<MinimumGateCeiling, number> = {
+    unrestricted: 0,
+    research_memo: 1,
+    system_validation_note: 2,
+    blocked_for_paper_scale: 3
+  };
+  return ranking[left] >= ranking[right as MinimumGateCeiling] ? left : (right as MinimumGateCeiling);
 }

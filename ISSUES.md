@@ -6,7 +6,111 @@ This file was compacted on 2026-03-22 to remove duplicated template fragments, m
 
 ---
 
-## Active issues
+## Current issue log
+
+### LV-075 — `implement_experiments` local verification can miss DictWriter fieldname mismatches when CSV schemas come from named constants
+- Status: FIXED
+- Validation target: fresh `test/` replay of the cycle-8 `implement_experiments -> run_experiments` boundary on substitute run `411d5215-b03a-46e4-bf89-ea5a42513288`
+- Environment/session context: repo head on 2026-03-24, `test/` workspace, substitute run `411d5215-b03a-46e4-bf89-ea5a42513288`, cycle 8 after the earlier scientific backtrack to `design_experiments`.
+- Reproduction steps:
+  1. Continue the live substitute loop into cycle 8 and allow `design_experiments` to rerun, then let `implement_experiments` publish a new public bundle and hand off to `run_experiments`.
+  2. Inspect `.autolabos/runs/runs.json`, `.autolabos/runs/411d5215-b03a-46e4-bf89-ea5a42513288/exec_logs/run_experiments.txt`, and the emitted `test/outputs/experiment/experiment.py`.
+  3. Compare the `csv.DictWriter(..., fieldnames=CONDITION_SUMMARY_FIELDNAMES)` schema with the actual row keys written by `write_condition_summary_csv(...)`.
+- Expected behavior: `implement_experiments` local verification should reject public experiment bundles whose CSV summaries write keys outside named `DictWriter` fieldname constants, so the run never burns a real `run_experiments` attempt on a statically visible schema mismatch.
+- Actual behavior: cycle 8 `implement_experiments` passed `python3 -m py_compile`, but `run_experiments` then failed at runtime with `ValueError: dict contains fields not in fieldnames: 'median_generated_tokens_per_example'` while writing `condition_summary.csv`. The generated bundle defined `csv.DictWriter(..., fieldnames=CONDITION_SUMMARY_FIELDNAMES)` and later wrote rows merged from a summary dict that included the extra median token field.
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in the continued live substitute loop after LV-074 was fixed and cycle 8 re-entered `implement_experiments`.
+  - Existing session: earlier CSV-guard work only covered local `fieldnames = [...]` assignments, so this replay exposed the remaining blind spot where the schema was declared through a named constant instead.
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: `detectPythonCsvFieldnameMismatch(...)` only extracted fieldnames from a literal variable named `fieldnames`, so it missed otherwise equivalent `csv.DictWriter(..., fieldnames=CONDITION_SUMMARY_FIELDNAMES)` schemas and allowed a bad bundle to persist into runtime.
+- Code/test changes:
+  - Generalized `detectPythonCsvFieldnameMismatch(...)` in `src/core/agents/implementSessionManager.ts` so it resolves `DictWriter` fieldname constants by name instead of only looking for `fieldnames = [...]`.
+  - Added regression coverage in `tests/implementSessionManager.test.ts` for the live failure shape where `CONDITION_SUMMARY_FIELDNAMES` is used with `csv.DictWriter(...)` and the returned summary dict adds `median_generated_tokens_per_example`.
+  - Re-ran `npm test -- tests/implementSessionManager.test.ts` and `npm run build`.
+- Regression status:
+  - Automated regression test linked: `tests/implementSessionManager.test.ts`
+  - Re-validation result: FIXED via same-flow live replay on substitute run `411d5215-b03a-46e4-bf89-ea5a42513288`. Attempt 1 still failed on missing materialized artifacts, but attempt 2 published a corrected bundle, `run_experiments` completed successfully at `2026-03-24T12:06:57Z`, `analyze_results` completed at `2026-03-24T12:07:17Z`, and the run advanced through `review` into `write_paper` instead of crashing while writing `condition_summary.csv`.
+  - Additional live evidence: the final public `test/outputs/experiment/experiment.py` no longer contained `median_generated_tokens_per_example`, so the previously observed schema leak did not survive the repaired flow.
+- Remaining risks: later stages can still surface separate research-quality or paper-readiness blockers, but this specific `condition_summary.csv` runtime mismatch no longer reproduces in the same live workflow.
+
+### LV-074 — `implement_experiments` local verification can still pass Hugging Face `model.generate(..., generator=...)` runners that crash immediately at runtime
+- Status: FIXED
+- Validation target: fresh `test/` replay of the cycle-7 `implement_experiments -> run_experiments` boundary on substitute run `411d5215-b03a-46e4-bf89-ea5a42513288`
+- Environment/session context: repo head on 2026-03-24, `test/` workspace, substitute run `411d5215-b03a-46e4-bf89-ea5a42513288`, cycle 7 after the governed backtrack from `analyze_results` to `design_experiments`.
+- Reproduction steps:
+  1. From the live `test/` validation loop, let cycle 7 complete `design_experiments`, then allow `implement_experiments` to finish and hand off to `run_experiments`.
+  2. Inspect `.autolabos/runs/runs.json` and `.autolabos/runs/411d5215-b03a-46e4-bf89-ea5a42513288/exec_logs/run_experiments.txt`.
+  3. Compare the local verification result in `implement_experiments/status.json` with the actual runtime traceback from the executed public bundle.
+- Expected behavior: `implement_experiments` local verification should reject Python experiment bundles that pass unsupported `generator` kwargs into Hugging Face `model.generate(...)`, so the run never burns a real `run_experiments` attempt on this predictable runtime failure.
+- Actual behavior: cycle 7 `implement_experiments` passed `python3 -m py_compile`, published a new public bundle, and handed off to `run_experiments`, but runtime then failed immediately with `ValueError: The following model_kwargs are not used by the model: ['generator']` from `test/outputs/experiment/experiment.py` line 418 (`outputs = model.generate(**inputs, **generation_kwargs)`).
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in the still-running live substitute loop after LV-073 was fixed and the run advanced back through `design_experiments` into cycle 7 `implement_experiments`.
+  - Existing session: earlier cycles had different late runtime and evidence-quality failures, but this replay exposed a new local-verification blind spot specific to `generator` being threaded through generation kwargs.
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: `implementSessionManager` only required `py_compile` plus a few source-level guards, so it still allowed a materially invalid real-execution bundle to be persisted and handed to `run_experiments` even though the unsupported `generator` kwarg was statically visible in source.
+- Code/test changes:
+  - Added a new `detectPythonUnsupportedGenerateKwarg(...)` local-verification guard in `src/core/agents/implementSessionManager.ts` and wired it into the `py_compile` verification pipeline before real-execution handoff.
+  - Tightened the staged implement prompt to explicitly forbid `generator=` / `generation_kwargs['generator']` in `model.generate(...)`.
+  - Added regression coverage in `tests/implementSessionManager.test.ts` for the live failure shape where `generation_kwargs["generator"] = ...` is later expanded into `model.generate(**inputs, **generation_kwargs)`.
+  - Re-ran `npm test -- tests/implementSessionManager.test.ts`, `npm run build`, and `npm run validate:harness`.
+- Regression status:
+  - Automated regression test linked: `tests/implementSessionManager.test.ts`
+  - Re-validation result: FIXED via same-flow live replay on substitute run `411d5215-b03a-46e4-bf89-ea5a42513288`. After rebuilding and restarting the TUI, the run was rewound to `implement_experiments/pending`, `/doctor` passed, and a fresh `/agent run implement_experiments 411d5215-b03a-46e4-bf89-ea5a42513288` replay completed without the previous runtime crash. Attempt 1 failed earlier on missing materialized artifacts, attempt 2 produced a new public bundle whose `experiment.py` no longer threaded `generator` into `model.generate(...)`, `metrics.json` was written successfully, and the run advanced through `analyze_results` into an auto-executable `backtrack_to_design` recommendation instead of failing in `run_experiments`.
+- Remaining risks: the loop is still blocked by experiment quality rather than this runtime seam — the replay finished with `accuracy_delta_vs_baseline=0`, so the next cycle still needs a stronger design to clear the governed review gate.
+
+### LV-073 — `analyze_papers` can exhaust selected full-text papers at the 45s extractor boundary and pause with only thin evidence
+- Status: FIXED
+- Validation target: fresh `test/` rerun of `analyze_papers` from the rewound substitute run while cached PDF/text artifacts already exist
+- Environment/session context: repo head on 2026-03-24, `test/` workspace, substitute run `411d5215-b03a-46e4-bf89-ea5a42513288`, fresh live TUI session after rewinding the run back to `analyze_papers`.
+- Reproduction steps:
+  1. Start a fresh TUI rooted at `test/` and confirm `/doctor` passes.
+  2. From the rewound substitute run, execute `/agent run analyze_papers 411d5215-b03a-46e4-bf89-ea5a42513288`.
+  3. Wait for the node to settle and inspect `.autolabos/runs/runs.json` plus `.autolabos/runs/411d5215-b03a-46e4-bf89-ea5a42513288/analysis_manifest.json`.
+  4. Compare the selected-paper statuses and the pending transition after the node pauses.
+- Expected behavior: selected full-text papers with cached PDF/text artifacts should have enough bounded extractor time to complete structured analysis or fall back cleanly without burning most of the selected set at the same fixed timeout boundary.
+- Actual behavior: the rerun paused at `analyze_papers` with `needs_approval`, preserving only `1` summary and `4` evidence items while `4/5` selected full-text papers failed with `paper_analysis_extractor_timeout_after_45000ms`. The run then recommended `/agent run generate_hypotheses ...` from this thin evidence package instead of recovering richer full-text support.
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in a freshly relaunched `test/` TUI after the earlier crash/restart repair work; the node advanced into live analysis and then paused with the repeated 45s extractor failures.
+  - Existing session: the same substitute run already had weak downstream evidence from earlier cycles, but the fresh rerun made the current blocker explicit by re-failing the top selected full-text papers at the bounded extractor seam.
+- Root cause hypothesis:
+  - Type: `race_timing_bug`
+  - Hypothesis: `paperAnalyzer`'s default extractor timeout (`45_000ms`) is still too aggressive for current full-text PDF/hybrid extraction workloads, so bounded analysis now fails prematurely even when cached sources are already available.
+- Code/test changes:
+  - Raised `DEFAULT_ANALYSIS_EXTRACT_TIMEOUT_MS` from `45_000` to `120_000` in `src/core/analysis/paperAnalyzer.ts` while preserving the existing `AUTOLABOS_ANALYSIS_EXTRACT_TIMEOUT_MS` override seam.
+  - Added deterministic coverage in `tests/paperAnalyzer.test.ts` for the new default extractor timeout and widened timeout-fingerprint fallback assertions to accept the `120000ms` extractor boundary.
+  - Re-ran `npm test -- tests/paperAnalyzer.test.ts tests/analyzePapers.test.ts` plus full `npm test && npm run build`.
+- Regression status:
+  - Automated regression test linked: `tests/paperAnalyzer.test.ts`, `tests/analyzePapers.test.ts`.
+  - Re-validation result: FIXED via same-flow live replay on substitute run `411d5215-b03a-46e4-bf89-ea5a42513288`. After rewinding to `analyze_papers/pending`, a fresh `test/` TUI passed `/doctor`, reran `/agent run analyze_papers 411d5215-b03a-46e4-bf89-ea5a42513288`, and `.autolabos/runs/runs.json` recorded `analyze_papers.status=completed` at `2026-03-24T10:43:23.164Z` with note `Analyzed 5 papers into 20 evidence item(s); 4 full-text and 1 abstract fallback (mode=responses_api_pdf).` The persisted `analysis_manifest.json` finished with `5/5` selected papers completed, `0` failed, and the run advanced into `generate_hypotheses`.
+- Remaining risks: the extractor remains bounded, but slower planner/reviewer phases or weak downstream scientific evidence can still block paper readiness later in the loop. This fix specifically closes the repeated `paper_analysis_extractor_timeout_after_45000ms` seam on the selected full-text set.
+
+### LV-072 — crash-restarted TUI can leave a recent running node stranded and still render stale analyze-results insight
+- Status: FIXED
+- Validation target: `test/` fresh TUI restart within one minute of a hard crash while `analyze_papers` is actively running
+- Environment/session context: repo head on 2026-03-24, `test/` workspace, substitute run `411d5215-b03a-46e4-bf89-ea5a42513288`, fresh TUI restart after a hard `SIGKILL` of the live `autolabos` process.
+- Reproduction steps:
+  1. From a live TUI rooted at `test/`, force-jump the surviving run back to `analyze_papers` and start it with `/agent run analyze_papers 411d5215-b03a-46e4-bf89-ea5a42513288`.
+  2. Wait until `.autolabos/runs/runs.json` shows `currentNode=analyze_papers`, `run.status=running`, and `analyze_papers.status=running`.
+  3. Hard-kill the TUI process with `SIGKILL`.
+  4. Relaunch a fresh TUI session within one minute.
+  5. Observe the relaunched screen and persisted run state without waiting five minutes.
+- Expected behavior: a crash-restarted fresh TUI should recognize that the prior session died, recover the orphaned `running` node for re-execution, and avoid surfacing stale `analyze_results` insight while the run is back at `analyze_papers`.
+- Actual behavior: the fresh TUI restart leaves the run stranded at `analyze_papers running` with no recovery, even though `runs.json` remains unchanged at `updatedAt=2026-03-24T09:39:54.114Z`. The relaunched screen simultaneously renders the old `Result analysis` card from `result_analysis.json`, so the user sees a stale downstream summary while the footer says `analyze_papers running`.
+- Fresh vs existing session comparison:
+  - Fresh session: re-validated with the patched build in `test/`. With the stale `result_analysis.json` artifact still present, a fresh TUI launch at `analyze_papers` no longer rendered the stale `Result analysis` card. After starting `analyze_papers`, hard-killing the live TUI, and relaunching once the dead lock PID had fully disappeared, `.autolabos/runs/runs.json` advanced from `updatedAt=2026-03-24T09:50:08.817Z` to `updatedAt=2026-03-24T09:51:37.537Z` while staying on `currentNode=analyze_papers`, proving the fresh restart recovered the recently running node immediately instead of waiting five minutes.
+  - Existing session: before the fix, the original crash/restart path stranded the run at the old `analyze_papers running` timestamp and rendered stale downstream `Result analysis` content on the relaunched screen.
+- Root cause hypothesis:
+  - Type: `resume_reload_bug`
+  - Hypothesis: `recoverStaleRunningNode()` skips recent `running` nodes for five minutes even when startup just replaced a dead TUI session lock, and `refreshActiveRunInsight()` surfaces `result_analysis.json` whenever it exists instead of gating it on the run's current node.
+- Code/test changes:
+  - Code: `src/core/runInsightSelection.ts`, `src/tui/TerminalApp.ts`, `src/interaction/InteractionSession.ts`
+  - Tests: `tests/runInsightSelection.test.ts`, `tests/terminalAppPlanExecution.test.ts`, `tests/interactionSession.test.ts`
+- Regression status:
+  - Automated regression test linked: yes, `tests/runInsightSelection.test.ts`, `tests/terminalAppPlanExecution.test.ts`, and `tests/interactionSession.test.ts`.
+  - Re-validation result: pass — the targeted regressions passed, the full `npm test && npm run build` validation passed, and the same-flow live replay in `test/` confirmed both halves of the fix: no stale `Result analysis` card on `analyze_papers` with `result_analysis.json` still present, and immediate stale-lock-aware recovery of the crash-orphaned `analyze_papers` run on restart.
+- Remaining risks: the shell-harness replay showed that an ultra-immediate relaunch can briefly see the just-killed PID before the OS fully reaps it; once the lock owner is truly dead, the stale-lock replacement path and recent-running-node recovery behave as intended.
 
 ### LV-070 — OpenAI Responses implement calls can collapse into opaque fetch failed errors with no actionable network cause
 - Status: FIXED

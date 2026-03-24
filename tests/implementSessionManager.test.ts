@@ -2562,6 +2562,184 @@ describe("ImplementSessionManager", () => {
     expect(report.summary).toContain("total_latency_sec");
   });
 
+  it("fails local verification when DictWriter fieldnames come from a named constant and summaries add extra CSV keys", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-constant-csv-fieldnames-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Constant CSV Fieldname Leak",
+      topic: "condition summary validation",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const scriptPath = path.join(runDir, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import csv",
+        "",
+        "CONDITION_SUMMARY_FIELDNAMES = [",
+        '    "condition",',
+        '    "num_examples",',
+        '    "accuracy",',
+        '    "answer_validity_rate",',
+        '    "avg_generated_tokens_per_example",',
+        '    "avg_latency_sec_per_example",',
+        "]",
+        "",
+        "def summarize_condition():",
+        "    return {",
+        '        "num_examples": 10,',
+        '        "accuracy": 0.4,',
+        '        "answer_validity_rate": 1.0,',
+        '        "avg_generated_tokens_per_example": 42.0,',
+        '        "median_generated_tokens_per_example": 40.0,',
+        '        "avg_latency_sec_per_example": 1.2,',
+        "    }",
+        "",
+        "def write_condition_summary_csv(path, condition_order, condition_summaries):",
+        "    with open(path, 'w', encoding='utf-8', newline='') as handle:",
+        "        writer = csv.DictWriter(handle, fieldnames=CONDITION_SUMMARY_FIELDNAMES)",
+        "        writer.writeheader()",
+        "        for condition in condition_order:",
+        "            row = {'condition': condition}",
+        "            row.update(condition_summaries[condition])",
+        "            writer.writerow(row)",
+        "",
+        "condition_summaries = {condition: summarize_condition() for condition in ['baseline']}",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexCliClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        workingDir: runDir,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    expect(report.status).toBe("fail");
+    expect(report.failure_type).toBe("implementation");
+    expect(report.summary).toContain("CSV row keys not present in fieldnames");
+    expect(report.summary).toContain("median_generated_tokens_per_example");
+  });
+
+  it("fails local verification when Python passes generator through model.generate kwargs", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-generator-kwarg-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Unsupported Generate Kwarg",
+      topic: "runtime generate validation",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const scriptPath = path.join(runDir, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import torch",
+        "",
+        "def make_generator(seed: int):",
+        "    return torch.Generator(device='cpu').manual_seed(seed)",
+        "",
+        "def run(model, inputs, do_sample: bool):",
+        "    generation_kwargs = {",
+        '        "max_new_tokens": 16,',
+        '        "do_sample": do_sample,',
+        "    }",
+        "    if do_sample:",
+        '        generation_kwargs["generator"] = make_generator(13)',
+        "    return model.generate(**inputs, **generation_kwargs)",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexCliClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        workingDir: runDir,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    expect(report.status).toBe("fail");
+    expect(report.failure_type).toBe("implementation");
+    expect(report.summary).toContain("unsupported generator kwarg to model.generate");
+    expect(report.summary).toContain("generate()");
+  });
+
   it("recovers a materialized public bundle when Codex disconnects before returning structured output", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-recover-bundle-"));
     tempDirs.push(workspace);

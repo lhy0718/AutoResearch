@@ -192,6 +192,7 @@ const originalPlannerTimeout = process.env.AUTOLABOS_ANALYSIS_PLANNER_TIMEOUT_MS
 const originalExtractTimeout = process.env.AUTOLABOS_ANALYSIS_EXTRACT_TIMEOUT_MS;
 
 afterEach(() => {
+  vi.useRealTimers();
   if (originalPlannerTimeout === undefined) {
     delete process.env.AUTOLABOS_ANALYSIS_PLANNER_TIMEOUT_MS;
   } else {
@@ -482,6 +483,22 @@ describe("paperAnalyzer", () => {
     ).toBe(true);
   });
 
+  it("uses the bounded default extractor timeout when no override is set", async () => {
+    delete process.env.AUTOLABOS_ANALYSIS_EXTRACT_TIMEOUT_MS;
+    vi.useFakeTimers();
+
+    const promise = analyzePaperWithLlm({
+      llm: new HangingExtractorLLM(),
+      paper,
+      source
+    });
+    const expectation = expect(promise).rejects.toThrow("paper_analysis_extractor_timeout_after_120000ms");
+
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    await expectation;
+  });
+
   it("passes rendered PDF page images into hybrid LLM analysis", async () => {
     const llm = {
       complete: vi.fn(async (_prompt: string, opts?: { systemPrompt?: string }) => {
@@ -675,7 +692,8 @@ describe("shouldFallbackResponsesPdfToLocalText", () => {
 
   it("triggers fallback for paper-analysis timeout fingerprints", () => {
     expect(shouldFallbackResponsesPdfToLocalText(new Error("paper_analysis_extractor_timeout_after_45000ms"))).toBe(true);
-    expect(shouldFallbackResponsesPdfToLocalText(new Error("extractor exceeded the 45000ms timeout"))).toBe(true);
+    expect(shouldFallbackResponsesPdfToLocalText(new Error("paper_analysis_extractor_timeout_after_120000ms"))).toBe(true);
+    expect(shouldFallbackResponsesPdfToLocalText(new Error("extractor exceeded the 120000ms timeout"))).toBe(true);
   });
 
   it("triggers fallback for upstream 403/404", () => {

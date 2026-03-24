@@ -278,6 +278,19 @@ describe("InteractionSession", () => {
       constraints: [],
       objectiveMetric: "metric"
     });
+    const current = await runStore.getRun(run.id);
+    if (!current) {
+      throw new Error("expected run");
+    }
+    current.status = "paused";
+    current.currentNode = "analyze_results";
+    current.graph.currentNode = "analyze_results";
+    current.graph.nodeStates.analyze_results = {
+      status: "completed",
+      updatedAt: new Date().toISOString(),
+      note: "Analysis completed."
+    };
+    await runStore.updateRun(current);
     const runDir = path.join(cwd, ".autolabos", "runs", run.id);
     await fs.mkdir(path.join(runDir, "figures"), { recursive: true });
     await fs.writeFile(path.join(runDir, "figures", "performance.svg"), "<svg></svg>", "utf8");
@@ -700,6 +713,67 @@ describe("InteractionSession", () => {
     );
     expect(snapshot.activeRunInsight?.title).toBe("Review packet");
     expect(snapshot.activeRunInsight?.lines.some((line) => line.includes("Review readiness: blocking"))).toBe(true);
+  });
+
+  it("does not surface analyze-results insight when the active run is rewound before analyze_results", async () => {
+    const run = await runStore.createRun({
+      title: "Stale analysis insight",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    const current = await runStore.getRun(run.id);
+    if (!current) {
+      throw new Error("expected run");
+    }
+    current.status = "running";
+    current.currentNode = "analyze_papers";
+    current.graph.currentNode = "analyze_papers";
+    current.graph.nodeStates.analyze_papers = {
+      status: "running",
+      updatedAt: new Date().toISOString(),
+      note: "analysis resumed"
+    };
+    await runStore.updateRun(current);
+
+    const runDir = path.join(cwd, ".autolabos", "runs", run.id);
+    await fs.mkdir(runDir, { recursive: true });
+    await fs.writeFile(
+      path.join(runDir, "result_analysis.json"),
+      JSON.stringify(
+        {
+          overview: {
+            objective_status: "not_met",
+            objective_summary: "Legacy analysis from an earlier cycle."
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const session = new InteractionSession({
+      workspaceRoot: cwd,
+      config: {
+        research: {
+          defaultTopic: "topic",
+          defaultConstraints: ["recent papers"],
+          default_objective_metric: "metric"
+        }
+      } as any,
+      runStore,
+      titleGenerator: {} as any,
+      codex: {} as any,
+      openAiTextClient: undefined,
+      eventStream: new InMemoryEventStream(),
+      orchestrator: {} as any,
+      semanticScholarApiKeyConfigured: true
+    });
+    await session.start();
+    await session.selectRun(run.id);
+
+    expect(session.snapshot().activeRunInsight).toBeUndefined();
   });
 
   it("blocks /approve on analyze_papers when no evidence has been persisted yet", async () => {

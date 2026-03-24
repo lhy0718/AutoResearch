@@ -41,6 +41,10 @@ import {
   formatAnalyzeResultsArtifactLines
 } from "../core/resultAnalysisPresentation.js";
 import {
+  shouldSurfaceAnalyzeResultsInsight,
+  shouldSurfaceReviewInsight
+} from "../core/runInsightSelection.js";
+import {
   buildRepositoryKnowledgeEntryLines,
   buildRepositoryKnowledgeOverviewLines,
   readRepositoryKnowledgeIndex
@@ -2047,16 +2051,20 @@ export class InteractionSession {
     try {
       const run = await this.runStore.getRun(this.activeRunId);
       const reviewPacket = parseReviewPacket(await safeRead(path.join(runDir, "review", "review_packet.json")));
-      if ((run?.currentNode === "review" || run?.currentNode === "write_paper") && reviewPacket) {
+      if (shouldSurfaceReviewInsight(run?.currentNode) && reviewPacket) {
         this.activeRunInsight = buildReviewInsightCard(reviewPacket);
         return;
       }
-      const report = parseAnalysisReport(await safeRead(path.join(runDir, "result_analysis.json")));
+      const report = shouldSurfaceAnalyzeResultsInsight(run?.currentNode)
+        ? parseAnalysisReport(await safeRead(path.join(runDir, "result_analysis.json")))
+        : undefined;
       if (report) {
         this.activeRunInsight = buildAnalyzeResultsInsightCard(report);
         return;
       }
-      this.activeRunInsight = reviewPacket ? buildReviewInsightCard(reviewPacket) : undefined;
+      this.activeRunInsight = shouldSurfaceReviewInsight(run?.currentNode) && reviewPacket
+        ? buildReviewInsightCard(reviewPacket)
+        : undefined;
     } catch {
       this.activeRunInsight = undefined;
     }

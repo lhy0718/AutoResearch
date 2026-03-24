@@ -43,6 +43,7 @@ When `analyze_results` is completed:
 - transition/result recommendation artifacts should exist (`transition_recommendation.json`).
 - the analysis must identify the compared systems or settings.
 - the analysis must state whether the objective metric improved, worsened, or was inconclusive.
+- when a governed brief declares minimum acceptable evidence, `analysis/evidence_scale_assessment.json` must exist and state whether the executed evidence satisfied that floor.
 
 ### C. `review` output expectations
 When `review` is completed:
@@ -63,6 +64,7 @@ The pre-draft critique (`review/paper_critique.json`) evaluates whether experime
 - Whether the selected venue style is realistic for the current evidence package
 
 If evidence is insufficient, `review` recommends backtrack to an upstream node rather than allowing progression to `write_paper`.
+For brief-governed runs, this includes honoring the brief's paper ceiling and minimum evidence floor instead of treating them as advisory notes.
 
 ## 4) Paper-scale experiment minimum gate
 For an experiment result to count as paper-scale candidate evidence, all of the following must hold:
@@ -87,6 +89,7 @@ The system should prefer experiments that include at least one of:
 - with-feature vs without-feature comparison
 
 If no comparator exists, `review` should downgrade the paper-readiness state.
+If the brief explicitly requires multiple baselines or comparators, design and review should enforce that stronger floor rather than silently accepting a weaker comparison set.
 
 ## 6) Result table expectation
 A paper-scale candidate should produce a compact structured summary that can be turned into a result table.
@@ -129,6 +132,7 @@ but they must not be elevated into experimental evidence sections of a paper.
 - no link from experiment artifacts to the stated research question
 - the “experiment” is mostly workflow validation
 - result claims exceed what artifacts support
+- brief-governed minimum evidence is unmet (for example: required repeat count, baseline count, or uncertainty reporting is missing)
 
 ## 10) Why this bar exists
 These artifacts are handoff boundaries between nodes.

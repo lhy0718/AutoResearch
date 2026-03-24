@@ -1604,6 +1604,7 @@ export class ImplementSessionManager {
       "- Load models with GPU support: model = AutoModelForCausalLM.from_pretrained(..., device_map='auto', torch_dtype=torch.float16) — this auto-places on GPU.",
       "- If device_map='auto' is not used, MUST call model = model.to(device) immediately after loading.",
       "- Before model.generate() or forward pass, move inputs: inputs = {k: v.to(device) for k, v in inputs.items()}",
+      "- Do NOT pass generator= or generation_kwargs['generator'] into model.generate(); seed sampling outside the generate() call instead.",
       "- In metrics output, include: 'device': str(device), 'gpu_name': torch.cuda.get_device_name(0) if available, 'peak_vram_gb': torch.cuda.max_memory_allocated()/1e9.",
       "- FAILURE TO USE GPU WHEN AVAILABLE IS A BLOCKING BUG. CPU inference on a 3B model takes ~17s/example; GPU takes <0.5s/example.",
       "- If an existing script already exists and uses CPU-only, you MUST patch it to use GPU."
@@ -2220,6 +2221,38 @@ export class ImplementSessionManager {
         next_action: "retry_patch",
         stderr_excerpt: pythonCsvFieldMismatch,
         summary: buildVerificationFailureSummary(command, "implementation", pythonCsvFieldMismatch)
+      };
+      this.deps.eventStream.emit({
+        type: "TEST_FAILED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          command,
+          cwd: attempt.workingDir,
+          failure_type: report.failure_type,
+          stderr: report.stderr_excerpt || report.summary,
+          attempt: attemptNumber
+        }
+      });
+      onProgress?.(report.summary, {
+        verificationCommand: command,
+        verifyStatus: report.status
+      });
+      return report;
+    }
+
+    const pythonUnsupportedGenerateKwarg = await detectPythonUnsupportedGenerateKwarg(executionScriptPath);
+    if (pythonUnsupportedGenerateKwarg) {
+      const report: VerifyReport = {
+        status: "fail",
+        command,
+        cwd: attempt.workingDir,
+        exit_code: 0,
+        failure_type: "implementation",
+        next_action: "retry_patch",
+        stderr_excerpt: pythonUnsupportedGenerateKwarg,
+        summary: buildVerificationFailureSummary(command, "implementation", pythonUnsupportedGenerateKwarg)
       };
       this.deps.eventStream.emit({
         type: "TEST_FAILED",
@@ -5013,7 +5046,7 @@ async function detectPythonCsvFieldnameMismatch(scriptPath?: string): Promise<st
   }
 
   const lines = source.split(/\r?\n/u);
-  const fieldnames = extractPythonStringListAssignment(lines, "fieldnames");
+  const fieldnames = extractPythonDictWriterFieldnames(lines);
   if (!fieldnames || fieldnames.length === 0) {
     return undefined;
   }
@@ -5060,6 +5093,47 @@ async function detectPythonCsvFieldnameMismatch(scriptPath?: string): Promise<st
   return undefined;
 }
 
+async function detectPythonUnsupportedGenerateKwarg(scriptPath?: string): Promise<string | undefined> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return undefined;
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  if (!/\bmodel\.generate\s*\(/u.test(source)) {
+    return undefined;
+  }
+
+  const lines = source.split(/\r?\n/u);
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!/\bmodel\.generate\s*\(/u.test(lines[index])) {
+      continue;
+    }
+    const call = extractPythonCallExpression(lines, index);
+    if (!call) {
+      continue;
+    }
+
+    if (/\bgenerator\s*=/u.test(call.text) || /\*\*\s*\{[\s\S]*?["']generator["']\s*:/u.test(call.text)) {
+      return `Python source passes unsupported generator kwarg to model.generate at ${path.basename(scriptPath)}:${call.startLine}; seed sampling outside generate() instead.`;
+    }
+
+    for (const match of call.text.matchAll(/\*\*(\w+)/gu)) {
+      const keyLine = findPythonDictKeyLine(lines, match[1], "generator", call.startLine);
+      if (keyLine !== undefined) {
+        return `Python source passes unsupported generator kwarg to model.generate at ${path.basename(scriptPath)}:${keyLine}; seed sampling outside generate() instead.`;
+      }
+    }
+  }
+
+  return undefined;
+}
+
 function extractPythonStringListAssignment(lines: string[], variableName: string): string[] | undefined {
   const escapedName = escapeRegex(variableName);
   const startPattern = new RegExp(`\\b${escapedName}\\s*=\\s*\\[`, "u");
@@ -5079,6 +5153,95 @@ function extractPythonStringListAssignment(lines: string[], variableName: string
       }
     }
   }
+  return undefined;
+}
+
+function extractPythonDictWriterFieldnames(lines: string[]): string[] | undefined {
+  const seen = new Set<string>();
+  for (const line of lines) {
+    for (const match of line.matchAll(/\bcsv\.DictWriter\s*\([^)]*fieldnames\s*=\s*([A-Za-z_][A-Za-z0-9_]*)/gu)) {
+      const variableName = match[1];
+      if (seen.has(variableName)) {
+        continue;
+      }
+      seen.add(variableName);
+      const values = extractPythonStringListAssignment(lines, variableName);
+      if (values && values.length > 0) {
+        return values;
+      }
+    }
+  }
+  return extractPythonStringListAssignment(lines, "fieldnames");
+}
+
+function extractPythonCallExpression(
+  lines: string[],
+  startIndex: number
+): { text: string; startLine: number } | undefined {
+  const collected: string[] = [];
+  let parenDepth = 0;
+  let sawOpenParen = false;
+
+  for (let cursor = startIndex; cursor < lines.length; cursor += 1) {
+    const line = lines[cursor];
+    collected.push(line);
+    const opens = countOccurrences(line, "(");
+    const closes = countOccurrences(line, ")");
+    if (opens > 0) {
+      sawOpenParen = true;
+    }
+    parenDepth += opens - closes;
+    if (sawOpenParen && parenDepth <= 0) {
+      return {
+        text: collected.join("\n"),
+        startLine: startIndex + 1
+      };
+    }
+  }
+
+  return sawOpenParen
+    ? {
+        text: collected.join("\n"),
+        startLine: startIndex + 1
+      }
+    : undefined;
+}
+
+function findPythonDictKeyLine(
+  lines: string[],
+  variableName: string,
+  keyName: string,
+  beforeLine?: number
+): number | undefined {
+  const escapedName = escapeRegex(variableName);
+  const startPattern = new RegExp(`\\b${escapedName}\\s*=\\s*\\{`, "u");
+  const keyPattern = new RegExp(`["']${escapeRegex(keyName)}["']\\s*:`, "u");
+  const assignmentPattern = new RegExp(`\\b${escapedName}\\s*\\[\\s*["']${escapeRegex(keyName)}["']\\s*\\]\\s*=`, "u");
+  const lineLimit = beforeLine ? Math.min(beforeLine - 1, lines.length) : lines.length;
+
+  for (let index = 0; index < lineLimit; index += 1) {
+    if (assignmentPattern.test(lines[index])) {
+      return index + 1;
+    }
+  }
+
+  for (let index = 0; index < lineLimit; index += 1) {
+    if (!startPattern.test(lines[index])) {
+      continue;
+    }
+    let braceDepth = 0;
+    for (let cursor = index; cursor < lineLimit; cursor += 1) {
+      const line = lines[cursor];
+      braceDepth += countOccurrences(line, "{") - countOccurrences(line, "}");
+      if (keyPattern.test(line)) {
+        return cursor + 1;
+      }
+      if (braceDepth <= 0) {
+        break;
+      }
+    }
+  }
+
   return undefined;
 }
 

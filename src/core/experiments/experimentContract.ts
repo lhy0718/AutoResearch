@@ -47,6 +47,15 @@ export interface ExperimentContract {
 
   /** Rule for deciding whether to keep or discard the result. */
   keep_or_discard_rule: string;
+
+  /** Explicit baselines/comparators expected in the design. */
+  baselines?: string[];
+
+  /** Metrics the design intends to analyze. */
+  metrics?: string[];
+
+  /** Minimum baseline count implied by the brief contract. */
+  brief_required_baseline_count?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -62,10 +71,15 @@ export interface BuildExperimentContractInput {
   expectedMetricEffect: string;
   abortCondition: string;
   keepOrDiscardRule: string;
+  baselines?: string[];
+  metrics?: string[];
+  briefRequiredBaselineCount?: number;
 }
 
 export function buildExperimentContract(input: BuildExperimentContractInput): ExperimentContract {
   const additionalChanges = (input.additionalChanges ?? []).filter(Boolean);
+  const baselines = (input.baselines ?? []).map((value) => value.trim()).filter(Boolean);
+  const metrics = (input.metrics ?? []).map((value) => value.trim()).filter(Boolean);
   const confounded = additionalChanges.length > 0;
   return {
     version: 1,
@@ -78,7 +92,13 @@ export function buildExperimentContract(input: BuildExperimentContractInput): Ex
     additional_changes: confounded ? additionalChanges : undefined,
     expected_metric_effect: input.expectedMetricEffect || "(not specified)",
     abort_condition: input.abortCondition || "No explicit abort condition defined.",
-    keep_or_discard_rule: input.keepOrDiscardRule || "Keep if objective metric improves; discard otherwise."
+    keep_or_discard_rule: input.keepOrDiscardRule || "Keep if objective metric improves; discard otherwise.",
+    baselines: baselines.length > 0 ? baselines : undefined,
+    metrics: metrics.length > 0 ? metrics : undefined,
+    brief_required_baseline_count:
+      typeof input.briefRequiredBaselineCount === "number" && input.briefRequiredBaselineCount > 0
+        ? input.briefRequiredBaselineCount
+        : undefined
   };
 }
 
@@ -137,6 +157,17 @@ export function validateExperimentContract(contract: ExperimentContract): Experi
   }
   if (!contract.expected_metric_effect || contract.expected_metric_effect === "(not specified)") {
     issues.push("Missing expected metric effect.");
+  }
+  if (!contract.baselines || contract.baselines.length === 0) {
+    issues.push("Missing explicit baseline/comparator declaration.");
+  }
+  if (
+    typeof contract.brief_required_baseline_count === "number" &&
+    (contract.baselines?.length ?? 0) < contract.brief_required_baseline_count
+  ) {
+    issues.push(
+      `Baseline requirement unmet: brief requires at least ${contract.brief_required_baseline_count} baseline(s), but the design declares ${(contract.baselines?.length ?? 0)}.`
+    );
   }
 
   // Enhanced confounding detection (Target 3): heuristic multi-change detection

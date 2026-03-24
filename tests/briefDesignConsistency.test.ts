@@ -6,6 +6,7 @@ import {
   ExperimentContract
 } from "../src/core/experiments/experimentContract.js";
 import { MarkdownRunBriefSections } from "../src/core/runs/runBriefParser.js";
+import { buildBriefCompletenessArtifact } from "../src/core/runs/researchBriefFiles.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -34,11 +35,18 @@ function makeBriefSections(overrides: Partial<MarkdownRunBriefSections> = {}): M
     objectiveMetric: "macro-F1",
     constraints: "- Laptop only",
     plan: "Run experiments",
+    researchQuestion: "Does structured calibration improve macro-F1 without unacceptable runtime cost?",
+    whySmallExperiment: "A 3-fold laptop-scale benchmark is enough to test whether the effect exists at all.",
+    baselineComparator: "Compare against the current free-form baseline.",
+    datasetTaskBench: "Use the tabular benchmark slice already used in prior runs.",
     targetComparison: "Proposed vs baseline on macro-F1",
     minimumAcceptableEvidence: "At least 3 folds",
     disallowedShortcuts: "- Do not cherry-pick datasets.",
     allowedBudgetedPasses: "One reranking pass",
     paperCeiling: "Cap at research_memo if weak",
+    minimumExperimentPlan: "Run the baseline and the proposed method across 3 folds.",
+    paperWorthinessGate: "Do not advance unless the comparison table and uncertainty support are present.",
+    failureConditions: "Fail if the effect disappears after the full 3-fold run.",
     ...overrides
   };
 }
@@ -50,6 +58,7 @@ describe("checkBriefDesignConsistency", () => {
   it("returns no errors for fully consistent brief and design", () => {
     const result = checkBriefDesignConsistency({
       briefSections: makeBriefSections(),
+      briefCompleteness: buildBriefCompletenessArtifact(renderBriefMarkdown(makeBriefSections())),
       experimentContract: makeContract(),
       designBaselines: ["free_form_chat"],
       designMetrics: ["macro-F1", "runtime"]
@@ -70,7 +79,7 @@ describe("checkBriefDesignConsistency", () => {
     expect(result.paper_scale_blocked).toBe(true);
   });
 
-  it("warns (not errors) when no target comparison but baselines exist in design", () => {
+  it("errors when the brief contract omits target comparison even if design baselines exist", () => {
     const result = checkBriefDesignConsistency({
       briefSections: makeBriefSections({ targetComparison: undefined }),
       experimentContract: makeContract(),
@@ -78,8 +87,8 @@ describe("checkBriefDesignConsistency", () => {
     });
     const warnings = result.warnings.filter((w) => w.code === "MISSING_TARGET_COMPARISON");
     expect(warnings).toHaveLength(1);
-    expect(warnings[0].severity).toBe("warning");
-    expect(result.paper_scale_blocked).toBe(false);
+    expect(warnings[0].severity).toBe("error");
+    expect(result.paper_scale_blocked).toBe(true);
   });
 
   it("warns about missing evidence plan", () => {
@@ -125,6 +134,29 @@ describe("checkBriefDesignConsistency", () => {
     expect(result.warnings.length).toBeGreaterThan(0);
   });
 });
+
+function renderBriefMarkdown(sections: MarkdownRunBriefSections): string {
+  return [
+    "# Research Brief",
+    "",
+    `## Topic\n${sections.topic ?? ""}`,
+    `## Objective Metric\n${sections.objectiveMetric ?? ""}`,
+    `## Constraints\n${sections.constraints ?? ""}`,
+    `## Plan\n${sections.plan ?? ""}`,
+    `## Research Question\n${sections.researchQuestion ?? ""}`,
+    `## Why This Can Be Tested With A Small Real Experiment\n${sections.whySmallExperiment ?? ""}`,
+    `## Baseline / Comparator\n${sections.baselineComparator ?? ""}`,
+    `## Dataset / Task / Bench\n${sections.datasetTaskBench ?? ""}`,
+    `## Target Comparison\n${sections.targetComparison ?? ""}`,
+    `## Minimum Acceptable Evidence\n${sections.minimumAcceptableEvidence ?? ""}`,
+    `## Disallowed Shortcuts\n${sections.disallowedShortcuts ?? ""}`,
+    `## Allowed Budgeted Passes\n${sections.allowedBudgetedPasses ?? ""}`,
+    `## Paper Ceiling If Evidence Remains Weak\n${sections.paperCeiling ?? ""}`,
+    `## Minimum Experiment Plan\n${sections.minimumExperimentPlan ?? ""}`,
+    `## Paper-worthiness Gate\n${sections.paperWorthinessGate ?? ""}`,
+    `## Failure Conditions\n${sections.failureConditions ?? ""}`
+  ].join("\n\n");
+}
 
 // ---------------------------------------------------------------------------
 // Enhanced confounding detection (Target 3)

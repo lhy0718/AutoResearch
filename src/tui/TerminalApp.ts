@@ -89,6 +89,10 @@ import {
   formatAnalyzeResultsArtifactLines
 } from "../core/resultAnalysisPresentation.js";
 import {
+  shouldSurfaceAnalyzeResultsInsight,
+  shouldSurfaceReviewInsight
+} from "../core/runInsightSelection.js";
+import {
   buildRepositoryKnowledgeEntryLines,
   buildRepositoryKnowledgeOverviewLines,
   readRepositoryKnowledgeIndex
@@ -253,6 +257,7 @@ export class TerminalApp {
   private readonly interactiveSupervisor: InteractiveRunSupervisor;
   private readonly appVersion = getAppVersion();
   private readonly colorEnabled = supportsColor();
+  private recoveredStaleSessionLock = false;
 
   private input = "";
   private cursorIndex = 0;
@@ -331,6 +336,10 @@ export class TerminalApp {
     this.saveConfigFn = deps.saveConfig;
   }
 
+  markRecoveredStaleSessionLock(): void {
+    this.recoveredStaleSessionLock = true;
+  }
+
   async start(): Promise<void> {
     // Prevent unhandled EIO/EPIPE crashes when stdout disconnects
     process.stdout.on("error", () => {
@@ -340,7 +349,9 @@ export class TerminalApp {
     await this.refreshRunIndex();
     if (this.activeRunId) {
       await this.loadHistoryForRun(this.activeRunId);
-      await this.recoverStaleRunningNode(this.activeRunId);
+      const recoverRecentNode = this.recoveredStaleSessionLock;
+      this.recoveredStaleSessionLock = false;
+      await this.recoverStaleRunningNode(this.activeRunId, recoverRecentNode);
     }
     this.unsubscribeEvents = this.eventStream.subscribe((event) => {
       void this.handleStreamEvent(event);
@@ -4455,16 +4466,20 @@ export class TerminalApp {
     try {
       const run = await this.runStore.getRun?.(this.activeRunId);
       const reviewPacket = parseReviewPacket(await safeRead(path.join(runDir, "review", "review_packet.json")));
-      if ((run?.currentNode === "review" || run?.currentNode === "write_paper") && reviewPacket) {
+      if (shouldSurfaceReviewInsight(run?.currentNode) && reviewPacket) {
         this.activeRunInsight = buildReviewInsightCard(reviewPacket);
         return;
       }
-      const report = parseAnalysisReport(await safeRead(path.join(runDir, "result_analysis.json")));
+      const report = shouldSurfaceAnalyzeResultsInsight(run?.currentNode)
+        ? parseAnalysisReport(await safeRead(path.join(runDir, "result_analysis.json")))
+        : undefined;
       if (report) {
         this.activeRunInsight = buildAnalyzeResultsInsightCard(report);
         return;
       }
-      this.activeRunInsight = reviewPacket ? buildReviewInsightCard(reviewPacket) : undefined;
+      this.activeRunInsight = shouldSurfaceReviewInsight(run?.currentNode) && reviewPacket
+        ? buildReviewInsightCard(reviewPacket)
+        : undefined;
     } catch {
       this.activeRunInsight = undefined;
     }
@@ -4527,7 +4542,7 @@ export class TerminalApp {
    * to "pending" so they can be re-executed. When the TUI restarts, any node
    * marked "running" has lost its in-memory execution context.
    */
-  private async recoverStaleRunningNode(runId: string): Promise<void> {
+  private async recoverStaleRunningNode(runId: string, recoverRecentNode = false): Promise<void> {
     const run = this.runIndex.find((r) => r.id === runId);
     if (!run) return;
     const nodeState = run.graph.nodeStates[run.currentNode];
@@ -4539,6 +4554,7 @@ export class TerminalApp {
         : Number.NEGATIVE_INFINITY
     );
     if (
+      !recoverRecentNode &&
       Number.isFinite(lastActivityMs) &&
       Date.now() - lastActivityMs < STALE_RUNNING_NODE_RECOVERY_MS
     ) {
@@ -5412,6 +5428,9 @@ export async function launchTerminalApp(deps: TerminalAppDeps): Promise<void> {
   const sessionLock = await acquireTerminalSessionLock(process.cwd());
   try {
     const app = new TerminalApp(deps);
+    if (sessionLock.recoveredStaleLock) {
+      app.markRecoveredStaleSessionLock();
+    }
     await app.start();
   } finally {
     await releaseTerminalSessionLock(sessionLock);
@@ -5421,6 +5440,7 @@ export async function launchTerminalApp(deps: TerminalAppDeps): Promise<void> {
 interface TerminalSessionLock {
   lockPath: string;
   token: string;
+  recoveredStaleLock: boolean;
 }
 
 interface PersistedTerminalSessionLock {
@@ -5435,10 +5455,14 @@ async function acquireTerminalSessionLock(cwd: string): Promise<TerminalSessionL
   await ensureDir(runtimeDir);
   const lockPath = path.join(runtimeDir, "tui-session-lock.json");
   const existing = await readTerminalSessionLock(lockPath);
-  if (existing && existing.pid !== process.pid && (await isTerminalSessionProcessActive(existing))) {
-    throw new Error(
-      `Another AutoLabOS TUI session is already running for ${existing.cwd} (pid ${existing.pid}). Close that session before starting a new live validation loop.`
-    );
+  let recoveredStaleLock = false;
+  if (existing && existing.pid !== process.pid) {
+    if (await isTerminalSessionProcessActive(existing)) {
+      throw new Error(
+        `Another AutoLabOS TUI session is already running for ${existing.cwd} (pid ${existing.pid}). Close that session before starting a new live validation loop.`
+      );
+    }
+    recoveredStaleLock = true;
   }
 
   const token = `${process.pid}:${Date.now()}`;
@@ -5449,7 +5473,7 @@ async function acquireTerminalSessionLock(cwd: string): Promise<TerminalSessionL
     token
   };
   await fs.writeFile(lockPath, `${JSON.stringify(nextLock, null, 2)}\n`, "utf8");
-  return { lockPath, token };
+  return { lockPath, token, recoveredStaleLock };
 }
 
 async function releaseTerminalSessionLock(lock: TerminalSessionLock): Promise<void> {

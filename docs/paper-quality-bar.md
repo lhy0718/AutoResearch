@@ -39,12 +39,20 @@ Each critique artifact must include:
 ### Pre-draft gate (review)
 `review` emits a pre-draft critique before allowing progression to `write_paper`.
 If the evidence package is insufficient, `review` recommends backtrack instead of advance.
+When a governed brief declares a minimum evidence floor, `review` should also honor the brief's paper ceiling instead of allowing a `research_memo`-grade run to drift into drafting.
 
 ### Post-draft critique (write_paper)
 After drafting, `write_paper` emits a post-draft critique that can:
 - Confirm `paper_ready` status if the manuscript is strong
 - Recommend `repair_then_retry` for writing/style-only issues
 - Recommend upstream backtrack for evidence/design/experiment deficits
+
+### Write-paper entry gate
+`write_paper` should fail fast before drafting when either of the following is already known:
+- the pre-draft critique classifies the run below `paper_scale_candidate`
+- the brief-governed evidence assessment says minimum acceptable evidence was not met
+
+In that case the correct action is upstream repair/backtrack, not spending drafting or PDF-compilation effort on a manuscript that should still be blocked.
 
 ## 4) Venue-style targeting
 Users can select a target venue style via `paper_profile.target_venue_style` in config.
@@ -112,6 +120,7 @@ For a manuscript to be marked `paper_ready=true`, all of the following should ho
 7. Major claims are traceable to evidence.
 8. Limitations or failure modes are stated.
 9. The paper does not center internal workflow validation as the main scientific contribution.
+10. Any brief-governed minimum evidence requirement (for example repeated runs, baseline count, or uncertainty reporting) has been satisfied.
 
 ## 6) Automatic downgrade / block conditions
 The manuscript must not be labeled `paper_ready` when any of the following is true:
@@ -122,6 +131,7 @@ The manuscript must not be labeled `paper_ready` when any of the following is tr
 - related work is too shallow to support positioning
 - the main contribution is really pipeline validation rather than research on an external task
 - the manuscript is mostly generated filler around weak artifacts
+- a governed brief explicitly required stronger evidence than the run actually produced
 
 In such cases, downgrade to one of:
 - `system_validation_note`

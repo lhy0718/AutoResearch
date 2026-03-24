@@ -1957,4 +1957,105 @@ describe("writePaper PDF build", () => {
       )
     ).toBe(true);
   });
+
+  it("fails fast before drafting when the brief evidence gate blocks paper progression", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-eligibility-"));
+    process.chdir(root);
+
+    const run = makeRun("run-paper-eligibility");
+    const runDir = await seedRun(root, run);
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put("analyze_results.brief_evidence_assessment", {
+      generated_at: new Date().toISOString(),
+      enabled: true,
+      status: "fail",
+      summary: "Brief evidence gate failed — repeated runs and comparator coverage are still below the declared minimum.",
+      ceiling_type: "research_memo",
+      recommended_action: "backtrack_to_design",
+      requirements: {
+        minimum_runs_or_folds: 3,
+        minimum_baseline_count: 2,
+        requires_confidence_intervals: true
+      },
+      actual: {
+        executed_trials: 1,
+        baseline_count: 1,
+        confidence_interval_count: 0,
+        evidence_gap_count: 1,
+        scope_limit_count: 0
+      },
+      checks: [],
+      failures: ["Executed evidence meets the brief run/fold floor"],
+      warnings: []
+    });
+    await memory.put("review.paper_critique", {
+      stage: "pre_draft_review",
+      manuscript_type: "research_memo",
+      overall_decision: "backtrack_to_design",
+      target_venue_style: "generic_cs_paper",
+      confidence: 0.9
+    });
+    await mkdir(path.join(runDir, "review"), { recursive: true });
+    await writeFile(
+      path.join(runDir, "review", "paper_critique.json"),
+      JSON.stringify(
+        {
+          stage: "pre_draft_review",
+          generated_at: new Date().toISOString(),
+          target_venue_style: "generic_cs_paper",
+          manuscript_type: "research_memo",
+          overall_decision: "backtrack_to_design",
+          overall_score: 2.4,
+          confidence: 0.9,
+          blocking_issues_count: 2,
+          non_blocking_issues_count: 0,
+          category_scores: [],
+          blocking_issues: [],
+          non_blocking_issues: [],
+          transition_recommendation: "backtrack_to_design",
+          paper_readiness_state: "research_memo",
+          downgrade_reason: "Evidence remained below the brief floor.",
+          manuscript_claim_risk_summary: "Evidence is still too thin for paper-scale drafting.",
+          needs_additional_experiments: true,
+          needs_additional_statistics: true,
+          needs_additional_related_work: false,
+          needs_design_revision: true,
+          venue_style_notes: "",
+          style_mismatches: [],
+          style_repairable_locally: true
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false,
+          validation_mode: "default"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient(buildSessionResponses()),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("write_paper blocked by brief evidence gate");
+    const eligibility = JSON.parse(await readFile(path.join(runDir, "paper", "write_paper_eligibility.json"), "utf8")) as {
+      allowed: boolean;
+      brief_evidence_status?: string;
+      manuscript_type?: string;
+    };
+    expect(eligibility.allowed).toBe(false);
+    expect(eligibility.brief_evidence_status).toBe("fail");
+    expect(eligibility.manuscript_type).toBe("research_memo");
+  });
 });

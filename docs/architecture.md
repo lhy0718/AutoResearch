@@ -95,6 +95,13 @@ At minimum, the brief structure should align with `docs/research-brief-template.
 
 Missing governance fields should be treated as execution risks, not harmless omissions.
 
+For brief-governed runs, the brief is not only advisory prose. The runtime should enforce it as a contract:
+
+- `design_experiments` should materialize brief completeness / design consistency artifacts and stop progression on explicit contract gaps.
+- `analyze_results` should compare executed evidence against the brief's minimum acceptable evidence and emit a deterministic evidence-scale assessment.
+- `review` should treat weak brief-governed evidence as a backtrack condition, not merely a drafting warning.
+- `write_paper` should fail fast when pre-draft critique or brief-evidence assessment still classifies the run below paper scale.
+
 ## 7) Validation surfaces are first-class
 
 The following are first-class validation surfaces for contract enforcement:

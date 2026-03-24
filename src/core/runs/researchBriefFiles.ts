@@ -399,6 +399,8 @@ export interface BriefCompletenessArtifact {
   };
   missing_sections: string[];
   paper_scale_ready: boolean;
+  contract_missing_sections: string[];
+  contract_ready: boolean;
 }
 
 function normalizeBriefSectionText(content: string): string {
@@ -477,12 +479,29 @@ export function buildBriefCompletenessArtifact(markdown: string): BriefCompleten
     grade = "minimal";
   }
 
+  const contractCriticalSectionKeys: RequiredResearchBriefSectionKey[] = [
+    "baselineComparator",
+    "targetComparison",
+    "minimumAcceptableEvidence",
+    "disallowedShortcuts",
+    "allowedBudgetedPasses",
+    "paperCeiling",
+    "minimumExperimentPlan",
+    "paperWorthinessGate",
+    "failureConditions"
+  ];
+  const contractMissing = contractCriticalSectionKeys
+    .filter((key) => !sectionMap[key].substantive)
+    .map((key) => RESEARCH_BRIEF_SECTION_LABELS[key]);
+
   return {
     generated_at: new Date().toISOString(),
     grade,
     sections: sectionMap,
     missing_sections: missing,
-    paper_scale_ready: grade === "complete"
+    paper_scale_ready: grade === "complete",
+    contract_missing_sections: contractMissing,
+    contract_ready: contractMissing.length === 0
   };
 }
 

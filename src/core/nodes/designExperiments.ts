@@ -28,7 +28,8 @@ import {
 } from "../experiments/experimentContract.js";
 import { checkBriefDesignConsistency } from "../experiments/briefDesignConsistency.js";
 import { parseMarkdownRunBriefSections } from "../runs/runBriefParser.js";
-import { BriefCompletenessArtifact } from "../runs/researchBriefFiles.js";
+import type { MarkdownRunBriefSections } from "../runs/runBriefParser.js";
+import { BriefCompletenessArtifact, buildBriefCompletenessArtifact } from "../runs/researchBriefFiles.js";
 
 interface FilteredHypothesis {
   hypothesis_id: string;
@@ -223,6 +224,11 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         contract: comparisonContract,
         entries: []
       });
+      const rawBrief = await runContextMemory.get<string>("run_brief.raw");
+      const briefSections = rawBrief ? parseMarkdownRunBriefSections(rawBrief) : undefined;
+      const briefCompleteness =
+        (await runContextMemory.get<BriefCompletenessArtifact>("run_brief.completeness")) ??
+        (rawBrief ? buildBriefCompletenessArtifact(rawBrief) : undefined);
 
       // --- Experiment contract: causal discipline artifact (Target 1+2) ---
       const selectedHypotheses = filtered.kept.filter(
@@ -241,7 +247,10 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         abortCondition: panelResult.selected.risks.length > 0
           ? `Abort if: ${panelResult.selected.risks[0]}`
           : "Abort if primary metric degrades significantly or execution fails repeatedly.",
-        keepOrDiscardRule: "Keep if objective metric improves over baseline; discard if no improvement or result is inconclusive."
+        keepOrDiscardRule: "Keep if objective metric improves over baseline; discard if no improvement or result is inconclusive.",
+        baselines: panelResult.selected.baselines,
+        metrics: panelResult.selected.metrics,
+        briefRequiredBaselineCount: deriveBriefRequiredBaselineCount(briefSections)
       });
       const contractValidation = validateExperimentContract(experimentContract);
       if (contractValidation.issues.length > 0) {
@@ -265,9 +274,14 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
       await runContextMemory.put("design_experiments.experiment_contract", experimentContract);
 
       // --- Brief-vs-design consistency check (Target 2) ---
-      const rawBrief = await runContextMemory.get<string>("run_brief.raw");
-      const briefSections = rawBrief ? parseMarkdownRunBriefSections(rawBrief) : undefined;
-      const briefCompleteness = await runContextMemory.get<BriefCompletenessArtifact>("run_brief.completeness");
+      if (briefCompleteness) {
+        await writeRunArtifact(
+          run,
+          "design_experiments_panel/brief_completeness.json",
+          `${JSON.stringify(briefCompleteness, null, 2)}\n`
+        );
+        await runContextMemory.put("design_experiments.brief_completeness", briefCompleteness);
+      }
       const consistencyResult = checkBriefDesignConsistency({
         briefSections: briefSections ?? undefined,
         briefCompleteness: briefCompleteness ?? undefined,
@@ -291,6 +305,21 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         if (warns.length > 0) {
           emitLog(`Brief-design consistency: ${warns.length} warning(s) — ${warns.map((w) => w.code).join(", ")}`);
         }
+      }
+      await runContextMemory.put("design_experiments.paper_scale_blocked", consistencyResult.paper_scale_blocked);
+      if (rawBrief && consistencyResult.paper_scale_blocked) {
+        const blockingCodes = consistencyResult.warnings
+          .filter((warning) => warning.severity === "error")
+          .map((warning) => warning.code)
+          .join(", ");
+        const error = `Brief contract blocked design progression: ${blockingCodes || "brief governance requirements not met"}.`;
+        emitLog(error);
+        return {
+          status: "failure",
+          error,
+          summary: error,
+          toolCallsUsed: 1
+        };
       }
 
       await runContextMemory.put("design_experiments.primary", panelResult.selected.title);
@@ -344,6 +373,28 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
       };
     }
   };
+}
+
+function deriveBriefRequiredBaselineCount(briefSections?: MarkdownRunBriefSections): number | undefined {
+  const text = [briefSections?.baselineComparator, briefSections?.targetComparison]
+    .filter((value): value is string => Boolean(value?.trim()))
+    .join("\n");
+  if (!text.trim()) {
+    return undefined;
+  }
+
+  const numericMatches = [...text.matchAll(/\b(\d+)\s+(?:explicit\s+)?(?:baselines?|comparators?)\b/giu)]
+    .map((match) => Number.parseInt(match[1], 10))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  if (numericMatches.length > 0) {
+    return Math.max(...numericMatches);
+  }
+
+  if (/\b(?:two|pair(?:ed)?|double)\b[\s\S]{0,24}\b(?:baselines?|comparators?)\b/iu.test(text)) {
+    return 2;
+  }
+
+  return 1;
 }
 
 function parseHypotheses(raw: string): DesignInputHypothesis[] {

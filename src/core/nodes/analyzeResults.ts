@@ -48,6 +48,8 @@ import {
   writeAttemptDecision,
   type AttemptDecisionVerdict
 } from "../experiments/attemptDecision.js";
+import { evaluateBriefEvidenceAgainstResults } from "../analysis/briefEvidenceValidator.js";
+import { parseMarkdownRunBriefSections } from "../runs/runBriefParser.js";
 
 export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
@@ -220,6 +222,30 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
           node: "analyze_results"
         });
       }
+      const rawBrief = await runContextMemory.get<string>("run_brief.raw");
+      const briefSections = rawBrief ? parseMarkdownRunBriefSections(rawBrief) : undefined;
+      const briefEvidenceAssessment = evaluateBriefEvidenceAgainstResults({
+        briefSections: briefSections ?? undefined,
+        report: summary
+      });
+      if (briefEvidenceAssessment.enabled && briefEvidenceAssessment.status === "fail") {
+        inputWarnings.push(briefEvidenceAssessment.summary);
+        summary.warnings = [...summary.warnings, briefEvidenceAssessment.summary];
+        deps.eventStream.emit({
+          type: "OBS_RECEIVED",
+          runId: run.id,
+          node: "analyze_results",
+          payload: {
+            text: `Brief evidence gate: ${briefEvidenceAssessment.summary}`
+          }
+        });
+      }
+      const evidenceAssessmentPath = await writeRunArtifact(
+        run,
+        "analysis/evidence_scale_assessment.json",
+        `${JSON.stringify(briefEvidenceAssessment, null, 2)}\n`
+      );
+      await runContextMemory.put("analyze_results.brief_evidence_assessment", briefEvidenceAssessment);
       const governanceDecision =
         comparisonContract &&
         deriveGovernedAnalysisDecision({
@@ -242,9 +268,14 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         summary,
         comparisonContract
       );
+      const gatedTransitionRecommendation = applyBriefEvidenceTransitionOverride(
+        baselineTransitionRecommendation,
+        briefEvidenceAssessment,
+        summary
+      );
       const panelResult = runAnalyzeResultsPanel({
         report: summary,
-        baselineRecommendation: baselineTransitionRecommendation
+        baselineRecommendation: gatedTransitionRecommendation
       });
       const transitionRecommendation = panelResult.recommendation;
       const humanInterventionRequest = buildAnalyzeResultsHumanInterventionRequest({
@@ -374,6 +405,11 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
           {
             sourcePath: path.join(process.cwd(), ".autolabos", "runs", run.id, "baseline_summary.json"),
             targetRelativePath: "baseline_summary.json",
+            optional: true
+          },
+          {
+            sourcePath: evidenceAssessmentPath,
+            targetRelativePath: "evidence_scale_assessment.json",
             optional: true
           }
         ]
@@ -1511,6 +1547,29 @@ function buildTransitionRecommendation(summary: AnalysisReport): TransitionRecom
       summary.overview.objective_summary,
       summary.synthesis?.confidence_statement,
       summary.synthesis?.discussion_points?.[0]
+    )
+  });
+}
+
+function applyBriefEvidenceTransitionOverride(
+  recommendation: TransitionRecommendation,
+  assessment: ReturnType<typeof evaluateBriefEvidenceAgainstResults>,
+  summary: AnalysisReport
+): TransitionRecommendation {
+  if (!assessment.enabled || assessment.status !== "fail") {
+    return recommendation;
+  }
+  return createRecommendation({
+    action: "backtrack_to_design",
+    targetNode: "design_experiments",
+    reason: `Brief minimum evidence gate failed: ${assessment.summary}`,
+    confidence: 0.92,
+    autoExecutable: true,
+    evidence: collectEvidence(
+      summary,
+      assessment.summary,
+      `executed_trials=${assessment.actual.executed_trials ?? "unknown"}`,
+      `confidence_intervals=${assessment.actual.confidence_interval_count}`
     )
   });
 }

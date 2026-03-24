@@ -53,6 +53,8 @@ import {
   getVenueProfile,
   type PaperCritique
 } from "../paperCritique.js";
+import type { BriefEvidenceAssessment } from "../analysis/briefEvidenceValidator.js";
+import type { ManuscriptType } from "../paperCritique.js";
 
 interface PaperCompileCommandResult {
   step: string;
@@ -167,6 +169,32 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         };
       }
       await runContextMemory.put("write_paper.last_error", null);
+      const preDraftCritique = await loadPreDraftCritique(run.id);
+      const briefEvidenceAssessment =
+        (await runContextMemory.get<BriefEvidenceAssessment>("analyze_results.brief_evidence_assessment")) ?? undefined;
+      const writeEligibility = evaluateWritePaperEligibility({
+        preDraftCritique,
+        briefEvidenceAssessment
+      });
+      await writeRunArtifact(
+        run,
+        "paper/write_paper_eligibility.json",
+        `${JSON.stringify(writeEligibility, null, 2)}\n`
+      );
+      await runContextMemory.put("write_paper.eligibility", writeEligibility);
+      if (!writeEligibility.allowed) {
+        emitLog(writeEligibility.reason);
+        await runContextMemory.put("write_paper.last_error", writeEligibility.reason);
+        await runContextMemory.put("write_paper.compile_status", null);
+        await runContextMemory.put("write_paper.compile_report", null);
+        await runContextMemory.put("write_paper.pdf_path", null);
+        return {
+          status: "failure",
+          error: writeEligibility.reason,
+          summary: writeEligibility.reason,
+          toolCallsUsed: 0
+        };
+      }
 
       const constraintProfile = await resolveConstraintProfile({
         run,
@@ -566,10 +594,9 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
 
       // Build post-draft critique artifact
       const venueStyle = resolveVenueStyle(deps.config.paper_profile?.target_venue_style);
-      const preDraftCritiqueRaw = await loadPreDraftCritique(run.id);
       const postDraftCritique = buildPostDraftCritique({
         venueStyle,
-        preDraftCritique: preDraftCritiqueRaw,
+        preDraftCritique,
         gateDecision,
         scientificValidation: scientificValidationArtifact,
         submissionValidation,
@@ -1522,6 +1549,63 @@ function buildPostDraftTransitionRecommendation(
     evidence,
     suggestedCommands: [],
     generatedAt: new Date().toISOString()
+  };
+}
+
+function evaluateWritePaperEligibility(input: {
+  preDraftCritique: PaperCritique | null;
+  briefEvidenceAssessment?: BriefEvidenceAssessment;
+}): {
+  generated_at: string;
+  allowed: boolean;
+  reason: string;
+  manuscript_type?: ManuscriptType;
+  brief_evidence_status?: BriefEvidenceAssessment["status"];
+} {
+  if (input.briefEvidenceAssessment?.enabled && input.briefEvidenceAssessment.status === "fail") {
+    return {
+      generated_at: new Date().toISOString(),
+      allowed: false,
+      reason: `write_paper blocked by brief evidence gate: ${input.briefEvidenceAssessment.summary}`,
+      manuscript_type: input.preDraftCritique?.manuscript_type,
+      brief_evidence_status: input.briefEvidenceAssessment.status
+    };
+  }
+
+  const manuscriptType = input.preDraftCritique?.manuscript_type;
+  const enforcePaperScaleFloor = input.briefEvidenceAssessment?.enabled === true;
+  if (manuscriptType === "blocked_for_paper_scale") {
+    return {
+      generated_at: new Date().toISOString(),
+      allowed: false,
+      reason: "write_paper blocked because review classified this run as blocked_for_paper_scale.",
+      manuscript_type: manuscriptType,
+      brief_evidence_status: input.briefEvidenceAssessment?.status
+    };
+  }
+  if (
+    enforcePaperScaleFloor &&
+    manuscriptType &&
+    manuscriptType !== "paper_scale_candidate" &&
+    manuscriptType !== "paper_ready"
+  ) {
+    return {
+      generated_at: new Date().toISOString(),
+      allowed: false,
+      reason: `write_paper requires a pre-draft critique of at least paper_scale_candidate, but review classified this run as ${manuscriptType}.`,
+      manuscript_type: manuscriptType,
+      brief_evidence_status: input.briefEvidenceAssessment?.status
+    };
+  }
+
+  return {
+    generated_at: new Date().toISOString(),
+    allowed: true,
+    reason: manuscriptType
+      ? `write_paper allowed: pre-draft critique classified the run as ${manuscriptType}.`
+      : "write_paper allowed: no pre-draft critique was available, so no critique-based gate was applied.",
+    manuscript_type: manuscriptType ?? undefined,
+    brief_evidence_status: input.briefEvidenceAssessment?.status
   };
 }
 
