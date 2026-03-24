@@ -205,7 +205,7 @@ This file was compacted on 2026-03-22 to remove duplicated template fragments, m
 - Remaining risks: the next live blocker may move back to the implementation turn once this runtime-literal guard is exercised on the real run.
 
 ### LV-066 — staged `implement_experiments` provider calls can hang indefinitely in `staged_llm` mode
-- Status: IN PROGRESS
+- Status: FIX IMPLEMENTED, LIVE REVALIDATION PENDING
 - Validation target: `test/` live rerun of `98987fc4-6ce2-4d39-8623-6dacbcb1508d` after forcing `implement_experiments` from the failed `run_experiments` boundary
 - Environment/session context: repo head on 2026-03-20, `test/` workspace, run `98987fc4-6ce2-4d39-8623-6dacbcb1508d`, `providers.llm_mode: openai_api`.
 - Reproduction steps:
@@ -225,8 +225,8 @@ This file was compacted on 2026-03-22 to remove duplicated template fragments, m
   - `tests/implementSessionManager.test.ts`
 - Regression status:
   - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`.
-  - Re-validation result: deterministic regression added; live re-validation pending.
-- Remaining risks: after bounding the staged-LLM timeout, the next blocker may expose the underlying provider error rather than the hang itself.
+  - Re-validation result: pass for deterministic coverage — focused `tests/implementSessionManager.test.ts`, full `npm test`, and `npm run build` all pass after adding a 600000ms default staged-LLM node timeout with env override support (including explicit `AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS=0` to disable it). Same-flow live re-validation is still pending.
+- Remaining risks: the hang boundary is now bounded in code, but the next live blocker may surface as an underlying provider error or a deliberately disabled timeout override rather than an indefinite wait.
 
 ---
 

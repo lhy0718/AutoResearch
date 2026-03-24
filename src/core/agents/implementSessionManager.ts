@@ -3297,13 +3297,18 @@ function stripDryRunFlag(command: string | undefined): string | undefined {
   return stripped || undefined;
 }
 
+const DEFAULT_IMPLEMENT_LLM_TIMEOUT_MS = 600_000;
+
 export function getImplementLlmTimeoutMs(config: AppConfig): number {
-  const parsed = Number.parseInt(process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS || "", 10);
-  if (Number.isFinite(parsed) && parsed > 0) {
-    return parsed;
+  const raw = process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS?.trim();
+  if (raw) {
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return parsed;
+    }
   }
   void config;
-  return 0;
+  return DEFAULT_IMPLEMENT_LLM_TIMEOUT_MS;
 }
 
 function isDryRunMetricsRepairFeedback(report: RunVerifierReport | undefined): boolean {

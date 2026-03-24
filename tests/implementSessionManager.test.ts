@@ -3343,7 +3343,7 @@ describe("ImplementSessionManager", () => {
     }
   });
 
-  it("does not apply a default staged_llm timeout unless explicitly configured", () => {
+  it("applies a bounded staged_llm timeout by default", () => {
     const config = createTestConfig();
     config.providers.llm_mode = "openai_api";
     config.providers.openai.experiment_model = "gpt-5.4";
@@ -3351,6 +3351,25 @@ describe("ImplementSessionManager", () => {
 
     const originalTimeout = process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS;
     delete process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS;
+    try {
+      expect(getImplementLlmTimeoutMs(config)).toBe(600_000);
+    } finally {
+      if (originalTimeout === undefined) {
+        delete process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS;
+      } else {
+        process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS = originalTimeout;
+      }
+    }
+  });
+
+  it("allows explicitly disabling the staged_llm timeout with zero", () => {
+    const config = createTestConfig();
+    config.providers.llm_mode = "openai_api";
+    config.providers.openai.experiment_model = "gpt-5.4";
+    config.providers.openai.experiment_reasoning_effort = "high";
+
+    const originalTimeout = process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS;
+    process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS = "0";
     try {
       expect(getImplementLlmTimeoutMs(config)).toBe(0);
     } finally {

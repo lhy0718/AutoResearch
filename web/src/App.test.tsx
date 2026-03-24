@@ -258,6 +258,12 @@ describe("App", () => {
       expect(screen.getByLabelText("Ollama base URL")).toBeInTheDocument();
     });
 
+    const ollamaExperimentSection = screen.getByText("Ollama experiment").closest("section");
+    expect(ollamaExperimentSection).not.toBeNull();
+    expect(within(ollamaExperimentSection as HTMLElement).getByRole("combobox", { name: "Model" })).toHaveValue(
+      "qwen2.5-coder:32b"
+    );
+
     fireEvent.change(screen.getByLabelText("Ollama base URL"), {
       target: { value: "http://127.0.0.1:22434" }
     });

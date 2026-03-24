@@ -115,6 +115,11 @@ export interface WebConfigFormData {
   openAiResearchBackendReasoningEffort: string;
   openAiExperimentModel: string;
   openAiExperimentReasoningEffort: string;
+  ollamaBaseUrl: string;
+  ollamaChatModel: string;
+  ollamaResearchModel: string;
+  ollamaExperimentModel: string;
+  ollamaVisionModel: string;
 }
 
 export interface WebConfigOptions {
