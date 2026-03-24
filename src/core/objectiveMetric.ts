@@ -221,6 +221,18 @@ export function normalizeObjectiveMetricProfile(
  */
 function promotePrimaryMetric(metrics: Record<string, unknown>): Record<string, unknown> {
   const pm = metrics.primary_metric;
+  if (typeof pm === "string") {
+    const value = metrics.primary_value;
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      return metrics;
+    }
+    const enriched: Record<string, unknown> = { ...metrics };
+    if (!(pm in enriched) || typeof enriched[pm] !== "number") {
+      enriched[pm] = value;
+    }
+    return enriched;
+  }
+
   if (!pm || typeof pm !== "object" || Array.isArray(pm)) {
     return metrics;
   }
@@ -384,6 +396,49 @@ export function synthesizeRelativeMetrics(
         }
       }
       return enriched;
+    }
+  }
+
+  // Strategy 3: baseline_method + methods object
+  const baselineMethod = typeof metrics.baseline_method === "string" ? metrics.baseline_method : undefined;
+  const methodsObj = metrics.methods;
+  if (
+    baselineMethod &&
+    methodsObj &&
+    typeof methodsObj === "object" &&
+    !Array.isArray(methodsObj)
+  ) {
+    const methodMetrics = methodsObj as Record<string, unknown>;
+    const baselineRecord = methodMetrics[baselineMethod];
+    if (baselineRecord && typeof baselineRecord === "object" && !Array.isArray(baselineRecord)) {
+      const nonBaselineEntries = Object.entries(methodMetrics).filter(
+        ([name, value]) =>
+          name !== baselineMethod &&
+          value &&
+          typeof value === "object" &&
+          !Array.isArray(value)
+      );
+      if (nonBaselineEntries.length > 0) {
+        const baseMetrics = baselineRecord as Record<string, unknown>;
+        const enriched: Record<string, unknown> = { ...metrics };
+        for (const metricKey of SYNTHESIZE_METRIC_KEYS) {
+          const baseVal = typeof baseMetrics[metricKey] === "number" ? (baseMetrics[metricKey] as number) : undefined;
+          if (baseVal === undefined) continue;
+          let bestDelta = -Infinity;
+          for (const [, treatmentValue] of nonBaselineEntries) {
+            const treatMetrics = treatmentValue as Record<string, unknown>;
+            const val = typeof treatMetrics[metricKey] === "number" ? (treatMetrics[metricKey] as number) : undefined;
+            if (val === undefined) continue;
+            const delta = val - baseVal;
+            if (delta > bestDelta) bestDelta = delta;
+          }
+          if (Number.isFinite(bestDelta)) {
+            enriched[`${metricKey}_delta_vs_baseline`] = bestDelta;
+            enriched[`${metricKey}_improvement_over_baseline`] = bestDelta;
+          }
+        }
+        return enriched;
+      }
     }
   }
 

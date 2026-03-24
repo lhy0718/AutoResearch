@@ -1472,6 +1472,96 @@ describe("TerminalApp pending natural plan execution", () => {
     }
   });
 
+  it("clears downstream artifacts when /agent clear rewinds from an upstream node", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "autolabos-clear-reset-"));
+    const originalCwd = process.cwd();
+    process.chdir(cwd);
+    try {
+      const paths = resolveAppPaths(cwd);
+      await ensureScaffold(paths);
+      const runStore = new RunStore(paths);
+      const run = await runStore.createRun({
+        title: "Clear reset run",
+        topic: "topic",
+        constraints: [],
+        objectiveMetric: "metric"
+      });
+      run.status = "paused";
+      run.currentNode = "write_paper";
+      run.graph.currentNode = "write_paper";
+      run.graph.nodeStates.implement_experiments.status = "completed";
+      run.graph.nodeStates.run_experiments.status = "completed";
+      run.graph.nodeStates.analyze_results.status = "completed";
+      run.graph.nodeStates.review.status = "completed";
+      run.graph.nodeStates.write_paper.status = "completed";
+      run.nodeThreads.implement_experiments = "thread-impl";
+      run.nodeThreads.run_experiments = "thread-run";
+      await runStore.updateRun(run);
+
+      const runDir = path.join(cwd, ".autolabos", "runs", run.id);
+      await mkdir(path.join(runDir, "review"), { recursive: true });
+      await mkdir(path.join(runDir, "paper"), { recursive: true });
+      await writeFile(path.join(runDir, "experiment.py"), "print('ok')\n", "utf8");
+      await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ accuracy: 0.1 }, null, 2), "utf8");
+      await writeFile(path.join(runDir, "result_analysis.json"), JSON.stringify({ overview: {} }, null, 2), "utf8");
+      await writeFile(path.join(runDir, "review", "decision.json"), JSON.stringify({ outcome: "advance" }, null, 2), "utf8");
+      await writeFile(path.join(runDir, "paper", "main.tex"), "stale paper\n", "utf8");
+
+      const runContext = new RunContextMemory(path.join(cwd, run.memoryRefs.runContextPath));
+      await runContext.put("implement_experiments.script", "print('stale')");
+      await runContext.put("analyze_results.last_summary", "stale analysis");
+      await runContext.put("review.last_decision", { outcome: "advance" });
+
+      const app = new TerminalApp({
+        config: {
+          papers: { max_results: 100 },
+          providers: {
+            llm_mode: "codex_chatgpt_only",
+            codex: { model: "gpt-5.3-codex", reasoning_effort: "xhigh", fast_mode: false },
+            openai: { model: "gpt-5.4", reasoning_effort: "medium" }
+          }
+        } as any,
+        runStore,
+        titleGenerator: {} as any,
+        codex: {} as any,
+        eventStream: { subscribe: () => () => {} } as any,
+        orchestrator: {} as any,
+        initialRunId: run.id,
+        semanticScholarApiKeyConfigured: false,
+        onQuit: () => {},
+        saveConfig: async () => {}
+      }) as any;
+
+      app.render = () => {};
+      app.updateSuggestions = () => {};
+      app.drainQueuedInputs = async () => {};
+
+      await app.refreshRunIndex();
+      await app.setActiveRunId(run.id);
+      await app.submitInputText(`/agent clear implement_experiments ${run.id}`);
+
+      const persisted = await runStore.getRun(run.id);
+      expect(app.logs.some((line: string) => line.includes("Run reset from implement_experiments (pending)."))).toBe(true);
+      await expect(readFile(path.join(runDir, "experiment.py"), "utf8")).rejects.toThrow();
+      await expect(readFile(path.join(runDir, "metrics.json"), "utf8")).rejects.toThrow();
+      await expect(readFile(path.join(runDir, "result_analysis.json"), "utf8")).rejects.toThrow();
+      await expect(readFile(path.join(runDir, "review", "decision.json"), "utf8")).rejects.toThrow();
+      await expect(readFile(path.join(runDir, "paper", "main.tex"), "utf8")).rejects.toThrow();
+      expect(await runContext.get("implement_experiments.script")).toBeNull();
+      expect(await runContext.get("analyze_results.last_summary")).toBeNull();
+      expect(await runContext.get("review.last_decision")).toBeNull();
+      expect(persisted?.status).toBe("paused");
+      expect(persisted?.currentNode).toBe("implement_experiments");
+      expect(persisted?.graph.nodeStates.implement_experiments.status).toBe("pending");
+      expect(persisted?.graph.nodeStates.write_paper.status).toBe("pending");
+      expect(persisted?.nodeThreads.implement_experiments).toBeUndefined();
+      expect(persisted?.nodeThreads.run_experiments).toBeUndefined();
+    } finally {
+      process.chdir(originalCwd);
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("pauses the active run on unexpected exit even when no busy promise is registered", async () => {
     const cwd = await mkdtemp(path.join(os.tmpdir(), "autolabos-exit-cleanup-idle-"));
     const originalCwd = process.cwd();

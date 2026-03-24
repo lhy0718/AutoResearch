@@ -1236,7 +1236,7 @@ export class InteractionSession {
         if (!run) {
           return { ok: false, reason: "target run not found" };
         }
-        const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+        const memory = new RunContextMemory(this.resolveWorkspacePath(run.memoryRefs.runContextPath));
         if (parsed.topN) {
           await memory.put("analyze_papers.request", {
             topN: parsed.topN,
@@ -1255,7 +1255,7 @@ export class InteractionSession {
         if (!run) {
           return { ok: false, reason: "target run not found" };
         }
-        const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+        const memory = new RunContextMemory(this.resolveWorkspacePath(run.memoryRefs.runContextPath));
         await memory.put("generate_hypotheses.request", {
           topK: parsed.topK ?? 2,
           branchCount: parsed.branchCount ?? 6
@@ -1624,7 +1624,7 @@ export class InteractionSession {
       return { ok: true };
     }
 
-    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    const runContext = new RunContextMemory(this.resolveWorkspacePath(run.memoryRefs.runContextPath));
     await runContext.put("collect_papers.request", nodeRequest);
     await runContext.put("collect_papers.requested_limit", fetchCount);
 
@@ -2150,7 +2150,7 @@ export class InteractionSession {
 
   private async clearNodeArtifacts(run: RunRecord, node: GraphNodeId): Promise<number> {
     const runDir = path.join(this.workspaceRoot, ".autolabos", "runs", run.id);
-    const targets = nodeArtifactTargets(node);
+    const targets = resetArtifactTargets(node);
     let removed = 0;
     for (const relative of targets) {
       const fullPath = path.join(runDir, relative);
@@ -2162,8 +2162,8 @@ export class InteractionSession {
         // ignore
       }
     }
-    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
-    for (const key of nodeContextKeys(node)) {
+    const runContext = new RunContextMemory(this.resolveWorkspacePath(run.memoryRefs.runContextPath));
+    for (const key of resetContextKeys(node)) {
       await runContext.put(key, null);
     }
     return removed;
@@ -2194,6 +2194,7 @@ export class InteractionSession {
       };
       delete run.graph.retryCounters[nodeId];
       delete run.graph.rollbackCounters[nodeId];
+      delete run.nodeThreads[nodeId];
     }
     await this.runStore.updateRun(run);
   }
@@ -2547,31 +2548,31 @@ function nodeArtifactTargets(node: GraphNodeId): string[] {
     case "design_experiments":
       return ["experiment_plan.yaml"];
     case "implement_experiments":
-      return ["experiment.py"];
+      return [
+        "experiment.py",
+        "implement_experiments",
+        "implement_result.json",
+        "implement_task_spec.json",
+        "implement_attempts.json",
+        "verify_report.json",
+        "localization_search_result.json",
+        "long_term_memory_result.json",
+        "branch_search_result.json",
+        "localization_result.json"
+      ];
     case "run_experiments":
-      return ["exec_logs/observations.jsonl", "exec_logs/run_experiments.txt", "metrics.json"];
+      return ["exec_logs", "metrics.json", "objective_evaluation.json", "run_experiments_verify_report.json"];
     case "analyze_results":
-      return ["figures", "metrics.json", "result_analysis.json", "result_analysis_synthesis.json"];
+      return ["figures", "analysis", "result_analysis.json", "result_analysis_synthesis.json", "transition_recommendation.json"];
     case "review":
-      return [
-        "review/review_packet.json",
-        "review/checklist.md",
-        "review/findings.jsonl",
-        "review/scorecard.json",
-        "review/consistency_report.json",
-        "review/bias_report.json",
-        "review/revision_plan.json",
-        "review/decision.json"
-      ];
+      return ["review"];
     case "write_paper":
-      return [
-        "paper/main.tex",
-        "paper/references.bib",
-        "paper/manuscript.json",
-        "paper/traceability.json",
-        "paper/evidence_links.json"
-      ];
+      return ["paper"];
   }
+}
+
+function resetArtifactTargets(node: GraphNodeId): string[] {
+  return [...new Set(resetScopeNodes(node).flatMap((nodeId) => nodeArtifactTargets(nodeId)))];
 }
 
 function nodeContextKeys(node: GraphNodeId): string[] {
@@ -2607,6 +2608,15 @@ function nodeContextKeys(node: GraphNodeId): string[] {
     default:
       return [];
   }
+}
+
+function resetContextKeys(node: GraphNodeId): string[] {
+  return [...new Set(resetScopeNodes(node).flatMap((nodeId) => nodeContextKeys(nodeId)))];
+}
+
+function resetScopeNodes(node: GraphNodeId): GraphNodeId[] {
+  const targetIndex = AGENT_ORDER.indexOf(node);
+  return targetIndex >= 0 ? AGENT_ORDER.slice(targetIndex) : [node];
 }
 
 async function safeRead(filePath: string): Promise<string> {

@@ -272,6 +272,35 @@ describe("objectiveMetric", () => {
     expect(evaluation.summary).toContain("not met");
   });
 
+  it("promotes string primary_metric + primary_value before falling back to secondary metrics", () => {
+    const objective =
+      "Primary metric: exact-match accuracy on held-out reasoning benchmarks. What counts as meaningful improvement: at least +2 exact-match points over a greedy baseline.";
+    const profile = buildHeuristicObjectiveMetricProfile(objective);
+
+    const evaluation = evaluateObjectiveMetric(
+      {
+        primary_metric: "accuracy_delta_vs_baseline",
+        primary_value: 0,
+        methods: {
+          greedy_baseline: {
+            accuracy: 0.1,
+            avg_generated_tokens_per_example: 96
+          },
+          adaptive_verify_and_vote: {
+            accuracy: 0.1,
+            avg_generated_tokens_per_example: 98
+          }
+        }
+      },
+      profile,
+      objective
+    );
+
+    expect(evaluation.matchedMetricKey).toBe("accuracy_delta_vs_baseline");
+    expect(evaluation.observedValue).toBe(0);
+    expect(evaluation.status).toBe("not_met");
+  });
+
   it("synthesizes delta from baseline_metrics + routed_metrics structure", () => {
     const enriched = synthesizeRelativeMetrics({
       baseline_metrics: { accuracy: 0.4375, f1: 0.50 },
@@ -280,5 +309,18 @@ describe("objectiveMetric", () => {
 
     expect(enriched.accuracy_delta_vs_baseline).toBeCloseTo(0.1944 - 0.4375, 10);
     expect(enriched.f1_delta_vs_baseline).toBeCloseTo(0.30 - 0.50, 10);
+  });
+
+  it("synthesizes delta from baseline_method + methods structure", () => {
+    const enriched = synthesizeRelativeMetrics({
+      baseline_method: "greedy_baseline",
+      methods: {
+        greedy_baseline: { accuracy: 0.1, exact_match: 0.1 },
+        adaptive_verify_and_vote: { accuracy: 0.25, exact_match: 0.25 }
+      }
+    });
+
+    expect(enriched.accuracy_delta_vs_baseline).toBeCloseTo(0.15, 10);
+    expect(enriched.exact_match_delta_vs_baseline).toBeCloseTo(0.15, 10);
   });
 });

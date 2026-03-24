@@ -181,6 +181,140 @@ describe("InteractionSession", () => {
     expect(result.logs.some((line) => line.includes("Analysis coverage: 1 summaries, 1 evidence rows"))).toBe(true);
   });
 
+  it("clears downstream artifacts and context when rewinding from an upstream node", async () => {
+    const run = await runStore.createRun({
+      title: "Reset run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.status = "paused";
+    run.currentNode = "write_paper";
+    run.graph.currentNode = "write_paper";
+    run.graph.nodeStates.implement_experiments.status = "completed";
+    run.graph.nodeStates.run_experiments.status = "completed";
+    run.graph.nodeStates.analyze_results.status = "completed";
+    run.graph.nodeStates.review.status = "completed";
+    run.graph.nodeStates.write_paper.status = "completed";
+    run.nodeThreads.implement_experiments = "thread-impl";
+    run.nodeThreads.run_experiments = "thread-run";
+    await runStore.updateRun(run);
+
+    const runDir = path.join(cwd, ".autolabos", "runs", run.id);
+    await fs.mkdir(path.join(runDir, "review"), { recursive: true });
+    await fs.mkdir(path.join(runDir, "paper"), { recursive: true });
+    await fs.writeFile(path.join(runDir, "experiment.py"), "print('ok')\n", "utf8");
+    await fs.writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ accuracy: 0.1 }, null, 2), "utf8");
+    await fs.writeFile(path.join(runDir, "result_analysis.json"), JSON.stringify({ overview: {} }, null, 2), "utf8");
+    await fs.writeFile(path.join(runDir, "review", "decision.json"), JSON.stringify({ outcome: "advance" }, null, 2), "utf8");
+    await fs.writeFile(path.join(runDir, "paper", "main.tex"), "stale paper\n", "utf8");
+
+    const runContext = new RunContextMemory(path.join(cwd, run.memoryRefs.runContextPath));
+    await runContext.put("implement_experiments.script", "print('stale')");
+    await runContext.put("analyze_results.last_summary", "stale analysis");
+    await runContext.put("review.last_decision", { outcome: "advance" });
+
+    const session = new InteractionSession({
+      workspaceRoot: cwd,
+      config: {
+        research: {
+          defaultTopic: "topic",
+          defaultConstraints: ["recent papers"],
+          default_objective_metric: "metric"
+        }
+      } as any,
+      runStore,
+      titleGenerator: {} as any,
+      codex: {} as any,
+      openAiTextClient: undefined,
+      eventStream: new InMemoryEventStream(),
+      orchestrator: {} as any,
+      semanticScholarApiKeyConfigured: true
+    });
+    await session.start();
+    await session.selectRun(run.id);
+
+    const result = await session.submitInput(`/agent clear implement_experiments ${run.id}`);
+    const persisted = await runStore.getRun(run.id);
+
+    expect(result.logs.some((line) => line.includes("Run reset from implement_experiments (pending)."))).toBe(true);
+    expect(await fs.stat(path.join(runDir, "experiment.py")).catch(() => undefined)).toBeUndefined();
+    expect(await fs.stat(path.join(runDir, "metrics.json")).catch(() => undefined)).toBeUndefined();
+    expect(await fs.stat(path.join(runDir, "result_analysis.json")).catch(() => undefined)).toBeUndefined();
+    expect(await fs.stat(path.join(runDir, "review", "decision.json")).catch(() => undefined)).toBeUndefined();
+    expect(await fs.stat(path.join(runDir, "paper", "main.tex")).catch(() => undefined)).toBeUndefined();
+    expect(await runContext.get("implement_experiments.script")).toBeNull();
+    expect(await runContext.get("analyze_results.last_summary")).toBeNull();
+    expect(await runContext.get("review.last_decision")).toBeNull();
+    expect(persisted?.status).toBe("paused");
+    expect(persisted?.currentNode).toBe("implement_experiments");
+    expect(persisted?.graph.nodeStates.implement_experiments.status).toBe("pending");
+    expect(persisted?.graph.nodeStates.write_paper.status).toBe("pending");
+    expect(persisted?.nodeThreads.implement_experiments).toBeUndefined();
+    expect(persisted?.nodeThreads.run_experiments).toBeUndefined();
+  });
+
+  it("preserves run_experiments metrics when clearing analyze_results", async () => {
+    const run = await runStore.createRun({
+      title: "Analyze reset run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.status = "paused";
+    run.currentNode = "write_paper";
+    run.graph.currentNode = "write_paper";
+    run.graph.nodeStates.run_experiments.status = "completed";
+    run.graph.nodeStates.analyze_results.status = "completed";
+    run.graph.nodeStates.review.status = "completed";
+    run.graph.nodeStates.write_paper.status = "completed";
+    await runStore.updateRun(run);
+
+    const runDir = path.join(cwd, ".autolabos", "runs", run.id);
+    await fs.mkdir(path.join(runDir, "review"), { recursive: true });
+    await fs.mkdir(path.join(runDir, "paper"), { recursive: true });
+    await fs.writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ accuracy: 0.1 }, null, 2), "utf8");
+    await fs.writeFile(path.join(runDir, "objective_evaluation.json"), JSON.stringify({ status: "met" }, null, 2), "utf8");
+    await fs.writeFile(path.join(runDir, "result_analysis.json"), JSON.stringify({ overview: {} }, null, 2), "utf8");
+    await fs.writeFile(path.join(runDir, "transition_recommendation.json"), JSON.stringify({ action: "advance" }, null, 2), "utf8");
+    await fs.writeFile(path.join(runDir, "review", "decision.json"), JSON.stringify({ outcome: "advance" }, null, 2), "utf8");
+    await fs.writeFile(path.join(runDir, "paper", "main.tex"), "stale paper\n", "utf8");
+
+    const session = new InteractionSession({
+      workspaceRoot: cwd,
+      config: {
+        research: {
+          defaultTopic: "topic",
+          defaultConstraints: ["recent papers"],
+          default_objective_metric: "metric"
+        }
+      } as any,
+      runStore,
+      titleGenerator: {} as any,
+      codex: {} as any,
+      openAiTextClient: undefined,
+      eventStream: new InMemoryEventStream(),
+      orchestrator: {} as any,
+      semanticScholarApiKeyConfigured: true
+    });
+    await session.start();
+    await session.selectRun(run.id);
+
+    await session.submitInput(`/agent clear analyze_results ${run.id}`);
+    const persisted = await runStore.getRun(run.id);
+
+    expect(await fs.readFile(path.join(runDir, "metrics.json"), "utf8")).toContain('"accuracy": 0.1');
+    expect(await fs.readFile(path.join(runDir, "objective_evaluation.json"), "utf8")).toContain('"status": "met"');
+    expect(await fs.stat(path.join(runDir, "result_analysis.json")).catch(() => undefined)).toBeUndefined();
+    expect(await fs.stat(path.join(runDir, "transition_recommendation.json")).catch(() => undefined)).toBeUndefined();
+    expect(await fs.stat(path.join(runDir, "review", "decision.json")).catch(() => undefined)).toBeUndefined();
+    expect(await fs.stat(path.join(runDir, "paper", "main.tex")).catch(() => undefined)).toBeUndefined();
+    expect(persisted?.currentNode).toBe("analyze_results");
+    expect(persisted?.graph.nodeStates.run_experiments.status).toBe("completed");
+    expect(persisted?.graph.nodeStates.analyze_results.status).toBe("pending");
+    expect(persisted?.graph.nodeStates.write_paper.status).toBe("pending");
+  });
+
   it("cancels a pending plan without executing any step", async () => {
     const session = new InteractionSession({
       workspaceRoot: cwd,
