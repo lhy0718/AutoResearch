@@ -992,8 +992,8 @@ export class InteractionSession {
     return run.status === "paused" && state.status === "pending" && state.note === "Canceled by user";
   }
 
-  private shouldAutoContinueAfterCollectRecovery(run: RunRecord): boolean {
-    if (AGENT_ORDER.indexOf(run.currentNode) <= AGENT_ORDER.indexOf("collect_papers")) {
+  private shouldAutoContinueAfterNodeAdvance(requestedNode: GraphNodeId, run: RunRecord): boolean {
+    if (AGENT_ORDER.indexOf(run.currentNode) <= AGENT_ORDER.indexOf(requestedNode)) {
       return false;
     }
     if (run.status === "completed" || run.status === "failed") {
@@ -1001,6 +1001,10 @@ export class InteractionSession {
     }
     const currentState = run.graph.nodeStates[run.currentNode];
     return currentState.status === "pending" || currentState.status === "running";
+  }
+
+  private shouldAutoContinueAfterCollectRecovery(run: RunRecord): boolean {
+    return this.shouldAutoContinueAfterNodeAdvance("collect_papers", run);
   }
 
   private applySteeringInput(instruction: string): void {
@@ -1260,8 +1264,21 @@ export class InteractionSession {
       }
       await this.setActiveRunId(run.id);
       const response = await this.orchestrator.runAgentWithOptions(run.id, nodeRaw, { abortSignal });
+      let updatedRun = response.run;
       await this.refreshRunIndex();
-      if (this.wasAgentRunCanceled(response.run, nodeRaw)) {
+      const refreshedRun = (await this.runStore.getRun(run.id)) ?? response.run;
+      if (this.shouldAutoContinueAfterNodeAdvance(nodeRaw, refreshedRun)) {
+        const continued = await this.orchestrator.runCurrentAgentWithOptions(run.id, { abortSignal });
+        await this.refreshRunIndex();
+        await this.setActiveRunId(continued.run.id);
+        updatedRun = continued.run;
+        if (continued.result.status === "failure" || continued.run.status === "failed") {
+          const failure = continued.result.error || continued.result.summary || "run failed";
+          this.pushLog(`Research stopped: ${oneLine(failure)}`);
+          return { ok: false, reason: failure };
+        }
+      }
+      if (this.wasAgentRunCanceled(updatedRun, nodeRaw)) {
         throw new Error("Operation aborted by user");
       }
       if (response.result.status === "failure") {

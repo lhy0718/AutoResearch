@@ -1783,8 +1783,8 @@ export class TerminalApp {
     return run.status === "paused" && state.status === "pending" && state.note === "Canceled by user";
   }
 
-  private shouldAutoContinueAfterCollectRecovery(run: RunRecord): boolean {
-    if (AGENT_ORDER.indexOf(run.currentNode) <= AGENT_ORDER.indexOf("collect_papers")) {
+  private shouldAutoContinueAfterNodeAdvance(requestedNode: GraphNodeId, run: RunRecord): boolean {
+    if (AGENT_ORDER.indexOf(run.currentNode) <= AGENT_ORDER.indexOf(requestedNode)) {
       return false;
     }
     if (run.status === "completed" || run.status === "failed") {
@@ -1792,6 +1792,10 @@ export class TerminalApp {
     }
     const currentState = run.graph.nodeStates[run.currentNode];
     return currentState.status === "pending" || currentState.status === "running";
+  }
+
+  private shouldAutoContinueAfterCollectRecovery(run: RunRecord): boolean {
+    return this.shouldAutoContinueAfterNodeAdvance("collect_papers", run);
   }
 
   private applySteeringInput(instruction: string): void {
@@ -2530,8 +2534,11 @@ export class TerminalApp {
 
       await this.setActiveRunId(run.id);
       const response = await this.orchestrator.runAgentWithOptions(run.id, nodeRaw, { abortSignal });
+      let updatedRun = response.run;
+      if (this.shouldAutoContinueAfterNodeAdvance(nodeRaw, updatedRun)) {
+        updatedRun = await this.continueSupervisedRun(updatedRun.id, abortSignal);
+      }
       await this.refreshRunIndex();
-      const updatedRun = response.run;
       await this.setActiveRunId(updatedRun.id);
       const pendingRequest = await this.interactiveSupervisor.getActiveRequest(updatedRun);
       if (pendingRequest) {

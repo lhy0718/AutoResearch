@@ -2209,6 +2209,38 @@ export class ImplementSessionManager {
       return report;
     }
 
+    const pythonCsvFieldMismatch = await detectPythonCsvFieldnameMismatch(executionScriptPath);
+    if (pythonCsvFieldMismatch) {
+      const report: VerifyReport = {
+        status: "fail",
+        command,
+        cwd: attempt.workingDir,
+        exit_code: 0,
+        failure_type: "implementation",
+        next_action: "retry_patch",
+        stderr_excerpt: pythonCsvFieldMismatch,
+        summary: buildVerificationFailureSummary(command, "implementation", pythonCsvFieldMismatch)
+      };
+      this.deps.eventStream.emit({
+        type: "TEST_FAILED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          command,
+          cwd: attempt.workingDir,
+          failure_type: report.failure_type,
+          stderr: report.stderr_excerpt || report.summary,
+          attempt: attemptNumber
+        }
+      });
+      onProgress?.(report.summary, {
+        verificationCommand: command,
+        verifyStatus: report.status
+      });
+      return report;
+    }
+
     if (attempt.experimentMode === "real_execution" && commandRequestsDryRun(attempt.runCommand)) {
       const dryRunSummary =
         "Real-execution handoff is blocked because the generated run_command still includes --dry-run and would never emit governed metrics.";
@@ -3330,7 +3362,7 @@ function isRecoverableBundleCommandRepairFeedback(report: RunVerifierReport | un
     return false;
   }
   const summary = `${report.summary || ""} ${report.suggested_next_action || ""}`.toLowerCase();
-  return /--metrics-path is required for a live run|repair the experiment command|required for a live run/u.test(summary);
+  return /(?:--metrics-path|metrics path) is required for a live run/u.test(summary);
 }
 
 function normalizeExperimentMode(mode: string | undefined, summary: string | undefined): string {
@@ -4959,6 +4991,99 @@ async function detectPythonJsonLiteralLeak(scriptPath?: string): Promise<string 
   }
 
   return undefined;
+}
+
+async function detectPythonCsvFieldnameMismatch(scriptPath?: string): Promise<string | undefined> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return undefined;
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  if (!/\bcsv\.DictWriter\s*\(/u.test(source) || !/writer\.writerow\s*\(/u.test(source)) {
+    return undefined;
+  }
+  if (/extrasaction\s*=\s*["']ignore["']/u.test(source)) {
+    return undefined;
+  }
+
+  const lines = source.split(/\r?\n/u);
+  const fieldnames = extractPythonStringListAssignment(lines, "fieldnames");
+  if (!fieldnames || fieldnames.length === 0) {
+    return undefined;
+  }
+
+  const fieldnameSet = new Set(fieldnames);
+  let insideReturn = false;
+  let braceDepth = 0;
+  const currentKeys = new Map<string, number>();
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+
+    if (!insideReturn) {
+      if (!/\breturn\s*\{/u.test(line)) {
+        continue;
+      }
+      insideReturn = true;
+      braceDepth = countOccurrences(line, "{") - countOccurrences(line, "}");
+      currentKeys.clear();
+    } else {
+      braceDepth += countOccurrences(line, "{") - countOccurrences(line, "}");
+    }
+
+    for (const match of line.matchAll(/["']([^"'\\]+)["']\s*:/gu)) {
+      if (!currentKeys.has(match[1])) {
+        currentKeys.set(match[1], index + 1);
+      }
+    }
+
+    if (insideReturn && braceDepth <= 0) {
+      const overlappingKeys = [...currentKeys.keys()].filter((key) => fieldnameSet.has(key));
+      const extraKeys = [...currentKeys.entries()].filter(([key]) => !fieldnameSet.has(key));
+      if (overlappingKeys.length >= 4 && extraKeys.length > 0) {
+        const renderedExtras = extraKeys.map(([key]) => key).join(", ");
+        const firstLine = extraKeys[0]?.[1] ?? 1;
+        return `Python source writes CSV row keys not present in fieldnames at ${path.basename(scriptPath)}:${firstLine} (${renderedExtras}).`;
+      }
+      insideReturn = false;
+      braceDepth = 0;
+      currentKeys.clear();
+    }
+  }
+
+  return undefined;
+}
+
+function extractPythonStringListAssignment(lines: string[], variableName: string): string[] | undefined {
+  const escapedName = escapeRegex(variableName);
+  const startPattern = new RegExp(`\\b${escapedName}\\s*=\\s*\\[`, "u");
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!startPattern.test(lines[index])) {
+      continue;
+    }
+    const collected: string[] = [];
+    let bracketDepth = 0;
+    for (let cursor = index; cursor < lines.length; cursor += 1) {
+      const line = lines[cursor];
+      collected.push(line);
+      bracketDepth += countOccurrences(line, "[") - countOccurrences(line, "]");
+      if (bracketDepth <= 0) {
+        const values = [...collected.join("\n").matchAll(/["']([^"'\\]+)["']/gu)].map((match) => match[1]);
+        return values.length > 0 ? values : undefined;
+      }
+    }
+  }
+  return undefined;
+}
+
+function countOccurrences(text: string, token: string): number {
+  return [...text].filter((char) => char === token).length;
 }
 
 function classifyVerificationFailure(

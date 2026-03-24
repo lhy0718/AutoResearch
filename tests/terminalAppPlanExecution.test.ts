@@ -844,6 +844,70 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(app.refreshRunIndex).toHaveBeenCalled();
   });
 
+  it("continues the supervised run when /agent run advances to a later pending node", async () => {
+    const app = makeApp();
+    const run = makeRun("run-design-auto-continue");
+    run.status = "paused";
+    run.currentNode = "design_experiments";
+    run.graph.currentNode = "design_experiments";
+    run.graph.nodeStates.design_experiments.status = "pending";
+
+    const advancedRun = {
+      ...run,
+      status: "running",
+      currentNode: "implement_experiments",
+      graph: {
+        ...run.graph,
+        currentNode: "implement_experiments",
+        nodeStates: {
+          ...run.graph.nodeStates,
+          design_experiments: {
+            ...run.graph.nodeStates.design_experiments,
+            status: "completed",
+            note: "design approved"
+          },
+          implement_experiments: {
+            ...run.graph.nodeStates.implement_experiments,
+            status: "pending",
+            note: "ready to run"
+          }
+        }
+      }
+    };
+
+    app.resolveTargetRun = vi.fn().mockResolvedValue(run);
+    app.setActiveRunId = vi.fn();
+    app.refreshRunIndex = vi.fn();
+    app.continueSupervisedRun = vi.fn().mockResolvedValue({
+      ...advancedRun,
+      graph: {
+        ...advancedRun.graph,
+        nodeStates: {
+          ...advancedRun.graph.nodeStates,
+          implement_experiments: {
+            ...advancedRun.graph.nodeStates.implement_experiments,
+            status: "running",
+            note: "Implementation started."
+          }
+        }
+      }
+    });
+    app.orchestrator = {
+      runAgentWithOptions: vi.fn().mockResolvedValue({
+        run: advancedRun,
+        result: {
+          status: "success",
+          summary: "Design approved."
+        }
+      })
+    };
+
+    const result = await app.handleAgent(["run", "design_experiments", run.id]);
+
+    expect(result.ok).toBe(true);
+    expect(app.continueSupervisedRun).toHaveBeenCalledWith(run.id, undefined);
+  });
+
   it("auto-continues after /agent collect recovery advances past collect_papers", async () => {
     const origCwd = process.cwd();
     const tmpDir = await mkdtemp(path.join(os.tmpdir(), "autolabos-collect-recovery-"));

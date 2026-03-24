@@ -846,4 +846,100 @@ describe("InteractionSession", () => {
       selectionMode: "top_n"
     });
   });
+
+  it("continues a manual /agent run when it advances to a later pending node", async () => {
+    const run = await runStore.createRun({
+      title: "Design continue run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.status = "paused";
+    run.currentNode = "design_experiments";
+    run.graph.currentNode = "design_experiments";
+    run.graph.nodeStates.design_experiments.status = "pending";
+    await runStore.updateRun(run);
+
+    const runAgentWithOptions = vi.fn(async (runId: string) => {
+      const stored = await runStore.getRun(runId);
+      if (!stored) {
+        throw new Error("expected stored run");
+      }
+      stored.status = "running";
+      stored.currentNode = "implement_experiments";
+      stored.graph.currentNode = "implement_experiments";
+      stored.graph.nodeStates.design_experiments = {
+        status: "completed",
+        updatedAt: new Date().toISOString(),
+        note: "design approved"
+      };
+      stored.graph.nodeStates.implement_experiments = {
+        status: "pending",
+        updatedAt: new Date().toISOString(),
+        note: "ready to run"
+      };
+      await runStore.updateRun(stored);
+      return {
+        run: stored,
+        result: { status: "success" as const, summary: "Design approved." }
+      };
+    });
+
+    const runCurrentAgentWithOptions = vi.fn(async (runId: string) => {
+      const stored = await runStore.getRun(runId);
+      if (!stored) {
+        throw new Error("expected stored run");
+      }
+      stored.graph.nodeStates.implement_experiments = {
+        status: "running",
+        updatedAt: new Date().toISOString(),
+        note: "Implementation started."
+      };
+      await runStore.updateRun(stored);
+      return {
+        run: stored,
+        result: { status: "success" as const, summary: "Implementation started." }
+      };
+    });
+
+    const session = new InteractionSession({
+      workspaceRoot: cwd,
+      config: {
+        research: {
+          defaultTopic: "topic",
+          defaultConstraints: ["recent papers"],
+          default_objective_metric: "metric"
+        },
+        providers: {
+          llm_mode: "codex_chatgpt_only",
+          codex: { model: "gpt-5.3-codex", reasoning_effort: "xhigh", fast_mode: false },
+          openai: { model: "gpt-5.4", reasoning_effort: "medium" }
+        },
+        analysis: {
+          responses_model: "gpt-5.4"
+        },
+        papers: { max_results: 100 }
+      } as any,
+      runStore,
+      titleGenerator: {} as any,
+      codex: {} as any,
+      openAiTextClient: undefined,
+      eventStream: new InMemoryEventStream(),
+      orchestrator: {
+        runAgentWithOptions,
+        runCurrentAgentWithOptions
+      } as any,
+      semanticScholarApiKeyConfigured: true
+    });
+    await session.start();
+    await session.selectRun(run.id);
+
+    const result = await session.submitInput(`/agent run design_experiments ${run.id}`);
+
+    expect(result.logs.some((line) => line.includes("design_experiments finished: Design approved."))).toBe(true);
+    expect(runCurrentAgentWithOptions).toHaveBeenCalledWith(
+      run.id,
+      expect.objectContaining({ abortSignal: expect.any(AbortSignal) })
+    );
+  });
 });

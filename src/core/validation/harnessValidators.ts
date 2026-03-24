@@ -29,6 +29,12 @@ export interface IssueLogValidationResult {
   issues: HarnessValidationIssue[];
 }
 
+interface IssueEntry {
+  title: string;
+  body: string;
+  identifier?: string;
+}
+
 const ISSUE_REQUIRED_FIELDS = [
   "Validation target",
   "Environment/session context",
@@ -240,7 +246,21 @@ export function validateLiveValidationIssueMarkdown(
     return { issueCount: 0, issues };
   }
 
+  const seenIdentifiers = new Map<string, string>();
   for (const entry of entries) {
+    if (entry.identifier) {
+      const previousTitle = seenIdentifiers.get(entry.identifier);
+      if (previousTitle) {
+        issues.push({
+          code: "issue_duplicate_identifier",
+          message: `${entry.identifier} is used by multiple issue headings, including "${previousTitle}" and "${entry.title}".`,
+          filePath
+        });
+      } else {
+        seenIdentifiers.set(entry.identifier, entry.title);
+      }
+    }
+
     for (const field of ISSUE_REQUIRED_FIELDS) {
       if (!hasField(entry.body, field)) {
         issues.push({
@@ -682,7 +702,7 @@ async function readFileIfExists(filePath: string): Promise<string | undefined> {
   }
 }
 
-function collectIssueEntries(markdown: string): Array<{ title: string; body: string }> {
+function collectIssueEntries(markdown: string): IssueEntry[] {
   // Scope to "Live validation issues" section when present, since Active/Resolved
   // sections use a compact format that predates the detailed template.
   const liveSection = markdown.match(/##\s*Live validation issues[\s\S]*$/iu)?.[0];
@@ -696,7 +716,8 @@ function collectIssueEntries(markdown: string): Array<{ title: string; body: str
     const body = scope.slice(start, end);
     return {
       title: match[1]?.trim() || `Issue ${index + 1}`,
-      body
+      body,
+      identifier: match[0]?.match(/\b(LV-\d+)\b/i)?.[1]?.toUpperCase()
     };
   });
 }

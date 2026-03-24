@@ -2470,6 +2470,98 @@ describe("ImplementSessionManager", () => {
     expect(report.summary).toContain("JSON literal false");
   });
 
+  it("fails local verification when Python CSV rows contain keys outside DictWriter fieldnames", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-csv-fieldnames-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "CSV Fieldname Leak",
+      topic: "result table validation",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const scriptPath = path.join(runDir, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import csv",
+        "",
+        "def write_csv(path, rows):",
+        "    fieldnames = [",
+        '        "policy_name",',
+        '        "examples",',
+        '        "correct",',
+        '        "exact_match_accuracy",',
+        "    ]",
+        "    with open(path, 'w', encoding='utf-8', newline='') as handle:",
+        "        writer = csv.DictWriter(handle, fieldnames=fieldnames)",
+        "        writer.writeheader()",
+        "        for row in rows:",
+        "            writer.writerow(row)",
+        "",
+        "def summarize():",
+        "    return {",
+        '        "policy_name": "baseline",',
+        '        "examples": 24,',
+        '        "correct": 10,',
+        '        "exact_match_accuracy": 0.41,',
+        '        "total_generated_tokens": 480,',
+        '        "total_latency_sec": 19.2,',
+        "    }",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexCliClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        workingDir: runDir,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    expect(report.status).toBe("fail");
+    expect(report.failure_type).toBe("implementation");
+    expect(report.summary).toContain("CSV row keys not present in fieldnames");
+    expect(report.summary).toContain("total_generated_tokens");
+    expect(report.summary).toContain("total_latency_sec");
+  });
+
   it("recovers a materialized public bundle when Codex disconnects before returning structured output", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-recover-bundle-"));
     tempDirs.push(workspace);
@@ -3085,6 +3177,126 @@ describe("ImplementSessionManager", () => {
     expect(callCount).toBe(1);
     expect(result.threadId).toBe("thread-fresh-after-runner-feedback");
     expect(result.rawResponse).toContain("Fresh repair turn after runner feedback");
+  });
+
+  it("does not reuse an existing public bundle when command-stage runner feedback contains a runtime traceback", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-command-runtime-reuse-gate-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Command Runtime Reuse Gate",
+      topic: "repair runtime failure after command handoff",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    run.graph.nodeStates.run_experiments.status = "failed";
+    mkdirSync(path.dirname(run.memoryRefs.episodePath), { recursive: true });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - repair_runtime_csv_mismatch\n", "utf8");
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const scriptPath = path.join(publicDir, "run_gsm8k_budget_reasoning.py");
+    const configPath = path.join(publicDir, "frozen_config.json");
+    const readmePath = path.join(publicDir, "README.md");
+    const metricsPath = path.join(runDir, "metrics.json");
+    const artifactPath = path.join(publicDir, "artifacts", "pilot", "metrics.public.json");
+    const baselinePath = path.join(publicDir, "baseline_summary.json");
+
+    mkdirSync(path.dirname(artifactPath), { recursive: true });
+    mkdirSync(publicDir, { recursive: true });
+    writeFileSync(scriptPath, "print('stale reused bundle')\n", "utf8");
+    writeFileSync(configPath, "{\"pilot_size\": 16}\n", "utf8");
+    writeFileSync(baselinePath, "{\"baseline\":\"greedy\"}\n", "utf8");
+    writeFileSync(metricsPath, "{\"status\":\"ok\"}\n", "utf8");
+    writeFileSync(artifactPath, "{\"accuracy\":0.5}\n", "utf8");
+    writeFileSync(
+      readmePath,
+      [
+        "# Existing Bundle",
+        "",
+        "```bash",
+        `python outputs/experiment/${path.basename(scriptPath)} \\`,
+        `  --config outputs/experiment/${path.basename(configPath)} \\`,
+        `  --public-dir outputs/experiment \\`,
+        `  --run-dir .autolabos/runs/${run.id} \\`,
+        `  --metrics-path .autolabos/runs/${run.id}/metrics.json`,
+        "```"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put("implement_experiments.thread_id", "thread-stale-command-runtime");
+    run.nodeThreads.implement_experiments = "thread-stale-command-runtime";
+    await runStore.updateRun(run);
+    await memory.put("implement_experiments.runner_feedback", {
+      source: "run_experiments",
+      status: "fail",
+      trigger: "auto_handoff",
+      stage: "command",
+      summary:
+        "Traceback (most recent call last): File \"experiment.py\", line 107, in write_csv ValueError: dict contains fields not in fieldnames: 'total_generated_tokens', 'total_latency_sec'",
+      command: `python ${JSON.stringify(scriptPath)} --config ${JSON.stringify(configPath)} --public-dir ${JSON.stringify(publicDir)} --run-dir ${JSON.stringify(runDir)} --metrics-path ${JSON.stringify(metricsPath)}`,
+      cwd: publicDir,
+      metrics_path: metricsPath,
+      exit_code: 1,
+      suggested_next_action: "Repair the experiment command or runtime dependencies before handing back to the runner.",
+      recorded_at: "2026-03-24T06:15:37.537Z"
+    });
+
+    let seenThreadId: string | undefined = "uninitialized";
+    let callCount = 0;
+    const codex = {
+      runTurnStream: async ({ threadId }: { threadId?: string }) => {
+        callCount += 1;
+        seenThreadId = threadId;
+        writeFileSync(scriptPath, "print(False)\n", "utf8");
+        return {
+          threadId: "thread-fresh-after-command-runtime",
+          finalText: JSON.stringify({
+            summary: "Fresh repair turn after command-stage runtime failure.",
+            run_command: `python3 ${JSON.stringify(scriptPath)}`,
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            experiment_mode: "real_execution"
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexCliClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const progressText = readFileSync(path.join(runDir, "implement_experiments", "progress.jsonl"), "utf8");
+    const updatedRun = await runStore.getRun(run.id);
+
+    expect(callCount).toBe(1);
+    expect(seenThreadId).toBeUndefined();
+    expect(result.threadId).toBe("thread-fresh-after-command-runtime");
+    expect(result.rawResponse).toContain("Fresh repair turn after command-stage runtime failure.");
+    expect(updatedRun?.nodeThreads.implement_experiments).toBe("thread-fresh-after-command-runtime");
+    expect(await memory.get("implement_experiments.thread_id")).toBe("thread-fresh-after-command-runtime");
+    expect(progressText).toContain("Runner feedback changed the repair target");
+    expect(progressText).not.toContain(
+      "Reused the existing governed experiment bundle and execution evidence instead of re-entering Codex."
+    );
   });
 
   it("does not reuse an existing public bundle before Codex when write_paper critique requires additional experiments", async () => {

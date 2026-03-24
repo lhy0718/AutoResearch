@@ -133,9 +133,9 @@ This file was compacted on 2026-03-22 to remove duplicated template fragments, m
 - Remaining risks: keep the build/smoke gate in routine validation because this issue is guarded primarily by compile coverage rather than a focused unit test.
 
 ### LV-056 — Supervisor stops after auto-approved design instead of executing the new pending node
-- Status: FIX IMPLEMENTED, LIVE REVALIDATION PENDING
-- Validation target: `test/` live TUI continuation after `design_experiments` auto-approves into `implement_experiments`
-- Environment/session context: `test/` workspace, resumed governed run `81820c46-d1b6-4080-8575-a35c60583480`, cycle 10, minimal approval mode.
+- Status: FIXED
+- Validation target: `test/` live TUI `/agent run design_experiments` continuation after `design_experiments` auto-approves into `implement_experiments`, recreated on substitute run `411d5215-b03a-46e4-bf89-ea5a42513288`
+- Environment/session context: original reproduced run `81820c46-d1b6-4080-8575-a35c60583480` is no longer present in `test/.autolabos/runs`; the live revalidation used surviving substitute run `411d5215-b03a-46e4-bf89-ea5a42513288` after forcing a backward jump to `design_experiments` in cycle 5 and rerunning from a fresh build.
 - Reproduction steps:
   1. Resume the governed run in `test/` near the `design_experiments` completion boundary.
   2. Let `design_experiments` finish and auto-approve into `implement_experiments`.
@@ -144,22 +144,24 @@ This file was compacted on 2026-03-22 to remove duplicated template fragments, m
 - Actual behavior: the run advances to `implement_experiments`, then the supervisor returns early and leaves the node idle.
 - Fresh vs existing session comparison:
   - Fresh session: not yet reproduced from a fresh run because the boundary depends on an existing cycle-10 design completion.
-  - Existing session: reproduced on the resumed governed run listed above.
+  - Existing session: reproduced on the original resumed governed run before it disappeared from the workspace; the same class of boundary was then recreated and revalidated on substitute run `411d5215-b03a-46e4-bf89-ea5a42513288`.
 - Root cause hypothesis:
   - Type: `persisted_state_bug`
-  - Hypothesis: `InteractiveRunSupervisor.runUntilStop()` treats the first continuation result as terminal even when the workflow has advanced to a fresh pending node that should execute immediately.
+  - Hypothesis: the manual `/agent run <node>` path stops after `AgentOrchestrator.runAgentWithOptions()` auto-approves the requested node, but it did not resume supervised execution when that approval advanced the workflow to a later pending node such as `implement_experiments`.
 - Code/test changes:
-  - `src/core/runs/interactiveRunSupervisor.ts`
-  - `tests/interactiveRunSupervisor.test.ts`
+  - `src/tui/TerminalApp.ts`
+  - `src/interaction/InteractionSession.ts`
+  - `tests/terminalAppPlanExecution.test.ts`
+  - `tests/interactionSession.test.ts`
 - Regression status:
-  - Automated regression test linked: yes, `tests/interactiveRunSupervisor.test.ts`.
-  - Re-validation result: focused regression passes locally; same-flow live revalidation on the cycle-10 boundary is still pending.
-- Remaining risks: confirm the loop continues exactly once into the new pending node without creating a self-loop when no progress occurs.
+  - Automated regression test linked: yes — `tests/terminalAppPlanExecution.test.ts` and `tests/interactionSession.test.ts`.
+  - Re-validation result: targeted regressions, full `npm test`, and `npm run build` now pass. In same-flow live revalidation on substitute run `411d5215-b03a-46e4-bf89-ea5a42513288`, `/agent jump design_experiments ... --force` recreated the boundary and `/agent run design_experiments ...` advanced `design_experiments` to `completed` at `2026-03-24T07:49:27.595Z`; `runs.json` then immediately moved `implement_experiments` from `pending` to `running` at `2026-03-24T07:49:27.680Z` instead of stalling. The TUI was stopped after that handoff to avoid leaving the provider turn running, but the original stop-at-pending symptom no longer reproduced.
+- Remaining risks: the supervisor handoff boundary is closed, but downstream `implement_experiments` quality and later runtime validation issues still depend on the generated artifact and are tracked separately under other LV entries.
 
 ### LV-057 — `implement_experiments` reuses a stale Codex thread after run feedback changes the repair target
-- Status: FIX IMPLEMENTED, LIVE REVALIDATION PENDING
-- Validation target: `test/` live repair cycle after `run_experiments` fails with new runner feedback
-- Environment/session context: `test/` workspace, resumed governed run `81820c46-d1b6-4080-8575-a35c60583480`, repair cycle after a new `run_experiments` failure.
+- Status: FIXED
+- Validation target: `test/` live repair cycle after `run_experiments` fails with new runner feedback, using substitute run `411d5215-b03a-46e4-bf89-ea5a42513288` because the original target run `81820c46-d1b6-4080-8575-a35c60583480` was no longer present in the workspace
+- Environment/session context: `test/` workspace, substitute governed run `411d5215-b03a-46e4-bf89-ea5a42513288`, repair cycle after repeated `run_experiments` failures with fresh runner feedback.
 - Reproduction steps:
   1. Resume the failed governed run after `run_experiments` reports new runner feedback.
   2. Allow the workflow to re-enter `implement_experiments`.
@@ -168,7 +170,7 @@ This file was compacted on 2026-03-22 to remove duplicated template fragments, m
 - Actual behavior: the old thread is reused and progress stalls while the previous context is replayed.
 - Fresh vs existing session comparison:
   - Fresh session: not yet reproduced from a fresh run because the stale-thread boundary depends on prior repair history.
-  - Existing session: reproduced on the resumed repair cycle listed above.
+  - Existing session: reproduced on the resumed repair cycle class; live revalidation on substitute run `411d5215-b03a-46e4-bf89-ea5a42513288` first narrowed the bug, then passed after the bundle-reuse gate fix.
 - Root cause hypothesis:
   - Type: `persisted_state_bug`
   - Hypothesis: thread reset depends on plan-hash changes only; fresh runner feedback does not clear the stale thread.
@@ -177,13 +179,13 @@ This file was compacted on 2026-03-22 to remove duplicated template fragments, m
   - `tests/implementSessionManager.test.ts`
 - Regression status:
   - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`.
-  - Re-validation result: focused regressions pass locally, including the fresh-thread runner-feedback case; same-flow live revalidation on the resumed repair cycle is still pending.
-- Remaining risks: verify the same run now starts with no carried-over thread and progresses into a fresh repair attempt.
+  - Re-validation result: focused regressions, full `npm test`, and `npm run build` now pass, including the fresh-thread runner-feedback case and a new regression that blocks bundle reuse for command-stage Traceback failures. In live validation on substitute run `411d5215-b03a-46e4-bf89-ea5a42513288`, the first rerun at `2026-03-24T06:15:37Z` proved that runner feedback was loaded and the stale thread was cleared, but it also exposed a coupled bug: the repair path still reused the existing governed bundle because generic command-stage feedback incorrectly passed the recovery gate. After tightening that gate, the same failure state was re-run at `2026-03-24T06:20:45Z`; `implement_experiments/progress.jsonl` showed `Loaded runner feedback from run_experiments`, then `Submitting request to OpenAI Responses API.` and `OpenAI accepted background response resp_08fc551578eefe260069c22d3d8de481a19714de748dd73cfa; polling for completion.` with no intervening bundle-reuse message. The TUI was intentionally stopped after the fresh repair turn was already in staged OpenAI polling, which aborted the provider request but did not reproduce the original stale-thread or bundle-reuse symptom.
+- Remaining risks: the stale-thread / stale-bundle symptom is closed, but successful repair completion still depends on the model producing a corrected runner; the currently failing CSV result-table schema is tracked separately below.
 
 ### LV-055 — `implement_experiments` local verification can miss Python-invalid JSON booleans, letting a broken runner reach `run_experiments`
-- Status: FIX IMPLEMENTED, LIVE REVALIDATION PENDING
-- Validation target: `test/` revived `design_experiments -> implement_experiments -> run_experiments` cycle
-- Environment/session context: `test/` workspace, resumed governed run on a revived `design_experiments -> implement_experiments -> run_experiments` cycle.
+- Status: FIXED
+- Validation target: `test/` revived `design_experiments -> implement_experiments -> run_experiments` cycle that produces a fresh Python artifact containing JSON literals such as `false` or `null`.
+- Environment/session context: `test/` workspace; the currently available substitute run `411d5215-b03a-46e4-bf89-ea5a42513288` is presently stuck at an aborted `implement_experiments` turn, so there is no fresh post-fix runnable artifact yet.
 - Reproduction steps:
   1. Resume the governed run at the implementation boundary.
   2. Let `implement_experiments` produce Python source that still contains JSON literals such as `false` or `null`.
@@ -192,7 +194,7 @@ This file was compacted on 2026-03-22 to remove duplicated template fragments, m
 - Actual behavior: the broken runner passes compile-time verification and only fails after `run_experiments` launches it.
 - Fresh vs existing session comparison:
   - Fresh session: not yet revalidated from a fresh end-to-end run.
-  - Existing session: reproduced on the resumed governed run before the deterministic fix was added.
+  - Existing session: reproduced on the resumed governed run before the deterministic fix was added; the current workspace does not yet contain a fresh implementation artifact that exercises the repaired verification path.
 - Root cause hypothesis:
   - Type: `persisted_state_bug`
   - Hypothesis: `py_compile` catches syntax errors but not runtime-invalid JSON literals embedded in otherwise valid Python code.
@@ -201,13 +203,13 @@ This file was compacted on 2026-03-22 to remove duplicated template fragments, m
   - `tests/implementSessionManager.test.ts`
 - Regression status:
   - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`.
-  - Re-validation result: deterministic regression added; same-flow live revalidation still pending.
-- Remaining risks: the next live blocker may move back to the implementation turn once this runtime-literal guard is exercised on the real run.
+  - Re-validation result: deterministic regression added, and a same-run substitute live replay now confirms the verifier boundary. After LV-071 closed, the surviving substitute run `411d5215-b03a-46e4-bf89-ea5a42513288` began attempt 1 by immediately reusing the existing governed experiment bundle instead of re-entering Codex. Because no organically generated JSON-literal artifact survived in the public bundle, a one-line probe (`'json_literal_probe': false`) was injected into `test/outputs/experiment/experiment.py` to recreate the prior runtime-invalid shape on the real bundle-reuse path. Re-running `implement_experiments` then failed local verification on all three attempts with `Python source contains JSON literal false at experiment.py:374; use Python False instead.`, while persisted run state remained at `currentNode=implement_experiments` and `run_experiments.status=pending`, so the bad Python literal was rejected before handoff.
+- Remaining risks: the live replay used a substitute injected bundle because no fresh organically generated JSON-literal artifact remained in the surviving workspace. That confirms the repaired verifier boundary on the real run path, but a future provider regression that emits a different literal-leak shape should still be checked on first sight.
 
 ### LV-066 — staged `implement_experiments` provider calls can hang indefinitely in `staged_llm` mode
-- Status: FIX IMPLEMENTED, LIVE REVALIDATION PENDING
-- Validation target: `test/` live rerun of `98987fc4-6ce2-4d39-8623-6dacbcb1508d` after forcing `implement_experiments` from the failed `run_experiments` boundary
-- Environment/session context: repo head on 2026-03-20, `test/` workspace, run `98987fc4-6ce2-4d39-8623-6dacbcb1508d`, `providers.llm_mode: openai_api`.
+- Status: FIXED
+- Validation target: `test/` same-flow substitute rerun on `411d5215-b03a-46e4-bf89-ea5a42513288` after the original target run `98987fc4-6ce2-4d39-8623-6dacbcb1508d` was no longer present in the workspace
+- Environment/session context: repo head on 2026-03-24, `test/` workspace, substitute run `411d5215-b03a-46e4-bf89-ea5a42513288`, `providers.llm_mode: openai_api`.
 - Reproduction steps:
   1. Resume the failed run and force it back into `implement_experiments`.
   2. Observe the staged LLM path persist `Submitting request to OpenAI Responses API.`.
@@ -216,7 +218,7 @@ This file was compacted on 2026-03-22 to remove duplicated template fragments, m
 - Actual behavior: the node can remain in `running` while waiting on a provider call with no node-local timeout or fallback boundary.
 - Fresh vs existing session comparison:
   - Fresh session: not yet reproduced from a fresh run because the boundary depends on a failed implementation retry path.
-  - Existing session: reproduced on the resumed failed run listed above.
+  - Existing session: originally reproduced on the resumed failed run class; live revalidation now passes on substitute run `411d5215-b03a-46e4-bf89-ea5a42513288` after forcing `analyze_results -> design_experiments -> implement_experiments` to invalidate bundle reuse and re-enter the staged OpenAI path.
 - Root cause hypothesis:
   - Type: `race_timing_bug`
   - Hypothesis: the staged LLM implementation path forwards the run abort signal but relies only on the long client safety timeout, so the node-owned execution has no practical bounded recovery path.
@@ -225,8 +227,33 @@ This file was compacted on 2026-03-22 to remove duplicated template fragments, m
   - `tests/implementSessionManager.test.ts`
 - Regression status:
   - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`.
-  - Re-validation result: pass for deterministic coverage — focused `tests/implementSessionManager.test.ts`, full `npm test`, and `npm run build` all pass after adding a 600000ms default staged-LLM node timeout with env override support (including explicit `AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS=0` to disable it). Same-flow live re-validation is still pending.
-- Remaining risks: the hang boundary is now bounded in code, but the next live blocker may surface as an underlying provider error or a deliberately disabled timeout override rather than an indefinite wait.
+  - Re-validation result: pass for deterministic coverage and same-flow live validation. Focused `tests/implementSessionManager.test.ts`, full `npm test`, and `npm run build` all passed after adding a 600000ms default staged-LLM node timeout with env override support (including explicit `AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS=0` to disable it). In live validation, the first substitute `implement_experiments` attempt reused an existing governed bundle and was rejected as insufficient evidence; after forcing a new design cycle, the rerun entered real staged OpenAI polling, stayed active past the old ~300s failure boundary, retried once after verification feedback, and then completed at `2026-03-24T05:58:03Z` with `implement_experiments/status.json.status=completed` and the run advanced to `run_experiments`.
+- Remaining risks: the indefinite hang boundary is now closed for the default configuration, but operators can still deliberately remove the node-owned timeout with `AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS=0`, and future live failures may still surface as provider/network errors rather than silent hangs.
+
+### LV-071 — local `implement_experiments` verification can pass runners that crash late when writing result tables
+- Status: FIXED
+- Validation target: `test/` same-flow substitute repair cycle on `411d5215-b03a-46e4-bf89-ea5a42513288` after `implement_experiments` hands a governed experiment bundle to `run_experiments`
+- Environment/session context: repo head on 2026-03-24, `test/` workspace, substitute run `411d5215-b03a-46e4-bf89-ea5a42513288`, real execution bundle in `test/outputs/experiment`, `providers.llm_mode: openai_api`.
+- Reproduction steps:
+  1. Resume the substitute run after `implement_experiments` produces or recovers the governed experiment bundle.
+  2. Let `run_experiments` execute the generated runner through most of the evaluation loop.
+  3. Observe whether the runner reaches result-table emission after local verification had already passed.
+- Expected behavior: implementation verification or handoff validation should catch result-table schema mismatches before `run_experiments` spends real execution time on a runner that will crash at publish time.
+- Actual behavior: `implement_experiments` passed local verification via `python3 -m py_compile`, but `run_experiments` later failed after real execution with `ValueError: dict contains fields not in fieldnames: 'total_latency_sec', 'total_generated_tokens'`.
+- Fresh vs existing session comparison:
+  - Fresh session: not yet reproduced from a fresh run.
+  - Existing session: reproduced on substitute run `411d5215-b03a-46e4-bf89-ea5a42513288`; `run_experiments` exhausted 3/3 attempts and failed at `2026-03-24T06:17:21Z`.
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: current local verification is strong enough to catch syntax and some static handoff errors, but not semantic result-table schema mismatches inside generated Python, so an internally inconsistent governed bundle can survive `implement_experiments` and only fail near the end of `run_experiments`.
+- Code/test changes:
+  - Added a Python-side local verification guard in `src/core/agents/implementSessionManager.ts` that rejects governed bundles when `csv.DictWriter(...)` fieldnames do not cover keys returned from row dict literals, unless the script explicitly opts into `extrasaction='ignore'`.
+  - Added `fails local verification when Python CSV rows contain keys outside DictWriter fieldnames` in `tests/implementSessionManager.test.ts`.
+  - Re-ran `npx vitest run tests/implementSessionManager.test.ts`, `npm test`, and `npm run build` after the change; all passed.
+- Regression status:
+  - Automated regression test linked: yes — `tests/implementSessionManager.test.ts`
+  - Re-validation result: pre-fix live failure reproduced on substitute run `411d5215-b03a-46e4-bf89-ea5a42513288`; `run_experiments` failed with a CSV writer schema mismatch after real execution, and the failure then fed back into `implement_experiments`. Two earlier bounded post-fix reruns were inconclusive because fresh staged OpenAI repair turns did not settle before the monitoring cutoff. A later extended same-flow replay from the cycle-5 failed `implement_experiments` state at `2026-03-24T08:29:55Z` did settle: attempt 1 completed the OpenAI turn but failed verification because referenced artifacts were not materialized, then attempts 2/3 reused the governed experiment bundle and failed local verification before any handoff with `Python source writes CSV row keys not present in fieldnames at experiment.py:372 (total_generated_tokens, total_latency_sec).` Persisted run state now shows `implement_experiments.status=failed`, `run_experiments.status=pending`, and `currentNode=implement_experiments`, so the bad CSV bundle is rejected inside `implement_experiments` instead of consuming real `run_experiments` execution time.
+- Remaining risks: the new guard is a targeted static heuristic for the reproduced `csv.DictWriter(...)` mismatch shape, so other late Python/runtime consistency failures may still require separate verification improvements.
 
 ---
 

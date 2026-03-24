@@ -269,6 +269,45 @@ describe("harness validators", () => {
     expect(result.issueCount).toBe(1);
     expect(result.issues).toEqual([]);
   });
+
+  it("reports duplicate LV identifiers", () => {
+    const duplicateMarkdown = `
+### LV-068 — First issue
+- Status: FIXED
+- Validation target: target one
+- Environment/session context: test workspace
+- Reproduction steps:
+  1. do thing one
+- Expected behavior: it works
+- Actual behavior: it fails
+- Fresh vs existing session comparison:
+  - Fresh session: pass
+  - Existing session: fail
+- Root cause hypothesis: hypothesis one
+- Code/test changes: change one
+- Regression status: pass
+
+### LV-068 — Second issue
+- Status: FIX IMPLEMENTED, LIVE REVALIDATION PENDING
+- Validation target: target two
+- Environment/session context: test workspace
+- Reproduction steps:
+  1. do thing two
+- Expected behavior: it works
+- Actual behavior: it fails differently
+- Fresh vs existing session comparison:
+  - Fresh session: pass
+  - Existing session: fail
+- Root cause hypothesis: hypothesis two
+- Code/test changes: change two
+- Regression status: pending
+`.trim();
+
+    const result = validateLiveValidationIssueMarkdown(duplicateMarkdown, "ISSUES.md");
+
+    expect(result.issueCount).toBe(2);
+    expect(result.issues.some((item) => item.code === "issue_duplicate_identifier")).toBe(true);
+  });
 });
 
 function createTempRunDir(prefix: string): string {
