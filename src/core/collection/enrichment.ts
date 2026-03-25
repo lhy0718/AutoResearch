@@ -5,7 +5,7 @@ import { buildGeneratedBibtexEntry, BibtexCandidate, BibtexMode, scoreBibtexRich
 import { CollectEnrichmentAttempt, CollectEnrichmentLogEntry, StoredBibtexSource, StoredCorpusRow } from "./types.js";
 
 const REQUEST_HEADERS = {
-  Accept: "text/html,application/pdf,application/x-bibtex,application/json;q=0.9,*/*;q=0.8",
+  Accept: "text/html,application/pdf,application/json;q=0.9,*/*;q=0.8",
   "User-Agent": "AutoLabOS/1.0.0"
 };
 
@@ -63,6 +63,16 @@ interface CandidatePdf {
   url: string;
 }
 
+interface ResolvedMetadata {
+  title?: string;
+  authors?: string[];
+  year?: number;
+  venue?: string;
+  doi?: string;
+  landingUrl?: string;
+  url?: string;
+}
+
 export interface EnrichCollectedPaperArgs {
   paper: SemanticScholarPaper;
   row: StoredCorpusRow;
@@ -97,10 +107,13 @@ export async function enrichCollectedPaper(args: EnrichCollectedPaperArgs): Prom
   if (row.arxiv_id) {
     const arxiv = await resolveArxiv(args, row.arxiv_id, attempts, errors);
     fallbackSources.add("arxiv");
+    applyResolvedMetadata(row, {
+      landingUrl: arxiv.landingUrl,
+      url: arxiv.landingUrl
+    });
     if (!row.pdf_url && arxiv.pdfUrl) {
       row.pdf_url = arxiv.pdfUrl;
       row.pdf_url_source = "arxiv";
-      row.landing_url ||= arxiv.landingUrl;
       pdfRecovered = true;
     }
     if (arxiv.bibtex && args.bibtexMode === "hybrid") {
@@ -126,11 +139,9 @@ export async function enrichCollectedPaper(args: EnrichCollectedPaperArgs): Prom
     }
   }
 
-  if (!row.pdf_url && shouldTryVenueTitleDiscovery(row)) {
+  if (shouldTryVenueTitleDiscovery(row)) {
     const discovery = await collectVenueTitleCandidates(args, row, attempts, errors);
-    if (discovery.doi && !row.doi) {
-      row.doi = discovery.doi;
-    }
+    applyResolvedMetadata(row, discovery.metadata);
     for (const landing of discovery.urls) {
       const processed = await processLandingCandidate(args, row, landing, attempts, errors, bibtexCandidates);
       fallbackSources.add("title_discovery");
@@ -152,32 +163,29 @@ export async function enrichCollectedPaper(args: EnrichCollectedPaperArgs): Prom
   if (row.doi) {
     const crossref = await resolveCrossref(args, row, attempts, errors);
     fallbackSources.add("crossref");
+    applyResolvedMetadata(row, crossref.metadata);
     if (!row.pdf_url && crossref.pdfUrl) {
       row.pdf_url = crossref.pdfUrl;
       row.pdf_url_source = "crossref";
-      row.landing_url ||= crossref.landingUrl;
       pdfRecovered = true;
     }
     if (crossref.bibtex && args.bibtexMode === "hybrid") {
       bibtexCandidates.push(crossref.bibtex);
       bibtexEnriched = true;
     }
-    if (crossref.landingUrl) {
-      row.landing_url ||= crossref.landingUrl;
-    }
   }
 
   if (row.doi && !row.pdf_url) {
     const openAlex = await resolveOpenAlex(args, row, attempts, errors);
     fallbackSources.add("openalex");
+    applyResolvedMetadata(row, {
+      landingUrl: openAlex.landingUrl,
+      url: openAlex.landingUrl
+    });
     if (!row.pdf_url && openAlex.pdfUrl) {
       row.pdf_url = openAlex.pdfUrl;
       row.pdf_url_source = "openalex";
-      row.landing_url ||= openAlex.landingUrl;
       pdfRecovered = true;
-    }
-    if (openAlex.landingUrl) {
-      row.landing_url ||= openAlex.landingUrl;
     }
   }
 
@@ -186,10 +194,10 @@ export async function enrichCollectedPaper(args: EnrichCollectedPaperArgs): Prom
     if (landing) {
       const generic = await resolveGenericLanding(args, row, landing, attempts, errors);
       fallbackSources.add("landing_page");
+      applyResolvedMetadata(row, generic.metadata);
       if (!row.pdf_url && generic.pdfUrl) {
         row.pdf_url = generic.pdfUrl;
         row.pdf_url_source = generic.pdfSource;
-        row.landing_url ||= landing;
         pdfRecovered = true;
       }
       if (generic.bibtex && args.bibtexMode === "hybrid") {
@@ -198,6 +206,8 @@ export async function enrichCollectedPaper(args: EnrichCollectedPaperArgs): Prom
       }
     }
   }
+
+  row.url = mergePreferredSourceUrl(row.url, row.landing_url);
 
   if (args.bibtexMode === "hybrid") {
     const selected = selectPreferredBibtex(args.bibtexMode, bibtexCandidates, row.semantic_scholar_bibtex);
@@ -259,7 +269,6 @@ async function processLandingCandidate(
     if (!row.pdf_url && verified) {
       row.pdf_url = verified;
       row.pdf_url_source = isIfaamas ? "ifaamas" : "landing_page";
-      row.landing_url ||= landingUrl;
       pdfRecovered = true;
       if (isIfaamas) {
         fallbackSources.add("ifaamas");
@@ -270,10 +279,13 @@ async function processLandingCandidate(
   if (host === "aclanthology.org") {
     const acl = await resolveAclAnthology(args, landingUrl, attempts, errors);
     fallbackSources.add("acl_anthology");
+    applyResolvedMetadata(row, {
+      landingUrl: acl.landingUrl,
+      url: acl.landingUrl
+    });
     if (!row.pdf_url && acl.pdfUrl) {
       row.pdf_url = acl.pdfUrl;
       row.pdf_url_source = "acl_anthology";
-      row.landing_url = acl.landingUrl;
       pdfRecovered = true;
     }
     if (acl.bibtex && args.bibtexMode === "hybrid") {
@@ -285,10 +297,13 @@ async function processLandingCandidate(
   if (host === "openreview.net") {
     const openReview = await resolveOpenReview(args, landingUrl, attempts, errors);
     fallbackSources.add("openreview");
+    applyResolvedMetadata(row, {
+      landingUrl: openReview.landingUrl,
+      url: openReview.landingUrl
+    });
     if (!row.pdf_url && openReview.pdfUrl) {
       row.pdf_url = openReview.pdfUrl;
       row.pdf_url_source = "openreview";
-      row.landing_url = openReview.landingUrl;
       pdfRecovered = true;
     }
     if (openReview.bibtex && args.bibtexMode === "hybrid") {
@@ -300,10 +315,13 @@ async function processLandingCandidate(
   if (host === "proceedings.mlr.press") {
     const pmlr = await resolvePmlr(args, landingUrl, attempts, errors);
     fallbackSources.add("pmlr");
+    applyResolvedMetadata(row, {
+      landingUrl: pmlr.landingUrl,
+      url: pmlr.landingUrl
+    });
     if (!row.pdf_url && pmlr.pdfUrl) {
       row.pdf_url = pmlr.pdfUrl;
       row.pdf_url_source = "pmlr";
-      row.landing_url = pmlr.landingUrl;
       pdfRecovered = true;
     }
     if (pmlr.bibtex && args.bibtexMode === "hybrid") {
@@ -328,23 +346,35 @@ export function mergeStoredCorpusRows(existing: StoredCorpusRow | undefined, inc
     return incoming;
   }
 
+  const preserveExistingMetadata = hasPreferredPublicationSignal(existing) && isArxivOnlyRecord(incoming);
+  const preferIncomingMetadata = hasPreferredPublicationSignal(incoming) && isArxivOnlyRecord(existing);
+
   const merged: StoredCorpusRow = {
     ...existing,
-    title: preferNonEmptyString(existing.title, incoming.title) ?? existing.title,
-    abstract: preferNonEmptyString(existing.abstract, incoming.abstract) ?? existing.abstract,
-    year: incoming.year ?? existing.year,
-    venue: preferNonEmptyString(existing.venue, incoming.venue),
+    title: mergePreferredMetadataString(existing.title, incoming.title, preserveExistingMetadata, preferIncomingMetadata) ?? existing.title,
+    abstract:
+      mergePreferredMetadataString(existing.abstract, incoming.abstract, preserveExistingMetadata, preferIncomingMetadata)
+      ?? existing.abstract,
+    year: mergePreferredMetadataNumber(existing.year, incoming.year, preserveExistingMetadata, preferIncomingMetadata),
+    venue: mergePreferredMetadataString(existing.venue, incoming.venue, preserveExistingMetadata, preferIncomingMetadata),
     url: mergePreferredSourceUrl(existing.url, incoming.url),
-    landing_url: preferNonEmptyString(existing.landing_url, incoming.landing_url),
-    authors: incoming.authors.length > 0 ? incoming.authors : existing.authors
+    landing_url: mergePreferredSourceUrl(existing.landing_url, incoming.landing_url),
+    authors: mergePreferredAuthors(existing.authors, incoming.authors, preserveExistingMetadata, preferIncomingMetadata)
   };
   merged.citation_count = incoming.citation_count ?? existing.citation_count;
   merged.influential_citation_count =
     incoming.influential_citation_count ?? existing.influential_citation_count;
-  merged.publication_date = preferNonEmptyString(existing.publication_date, incoming.publication_date);
+  merged.publication_date = mergePreferredMetadataString(
+    existing.publication_date,
+    incoming.publication_date,
+    preserveExistingMetadata,
+    preferIncomingMetadata
+  );
   merged.publication_types =
     incoming.publication_types && incoming.publication_types.length > 0
-      ? incoming.publication_types
+      ? preserveExistingMetadata
+        ? existing.publication_types
+        : incoming.publication_types
       : existing.publication_types;
   merged.fields_of_study =
     incoming.fields_of_study && incoming.fields_of_study.length > 0
@@ -360,10 +390,31 @@ export function mergeStoredCorpusRows(existing: StoredCorpusRow | undefined, inc
 
   const existingBibtexRichness = existing.bibtex_richness ?? scoreBibtexRichness(existing.bibtex ?? "");
   const incomingBibtexRichness = incoming.bibtex_richness ?? scoreBibtexRichness(incoming.bibtex ?? "");
-  if (incomingBibtexRichness > existingBibtexRichness) {
-    merged.bibtex = incoming.bibtex;
-    merged.bibtex_source = incoming.bibtex_source;
-    merged.bibtex_richness = incomingBibtexRichness || undefined;
+  const existingBibtexCandidate =
+    existing.bibtex && existing.bibtex.trim()
+      ? {
+          source: existing.bibtex_source ?? "local_generated",
+          entry: existing.bibtex,
+          richness: existingBibtexRichness
+        }
+      : undefined;
+  const incomingBibtexCandidate =
+    incoming.bibtex && incoming.bibtex.trim()
+      ? {
+          source: incoming.bibtex_source ?? "local_generated",
+          entry: incoming.bibtex,
+          richness: incomingBibtexRichness
+        }
+      : undefined;
+  const preferredBibtex = selectPreferredBibtex(
+    "hybrid",
+    [existingBibtexCandidate, incomingBibtexCandidate].filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate)),
+    undefined
+  );
+  if (preferredBibtex) {
+    merged.bibtex = preferredBibtex.entry;
+    merged.bibtex_source = preferredBibtex.source;
+    merged.bibtex_richness = preferredBibtex.richness || undefined;
   }
 
   if (!existing.semantic_scholar_bibtex && incoming.semantic_scholar_bibtex) {
@@ -378,6 +429,7 @@ export function mergeStoredCorpusRows(existing: StoredCorpusRow | undefined, inc
   if (!existing.landing_url && incoming.landing_url) {
     merged.landing_url = incoming.landing_url;
   }
+  merged.url = mergePreferredSourceUrl(merged.url, merged.landing_url);
 
   return merged;
 }
@@ -396,15 +448,213 @@ function mergePreferredSourceUrl(existing: string | undefined, incoming: string 
   if (!existing) {
     return incoming;
   }
-  const existingIsSemanticScholar = isSemanticScholarHost(existing);
-  const incomingIsSemanticScholar = isSemanticScholarHost(incoming);
-  if (existingIsSemanticScholar && !incomingIsSemanticScholar) {
+  const existingPriority = sourceUrlPriority(existing);
+  const incomingPriority = sourceUrlPriority(incoming);
+  if (incomingPriority > existingPriority) {
     return incoming;
   }
-  if (!existingIsSemanticScholar && incomingIsSemanticScholar) {
+  if (incomingPriority < existingPriority) {
     return existing;
   }
+  const existingIsPdf = /\.pdf($|[?#])/i.test(existing);
+  const incomingIsPdf = /\.pdf($|[?#])/i.test(incoming);
+  if (!existingIsPdf && incomingIsPdf) {
+    return existing;
+  }
+  if (existingIsPdf && !incomingIsPdf) {
+    return incoming;
+  }
   return incoming;
+}
+
+function mergePreferredMetadataString(
+  existing: string | undefined,
+  incoming: string | undefined,
+  preserveExisting: boolean,
+  preferIncoming: boolean
+): string | undefined {
+  const normalizedIncoming = typeof incoming === "string" && incoming.trim() ? incoming.trim() : undefined;
+  if (!normalizedIncoming) {
+    return existing;
+  }
+  if (!existing || !existing.trim()) {
+    return normalizedIncoming;
+  }
+  if (preserveExisting) {
+    return existing;
+  }
+  if (preferIncoming) {
+    return normalizedIncoming;
+  }
+  return normalizedIncoming;
+}
+
+function mergePreferredMetadataNumber(
+  existing: number | undefined,
+  incoming: number | undefined,
+  preserveExisting: boolean,
+  preferIncoming: boolean
+): number | undefined {
+  if (typeof incoming !== "number" || !Number.isFinite(incoming)) {
+    return existing;
+  }
+  if (existing === undefined) {
+    return incoming;
+  }
+  if (preserveExisting) {
+    return existing;
+  }
+  if (preferIncoming) {
+    return incoming;
+  }
+  return incoming;
+}
+
+function mergePreferredAuthors(
+  existing: string[],
+  incoming: string[],
+  preserveExisting: boolean,
+  preferIncoming: boolean
+): string[] {
+  if (!incoming.length) {
+    return existing;
+  }
+  if (!existing.length) {
+    return incoming;
+  }
+  if (preserveExisting) {
+    return existing;
+  }
+  if (preferIncoming) {
+    return incoming;
+  }
+  return incoming;
+}
+
+function applyResolvedMetadata(row: StoredCorpusRow, metadata: ResolvedMetadata | undefined): void {
+  if (!metadata) {
+    return;
+  }
+
+  const rowWasArxivOnly = isArxivOnlyRecord(row);
+  const incomingPreferred = hasPreferredMetadataSignal(metadata);
+
+  if (metadata.doi && !row.doi) {
+    row.doi = metadata.doi;
+  }
+
+  if (metadata.landingUrl) {
+    row.landing_url = mergePreferredSourceUrl(row.landing_url, metadata.landingUrl);
+  }
+  if (metadata.url || metadata.landingUrl) {
+    row.url = mergePreferredSourceUrl(row.url, metadata.url || metadata.landingUrl);
+  }
+
+  if (metadata.title && (!row.title || (rowWasArxivOnly && incomingPreferred))) {
+    row.title = metadata.title;
+  }
+  if (metadata.venue && (!row.venue || isArxivVenue(row.venue) || (rowWasArxivOnly && incomingPreferred))) {
+    row.venue = metadata.venue;
+  }
+  if (typeof metadata.year === "number" && Number.isFinite(metadata.year) && (!row.year || (rowWasArxivOnly && incomingPreferred))) {
+    row.year = metadata.year;
+  }
+  if (metadata.authors && metadata.authors.length > 0 && (row.authors.length === 0 || (rowWasArxivOnly && incomingPreferred))) {
+    row.authors = metadata.authors;
+  }
+}
+
+function hasPreferredPublicationSignal(row: Partial<StoredCorpusRow>): boolean {
+  return (
+    hasPreferredMetadataSignal({
+      venue: row.venue,
+      landingUrl: row.landing_url,
+      url: row.url
+    })
+    || isPublishedBibtexSource(row.bibtex_source)
+    || isPublishedPdfSource(row.pdf_url_source)
+  );
+}
+
+function hasPreferredMetadataSignal(metadata: ResolvedMetadata | Pick<StoredCorpusRow, "doi" | "venue" | "landing_url" | "url">): boolean {
+  const landingUrl = "landingUrl" in metadata ? metadata.landingUrl : undefined;
+  const storedLandingUrl = "landing_url" in metadata ? metadata.landing_url : undefined;
+  return Boolean(
+    hasPublishedVenue(metadata.venue)
+    || hasCanonicalPublicationUrl(landingUrl || storedLandingUrl)
+    || hasCanonicalPublicationUrl(metadata.url)
+  );
+}
+
+function isArxivOnlyRecord(row: Partial<StoredCorpusRow>): boolean {
+  return hasArxivSignal(row) && !hasPreferredPublicationSignal(row);
+}
+
+function hasArxivSignal(row: Partial<StoredCorpusRow>): boolean {
+  return Boolean(
+    row.arxiv_id
+    || isArxivVenue(row.venue)
+    || isArxivUrl(row.url)
+    || isArxivUrl(row.landing_url)
+    || row.pdf_url_source === "arxiv"
+    || row.bibtex_source === "arxiv_generated"
+  );
+}
+
+function hasPublishedVenue(venue: string | undefined): boolean {
+  return Boolean(venue && venue.trim() && !isArxivVenue(venue));
+}
+
+function isArxivVenue(venue: string | undefined): boolean {
+  const normalized = normalizeSearchText(venue || "");
+  return normalized.includes("arxiv") || normalized === "corr" || normalized.includes("computing research repository");
+}
+
+function hasCanonicalPublicationUrl(url: string | undefined): boolean {
+  return sourceUrlPriority(url) >= 2;
+}
+
+function isArxivUrl(url: string | undefined): boolean {
+  const host = url ? safeHost(url) : undefined;
+  return Boolean(host && host === "arxiv.org");
+}
+
+function isPublishedBibtexSource(source: StoredBibtexSource | undefined): boolean {
+  return source === "acl_anthology"
+    || source === "doi_content_negotiation"
+    || source === "crossref_generated"
+    || source === "openreview_generated"
+    || source === "pmlr_generated";
+}
+
+function isPublishedPdfSource(source: string | undefined): boolean {
+  return source === "crossref"
+    || source === "openalex"
+    || source === "acl_anthology"
+    || source === "openreview"
+    || source === "pmlr"
+    || source === "ifaamas"
+    || source === "landing_page";
+}
+
+function sourceUrlPriority(url: string | undefined): number {
+  if (!url) {
+    return -1;
+  }
+  const host = safeHost(url);
+  if (!host) {
+    return 0;
+  }
+  if (host.endsWith("semanticscholar.org")) {
+    return 0;
+  }
+  if (host === "arxiv.org") {
+    return 1;
+  }
+  if (host === "doi.org") {
+    return 2;
+  }
+  return 3;
 }
 
 function isSemanticScholarHost(url: string): boolean {
@@ -560,7 +810,7 @@ async function resolveCrossref(
   row: StoredCorpusRow,
   attempts: CollectEnrichmentAttempt[],
   errors: string[]
-): Promise<{ pdfUrl?: string; landingUrl?: string; bibtex?: BibtexCandidate }> {
+): Promise<{ pdfUrl?: string; landingUrl?: string; bibtex?: BibtexCandidate; metadata?: ResolvedMetadata }> {
   if (!row.doi) {
     return {};
   }
@@ -635,7 +885,25 @@ async function resolveCrossref(
   const doiLanding = await resolveRedirectLanding(`https://doi.org/${encodedDoi}`, "doi_landing", attempts, errors, args.abortSignal);
   landingUrl = firstNonSemanticScholarUrl(doiLanding) || message?.URL || row.landing_url;
 
-  return { pdfUrl, landingUrl, bibtex };
+  const metadata = message
+    ? {
+        title: (message.title && message.title[0]) || args.paper.title,
+        authors: normalizeCrossrefAuthors(message.author, args.paper.authors),
+        year: extractCrossrefYear(message) ?? args.paper.year,
+        venue: (message["container-title"] && message["container-title"][0]) || args.paper.venue,
+        doi: row.doi,
+        landingUrl,
+        url: landingUrl || message.URL || row.url
+      }
+    : landingUrl || row.doi
+      ? {
+          doi: row.doi,
+          landingUrl,
+          url: landingUrl || row.url
+        }
+      : undefined;
+
+  return { pdfUrl, landingUrl, bibtex, metadata };
 }
 
 async function resolveOpenAlex(
@@ -700,7 +968,7 @@ async function resolveGenericLanding(
   landingUrl: string,
   attempts: CollectEnrichmentAttempt[],
   errors: string[]
-): Promise<{ pdfUrl?: string; pdfSource?: string; bibtex?: BibtexCandidate }> {
+): Promise<{ pdfUrl?: string; pdfSource?: string; bibtex?: BibtexCandidate; metadata?: ResolvedMetadata }> {
   const html = await fetchTextCandidate(landingUrl, "landing_html", attempts, errors, args.abortSignal);
   if (!html) {
     return {};
@@ -739,6 +1007,15 @@ async function resolveGenericLanding(
   return {
     pdfUrl,
     pdfSource: pdfUrl ? "landing_page" : undefined,
+    metadata: {
+      title,
+      authors: authors.length > 0 ? authors : undefined,
+      year,
+      venue,
+      doi,
+      landingUrl,
+      url: landingUrl
+    },
     bibtex: shouldTryGenericBibtex(row)
       ? {
           source: "local_generated",
@@ -806,9 +1083,8 @@ async function collectVenueTitleCandidates(
   row: StoredCorpusRow,
   attempts: CollectEnrichmentAttempt[],
   errors: string[]
-): Promise<{ urls: string[]; doi?: string }> {
+): Promise<{ urls: string[]; metadata?: ResolvedMetadata }> {
   const urls = new Set<string>();
-  let discoveredDoi: string | undefined;
 
   if (looksLikeOpenReviewVenue(row.venue)) {
     const openReviewUrl = await searchOpenReviewByTitle(row.title, attempts, errors, args.abortSignal);
@@ -832,16 +1108,15 @@ async function collectVenueTitleCandidates(
   }
 
   if (urls.size > 0) {
-    return { urls: Array.from(urls), doi: discoveredDoi };
+    return { urls: Array.from(urls) };
   }
 
   const dblp = await searchDblpByTitle(row.title, row.venue, attempts, errors, args.abortSignal);
   for (const url of dblp.urls) {
     urls.add(url);
   }
-  discoveredDoi = dblp.doi;
 
-  return { urls: Array.from(urls), doi: discoveredDoi };
+  return { urls: Array.from(urls), metadata: dblp.metadata };
 }
 
 async function searchPmlrByTitleAndVenue(
@@ -963,7 +1238,7 @@ async function searchDblpByTitle(
   attempts: CollectEnrichmentAttempt[],
   errors: string[],
   abortSignal?: AbortSignal
-): Promise<{ urls: string[]; doi?: string }> {
+): Promise<{ urls: string[]; metadata?: ResolvedMetadata }> {
   const queries = buildTitleSearchQueries(title);
   for (const query of queries) {
     const raw = await fetchJsonCandidateWithRetry(
@@ -1000,6 +1275,7 @@ async function searchDblpByTitle(
     }
     const urls = new Set<string>();
     let doi: string | undefined;
+    const best = ranked[0]?.info;
     for (const candidate of ranked.slice(0, 5)) {
       const eeValues = Array.isArray(candidate.info.ee) ? candidate.info.ee : candidate.info.ee ? [candidate.info.ee] : [];
       for (const value of eeValues) {
@@ -1021,7 +1297,15 @@ async function searchDblpByTitle(
       }
     }
     if (urls.size > 0 || doi) {
-      return { urls: Array.from(urls), doi };
+      return {
+        urls: Array.from(urls),
+        metadata: {
+          title: typeof best?.title === "string" ? best.title : undefined,
+          venue: typeof best?.venue === "string" ? best.venue : undefined,
+          year: normalizeYear(best?.year),
+          doi
+        }
+      };
     }
   }
   return { urls: [] };
@@ -1063,16 +1347,22 @@ function shouldTryGenericBibtex(row: StoredCorpusRow): boolean {
 }
 
 function shouldTryVenueTitleDiscovery(row: StoredCorpusRow): boolean {
-  if (row.pdf_url || !row.title) {
+  if (!row.title) {
+    return false;
+  }
+  const arxivPdfOnly = row.pdf_url && row.pdf_url_source === "arxiv" && isArxivOnlyRecord(row);
+  if (row.pdf_url && !arxivPdfOnly) {
     return false;
   }
   const landingHost = row.landing_url ? safeHost(row.landing_url) : undefined;
   const sourceHost = row.url ? safeHost(row.url) : undefined;
   return (
-    (!landingHost || landingHost.endsWith("semanticscholar.org")) &&
+    (!landingHost || landingHost.endsWith("semanticscholar.org") || landingHost === "arxiv.org") &&
     (
       (sourceHost ? sourceHost.endsWith("semanticscholar.org") : false) ||
+      sourceHost === "arxiv.org" ||
       (landingHost ? landingHost.endsWith("semanticscholar.org") : false) ||
+      landingHost === "arxiv.org" ||
       looksLikeOpenReviewVenue(row.venue) ||
       looksLikeAclVenue(row.venue) ||
       looksLikePmlrVenue(row.venue) ||
@@ -1240,6 +1530,21 @@ function normalizeCrossrefAuthors(
 function extractCrossrefYear(message: CrossrefMessage): number | undefined {
   const candidate = message.issued?.["date-parts"]?.[0]?.[0] ?? message.published?.["date-parts"]?.[0]?.[0];
   return typeof candidate === "number" && Number.isFinite(candidate) ? candidate : undefined;
+}
+
+function normalizeYear(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    const parsed = Number.parseInt(trimmed, 10);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
 }
 
 function deriveAclCanonicalUrl(landingUrl: string, doi?: string): string | undefined {

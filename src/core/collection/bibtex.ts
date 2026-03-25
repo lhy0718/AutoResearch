@@ -266,12 +266,13 @@ function bibtexSourcePriority(source: StoredBibtexSource): number {
       return 2;
     case "openreview_generated":
     case "pmlr_generated":
-    case "arxiv_generated":
       return 3;
-    case "semantic_scholar":
+    case "arxiv_generated":
       return 4;
-    case "local_generated":
+    case "semantic_scholar":
       return 5;
+    case "local_generated":
+      return 6;
     default:
       return 99;
   }

@@ -18,6 +18,9 @@ import { EventStream, PersistedEventStream } from "../core/events.js";
 import { CodexLLMClient, OllamaLLMClient, OpenAiResponsesLLMClient, RoutedLLMClient } from "../core/llm/client.js";
 import { LocalAciAdapter } from "../tools/aciLocalAdapter.js";
 import { SemanticScholarClient } from "../tools/semanticScholar.js";
+import { OpenAlexClient } from "../tools/openAlex.js";
+import { CrossrefClient } from "../tools/crossref.js";
+import { ArxivClient } from "../tools/arxiv.js";
 import { DefaultNodeRegistry } from "../core/stateGraph/nodeRegistry.js";
 import { CheckpointStore } from "../core/stateGraph/checkpointStore.js";
 import { StateGraphRuntime } from "../core/stateGraph/runtime.js";
@@ -213,6 +216,9 @@ export async function createAutoLabOSRuntime(
     perSecondLimit: config.papers.per_second_limit,
     maxRetries: 3
   });
+  const openAlex = new OpenAlexClient();
+  const crossref = new CrossrefClient();
+  const arxiv = new ArxivClient();
   const responsesPdfAnalysis = new ResponsesPdfAnalysisClient(() => resolveOpenAiApiKey(paths.cwd));
 
   const nodeRegistry = new DefaultNodeRegistry({
@@ -225,6 +231,9 @@ export async function createAutoLabOSRuntime(
     codex,
     aci,
     semanticScholar,
+    openAlex,
+    crossref,
+    arxiv,
     responsesPdfAnalysis,
     ollamaPdfAnalysis
   });

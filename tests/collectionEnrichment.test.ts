@@ -95,6 +95,46 @@ describe("collection enrichment", () => {
     expect(merged.bibtex_richness).toBe(12);
   });
 
+  it("preserves published canonical metadata when an arxiv-flavored duplicate arrives later", () => {
+    const merged = mergeStoredCorpusRows(
+      makeRow({
+        title: "Conference Version",
+        authors: ["Alice Kim", "Bob Lee"],
+        year: 2024,
+        venue: "ICLR",
+        doi: "10.1000/published",
+        url: "https://publisher.example/paper",
+        landing_url: "https://publisher.example/paper",
+        bibtex: "@inproceedings{published,\n  title = {Conference Version},\n  booktitle = {ICLR}\n}",
+        bibtex_source: "doi_content_negotiation",
+        bibtex_richness: 14
+      }),
+      makeRow({
+        title: "Preprint Version",
+        authors: ["Alice Kim"],
+        year: 2023,
+        venue: "arXiv",
+        arxiv_id: "2401.12345",
+        url: "https://arxiv.org/abs/2401.12345",
+        landing_url: "https://arxiv.org/abs/2401.12345",
+        bibtex: "@article{preprint,\n  title = {Preprint Version},\n  archivePrefix = {arXiv},\n  note = {Longer but lower priority}\n}",
+        bibtex_source: "arxiv_generated",
+        bibtex_richness: 20
+      })
+    );
+
+    expect(merged.title).toBe("Conference Version");
+    expect(merged.authors).toEqual(["Alice Kim", "Bob Lee"]);
+    expect(merged.year).toBe(2024);
+    expect(merged.venue).toBe("ICLR");
+    expect(merged.doi).toBe("10.1000/published");
+    expect(merged.url).toBe("https://publisher.example/paper");
+    expect(merged.landing_url).toBe("https://publisher.example/paper");
+    expect(merged.bibtex_source).toBe("doi_content_negotiation");
+    expect(merged.bibtex).toContain("@inproceedings{published");
+    expect(merged.arxiv_id).toBe("2401.12345");
+  });
+
   it("recovers arxiv pdf and generated bibtex", async () => {
     vi.stubGlobal(
       "fetch",
@@ -337,7 +377,88 @@ describe("collection enrichment", () => {
     expect(result.row.pdf_url).toBe("https://aclanthology.org/2025.coling-main.475.pdf");
     expect(result.row.pdf_url_source).toBe("acl_anthology");
     expect(result.row.doi).toBe("10.18653/v1/2025.coling-main.475");
+    expect(result.row.venue).toBe("International Conference on Computational Linguistics");
+    expect(result.row.url).toBe("https://aclanthology.org/2025.coling-main.475");
+    expect(result.row.landing_url).toBe("https://aclanthology.org/2025.coling-main.475");
     expect(result.fallbackSources).toContain("title_discovery");
+  });
+
+  it("promotes published metadata over arxiv metadata when crossref resolves a journal version", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "https://arxiv.org/pdf/2501.01234.pdf") {
+          return makeResponse(url, "", {
+            status: 200,
+            headers: { "content-type": "application/pdf" }
+          });
+        }
+        if (url === "https://api.crossref.org/works/10.1000%2Fxyz") {
+          return makeResponse(
+            url,
+            JSON.stringify({
+              message: {
+                URL: "https://publisher.example/paper",
+                title: ["Journal Version"],
+                "container-title": ["Test Journal"],
+                author: [{ given: "Alice", family: "Kim" }, { given: "Bob", family: "Lee" }],
+                issued: { "date-parts": [[2024]] },
+                link: []
+              }
+            }),
+            { status: 200, headers: { "content-type": "application/json" } }
+          );
+        }
+        if (url === "https://doi.org/10.1000%2Fxyz" && init?.headers && String((init.headers as Record<string, string>).Accept).includes("application/x-bibtex")) {
+          return makeResponse(
+            "https://doi.org/10.1000/xyz",
+            "@article{journal,\n  title = {Journal Version},\n  journal = {Test Journal},\n  doi = {10.1000/xyz}\n}",
+            { status: 200, headers: { "content-type": "application/x-bibtex" } }
+          );
+        }
+        if (url === "https://doi.org/10.1000%2Fxyz") {
+          return makeResponse("https://publisher.example/paper", "", {
+            status: 200,
+            headers: { "content-type": "text/html" }
+          });
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      })
+    );
+
+    const result = await enrichCollectedPaper({
+      paper: makePaper({
+        title: "Preprint Version",
+        authors: ["Alice Kim"],
+        year: 2023,
+        venue: "arXiv",
+        doi: "10.1000/xyz",
+        arxivId: "2501.01234"
+      }),
+      row: makeRow({
+        title: "Preprint Version",
+        authors: ["Alice Kim"],
+        year: 2023,
+        venue: "arXiv",
+        doi: "10.1000/xyz",
+        arxiv_id: "2501.01234",
+        url: "https://arxiv.org/abs/2501.01234",
+        landing_url: "https://arxiv.org/abs/2501.01234"
+      }),
+      bibtexMode: "hybrid",
+      requireOpenAccessPdf: false
+    });
+
+    expect(result.row.arxiv_id).toBe("2501.01234");
+    expect(result.row.pdf_url).toBe("https://arxiv.org/pdf/2501.01234.pdf");
+    expect(result.row.title).toBe("Journal Version");
+    expect(result.row.authors).toEqual(["Alice Kim", "Bob Lee"]);
+    expect(result.row.year).toBe(2024);
+    expect(result.row.venue).toBe("Test Journal");
+    expect(result.row.url).toBe("https://publisher.example/paper");
+    expect(result.row.landing_url).toBe("https://publisher.example/paper");
+    expect(result.row.bibtex_source).toBe("doi_content_negotiation");
   });
 
   it("retries transient dblp 500 errors before recovering acl anthology metadata", async () => {
@@ -414,6 +535,103 @@ describe("collection enrichment", () => {
     expect(dblpCalls).toBe(3);
     expect(result.row.pdf_url).toBe("https://aclanthology.org/2025.coling-main.475.pdf");
     expect(result.row.pdf_url_source).toBe("acl_anthology");
+    expect(result.row.bibtex_source).toBe("acl_anthology");
+  });
+
+  it("replaces arxiv canonical metadata with dblp and acl anthology metadata when a venue version is found", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "https://arxiv.org/pdf/2501.01234.pdf") {
+          return makeResponse(url, "", {
+            status: 200,
+            headers: { "content-type": "application/pdf" }
+          });
+        }
+        if (url.includes("dblp.org/search/publ/api")) {
+          return makeResponse(
+            url,
+            JSON.stringify({
+              result: {
+                hits: {
+                  hit: [
+                    {
+                      info: {
+                        title: "Explain-Analyze-Generate: A Sequential Multi-Agent Collaboration Method for Complex Reasoning",
+                        venue: "COLING",
+                        year: "2025",
+                        doi: "10.18653/v1/2025.coling-main.475",
+                        ee: "https://aclanthology.org/2025.coling-main.475/"
+                      }
+                    }
+                  ]
+                }
+              }
+            }),
+            { status: 200, headers: { "content-type": "application/json" } }
+          );
+        }
+        if (url === "https://api.crossref.org/works/10.18653%2Fv1%2F2025.coling-main.475") {
+          return makeResponse(url, JSON.stringify({ message: {} }), {
+            status: 404,
+            headers: { "content-type": "application/json" }
+          });
+        }
+        if (url === "https://doi.org/10.18653%2Fv1%2F2025.coling-main.475" && init?.headers && String((init.headers as Record<string, string>).Accept).includes("application/x-bibtex")) {
+          return makeResponse(url, "", {
+            status: 404,
+            headers: { "content-type": "text/html" }
+          });
+        }
+        if (url === "https://doi.org/10.18653%2Fv1%2F2025.coling-main.475") {
+          return makeResponse(url, "", {
+            status: 404,
+            headers: { "content-type": "text/html" }
+          });
+        }
+        if (url === "https://aclanthology.org/2025.coling-main.475.pdf") {
+          return makeResponse(url, "", {
+            status: 200,
+            headers: { "content-type": "application/pdf" }
+          });
+        }
+        if (url === "https://aclanthology.org/2025.coling-main.475.bib") {
+          return makeResponse(
+            url,
+            "@inproceedings{coling475,\n  title = {Explain-Analyze-Generate},\n  author = {Alice Kim},\n  booktitle = {COLING}\n}",
+            { status: 200, headers: { "content-type": "application/x-bibtex" } }
+          );
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      })
+    );
+
+    const result = await enrichCollectedPaper({
+      paper: makePaper({
+        title: "Explain-Analyze-Generate: A Sequential Multi-Agent Collaboration Method for Complex Reasoning",
+        authors: ["Alice Kim"],
+        year: 2025,
+        venue: "arXiv",
+        arxivId: "2501.01234"
+      }),
+      row: makeRow({
+        title: "Explain-Analyze-Generate: A Sequential Multi-Agent Collaboration Method for Complex Reasoning",
+        authors: ["Alice Kim"],
+        year: 2025,
+        venue: "arXiv",
+        arxiv_id: "2501.01234",
+        url: "https://arxiv.org/abs/2501.01234",
+        landing_url: "https://arxiv.org/abs/2501.01234"
+      }),
+      bibtexMode: "hybrid",
+      requireOpenAccessPdf: false
+    });
+
+    expect(result.row.arxiv_id).toBe("2501.01234");
+    expect(result.row.venue).toBe("COLING");
+    expect(result.row.url).toBe("https://aclanthology.org/2025.coling-main.475");
+    expect(result.row.landing_url).toBe("https://aclanthology.org/2025.coling-main.475");
     expect(result.row.bibtex_source).toBe("acl_anthology");
   });
 

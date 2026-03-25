@@ -390,6 +390,153 @@ describe("collectPapers bibtex", () => {
     ).toBe(true);
   });
 
+  it("aggregates semantic scholar, crossref, and arxiv search results into one canonical published record", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-aggregated-"));
+    process.chdir(root);
+
+    const runId = "run-collect-aggregated";
+    const run = makeRun(runId);
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "collect_papers.request",
+            value: {
+              query: "Multi-Agent Collaboration",
+              limit: 5,
+              bibtexMode: "s2",
+              sort: { field: "relevance", order: "desc" }
+            },
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const node = createCollectPapersNode({
+      config: {
+        papers: {
+          max_results: 200
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {
+        streamSearchPapers: vi.fn(() =>
+          batchStream([
+            {
+              paperId: "paper-s2",
+              title: "Preprint Version",
+              abstract: "Preprint abstract",
+              year: 2023,
+              venue: "arXiv",
+              url: "https://www.semanticscholar.org/paper/paper-s2",
+              openAccessPdfUrl: "https://publisher.example/paper.pdf",
+              authors: ["Alice Kim"],
+              doi: "10.1000/xyz",
+              arxivId: "2501.01234",
+              citationStylesBibtex: "@article{s2key,\n  title = {Preprint Version},\n  author = {Alice Kim},\n  year = {2023},\n  doi = {10.1000/xyz},\n  url = {https://publisher.example/paper},\n  journal = {Preprint}\n}"
+            }
+          ])
+        ),
+        getLastSearchDiagnostics: vi.fn(() => ({
+          attemptCount: 1,
+          lastStatus: 200,
+          attempts: [{ attempt: 1, ok: true, status: 200, endpoint: "search" }]
+        }))
+      } as any,
+      crossref: {
+        provider: "crossref",
+        searchPapers: vi.fn(async () => [
+          {
+            provider: "crossref",
+            providerId: "10.1000/xyz",
+            title: "Journal Version",
+            authors: ["Alice Kim", "Bob Lee"],
+            year: 2024,
+            venue: "Test Journal",
+            url: "https://publisher.example/paper",
+            landingUrl: "https://publisher.example/paper",
+            doi: "10.1000/xyz"
+          }
+        ]),
+        getLastSearchDiagnostics: vi.fn(() => ({
+          provider: "crossref",
+          query: "Multi-Agent Collaboration",
+          fetched: 1,
+          attemptCount: 1,
+          attempts: [{ provider: "crossref", attempt: 1, ok: true, endpoint: "crossref" }]
+        }))
+      } as any,
+      arxiv: {
+        provider: "arxiv",
+        searchPapers: vi.fn(async () => [
+          {
+            provider: "arxiv",
+            providerId: "2501.01234",
+            title: "Preprint Version",
+            authors: ["Alice Kim"],
+            year: 2023,
+            venue: "arXiv",
+            url: "https://arxiv.org/abs/2501.01234",
+            landingUrl: "https://arxiv.org/abs/2501.01234",
+            openAccessPdfUrl: "https://arxiv.org/pdf/2501.01234.pdf",
+            arxivId: "2501.01234"
+          }
+        ]),
+        getLastSearchDiagnostics: vi.fn(() => ({
+          provider: "arxiv",
+          query: "Multi-Agent Collaboration",
+          fetched: 1,
+          attemptCount: 1,
+          attempts: [{ provider: "arxiv", attempt: 1, ok: true, endpoint: "arxiv" }]
+        }))
+      } as any
+    });
+
+    const result = await node.execute({
+      run,
+      graph: run.graph
+    });
+
+    expect(result.status).toBe("success");
+    expect(result.summary).toBe('Aggregated search stored 1 papers for "Multi-Agent Collaboration".');
+
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    const corpus = await readFile(path.join(runDir, "corpus.jsonl"), "utf8");
+    expect(corpus).toContain('"paper_id":"paper-s2"');
+    expect(corpus).toContain('"title":"Journal Version"');
+    expect(corpus).toContain('"venue":"Test Journal"');
+    expect(corpus).toContain('"arxiv_id":"2501.01234"');
+
+    const resultMeta = JSON.parse(await readFile(path.join(runDir, "collect_result.json"), "utf8")) as {
+      source?: string;
+      providers?: string[];
+    };
+    expect(resultMeta.source).toBe("aggregated");
+    expect(resultMeta.providers).toEqual(["semantic_scholar", "crossref", "arxiv"]);
+
+    const aggregationMeta = JSON.parse(
+      await readFile(path.join(runDir, "collect_search_aggregation.json"), "utf8")
+    ) as {
+      canonicalCount?: number;
+      rawCandidateCount?: number;
+      clusters?: Array<{ canonicalSource?: string; selectionReasons?: string[] }>;
+    };
+    expect(aggregationMeta.canonicalCount).toBe(1);
+    expect(aggregationMeta.rawCandidateCount).toBe(3);
+    expect(aggregationMeta.clusters?.[0]?.canonicalSource).toBe("crossref");
+    expect(aggregationMeta.clusters?.[0]?.selectionReasons).toContain("arxiv_deprioritized");
+  });
+
   it("merges additional collection results with existing corpus and dedupes by paper_id", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-merge-"));
     process.chdir(root);

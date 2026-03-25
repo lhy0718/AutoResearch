@@ -4,6 +4,9 @@ import { LLMClient } from "../llm/client.js";
 import { RunStore } from "../runs/runStore.js";
 import { AgentComputerInterface } from "../../tools/aci.js";
 import { SemanticScholarClient } from "../../tools/semanticScholar.js";
+import { OpenAlexClient } from "../../tools/openAlex.js";
+import { CrossrefClient } from "../../tools/crossref.js";
+import { ArxivClient } from "../../tools/arxiv.js";
 import { GraphNodeHandler, GraphNodeResult } from "../stateGraph/types.js";
 import { CodexCliClient } from "../../integrations/codex/codexCliClient.js";
 import { ResponsesPdfAnalysisClient } from "../../integrations/openai/responsesPdfAnalysisClient.js";
@@ -19,6 +22,9 @@ export interface NodeExecutionDeps {
   codex: CodexCliClient;
   aci: AgentComputerInterface;
   semanticScholar: SemanticScholarClient;
+  openAlex?: OpenAlexClient;
+  crossref?: CrossrefClient;
+  arxiv?: ArxivClient;
   responsesPdfAnalysis: ResponsesPdfAnalysisClient;
   ollamaPdfAnalysis?: OllamaPdfAnalysisClient;
 }

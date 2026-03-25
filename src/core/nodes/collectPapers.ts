@@ -21,9 +21,22 @@ import {
 } from "../runConstraints.js";
 import { resolveConstraintProfile } from "../constraintProfile.js";
 export { buildBibtexEntry, buildBibtexFile } from "../collection/bibtex.js";
-import { buildBibtexFile, normalizeS2Bibtex, scoreBibtexRichness } from "../collection/bibtex.js";
+import { buildBibtexFile, scoreBibtexRichness } from "../collection/bibtex.js";
 import { enrichCollectedPaper, mergeStoredCorpusRows } from "../collection/enrichment.js";
-import { CollectEnrichmentLogEntry, StoredCorpusRow } from "../collection/types.js";
+import {
+  AggregatedSearchPaper,
+  CollectEnrichmentLogEntry,
+  PaperSearchAggregationReport,
+  PaperSearchProvider,
+  PaperSearchProviderDiagnostics,
+  StoredCorpusRow
+} from "../collection/types.js";
+import {
+  AggregatedSearchRecord,
+  createSemanticScholarSearchProvider,
+  runAggregatedPaperSearch,
+  SearchProviderClient
+} from "../collection/searchAggregation.js";
 
 const ENRICHMENT_CONCURRENCY = 6;
 const ENRICHMENT_PROGRESS_INTERVAL = 10;
@@ -132,7 +145,11 @@ interface CollectResultMeta {
   baseCount: number;
   completed: boolean;
   mode: "replace" | "additional";
-  source: "semantic_scholar";
+  source: "semantic_scholar" | "aggregated";
+  providers?: PaperSearchProvider[];
+  rawCandidateCount?: number;
+  canonicalCount?: number;
+  providerDiagnostics?: PaperSearchProviderDiagnostics[];
   fetchError?: string;
   attemptCount: number;
   lastStatus?: number;
@@ -295,7 +312,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       const storedRows = new Map<string, StoredCorpusRow>(
         existingCorpus.map((row) => [row.paper_id, row])
       );
-      const fetchedPapers: SemanticScholarPaper[] = [];
+      const fetchedPapers = new Map<string, AggregatedSearchPaper>();
       const newPaperIds = new Set<string>();
       const baseCount = storedRows.size;
       let storedCount = storedRows.size;
@@ -307,8 +324,10 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         existingEnrichmentLogs.map((entry) => [entry.paper_id, entry])
       );
       let diagnostics: SemanticScholarSearchDiagnostics = emptyCollectDiagnostics();
+      let aggregationReport: PaperSearchAggregationReport | undefined;
       const queryAttempts: CollectQueryAttemptMeta[] = [];
       let effectiveRequest = normalizedRequest.primaryRequest;
+      const searchProviders = buildSearchProviders(deps);
       await syncCollectRunContext({
         runContextMemory,
         request: effectiveRequest,
@@ -325,6 +344,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           completed: false,
           pdfRecovered,
           bibtexEnriched,
+          aggregationReport,
           enrichmentAttempts: 0,
           fallbackSources: [],
           requestedQuery: normalizedRequest.requestedQuery,
@@ -347,9 +367,11 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         effectiveRequest = plannedSearch.request;
         let searchDiagnostics = emptyCollectDiagnostics();
         let searchFetched = 0;
+        let currentAggregation: PaperSearchAggregationReport | undefined;
 
         try {
-          const estimatedTotalBatches = Math.max(1, Math.ceil(effectiveRequest.limit / 50));
+          const providerLabel = formatProviderList(searchProviders.map((provider) => provider.provider));
+          const semanticScholarOnly = isSemanticScholarOnlyProviders(searchProviders);
           deps.eventStream.emit({
             type: "OBS_RECEIVED",
             runId: run.id,
@@ -357,114 +379,136 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             payload: {
               text:
                 searchIndex === 0
-                  ? `Searching Semantic Scholar for "${effectiveRequest.query}" (${plannedSearch.reason}).`
-                  : `No papers found yet; retrying with broader query "${effectiveRequest.query}"${plannedSearch.filtersRelaxed ? " and relaxed filters" : ""}.`
+                  ? `Searching ${providerLabel} for "${effectiveRequest.query}" (${plannedSearch.reason}).`
+                  : `No papers found yet; retrying with broader query "${effectiveRequest.query}" across ${providerLabel}${plannedSearch.filtersRelaxed ? " and relaxed filters" : ""}.`
             }
           });
-          deps.eventStream.emit({
-            type: "OBS_RECEIVED",
-            runId: run.id,
-            node: "collect_papers",
-            payload: {
-              text: `Requesting Semantic Scholar batch 1/${estimatedTotalBatches}.`
-            }
-          });
-
-          let batchIndex = 0;
-          for await (const batch of deps.semanticScholar.streamSearchPapers(effectiveRequest, abortSignal)) {
-            batchIndex += 1;
-            searchDiagnostics = deps.semanticScholar.getLastSearchDiagnostics?.() ?? searchDiagnostics;
-            fetchedPapers.push(...batch);
-            searchFetched += batch.length;
-            let changed = false;
-            for (const paper of batch) {
-              const currentRow = storedRows.get(paper.paperId);
-              if (!currentRow && additionalLimit !== undefined && newPaperIds.size >= additionalLimit) {
-                continue;
-              }
-              const mergedRow = mergeStoredCorpusRows(currentRow, normalizeCorpusRow(paper));
-              const prevSerialized = currentRow ? JSON.stringify(currentRow) : undefined;
-              const nextSerialized = JSON.stringify(mergedRow);
-              if (!currentRow) {
-                newPaperIds.add(paper.paperId);
-                changed = true;
-              } else if (prevSerialized !== nextSerialized) {
-                changed = true;
-              }
-              storedRows.set(paper.paperId, mergedRow);
-            }
-
-            if (changed) {
-              storedCount = storedRows.size;
-              await persistCollectSnapshot({
-                run,
-                rows: Array.from(storedRows.values()),
-                mode,
-                request: effectiveRequest,
-                resultMeta: buildCollectResultMeta({
-                  request: effectiveRequest,
-                  fetched: fetchedPapers.length,
-                  stored: storedCount,
-                  added: newPaperIds.size,
-                  baseCount,
-                  mode,
-                  diagnostics: mergeCollectDiagnostics(diagnostics, searchDiagnostics),
-                  filters: effectiveRequest.filters || {},
-                  bibtexMode: normalizeBibtexMode(requestFromContext?.bibtexMode),
-                  completed: false,
-                  pdfRecovered,
-                  bibtexEnriched,
-                  enrichmentAttempts: countEnrichmentAttempts(currentEnrichmentLogs),
-                  fallbackSources: Array.from(fallbackSources),
-                  requestedQuery: normalizedRequest.requestedQuery,
-                  queryAttempts,
-                  enrichment: {
-                    blocking: false,
-                    status: "not_needed",
-                    targetCount: 0,
-                    processedCount: 0,
-                    attemptedCount: 0,
-                    updatedCount: 0
-                  }
-                }),
-                enrichmentLogs: Array.from(persistedEnrichmentLogs.values()),
-                bibtexMode: normalizeBibtexMode(requestFromContext?.bibtexMode)
-              });
-              deps.eventStream.emit({
-                type: "OBS_RECEIVED",
-                runId: run.id,
-                node: "collect_papers",
-                payload: {
-                  text: `Collected ${storedCount} paper(s) so far (${newPaperIds.size} new) for "${effectiveRequest.query}".`
-                }
-              });
-            }
-
+          if (semanticScholarOnly) {
             deps.eventStream.emit({
               type: "OBS_RECEIVED",
               runId: run.id,
               node: "collect_papers",
               payload: {
-                text: `Fetched Semantic Scholar batch ${Math.min(batchIndex, estimatedTotalBatches)}/${estimatedTotalBatches} (${batch.length} paper(s)).`
+                text: "Requesting Semantic Scholar batch 1/1."
               }
             });
-            if (additionalLimit !== undefined && newPaperIds.size >= additionalLimit) {
-              break;
-            }
-            if (searchFetched < effectiveRequest.limit) {
-              deps.eventStream.emit({
-                type: "OBS_RECEIVED",
-                runId: run.id,
-                node: "collect_papers",
-                payload: {
-                  text: `Requesting Semantic Scholar batch ${Math.min(batchIndex + 1, estimatedTotalBatches)}/${estimatedTotalBatches}.`
-                }
-              });
-            }
           }
-
+          const aggregated = await runAggregatedPaperSearch({
+            request: effectiveRequest,
+            providers: searchProviders,
+            abortSignal
+          });
+          currentAggregation = aggregated.report;
+          aggregationReport = aggregated.report;
           searchDiagnostics = deps.semanticScholar.getLastSearchDiagnostics?.() ?? searchDiagnostics;
           diagnostics = mergeCollectDiagnostics(diagnostics, searchDiagnostics);
+          searchFetched = aggregated.records.length;
+
+          let changed = false;
+          for (const record of aggregated.records) {
+            fetchedPapers.set(record.paper.paperId, record.paper);
+            const currentRow = storedRows.get(record.paper.paperId);
+            if (!currentRow && additionalLimit !== undefined && newPaperIds.size >= additionalLimit) {
+              continue;
+            }
+            const mergedRow = mergeStoredCorpusRows(currentRow, record.row);
+            const prevSerialized = currentRow ? JSON.stringify(currentRow) : undefined;
+            const nextSerialized = JSON.stringify(mergedRow);
+            if (!currentRow) {
+              newPaperIds.add(record.paper.paperId);
+              changed = true;
+            } else if (prevSerialized !== nextSerialized) {
+              changed = true;
+            }
+            storedRows.set(record.paper.paperId, mergedRow);
+          }
+
+          for (const providerDiagnostic of aggregated.report.providerDiagnostics) {
+            deps.eventStream.emit({
+              type: "OBS_RECEIVED",
+              runId: run.id,
+              node: "collect_papers",
+              payload: {
+                text: providerDiagnostic.error
+                  ? `${formatProviderName(providerDiagnostic.provider)} returned no usable results (${providerDiagnostic.error}).`
+                  : `${formatProviderName(providerDiagnostic.provider)} returned ${providerDiagnostic.fetched} candidate(s).`
+              }
+            });
+          }
+
+          if (changed) {
+            storedCount = storedRows.size;
+            await persistCollectSnapshot({
+              run,
+              rows: Array.from(storedRows.values()),
+              mode,
+              request: effectiveRequest,
+              resultMeta: buildCollectResultMeta({
+                request: effectiveRequest,
+                fetched: fetchedPapers.size,
+                stored: storedCount,
+                added: newPaperIds.size,
+                baseCount,
+                mode,
+                diagnostics,
+                filters: effectiveRequest.filters || {},
+                bibtexMode: normalizeBibtexMode(requestFromContext?.bibtexMode),
+                completed: false,
+                pdfRecovered,
+                bibtexEnriched,
+                aggregationReport,
+                enrichmentAttempts: countEnrichmentAttempts(currentEnrichmentLogs),
+                fallbackSources: Array.from(fallbackSources),
+                requestedQuery: normalizedRequest.requestedQuery,
+                queryAttempts,
+                enrichment: {
+                  blocking: false,
+                  status: "not_needed",
+                  targetCount: 0,
+                  processedCount: 0,
+                  attemptedCount: 0,
+                  updatedCount: 0
+                }
+              }),
+              enrichmentLogs: Array.from(persistedEnrichmentLogs.values()),
+              bibtexMode: normalizeBibtexMode(requestFromContext?.bibtexMode),
+              aggregationReport
+            });
+            deps.eventStream.emit({
+              type: "OBS_RECEIVED",
+              runId: run.id,
+              node: "collect_papers",
+              payload: {
+                text:
+                  currentAggregation?.source === "aggregated"
+                    ? `Aggregated search stored ${storedCount} paper(s) so far (${newPaperIds.size} new) from ${currentAggregation.rawCandidateCount} candidate(s).`
+                    : `Collected ${storedCount} paper(s) so far (${newPaperIds.size} new) for "${effectiveRequest.query}".`
+              }
+            });
+          }
+
+          deps.eventStream.emit({
+            type: "OBS_RECEIVED",
+            runId: run.id,
+            node: "collect_papers",
+            payload: {
+              text:
+                currentAggregation?.source === "aggregated"
+                  ? `Canonicalized ${currentAggregation.canonicalCount} paper(s) from ${currentAggregation.rawCandidateCount} cross-provider candidate(s).`
+                  : `Fetched ${searchFetched} paper(s) from Semantic Scholar.`
+            }
+          });
+          if (semanticScholarOnly) {
+            deps.eventStream.emit({
+              type: "OBS_RECEIVED",
+              runId: run.id,
+              node: "collect_papers",
+              payload: {
+                text: `Fetched Semantic Scholar batch 1/1 (${searchFetched} paper(s)).`
+              }
+            });
+          }
+
           queryAttempts.push({
             query: effectiveRequest.query,
             reason: plannedSearch.reason,
@@ -474,6 +518,16 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             lastStatus: searchDiagnostics.lastStatus,
             retryAfterMs: searchDiagnostics.retryAfterMs
           });
+
+          const providerFailure = buildProviderFailureMessage(effectiveRequest.query, currentAggregation?.providerDiagnostics || []);
+          if (providerFailure && semanticScholarOnly) {
+            fetchError = providerFailure;
+            break;
+          }
+          if (searchFetched === 0 && providerFailure) {
+            fetchError = providerFailure;
+            break;
+          }
 
           if (shouldRetryBroaderAfterLowYieldCollect({
             fetched: searchFetched,
@@ -545,18 +599,22 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       const bibtexMode = normalizeBibtexMode(requestFromContext?.bibtexMode);
       const zeroResultFailure =
         !fetchError && mode === "replace" && storedRows.size === 0
-          ? buildCollectZeroResultsMessage(queryAttempts, normalizedRequest.requestedQuery)
+          ? buildCollectZeroResultsMessage(
+              queryAttempts,
+              normalizedRequest.requestedQuery,
+              aggregationReport?.source ?? "semantic_scholar"
+            )
           : undefined;
       const papersToEnrich = zeroResultFailure
         ? []
-        : fetchedPapers.filter((paper) =>
+        : Array.from(fetchedPapers.values()).filter((paper) =>
             shouldEnrichStoredRow(storedRows.get(paper.paperId), bibtexMode)
           );
 
       storedCount = storedRows.size;
       const resultMeta = buildCollectResultMeta({
         request: effectiveRequest,
-        fetched: fetchedPapers.length,
+        fetched: fetchedPapers.size,
         stored: storedCount,
         added: newPaperIds.size,
         baseCount,
@@ -568,6 +626,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         fetchError: fetchError || zeroResultFailure,
         pdfRecovered,
         bibtexEnriched,
+        aggregationReport,
         enrichmentAttempts: countEnrichmentAttempts(currentEnrichmentLogs),
         fallbackSources: Array.from(fallbackSources),
         requestedQuery: normalizedRequest.requestedQuery,
@@ -599,7 +658,8 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         request: effectiveRequest,
         resultMeta,
         enrichmentLogs: Array.from(persistedEnrichmentLogs.values()),
-        bibtexMode
+        bibtexMode,
+        aggregationReport
       });
 
       await syncCollectRunContext({
@@ -634,7 +694,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         runId: run.id,
         node: "collect_papers",
         payload: {
-          source: "semantic_scholar",
+          source: resultMeta.source,
           papers: storedCount,
           query: effectiveRequest.query,
           requested_limit: effectiveRequest.limit,
@@ -643,7 +703,11 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       });
 
       if (fetchError) {
-        const failureMessage = buildCollectFailureMessage(effectiveRequest, fetchError);
+        const failureMessage = buildCollectFailureMessage(
+          effectiveRequest,
+          fetchError,
+          aggregationReport?.source ?? "semantic_scholar"
+        );
         return {
           status: "failure",
           error: failureMessage,
@@ -679,7 +743,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           baseCount,
           bibtexMode,
           papers: papersToEnrich,
-          fetchedCount: fetchedPapers.length,
+          fetchedCount: fetchedPapers.size,
           diagnostics,
           storedRows,
           pdfRecovered,
@@ -690,6 +754,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           storedCount,
           newPaperIds,
           pendingSummary: buildCollectSummary(resultMeta),
+          aggregationReport,
           requestedQuery: normalizedRequest.requestedQuery,
           queryAttempts
         });
@@ -838,8 +903,12 @@ function normalizeBibtexMode(mode: unknown): BibtexMode {
 
 function buildCollectFailureMessage(
   request: SemanticScholarSearchRequest,
-  fetchError: string
+  fetchError: string,
+  source: CollectResultMeta["source"] = "semantic_scholar"
 ): string {
+  if (source === "aggregated") {
+    return `Multi-provider literature search failed for "${request.query}" (${fetchError})`;
+  }
   if (/\b429\b/.test(fetchError)) {
     const chunkNote = usesConservativeChunking(request)
       ? " AutoLabOS already switched this request to smaller Semantic Scholar chunks."
@@ -850,10 +919,11 @@ function buildCollectFailureMessage(
 }
 
 function buildCollectSummary(resultMeta: CollectResultMeta): string {
+  const sourceLabel = resultMeta.source === "aggregated" ? "Aggregated search" : "Semantic Scholar";
   const storedSummary =
     resultMeta.mode === "additional"
-      ? `Semantic Scholar stored ${resultMeta.stored} total papers for "${resultMeta.query}" (${resultMeta.added} newly added).`
-      : `Semantic Scholar stored ${resultMeta.stored} papers for "${resultMeta.query}".`;
+      ? `${sourceLabel} stored ${resultMeta.stored} total papers for "${resultMeta.query}" (${resultMeta.added} newly added).`
+      : `${sourceLabel} stored ${resultMeta.stored} papers for "${resultMeta.query}".`;
 
   switch (resultMeta.enrichment.status) {
     case "pending":
@@ -887,27 +957,57 @@ function usesConservativeChunking(request: SemanticScholarSearchRequest): boolea
   );
 }
 
-function normalizeCorpusRow(paper: SemanticScholarPaper): StoredCorpusRow {
-  return {
-    paper_id: paper.paperId,
-    title: paper.title,
-    abstract: paper.abstract || "",
-    year: paper.year,
-    venue: paper.venue,
-    url: paper.url,
-    landing_url: isSemanticScholarUrl(paper.url) ? undefined : paper.url,
-    pdf_url: paper.openAccessPdfUrl,
-    pdf_url_source: paper.openAccessPdfUrl ? "semantic_scholar" : undefined,
-    authors: paper.authors,
-    citation_count: paper.citationCount,
-    influential_citation_count: paper.influentialCitationCount,
-    publication_date: paper.publicationDate,
-    publication_types: paper.publicationTypes,
-    fields_of_study: paper.fieldsOfStudy,
-    doi: paper.doi,
-    arxiv_id: paper.arxivId,
-    semantic_scholar_bibtex: normalizeS2Bibtex(paper.citationStylesBibtex)
-  };
+function buildSearchProviders(deps: NodeExecutionDeps): SearchProviderClient[] {
+  const providers: SearchProviderClient[] = [createSemanticScholarSearchProvider(deps.semanticScholar)];
+  if (deps.openAlex) {
+    providers.push(deps.openAlex);
+  }
+  if (deps.crossref) {
+    providers.push(deps.crossref);
+  }
+  if (deps.arxiv) {
+    providers.push(deps.arxiv);
+  }
+  return providers;
+}
+
+function formatProviderName(provider: PaperSearchProvider): string {
+  switch (provider) {
+    case "semantic_scholar":
+      return "Semantic Scholar";
+    case "openalex":
+      return "OpenAlex";
+    case "crossref":
+      return "Crossref";
+    case "arxiv":
+      return "arXiv";
+  }
+}
+
+function formatProviderList(providers: PaperSearchProvider[]): string {
+  return providers.map((provider) => formatProviderName(provider)).join(", ");
+}
+
+function isSemanticScholarOnlyProviders(providers: SearchProviderClient[]): boolean {
+  return providers.length === 1 && providers[0]?.provider === "semantic_scholar";
+}
+
+function buildProviderFailureMessage(
+  query: string,
+  diagnostics: PaperSearchProviderDiagnostics[]
+): string | undefined {
+  const failedProviders = diagnostics.filter((diagnostic) => diagnostic.error);
+  if (diagnostics.length === 1 && diagnostics[0]?.provider === "semantic_scholar") {
+    return diagnostics[0].error;
+  }
+  if (failedProviders.length === 0 || failedProviders.length !== diagnostics.length) {
+    return undefined;
+  }
+  return failedProviders
+    .map((diagnostic) => `${formatProviderName(diagnostic.provider)}: ${diagnostic.error}`)
+    .join("; ")
+    .replace(/^/, `all providers failed for "${query}" (`)
+    .concat(")");
 }
 
 function shouldEnrichStoredRow(row: StoredCorpusRow | undefined, bibtexMode: BibtexMode): boolean {
@@ -1017,6 +1117,7 @@ async function runEnrichmentPass(input: {
   persistedEnrichmentLogs: Map<string, CollectEnrichmentLogEntry>;
   storedCount: number;
   newPaperIds: Set<string>;
+  aggregationReport?: PaperSearchAggregationReport;
   requestedQuery?: string;
   queryAttempts: CollectQueryAttemptMeta[];
   writeCorpusArtifactsOnProgress: boolean;
@@ -1055,6 +1156,7 @@ async function runEnrichmentPass(input: {
       completed: true,
       pdfRecovered: input.pdfRecovered,
       bibtexEnriched: input.bibtexEnriched,
+      aggregationReport: input.aggregationReport,
       enrichmentAttempts: countEnrichmentAttempts(input.currentEnrichmentLogs),
       fallbackSources: Array.from(input.fallbackSources),
       requestedQuery: input.requestedQuery,
@@ -1076,6 +1178,7 @@ async function runEnrichmentPass(input: {
       resultMeta: progressMeta,
       enrichmentLogs: Array.from(input.persistedEnrichmentLogs.values()),
       bibtexMode: input.bibtexMode,
+      aggregationReport: input.aggregationReport,
       writeCorpusArtifacts: input.writeCorpusArtifactsOnProgress
     });
     await syncCollectRunContext({
@@ -1351,6 +1454,7 @@ function buildCollectResultMeta(input: {
   fetchError?: string;
   pdfRecovered: number;
   bibtexEnriched: number;
+  aggregationReport?: PaperSearchAggregationReport;
   enrichmentAttempts: number;
   fallbackSources: string[];
   requestedQuery?: string;
@@ -1366,7 +1470,11 @@ function buildCollectResultMeta(input: {
     baseCount: input.baseCount,
     completed: input.completed,
     mode: input.mode,
-    source: "semantic_scholar",
+    source: input.aggregationReport?.source ?? "semantic_scholar",
+    providers: input.aggregationReport?.providers,
+    rawCandidateCount: input.aggregationReport?.rawCandidateCount,
+    canonicalCount: input.aggregationReport?.canonicalCount,
+    providerDiagnostics: input.aggregationReport?.providerDiagnostics,
     fetchError: input.fetchError,
     attemptCount: input.diagnostics.attemptCount,
     lastStatus: input.diagnostics.lastStatus,
@@ -1397,10 +1505,18 @@ async function persistCollectSnapshot(input: {
   resultMeta: CollectResultMeta;
   enrichmentLogs: CollectEnrichmentLogEntry[];
   bibtexMode: BibtexMode;
+  aggregationReport?: PaperSearchAggregationReport;
   writeCorpusArtifacts?: boolean;
 }): Promise<void> {
   await writeRunArtifact(input.run as any, "collect_request.json", JSON.stringify(input.request, null, 2));
   await writeRunArtifact(input.run as any, "collect_result.json", JSON.stringify(input.resultMeta, null, 2));
+  if (input.aggregationReport) {
+    await writeRunArtifact(
+      input.run as any,
+      "collect_search_aggregation.json",
+      JSON.stringify(input.aggregationReport, null, 2)
+    );
+  }
   await appendJsonl(input.run as any, "collect_enrichment.jsonl", input.enrichmentLogs);
   if (input.writeCorpusArtifacts === false) {
     return;
@@ -1426,7 +1542,7 @@ async function syncCollectRunContext(input: {
   await input.runContextMemory.put("collect_papers.last_result", input.resultMeta);
   await input.runContextMemory.put("collect_papers.last_attempt_count", input.diagnostics.attemptCount);
   await input.runContextMemory.put("collect_papers.count", input.resultMeta.stored);
-  await input.runContextMemory.put("collect_papers.source", "semantic_scholar");
+  await input.runContextMemory.put("collect_papers.source", input.resultMeta.source);
   await input.runContextMemory.put("collect_papers.last_error", deriveCollectRunContextError(input.resultMeta));
   await input.runContextMemory.put(
     "collect_papers.enrichment_last_error",
@@ -1502,6 +1618,20 @@ function mergeCollectDiagnostics(
   };
 }
 
+function extractAggregationReport(resultMeta: CollectResultMeta | undefined): PaperSearchAggregationReport | undefined {
+  if (!resultMeta) {
+    return undefined;
+  }
+  return {
+    source: resultMeta.source,
+    rawCandidateCount: resultMeta.rawCandidateCount ?? resultMeta.fetched,
+    canonicalCount: resultMeta.canonicalCount ?? resultMeta.stored,
+    providers: resultMeta.providers ?? (resultMeta.source === "semantic_scholar" ? ["semantic_scholar"] : []),
+    providerDiagnostics: resultMeta.providerDiagnostics ?? [],
+    clusters: []
+  };
+}
+
 function serializeSearchFilters(filters: SemanticScholarSearchFilters | undefined): string {
   return JSON.stringify({
     publicationTypes: [...(filters?.publicationTypes || [])],
@@ -1514,20 +1644,21 @@ function serializeSearchFilters(filters: SemanticScholarSearchFilters | undefine
   });
 }
 
-function sameSearchFilters(a: SemanticScholarSearchFilters | undefined, b: SemanticScholarSearchFilters | undefined): boolean {
-  return serializeSearchFilters(a) === serializeSearchFilters(b);
-}
-
 function buildCollectZeroResultsMessage(
   queryAttempts: CollectQueryAttemptMeta[],
-  requestedQuery?: string
+  requestedQuery?: string,
+  source: CollectResultMeta["source"] = "semantic_scholar"
 ): string {
   const attempted = queryAttempts
     .map((attempt) => `"${attempt.query}"${attempt.filtersRelaxed ? " (relaxed filters)" : ""}`)
     .join(", ");
   const requested = requestedQuery ? ` Requested query was "${requestedQuery}".` : "";
   const queries = attempted ? ` Tried ${queryAttempts.length} query variant(s): ${attempted}.` : "";
-  return `Semantic Scholar returned 0 papers for the configured query plan.${requested}${queries}`;
+  const prefix =
+    source === "semantic_scholar"
+      ? "Semantic Scholar returned 0 papers for the configured query plan."
+      : "Literature search returned 0 papers for the configured query plan.";
+  return `${prefix}${requested}${queries}`;
 }
 
 function buildCollectQueryPlanningFailureMessage(requestedQuery?: string): string {
@@ -1556,6 +1687,7 @@ async function startDetachedEnrichment(input: {
   storedCount: number;
   newPaperIds: Set<string>;
   pendingSummary: string;
+  aggregationReport?: PaperSearchAggregationReport;
   requestedQuery?: string;
   queryAttempts: CollectQueryAttemptMeta[];
   targetCount?: number;
@@ -1650,6 +1782,7 @@ async function startDetachedEnrichment(input: {
         persistedEnrichmentLogs: input.persistedEnrichmentLogs,
         storedCount: input.storedCount,
         newPaperIds: input.newPaperIds,
+        aggregationReport: input.aggregationReport,
         requestedQuery: input.requestedQuery,
         queryAttempts: input.queryAttempts,
         writeCorpusArtifactsOnProgress: true,
@@ -1672,6 +1805,7 @@ async function startDetachedEnrichment(input: {
         completed: true,
         pdfRecovered: enrichmentState.pdfRecovered,
         bibtexEnriched: enrichmentState.bibtexEnriched,
+        aggregationReport: input.aggregationReport,
         enrichmentAttempts: countEnrichmentAttempts(input.currentEnrichmentLogs),
         fallbackSources: Array.from(input.fallbackSources),
         requestedQuery: input.requestedQuery,
@@ -1693,7 +1827,8 @@ async function startDetachedEnrichment(input: {
         request: input.request,
         resultMeta: completionMeta,
         enrichmentLogs: Array.from(input.persistedEnrichmentLogs.values()),
-        bibtexMode: input.bibtexMode
+        bibtexMode: input.bibtexMode,
+        aggregationReport: input.aggregationReport
       });
       await syncCollectRunContext({
         runContextMemory,
@@ -1752,6 +1887,7 @@ async function startDetachedEnrichment(input: {
         completed: true,
         pdfRecovered: input.pdfRecovered,
         bibtexEnriched: input.bibtexEnriched,
+        aggregationReport: input.aggregationReport,
         enrichmentAttempts: countEnrichmentAttempts(input.currentEnrichmentLogs),
         fallbackSources: Array.from(input.fallbackSources),
         requestedQuery: input.requestedQuery,
@@ -1775,6 +1911,7 @@ async function startDetachedEnrichment(input: {
         resultMeta: failureMeta,
         enrichmentLogs: Array.from(input.persistedEnrichmentLogs.values()),
         bibtexMode: input.bibtexMode,
+        aggregationReport: input.aggregationReport,
         writeCorpusArtifacts: false
       });
       await syncCollectRunContext({
@@ -1927,6 +2064,7 @@ export async function recoverCollectEnrichmentJobs(input: {
         completed: true,
         pdfRecovered: resultMeta?.pdfRecovered ?? 0,
         bibtexEnriched: resultMeta?.bibtexEnriched ?? 0,
+        aggregationReport: extractAggregationReport(resultMeta),
         enrichmentAttempts: countEnrichmentAttempts(currentEnrichmentLogs),
         fallbackSources: Array.from(fallbackSources),
         requestedQuery: job.requestedQuery,
@@ -1948,7 +2086,8 @@ export async function recoverCollectEnrichmentJobs(input: {
         request: job.request,
         resultMeta: completionMeta,
         enrichmentLogs: Array.from(persistedEnrichmentLogs.values()),
-        bibtexMode: job.bibtexMode
+        bibtexMode: job.bibtexMode,
+        aggregationReport: extractAggregationReport(resultMeta)
       });
       await syncCollectRunContext({
         runContextMemory,
@@ -2010,6 +2149,7 @@ export async function recoverCollectEnrichmentJobs(input: {
         completed: true,
         pdfRecovered: resultMeta?.pdfRecovered ?? 0,
         bibtexEnriched: resultMeta?.bibtexEnriched ?? 0,
+        aggregationReport: extractAggregationReport(resultMeta),
         enrichmentAttempts: countEnrichmentAttempts(currentEnrichmentLogs),
         fallbackSources: Array.from(fallbackSources),
         requestedQuery: job.requestedQuery,
@@ -2033,6 +2173,7 @@ export async function recoverCollectEnrichmentJobs(input: {
         resultMeta: failureMeta,
         enrichmentLogs: Array.from(persistedEnrichmentLogs.values()),
         bibtexMode: job.bibtexMode,
+        aggregationReport: extractAggregationReport(resultMeta),
         writeCorpusArtifacts: false
       });
       await syncCollectRunContext({
@@ -2099,6 +2240,7 @@ export async function recoverCollectEnrichmentJobs(input: {
       storedCount: storedRows.size,
       newPaperIds,
       pendingSummary: job.pendingSummary,
+      aggregationReport: extractAggregationReport(resultMeta),
       requestedQuery: job.requestedQuery,
       queryAttempts: job.queryAttempts,
       targetCount: job.paperIds.length,
@@ -2144,15 +2286,4 @@ async function syncCollectRunRecord(input: {
   }
 
   await input.runStore.updateRun(run);
-}
-
-function isSemanticScholarUrl(url: string | undefined): boolean {
-  if (!url) {
-    return false;
-  }
-  try {
-    return new URL(url).hostname.toLowerCase().endsWith("semanticscholar.org");
-  } catch {
-    return false;
-  }
 }
