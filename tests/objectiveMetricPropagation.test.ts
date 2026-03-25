@@ -2428,8 +2428,12 @@ describe("objective metric propagation", () => {
         "experiment/run_experiments_verify_report.json",
         "experiment/run_manifest.json",
         "experiment/experiment_portfolio.json",
+        "experiment/trial_group_matrix.json",
         "experiment/quick_check_metrics.json",
-        "experiment/confirmatory_metrics.json"
+        "experiment/confirmatory_metrics.json",
+        "experiment/trial_group_metrics/primary_standard__hotpotqa_mini.json",
+        "experiment/trial_group_metrics/quick_check__gsm8k_mini.json",
+        "experiment/trial_group_metrics/confirmatory__humaneval_mini.json"
       ])
     );
     const runManifest = JSON.parse(await readFile(path.join(runDir, "run_manifest.json"), "utf8")) as {
@@ -2438,25 +2442,47 @@ describe("objective metric propagation", () => {
       trial_groups: Array<{
         id: string;
         profile?: string;
+        group_kind?: string;
         status: string;
         objective_evaluation?: { status?: string };
       }>;
     };
     expect(runManifest.execution_model).toBe("managed_bundle");
     expect(runManifest.total_expected_trials).toBe(126);
-    expect(runManifest.trial_groups).toEqual([
+    expect(runManifest.trial_groups).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: "primary_standard",
         status: "pass",
         objective_evaluation: expect.objectContaining({ status: "met" })
       }),
       expect.objectContaining({ id: "quick_check", profile: "quick_check", status: "pass" }),
-      expect.objectContaining({ id: "confirmatory", profile: "confirmatory", status: "pass" })
-    ]);
+      expect.objectContaining({ id: "confirmatory", profile: "confirmatory", status: "pass" }),
+      expect.objectContaining({
+        id: "primary_standard__hotpotqa_mini",
+        group_kind: "matrix_slice",
+        status: "pass"
+      }),
+      expect.objectContaining({
+        id: "quick_check__gsm8k_mini",
+        group_kind: "matrix_slice",
+        status: "pass"
+      }),
+      expect.objectContaining({
+        id: "confirmatory__humaneval_mini",
+        group_kind: "matrix_slice",
+        status: "pass"
+      })
+    ]));
     expect(await memory.get("run_experiments.run_manifest")).toMatchObject({
       execution_model: "managed_bundle",
       total_expected_trials: 126
     });
+    expect(await memory.get("run_experiments.matrix_trial_groups")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "primary_standard__hotpotqa_mini", status: "pass" }),
+        expect.objectContaining({ id: "quick_check__gsm8k_mini", status: "pass" })
+      ])
+    );
     expect(await memory.get("run_experiments.triage")).toMatchObject({
       watchdog: {
         metrics_state: "valid"

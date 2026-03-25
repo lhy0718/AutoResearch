@@ -153,7 +153,7 @@ function briefSuggestions(parsed: ParsedInput): SuggestionItem[] {
     {
       key: "brief:start-latest",
       label: "/brief start --latest",
-      description: "Start research from the latest Research Brief",
+      description: "Start research from workspace Brief.md",
       applyValue: "/brief start --latest",
       score: Math.max(0, startScore ?? 0) + 1,
       rank: 0,
@@ -162,7 +162,7 @@ function briefSuggestions(parsed: ParsedInput): SuggestionItem[] {
     {
       key: "brief:start-path",
       label: "/brief start <path>",
-      description: "Start research from a specific brief file",
+      description: "Start research from a specific brief path",
       applyValue: "/brief start ",
       score: Math.max(0, startScore ?? 0),
       rank: 1,

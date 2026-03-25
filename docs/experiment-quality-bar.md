@@ -77,6 +77,7 @@ For an experiment result to count as paper-scale candidate evidence, all of the 
 5. The result analysis identifies the direction of change.
 6. The experiment output is connected to the stated research question.
 7. The run is not merely a smoke test of the workflow itself.
+8. The evidence goes beyond a single thin run by including repeated trials/folds/seeds or explicit robustness evidence such as confidence intervals, stability metrics, or effect estimates.
 
 If any of the above is missing, the result may still be valid runtime output,
 but it must not be treated as paper-worthy experimental evidence.
@@ -132,6 +133,7 @@ but they must not be elevated into experimental evidence sections of a paper.
 - no external task/dataset grounding
 - no link from experiment artifacts to the stated research question
 - the “experiment” is mostly workflow validation
+- the evidence is only a single thin run with no repeated-trial or robustness signal
 - result claims exceed what artifacts support
 - brief-governed minimum evidence is unmet (for example: required repeat count, baseline count, or uncertainty reporting is missing)
 

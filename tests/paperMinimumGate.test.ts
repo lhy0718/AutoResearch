@@ -32,7 +32,7 @@ function minimalReport(): AnalysisReport {
     overview: {
       objective_status: "met",
       objective_summary: "Test objective met",
-      execution_runs: 1
+      execution_runs: 3
     },
     condition_comparisons: [
       {
@@ -61,6 +61,15 @@ function minimalReport(): AnalysisReport {
     ],
     limitations: [],
     warnings: [],
+    statistical_summary: {
+      total_trials: 3,
+      executed_trials: 3,
+      cached_trials: 0,
+      confidence_intervals: [],
+      stability_metrics: [],
+      effect_estimates: [],
+      notes: []
+    },
     shortlisted_designs: [],
     recommendations: []
   } as unknown as AnalysisReport;
@@ -90,14 +99,15 @@ describe("paperMinimumGate", () => {
     expect(result.summary).toContain("passed");
   });
 
-  it("has exactly 7 checks", () => {
+  it("has exactly 8 checks", () => {
     const result = evaluateMinimumGate(fullInput());
-    expect(result.checks).toHaveLength(7);
+    expect(result.checks).toHaveLength(8);
     const checkIds = result.checks.map(c => c.id);
     expect(checkIds).toContain("objective_metric");
     expect(checkIds).toContain("experiment_plan");
     expect(checkIds).toContain("baseline_or_comparator");
     expect(checkIds).toContain("executed_result");
+    expect(checkIds).toContain("evidence_depth");
     expect(checkIds).toContain("result_artifacts");
     expect(checkIds).toContain("claim_evidence_linkage");
     expect(checkIds).toContain("not_smoke_only");
@@ -204,6 +214,26 @@ describe("paperMinimumGate", () => {
     const result = evaluateMinimumGate(input);
 
     expect(result.passed).toBe(false);
+    expect(result.ceiling_type).toBe("research_memo");
+  });
+
+  it("assigns research_memo when evidence stays at a single thin run without robustness support", () => {
+    const input = fullInput();
+    (input.report as AnalysisReport).overview.execution_runs = 1;
+    (input.report as AnalysisReport).statistical_summary = {
+      total_trials: 1,
+      executed_trials: 1,
+      cached_trials: 0,
+      confidence_intervals: [],
+      stability_metrics: [],
+      effect_estimates: [],
+      notes: []
+    } as AnalysisReport["statistical_summary"];
+
+    const result = evaluateMinimumGate(input);
+
+    expect(result.passed).toBe(false);
+    expect(result.blockers).toContain("Evidence goes beyond a single thin run");
     expect(result.ceiling_type).toBe("research_memo");
   });
 

@@ -781,15 +781,30 @@ describe("constraint propagation", () => {
     const portfolio = JSON.parse(await readFile(path.join(runDir, "experiment_portfolio.json"), "utf8")) as {
       execution_model: string;
       total_expected_trials?: number;
-      trial_groups: Array<{ id: string; profile?: string; expected_trials?: number }>;
+      trial_groups: Array<{ id: string; profile?: string; expected_trials?: number; group_kind?: string }>;
     };
     expect(portfolio.execution_model).toBe("managed_bundle");
     expect(portfolio.total_expected_trials).toBe(126);
-    expect(portfolio.trial_groups).toEqual([
+    expect(portfolio.trial_groups).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "primary_standard", profile: "standard", expected_trials: 48 }),
       expect.objectContaining({ id: "quick_check", profile: "quick_check", expected_trials: 6 }),
-      expect.objectContaining({ id: "confirmatory", profile: "confirmatory", expected_trials: 72 })
-    ]);
+      expect.objectContaining({ id: "confirmatory", profile: "confirmatory", expected_trials: 72 }),
+      expect.objectContaining({
+        id: "primary_standard__hotpotqa_mini",
+        group_kind: "matrix_slice",
+        expected_trials: 16
+      }),
+      expect.objectContaining({
+        id: "quick_check__gsm8k_mini",
+        group_kind: "matrix_slice",
+        expected_trials: 2
+      }),
+      expect.objectContaining({
+        id: "confirmatory__humaneval_mini",
+        group_kind: "matrix_slice",
+        expected_trials: 24
+      })
+    ]));
     const publicManifest = JSON.parse(await readFile(buildPublicRunManifestPath(root, run), "utf8")) as {
       sections?: { experiment?: { generated_files?: string[] } };
     };

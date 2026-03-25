@@ -39,12 +39,12 @@ describe("buildContextualGuidance", () => {
     expect(guidance?.items).toEqual([
       {
         label: "new brief",
-        description: "Create a Markdown Research Brief in .autolabos/briefs.",
+        description: "Create or open workspace Brief.md.",
         applyValue: "/new"
       },
       {
         label: "start latest brief",
-        description: "Start the most recent Research Brief file.",
+        description: "Start workspace Brief.md or the latest legacy brief.",
         applyValue: "/brief start --latest"
       }
     ]);

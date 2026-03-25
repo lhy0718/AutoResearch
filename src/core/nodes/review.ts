@@ -74,16 +74,6 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       });
       const packet = buildReviewPacket(report, presence, panel);
 
-      // Build structured pre-draft critique artifact
-      const venueStyle = resolveVenueStyle(deps.config.paper_profile?.target_venue_style);
-      const preDraftCritique = buildPreDraftCritique({
-        venueStyle,
-        scorecard: panel.scorecard,
-        decision: panel.decision,
-        findings: panel.findings,
-        presence
-      });
-
       // --- Layer 1: Deterministic minimum gate ---
       const minimumGate = evaluateMinimumGate({
         presence,
@@ -98,6 +88,17 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         "review/minimum_gate.json",
         `${JSON.stringify(minimumGate, null, 2)}\n`
       );
+
+      // Build structured pre-draft critique artifact
+      const venueStyle = resolveVenueStyle(deps.config.paper_profile?.target_venue_style);
+      const preDraftCritique = buildPreDraftCritique({
+        venueStyle,
+        scorecard: panel.scorecard,
+        decision: panel.decision,
+        findings: panel.findings,
+        presence,
+        minimumGateCeiling: minimumGate.ceiling_type
+      });
 
       // --- Layer 2: LLM paper-quality evaluation ---
       let llmEvalCost = 0;

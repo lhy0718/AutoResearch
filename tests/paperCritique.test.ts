@@ -397,6 +397,15 @@ describe("pre-draft critique", () => {
     }));
     expect(critique.manuscript_type).not.toBe("paper_ready");
   });
+
+  it("caps pre-draft manuscript type to research_memo when the minimum gate ceiling is research_memo", () => {
+    const critique = buildPreDraftCritique(makePreDraftInput({
+      minimumGateCeiling: "research_memo"
+    }));
+
+    expect(critique.manuscript_type).toBe("research_memo");
+    expect(critique.downgrade_reason).toContain("Minimum evidence gate capped");
+  });
 });
 
 // ===========================================================================

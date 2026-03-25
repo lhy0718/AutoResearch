@@ -38,6 +38,9 @@ export interface RunExperimentsExecutionPlan {
       label: string;
       role: "primary" | "supplemental";
       profile?: string;
+      group_kind?: "aggregate" | "matrix_slice";
+      source_trial_group_id?: string;
+      matrix_axes?: Record<string, string>;
       expected_trials?: number;
     }>;
   };
@@ -130,6 +133,9 @@ export function buildRunExperimentsExecutionPlan(input: {
             label: group.label,
             role: group.role,
             profile: group.profile,
+            group_kind: group.group_kind,
+            source_trial_group_id: group.source_trial_group_id,
+            matrix_axes: group.matrix_axes,
             expected_trials: group.expected_trials
           }))
         }

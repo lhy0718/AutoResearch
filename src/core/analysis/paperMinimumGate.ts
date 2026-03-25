@@ -5,8 +5,9 @@
  *   "Is this branch categorically below the minimum evidence bar?"
  *
  * It checks structural prerequisites only — task/dataset grounding,
- * objective metric, baseline/comparator, executed comparison, key artifact
- * parseability, claim→evidence linkage, and smoke/system-only guard.
+ * objective metric, baseline/comparator, executed comparison, minimum
+ * robustness depth, key artifact parseability, claim→evidence linkage,
+ * and smoke/system-only guard.
  *
  * It does NOT assess quality, significance, writing, or venue fit.
  * Those judgments belong to the LLM-based evaluator (Layer 2).
@@ -107,7 +108,16 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
       : "No metrics.json — no executed result evidence"
   });
 
-  // 5. Key result artifacts exist and are parseable
+  // 5. Evidence goes beyond a single thin run
+  const evidenceDepth = deriveEvidenceDepth(input.report);
+  checks.push({
+    id: "evidence_depth",
+    label: "Evidence goes beyond a single thin run",
+    passed: evidenceDepth.passed,
+    detail: evidenceDepth.detail
+  });
+
+  // 6. Key result artifacts exist and are parseable
   const hasResultTable = input.presence.resultTablePresent;
   checks.push({
     id: "result_artifacts",
@@ -118,7 +128,7 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
       : "No result_table.json"
   });
 
-  // 6. Claim→evidence linkage support
+  // 7. Claim→evidence linkage support
   const hasClaimEvidence = input.presence.evidenceStorePresent &&
     (input.report.paper_claims?.length > 0);
   const claimsWithEvidence = input.report.paper_claims?.filter(
@@ -135,7 +145,7 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
         : "No paper claims generated"
   });
 
-  // 7. Not merely system/smoke validation
+  // 8. Not merely system/smoke validation
   const hasHypotheses = input.presence.hypothesesPresent;
   const hasMultipleFindings = (input.report.primary_findings?.length ?? 0) >= 1;
   const isSubstantive = hasHypotheses && hasMultipleFindings && hasObjective;
@@ -211,4 +221,27 @@ function moreRestrictiveCeiling(
     blocked_for_paper_scale: 3
   };
   return ranking[left] >= ranking[right as MinimumGateCeiling] ? left : (right as MinimumGateCeiling);
+}
+
+function deriveEvidenceDepth(report: AnalysisReport): { passed: boolean; detail: string } {
+  const totalTrials =
+    report.statistical_summary?.total_trials ??
+    report.statistical_summary?.executed_trials ??
+    report.overview.execution_runs;
+  const executedTrials =
+    report.statistical_summary?.executed_trials ??
+    report.overview.execution_runs;
+  const confidenceIntervalCount = report.statistical_summary?.confidence_intervals?.length ?? 0;
+  const stabilityMetricCount = report.statistical_summary?.stability_metrics?.length ?? 0;
+  const effectEstimateCount = report.statistical_summary?.effect_estimates?.length ?? 0;
+  const hasRobustnessEvidence =
+    (typeof totalTrials === "number" && totalTrials > 1) ||
+    confidenceIntervalCount > 0 ||
+    stabilityMetricCount > 0 ||
+    effectEstimateCount > 0;
+
+  return {
+    passed: hasRobustnessEvidence,
+    detail: `Observed total_trials=${totalTrials ?? "unknown"}, executed_trials=${executedTrials ?? "unknown"}, confidence_intervals=${confidenceIntervalCount}, stability_metrics=${stabilityMetricCount}, effect_estimates=${effectEstimateCount}.`
+  };
 }

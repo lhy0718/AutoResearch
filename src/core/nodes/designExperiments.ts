@@ -65,6 +65,11 @@ const MANAGED_EXECUTABLE_DESIGN = {
     dataset_count: 3,
     total_trials: 72
   },
+  supported_dataset_ids: [
+    "hotpotqa_mini",
+    "gsm8k_mini",
+    "humaneval_mini"
+  ],
   supported_benchmarks: [
     "hotpotqa_mini (2 tasks in standard, 1 task in quick_check)",
     "gsm8k_mini (2 tasks in standard, 1 task in quick_check)",
@@ -269,7 +274,7 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
                 label: "Primary standard managed run",
                 profile: "standard",
                 expected_trials: MANAGED_EXECUTABLE_DESIGN.standard_profile.total_trials,
-                dataset_scope: [...MANAGED_EXECUTABLE_DESIGN.supported_benchmarks],
+                dataset_scope: [...MANAGED_EXECUTABLE_DESIGN.supported_dataset_ids],
                 metrics: [...MANAGED_EXECUTABLE_DESIGN.supported_metrics],
                 baselines: [...MANAGED_EXECUTABLE_DESIGN.supported_baselines],
                 notes: [
@@ -284,7 +289,7 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
                   label: "Quick-check managed replication",
                   profile: "quick_check",
                   expected_trials: MANAGED_EXECUTABLE_DESIGN.quick_check_profile.total_trials,
-                  dataset_scope: [...MANAGED_EXECUTABLE_DESIGN.supported_benchmarks],
+                  dataset_scope: [...MANAGED_EXECUTABLE_DESIGN.supported_dataset_ids],
                   metrics: [...MANAGED_EXECUTABLE_DESIGN.supported_metrics],
                   baselines: [...MANAGED_EXECUTABLE_DESIGN.supported_baselines],
                   notes: [
@@ -297,7 +302,7 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
                   label: "Confirmatory extension",
                   profile: "confirmatory",
                   expected_trials: MANAGED_EXECUTABLE_DESIGN.confirmatory_profile.total_trials,
-                  dataset_scope: panelResult.selected.datasets,
+                  dataset_scope: [...MANAGED_EXECUTABLE_DESIGN.supported_dataset_ids],
                   metrics: panelResult.selected.metrics,
                   baselines: panelResult.selected.baselines,
                   notes: [

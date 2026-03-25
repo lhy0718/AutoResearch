@@ -281,11 +281,13 @@ Stops on: explicit user stop, resource limits, stagnation detection, or catastro
 Every run starts from a structured Markdown brief that defines scope, constraints, and governance rules.
 
 ```bash
-/new                        # Create a brief
-/brief start --latest       # Validate, snapshot, extract, launch
+/new                        # Create or open Brief.md
+/brief start --latest       # Validate workspace Brief.md, snapshot, extract, launch
 ```
 
 Briefs carry **core** sections (topic, objective metric) and **governance** sections (target comparison, minimum evidence, disallowed shortcuts, paper ceiling). AutoLabOS grades brief completeness and warns when governance coverage is insufficient for paper-scale work.
+
+By default, `/new` and `/brief start --latest` use the workspace-root `Brief.md`. When a run starts, AutoLabOS snapshots that source brief into `.autolabos/runs/<run-id>/brief/source_brief.md` so run provenance remains auditable even if `Brief.md` changes later.
 
 <details>
 <summary><strong>Brief sections and grading</strong></summary>
@@ -525,8 +527,8 @@ Every internal automation has an explicit bound.
 | Command | Description |
 |---|---|
 | `/help` | Show command list |
-| `/new` | Create a research brief file |
-| `/brief start <path\|--latest>` | Start research from a brief file |
+| `/new` | Create or open workspace `Brief.md` |
+| `/brief start <path\|--latest>` | Start research from workspace `Brief.md` or a brief path |
 | `/doctor` | Environment + workspace diagnostics |
 | `/runs [query]` | List or search runs |
 | `/run <run>` | Select run |

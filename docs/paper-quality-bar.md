@@ -128,6 +128,7 @@ For a manuscript to be marked `paper_ready=true`, all of the following should ho
 8. Limitations or failure modes are stated.
 9. The paper does not center internal workflow validation as the main scientific contribution.
 10. Any brief-governed minimum evidence requirement (for example repeated runs, baseline count, or uncertainty reporting) has been satisfied.
+11. The experiment evidence is not just a single thin run; it includes repeated trials or explicit robustness/uncertainty reporting.
 
 ## 6) Automatic downgrade / block conditions
 The manuscript must not be labeled `paper_ready` when any of the following is true:
@@ -137,6 +138,7 @@ The manuscript must not be labeled `paper_ready` when any of the following is tr
 - claims exceed evidence
 - related work is too shallow to support positioning
 - the main contribution is really pipeline validation rather than research on an external task
+- the evidence is only a single thin run with no repeated-trial or robustness support
 - the manuscript is mostly generated filler around weak artifacts
 - a governed brief explicitly required stronger evidence than the run actually produced
 

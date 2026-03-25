@@ -54,12 +54,12 @@ export function buildContextualGuidance(input: ContextualGuidanceInput): Context
       items: [
         {
           label: "new brief",
-          description: "Create a Markdown Research Brief in .autolabos/briefs.",
+          description: "Create or open workspace Brief.md.",
           applyValue: "/new"
         },
         {
           label: "start latest brief",
-          description: "Start the most recent Research Brief file.",
+          description: "Start workspace Brief.md or the latest legacy brief.",
           applyValue: "/brief start --latest"
         }
       ]
@@ -78,12 +78,12 @@ export function buildContextualGuidance(input: ContextualGuidanceInput): Context
       items: [
         {
           label: "new brief",
-          description: "Create the next Research Brief.",
+          description: "Create or open the next workspace Brief.md.",
           applyValue: "/new"
         },
         {
           label: "start latest brief",
-          description: "Start the most recent Research Brief.",
+          description: "Start workspace Brief.md or the latest legacy brief.",
           applyValue: "/brief start --latest"
         }
       ]

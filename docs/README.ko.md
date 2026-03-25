@@ -281,11 +281,13 @@ AutoLabOS는 어떤 모드에서도 9노드 워크플로와 모든 안전 게이
 모든 실행은 범위, 제약, 거버넌스 규칙을 정의하는 구조화된 Markdown 브리프로 시작합니다.
 
 ```bash
-/new                        # 브리프 생성
-/brief start --latest       # 검증, 스냅샷, 추출, 실행 시작
+/new                        # Brief.md 생성 또는 열기
+/brief start --latest       # 작업공간 Brief.md 검증, 스냅샷, 추출, 실행 시작
 ```
 
 브리프에는 **핵심** 섹션(주제, 객관적 지표)과 **거버넌스** 섹션(목표 비교, 최소 증거, 금지된 지름길, 논문 상한)이 함께 들어갑니다. AutoLabOS는 브리프 완성도를 평가하고, 논문 규모의 작업을 수행하기에 거버넌스 범위가 부족하면 경고를 표시합니다.
+
+기본적으로 `/new`와 `/brief start --latest`는 작업공간 루트의 `Brief.md`를 사용합니다. 실행이 시작되면 해당 브리프는 `.autolabos/runs/<run-id>/brief/source_brief.md`에 스냅샷되어, 나중에 `Brief.md`가 바뀌어도 실행 provenance를 추적할 수 있습니다.
 
 <details>
 <summary><strong>브리프 섹션과 등급</strong></summary>
@@ -523,8 +525,8 @@ flowchart LR
 | 명령 | 설명 |
 |---|---|
 | `/help` | 명령 목록 표시 |
-| `/new` | 연구 브리프 파일 생성 |
-| `/brief start <path\|--latest>` | 브리프 파일에서 연구 시작 |
+| `/new` | 작업공간 `Brief.md` 생성 또는 열기 |
+| `/brief start <path\|--latest>` | 작업공간 `Brief.md` 또는 지정 경로 브리프에서 연구 시작 |
 | `/doctor` | 환경 + 워크스페이스 진단 |
 | `/runs [query]` | 실행 목록 조회 또는 검색 |
 | `/run <run>` | 실행 선택 |

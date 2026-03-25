@@ -17,8 +17,8 @@ export function needsArg(cmd: SlashCommandDef): boolean {
 
 export const SLASH_COMMANDS: SlashCommandDef[] = [
   { name: "help", usage: "/help", description: "Show the minimal workflow", category: "system", visible: true },
-  { name: "new", usage: "/new", description: "Create a Markdown Research Brief", category: "workflow", visible: true },
-  { name: "brief", usage: "/brief start <path|--latest>", description: "Start research from a brief file", category: "workflow", argHint: "start <path|--latest>", visible: true },
+  { name: "new", usage: "/new", description: "Create or open workspace Brief.md", category: "workflow", visible: true },
+  { name: "brief", usage: "/brief start <path|--latest>", description: "Start research from Brief.md or a brief path", category: "workflow", argHint: "start <path|--latest>", visible: true },
   { name: "doctor", usage: "/doctor", description: "Run environment checks", category: "system" },
   { name: "runs", usage: "/runs", description: "List and search runs", category: "run" },
   { name: "run", usage: "/run <run>", description: "Select a run", category: "run", argHint: "<run>" },

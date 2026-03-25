@@ -6,6 +6,7 @@ import { ExtractedRunBrief, MarkdownRunBriefSections, parseMarkdownRunBriefSecti
 import type { ManuscriptFormatTarget } from "../../types.js";
 
 export const RESEARCH_BRIEF_DIR = ".autolabos/briefs";
+export const WORKSPACE_RESEARCH_BRIEF_FILENAME = "Brief.md";
 
 export interface BriefValidationResult {
   errors: string[];
@@ -274,21 +275,24 @@ export function buildResearchBriefTemplate(): string {
   ].join("\n");
 }
 
-export async function createResearchBriefFile(workspaceRoot: string, seedTopic?: string): Promise<string> {
-  const dirPath = path.join(workspaceRoot, RESEARCH_BRIEF_DIR);
-  await ensureDir(dirPath);
-  const baseName = `${timestampForFileName(new Date())}-${slugify(seedTopic || "research-brief")}`;
-  let filePath = path.join(dirPath, `${baseName}.md`);
-  let counter = 2;
-  while (await fileExists(filePath)) {
-    filePath = path.join(dirPath, `${baseName}-${counter}.md`);
-    counter += 1;
+export function getWorkspaceResearchBriefPath(workspaceRoot: string): string {
+  return path.join(workspaceRoot, WORKSPACE_RESEARCH_BRIEF_FILENAME);
+}
+
+export async function createResearchBriefFile(workspaceRoot: string, _seedTopic?: string): Promise<string> {
+  const filePath = getWorkspaceResearchBriefPath(workspaceRoot);
+  if (!(await fileExists(filePath))) {
+    await fs.writeFile(filePath, `${buildResearchBriefTemplate()}\n`, "utf8");
   }
-  await fs.writeFile(filePath, `${buildResearchBriefTemplate()}\n`, "utf8");
   return filePath;
 }
 
 export async function findLatestResearchBrief(workspaceRoot: string): Promise<string | undefined> {
+  const workspaceBriefPath = getWorkspaceResearchBriefPath(workspaceRoot);
+  if (await fileExists(workspaceBriefPath)) {
+    return workspaceBriefPath;
+  }
+
   const dirPath = path.join(workspaceRoot, RESEARCH_BRIEF_DIR);
   try {
     const entries = await fs.readdir(dirPath, { withFileTypes: true });
@@ -310,6 +314,9 @@ export function resolveResearchBriefPath(workspaceRoot: string, inputPath: strin
     return inputPath;
   }
   if (!inputPath.includes("/") && !inputPath.includes("\\")) {
+    if (inputPath.toLowerCase() === WORKSPACE_RESEARCH_BRIEF_FILENAME.toLowerCase()) {
+      return getWorkspaceResearchBriefPath(workspaceRoot);
+    }
     return path.join(workspaceRoot, RESEARCH_BRIEF_DIR, inputPath);
   }
   const workspaceRelative = path.join(workspaceRoot, inputPath);
@@ -530,24 +537,6 @@ export function summarizeBriefValidation(
     lines.push(`Objective: ${extracted.objectiveMetric}`);
   }
   return lines;
-}
-
-function timestampForFileName(value: Date): string {
-  const year = value.getFullYear();
-  const month = String(value.getMonth() + 1).padStart(2, "0");
-  const day = String(value.getDate()).padStart(2, "0");
-  const hour = String(value.getHours()).padStart(2, "0");
-  const minute = String(value.getMinutes()).padStart(2, "0");
-  const second = String(value.getSeconds()).padStart(2, "0");
-  return `${year}${month}${day}-${hour}${minute}${second}`;
-}
-
-function slugify(value: string): string {
-  const slug = value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return slug || "research-brief";
 }
 
 /**

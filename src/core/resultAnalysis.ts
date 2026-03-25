@@ -100,6 +100,9 @@ export interface AnalysisExperimentPortfolioTrialGroup {
   label: string;
   role: "primary" | "supplemental";
   profile?: string;
+  group_kind?: "aggregate" | "matrix_slice";
+  source_trial_group_id?: string;
+  matrix_axes?: Record<string, string>;
   status?: "pass" | "fail" | "skipped";
   expected_trials?: number;
   executed_trials?: number;
@@ -746,7 +749,7 @@ function buildPrimaryFindings(args: {
       `Execution portfolio (${args.experimentPortfolio?.execution_model}) tracked ${
         args.experimentPortfolio?.trial_groups.length || 0
       } trial group(s): ${args.experimentPortfolio?.trial_groups
-        .map((group) => `${group.profile || group.id} ${group.status || "planned"}`)
+        .map((group) => `${group.profile || group.label} ${group.status || "planned"}`)
         .join(", ")}.`
     );
   }
@@ -907,7 +910,12 @@ function buildSupplementalRuns(args: {
 }): AnalysisSupplementalRun[] {
   const portfolioGroupsByProfile = new Map(
     (args.runManifest?.trial_groups || [])
-      .filter((group) => group.role === "supplemental" && typeof group.profile === "string")
+      .filter(
+        (group) =>
+          group.role === "supplemental"
+          && group.group_kind !== "matrix_slice"
+          && typeof group.profile === "string"
+      )
       .map((group) => [group.profile as string, group])
   );
   return args.runs
@@ -979,6 +987,9 @@ function buildExperimentPortfolioSummary(
         label: group.label,
         role: group.role,
         profile: group.profile,
+        group_kind: group.group_kind,
+        source_trial_group_id: group.source_trial_group_id,
+        matrix_axes: group.matrix_axes,
         status: execution?.status,
         expected_trials: execution?.expected_trials ?? group.expected_trials,
         executed_trials: execution?.sampling_profile?.executed_trials,

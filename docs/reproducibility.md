@@ -8,6 +8,8 @@ Reproducibility claims must be backed by concrete artifacts.
 - Deferred background recovery record when used (`collect_background_job.json`)
 - Planned portfolio / trial-group structure (`experiment_portfolio.json`)
 - Run manifest (`run_manifest.json`)
+- Matrix trial-group index when managed bundle execution materializes dataset/profile slices (`trial_group_matrix.json`)
+- Per-slice managed trial-group metrics when present (`trial_group_metrics/*.json`)
 - Raw or summarized metrics (`metrics.json`, supplemental metrics)
 - Objective evaluation (`objective_evaluation.json`)
 - Result synthesis (`result_analysis.json`, optional synthesis artifact)
@@ -22,7 +24,7 @@ For each run, preserve:
 - workflow node progression (`runs.json`) including current node/status and aggregate usage when available
 - append-only runtime events (`events.jsonl`)
 - key gate/recovery artifacts (`transition_recommendation.json`, `collect_background_job.json` when present)
-- key generated artifacts in `.autolabos/runs/<run_id>/...`
+- key generated artifacts in `.autolabos/runs/<run_id>/...`, including trial-group matrix artifacts when present
 
 ## 3) Reproducibility claim language
 

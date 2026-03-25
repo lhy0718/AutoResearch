@@ -214,6 +214,13 @@ export async function validateRunArtifactStructure(
     });
     if (runManifest) {
       validateRunManifestPayload(runManifest, runManifestPath, runId, issues);
+      await validateRunManifestArtifactPaths({
+        runManifest,
+        runManifestPath,
+        runDir,
+        runId,
+        issues
+      });
     }
   }
 
@@ -607,6 +614,38 @@ function validateRunManifestPayload(
         message: `run_manifest.json trial_groups[${index}] must include status.`,
         filePath,
         runId
+      });
+    }
+  }
+}
+
+async function validateRunManifestArtifactPaths(input: {
+  runManifest: Record<string, unknown>;
+  runManifestPath: string;
+  runDir: string;
+  runId: string;
+  issues: HarnessValidationIssue[];
+}): Promise<void> {
+  const trialGroups = asObjectArray(input.runManifest.trial_groups);
+  for (let index = 0; index < trialGroups.length; index += 1) {
+    const metricsPath = asString(trialGroups[index]?.metrics_path);
+    if (!metricsPath) {
+      continue;
+    }
+    const resolvedPath = path.isAbsolute(metricsPath)
+      ? metricsPath
+      : path.join(process.cwd(), metricsPath);
+    if (!resolvedPath.startsWith(process.cwd())) {
+      continue;
+    }
+    if (!(await fileExists(resolvedPath))) {
+      input.issues.push({
+        code: "run_manifest_trial_group_metrics_missing",
+        message:
+          `run_manifest.json trial_groups[${index}] references metrics_path ${metricsPath}, ` +
+          "but that artifact does not exist.",
+        filePath: input.runManifestPath,
+        runId: input.runId
       });
     }
   }

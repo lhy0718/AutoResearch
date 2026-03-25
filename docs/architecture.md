@@ -42,6 +42,7 @@ Harness and runtime work must preserve both TUI and web behaviors unless a chang
 - Public mirrored outputs: `outputs/` (single latest-run public bundle)
 - Checkpoints and run context are persisted under each run directory.
 - Design/execution experiment contracts live in `experiment_portfolio.json` and `run_manifest.json`.
+- Managed-bundle matrix slices, when materialized, are persisted as `trial_group_matrix.json` plus per-slice `trial_group_metrics/*.json`.
 - Transition/gate decisions remain inspectable through artifacts such as `transition_recommendation.json`, `analysis/evidence_scale_assessment.json`, `review/*`, and `paper/write_paper_eligibility.json`.
 
 Quality checks should be deterministic and file-based whenever possible.

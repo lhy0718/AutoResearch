@@ -72,6 +72,7 @@ import { HumanInterventionRequest } from "../core/humanIntervention.js";
 import {
   createResearchBriefFile,
   findLatestResearchBrief,
+  getWorkspaceResearchBriefPath,
   parseManuscriptFormatFromBrief,
   resolveResearchBriefPath,
   snapshotResearchBriefToRun,
@@ -2071,12 +2072,15 @@ export class TerminalApp {
   }
 
   private async handleNewRun(): Promise<void> {
-    const filePath = await createResearchBriefFile(process.cwd());
-    this.pushLog(`Created research brief: ${filePath}`);
+    const workspaceRoot = process.cwd();
+    const filePath = getWorkspaceResearchBriefPath(workspaceRoot);
+    const existed = await fileExists(filePath);
+    await createResearchBriefFile(workspaceRoot);
+    this.pushLog(`${existed ? "Using existing" : "Created"} research brief: ${filePath}`);
 
     const openedInEditor = await this.openResearchBriefInEditor(filePath);
     if (!openedInEditor) {
-      this.pushLog("Edit the brief, then start it with /brief start --latest or /brief start <path>.");
+      this.pushLog("Edit Brief.md, then start it with /brief start --latest or /brief start <path>.");
       return;
     }
 
@@ -2093,7 +2097,7 @@ export class TerminalApp {
     const validation = await validateResearchBriefFile(filePath);
     if (validation.errors.length > 0) {
       this.pushLog(
-        "Draft saved. Fill the remaining paper-scale sections, then start it with /brief start --latest or /brief start <path>."
+        "Draft saved in Brief.md. Fill the remaining paper-scale sections, then start it with /brief start --latest or /brief start <path>."
       );
       return;
     }
@@ -2204,7 +2208,7 @@ export class TerminalApp {
         ? await findLatestResearchBrief(process.cwd())
         : resolveResearchBriefPath(process.cwd(), briefArg);
     if (!briefPath) {
-      this.pushLog("No research brief file was found. Use /new to create one first.");
+      this.pushLog("No research brief file was found. Use /new to create Brief.md first.");
       return { ok: false, reason: "research brief not found" };
     }
     if (!(await fileExists(briefPath))) {

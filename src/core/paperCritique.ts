@@ -4,6 +4,7 @@
  */
 
 import type { ReviewFinding, ReviewScorecard, ReviewDecision, ReviewArtifactPresence } from "./reviewSystem.js";
+import type { MinimumGateCeiling } from "./analysis/paperMinimumGate.js";
 import type { TransitionAction, GraphNodeId } from "../types.js";
 
 // ---------------------------------------------------------------------------
@@ -335,6 +336,7 @@ export interface PreDraftCritiqueInput {
   decision: ReviewDecision;
   findings: ReviewFinding[];
   presence: ReviewArtifactPresence;
+  minimumGateCeiling?: MinimumGateCeiling;
 }
 
 export function buildPreDraftCritique(input: PreDraftCritiqueInput): PaperCritique {
@@ -351,7 +353,11 @@ export function buildPreDraftCritique(input: PreDraftCritiqueInput): PaperCritiq
     : `Evidence package appears compatible with ${venueProfile.label} style.`;
 
   // Manuscript type classification
-  const manuscriptType = classifyManuscriptType(categoryScores, blockingIssues, input.presence);
+  const classifiedManuscriptType = classifyManuscriptType(categoryScores, blockingIssues, input.presence);
+  const manuscriptType = applyMinimumGateCeiling(
+    classifiedManuscriptType,
+    input.minimumGateCeiling
+  );
 
   // Upstream deficit flags
   const needsExperiments = blockingIssues.some(
@@ -384,9 +390,11 @@ export function buildPreDraftCritique(input: PreDraftCritiqueInput): PaperCritiq
     non_blocking_issues: nonBlockingIssues,
     transition_recommendation: overallDecision,
     paper_readiness_state: manuscriptType,
-    downgrade_reason: manuscriptType !== "paper_ready" && manuscriptType !== "paper_scale_candidate"
-      ? `Evidence package classified as ${manuscriptType}.`
-      : null,
+    downgrade_reason: buildPreDraftDowngradeReason(
+      classifiedManuscriptType,
+      manuscriptType,
+      input.minimumGateCeiling
+    ),
     manuscript_claim_risk_summary: claimRisk,
     needs_additional_experiments: needsExperiments,
     needs_additional_statistics: needsStatistics,
@@ -757,6 +765,40 @@ function classifyManuscriptType(
   return "system_validation_note";
 }
 
+function applyMinimumGateCeiling(
+  manuscriptType: ManuscriptType,
+  minimumGateCeiling?: MinimumGateCeiling
+): ManuscriptType {
+  if (!minimumGateCeiling || minimumGateCeiling === "unrestricted") {
+    return manuscriptType;
+  }
+
+  const gateCap = mapMinimumGateCeilingToManuscriptType(minimumGateCeiling);
+  const ranking: Record<ManuscriptType, number> = {
+    paper_ready: 0,
+    paper_scale_candidate: 1,
+    research_memo: 2,
+    system_validation_note: 3,
+    blocked_for_paper_scale: 4
+  };
+
+  return ranking[manuscriptType] >= ranking[gateCap] ? manuscriptType : gateCap;
+}
+
+function mapMinimumGateCeilingToManuscriptType(ceiling: MinimumGateCeiling): ManuscriptType {
+  switch (ceiling) {
+    case "blocked_for_paper_scale":
+      return "blocked_for_paper_scale";
+    case "system_validation_note":
+      return "system_validation_note";
+    case "research_memo":
+      return "research_memo";
+    case "unrestricted":
+    default:
+      return "paper_ready";
+  }
+}
+
 function classifyPostDraftManuscriptType(
   input: PostDraftCritiqueInput,
   blockingIssues: CritiqueIssue[]
@@ -786,6 +828,26 @@ function classifyPostDraftManuscriptType(
   }
 
   return "research_memo";
+}
+
+function buildPreDraftDowngradeReason(
+  classifiedManuscriptType: ManuscriptType,
+  finalManuscriptType: ManuscriptType,
+  minimumGateCeiling?: MinimumGateCeiling
+): string | null {
+  if (finalManuscriptType === "paper_ready" || finalManuscriptType === "paper_scale_candidate") {
+    return null;
+  }
+
+  if (
+    minimumGateCeiling &&
+    minimumGateCeiling !== "unrestricted" &&
+    classifiedManuscriptType !== finalManuscriptType
+  ) {
+    return `Minimum evidence gate capped the manuscript at ${finalManuscriptType} (ceiling: ${minimumGateCeiling}).`;
+  }
+
+  return `Evidence package classified as ${finalManuscriptType}.`;
 }
 
 function computePreDraftDecision(

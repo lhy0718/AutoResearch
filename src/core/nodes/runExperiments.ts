@@ -26,8 +26,10 @@ import { RunVerifierReport, RunVerifierTrigger } from "../experiments/runVerifie
 import { FailureMemory, buildErrorFingerprint } from "../experiments/failureMemory.js";
 import {
   buildExperimentRunManifest,
+  BuildExperimentRunManifestTrialGroupExecution,
   buildFallbackExperimentPortfolio,
   ExperimentPortfolio,
+  ExperimentPortfolioTrialGroup,
   ExperimentPortfolioSamplingProfile
 } from "../experiments/experimentPortfolio.js";
 import {
@@ -75,6 +77,24 @@ interface SupplementalExpectationArtifact {
   applicable: boolean;
   profiles: string[];
   reason?: string;
+}
+
+interface ManagedMatrixSliceArtifact {
+  version: 1;
+  run_id: string;
+  trial_group_id: string;
+  source_trial_group_id: string;
+  generated_at: string;
+  execution_model: "managed_bundle";
+  runner_profile?: string;
+  dataset: string;
+  source_metrics_path?: string;
+  command?: string;
+  cwd?: string;
+  sampling_profile?: ExperimentPortfolioSamplingProfile;
+  condition_metrics: Record<string, unknown>;
+  comparison: Record<string, unknown>;
+  summary: string;
 }
 
 export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHandler {
@@ -841,6 +861,16 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
       await runContext.put("run_experiments.supplemental_runs", supplementalRuns.records);
       await runContext.put("run_experiments.supplemental_summary", supplementalRuns.summary || null);
       await runContext.put("run_experiments.supplemental_expectation", supplementalRuns.expectation || null);
+      const matrixTrialGroups = await materializeManagedMatrixTrialGroupArtifacts({
+        run,
+        portfolio: experimentPortfolio,
+        primaryCommand,
+        primaryCwd: resolved.cwd,
+        primaryMetricsPath: resolved.metricsPath,
+        primaryMetrics: parsedMetrics,
+        primarySummary: objectiveEvaluation.summary,
+        supplementalRuns: supplementalRuns.records
+      });
       const runManifest = buildExperimentRunManifest({
         runId: run.id,
         portfolio: experimentPortfolio,
@@ -851,9 +881,11 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         primaryMetrics: parsedMetrics,
         objectiveEvaluation,
         comparisonMode: comparisonContract?.comparison_mode,
-        supplementalRuns: supplementalRuns.records
+        supplementalRuns: supplementalRuns.records,
+        executedTrialGroups: matrixTrialGroups
       });
       await runContext.put("run_experiments.portfolio", runManifest.portfolio);
+      await runContext.put("run_experiments.matrix_trial_groups", matrixTrialGroups);
       await runContext.put("run_experiments.run_manifest", runManifest);
       await writeRunArtifact(
         run,
@@ -865,13 +897,19 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         "run_experiments_supplemental_expectation.json",
         JSON.stringify(supplementalRuns.expectation || null, null, 2)
       );
+      await writeRunArtifact(
+        run,
+        "run_experiments_matrix_trial_groups.json",
+        JSON.stringify(matrixTrialGroups, null, 2)
+      );
       await writeRunArtifact(run, "run_manifest.json", JSON.stringify(runManifest, null, 2));
       const publicOutputs = await publishRunExperimentOutputs({
         workspaceRoot: process.cwd(),
         run,
         runContext,
         metricsPath: resolved.metricsPath,
-        supplementalPlan: managedSupplementalPlan
+        supplementalPlan: managedSupplementalPlan,
+        matrixTrialGroups
       });
 
       deps.eventStream.emit({
@@ -1583,6 +1621,7 @@ async function publishRunExperimentOutputs(input: {
   runContext: RunContextMemory;
   metricsPath: string;
   supplementalPlan?: ManagedSupplementalPlan;
+  matrixTrialGroups?: BuildExperimentRunManifestTrialGroupExecution[];
 }): Promise<PublishPublicRunOutputsResult> {
   const runDir = path.join(input.workspaceRoot, ".autolabos", "runs", input.run.id);
   const files: Array<{
@@ -1614,6 +1653,11 @@ async function publishRunExperimentOutputs(input: {
       sourcePath: path.join(runDir, "experiment_portfolio.json"),
       targetRelativePath: "experiment_portfolio.json",
       optional: true
+    },
+    {
+      sourcePath: path.join(runDir, "trial_group_matrix.json"),
+      targetRelativePath: "trial_group_matrix.json",
+      optional: true
     }
   ];
   if (input.supplementalPlan) {
@@ -1630,6 +1674,18 @@ async function publishRunExperimentOutputs(input: {
       optional: true
     });
   }
+  if (input.matrixTrialGroups?.length) {
+    for (const group of input.matrixTrialGroups) {
+      if (!group.metrics_path || !group.metrics_path.startsWith(path.join(".autolabos", "runs", input.run.id, "trial_group_metrics"))) {
+        continue;
+      }
+      files.push({
+        sourcePath: group.metrics_path,
+        targetRelativePath: path.join("trial_group_metrics", path.basename(group.metrics_path)),
+        optional: true
+      });
+    }
+  }
 
   return publishPublicRunOutputs({
     workspaceRoot: input.workspaceRoot,
@@ -1638,6 +1694,324 @@ async function publishRunExperimentOutputs(input: {
     section: "experiment",
     files
   });
+}
+
+async function materializeManagedMatrixTrialGroupArtifacts(input: {
+  run: Parameters<typeof writeRunArtifact>[0];
+  portfolio: ExperimentPortfolio;
+  primaryCommand: string;
+  primaryCwd?: string;
+  primaryMetricsPath: string;
+  primaryMetrics: Record<string, unknown>;
+  primarySummary: string;
+  supplementalRuns: SupplementalRunRecord[];
+}): Promise<BuildExperimentRunManifestTrialGroupExecution[]> {
+  if (input.portfolio.execution_model !== "managed_bundle") {
+    return [];
+  }
+
+  const matrixGroups = input.portfolio.trial_groups.filter((group) => group.group_kind === "matrix_slice");
+  if (matrixGroups.length === 0) {
+    return [];
+  }
+
+  const aggregateGroups = input.portfolio.trial_groups.filter((group) => group.group_kind !== "matrix_slice");
+  const sourceExecutions = new Map<string, {
+    group: ExperimentPortfolioTrialGroup;
+    status: "pass" | "fail" | "skipped";
+    command?: string;
+    cwd?: string;
+    metricsPath?: string;
+    metrics?: Record<string, unknown>;
+    summary: string;
+  }>();
+  const primaryGroup =
+    aggregateGroups.find((group) => group.id === input.portfolio.primary_trial_group_id) ||
+    aggregateGroups.find((group) => group.role === "primary");
+  if (primaryGroup) {
+    sourceExecutions.set(primaryGroup.id, {
+      group: primaryGroup,
+      status: "pass",
+      command: input.primaryCommand,
+      cwd: input.primaryCwd,
+      metricsPath: input.primaryMetricsPath,
+      metrics: input.primaryMetrics,
+      summary: input.primarySummary
+    });
+  }
+
+  for (const record of input.supplementalRuns) {
+    const sourceGroup = aggregateGroups.find(
+      (group) => group.group_kind !== "matrix_slice" && group.profile === record.profile
+    );
+    if (!sourceGroup) {
+      continue;
+    }
+    sourceExecutions.set(sourceGroup.id, {
+      group: sourceGroup,
+      status: record.status,
+      command: record.command,
+      cwd: record.cwd,
+      metricsPath: record.metrics_path,
+      metrics: record.status === "pass"
+        ? await readMetricsObject(record.metrics_path, process.cwd())
+        : undefined,
+      summary: record.summary
+    });
+  }
+
+  const records: BuildExperimentRunManifestTrialGroupExecution[] = [];
+  const matrixSummary: Array<Record<string, unknown>> = [];
+  for (const group of matrixGroups) {
+    const sourceId = group.source_trial_group_id;
+    const dataset = group.matrix_axes?.dataset || group.dataset_scope[0];
+    const sourceExecution = sourceId ? sourceExecutions.get(sourceId) : undefined;
+    if (!sourceId || !dataset || !sourceExecution) {
+      const record = {
+        id: group.id,
+        status: "skipped" as const,
+        summary: "Matrix slice could not be materialized because the source aggregate group was unavailable."
+      };
+      records.push(record);
+      matrixSummary.push({
+        ...record,
+        group_kind: group.group_kind,
+        source_trial_group_id: sourceId,
+        matrix_axes: group.matrix_axes,
+        dataset_scope: group.dataset_scope
+      });
+      continue;
+    }
+
+    if (sourceExecution.status !== "pass" || !sourceExecution.metrics || !sourceExecution.metricsPath) {
+      const record = {
+        id: group.id,
+        status: sourceExecution.status,
+        command: sourceExecution.command,
+        cwd: sourceExecution.cwd,
+        summary: `${group.label} inherited ${sourceExecution.status} from ${sourceExecution.group.label}: ${sourceExecution.summary}`
+      };
+      records.push(record);
+      matrixSummary.push({
+        ...record,
+        group_kind: group.group_kind,
+        source_trial_group_id: sourceId,
+        matrix_axes: group.matrix_axes,
+        dataset_scope: group.dataset_scope
+      });
+      continue;
+    }
+
+    const artifact = buildManagedMatrixSliceArtifact({
+      runId: input.run.id,
+      group,
+      sourceGroup: sourceExecution.group,
+      dataset,
+      command: sourceExecution.command,
+      cwd: sourceExecution.cwd,
+      sourceMetrics: sourceExecution.metrics,
+      sourceMetricsPath: sourceExecution.metricsPath
+    });
+    const metricsPath = await writeRunArtifact(
+      input.run,
+      path.join("trial_group_metrics", `${group.id}.json`),
+      `${JSON.stringify(artifact, null, 2)}\n`
+    );
+    const record = {
+      id: group.id,
+      status: "pass" as const,
+      command: sourceExecution.command,
+      cwd: sourceExecution.cwd,
+      metrics_path: metricsPath,
+      summary: artifact.summary,
+      sampling_profile: artifact.sampling_profile
+    };
+    records.push(record);
+    matrixSummary.push({
+      ...record,
+      group_kind: group.group_kind,
+      source_trial_group_id: sourceId,
+      matrix_axes: group.matrix_axes,
+      dataset_scope: group.dataset_scope
+    });
+  }
+
+  await writeRunArtifact(
+    input.run,
+    "trial_group_matrix.json",
+    `${JSON.stringify({
+      version: 1,
+      run_id: input.run.id,
+      generated_at: new Date().toISOString(),
+      execution_model: input.portfolio.execution_model,
+      trial_groups: matrixSummary
+    }, null, 2)}\n`
+  );
+
+  return records;
+}
+
+function buildManagedMatrixSliceArtifact(input: {
+  runId: string;
+  group: ExperimentPortfolioTrialGroup;
+  sourceGroup: ExperimentPortfolioTrialGroup;
+  dataset: string;
+  command?: string;
+  cwd?: string;
+  sourceMetrics: Record<string, unknown>;
+  sourceMetricsPath: string;
+}): ManagedMatrixSliceArtifact {
+  const metrics = asRecord(input.sourceMetrics);
+  const conditionMetrics = asRecord(metrics.condition_metrics);
+  const primaryCondition = asString(metrics.primary_condition) || "shared_state_schema";
+  const baselineCondition = asString(metrics.baseline_condition) || "free_form_chat";
+  const primaryConditionMetrics = asRecord(conditionMetrics[primaryCondition]);
+  const baselineConditionMetrics = asRecord(conditionMetrics[baselineCondition]);
+  const primaryDatasetBreakdown = asRecord(asRecord(primaryConditionMetrics.dataset_breakdown)[input.dataset]);
+  const baselineDatasetBreakdown = asRecord(asRecord(baselineConditionMetrics.dataset_breakdown)[input.dataset]);
+  const primaryDatasetScore = asNumber(asRecord(primaryConditionMetrics.dataset_scores)[input.dataset]);
+  const baselineDatasetScore = asNumber(asRecord(baselineConditionMetrics.dataset_scores)[input.dataset]);
+  const datasetCount = inferManagedDatasetCount(input.sourceGroup, primaryConditionMetrics, baselineConditionMetrics);
+  const samplingProfile = divideSamplingProfileAcrossDatasets(
+    extractSamplingProfile(input.sourceMetrics),
+    datasetCount
+  );
+  const comparison = compactRecord({
+    dataset_score_delta: subtractNumbers(primaryDatasetScore, baselineDatasetScore),
+    mean_task_score_delta: subtractNumbers(
+      asNumber(primaryDatasetBreakdown.mean_task_score),
+      asNumber(baselineDatasetBreakdown.mean_task_score)
+    ),
+    failure_rate_delta: subtractNumbers(
+      asNumber(primaryDatasetBreakdown.failure_rate),
+      asNumber(baselineDatasetBreakdown.failure_rate)
+    ),
+    token_count_mean_delta: subtractNumbers(
+      asNumber(primaryDatasetBreakdown.token_count_mean),
+      asNumber(baselineDatasetBreakdown.token_count_mean)
+    )
+  });
+
+  return {
+    version: 1,
+    run_id: input.runId,
+    trial_group_id: input.group.id,
+    source_trial_group_id: input.sourceGroup.id,
+    generated_at: new Date().toISOString(),
+    execution_model: "managed_bundle",
+    runner_profile: input.group.profile || input.sourceGroup.profile,
+    dataset: input.dataset,
+    source_metrics_path: input.sourceMetricsPath,
+    command: input.command,
+    cwd: input.cwd,
+    sampling_profile: samplingProfile,
+    condition_metrics: compactRecord({
+      [primaryCondition]: compactRecord({
+        dataset_score: primaryDatasetScore,
+        ...primaryDatasetBreakdown
+      }),
+      [baselineCondition]: compactRecord({
+        dataset_score: baselineDatasetScore,
+        ...baselineDatasetBreakdown
+      })
+    }),
+    comparison,
+    summary: buildManagedMatrixSliceSummary({
+      dataset: input.dataset,
+      sourceLabel: input.sourceGroup.label,
+      profile: input.group.profile || input.sourceGroup.profile,
+      datasetScoreDelta: asNumber(comparison.dataset_score_delta),
+      meanTaskScoreDelta: asNumber(comparison.mean_task_score_delta)
+    })
+  };
+}
+
+function buildManagedMatrixSliceSummary(input: {
+  dataset: string;
+  sourceLabel: string;
+  profile?: string;
+  datasetScoreDelta?: number;
+  meanTaskScoreDelta?: number;
+}): string {
+  const parts = [
+    `Matrix slice ${input.dataset}`,
+    input.profile ? `(profile=${input.profile})` : undefined,
+    `from ${input.sourceLabel}.`
+  ].filter((part): part is string => Boolean(part));
+  if (typeof input.datasetScoreDelta === "number") {
+    parts.push(`dataset_score_delta=${formatMetricValue(input.datasetScoreDelta)}.`);
+  } else if (typeof input.meanTaskScoreDelta === "number") {
+    parts.push(`mean_task_score_delta=${formatMetricValue(input.meanTaskScoreDelta)}.`);
+  } else {
+    parts.push("Dataset-level delta could not be recovered from the source metrics.");
+  }
+  return parts.join(" ");
+}
+
+function inferManagedDatasetCount(
+  sourceGroup: ExperimentPortfolioTrialGroup,
+  primaryConditionMetrics: Record<string, unknown>,
+  baselineConditionMetrics: Record<string, unknown>
+): number {
+  return Math.max(
+    sourceGroup.dataset_scope.length,
+    Object.keys(asRecord(primaryConditionMetrics.dataset_scores)).length,
+    Object.keys(asRecord(baselineConditionMetrics.dataset_scores)).length,
+    1
+  );
+}
+
+function divideSamplingProfileAcrossDatasets(
+  samplingProfile: ExperimentPortfolioSamplingProfile | undefined,
+  datasetCount: number
+): ExperimentPortfolioSamplingProfile | undefined {
+  if (!samplingProfile) {
+    return undefined;
+  }
+  const next: ExperimentPortfolioSamplingProfile = {};
+  if (samplingProfile.name) {
+    next.name = samplingProfile.name;
+  }
+  const totalTrials = divideEvenlyNumber(samplingProfile.total_trials, datasetCount);
+  const executedTrials = divideEvenlyNumber(samplingProfile.executed_trials, datasetCount);
+  const cachedTrials = divideEvenlyNumber(samplingProfile.cached_trials, datasetCount);
+  if (typeof totalTrials === "number") {
+    next.total_trials = totalTrials;
+  }
+  if (typeof executedTrials === "number") {
+    next.executed_trials = executedTrials;
+  }
+  if (typeof cachedTrials === "number") {
+    next.cached_trials = cachedTrials;
+  }
+  return Object.keys(next).length > 0 ? next : undefined;
+}
+
+function divideEvenlyNumber(value: number | undefined, divisor: number): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || divisor <= 0) {
+    return undefined;
+  }
+  const quotient = value / divisor;
+  return Number.isInteger(quotient) ? quotient : undefined;
+}
+
+async function readMetricsObject(
+  metricsPath: string | undefined,
+  workspaceRoot: string
+): Promise<Record<string, unknown> | undefined> {
+  const resolvedPath = resolveMaybeRelative(metricsPath, workspaceRoot);
+  if (!resolvedPath) {
+    return undefined;
+  }
+  try {
+    const raw = await fs.readFile(resolvedPath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function trimExcerpt(value: string | undefined): string | undefined {
@@ -1677,6 +2051,34 @@ function extractPolicyBlock(
 
 function oneLine(value: string | undefined): string {
   return value?.replace(/\s+/g, " ").trim() || "";
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function asNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function subtractNumbers(left: number | undefined, right: number | undefined): number | undefined {
+  return typeof left === "number" && typeof right === "number"
+    ? Number((left - right).toFixed(6))
+    : undefined;
+}
+
+function compactRecord(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => entry !== undefined)
+  );
+}
+
+function formatMetricValue(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(Math.abs(value) >= 1 ? 3 : 4);
 }
 
 async function loadExperimentPortfolio(runId: string): Promise<ExperimentPortfolio | undefined> {

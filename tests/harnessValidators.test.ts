@@ -174,6 +174,56 @@ describe("harness validators", () => {
     expect(codes).toContain("analyze_results_transition_missing");
   });
 
+  it("reports missing trial-group metrics artifacts referenced by run_manifest.json", async () => {
+    const runDir = createTempRunDir("autolabos-harness-validator-trial-group-metrics-");
+    await writeJson(path.join(runDir, "experiment_portfolio.json"), {
+      version: 1,
+      run_id: "run-trial-group-metrics",
+      execution_model: "managed_bundle",
+      primary_trial_group_id: "primary_standard",
+      trial_groups: [
+        { id: "primary_standard", label: "Primary standard managed run", role: "primary" },
+        {
+          id: "primary_standard__hotpotqa_mini",
+          label: "Primary standard managed run / hotpotqa_mini",
+          role: "supplemental",
+          group_kind: "matrix_slice",
+          source_trial_group_id: "primary_standard"
+        }
+      ]
+    });
+    await writeJson(path.join(runDir, "run_manifest.json"), {
+      version: 1,
+      run_id: "run-trial-group-metrics",
+      execution_model: "managed_bundle",
+      portfolio: {
+        primary_trial_group_id: "primary_standard"
+      },
+      trial_groups: [
+        { id: "primary_standard", status: "pass" },
+        {
+          id: "primary_standard__hotpotqa_mini",
+          status: "pass",
+          metrics_path: ".autolabos/runs/run-trial-group-metrics/trial_group_metrics/primary_standard__hotpotqa_mini.json"
+        }
+      ]
+    });
+    await writeJson(path.join(runDir, "run_experiments_verify_report.json"), { status: "pass" });
+    await writeJson(path.join(runDir, "metrics.json"), { accuracy: 0.92 });
+    await writeJson(path.join(runDir, "objective_evaluation.json"), { status: "met" });
+
+    const result = await validateRunArtifactStructure({
+      runId: "run-trial-group-metrics",
+      runDir,
+      nodeStates: makeNodeStates({
+        run_experiments: "completed"
+      })
+    });
+
+    const codes = result.issues.map((item) => item.code);
+    expect(codes).toContain("run_manifest_trial_group_metrics_missing");
+  });
+
   it("reports malformed event logs and malformed collect background job records", async () => {
     const runDir = createTempRunDir("autolabos-harness-validator-events-");
     await writeFile(path.join(runDir, "events.jsonl"), '{"type":"NODE_STARTED"}\nnot-json\n', "utf8");

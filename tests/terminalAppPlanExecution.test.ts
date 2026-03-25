@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -1713,7 +1713,7 @@ describe("TerminalApp pending natural plan execution", () => {
       {
         key: "brief",
         label: "/brief start <path|--latest>",
-        description: "Start research from a brief file",
+        description: "Start research from Brief.md or a brief path",
         applyValue: "/brief start --latest"
       }
     ];
@@ -1734,7 +1734,7 @@ describe("TerminalApp pending natural plan execution", () => {
       {
         key: "new",
         label: "/new",
-        description: "Create a Markdown Research Brief",
+        description: "Create or open workspace Brief.md",
         applyValue: "/new"
       }
     ];
@@ -2746,10 +2746,7 @@ describe("TerminalApp pending natural plan execution", () => {
 
       await app.handleNewRun();
 
-      const briefsDir = path.join(cwd, ".autolabos", "briefs");
-      const files = await readdir(briefsDir);
-      expect(files).toHaveLength(1);
-      const raw = await readFile(path.join(briefsDir, files[0]), "utf8");
+      const raw = await readFile(path.join(cwd, "Brief.md"), "utf8");
       expect(raw).toContain("# Research Brief");
       expect(raw).toContain("## Topic");
       expect(raw).toContain("## Research Question");
@@ -2791,12 +2788,45 @@ describe("TerminalApp pending natural plan execution", () => {
       await app.handleNewRun();
 
       expect(app.logs).toContain(
-        "Draft saved. Fill the remaining paper-scale sections, then start it with /brief start --latest or /brief start <path>."
+        "Draft saved in Brief.md. Fill the remaining paper-scale sections, then start it with /brief start --latest or /brief start <path>."
       );
       expect(
         app.logs.some((line: string) => line.includes('Replace the placeholder text in "## Objective Metric"'))
       ).toBe(false);
       expect(app.askWithinTui).not.toHaveBeenCalled();
+    } finally {
+      process.chdir(originalCwd);
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("reuses an existing workspace Brief.md during /new without overwriting it", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "autolabos-brief-existing-"));
+    const originalCwd = process.cwd();
+    process.chdir(cwd);
+    try {
+      const paths = resolveAppPaths(cwd);
+      await ensureScaffold(paths);
+      const briefPath = path.join(cwd, "Brief.md");
+      await writeFile(
+        briefPath,
+        [
+          "# Research Brief",
+          "",
+          "## Topic",
+          "",
+          "Existing workspace brief."
+        ].join("\n"),
+        "utf8"
+      );
+      const app = makeApp();
+      app.openResearchBriefInEditor = vi.fn(async () => false);
+
+      await app.handleNewRun();
+
+      expect(await readFile(briefPath, "utf8")).toContain("Existing workspace brief.");
+      expect(app.openResearchBriefInEditor).toHaveBeenCalledWith(briefPath);
+      expect(app.logs.some((line: string) => line.includes("Using existing research brief:"))).toBe(true);
     } finally {
       process.chdir(originalCwd);
       await rm(cwd, { recursive: true, force: true });

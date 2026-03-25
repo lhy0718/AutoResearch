@@ -102,10 +102,38 @@ selected_design:
           role: "supplemental" as const,
           profile: "confirmatory",
           expected_trials: 72,
-          dataset_scope: ["research_bench_alpha"],
+          dataset_scope: ["hotpotqa_mini", "gsm8k_mini", "humaneval_mini"],
           metrics: ["reproducibility_score"],
           baselines: ["free_form_chat baseline"],
           notes: ["Higher-budget confirmatory run."]
+        },
+        {
+          id: "primary_standard__hotpotqa_mini",
+          label: "Primary standard managed run / hotpotqa_mini",
+          role: "supplemental" as const,
+          profile: "standard",
+          group_kind: "matrix_slice" as const,
+          source_trial_group_id: "primary_standard",
+          matrix_axes: { runner_profile: "standard", dataset: "hotpotqa_mini" },
+          expected_trials: 16,
+          dataset_scope: ["hotpotqa_mini"],
+          metrics: ["reproducibility_score"],
+          baselines: ["free_form_chat baseline"],
+          notes: ["Matrix slice for dataset hotpotqa_mini."]
+        },
+        {
+          id: "quick_check__hotpotqa_mini",
+          label: "Quick-check managed replication / hotpotqa_mini",
+          role: "supplemental" as const,
+          profile: "quick_check",
+          group_kind: "matrix_slice" as const,
+          source_trial_group_id: "quick_check",
+          matrix_axes: { runner_profile: "quick_check", dataset: "hotpotqa_mini" },
+          expected_trials: 2,
+          dataset_scope: ["hotpotqa_mini"],
+          metrics: ["reproducibility_score"],
+          baselines: ["free_form_chat baseline"],
+          notes: ["Matrix slice for dataset hotpotqa_mini."]
         }
       ]
     };
@@ -207,6 +235,30 @@ selected_design:
             status: "skipped",
             metrics_path: "confirmatory_metrics.json",
             summary: "Confirmatory run skipped because quick_check did not justify escalation."
+          },
+          {
+            ...experimentPortfolio.trial_groups[3],
+            status: "pass",
+            metrics_path: ".autolabos/runs/run-portfolio/trial_group_metrics/primary_standard__hotpotqa_mini.json",
+            summary: "Matrix slice hotpotqa_mini (profile=standard) from Primary standard managed run. mean_task_score_delta=0.1200.",
+            sampling_profile: {
+              name: "standard",
+              total_trials: 16,
+              executed_trials: 16,
+              cached_trials: 0
+            }
+          },
+          {
+            ...experimentPortfolio.trial_groups[4],
+            status: "pass",
+            metrics_path: ".autolabos/runs/run-portfolio/trial_group_metrics/quick_check__hotpotqa_mini.json",
+            summary: "Matrix slice hotpotqa_mini (profile=quick_check) from Quick-check managed replication. mean_task_score_delta=0.0800.",
+            sampling_profile: {
+              name: "quick_check",
+              total_trials: 2,
+              executed_trials: 2,
+              cached_trials: 0
+            }
           }
         ]
       },
@@ -236,11 +288,23 @@ selected_design:
       total_expected_trials: 126,
       executed_trials: 54
     });
-    expect(report.experiment_portfolio?.trial_groups).toEqual([
+    expect(report.experiment_portfolio?.trial_groups).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "primary_standard", status: "pass", executed_trials: 48 }),
       expect.objectContaining({ id: "quick_check", status: "pass", executed_trials: 6 }),
-      expect.objectContaining({ id: "confirmatory", status: "skipped" })
-    ]);
+      expect.objectContaining({ id: "confirmatory", status: "skipped" }),
+      expect.objectContaining({
+        id: "primary_standard__hotpotqa_mini",
+        group_kind: "matrix_slice",
+        status: "pass",
+        executed_trials: 16
+      }),
+      expect.objectContaining({
+        id: "quick_check__hotpotqa_mini",
+        group_kind: "matrix_slice",
+        status: "pass",
+        executed_trials: 2
+      })
+    ]));
     expect(report.supplemental_runs[0]?.portfolio).toMatchObject({
       trial_group_id: "quick_check",
       trial_group_label: "Quick-check managed replication",
