@@ -65,11 +65,42 @@ export async function validateRunArtifactStructure(
   const issues: HarnessValidationIssue[] = [];
   const checked = new Set<string>();
   const { runId, runDir, nodeStates, runStatus } = input;
+  const eventsPath = path.join(runDir, "events.jsonl");
+  const collectBackgroundJobPath = path.join(runDir, "collect_background_job.json");
+  const experimentPortfolioPath = path.join(runDir, "experiment_portfolio.json");
+  const runManifestPath = path.join(runDir, "run_manifest.json");
   const metricsPath = path.join(runDir, "metrics.json");
   const objectiveEvaluationPath = path.join(runDir, "objective_evaluation.json");
   const resultAnalysisPath = path.join(runDir, "result_analysis.json");
   const transitionPath = path.join(runDir, "transition_recommendation.json");
   const reviewDecisionPath = path.join(runDir, "review", "decision.json");
+
+  const eventsPresent = await fileExists(eventsPath);
+  if (hasRunProgress(nodeStates, runStatus) || eventsPresent) {
+    checked.add("events_log");
+    const events = await requireJsonLinesObjects({
+      filePath: eventsPath,
+      missingCode: "events_log_missing",
+      emptyCode: "events_log_empty",
+      malformedCode: "events_log_malformed",
+      runId,
+      issues
+    });
+    if (events) {
+      validatePersistedEventsPayload(events, eventsPath, runId, issues);
+    }
+  }
+
+  const collectBackgroundJob = await readOptionalJsonObject({
+    filePath: collectBackgroundJobPath,
+    malformedCode: "collect_background_job_malformed",
+    runId,
+    issues
+  });
+  if (collectBackgroundJob) {
+    checked.add("collect_background_job");
+    validateCollectBackgroundJobPayload(collectBackgroundJob, collectBackgroundJobPath, runId, issues);
+  }
 
   const reviewPacketPath = path.join(runDir, "review", "review_packet.json");
   const reviewCompleted = isNodeCompleted(nodeStates, "review");
@@ -156,6 +187,47 @@ export async function validateRunArtifactStructure(
   const runVerifier = await readJsonObjectIfPresent(path.join(runDir, "run_experiments_verify_report.json"), runId, issues);
   const runExperimentsCompleted = isNodeCompleted(nodeStates, "run_experiments");
   const runVerifierPass = asString(runVerifier?.status) === "pass";
+  let experimentPortfolio: Record<string, unknown> | undefined;
+  if (runExperimentsCompleted || runVerifierPass || await fileExists(experimentPortfolioPath)) {
+    checked.add("experiment_portfolio");
+    experimentPortfolio = await requireJsonObject({
+      filePath: experimentPortfolioPath,
+      missingCode: "experiment_portfolio_missing",
+      malformedCode: "experiment_portfolio_malformed",
+      runId,
+      issues
+    });
+    if (experimentPortfolio) {
+      validateExperimentPortfolioPayload(experimentPortfolio, experimentPortfolioPath, runId, issues);
+    }
+  }
+
+  let runManifest: Record<string, unknown> | undefined;
+  if (runExperimentsCompleted || runVerifierPass || await fileExists(runManifestPath)) {
+    checked.add("run_manifest");
+    runManifest = await requireJsonObject({
+      filePath: runManifestPath,
+      missingCode: "run_manifest_missing",
+      malformedCode: "run_manifest_malformed",
+      runId,
+      issues
+    });
+    if (runManifest) {
+      validateRunManifestPayload(runManifest, runManifestPath, runId, issues);
+    }
+  }
+
+  if (runManifest && experimentPortfolio) {
+    validateExperimentExecutionConsistency({
+      runManifest,
+      experimentPortfolio,
+      runManifestPath,
+      experimentPortfolioPath,
+      runId,
+      issues
+    });
+  }
+
   if (runExperimentsCompleted || runVerifierPass) {
     checked.add("run_experiments");
     const metrics = await requireJsonObject({
@@ -179,7 +251,7 @@ export async function validateRunArtifactStructure(
   const resultAnalysisPresent = await fileExists(resultAnalysisPath);
   if (analyzeResultsCompleted || resultAnalysisPresent) {
     checked.add("analyze_results");
-    await requireJsonObject({
+    const resultAnalysis = await requireJsonObject({
       filePath: resultAnalysisPath,
       missingCode: "analyze_results_missing",
       malformedCode: "analyze_results_malformed",
@@ -200,6 +272,14 @@ export async function validateRunArtifactStructure(
       runId,
       issues
     });
+    if (resultAnalysis?.experiment_portfolio && !experimentPortfolio) {
+      issues.push({
+        code: "analyze_results_portfolio_missing",
+        message: "result_analysis.json exposes experiment_portfolio, but experiment_portfolio.json is missing or malformed.",
+        filePath: resultAnalysisPath,
+        runId
+      });
+    }
   }
 
   await validateReviewAndPaperConsistency({
@@ -313,6 +393,258 @@ function isNodeCompleted(
   node: GraphNodeId
 ): boolean {
   return nodeStates?.[node]?.status === "completed";
+}
+
+function hasRunProgress(
+  nodeStates: RunArtifactValidationInput["nodeStates"],
+  runStatus?: string
+): boolean {
+  if (runStatus && runStatus !== "pending") {
+    return true;
+  }
+  return Object.values(nodeStates ?? {}).some((state) => {
+    const status = typeof state?.status === "string" ? state.status : undefined;
+    return Boolean(status && status !== "pending");
+  });
+}
+
+function validatePersistedEventsPayload(
+  events: Record<string, unknown>[],
+  filePath: string,
+  runId: string,
+  issues: HarnessValidationIssue[]
+): void {
+  for (let index = 0; index < events.length; index += 1) {
+    const event = events[index];
+    if (!asString(event.type)) {
+      issues.push({
+        code: "events_log_entry_missing_type",
+        message: `events.jsonl entry ${index + 1} must include a non-empty type.`,
+        filePath,
+        runId
+      });
+    }
+    if (!asString(event.timestamp)) {
+      issues.push({
+        code: "events_log_entry_missing_timestamp",
+        message: `events.jsonl entry ${index + 1} must include a non-empty timestamp.`,
+        filePath,
+        runId
+      });
+    }
+    const eventRunId = asString(event.runId);
+    if (!eventRunId) {
+      issues.push({
+        code: "events_log_entry_missing_run_id",
+        message: `events.jsonl entry ${index + 1} must include runId.`,
+        filePath,
+        runId
+      });
+    } else if (eventRunId !== runId) {
+      issues.push({
+        code: "events_log_entry_run_id_mismatch",
+        message: `events.jsonl entry ${index + 1} references runId ${eventRunId}, expected ${runId}.`,
+        filePath,
+        runId
+      });
+    }
+  }
+}
+
+function validateCollectBackgroundJobPayload(
+  payload: Record<string, unknown>,
+  filePath: string,
+  runId: string,
+  issues: HarnessValidationIssue[]
+): void {
+  if (payload.version !== 1) {
+    issues.push({
+      code: "collect_background_job_version_invalid",
+      message: "collect_background_job.json must declare version=1.",
+      filePath,
+      runId
+    });
+  }
+  if (asString(payload.kind) !== "collect_deferred_enrichment") {
+    issues.push({
+      code: "collect_background_job_kind_invalid",
+      message: "collect_background_job.json must declare kind=collect_deferred_enrichment.",
+      filePath,
+      runId
+    });
+  }
+  if (asString(payload.runId) !== runId) {
+    issues.push({
+      code: "collect_background_job_run_id_mismatch",
+      message: `collect_background_job.json references runId ${asString(payload.runId) || "(missing)"}, expected ${runId}.`,
+      filePath,
+      runId
+    });
+  }
+  if (!["running", "completed", "failed"].includes(asString(payload.status))) {
+    issues.push({
+      code: "collect_background_job_status_invalid",
+      message: "collect_background_job.json must use status running, completed, or failed.",
+      filePath,
+      runId
+    });
+  }
+}
+
+function validateExperimentPortfolioPayload(
+  payload: Record<string, unknown>,
+  filePath: string,
+  runId: string,
+  issues: HarnessValidationIssue[]
+): void {
+  if (payload.version !== 1) {
+    issues.push({
+      code: "experiment_portfolio_version_invalid",
+      message: "experiment_portfolio.json must declare version=1.",
+      filePath,
+      runId
+    });
+  }
+  if (asString(payload.run_id) !== runId) {
+    issues.push({
+      code: "experiment_portfolio_run_id_mismatch",
+      message: `experiment_portfolio.json references run_id ${asString(payload.run_id) || "(missing)"}, expected ${runId}.`,
+      filePath,
+      runId
+    });
+  }
+  if (!asString(payload.execution_model)) {
+    issues.push({
+      code: "experiment_portfolio_execution_model_missing",
+      message: "experiment_portfolio.json must include execution_model.",
+      filePath,
+      runId
+    });
+  }
+  const trialGroups = asObjectArray(payload.trial_groups);
+  if (trialGroups.length === 0) {
+    issues.push({
+      code: "experiment_portfolio_trial_groups_missing",
+      message: "experiment_portfolio.json must include a non-empty trial_groups array.",
+      filePath,
+      runId
+    });
+    return;
+  }
+  const primaryTrialGroupId = asString(payload.primary_trial_group_id);
+  if (!primaryTrialGroupId) {
+    issues.push({
+      code: "experiment_portfolio_primary_group_missing",
+      message: "experiment_portfolio.json must include primary_trial_group_id.",
+      filePath,
+      runId
+    });
+    return;
+  }
+  if (!trialGroups.some((trialGroup) => asString(trialGroup.id) === primaryTrialGroupId)) {
+    issues.push({
+      code: "experiment_portfolio_primary_group_unresolved",
+      message: `experiment_portfolio.json primary_trial_group_id ${primaryTrialGroupId} does not appear in trial_groups.`,
+      filePath,
+      runId
+    });
+  }
+}
+
+function validateRunManifestPayload(
+  payload: Record<string, unknown>,
+  filePath: string,
+  runId: string,
+  issues: HarnessValidationIssue[]
+): void {
+  if (payload.version !== 1) {
+    issues.push({
+      code: "run_manifest_version_invalid",
+      message: "run_manifest.json must declare version=1.",
+      filePath,
+      runId
+    });
+  }
+  if (asString(payload.run_id) !== runId) {
+    issues.push({
+      code: "run_manifest_run_id_mismatch",
+      message: `run_manifest.json references run_id ${asString(payload.run_id) || "(missing)"}, expected ${runId}.`,
+      filePath,
+      runId
+    });
+  }
+  if (!asString(payload.execution_model)) {
+    issues.push({
+      code: "run_manifest_execution_model_missing",
+      message: "run_manifest.json must include execution_model.",
+      filePath,
+      runId
+    });
+  }
+  const trialGroups = asObjectArray(payload.trial_groups);
+  if (trialGroups.length === 0) {
+    issues.push({
+      code: "run_manifest_trial_groups_missing",
+      message: "run_manifest.json must include a non-empty trial_groups array.",
+      filePath,
+      runId
+    });
+    return;
+  }
+  for (let index = 0; index < trialGroups.length; index += 1) {
+    const trialGroup = trialGroups[index];
+    if (!asString(trialGroup.id)) {
+      issues.push({
+        code: "run_manifest_trial_group_id_missing",
+        message: `run_manifest.json trial_groups[${index}] must include id.`,
+        filePath,
+        runId
+      });
+    }
+    if (!asString(trialGroup.status)) {
+      issues.push({
+        code: "run_manifest_trial_group_status_missing",
+        message: `run_manifest.json trial_groups[${index}] must include status.`,
+        filePath,
+        runId
+      });
+    }
+  }
+}
+
+function validateExperimentExecutionConsistency(input: {
+  runManifest: Record<string, unknown>;
+  experimentPortfolio: Record<string, unknown>;
+  runManifestPath: string;
+  experimentPortfolioPath: string;
+  runId: string;
+  issues: HarnessValidationIssue[];
+}): void {
+  const manifestExecutionModel = asString(input.runManifest.execution_model);
+  const portfolioExecutionModel = asString(input.experimentPortfolio.execution_model);
+  if (
+    manifestExecutionModel
+    && portfolioExecutionModel
+    && manifestExecutionModel !== portfolioExecutionModel
+  ) {
+    input.issues.push({
+      code: "experiment_execution_model_mismatch",
+      message: `run_manifest.json execution_model (${manifestExecutionModel}) does not match experiment_portfolio.json (${portfolioExecutionModel}).`,
+      filePath: input.runManifestPath,
+      runId: input.runId
+    });
+  }
+
+  const manifestPrimary = asString(isRecord(input.runManifest.portfolio) ? input.runManifest.portfolio.primary_trial_group_id : undefined);
+  const portfolioPrimary = asString(input.experimentPortfolio.primary_trial_group_id);
+  if (manifestPrimary && portfolioPrimary && manifestPrimary !== portfolioPrimary) {
+    input.issues.push({
+      code: "experiment_primary_group_mismatch",
+      message: `run_manifest.json primary trial group (${manifestPrimary}) does not match experiment_portfolio.json (${portfolioPrimary}).`,
+      filePath: input.experimentPortfolioPath,
+      runId: input.runId
+    });
+  }
 }
 
 function validateReviewPacketPayload(
@@ -633,6 +965,57 @@ async function requireJsonObject(input: {
   return parsed;
 }
 
+async function requireJsonLinesObjects(input: {
+  filePath: string;
+  missingCode: string;
+  emptyCode: string;
+  malformedCode: string;
+  runId: string;
+  issues: HarnessValidationIssue[];
+}): Promise<Record<string, unknown>[] | undefined> {
+  const raw = await readFileIfExists(input.filePath);
+  if (raw === undefined) {
+    input.issues.push({
+      code: input.missingCode,
+      message: `Missing required artifact: ${relativeFromRun(input.filePath)}.`,
+      filePath: input.filePath,
+      runId: input.runId
+    });
+    return undefined;
+  }
+
+  const lines = raw
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (lines.length === 0) {
+    input.issues.push({
+      code: input.emptyCode,
+      message: `Artifact must not be empty: ${relativeFromRun(input.filePath)}.`,
+      filePath: input.filePath,
+      runId: input.runId
+    });
+    return undefined;
+  }
+
+  const entries: Record<string, unknown>[] = [];
+  for (const line of lines) {
+    const parsed = parseJsonRecord(line);
+    if (!parsed) {
+      input.issues.push({
+        code: input.malformedCode,
+        message: `Artifact must be newline-delimited JSON objects: ${relativeFromRun(input.filePath)}.`,
+        filePath: input.filePath,
+        runId: input.runId
+      });
+      return undefined;
+    }
+    entries.push(parsed);
+  }
+
+  return entries;
+}
+
 async function requireNonEmptyText(input: {
   filePath: string;
   missingCode: string;
@@ -658,6 +1041,29 @@ async function requireNonEmptyText(input: {
       runId: input.runId
     });
   }
+}
+
+async function readOptionalJsonObject(input: {
+  filePath: string;
+  malformedCode: string;
+  runId: string;
+  issues: HarnessValidationIssue[];
+}): Promise<Record<string, unknown> | undefined> {
+  const raw = await readFileIfExists(input.filePath);
+  if (raw === undefined) {
+    return undefined;
+  }
+  const parsed = parseJsonRecord(raw);
+  if (!parsed) {
+    input.issues.push({
+      code: input.malformedCode,
+      message: `Artifact must be a valid JSON object: ${relativeFromRun(input.filePath)}.`,
+      filePath: input.filePath,
+      runId: input.runId
+    });
+    return undefined;
+  }
+  return parsed;
 }
 
 async function readJsonObjectIfPresent(
@@ -753,6 +1159,13 @@ function asStringArray(value: unknown): string[] {
   return value
     .map((item) => (typeof item === "string" ? item.trim() : ""))
     .filter((item) => item.length > 0);
+}
+
+function asObjectArray(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is Record<string, unknown> => isRecord(item));
 }
 
 function isPlaceholder(value: string): boolean {

@@ -28,19 +28,27 @@ Until those conditions are met, treat the 9-node workflow as fixed.
 
 - TUI (`autolabos`) and local web ops UI (`autolabos web`) share the same interaction/runtime layer.
 - Node execution and transitions are controlled by `StateGraphRuntime`.
+- Runtime events are persisted per run in `.autolabos/runs/<run-id>/events.jsonl`; high-churn telemetry should go there rather than into `runs.json`.
+- Deferred `collect_papers` recovery state is persisted in `.autolabos/runs/<run-id>/collect_background_job.json` whenever background enrichment is active, so restart recovery stays inspectable.
 - Approval mode and transition recommendation behavior are part of runtime contracts.
+- `/approve` must respect stored non-advance pending transitions (for example `analyze_results -> backtrack_to_design`) instead of advancing by graph order. Explicit manual `/agent run <next-node>` handoffs may resume `pause_for_human` transitions without weakening default approval behavior.
 
 Harness and runtime work must preserve both TUI and web behaviors unless a change is explicitly requested.
 
 ## 3) Artifact model
 
 - Run-scoped source of truth: `.autolabos/runs/<run-id>/...`
+- Lightweight run index/projection: `.autolabos/runs/runs.json` (status, node pointer, aggregate `usage`)
 - Public mirrored outputs: `outputs/` (single latest-run public bundle)
 - Checkpoints and run context are persisted under each run directory.
+- Design/execution experiment contracts live in `experiment_portfolio.json` and `run_manifest.json`.
+- Transition/gate decisions remain inspectable through artifacts such as `transition_recommendation.json`, `analysis/evidence_scale_assessment.json`, `review/*`, and `paper/write_paper_eligibility.json`.
 
 Quality checks should be deterministic and file-based whenever possible.
 
 Public-facing outputs must remain traceable to underlying run artifacts.
+
+Because events, checkpoints, background-job recovery, and execution artifacts already live in per-run files, `runs.json` should stay a summary index rather than a sink for append-only logs. If index write contention becomes material, split the summary index or move it to sqlite instead of pushing more high-volume data into `runs.json`.
 
 ## 4) Node-internal loops are bounded
 

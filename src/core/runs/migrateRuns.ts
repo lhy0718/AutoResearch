@@ -6,6 +6,7 @@ import {
   RunsFile
 } from "../../types.js";
 import { createDefaultGraphState } from "../stateGraph/defaults.js";
+import { normalizeRunUsageSummary } from "./runUsage.js";
 
 type StageIdV1 =
   | "collect"
@@ -207,6 +208,7 @@ function normalizeRunsV3(file: RunsFile): RunsFile {
       version: 3,
       workflowVersion: 3,
       nodeThreads: run.nodeThreads ?? {},
+      usage: normalizeRunUsageSummary(run.usage),
       graph: {
         ...createDefaultGraphState(),
         ...run.graph,

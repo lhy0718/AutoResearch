@@ -81,4 +81,106 @@ describe("migrate runs to v3", () => {
     expect(migrated.version).toBe(3);
     expect(isGraphNodeId(migrated.runs[0].currentNode)).toBe(true);
   });
+
+  it("normalizes persisted usage summaries when accepting v3 inputs", () => {
+    const ts = new Date().toISOString();
+    const migrated = migrateAnyRunsFileToV3({
+      version: 3,
+      runs: [
+        {
+          version: 3,
+          workflowVersion: 3,
+          id: "run-usage",
+          title: "usage run",
+          topic: "topic",
+          constraints: [],
+          objectiveMetric: "acc",
+          status: "running",
+          currentNode: "collect_papers",
+          latestSummary: "",
+          nodeThreads: {},
+          createdAt: ts,
+          updatedAt: ts,
+          usage: {
+            totals: {
+              costUsd: -1,
+              toolCalls: 3,
+              inputTokens: -5,
+              outputTokens: 7,
+              wallTimeMs: 12
+            },
+            byNode: {
+              analyze_results: {
+                costUsd: 1,
+                toolCalls: -3,
+                inputTokens: 9,
+                outputTokens: -2,
+                wallTimeMs: 8,
+                executions: 2
+              },
+              bogus: {
+                costUsd: 10,
+                toolCalls: 10,
+                inputTokens: 10,
+                outputTokens: 10,
+                wallTimeMs: 10,
+                executions: 10
+              }
+            } as any,
+            lastUpdatedAt: ""
+          },
+          graph: {
+            currentNode: "collect_papers",
+            nodeStates: {
+              collect_papers: { status: "running", updatedAt: ts },
+              analyze_papers: { status: "pending", updatedAt: ts },
+              generate_hypotheses: { status: "pending", updatedAt: ts },
+              design_experiments: { status: "pending", updatedAt: ts },
+              implement_experiments: { status: "pending", updatedAt: ts },
+              run_experiments: { status: "pending", updatedAt: ts },
+              analyze_results: { status: "pending", updatedAt: ts },
+              review: { status: "pending", updatedAt: ts },
+              write_paper: { status: "pending", updatedAt: ts }
+            },
+            retryCounters: {},
+            rollbackCounters: {},
+            researchCycle: 0,
+            transitionHistory: [],
+            checkpointSeq: 0,
+            retryPolicy: {
+              maxAttemptsPerNode: 3,
+              maxAutoRollbacksPerNode: 1
+            }
+          },
+          memoryRefs: {
+            runContextPath: ".autolabos/runs/run-usage/memory/run_context.json",
+            longTermPath: ".autolabos/runs/run-usage/memory/long_term.jsonl",
+            episodePath: ".autolabos/runs/run-usage/memory/episodes.jsonl"
+          }
+        }
+      ]
+    } as any);
+
+    expect(migrated.runs[0].usage).toEqual({
+      totals: {
+        costUsd: 0,
+        toolCalls: 3,
+        inputTokens: 0,
+        outputTokens: 7,
+        wallTimeMs: 12
+      },
+      byNode: {
+        analyze_results: {
+          costUsd: 1,
+          toolCalls: 0,
+          inputTokens: 9,
+          outputTokens: 0,
+          wallTimeMs: 8,
+          executions: 2,
+          lastUpdatedAt: undefined
+        }
+      },
+      lastUpdatedAt: undefined
+    });
+  });
 });

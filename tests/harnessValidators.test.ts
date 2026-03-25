@@ -28,6 +28,32 @@ describe("harness validators", () => {
     await mkdir(path.join(runDir, "review"), { recursive: true });
     await mkdir(path.join(runDir, "paper"), { recursive: true });
 
+    await writeFile(
+      path.join(runDir, "events.jsonl"),
+      `${JSON.stringify({
+        type: "NODE_STARTED",
+        runId: "run-pass",
+        node: "run_experiments",
+        timestamp: new Date().toISOString()
+      })}\n`,
+      "utf8"
+    );
+    await writeJson(path.join(runDir, "experiment_portfolio.json"), {
+      version: 1,
+      run_id: "run-pass",
+      execution_model: "single_run",
+      primary_trial_group_id: "primary",
+      trial_groups: [{ id: "primary", label: "Primary run", role: "primary" }]
+    });
+    await writeJson(path.join(runDir, "run_manifest.json"), {
+      version: 1,
+      run_id: "run-pass",
+      execution_model: "single_run",
+      portfolio: {
+        primary_trial_group_id: "primary"
+      },
+      trial_groups: [{ id: "primary", status: "pass" }]
+    });
     await writeJson(path.join(runDir, "run_experiments_verify_report.json"), { status: "pass" });
     await writeJson(path.join(runDir, "metrics.json"), { accuracy: 0.92 });
     await writeJson(path.join(runDir, "objective_evaluation.json"), { status: "met" });
@@ -140,9 +166,30 @@ describe("harness validators", () => {
     });
 
     const codes = result.issues.map((item) => item.code);
+    expect(codes).toContain("events_log_missing");
+    expect(codes).toContain("experiment_portfolio_missing");
+    expect(codes).toContain("run_manifest_missing");
     expect(codes).toContain("run_metrics_missing");
     expect(codes).toContain("analyze_results_objective_evaluation_missing");
     expect(codes).toContain("analyze_results_transition_missing");
+  });
+
+  it("reports malformed event logs and malformed collect background job records", async () => {
+    const runDir = createTempRunDir("autolabos-harness-validator-events-");
+    await writeFile(path.join(runDir, "events.jsonl"), '{"type":"NODE_STARTED"}\nnot-json\n', "utf8");
+    await writeFile(path.join(runDir, "collect_background_job.json"), "[]\n", "utf8");
+
+    const result = await validateRunArtifactStructure({
+      runId: "run-events-bad",
+      runDir,
+      nodeStates: makeNodeStates({
+        collect_papers: "completed"
+      })
+    });
+
+    const codes = result.issues.map((item) => item.code);
+    expect(codes).toContain("events_log_malformed");
+    expect(codes).toContain("collect_background_job_malformed");
   });
 
   it("reports missing source artifact paths in paper evidence links", async () => {

@@ -257,6 +257,15 @@ export function defaultRemediationForIssueCode(code: string): string {
   if (code.includes("paper_result")) {
     return "Regenerate paper artifacts after run_experiments/analyze_results, or remove unsupported result claims from the manuscript.";
   }
+  if (code.includes("events_log")) {
+    return "Ensure every started run writes parseable JSONL events to .autolabos/runs/<run-id>/events.jsonl.";
+  }
+  if (code.includes("run_manifest") || code.includes("experiment_portfolio")) {
+    return "Regenerate design/run artifacts so experiment_portfolio.json and run_manifest.json are present and structurally consistent.";
+  }
+  if (code.includes("collect_background_job")) {
+    return "Rewrite or clear collect_background_job.json so deferred enrichment recovery metadata matches the current run.";
+  }
   if (code.includes("review_")) {
     return "Align review decision artifacts, run status, and paper output state before marking the run as completed.";
   }

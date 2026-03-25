@@ -4,11 +4,14 @@ Reproducibility claims must be backed by concrete artifacts.
 
 ## 1) Minimum artifact set (when applicable)
 
+- Runtime event trace (`events.jsonl`)
+- Deferred background recovery record when used (`collect_background_job.json`)
 - Planned portfolio / trial-group structure (`experiment_portfolio.json`)
 - Run manifest (`run_manifest.json`)
 - Raw or summarized metrics (`metrics.json`, supplemental metrics)
 - Objective evaluation (`objective_evaluation.json`)
 - Result synthesis (`result_analysis.json`, optional synthesis artifact)
+- Transition decision (`transition_recommendation.json`)
 - Paper trace outputs (`paper/main.tex`, `paper/references.bib`, `paper/evidence_links.json`)
 
 ## 2) Run-state traceability
@@ -16,7 +19,9 @@ Reproducibility claims must be backed by concrete artifacts.
 For each run, preserve:
 
 - run id
-- workflow node progression (`runs.json`)
+- workflow node progression (`runs.json`) including current node/status and aggregate usage when available
+- append-only runtime events (`events.jsonl`)
+- key gate/recovery artifacts (`transition_recommendation.json`, `collect_background_job.json` when present)
 - key generated artifacts in `.autolabos/runs/<run_id>/...`
 
 ## 3) Reproducibility claim language
@@ -29,12 +34,12 @@ For each run, preserve:
 Before marking work complete:
 
 1. Re-run the relevant flow or tests.
-2. Confirm expected artifacts are present and parseable.
+2. Confirm expected artifacts are present, parseable, and consistent across `runs.json`, `events.jsonl`, and run-scoped artifacts.
 3. Record limitations and unresolved uncertainty.
 
 ## 5) Validation surfaces
 
 - Runtime diagnostics: `/doctor` in TUI and web Doctor tab (environment + workspace harness checks).
-- CI/internal gate: `npm run validate:harness` (issue log format + workspace/test run artifact structure).
+- CI/internal gate: `npm run validate:harness` (issue log format + workspace/test run artifact structure, including event logs and portfolio/manifest contracts).
 
-No separate end-user command is required beyond `/doctor`.
+No separate end-user command is required beyond `/doctor`, but maintainers should still run `npm run validate:harness` before declaring artifact-level reproducibility complete.
