@@ -305,6 +305,50 @@ describe("AgentOrchestrator (state graph)", () => {
     });
   });
 
+  it("applies an analyze-results backtrack when the analyze approval is accepted", async () => {
+    const { store, orchestrator } = await setup(new DeterministicRegistry({}));
+
+    const run = await store.createRun({
+      title: "Run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "analyze_results";
+    run.graph.currentNode = "analyze_results";
+    run.status = "paused";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    run.graph.nodeStates.implement_experiments.status = "completed";
+    run.graph.nodeStates.run_experiments.status = "completed";
+    run.graph.nodeStates.analyze_results.status = "needs_approval";
+    run.graph.pendingTransition = {
+      action: "backtrack_to_design",
+      sourceNode: "analyze_results",
+      targetNode: "design_experiments",
+      reason: "Brief evidence gate requires another design revision.",
+      confidence: 0.76,
+      autoExecutable: false,
+      evidence: ["The bounded run is still too thin for paper progression."],
+      suggestedCommands: ["/agent jump design_experiments", "/agent run design_experiments"],
+      generatedAt: new Date().toISOString()
+    };
+    await store.updateRun(run);
+
+    const updated = await orchestrator.approveCurrent(run.id);
+
+    expect(updated.currentNode).toBe("design_experiments");
+    expect(updated.graph.pendingTransition).toBeUndefined();
+    expect(updated.graph.transitionHistory.at(-1)).toMatchObject({
+      action: "backtrack_to_design",
+      fromNode: "analyze_results",
+      toNode: "design_experiments"
+    });
+  });
+
   it("auto-applies review backtracks under the default minimal approval mode", async () => {
     const registry = new DeterministicRegistry({
       review: {

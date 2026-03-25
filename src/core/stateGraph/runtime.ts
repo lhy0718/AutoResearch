@@ -372,7 +372,7 @@ export class StateGraphRuntime {
 
   async approveCurrent(
     runId: string,
-    opts?: { continueAfterApprove?: boolean; abortSignal?: AbortSignal }
+    opts?: { continueAfterApprove?: boolean; abortSignal?: AbortSignal; allowPauseForHuman?: boolean }
   ): Promise<RunRecord> {
     const run = await this.getRunOrThrow(runId);
     const node = run.currentNode;
@@ -382,12 +382,12 @@ export class StateGraphRuntime {
       return run;
     }
 
-    if (node === "review" && run.graph.pendingTransition) {
+    if (run.graph.pendingTransition) {
       const recommendation = run.graph.pendingTransition;
-      if (recommendation.action === "pause_for_human") {
+      if (recommendation.action === "pause_for_human" && !opts?.allowPauseForHuman) {
         return run;
       }
-      if (recommendation.action !== "advance") {
+      if (recommendation.action !== "advance" && recommendation.action !== "pause_for_human") {
         return this.applyPendingTransition(run.id);
       }
     }

@@ -25,6 +25,12 @@ import {
 import { RunVerifierReport, RunVerifierTrigger } from "../experiments/runVerifierFeedback.js";
 import { FailureMemory, buildErrorFingerprint } from "../experiments/failureMemory.js";
 import {
+  buildExperimentRunManifest,
+  buildFallbackExperimentPortfolio,
+  ExperimentPortfolio,
+  ExperimentPortfolioSamplingProfile
+} from "../experiments/experimentPortfolio.js";
+import {
   buildRunExperimentsExecutionPlan,
   classifyRunExperimentsFailure,
   createRunExperimentsWatchdogState,
@@ -62,6 +68,7 @@ interface SupplementalRunRecord {
   exit_code?: number;
   log_file?: string;
   objective_evaluation?: ObjectiveMetricEvaluation;
+  sampling_profile?: ExperimentPortfolioSamplingProfile;
 }
 
 interface SupplementalExpectationArtifact {
@@ -84,11 +91,26 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
       const experimentMode =
         (await runContext.get<string>("implement_experiments.mode")) || "real_execution";
       const managedSupplementalPlan = await resolveManagedSupplementalPlan(runContext, process.cwd());
+      const loadedExperimentPortfolio = await loadExperimentPortfolio(run.id);
+      const experimentPortfolio =
+        loadedExperimentPortfolio ||
+        buildFallbackExperimentPortfolio({
+          runId: run.id,
+          executionModel: managedSupplementalPlan?.kind || "single_run",
+          supplementalProfiles: managedSupplementalPlan?.profiles.map((profile) => ({
+            profile: profile.profile
+          }))
+        });
+      if (!loadedExperimentPortfolio) {
+        await writeRunArtifact(run, "experiment_portfolio.json", JSON.stringify(experimentPortfolio, null, 2));
+      }
       await runContext.put("run_experiments.trigger", trigger);
       await runContext.put("run_experiments.handoff_reason", handoffReason || null);
       await runContext.put("run_experiments.supplemental_runs", []);
       await runContext.put("run_experiments.supplemental_summary", null);
       await runContext.put("run_experiments.triage", null);
+      await runContext.put("run_experiments.portfolio", null);
+      await runContext.put("run_experiments.run_manifest", null);
 
       const defaultMetricsPath = path.join(process.cwd(), ".autolabos", "runs", run.id, "metrics.json");
       const failureMemory = FailureMemory.forRun(run.id);
@@ -253,6 +275,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         baselineCandidateIds: comparisonContract?.baseline_candidate_ids,
         testCommand: resolved.testCommand,
         testCwd: resolved.testCwd,
+        portfolio: experimentPortfolio,
         supplementalProfiles: managedSupplementalPlan?.profiles.map((profile) => ({
           profile: profile.profile,
           command: profile.command,
@@ -818,6 +841,20 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
       await runContext.put("run_experiments.supplemental_runs", supplementalRuns.records);
       await runContext.put("run_experiments.supplemental_summary", supplementalRuns.summary || null);
       await runContext.put("run_experiments.supplemental_expectation", supplementalRuns.expectation || null);
+      const runManifest = buildExperimentRunManifest({
+        runId: run.id,
+        portfolio: experimentPortfolio,
+        executionModel: managedSupplementalPlan?.kind || experimentPortfolio.execution_model,
+        primaryCommand,
+        primaryCwd: resolved.cwd,
+        primaryMetricsPath: resolved.metricsPath,
+        primaryMetrics: parsedMetrics,
+        objectiveEvaluation,
+        comparisonMode: comparisonContract?.comparison_mode,
+        supplementalRuns: supplementalRuns.records
+      });
+      await runContext.put("run_experiments.portfolio", runManifest.portfolio);
+      await runContext.put("run_experiments.run_manifest", runManifest);
       await writeRunArtifact(
         run,
         "run_experiments_supplemental_runs.json",
@@ -828,6 +865,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         "run_experiments_supplemental_expectation.json",
         JSON.stringify(supplementalRuns.expectation || null, null, 2)
       );
+      await writeRunArtifact(run, "run_manifest.json", JSON.stringify(runManifest, null, 2));
       const publicOutputs = await publishRunExperimentOutputs({
         workspaceRoot: process.cwd(),
         run,
@@ -1280,7 +1318,8 @@ async function runManagedSupplementalProfile(input: {
       summary,
       exit_code: obs.exit_code ?? 0,
       log_file: logFile,
-      objective_evaluation: objectiveEvaluation
+      objective_evaluation: objectiveEvaluation,
+      sampling_profile: extractSamplingProfile(parsed as Record<string, unknown>)
     };
   } catch (error) {
     const summary = `Supplemental ${input.profile.profile} produced invalid metrics: ${
@@ -1565,6 +1604,16 @@ async function publishRunExperimentOutputs(input: {
       sourcePath: path.join(runDir, "run_experiments_verify_report.json"),
       targetRelativePath: "run_experiments_verify_report.json",
       optional: true
+    },
+    {
+      sourcePath: path.join(runDir, "run_manifest.json"),
+      targetRelativePath: "run_manifest.json",
+      optional: true
+    },
+    {
+      sourcePath: path.join(runDir, "experiment_portfolio.json"),
+      targetRelativePath: "experiment_portfolio.json",
+      optional: true
     }
   ];
   if (input.supplementalPlan) {
@@ -1628,4 +1677,40 @@ function extractPolicyBlock(
 
 function oneLine(value: string | undefined): string {
   return value?.replace(/\s+/g, " ").trim() || "";
+}
+
+async function loadExperimentPortfolio(runId: string): Promise<ExperimentPortfolio | undefined> {
+  try {
+    const raw = await fs.readFile(path.join(".autolabos", "runs", runId, "experiment_portfolio.json"), "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return undefined;
+    }
+    return parsed as ExperimentPortfolio;
+  } catch {
+    return undefined;
+  }
+}
+
+function extractSamplingProfile(metrics: Record<string, unknown>): ExperimentPortfolioSamplingProfile | undefined {
+  const sampling =
+    metrics.sampling_profile &&
+    typeof metrics.sampling_profile === "object" &&
+    !Array.isArray(metrics.sampling_profile)
+      ? metrics.sampling_profile as Record<string, unknown>
+      : {};
+  const profile: ExperimentPortfolioSamplingProfile = {};
+  if (typeof sampling.name === "string" && sampling.name.trim().length > 0) {
+    profile.name = sampling.name.trim();
+  }
+  if (typeof sampling.total_trials === "number" && Number.isFinite(sampling.total_trials)) {
+    profile.total_trials = sampling.total_trials;
+  }
+  if (typeof sampling.executed_trials === "number" && Number.isFinite(sampling.executed_trials)) {
+    profile.executed_trials = sampling.executed_trials;
+  }
+  if (typeof sampling.cached_trials === "number" && Number.isFinite(sampling.cached_trials)) {
+    profile.cached_trials = sampling.cached_trials;
+  }
+  return Object.keys(profile).length > 0 ? profile : undefined;
 }

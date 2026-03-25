@@ -865,6 +865,101 @@ describe("InteractionSession", () => {
     expect(snapshot.activeRunInsight?.lines.some((line) => line.includes("Review readiness: blocking"))).toBe(true);
   });
 
+  it("stops /agent review when approving analyze_results backtracks to design", async () => {
+    const run = await runStore.createRun({
+      title: "Backtrack before review",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    const current = await runStore.getRun(run.id);
+    if (!current) {
+      throw new Error("expected run");
+    }
+    current.status = "paused";
+    current.currentNode = "analyze_results";
+    current.graph.currentNode = "analyze_results";
+    current.graph.nodeStates.analyze_results = {
+      status: "needs_approval",
+      updatedAt: new Date().toISOString(),
+      note: "Analysis recommends another design revision."
+    };
+    current.graph.nodeStates.review = {
+      status: "pending",
+      updatedAt: new Date().toISOString()
+    };
+    current.graph.pendingTransition = {
+      action: "backtrack_to_design",
+      sourceNode: "analyze_results",
+      targetNode: "design_experiments",
+      reason: "Brief evidence gate failed.",
+      confidence: 0.76,
+      autoExecutable: false,
+      evidence: ["The run remains too small for paper progression."],
+      suggestedCommands: ["/agent jump design_experiments", "/agent run design_experiments"],
+      generatedAt: new Date().toISOString()
+    };
+    await runStore.updateRun(current);
+
+    const approveCurrent = vi.fn(async (runId: string) => {
+      const stored = await runStore.getRun(runId);
+      if (!stored) {
+        throw new Error("expected stored run");
+      }
+      stored.currentNode = "design_experiments";
+      stored.graph.currentNode = "design_experiments";
+      stored.status = "running";
+      stored.graph.nodeStates.analyze_results.status = "completed";
+      stored.graph.nodeStates.design_experiments = {
+        status: "pending",
+        updatedAt: new Date().toISOString(),
+        note: "Ready for another design pass."
+      };
+      stored.graph.pendingTransition = undefined;
+      await runStore.updateRun(stored);
+      return stored;
+    });
+    const runAgentWithOptions = vi.fn();
+
+    const session = new InteractionSession({
+      workspaceRoot: cwd,
+      config: {
+        research: {
+          defaultTopic: "topic",
+          defaultConstraints: ["recent papers"],
+          default_objective_metric: "metric"
+        },
+        providers: {
+          llm_mode: "codex_chatgpt_only",
+          codex: { model: "gpt-5.3-codex", reasoning_effort: "xhigh", fast_mode: false },
+          openai: { model: "gpt-5.4", reasoning_effort: "medium" }
+        },
+        analysis: {
+          responses_model: "gpt-5.4"
+        },
+        papers: { max_results: 100 }
+      } as any,
+      runStore,
+      titleGenerator: {} as any,
+      codex: {} as any,
+      openAiTextClient: undefined,
+      eventStream: new InMemoryEventStream(),
+      orchestrator: {
+        approveCurrent,
+        runAgentWithOptions
+      } as any,
+      semanticScholarApiKeyConfigured: true
+    });
+    await session.start();
+    await session.selectRun(run.id);
+
+    const result = await session.submitInput("/agent review");
+
+    expect(result.logs.some((line) => line.includes("Approved analyze_results. Next node is design_experiments."))).toBe(true);
+    expect(approveCurrent).toHaveBeenCalledWith(run.id);
+    expect(runAgentWithOptions).not.toHaveBeenCalled();
+  });
+
   it("does not surface analyze-results insight when the active run is rewound before analyze_results", async () => {
     const run = await runStore.createRun({
       title: "Stale analysis insight",

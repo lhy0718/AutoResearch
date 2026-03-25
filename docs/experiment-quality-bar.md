@@ -33,7 +33,7 @@ When execution is recorded as successful:
 - `metrics.json` must exist and be parseable as an object.
 - `objective_evaluation.json` should exist.
 - `run_manifest.json` should exist and summarize what was run.
-- `experiment_plan.json` or equivalent design artifact should exist.
+- `experiment_portfolio.json` or an equivalent design artifact should exist and describe the planned trial groups.
 - At least one concrete run record must exist under the run artifact tree.
 
 ### B. `analyze_results` success expectations
@@ -43,6 +43,7 @@ When `analyze_results` is completed:
 - transition/result recommendation artifacts should exist (`transition_recommendation.json`).
 - the analysis must identify the compared systems or settings.
 - the analysis must state whether the objective metric improved, worsened, or was inconclusive.
+- when a portfolio or supplemental trial structure exists, `result_analysis.json` should expose the trial-group summary rather than flattening everything into one opaque run.
 - when a governed brief declares minimum acceptable evidence, `analysis/evidence_scale_assessment.json` must exist and state whether the executed evidence satisfied that floor.
 
 ### C. `review` output expectations

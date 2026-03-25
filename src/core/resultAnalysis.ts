@@ -1,6 +1,7 @@
 import YAML from "yaml";
 
 import { evaluateObjectiveMetric, ObjectiveMetricEvaluation, ObjectiveMetricProfile } from "./objectiveMetric.js";
+import { ExperimentPortfolio, ExperimentRunManifest } from "./experiments/experimentPortfolio.js";
 import { RunVerifierReport } from "./experiments/runVerifierFeedback.js";
 import { RunRecord, TransitionRecommendation } from "../types.js";
 
@@ -86,7 +87,40 @@ export interface AnalysisSupplementalRun {
     executed_trials?: number;
     cached_trials?: number;
   };
+  portfolio?: {
+    trial_group_id: string;
+    trial_group_label: string;
+    execution_model: string;
+  };
   summary: string;
+}
+
+export interface AnalysisExperimentPortfolioTrialGroup {
+  id: string;
+  label: string;
+  role: "primary" | "supplemental";
+  profile?: string;
+  status?: "pass" | "fail" | "skipped";
+  expected_trials?: number;
+  executed_trials?: number;
+  cached_trials?: number;
+  metrics_path?: string;
+  objective_status?: ObjectiveMetricEvaluation["status"];
+  dataset_scope: string[];
+  metrics: string[];
+  baselines: string[];
+  notes: string[];
+  summary?: string;
+}
+
+export interface AnalysisExperimentPortfolio {
+  execution_model: string;
+  comparison_axes: string[];
+  primary_trial_group_id: string;
+  total_expected_trials?: number;
+  executed_trials?: number;
+  cached_trials?: number;
+  trial_groups: AnalysisExperimentPortfolioTrialGroup[];
 }
 
 export interface AnalysisExternalComparison {
@@ -186,6 +220,7 @@ export interface AnalysisReport {
     top_metric?: AnalysisMetricEntry;
   };
   plan_context: AnalysisPlanContext;
+  experiment_portfolio?: AnalysisExperimentPortfolio;
   metric_table: AnalysisMetricEntry[];
   condition_comparisons: AnalysisConditionComparison[];
   execution_summary: AnalysisExecutionSummary;
@@ -226,6 +261,8 @@ interface BuildAnalysisReportArgs {
   performanceFigurePath?: string;
   inputWarnings?: string[];
   runVerifierReport?: RunVerifierReport;
+  experimentPortfolio?: ExperimentPortfolio;
+  runManifest?: ExperimentRunManifest;
   supplementalMetrics?: Array<{
     profile: string;
     path?: string;
@@ -265,8 +302,13 @@ export function buildAnalysisReport(args: BuildAnalysisReportArgs): AnalysisRepo
   const limitations = buildLimitations(planContext, warnings);
   const topMetric = metricTable[0];
   const verifierFeedback = normalizeVerifierFeedback(args.runVerifierReport);
+  const experimentPortfolio = buildExperimentPortfolioSummary(
+    args.experimentPortfolio || args.runManifest?.portfolio,
+    args.runManifest
+  );
   const supplementalRuns = buildSupplementalRuns({
     runs: args.supplementalMetrics || [],
+    runManifest: args.runManifest,
     objectiveProfile: args.objectiveProfile,
     rawObjectiveMetric: args.run.objectiveMetric
   });
@@ -285,7 +327,9 @@ export function buildAnalysisReport(args: BuildAnalysisReportArgs): AnalysisRepo
     supplementalExpectation: args.supplementalExpectation
   });
   const executionRuns =
-    typeof statisticalSummary.executed_trials === "number"
+    typeof experimentPortfolio?.executed_trials === "number"
+      ? experimentPortfolio.executed_trials
+      : typeof statisticalSummary.executed_trials === "number"
       ? statisticalSummary.executed_trials
       : executionSummary.observation_count;
   const failureTaxonomy = buildFailureTaxonomy({
@@ -314,7 +358,8 @@ export function buildAnalysisReport(args: BuildAnalysisReportArgs): AnalysisRepo
     supplementalRuns,
     externalComparisons,
     statisticalSummary,
-    failureTaxonomy
+    failureTaxonomy,
+    experimentPortfolio
   });
   const paperClaims = buildPaperClaims(primaryFindings, planContext, conditionComparisons, externalComparisons);
 
@@ -347,6 +392,7 @@ export function buildAnalysisReport(args: BuildAnalysisReportArgs): AnalysisRepo
       top_metric: topMetric
     },
     plan_context: planContext,
+    experiment_portfolio: experimentPortfolio,
     metric_table: metricTable,
     condition_comparisons: conditionComparisons,
     execution_summary: executionSummary,
@@ -666,6 +712,7 @@ function buildPrimaryFindings(args: {
   externalComparisons: AnalysisExternalComparison[];
   statisticalSummary: AnalysisStatisticalSummary;
   failureTaxonomy: AnalysisFailureCategory[];
+  experimentPortfolio?: AnalysisExperimentPortfolio;
 }): string[] {
   const findings: string[] = [args.objectiveEvaluation.summary];
   const executedTrials = args.statisticalSummary.executed_trials;
@@ -691,6 +738,16 @@ function buildPrimaryFindings(args: {
       `The selected design preset a practical runtime-increase guardrail of ${formatMetricValue(
         args.planContext.selected_design.runtime_guardrail_pct
       )}% before analysis.`
+    );
+  }
+
+  if ((args.experimentPortfolio?.trial_groups.length || 0) > 1) {
+    findings.push(
+      `Execution portfolio (${args.experimentPortfolio?.execution_model}) tracked ${
+        args.experimentPortfolio?.trial_groups.length || 0
+      } trial group(s): ${args.experimentPortfolio?.trial_groups
+        .map((group) => `${group.profile || group.id} ${group.status || "planned"}`)
+        .join(", ")}.`
     );
   }
 
@@ -844,9 +901,15 @@ function normalizeVerifierFeedback(report: RunVerifierReport | undefined): Analy
 
 function buildSupplementalRuns(args: {
   runs: Array<{ profile: string; path?: string; metrics: Record<string, unknown> }>;
+  runManifest?: ExperimentRunManifest;
   objectiveProfile: ObjectiveMetricProfile;
   rawObjectiveMetric: string;
 }): AnalysisSupplementalRun[] {
+  const portfolioGroupsByProfile = new Map(
+    (args.runManifest?.trial_groups || [])
+      .filter((group) => group.role === "supplemental" && typeof group.profile === "string")
+      .map((group) => [group.profile as string, group])
+  );
   return args.runs
     .map((item) => {
       const metricTable = sortMetricTable(
@@ -859,9 +922,10 @@ function buildSupplementalRuns(args: {
         args.rawObjectiveMetric
       );
       const sampling = asRecord(item.metrics.sampling_profile);
+      const portfolioGroup = portfolioGroupsByProfile.get(item.profile);
       return {
         profile: item.profile,
-        path: item.path,
+        path: portfolioGroup?.metrics_path || item.path,
         mean_score: computeMeanScore(item.metrics),
         objective_evaluation: objectiveEvaluation,
         metric_table: metricTable.slice(0, 6),
@@ -871,10 +935,64 @@ function buildSupplementalRuns(args: {
           executed_trials: asNumber(sampling.executed_trials),
           cached_trials: asNumber(sampling.cached_trials)
         },
-        summary: buildSupplementalRunSummary(item.profile, objectiveEvaluation, sampling, item.path)
+        portfolio: portfolioGroup && args.runManifest
+          ? {
+              trial_group_id: portfolioGroup.id,
+              trial_group_label: portfolioGroup.label,
+              execution_model: args.runManifest.execution_model
+            }
+          : undefined,
+        summary: buildSupplementalRunSummary(
+          item.profile,
+          objectiveEvaluation,
+          sampling,
+          portfolioGroup?.metrics_path || item.path
+        )
       };
     })
     .sort((left, right) => left.profile.localeCompare(right.profile));
+}
+
+function buildExperimentPortfolioSummary(
+  portfolio: ExperimentPortfolio | undefined,
+  runManifest: ExperimentRunManifest | undefined
+): AnalysisExperimentPortfolio | undefined {
+  if (!portfolio) {
+    return undefined;
+  }
+
+  const manifestGroups = new Map(
+    (runManifest?.trial_groups || []).map((group) => [group.id, group])
+  );
+
+  return {
+    execution_model: runManifest?.execution_model || portfolio.execution_model,
+    comparison_axes: portfolio.comparison_axes,
+    primary_trial_group_id: portfolio.primary_trial_group_id,
+    total_expected_trials: runManifest?.total_expected_trials ?? portfolio.total_expected_trials,
+    executed_trials: runManifest?.executed_trials,
+    cached_trials: runManifest?.cached_trials,
+    trial_groups: portfolio.trial_groups.map((group) => {
+      const execution = manifestGroups.get(group.id);
+      return {
+        id: group.id,
+        label: group.label,
+        role: group.role,
+        profile: group.profile,
+        status: execution?.status,
+        expected_trials: execution?.expected_trials ?? group.expected_trials,
+        executed_trials: execution?.sampling_profile?.executed_trials,
+        cached_trials: execution?.sampling_profile?.cached_trials,
+        metrics_path: execution?.metrics_path,
+        objective_status: execution?.objective_evaluation?.status,
+        dataset_scope: group.dataset_scope,
+        metrics: group.metrics,
+        baselines: group.baselines,
+        notes: group.notes,
+        summary: execution?.summary
+      };
+    })
+  };
 }
 
 function buildExternalComparisons(args: {

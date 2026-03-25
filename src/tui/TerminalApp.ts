@@ -3093,8 +3093,12 @@ export class TerminalApp {
       const analyzeState = workingRun.graph.nodeStates.analyze_results;
       if (analyzeState.status === "needs_approval") {
         workingRun = await this.orchestrator.approveCurrent(workingRun.id);
-        this.pushLog("Approved analyze_results and moved into review.");
         await this.refreshRunIndex();
+        if (workingRun.currentNode !== "review") {
+          this.pushLog(`Approved analyze_results. Next node is ${workingRun.currentNode}.`);
+          return { ok: false, reason: `review not available after approval: ${workingRun.currentNode}` };
+        }
+        this.pushLog("Approved analyze_results and moved into review.");
       }
     }
 

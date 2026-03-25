@@ -4,6 +4,8 @@ Reproducibility claims must be backed by concrete artifacts.
 
 ## 1) Minimum artifact set (when applicable)
 
+- Planned portfolio / trial-group structure (`experiment_portfolio.json`)
+- Run manifest (`run_manifest.json`)
 - Raw or summarized metrics (`metrics.json`, supplemental metrics)
 - Objective evaluation (`objective_evaluation.json`)
 - Result synthesis (`result_analysis.json`, optional synthesis artifact)

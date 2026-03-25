@@ -778,6 +778,22 @@ describe("constraint propagation", () => {
     expect(plan).toContain('      - "Prompt phrasing / coordination-style variation via neutral vs compressed collaboration instructions."');
     expect(plan).toContain("  confirmatory_extension:");
     expect(plan).toContain("        total_trials: 72");
+    const portfolio = JSON.parse(await readFile(path.join(runDir, "experiment_portfolio.json"), "utf8")) as {
+      execution_model: string;
+      total_expected_trials?: number;
+      trial_groups: Array<{ id: string; profile?: string; expected_trials?: number }>;
+    };
+    expect(portfolio.execution_model).toBe("managed_bundle");
+    expect(portfolio.total_expected_trials).toBe(126);
+    expect(portfolio.trial_groups).toEqual([
+      expect.objectContaining({ id: "primary_standard", profile: "standard", expected_trials: 48 }),
+      expect.objectContaining({ id: "quick_check", profile: "quick_check", expected_trials: 6 }),
+      expect.objectContaining({ id: "confirmatory", profile: "confirmatory", expected_trials: 72 })
+    ]);
+    const publicManifest = JSON.parse(await readFile(buildPublicRunManifestPath(root, run), "utf8")) as {
+      sections?: { experiment?: { generated_files?: string[] } };
+    };
+    expect(publicManifest.sections?.experiment?.generated_files).toContain("experiment/experiment_portfolio.json");
   });
 
   it("reuses one llm-derived constraint profile across design and write nodes", async () => {

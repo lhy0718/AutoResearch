@@ -2426,10 +2426,37 @@ describe("objective metric propagation", () => {
         "experiment/metrics.json",
         "experiment/objective_evaluation.json",
         "experiment/run_experiments_verify_report.json",
+        "experiment/run_manifest.json",
+        "experiment/experiment_portfolio.json",
         "experiment/quick_check_metrics.json",
         "experiment/confirmatory_metrics.json"
       ])
     );
+    const runManifest = JSON.parse(await readFile(path.join(runDir, "run_manifest.json"), "utf8")) as {
+      execution_model: string;
+      total_expected_trials?: number;
+      trial_groups: Array<{
+        id: string;
+        profile?: string;
+        status: string;
+        objective_evaluation?: { status?: string };
+      }>;
+    };
+    expect(runManifest.execution_model).toBe("managed_bundle");
+    expect(runManifest.total_expected_trials).toBe(126);
+    expect(runManifest.trial_groups).toEqual([
+      expect.objectContaining({
+        id: "primary_standard",
+        status: "pass",
+        objective_evaluation: expect.objectContaining({ status: "met" })
+      }),
+      expect.objectContaining({ id: "quick_check", profile: "quick_check", status: "pass" }),
+      expect.objectContaining({ id: "confirmatory", profile: "confirmatory", status: "pass" })
+    ]);
+    expect(await memory.get("run_experiments.run_manifest")).toMatchObject({
+      execution_model: "managed_bundle",
+      total_expected_trials: 126
+    });
     expect(await memory.get("run_experiments.triage")).toMatchObject({
       watchdog: {
         metrics_state: "valid"
@@ -2693,6 +2720,17 @@ describe("objective metric propagation", () => {
     const supplementalRaw = await readFile(path.join(runDir, "run_experiments_supplemental_runs.json"), "utf8");
     expect(supplementalRaw).toContain('"status": "skipped"');
     expect(supplementalRaw).not.toContain('"status": "fail"');
+    const runManifest = JSON.parse(await readFile(path.join(runDir, "run_manifest.json"), "utf8")) as {
+      execution_model: string;
+      trial_groups: Array<{ profile?: string; status: string }>;
+    };
+    expect(runManifest.execution_model).toBe("legacy_python_runner");
+    expect(runManifest.trial_groups).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ profile: "quick_check", status: "skipped" }),
+        expect.objectContaining({ profile: "confirmatory", status: "skipped" })
+      ])
+    );
   });
 
   it("fails second-stage verification when metrics.json is not a JSON object", async () => {

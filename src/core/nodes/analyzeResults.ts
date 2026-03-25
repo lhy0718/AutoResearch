@@ -24,6 +24,7 @@ import {
 import { buildAnalyzeResultsCompletionSummary } from "../resultAnalysisPresentation.js";
 import { synthesizeAnalysisReport } from "../resultAnalysisSynthesis.js";
 import { RunVerifierReport } from "../experiments/runVerifierFeedback.js";
+import { ExperimentPortfolio, ExperimentRunManifest } from "../experiments/experimentPortfolio.js";
 import { GraphNodeId, TransitionRecommendation } from "../../types.js";
 import { runAnalyzeResultsPanel } from "../analyzeResultsPanel.js";
 import {
@@ -185,6 +186,18 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         inputWarnings,
         "run_experiments_verify_report.json"
       );
+      const experimentPortfolio =
+        (await readJsonObject<ExperimentPortfolio>(
+          path.join(".autolabos", "runs", run.id, "experiment_portfolio.json"),
+          inputWarnings,
+          "experiment_portfolio.json"
+        )) || undefined;
+      const runManifest =
+        (await readJsonObject<ExperimentRunManifest>(
+          path.join(".autolabos", "runs", run.id, "run_manifest.json"),
+          inputWarnings,
+          "run_manifest.json"
+        )) || undefined;
       const supplementalMetrics = await loadSupplementalMetrics(publicDir, inputWarnings);
       const supplementalExpectation = await loadSupplementalExpectation(run.id, inputWarnings);
       const recentPaperComparisonPath =
@@ -207,6 +220,8 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         observationsRaw,
         inputWarnings,
         runVerifierReport,
+        experimentPortfolio,
+        runManifest,
         supplementalMetrics,
         supplementalExpectation,
         recentPaperComparison,
@@ -426,6 +441,7 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
       await runContextMemory.put("analyze_results.last_error", metricsLoadError || null);
       await runContextMemory.put("analyze_results.last_synthesis", summary.synthesis || null);
       await runContextMemory.put("analyze_results.last_transition", transitionRecommendation);
+      await runContextMemory.put("analyze_results.experiment_portfolio", summary.experiment_portfolio || null);
       await runContextMemory.put("analyze_results.panel_decision", panelResult.decision);
       if (humanInterventionRequest) {
         await writeHumanInterventionRequest({

@@ -41,7 +41,7 @@ export class AgentOrchestrator {
 
     if (current.currentNode !== nodeId) {
       if (shouldTreatManualRunAsApprovalHandoff(current, nodeId)) {
-        await this.runtime.approveCurrent(runId, { continueAfterApprove: false });
+        await this.runtime.approveCurrent(runId, { continueAfterApprove: false, allowPauseForHuman: true });
       } else {
         await this.runtime.jumpToNode(runId, nodeId, "force", "manual node run");
       }

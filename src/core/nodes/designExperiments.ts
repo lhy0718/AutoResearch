@@ -16,6 +16,7 @@ import {
   ExperimentDesignCandidate
 } from "../analysis/researchPlanning.js";
 import { supportsRealExecutionBundle } from "../experiments/realExecutionBundle.js";
+import { buildExperimentPortfolioFromDesign } from "../experiments/experimentPortfolio.js";
 import { runDesignExperimentsPanel } from "../designExperimentsPanel.js";
 import {
   buildExperimentComparisonContract,
@@ -257,6 +258,63 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         emitLog(`Experiment contract notes: ${contractValidation.issues.join("; ")}`);
       }
       await writeExperimentContract(run, experimentContract);
+      const experimentPortfolio = buildExperimentPortfolioFromDesign({
+        runId: run.id,
+        selectedDesign: panelResult.selected,
+        managedConfig: managedBundleSupported
+          ? {
+              comparison_axes: ["runner_profile", "dataset", "repeat", "prompt_variant", "baseline"],
+              primary: {
+                id: "primary_standard",
+                label: "Primary standard managed run",
+                profile: "standard",
+                expected_trials: MANAGED_EXECUTABLE_DESIGN.standard_profile.total_trials,
+                dataset_scope: [...MANAGED_EXECUTABLE_DESIGN.supported_benchmarks],
+                metrics: [...MANAGED_EXECUTABLE_DESIGN.supported_metrics],
+                baselines: [...MANAGED_EXECUTABLE_DESIGN.supported_baselines],
+                notes: [
+                  panelResult.selected.plan_summary,
+                  ...MANAGED_EXECUTABLE_DESIGN.conditions,
+                  ...panelResult.selected.evaluation_steps
+                ]
+              },
+              supplemental: [
+                {
+                  id: "quick_check",
+                  label: "Quick-check managed replication",
+                  profile: "quick_check",
+                  expected_trials: MANAGED_EXECUTABLE_DESIGN.quick_check_profile.total_trials,
+                  dataset_scope: [...MANAGED_EXECUTABLE_DESIGN.supported_benchmarks],
+                  metrics: [...MANAGED_EXECUTABLE_DESIGN.supported_metrics],
+                  baselines: [...MANAGED_EXECUTABLE_DESIGN.supported_baselines],
+                  notes: [
+                    "Low-cost validation run gated on the primary objective result.",
+                    ...panelResult.selected.implementation_notes
+                  ]
+                },
+                {
+                  id: "confirmatory",
+                  label: "Confirmatory extension",
+                  profile: "confirmatory",
+                  expected_trials: MANAGED_EXECUTABLE_DESIGN.confirmatory_profile.total_trials,
+                  dataset_scope: panelResult.selected.datasets,
+                  metrics: panelResult.selected.metrics,
+                  baselines: panelResult.selected.baselines,
+                  notes: [
+                    "Higher-budget confirmatory run gated on the quick_check outcome.",
+                    ...panelResult.selected.evaluation_steps,
+                    ...panelResult.selected.resource_notes
+                  ]
+                }
+              ]
+            }
+          : undefined
+      });
+      await writeRunArtifact(
+        run,
+        "experiment_portfolio.json",
+        `${JSON.stringify(experimentPortfolio, null, 2)}\n`
+      );
 
       // --- Baseline summary artifact (for review gate) ---
       const baselineSummary = buildBaselineSummary({
@@ -272,6 +330,7 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
       );
 
       await runContextMemory.put("design_experiments.experiment_contract", experimentContract);
+      await runContextMemory.put("design_experiments.portfolio", experimentPortfolio);
 
       // --- Brief-vs-design consistency check (Target 2) ---
       if (briefCompleteness) {
@@ -337,6 +396,11 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
           {
             sourcePath: outputPath,
             targetRelativePath: "experiment_plan.yaml"
+          },
+          {
+            sourcePath: path.join(process.cwd(), ".autolabos", "runs", run.id, "experiment_portfolio.json"),
+            targetRelativePath: "experiment_portfolio.json",
+            optional: true
           },
           {
             sourcePath: path.join(process.cwd(), ".autolabos", "runs", run.id, "baseline_summary.json"),

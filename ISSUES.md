@@ -1,12 +1,39 @@
 # ISSUES.md
 
-Last updated: 2026-03-24
+Last updated: 2026-03-25
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
 ---
 
 ## Current issue log
+
+### LV-076 — `/approve` can ignore an `analyze_results` backtrack recommendation and advance into `review`
+- Status: FIXED
+- Validation target: fresh `test/` replay of the paper-ready gate on substitute run `411d5215-b03a-46e4-bf89-ea5a42513288`
+- Environment/session context: repo head on 2026-03-25, `test/` workspace, substitute run `411d5215-b03a-46e4-bf89-ea5a42513288`, fresh rebuilt TUI after the portfolio-artifact slice and paper-ready gate hardening.
+- Reproduction steps:
+  1. Start a fresh TUI rooted at `test/` and rerun `analyze_results` for run `411d5215-b03a-46e4-bf89-ea5a42513288` with `/agent run analyze_results 411d5215-b03a-46e4-bf89-ea5a42513288`.
+  2. Wait for `.autolabos/runs/runs.json` to show `currentNode=analyze_results`, `run.status=paused`, `analyze_results.status=needs_approval`.
+  3. Confirm `.autolabos/runs/411d5215-b03a-46e4-bf89-ea5a42513288/transition_recommendation.json` recommends `backtrack_to_design` with target `design_experiments`.
+  4. Submit `/approve` and compare the resulting `currentNode` in `.autolabos/runs/runs.json` with the stored recommendation.
+- Expected behavior: when `analyze_results` pauses with a non-advance pending transition such as `backtrack_to_design`, `/approve` should apply that stored transition and rewind the run to `design_experiments` rather than walking forward into `review`.
+- Actual behavior: before the fix, the live replay produced `transition_recommendation.json` with `action=backtrack_to_design`, but `/approve` still cleared the pending transition and moved the run into `review`, so the approval path contradicted the persisted gate artifact.
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced again on 2026-03-25 in a freshly rebuilt `test/` TUI by rerunning `analyze_results` and immediately approving the paused node.
+  - Existing session: the earlier live replay from `run_experiments` had already shown the same divergence — the run paused at `analyze_results` with a paper-readiness backtrack recommendation, but `/approve` advanced it into `review`.
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: `StateGraphRuntime.approveCurrent(...)` only honored non-advance pending transitions for `review`, so `analyze_results` approvals discarded the persisted transition recommendation and advanced by graph order instead.
+- Code/test changes:
+  - Generalized `StateGraphRuntime.approveCurrent(...)` in `src/core/stateGraph/runtime.ts` so non-advance pending transitions are applied for `analyze_results` too, while preserving `pause_for_human` boundaries unless an explicit manual handoff requested them.
+  - Updated `src/core/agents/agentOrchestrator.ts` so the existing analyze-papers `pause_for_human` handoff path (`/agent run <next-node>`) still works via an explicit `allowPauseForHuman` approval option.
+  - Updated `src/interaction/InteractionSession.ts` and `src/tui/TerminalApp.ts` so `/agent review` stops cleanly and reports the rewound node if approving `analyze_results` backtracks instead of entering `review`.
+  - Added regression coverage in `tests/agentOrchestrator.test.ts` and `tests/interactionSession.test.ts`.
+- Regression status:
+  - Automated regression test linked: `tests/agentOrchestrator.test.ts`, `tests/interactionSession.test.ts`
+  - Re-validation result: FIXED via targeted regressions (`npx vitest run tests/agentOrchestrator.test.ts tests/interactionSession.test.ts`), full `npm test`, `npm run build`, `npm run validate:harness`, and same-flow live replay in `test/`. On the repaired build, rerunning `analyze_results` regenerated `transition_recommendation.json` with `backtrack_to_design`, and `/approve` then rewound the run to `design_experiments` at `2026-03-25T05:37:25Z` with the matching `backtrack_to_design` transition recorded in `runs.json`.
+- Remaining risks: this closes the approval/artifact mismatch, but the substituted paper-scale run remains intentionally blocked for paper progression because its evidence is still too thin; future work should improve the actual experiment design or evidence scale rather than weakening this gate.
 
 ### LV-075 — `implement_experiments` local verification can miss DictWriter fieldname mismatches when CSV schemas come from named constants
 - Status: FIXED

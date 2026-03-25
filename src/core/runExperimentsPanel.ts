@@ -1,4 +1,5 @@
 import { ExperimentBudgetProfile } from "./experimentGovernance.js";
+import { ExperimentPortfolio } from "./experiments/experimentPortfolio.js";
 
 type ExecutionStage = "resolve" | "preflight" | "command" | "metrics" | "supplemental";
 
@@ -28,6 +29,18 @@ export interface RunExperimentsExecutionPlan {
     command: string;
     metrics_path: string;
   }>;
+  portfolio?: {
+    execution_model: ExperimentPortfolio["execution_model"];
+    primary_trial_group_id: string;
+    total_expected_trials?: number;
+    trial_groups: Array<{
+      id: string;
+      label: string;
+      role: "primary" | "supplemental";
+      profile?: string;
+      expected_trials?: number;
+    }>;
+  };
   rerun_policy: {
     max_automatic_reruns: number;
   };
@@ -83,6 +96,7 @@ export function buildRunExperimentsExecutionPlan(input: {
   baselineCandidateIds?: string[];
   testCommand?: string;
   testCwd?: string;
+  portfolio?: ExperimentPortfolio;
   supplementalProfiles?: Array<{
     profile: string;
     command: string;
@@ -106,6 +120,20 @@ export function buildRunExperimentsExecutionPlan(input: {
       command: profile.command,
       metrics_path: profile.metricsPath
     })),
+    portfolio: input.portfolio
+      ? {
+          execution_model: input.portfolio.execution_model,
+          primary_trial_group_id: input.portfolio.primary_trial_group_id,
+          total_expected_trials: input.portfolio.total_expected_trials,
+          trial_groups: input.portfolio.trial_groups.map((group) => ({
+            id: group.id,
+            label: group.label,
+            role: group.role,
+            profile: group.profile,
+            expected_trials: group.expected_trials
+          }))
+        }
+      : undefined,
     rerun_policy: {
       max_automatic_reruns: 1
     }
