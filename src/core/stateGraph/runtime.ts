@@ -647,7 +647,8 @@ export class StateGraphRuntime {
       });
     }
 
-    if (shouldSkipAutoRetryForFailure(node, errorMessage) && nextRetry < maxAttempts) {
+    const autoRetrySkipObservation = getAutoRetrySkipObservation(node, errorMessage);
+    if (autoRetrySkipObservation && nextRetry < maxAttempts) {
       nextRetry = maxAttempts;
       run.graph.retryCounters[node] = nextRetry;
       this.eventStream.emit({
@@ -655,7 +656,7 @@ export class StateGraphRuntime {
         runId: run.id,
         node,
         payload: {
-          text: `Skipping auto retries for ${node}: the failure requires upstream evidence strengthening rather than another identical attempt.`
+          text: autoRetrySkipObservation
         }
       });
     }
@@ -695,6 +696,21 @@ export class StateGraphRuntime {
         node,
         payload: { attempt: nextRetry, checkpoint: retryCheckpoint.seq }
       });
+      return this.getRunOrThrow(run.id);
+    }
+
+    if (shouldFailWithoutAutoRollback(node, errorMessage)) {
+      run.status = "failed";
+      this.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId: run.id,
+        node,
+        payload: {
+          text: `Skipping auto rollback for ${node}: the failure requires environment or configuration changes rather than rerunning earlier workflow nodes.`
+        }
+      });
+      this.syncLatestSummary(run, node);
+      await this.saveCheckpointAndPersist(run, "fail", errorMessage);
       return this.getRunOrThrow(run.id);
     }
 
@@ -1022,7 +1038,7 @@ export class StateGraphRuntime {
 }
 
 function shouldSkipAutoRetryForFailure(node: GraphNodeId, errorMessage: string): boolean {
-  const normalized = errorMessage.trim().toLowerCase();
+  const normalized = normalizeFailureMessage(errorMessage);
   if (node === "generate_hypotheses") {
     return (
       normalized.includes("hypothesis generation blocked:") &&
@@ -1035,7 +1051,42 @@ function shouldSkipAutoRetryForFailure(node: GraphNodeId, errorMessage: string):
     return normalized.includes("implementation execution failed before any runnable implementation was produced:");
   }
 
+  if (node === "analyze_papers") {
+    return isAnalyzePapersResponsesApiPdfConfigFailure(normalized);
+  }
+
   return false;
+}
+
+function getAutoRetrySkipObservation(node: GraphNodeId, errorMessage: string): string | undefined {
+  if (!shouldSkipAutoRetryForFailure(node, errorMessage)) {
+    return undefined;
+  }
+
+  if (node === "analyze_papers") {
+    return `Skipping auto retries for ${node}: the failure requires environment or configuration changes rather than another identical attempt.`;
+  }
+
+  return `Skipping auto retries for ${node}: the failure requires upstream evidence strengthening rather than another identical attempt.`;
+}
+
+function shouldFailWithoutAutoRollback(node: GraphNodeId, errorMessage: string): boolean {
+  const normalized = normalizeFailureMessage(errorMessage);
+  if (node === "analyze_papers") {
+    return isAnalyzePapersResponsesApiPdfConfigFailure(normalized);
+  }
+  return false;
+}
+
+function isAnalyzePapersResponsesApiPdfConfigFailure(normalizedErrorMessage: string): boolean {
+  return (
+    normalizedErrorMessage.includes("responses api pdf analysis is selected, but openai_api_key is not configured") ||
+    normalizedErrorMessage.includes("openai_api_key is required when pdf analysis mode is set to responses api")
+  );
+}
+
+function normalizeFailureMessage(errorMessage: string): string {
+  return errorMessage.trim().toLowerCase();
 }
 
 

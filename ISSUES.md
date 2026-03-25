@@ -8,6 +8,32 @@ This file was compacted on 2026-03-22 to remove duplicated template fragments, m
 
 ## Current issue log
 
+### LV-079 — downstream analyze failure can roll a successful real collect run back into a second provider search
+- Status: FIXED
+- Validation target: fresh direct live/provider-backed `collect_papers` TUI run using `/agent collect ...` without deterministic smoke fixtures or fake provider responses
+- Environment/session context: repo head on 2026-03-25, temporary workspace `/tmp/autolabos-real-collect-hAu8a6` copied from `test/.autolabos`, run `411d5215-b03a-46e4-bf89-ea5a42513288`, real provider traffic enabled, no `AUTOLABOS_FAKE_*` collect fixtures, `OPENAI_API_KEY` absent while the workspace remained configured for Responses API PDF analysis.
+- Reproduction steps:
+  1. Launch a fresh TUI rooted at `/tmp/autolabos-real-collect-hAu8a6`, run `/doctor`, then submit `/agent collect "small language model reasoning" --limit 10 --last-years 5 --run 411d5215-b03a-46e4-bf89-ea5a42513288`.
+  2. Let `collect_papers` complete with real Semantic Scholar/OpenAlex/Crossref/arXiv traffic, then keep the same session running as the workflow auto-advances into `analyze_papers`.
+  3. Inspect the live PTY log plus `.autolabos/runs/411d5215-b03a-46e4-bf89-ea5a42513288/run_record.json`, `collect_result.json`, `collect_search_aggregation.json`, and `events.jsonl`.
+- Expected behavior: once `collect_papers` has completed successfully, a downstream `analyze_papers` configuration failure should surface honestly at `analyze_papers`; it must not trigger a second real provider search or increment `collect_papers.executions`.
+- Actual behavior: the live run completed real multi-provider collect successfully (`collect_result.json` recorded `completed=true`, `source="aggregated"`, `stored=34`), then `analyze_papers` failed with `OPENAI_API_KEY is required when PDF analysis mode is set to Responses API.` The runtime retried `analyze_papers`, and after retries/collect-enrichment timing converged it auto-rolled back to `collect_papers`, which reran the same real search and pushed `usage.byNode.collect_papers.executions` to `2`.
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in a fresh temporary workspace and same-session live TUI run with no reopen/reload boundary; the duplicate provider traffic happened inside the original session after `collect_papers` had already succeeded once.
+  - Existing session: not yet separately exercised because the incorrect rollback happens before any restart boundary and already reproduces in the minimal fresh-session case.
+  - Divergence: not established yet; current evidence shows the bug does not require session reopen/reload.
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: generic `StateGraphRuntime` failure handling treated this `analyze_papers` environment/configuration error like a retry/rollback-worthy upstream problem, so it exhausted retries and rewound to `collect_papers` even though collect had already succeeded and the actual fix required credentials/configuration rather than a second provider search.
+- Code/test changes:
+  - Code: `src/core/stateGraph/runtime.ts` now classifies the Responses API PDF missing-key failure from `analyze_papers` as a non-retryable, non-rollbackable configuration failure. The runtime stops at `analyze_papers`, marks the run failed in place, and emits environment/configuration-focused observations instead of rewinding to `collect_papers`.
+  - Tests: added a regression in `tests/stateGraphRuntime.test.ts` that runs a real collect->analyze runtime loop with `collect_papers` succeeding and `analyze_papers` failing on the Responses API key requirement, then asserts `collect_papers.executions=1`, `analyze_papers.executions=1`, `currentNode=analyze_papers`, and no auto rollback.
+- Regression status:
+  - Automated regression test linked: `tests/stateGraphRuntime.test.ts`
+  - Re-validation result: FIXED via targeted `npx vitest run tests/stateGraphRuntime.test.ts`, full `npm run build`, full `npm test`, `npm run validate:harness`, same-flow direct PTY revalidation in `/tmp/autolabos-real-collect-rerun-g0saut`, and adjacent real open-access PTY revalidation in `/tmp/autolabos-real-collect-open-1nZuCN`.
+- Remaining risks: real collect runs still fail honestly at `analyze_papers` when `OPENAI_API_KEY` is absent for Responses API PDF mode, so end-to-end progression still requires valid LLM credentials. The fix only removes the incorrect retry/rollback behavior and duplicate provider traffic.
+- Evidence/artifacts: `/tmp/autolabos-real-collect-hAu8a6/.autolabos/runs/411d5215-b03a-46e4-bf89-ea5a42513288/run_record.json`; `/tmp/autolabos-real-collect-hAu8a6/.autolabos/runs/411d5215-b03a-46e4-bf89-ea5a42513288/collect_result.json`; `/tmp/autolabos-real-collect-hAu8a6/.autolabos/runs/411d5215-b03a-46e4-bf89-ea5a42513288/collect_search_aggregation.json`; `/tmp/autolabos-real-collect-hAu8a6/.autolabos/runs/411d5215-b03a-46e4-bf89-ea5a42513288/events.jsonl`; `/tmp/autolabos-real-collect-rerun-g0saut/.autolabos/runs/411d5215-b03a-46e4-bf89-ea5a42513288/run_record.json`; `/tmp/autolabos-real-collect-open-1nZuCN/.autolabos/runs/411d5215-b03a-46e4-bf89-ea5a42513288/run_record.json`; PTY logs from the same live runs on 2026-03-25
+
 ### LV-078 — reopened collect sessions can replay historical collect logs as if they are live
 - Status: FIXED
 - Validation target: reopened `test/smoke-workspace` TUI session after a confirmed collect run has already persisted `collect_background_job.json`

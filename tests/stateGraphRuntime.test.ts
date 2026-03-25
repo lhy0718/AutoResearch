@@ -324,6 +324,70 @@ describe("StateGraphRuntime", () => {
     });
   });
 
+  it("fails analyze_papers in place for Responses API PDF config errors instead of rerunning collect_papers", async () => {
+    let collectExecutions = 0;
+    let analyzeExecutions = 0;
+    const registry = new Registry({
+      collect_papers: {
+        id: "collect_papers",
+        execute: async () => {
+          collectExecutions += 1;
+          return {
+            status: "success",
+            summary: "collect complete",
+            needsApproval: false,
+            toolCallsUsed: 1
+          };
+        }
+      },
+      analyze_papers: {
+        id: "analyze_papers",
+        execute: async () => {
+          analyzeExecutions += 1;
+          return {
+            status: "failure",
+            summary: "Responses API PDF analysis is selected, but OPENAI_API_KEY is not configured.",
+            error: "OPENAI_API_KEY is required when PDF analysis mode is set to Responses API.",
+            toolCallsUsed: 0
+          };
+        }
+      }
+    });
+    const { store, runtime } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Collect rollback guard",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.graph.retryPolicy.maxAttemptsPerNode = 3;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 2;
+    await store.updateRun(run);
+
+    const updated = await runtime.runUntilPause(run.id);
+
+    expect(collectExecutions).toBe(1);
+    expect(analyzeExecutions).toBe(1);
+    expect(updated.status).toBe("failed");
+    expect(updated.currentNode).toBe("analyze_papers");
+    expect(updated.graph.nodeStates.collect_papers.status).toBe("completed");
+    expect(updated.graph.nodeStates.analyze_papers.status).toBe("failed");
+    expect(updated.graph.nodeStates.analyze_papers.lastError).toBe(
+      "OPENAI_API_KEY is required when PDF analysis mode is set to Responses API."
+    );
+    expect(updated.graph.retryCounters.analyze_papers).toBe(3);
+    expect(updated.graph.rollbackCounters.analyze_papers ?? 0).toBe(0);
+    expect(updated.usage?.byNode.collect_papers?.executions).toBe(1);
+    expect(updated.usage?.byNode.analyze_papers?.executions).toBe(1);
+
+    const persisted = await store.getRun(run.id);
+    expect(persisted?.status).toBe("failed");
+    expect(persisted?.currentNode).toBe("analyze_papers");
+    expect(persisted?.usage?.byNode.collect_papers?.executions).toBe(1);
+    expect(persisted?.usage?.byNode.analyze_papers?.executions).toBe(1);
+  });
+
   it("pauses before starting another node when cumulative spend already exceeds the configured budget", async () => {
     let executions = 0;
     const registry = new Registry({
