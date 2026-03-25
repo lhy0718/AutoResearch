@@ -8,6 +8,58 @@ This file was compacted on 2026-03-22 to remove duplicated template fragments, m
 
 ## Current issue log
 
+### LV-078 — reopened collect sessions can replay historical collect logs as if they are live
+- Status: FIXED
+- Validation target: reopened `test/smoke-workspace` TUI session after a confirmed collect run has already persisted `collect_background_job.json`
+- Environment/session context: repo head on 2026-03-25, `test/smoke-workspace`, run `9727e56e-19bc-46bb-bf5c-88d3be06af0d`, fake Codex structured collect action, `AUTOLABOS_FAKE_SEMANTIC_SCHOLAR_RESPONSE` set to the 3-paper smoke fixture, collect flow already completed once and left deferred enrichment pending.
+- Reproduction steps:
+  1. Prepare `test/smoke-workspace`, launch a fresh TUI, run the natural query `최근 5년 관련도 순으로 100개 수집해줘`, confirm the pending collect step, and let `collect_papers` complete once.
+  2. Exit the TUI before deferred enrichment finishes, then relaunch a fresh TUI process rooted at the same workspace without issuing a new collect command.
+  3. Compare the reopened startup log with `.autolabos/runs/9727e56e-19bc-46bb-bf5c-88d3be06af0d/run_record.json` and the persisted event log.
+- Expected behavior: the reopened session may replay recent persisted history for context, but those lines should be visibly marked as replayed so the operator can distinguish them from live recovery events; persisted state should continue to show that `collect_papers` only executed once.
+- Actual behavior: before the fix, the reopened TUI printed historical `Node collect_papers started.`, `Searching Semantic Scholar for "AI agent automation" (requested_query).`, and completion lines with the same formatting as live stream events, then separately printed `Recovered deferred enrichment background task after restart...`. Persisted state showed no second execution (`run_record.json` kept `usage.byNode.collect_papers.executions=1`), but the operator-visible log looked like `collect_papers` had rerun.
+- Fresh vs existing session comparison:
+  - Fresh session: the initial live collect run logs were genuinely live and matched the one actual execution.
+  - Existing session: reopening the same run replayed those old collect lines into the startup log with no replay marker, then appended the real deferred-enrichment recovery lines.
+  - Divergence: yes — only the reopened-session path mixed historical and live lines indistinguishably.
+- Root cause hypothesis:
+  - Type: `refresh_render_bug`
+  - Hypothesis: `loadHistoryForRun(...)` / `replayPersistedRunEvents(...)` in the TUI and web session surfaces appended persisted event lines through the same live log presentation path, so historical collect events were rendered as if they were happening again.
+- Code/test changes:
+  - Code: `src/tui/TerminalApp.ts` and `src/interaction/InteractionSession.ts` now route replayed persisted run events through replay-specific log helpers that prefix them with `Replay: ` instead of rendering them as live lines.
+  - Tests: added a TUI regression in `tests/terminalAppPlanExecution.test.ts` for replay-labeled persisted `collect_papers` events and updated `tests/interactionSession.test.ts` to assert the same replay prefix for web session history.
+- Regression status:
+  - Automated regression test linked: `tests/terminalAppPlanExecution.test.ts`, `tests/interactionSession.test.ts`
+  - Re-validation result: FIXED via `npx vitest run tests/terminalAppPlanExecution.test.ts tests/interactionSession.test.ts`, full `npm run build`, full `npm test`, and a fresh-plus-reopen PTY collect replay in `test/smoke-workspace`. The live PTY revalidation now shows `Replay: Node collect_papers started.` and `Replay: Searching Semantic Scholar ...` on reopen, the real recovery message remains unprefixed, and `run_record.json` still reports `collect_papers.executions=1`.
+- Remaining risks: reopened sessions still replay up to 40 persisted events for context, so the startup log can remain verbose; however, those historical lines no longer masquerade as live execution or imply a second collect search.
+- Evidence/artifacts: `test/smoke-workspace/.autolabos/runs/9727e56e-19bc-46bb-bf5c-88d3be06af0d/events.jsonl`; `test/smoke-workspace/.autolabos/runs/9727e56e-19bc-46bb-bf5c-88d3be06af0d/run_record.json`; PTY replay on 2026-03-25 showing replay-prefixed historical collect lines plus unprefixed deferred-enrichment recovery
+
+### LV-077 — fake Semantic Scholar collect validation can still persist live multi-provider results
+- Status: FIXED
+- Validation target: fresh `test/smoke-workspace` TUI `collect_papers` replay driven by the natural-language collect flow and fake Semantic Scholar fixture
+- Environment/session context: repo head on 2026-03-25, `test/smoke-workspace`, run `9727e56e-19bc-46bb-bf5c-88d3be06af0d`, fake Codex structured collect action, `AUTOLABOS_FAKE_SEMANTIC_SCHOLAR_RESPONSE` set to the 3-paper smoke fixture, no per-provider fake fixtures for OpenAlex/Crossref/arXiv.
+- Reproduction steps:
+  1. Prepare `test/smoke-workspace` with `tests/smoke/common.sh`, seed run `9727e56e-19bc-46bb-bf5c-88d3be06af0d`, and export the fake Codex collect action plus the fake 3-paper Semantic Scholar fixture.
+  2. Launch a fresh TUI rooted at `test/smoke-workspace`, run `/doctor`, then submit the natural query `최근 5년 관련도 순으로 100개 수집해줘` and confirm the pending collect step.
+  3. Inspect `.autolabos/runs/9727e56e-19bc-46bb-bf5c-88d3be06af0d/collect_result.json`, `collect_search_aggregation.json`, `corpus.jsonl`, and `collect_background_job.json`.
+- Expected behavior: fake-fixture collect validation should stay deterministic — the persisted corpus should contain only the 3 fake Semantic Scholar papers, `collect_result.json` should stay on the Semantic Scholar single-provider path, and live public providers should not pollute the artifacts.
+- Actual behavior: the live collect run persisted 114 papers, marked the result as `source="aggregated"`, and recorded successful OpenAlex/Crossref/arXiv searches in both `collect_result.json` and `collect_search_aggregation.json`; only 3 of the 114 papers came from the fake Semantic Scholar fixture, so the supposedly deterministic collect output was polluted by live provider traffic.
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in a fresh `test/smoke-workspace` launch; the collect artifacts contained 114 aggregated papers instead of the 3 fake fixture papers.
+  - Existing session: reopening the same persisted run in a fresh TUI process re-ran the same cross-provider search and resumed deferred enrichment against the already polluted 114-paper corpus.
+  - Divergence: no — both fresh and reopened-session validation showed the same provider fanout and polluted persisted outputs.
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: `collect_papers` still builds the full provider fanout even when `AUTOLABOS_FAKE_SEMANTIC_SCHOLAR_RESPONSE` is active, so deterministic live validation only fakes Semantic Scholar while OpenAlex/Crossref/arXiv keep contributing real persisted candidates.
+- Code/test changes:
+  - Code: `src/core/nodes/collectPapers.ts` now short-circuits `buildSearchProviders(...)` to Semantic Scholar only whenever the fake Semantic Scholar fixture env var is active, so live smoke validation no longer fans out into real provider traffic.
+  - Tests: added a regression in `tests/collectPapers.test.ts` that passes OpenAlex/Crossref/arXiv stubs alongside a fake Semantic Scholar fixture env var and asserts only Semantic Scholar is used.
+- Regression status:
+  - Automated regression test linked: `tests/collectPapers.test.ts`
+  - Re-validation result: FIXED via targeted `npx vitest run tests/collectPapers.test.ts`, full `npm run build`, `npm test`, `npm run validate:harness`, a fresh PTY-driven collect replay in `test/smoke-workspace`, and a reopened-session PTY check. After the fix, `collect_result.json` and `collect_search_aggregation.json` both stayed on the `semantic_scholar` single-provider path with exactly 3 fake smoke papers, and the reopened session no longer logged OpenAlex/Crossref/arXiv candidate fanout.
+- Remaining risks: smoke-workspace `/doctor` still reports unrelated environment diagnostics (`OPENAI_API_KEY` missing for OpenAI mode and missing workspace-local `ISSUES.md`), and true multi-provider deterministic smoke coverage would still need explicit per-provider fakes if that becomes a future validation target.
+- Evidence/artifacts: `test/smoke-workspace/.autolabos/runs/9727e56e-19bc-46bb-bf5c-88d3be06af0d/collect_result.json`, `test/smoke-workspace/.autolabos/runs/9727e56e-19bc-46bb-bf5c-88d3be06af0d/collect_search_aggregation.json`, `test/smoke-workspace/.autolabos/runs/9727e56e-19bc-46bb-bf5c-88d3be06af0d/corpus.jsonl`, `test/smoke-workspace/.autolabos/runs/9727e56e-19bc-46bb-bf5c-88d3be06af0d/collect_background_job.json`
+
 ### LV-076 — `/approve` can ignore an `analyze_results` backtrack recommendation and advance into `review`
 - Status: FIXED
 - Validation target: fresh `test/` replay of the paper-ready gate on substitute run `411d5215-b03a-46e4-bf89-ea5a42513288`

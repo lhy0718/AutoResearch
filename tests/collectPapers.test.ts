@@ -390,6 +390,168 @@ describe("collectPapers bibtex", () => {
     ).toBe(true);
   });
 
+  it("uses semantic scholar only when a fake semantic scholar fixture is active", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-fake-fixture-"));
+    process.chdir(root);
+
+    const previousFakeResponse = process.env.AUTOLABOS_FAKE_SEMANTIC_SCHOLAR_RESPONSE;
+    process.env.AUTOLABOS_FAKE_SEMANTIC_SCHOLAR_RESPONSE = '[{"paperId":"fixture-paper"}]';
+
+    try {
+      const runId = "run-collect-fake-fixture";
+      const run = makeRun(runId);
+      const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
+      await mkdir(memoryDir, { recursive: true });
+      await writeFile(
+        path.join(memoryDir, "run_context.json"),
+        JSON.stringify({
+          version: 1,
+          items: [
+            {
+              key: "collect_papers.request",
+              value: {
+                query: "Multi-Agent Collaboration",
+                limit: 1,
+                bibtexMode: "s2",
+                sort: { field: "relevance", order: "desc" }
+              },
+              updatedAt: new Date().toISOString()
+            }
+          ]
+        }),
+        "utf8"
+      );
+
+      const openAlexSearch = vi.fn(async () => [
+        {
+          provider: "openalex" as const,
+          providerId: "openalex-paper",
+          title: "Live OpenAlex Result",
+          authors: ["Open Alex"],
+          year: 2025
+        }
+      ]);
+      const crossrefSearch = vi.fn(async () => [
+        {
+          provider: "crossref" as const,
+          providerId: "crossref-paper",
+          title: "Live Crossref Result",
+          authors: ["Cross Ref"],
+          year: 2025
+        }
+      ]);
+      const arxivSearch = vi.fn(async () => [
+        {
+          provider: "arxiv" as const,
+          providerId: "arxiv-paper",
+          title: "Live arXiv Result",
+          authors: ["arXiv"],
+          year: 2025
+        }
+      ]);
+
+      const node = createCollectPapersNode({
+        config: {
+          papers: {
+            max_results: 200
+          }
+        } as any,
+        runStore: {} as any,
+        eventStream: new InMemoryEventStream(),
+        llm: new MockLLMClient(),
+        codex: {} as any,
+        aci: {} as any,
+        semanticScholar: {
+          streamSearchPapers: vi.fn(() =>
+            batchStream([
+              {
+                paperId: "paper-s2-only",
+                title: "Semantic Scholar Fixture Paper",
+                abstract: "Fixture abstract",
+                year: 2025,
+                venue: "NeurIPS",
+                url: "https://example.org/paper-s2-only",
+                openAccessPdfUrl: "https://example.org/paper-s2-only.pdf",
+                authors: ["Alice Kim"],
+                citationStylesBibtex:
+                  "@article{s2only,\n  title = {Semantic Scholar Fixture Paper},\n  author = {Alice Kim},\n  year = {2025}\n}"
+              }
+            ])
+          ),
+          getLastSearchDiagnostics: vi.fn(() => ({
+            attemptCount: 1,
+            lastStatus: 200,
+            attempts: [{ attempt: 1, ok: true, status: 200, endpoint: "search" }]
+          }))
+        } as any,
+        openAlex: {
+          provider: "openalex",
+          searchPapers: openAlexSearch,
+          getLastSearchDiagnostics: vi.fn(() => ({
+            provider: "openalex",
+            query: "Multi-Agent Collaboration",
+            fetched: 1,
+            attemptCount: 1,
+            attempts: [{ provider: "openalex", attempt: 1, ok: true, endpoint: "openalex" }]
+          }))
+        } as any,
+        crossref: {
+          provider: "crossref",
+          searchPapers: crossrefSearch,
+          getLastSearchDiagnostics: vi.fn(() => ({
+            provider: "crossref",
+            query: "Multi-Agent Collaboration",
+            fetched: 1,
+            attemptCount: 1,
+            attempts: [{ provider: "crossref", attempt: 1, ok: true, endpoint: "crossref" }]
+          }))
+        } as any,
+        arxiv: {
+          provider: "arxiv",
+          searchPapers: arxivSearch,
+          getLastSearchDiagnostics: vi.fn(() => ({
+            provider: "arxiv",
+            query: "Multi-Agent Collaboration",
+            fetched: 1,
+            attemptCount: 1,
+            attempts: [{ provider: "arxiv", attempt: 1, ok: true, endpoint: "arxiv" }]
+          }))
+        } as any
+      });
+
+      const result = await node.execute({
+        run,
+        graph: run.graph
+      });
+
+      expect(result.status).toBe("success");
+      expect(result.summary).toBe('Semantic Scholar stored 1 papers for "Multi-Agent Collaboration".');
+      expect(openAlexSearch).not.toHaveBeenCalled();
+      expect(crossrefSearch).not.toHaveBeenCalled();
+      expect(arxivSearch).not.toHaveBeenCalled();
+
+      const runDir = path.join(root, ".autolabos", "runs", runId);
+      const resultMeta = JSON.parse(await readFile(path.join(runDir, "collect_result.json"), "utf8")) as {
+        source?: string;
+        providers?: string[];
+      };
+      expect(resultMeta.source).toBe("semantic_scholar");
+      expect(resultMeta.providers).toEqual(["semantic_scholar"]);
+
+      const corpus = await readFile(path.join(runDir, "corpus.jsonl"), "utf8");
+      expect(corpus).toContain('"paper_id":"paper-s2-only"');
+      expect(corpus).not.toContain("Live OpenAlex Result");
+      expect(corpus).not.toContain("Live Crossref Result");
+      expect(corpus).not.toContain("Live arXiv Result");
+    } finally {
+      if (previousFakeResponse === undefined) {
+        delete process.env.AUTOLABOS_FAKE_SEMANTIC_SCHOLAR_RESPONSE;
+      } else {
+        process.env.AUTOLABOS_FAKE_SEMANTIC_SCHOLAR_RESPONSE = previousFakeResponse;
+      }
+    }
+  });
+
   it("aggregates semantic scholar, crossref, and arxiv search results into one canonical published record", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-aggregated-"));
     process.chdir(root);

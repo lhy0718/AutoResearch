@@ -1262,7 +1262,7 @@ describe("InteractionSession", () => {
     );
   });
 
-  it("replays persisted run events when selecting a run", async () => {
+  it("prefixes replayed persisted run events when selecting a run", async () => {
     const run = await runStore.createRun({
       title: "Recovered run",
       topic: "topic",
@@ -1299,9 +1299,6 @@ describe("InteractionSession", () => {
     await session.start();
     await session.selectRun(run.id);
 
-    const replayed = session.snapshot().logs.filter((line) =>
-      line.includes("Recovered deferred enrichment background task after restart.")
-    );
-    expect(replayed).toHaveLength(1);
+    expect(session.snapshot().logs).toContain("Replay: Recovered deferred enrichment background task after restart.");
   });
 });

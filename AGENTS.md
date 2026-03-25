@@ -62,6 +62,7 @@ If a relevant skill exists, follow it in addition to this file and the docs.
 - Do not present partial success as full completion.
 - Do not mark unverified improvements as done.
 - Treat `/doctor`, targeted smoke checks, and live validation as first-class diagnostic surfaces when applicable.
+- If the user explicitly asks for direct testing or to see actual runtime behavior, do not satisfy that request with deterministic smoke fixtures, fake-provider runs, or replay-only checks. Use a real TUI/web flow when the environment allows, or state the blocking limitation explicitly.
 - Prefer bounded node-internal loops, auditable artifacts, and minimal high-confidence fixes over broad speculative refactors.
 
 ---
@@ -102,6 +103,7 @@ Targeted smoke checks when relevant:
 
 For interactive defects, do not rely on tests alone if a real TUI/web flow can be run.
 Re-run the same flow that exposed the issue.
+Deterministic smoke is a secondary diagnostic/regression tool, not a substitute for a user-requested direct live test.
 
 ---
 

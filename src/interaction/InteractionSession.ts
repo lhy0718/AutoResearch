@@ -364,11 +364,20 @@ export class InteractionSession {
   }
 
   private pushLog(line: string): void {
+    this.appendLogLine(line);
+    this.notify();
+  }
+
+  private pushReplayLog(line: string): void {
+    this.appendLogLine(`Replay: ${line}`);
+    this.notify();
+  }
+
+  private appendLogLine(line: string): void {
     this.logs.push(line);
     if (this.logs.length > 200) {
       this.logs = this.logs.slice(-200);
     }
-    this.notify();
   }
 
   private async refreshRunIndex(): Promise<void> {
@@ -2069,7 +2078,7 @@ export class InteractionSession {
       if (!line) {
         continue;
       }
-      this.pushLog(line);
+      this.pushReplayLog(line);
     }
   }
 

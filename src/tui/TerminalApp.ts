@@ -4567,7 +4567,7 @@ export class TerminalApp {
       if (!line || !this.shouldLogStreamEvent(event)) {
         continue;
       }
-      this.pushLog(line);
+      this.pushReplayLog(line);
     }
   }
 
@@ -4654,6 +4654,14 @@ export class TerminalApp {
     if (isCollectProgressLog(line) || isAnalyzeProgressLog(line)) {
       return;
     }
+    this.appendLogLine(line);
+  }
+
+  private pushReplayLog(line: string): void {
+    this.appendLogLine(`Replay: ${line}`);
+  }
+
+  private appendLogLine(line: string): void {
     this.logs.push(line);
     if (this.logs.length > 1000) {
       this.logs = this.logs.slice(-1000);

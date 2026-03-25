@@ -958,7 +958,11 @@ function usesConservativeChunking(request: SemanticScholarSearchRequest): boolea
 }
 
 function buildSearchProviders(deps: NodeExecutionDeps): SearchProviderClient[] {
-  const providers: SearchProviderClient[] = [createSemanticScholarSearchProvider(deps.semanticScholar)];
+  const semanticScholarProvider = createSemanticScholarSearchProvider(deps.semanticScholar);
+  if (isFakeSemanticScholarFixtureActive()) {
+    return [semanticScholarProvider];
+  }
+  const providers: SearchProviderClient[] = [semanticScholarProvider];
   if (deps.openAlex) {
     providers.push(deps.openAlex);
   }
@@ -969,6 +973,11 @@ function buildSearchProviders(deps: NodeExecutionDeps): SearchProviderClient[] {
     providers.push(deps.arxiv);
   }
   return providers;
+}
+
+function isFakeSemanticScholarFixtureActive(): boolean {
+  const fakeResponse = process.env.AUTOLABOS_FAKE_SEMANTIC_SCHOLAR_RESPONSE;
+  return typeof fakeResponse === "string" && fakeResponse.trim().length > 0;
 }
 
 function formatProviderName(provider: PaperSearchProvider): string {

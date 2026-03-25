@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { ensureScaffold, getDefaultPdfAnalysisModeForLlmMode, resolveAppPaths } from "../src/config.js";
+import { PersistedEventStream } from "../src/core/events.js";
 import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 import { buildResearchBriefTemplate } from "../src/core/runs/researchBriefFiles.js";
 import { RunStore } from "../src/core/runs/runStore.js";
@@ -1466,6 +1467,71 @@ describe("TerminalApp pending natural plan execution", () => {
       expect(persisted?.graph.nodeStates.analyze_papers.status).toBe("pending");
       expect(persisted?.graph.nodeStates.analyze_papers.note).toBe("Canceled by user");
       expect(persisted?.latestSummary).toBe("Canceled by user");
+    } finally {
+      process.chdir(originalCwd);
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("prefixes replayed persisted TUI run events so restart logs do not look live", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "autolabos-tui-replay-log-"));
+    const originalCwd = process.cwd();
+    process.chdir(cwd);
+    try {
+      const paths = resolveAppPaths(cwd);
+      await ensureScaffold(paths);
+      const runStore = new RunStore(paths);
+      const run = await runStore.createRun({
+        title: "Replay labeling run",
+        topic: "topic",
+        constraints: [],
+        objectiveMetric: "metric"
+      });
+      const persistedEvents = new PersistedEventStream(path.join(cwd, ".autolabos", "runs"));
+      persistedEvents.emit({
+        type: "NODE_STARTED",
+        runId: run.id,
+        node: "collect_papers",
+        payload: { node: "collect_papers" }
+      });
+      persistedEvents.emit({
+        type: "OBS_RECEIVED",
+        runId: run.id,
+        node: "collect_papers",
+        payload: {
+          text: 'Searching Semantic Scholar for "AI agent automation" (requested_query).'
+        }
+      });
+
+      const app = new TerminalApp({
+        config: {
+          papers: { max_results: 100 },
+          providers: {
+            llm_mode: "codex_chatgpt_only",
+            codex: { model: "gpt-5.3-codex", reasoning_effort: "xhigh", fast_mode: false },
+            openai: { model: "gpt-5.4", reasoning_effort: "medium" }
+          }
+        } as any,
+        runStore,
+        titleGenerator: {} as any,
+        codex: {} as any,
+        eventStream: { subscribe: () => () => {} } as any,
+        orchestrator: {} as any,
+        initialRunId: run.id,
+        semanticScholarApiKeyConfigured: false,
+        onQuit: () => {},
+        saveConfig: async () => {}
+      }) as any;
+
+      app.render = () => {};
+      app.updateSuggestions = () => {};
+      app.drainQueuedInputs = async () => {};
+
+      await app.loadHistoryForRun(run.id);
+
+      expect(app.logs).toContain("Replay: Node collect_papers started.");
+      expect(app.logs).toContain('Replay: Searching Semantic Scholar for "AI agent automation" (requested_query).');
+      expect(app.logs).not.toContain("Node collect_papers started.");
     } finally {
       process.chdir(originalCwd);
       await rm(cwd, { recursive: true, force: true });

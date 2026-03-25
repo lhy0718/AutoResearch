@@ -78,8 +78,11 @@ That means:
 - a completed run is not enough
 - a generated TeX file is not enough
 - a generated PDF is not enough
+- deterministic smoke, fake-provider fixtures, and replay-only checks are not enough when the user explicitly asked for direct live testing
 
 A fix only counts when the same live flow is rerun and the observed symptom is resolved or materially narrowed.
+
+If the user explicitly asks you to test the system yourself or to inspect actual runtime behavior, deterministic smoke can still be used later for regression coverage, but it must not be presented as satisfying that direct-testing request. If credentials, network access, or required binaries block the real flow, say so explicitly instead of silently substituting a fixture-driven run.
 
 ## Node-ownership rule
 During live validation or test-driven execution, do not let the external coding agent perform work that belongs to an AutoLabOS workflow node.
@@ -202,6 +205,7 @@ When using this skill, structure the working report like this:
 - Do not patch before recording the issue.
 - Do not confuse `test/` with `tests/`.
 - Do not replace real validation with test-only confidence.
+- Do not replace a user-requested direct live test with deterministic smoke, fake-provider fixtures, or replay-only evidence.
 - Do not let the coding agent substitute for `implement_experiments` or other node-owned execution.
 - Do not manually create artifacts that the workflow itself is supposed to generate.
 - Do not overclaim based on one successful run.

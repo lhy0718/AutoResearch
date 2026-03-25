@@ -14,6 +14,12 @@ Minimum loop:
 4. Re-run the same flow.
 5. Check adjacent flows for regressions.
 
+### Direct-testing rule
+
+If the user explicitly asks you to test the behavior yourself or to show actual runtime behavior, do not treat deterministic smoke fixtures, fake-provider runs, replay-only checks, or unit/integration tests as fulfilling that request.
+
+Those tools are still useful as secondary diagnostics or regression checks, but the direct-testing request must use a real TUI/web flow when the environment allows. If credentials, network access, or required binaries block that real flow, state the limitation explicitly and do not present the fixture-driven result as equivalent to direct live validation.
+
 ## 2) Required bug taxonomy
 
 Tag root-cause hypotheses with one dominant class:
