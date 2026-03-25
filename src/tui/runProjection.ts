@@ -1,4 +1,5 @@
 import { AutoLabOSEvent } from "../core/events.js";
+import { formatRunUsageSummary } from "../core/runs/runUsage.js";
 import { GRAPH_NODE_ORDER, GraphNodeId, NodeStatus, RunRecord, RunStatus } from "../types.js";
 
 const ACTIVE_NODE_STATUSES = new Set<NodeStatus>(["running", "needs_approval"]);
@@ -282,6 +283,10 @@ export function projectRunForDisplay(run: RunRecord, hints?: RunProjectionHints)
   }
   if (!staleLatestSummary && !headline && normalized.latestSummary) {
     detailParts.push(toOneLine(normalized.latestSummary));
+  }
+  const usageSummary = formatRunUsageSummary(normalized.usage);
+  if (usageSummary) {
+    detailParts.push(usageSummary);
   }
   // Surface paper critique state when available
   const critiqueHints = effectiveHints?.paperCritique;

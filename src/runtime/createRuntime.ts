@@ -14,7 +14,7 @@ import { AppConfig } from "../types.js";
 import { RunStore } from "../core/runs/runStore.js";
 import { TitleGenerator } from "../core/runs/titleGenerator.js";
 import { CodexCliClient } from "../integrations/codex/codexCliClient.js";
-import { InMemoryEventStream } from "../core/events.js";
+import { EventStream, PersistedEventStream } from "../core/events.js";
 import { CodexLLMClient, OllamaLLMClient, OpenAiResponsesLLMClient, RoutedLLMClient } from "../core/llm/client.js";
 import { LocalAciAdapter } from "../tools/aciLocalAdapter.js";
 import { SemanticScholarClient } from "../tools/semanticScholar.js";
@@ -27,6 +27,7 @@ import { OpenAiResponsesTextClient } from "../integrations/openai/responsesTextC
 import { OllamaClient } from "../integrations/ollama/ollamaClient.js";
 import { OllamaPdfAnalysisClient } from "../integrations/ollama/ollamaPdfAnalysisClient.js";
 import { DEFAULT_OLLAMA_BASE_URL } from "../integrations/ollama/modelCatalog.js";
+import { recoverCollectEnrichmentJobs } from "../core/nodes/collectPapers.js";
 
 export interface AutoLabOSRuntime {
   paths: AppPaths;
@@ -35,7 +36,7 @@ export interface AutoLabOSRuntime {
   titleGenerator: TitleGenerator;
   codex: CodexCliClient;
   openAiTextClient: OpenAiResponsesTextClient;
-  eventStream: InMemoryEventStream;
+  eventStream: EventStream;
   checkpointStore: CheckpointStore;
   orchestrator: AgentOrchestrator;
   semanticScholarApiKeyConfigured: boolean;
@@ -187,7 +188,7 @@ export async function createAutoLabOSRuntime(
     };
   });
 
-  const eventStream = new InMemoryEventStream();
+  const eventStream = new PersistedEventStream(paths.runsDir);
   const llm = new RoutedLLMClient(() => {
     if (config.providers.llm_mode === "openai_api") return openAiTaskLlm;
     if (config.providers.llm_mode === "ollama") return ollamaTaskLlm;
@@ -230,9 +231,14 @@ export async function createAutoLabOSRuntime(
 
   const checkpointStore = new CheckpointStore(paths);
   const runtime = new StateGraphRuntime(runStore, nodeRegistry, checkpointStore, eventStream, {
-    approvalMode: config.workflow?.approval_mode
+    approvalMode: config.workflow?.approval_mode,
+    budgetGuardUsd: config.workflow?.budget_guard_usd
   });
   const orchestrator = new AgentOrchestrator(runStore, runtime, checkpointStore);
+  await recoverCollectEnrichmentJobs({
+    runStore,
+    eventStream
+  });
 
   return {
     paths,

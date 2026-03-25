@@ -1346,9 +1346,17 @@ describe("writePaper PDF build", () => {
     expect(submissionValidation.issues).toHaveLength(0);
     const compiledPageValidation = JSON.parse(
       await readFile(path.join(runDir, "paper", "compiled_page_validation.json"), "utf8")
-    ) as { status: string; compiled_pdf_page_count: number; main_page_limit: number };
+    ) as {
+      status: string;
+      compiled_pdf_page_count: number;
+      minimum_main_pages: number;
+      target_main_pages: number;
+      main_page_limit: number;
+    };
     expect(compiledPageValidation.status).toBe("pass");
     expect(compiledPageValidation.compiled_pdf_page_count).toBe(8);
+    expect(compiledPageValidation.minimum_main_pages).toBe(8);
+    expect(compiledPageValidation.target_main_pages).toBe(8);
     expect(compiledPageValidation.main_page_limit).toBe(8);
 
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);
@@ -1566,12 +1574,22 @@ describe("writePaper PDF build", () => {
     expect(result.status).toBe("success");
     const compiledPageValidation = JSON.parse(
       await readFile(path.join(runDir, "paper", "compiled_page_validation.json"), "utf8")
-    ) as { status: string; outcome: string; compiled_pdf_page_count: number; main_page_limit: number; message: string };
+    ) as {
+      status: string;
+      outcome: string;
+      compiled_pdf_page_count: number;
+      minimum_main_pages: number;
+      target_main_pages: number;
+      main_page_limit: number;
+      message: string;
+    };
     expect(compiledPageValidation.status).toBe("warn");
     expect(compiledPageValidation.outcome).toBe("under_limit");
     expect(compiledPageValidation.compiled_pdf_page_count).toBe(3);
+    expect(compiledPageValidation.minimum_main_pages).toBe(8);
+    expect(compiledPageValidation.target_main_pages).toBe(8);
     expect(compiledPageValidation.main_page_limit).toBe(8);
-    expect(compiledPageValidation.message).toContain("below the configured main_page_limit");
+    expect(compiledPageValidation.message).toContain("below the configured minimum_main_pages");
     expect(await exists(path.join(buildPublicPaperDir(root, run), "compiled_page_validation.json"))).toBe(true);
   });
 
@@ -1606,13 +1624,57 @@ describe("writePaper PDF build", () => {
         pdf_path: path.join(".autolabos", "runs", run.id, "paper", "main.pdf")
       },
       validationMode: "strict_paper",
-      mainPageLimit: 1
+      minimumMainPages: 1,
+      targetMainPages: 1
     });
 
     expect(compiledPageValidation.status).toBe("fail");
     expect(compiledPageValidation.outcome).toBe("under_limit");
     expect(compiledPageValidation.compiled_pdf_page_count).toBe(0);
+    expect(compiledPageValidation.minimum_main_pages).toBe(1);
+    expect(compiledPageValidation.target_main_pages).toBe(1);
     expect(compiledPageValidation.main_page_limit).toBe(1);
+  });
+
+  it("passes compiled page-budget validation when the PDF exceeds the target page budget", async () => {
+    const run = makeRun("run-paper-pdf-over-target");
+
+    const compiledPageValidation = await validateCompiledPdfPageBudget({
+      deps: {
+        aci: {
+          async runCommand(command: string) {
+            expect(command).toBe("pdfinfo main.pdf");
+            return {
+              status: "ok" as const,
+              stdout: "Title: mock\nPages: 10\n",
+              stderr: "",
+              exit_code: 0,
+              duration_ms: 1
+            };
+          }
+        }
+      } as any,
+      run,
+      compileResult: {
+        enabled: true,
+        status: "success",
+        repaired: false,
+        toolCallsUsed: 0,
+        attempts: [],
+        warnings: [],
+        pdf_path: path.join(".autolabos", "runs", run.id, "paper", "main.pdf")
+      },
+      validationMode: "strict_paper",
+      minimumMainPages: 8,
+      targetMainPages: 8
+    });
+
+    expect(compiledPageValidation.status).toBe("pass");
+    expect(compiledPageValidation.outcome).toBe("ok");
+    expect(compiledPageValidation.compiled_pdf_page_count).toBe(10);
+    expect(compiledPageValidation.minimum_main_pages).toBe(8);
+    expect(compiledPageValidation.target_main_pages).toBe(8);
+    expect(compiledPageValidation.message).toContain("meeting the configured minimum_main_pages");
   });
 
   it("fails the node when PDF compilation still fails after repair", async () => {

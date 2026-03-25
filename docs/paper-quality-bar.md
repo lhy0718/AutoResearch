@@ -54,6 +54,13 @@ After drafting, `write_paper` emits a post-draft critique that can:
 
 In that case the correct action is upstream repair/backtrack, not spending drafting or PDF-compilation effort on a manuscript that should still be blocked.
 
+### Page-budget semantics
+`write_paper` should treat page budgets as explicit targets/floors, not as an implicit upper cap:
+
+- `paper_profile.target_main_pages` is the nominal main-body target used for writing budgets
+- `paper_profile.minimum_main_pages` is the compiled-PDF floor checked after LaTeX build
+- legacy `paper_profile.main_page_limit` remains a compatibility alias and should not be interpreted as a maximum-page constraint
+
 ## 4) Venue-style targeting
 Users can select a target venue style via `paper_profile.target_venue_style` in config.
 Supported venues: `acl`, `aaai`, `icml`, `neurips`, `iclr`, `generic_nlp_conference`, `generic_ml_conference`, `generic_cs_paper`.

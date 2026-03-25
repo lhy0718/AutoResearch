@@ -8,7 +8,7 @@ import { AGENT_ORDER, AgentId, AppConfig, GraphNodeId, RunInsightCard, RunRecord
 import { RunStore } from "../core/runs/runStore.js";
 import { TitleGenerator } from "../core/runs/titleGenerator.js";
 import { CodexCliClient, CodexReasoningEffort } from "../integrations/codex/codexCliClient.js";
-import { AutoLabOSEvent, EventStream } from "../core/events.js";
+import { AutoLabOSEvent, EventStream, readPersistedRunEvents } from "../core/events.js";
 import {
   buildCodexModelSelectionChoices,
   DEFAULT_CODEX_MODEL,
@@ -255,6 +255,7 @@ export class TerminalApp {
   private readonly saveConfigFn: (nextConfig: AppConfig) => Promise<void>;
   private readonly semanticScholarApiKeyConfigured: boolean;
   private readonly interactiveSupervisor: InteractiveRunSupervisor;
+  private readonly seenEventIds = new Set<string>();
   private readonly appVersion = getAppVersion();
   private readonly colorEnabled = supportsColor();
   private recoveredStaleSessionLock = false;
@@ -354,6 +355,9 @@ export class TerminalApp {
       await this.recoverStaleRunningNode(this.activeRunId, recoverRecentNode);
     }
     this.unsubscribeEvents = this.eventStream.subscribe((event) => {
+      if (!this.rememberEventId(event.id)) {
+        return;
+      }
       void this.handleStreamEvent(event);
     });
     this.attachProcessTerminationHandlers();
@@ -4534,7 +4538,37 @@ export class TerminalApp {
     } catch {
       this.commandHistory = [];
     }
+    this.replayPersistedRunEvents(runId);
     this.historyLoadedRunId = runId;
+  }
+
+  private replayPersistedRunEvents(runId?: string): void {
+    if (!runId) {
+      return;
+    }
+    const events = readPersistedRunEvents({
+      runsDir: path.join(process.cwd(), ".autolabos", "runs"),
+      runId,
+      limit: 40
+    });
+    for (const event of events) {
+      if (!this.rememberEventId(event.id)) {
+        continue;
+      }
+      const line = formatEventLog(event);
+      if (!line || !this.shouldLogStreamEvent(event)) {
+        continue;
+      }
+      this.pushLog(line);
+    }
+  }
+
+  private rememberEventId(eventId: string): boolean {
+    if (this.seenEventIds.has(eventId)) {
+      return false;
+    }
+    this.seenEventIds.add(eventId);
+    return true;
   }
 
   /**
@@ -5069,7 +5103,7 @@ export class TerminalApp {
     }
 
     const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
-    for (const key of resetContextKeys(node)) {
+    for (const key of await resolveResetContextKeys(runContext, node)) {
       await runContext.put(key, null);
     }
     return removed;
@@ -6430,61 +6464,44 @@ function resetArtifactTargets(node: GraphNodeId): string[] {
   return [...new Set(resetScopeNodes(node).flatMap((nodeId) => nodeArtifactTargets(nodeId)))];
 }
 
-function nodeContextKeys(node: GraphNodeId): string[] {
+async function resolveResetContextKeys(runContext: RunContextMemory, node: GraphNodeId): Promise<string[]> {
+  const prefixes = resetContextPrefixes(node);
+  if (prefixes.length === 0) {
+    return [];
+  }
+  const existing = await runContext.entries();
+  return existing
+    .map((item) => item.key)
+    .filter((key, index, keys) => prefixes.some((prefix) => key.startsWith(prefix)) && keys.indexOf(key) === index);
+}
+
+function nodeContextPrefixes(node: GraphNodeId): string[] {
   switch (node) {
     case "collect_papers":
-      return [
-        "collect_papers.count",
-        "collect_papers.source",
-        "collect_papers.last_error",
-        "collect_papers.last_attempt_count",
-        "collect_papers.requested_limit",
-        "collect_papers.request",
-        "collect_papers.last_request",
-        "collect_papers.last_result"
-      ];
+      return ["collect_papers."];
     case "analyze_papers":
-      return [
-        "analyze_papers.request",
-        "analyze_papers.evidence_count",
-        "analyze_papers.summary_count",
-        "analyze_papers.full_text_count",
-        "analyze_papers.abstract_fallback_count",
-        "analyze_papers.selected_count",
-        "analyze_papers.total_candidates",
-        "analyze_papers.selection_fingerprint"
-      ];
+      return ["analyze_papers."];
     case "generate_hypotheses":
-      return [
-        "generate_hypotheses.request",
-        "generate_hypotheses.top_k",
-        "generate_hypotheses.candidate_count",
-        "generate_hypotheses.source",
-        "generate_hypotheses.pipeline",
-        "generate_hypotheses.summary"
-      ];
+      return ["generate_hypotheses."];
     case "design_experiments":
-      return ["design_experiments.primary"];
+      return ["design_experiments."];
     case "implement_experiments":
-      return ["implement_experiments.script"];
+      return ["implement_experiments."];
+    case "run_experiments":
+      return ["run_experiments.", "objective_metric."];
     case "analyze_results":
-      return ["analyze_results.last_summary", "analyze_results.last_error", "analyze_results.last_synthesis"];
+      return ["analyze_results."];
     case "review":
-      return [
-        "review.packet",
-        "review.last_summary",
-        "review.last_recommendation",
-        "review.last_decision",
-        "review.last_findings_count",
-        "review.last_panel_agreement"
-      ];
+      return ["review."];
+    case "write_paper":
+      return ["write_paper."];
     default:
       return [];
   }
 }
 
-function resetContextKeys(node: GraphNodeId): string[] {
-  return [...new Set(resetScopeNodes(node).flatMap((nodeId) => nodeContextKeys(nodeId)))];
+function resetContextPrefixes(node: GraphNodeId): string[] {
+  return [...new Set(resetScopeNodes(node).flatMap((nodeId) => nodeContextPrefixes(nodeId)))];
 }
 
 function resetScopeNodes(node: GraphNodeId): GraphNodeId[] {

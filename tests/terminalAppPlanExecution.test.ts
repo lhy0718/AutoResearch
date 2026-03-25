@@ -1509,6 +1509,12 @@ describe("TerminalApp pending natural plan execution", () => {
 
       const runContext = new RunContextMemory(path.join(cwd, run.memoryRefs.runContextPath));
       await runContext.put("implement_experiments.script", "print('stale')");
+      await runContext.put("run_experiments.feedback_for_implementer", { summary: "The operation was aborted" });
+      await runContext.put("write_paper.paper_critique", {
+        overall_decision: "backtrack_to_implement",
+        needs_additional_experiments: true,
+        manuscript_claim_risk_summary: "stale critique"
+      });
       await runContext.put("analyze_results.last_summary", "stale analysis");
       await runContext.put("review.last_decision", { outcome: "advance" });
 
@@ -1548,6 +1554,8 @@ describe("TerminalApp pending natural plan execution", () => {
       await expect(readFile(path.join(runDir, "review", "decision.json"), "utf8")).rejects.toThrow();
       await expect(readFile(path.join(runDir, "paper", "main.tex"), "utf8")).rejects.toThrow();
       expect(await runContext.get("implement_experiments.script")).toBeNull();
+      expect(await runContext.get("run_experiments.feedback_for_implementer")).toBeNull();
+      expect(await runContext.get("write_paper.paper_critique")).toBeNull();
       expect(await runContext.get("analyze_results.last_summary")).toBeNull();
       expect(await runContext.get("review.last_decision")).toBeNull();
       expect(persisted?.status).toBe("paused");

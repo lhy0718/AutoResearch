@@ -48,8 +48,10 @@ describe("runDoctorReport", () => {
     await writeJson(path.join(workspace, ".autolabos", "runs", "run-1", "paper", "compiled_page_validation.json"), {
       status: "warn",
       compiled_pdf_page_count: 3,
+      minimum_main_pages: 8,
+      target_main_pages: 8,
       main_page_limit: 8,
-      message: "Compiled PDF is only 3 pages, below the configured main_page_limit of 8."
+      message: "Compiled PDF is only 3 pages, below the configured minimum_main_pages of 8."
     });
 
     const report = await runDoctorReport(createCodexStub(), {
@@ -61,7 +63,7 @@ describe("runDoctorReport", () => {
       expect.objectContaining({
         name: "paper-page-budget",
         ok: false,
-        detail: expect.stringContaining("pages=3, main_page_limit=8")
+        detail: expect.stringContaining("pages=3, minimum_main_pages=8")
       })
     );
     expect(buildDoctorHighlightLines(report)).toEqual([

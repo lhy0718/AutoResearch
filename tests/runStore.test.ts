@@ -432,4 +432,93 @@ describe("RunStore", () => {
     expect(hydrated?.status).toBe("running");
     expect(hydrated?.currentNode).toBe("design_experiments");
   });
+
+  it("normalizes persisted usage summaries without forcing usage onto untouched runs", async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), "autolabos-run-usage-normalize-"));
+    tempDirs.push(cwd);
+    const paths = resolveAppPaths(cwd);
+    await ensureScaffold(paths);
+
+    await writeFile(
+      paths.runsFile,
+      `${JSON.stringify({
+        version: 3,
+        runs: [
+          {
+            version: 3,
+            workflowVersion: 3,
+            id: "usage-run",
+            title: "Usage",
+            topic: "topic",
+            constraints: [],
+            objectiveMetric: "metric",
+            status: "paused",
+            currentNode: "collect_papers",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            usage: {
+              totals: {
+                toolCalls: 5
+              },
+              byNode: {
+                collect_papers: {
+                  toolCalls: 2,
+                  executions: 1
+                }
+              }
+            },
+            nodeThreads: {},
+            graph: createDefaultGraphState(),
+            memoryRefs: {
+              runContextPath: ".autolabos/runs/usage-run/memory/run_context.json",
+              longTermPath: ".autolabos/runs/usage-run/memory/long_term.jsonl",
+              episodePath: ".autolabos/runs/usage-run/memory/episodes.jsonl"
+            }
+          },
+          {
+            version: 3,
+            workflowVersion: 3,
+            id: "plain-run",
+            title: "Plain",
+            topic: "topic",
+            constraints: [],
+            objectiveMetric: "metric",
+            status: "pending",
+            currentNode: "collect_papers",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            nodeThreads: {},
+            graph: createDefaultGraphState(),
+            memoryRefs: {
+              runContextPath: ".autolabos/runs/plain-run/memory/run_context.json",
+              longTermPath: ".autolabos/runs/plain-run/memory/long_term.jsonl",
+              episodePath: ".autolabos/runs/plain-run/memory/episodes.jsonl"
+            }
+          }
+        ]
+      }, null, 2)}\n`,
+      "utf8"
+    );
+
+    const store = new RunStore(paths);
+    const usageRun = await store.getRun("usage-run");
+    const plainRun = await store.getRun("plain-run");
+
+    expect(usageRun?.usage?.totals).toMatchObject({
+      costUsd: 0,
+      toolCalls: 5,
+      inputTokens: 0,
+      outputTokens: 0,
+      wallTimeMs: 0
+    });
+    expect(usageRun?.usage?.byNode.collect_papers).toMatchObject({
+      costUsd: 0,
+      toolCalls: 2,
+      inputTokens: 0,
+      outputTokens: 0,
+      wallTimeMs: 0,
+      executions: 1
+    });
+    expect(plainRun?.usage).toBeUndefined();
+  });
 });

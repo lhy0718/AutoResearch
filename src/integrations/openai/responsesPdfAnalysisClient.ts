@@ -3,16 +3,23 @@ import {
   supportsOpenAiResponsesReasoning
 } from "./modelCatalog.js";
 import { describeOpenAiFetchError, isAbortLikeError } from "./networkError.js";
+import { computeModelUsageCostUsd } from "../../core/llm/modelPricing.js";
+import { OpenAiResponsesUsage, extractOpenAiResponsesUsage } from "./usage.js";
 
 export interface ResponsesPdfAnalysisResult {
   text: string;
   responseId?: string;
   model?: string;
+  usage?: OpenAiResponsesUsage;
 }
 
 interface ResponsesApiResponse {
   id?: string;
   model?: string;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+  } | null;
   error?: {
     message?: string;
   } | null;
@@ -126,10 +133,16 @@ export class ResponsesPdfAnalysisClient {
 
     args.onProgress?.("Responses API produced PDF analysis text.");
 
+    const usage = extractOpenAiResponsesUsage(payload);
+    if (usage) {
+      usage.costUsd = computeModelUsageCostUsd(payload.model || args.model, usage);
+    }
+
     return {
       text,
       responseId: payload.id,
-      model: payload.model
+      model: payload.model,
+      usage
     };
   }
 }

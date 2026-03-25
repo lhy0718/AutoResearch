@@ -13,7 +13,8 @@ import {
   WorkflowApprovalMode
 } from "../../types.js";
 import { CheckpointStore } from "./checkpointStore.js";
-import { CheckpointPhase, GraphNodeRegistry, JumpMode } from "./types.js";
+import { applyRunUsageDelta, RunUsageDelta } from "../runs/runUsage.js";
+import { CheckpointPhase, GraphNodeRegistry, GraphNodeResult, JumpMode } from "./types.js";
 import { defaultRunStatusForGraph } from "./defaults.js";
 
 export class StateGraphRuntime {
@@ -24,6 +25,7 @@ export class StateGraphRuntime {
     private readonly eventStream: EventStream,
     private readonly options: {
       approvalMode?: WorkflowApprovalMode;
+      budgetGuardUsd?: number;
     } = {}
   ) {}
 
@@ -35,6 +37,10 @@ export class StateGraphRuntime {
     }
     run.status = "running";
     this.syncLatestSummary(run);
+    const budgetPaused = await this.pauseForBudgetGuardIfNeeded(run);
+    if (budgetPaused) {
+      return budgetPaused;
+    }
     await this.runStore.updateRun(run);
     return run;
   }
@@ -76,6 +82,10 @@ export class StateGraphRuntime {
     this.throwIfAborted(abortSignal);
     let run = await this.getRunOrThrow(runId);
     run.graph.currentNode = run.currentNode;
+    const budgetPaused = await this.pauseForBudgetGuardIfNeeded(run);
+    if (budgetPaused) {
+      return budgetPaused;
+    }
 
     const node = run.currentNode;
     run.graph.nodeStates[node] = {
@@ -102,8 +112,10 @@ export class StateGraphRuntime {
     });
 
     const started = Date.now();
+    let invokedNode = false;
     try {
       this.throwIfAborted(abortSignal);
+      invokedNode = true;
       const result = await this.nodeRegistry.get(node).execute({
         run,
         graph: run.graph,
@@ -112,14 +124,13 @@ export class StateGraphRuntime {
       // Once a node returns, its result becomes the source of truth even if a
       // late Ctrl-C arrives before runtime persistence finishes.
       run = await this.getRunOrThrow(run.id);
-      void started;
-      void result.toolCallsUsed;
-      void result.costUsd;
+      const usageDelta = this.buildUsageDeltaFromResult(result, started);
 
       if (result.status === "failure") {
-        return this.handleFailure(run, node, result.error || "Node execution failed");
+        return this.handleFailure(run, node, result.error || "Node execution failed", usageDelta);
       }
 
+      this.applyUsageDelta(run, node, usageDelta);
       run.latestSummary = result.summary || run.latestSummary;
       run.graph.pendingTransition = result.transitionRecommendation;
       run.graph.nodeStates[node] = {
@@ -141,7 +152,11 @@ export class StateGraphRuntime {
         }
       }
 
-      this.syncLatestSummary(run, node);
+      const budgetPauseMessage = this.applyBudgetGuard(run);
+      this.syncLatestSummary(
+        run,
+        budgetPauseMessage && run.currentNode !== node ? run.currentNode : node
+      );
       const after = await this.saveCheckpointAndPersist(run, "after", undefined, node);
       this.eventStream.emit({
         type: "CHECKPOINT_SAVED",
@@ -168,11 +183,17 @@ export class StateGraphRuntime {
           }
         });
       }
+      if (budgetPauseMessage) {
+        this.emitBudgetGuardObservation(run, budgetPauseMessage);
+      }
 
       return this.getRunOrThrow(run.id);
     } catch (error) {
       if (isAbortError(error)) {
         run = await this.getRunOrThrow(run.id);
+        if (invokedNode) {
+          this.applyUsageDelta(run, node, this.buildUsageDeltaForException(started));
+        }
         run.status = "paused";
         run.graph.nodeStates[node] = {
           ...run.graph.nodeStates[node],
@@ -186,7 +207,12 @@ export class StateGraphRuntime {
       }
       const message = error instanceof Error ? error.message : String(error);
       run = await this.getRunOrThrow(run.id);
-      return this.handleFailure(run, node, message);
+      return this.handleFailure(
+        run,
+        node,
+        message,
+        invokedNode ? this.buildUsageDeltaForException(started) : undefined
+      );
     }
   }
 
@@ -199,6 +225,10 @@ export class StateGraphRuntime {
     }
   ): Promise<RunRecord> {
     let run = await this.getRunOrThrow(runId);
+    const budgetPaused = await this.pauseForBudgetGuardIfNeeded(run);
+    if (budgetPaused) {
+      return budgetPaused;
+    }
     const continuePastCollectRecovery =
       Boolean(opts?.stopAfterApprovalBoundary) &&
       opts?.floorNode === "collect_papers" &&
@@ -267,6 +297,10 @@ export class StateGraphRuntime {
   private async resolveApprovalGate(run: RunRecord, abortSignal?: AbortSignal): Promise<RunRecord> {
     while (run.status === "paused" && run.graph.nodeStates[run.currentNode].status === "needs_approval") {
       this.throwIfAborted(abortSignal);
+      const budgetPaused = await this.pauseForBudgetGuardIfNeeded(run);
+      if (budgetPaused) {
+        return budgetPaused;
+      }
       const action = this.selectApprovalResolution(run);
       if (action === "pause") {
         return run;
@@ -374,9 +408,19 @@ export class StateGraphRuntime {
       run.status = "running";
     }
 
-    this.syncLatestSummary(run, node);
+    const budgetPauseMessage = this.applyBudgetGuard(run);
+    this.syncLatestSummary(
+      run,
+      budgetPauseMessage && run.currentNode !== node ? run.currentNode : node
+    );
     await this.saveCheckpointAndPersist(run, "after", "approved", node);
+    if (budgetPauseMessage) {
+      this.emitBudgetGuardObservation(run, budgetPauseMessage);
+    }
     if (!next || !opts?.continueAfterApprove) {
+      return this.getRunOrThrow(runId);
+    }
+    if (budgetPauseMessage) {
       return this.getRunOrThrow(runId);
     }
 
@@ -454,8 +498,12 @@ export class StateGraphRuntime {
     };
     run.status = "running";
 
+    const budgetPauseMessage = this.applyBudgetGuard(run, target);
     this.syncLatestSummary(run, target);
     const checkpoint = await this.saveCheckpointAndPersist(run, "retry", "manual retry");
+    if (budgetPauseMessage) {
+      this.emitBudgetGuardObservation(run, budgetPauseMessage);
+    }
     this.eventStream.emit({
       type: "NODE_RETRY",
       runId: run.id,
@@ -538,7 +586,12 @@ export class StateGraphRuntime {
     }
   }
 
-  private async handleFailure(run: RunRecord, node: GraphNodeId, errorMessage: string): Promise<RunRecord> {
+  private async handleFailure(
+    run: RunRecord,
+    node: GraphNodeId,
+    errorMessage: string,
+    usageDelta?: RunUsageDelta
+  ): Promise<RunRecord> {
     const latest = await this.getRunOrThrow(run.id);
     if (
       latest.currentNode !== node &&
@@ -548,6 +601,9 @@ export class StateGraphRuntime {
       return latest;
     }
     run = latest;
+    if (usageDelta) {
+      this.applyUsageDelta(run, node, usageDelta);
+    }
     run.graph.pendingTransition = undefined;
     const maxAttempts = Math.max(1, run.graph.retryPolicy.maxAttemptsPerNode);
     let nextRetry = Math.min((run.graph.retryCounters[node] ?? 0) + 1, maxAttempts);
@@ -625,10 +681,14 @@ export class StateGraphRuntime {
         ...run.graph.nodeStates[node],
         status: "running",
         updatedAt: new Date().toISOString(),
-        note: `Auto retry scheduled after failed attempt ${nextRetry}/${maxAttempts}.`
+          note: `Auto retry scheduled after failed attempt ${nextRetry}/${maxAttempts}.`
       };
+      const budgetPauseMessage = this.applyBudgetGuard(run, node);
       this.syncLatestSummary(run, node);
       const retryCheckpoint = await this.saveCheckpointAndPersist(run, "retry", "auto retry");
+      if (budgetPauseMessage) {
+        this.emitBudgetGuardObservation(run, budgetPauseMessage);
+      }
       this.eventStream.emit({
         type: "NODE_RETRY",
         runId: run.id,
@@ -675,8 +735,12 @@ export class StateGraphRuntime {
       note: rollbackNote
     };
 
+    const budgetPauseMessage = this.applyBudgetGuard(run, prev);
     this.syncLatestSummary(run, prev);
     const rollbackCheckpoint = await this.saveCheckpointAndPersist(run, "jump", `rollback to ${prev}`);
+    if (budgetPauseMessage) {
+      this.emitBudgetGuardObservation(run, budgetPauseMessage);
+    }
     this.eventStream.emit({
       type: "NODE_ROLLBACK",
       runId: run.id,
@@ -744,6 +808,129 @@ export class StateGraphRuntime {
     this.syncLatestSummary(run);
     await this.runStore.updateRun(run);
     return this.getRunOrThrow(run.id);
+  }
+
+  private async pauseForBudgetGuardIfNeeded(
+    run: RunRecord,
+    noteNode?: GraphNodeId
+  ): Promise<RunRecord | undefined> {
+    const message = this.applyBudgetGuard(run, noteNode);
+    if (!message) {
+      return undefined;
+    }
+
+    this.emitBudgetGuardObservation(run, message, noteNode);
+    await this.runStore.updateRun(run);
+    return this.getRunOrThrow(run.id);
+  }
+
+  private applyUsageDelta(run: RunRecord, node: GraphNodeId, delta: RunUsageDelta): void {
+    run.usage = applyRunUsageDelta(run.usage, node, delta);
+  }
+
+  private buildUsageDeltaFromResult(result: GraphNodeResult, startedAtMs: number): RunUsageDelta {
+    const elapsedMs = Math.max(0, Date.now() - startedAtMs);
+    const reportedWallTimeMs =
+      typeof result.usage?.wallTimeMs === "number" && Number.isFinite(result.usage.wallTimeMs)
+        ? result.usage.wallTimeMs
+        : undefined;
+
+    return {
+      toolCalls:
+        typeof result.usage?.toolCalls === "number" && Number.isFinite(result.usage.toolCalls)
+          ? Math.max(0, result.usage.toolCalls)
+          : typeof result.toolCallsUsed === "number" && Number.isFinite(result.toolCallsUsed)
+            ? Math.max(0, result.toolCallsUsed)
+            : 0,
+      costUsd:
+        typeof result.usage?.costUsd === "number" && Number.isFinite(result.usage.costUsd)
+          ? Math.max(0, result.usage.costUsd)
+          : typeof result.costUsd === "number" && Number.isFinite(result.costUsd)
+            ? Math.max(0, result.costUsd)
+            : 0,
+      inputTokens:
+        typeof result.usage?.inputTokens === "number" && Number.isFinite(result.usage.inputTokens)
+          ? Math.max(0, result.usage.inputTokens)
+          : 0,
+      outputTokens:
+        typeof result.usage?.outputTokens === "number" && Number.isFinite(result.usage.outputTokens)
+          ? Math.max(0, result.usage.outputTokens)
+          : 0,
+      wallTimeMs: Math.max(elapsedMs, reportedWallTimeMs ?? 0),
+      executions: 1,
+      lastUpdatedAt: new Date().toISOString()
+    };
+  }
+
+  private buildUsageDeltaForException(startedAtMs: number): RunUsageDelta {
+    return {
+      toolCalls: 0,
+      costUsd: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      wallTimeMs: Math.max(0, Date.now() - startedAtMs),
+      executions: 1,
+      lastUpdatedAt: new Date().toISOString()
+    };
+  }
+
+  private applyBudgetGuard(run: RunRecord, noteNode?: GraphNodeId): string | undefined {
+    const threshold = this.getBudgetGuardUsd();
+    const cumulativeCost = run.usage?.totals.costUsd;
+    if (
+      threshold === undefined ||
+      typeof cumulativeCost !== "number" ||
+      !Number.isFinite(cumulativeCost) ||
+      cumulativeCost <= threshold ||
+      run.status === "completed" ||
+      run.status === "failed"
+    ) {
+      return undefined;
+    }
+
+    const node = noteNode ?? run.currentNode;
+    const timestamp = new Date().toISOString();
+    const currentState = run.graph.nodeStates[node] ?? {
+      status: "pending",
+      updatedAt: timestamp
+    };
+    const message = `Budget guard paused further execution at ${node} because cumulative run spend is $${formatBudgetUsd(
+      cumulativeCost
+    )}, above the configured limit of $${formatBudgetUsd(threshold)}.`;
+    const note =
+      currentState.note && currentState.status !== "pending"
+        ? appendPauseSuffix(currentState.note, message)
+        : message;
+
+    run.status = "paused";
+    run.graph.nodeStates[node] = {
+      ...currentState,
+      status: currentState.status === "running" ? "pending" : currentState.status,
+      updatedAt: timestamp,
+      note
+    };
+    this.syncLatestSummary(run, node);
+    return message;
+  }
+
+  private emitBudgetGuardObservation(
+    run: RunRecord,
+    message: string,
+    noteNode?: GraphNodeId
+  ): void {
+    this.eventStream.emit({
+      type: "OBS_RECEIVED",
+      runId: run.id,
+      node: noteNode ?? run.currentNode,
+      payload: {
+        text: message
+      }
+    });
+  }
+
+  private getBudgetGuardUsd(): number | undefined {
+    const value = this.options.budgetGuardUsd;
+    return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
   }
 
   private hasVisitedLaterNodes(run: RunRecord, floorNode: GraphNodeId): boolean {
@@ -835,16 +1022,20 @@ export class StateGraphRuntime {
 }
 
 function shouldSkipAutoRetryForFailure(node: GraphNodeId, errorMessage: string): boolean {
-  if (node !== "generate_hypotheses") {
-    return false;
+  const normalized = errorMessage.trim().toLowerCase();
+  if (node === "generate_hypotheses") {
+    return (
+      normalized.includes("hypothesis generation blocked:") &&
+      normalized.includes("single low-confidence, caveated paper") &&
+      normalized.includes("strengthen analyze_papers before designing experiments")
+    );
   }
 
-  const normalized = errorMessage.trim().toLowerCase();
-  return (
-    normalized.includes("hypothesis generation blocked:") &&
-    normalized.includes("single low-confidence, caveated paper") &&
-    normalized.includes("strengthen analyze_papers before designing experiments")
-  );
+  if (node === "implement_experiments") {
+    return normalized.includes("implementation execution failed before any runnable implementation was produced:");
+  }
+
+  return false;
 }
 
 
@@ -865,4 +1056,10 @@ function appendPauseSuffix(note: string | undefined, suffix: string): string {
     return base;
   }
   return `${base} ${suffix}`;
+}
+
+function formatBudgetUsd(value: number): string {
+  const rounded =
+    value >= 100 ? value.toFixed(0) : value >= 10 ? value.toFixed(1) : value >= 1 ? value.toFixed(2) : value.toFixed(4);
+  return rounded.replace(/\.0+$/u, "").replace(/(\.\d*?)0+$/u, "$1");
 }

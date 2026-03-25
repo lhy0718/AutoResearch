@@ -22,6 +22,7 @@ import {
 } from "./migrateRuns.js";
 import { createDefaultGraphState } from "../stateGraph/defaults.js";
 import { RunContextItem } from "../memory/runContextMemory.js";
+import { normalizeRunUsageSummary } from "./runUsage.js";
 
 export interface CreateRunInput {
   title: string;
@@ -392,6 +393,7 @@ function normalizeRunRecord(run: RunRecord): RunRecord {
       pendingTransition: normalizePendingTransition(run.graph?.pendingTransition)
     },
     nodeThreads: run.nodeThreads ?? {},
+    usage: normalizeRunUsageSummary(run.usage),
     memoryRefs: run.memoryRefs ?? {
       runContextPath: `.autolabos/runs/${run.id}/memory/run_context.json`,
       longTermPath: `.autolabos/runs/${run.id}/memory/long_term.jsonl`,

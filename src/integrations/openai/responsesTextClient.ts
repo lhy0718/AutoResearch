@@ -6,11 +6,14 @@ import {
   supportsOpenAiResponsesReasoning
 } from "./modelCatalog.js";
 import { describeOpenAiFetchError, isAbortLikeError } from "./networkError.js";
+import { computeModelUsageCostUsd } from "../../core/llm/modelPricing.js";
+import { OpenAiResponsesUsage, extractOpenAiResponsesUsage } from "./usage.js";
 
 export interface OpenAiResponsesTextResult {
   text: string;
   responseId?: string;
   model?: string;
+  usage?: OpenAiResponsesUsage;
 }
 
 export interface OpenAiResponsesTextDefaults {
@@ -23,6 +26,17 @@ interface ResponsesApiResponse {
   id?: string;
   model?: string;
   status?: string;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    total_tokens?: number;
+    input_tokens_details?: {
+      cached_tokens?: number;
+    } | null;
+    output_tokens_details?: {
+      reasoning_tokens?: number;
+    } | null;
+  } | null;
   error?: {
     message?: string;
   } | null;
@@ -217,10 +231,16 @@ export class OpenAiResponsesTextClient {
 
     this.mostRecentResponseId = resolvedPayload.id;
 
+    const usage = extractOpenAiResponsesUsage(resolvedPayload);
+    if (usage) {
+      usage.costUsd = computeModelUsageCostUsd(resolvedPayload.model || model, usage);
+    }
+
     return {
       text,
       responseId: resolvedPayload.id,
-      model: resolvedPayload.model || model
+      model: resolvedPayload.model || model,
+      usage
     };
   }
 

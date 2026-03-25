@@ -29,6 +29,7 @@ function makeRun(overrides: Partial<RunRecord> = {}): RunRecord {
     nodeThreads: overrides.nodeThreads ?? {},
     createdAt: overrides.createdAt ?? now,
     updatedAt: overrides.updatedAt ?? now,
+    usage: overrides.usage,
     graph,
     memoryRefs: overrides.memoryRefs ?? {
       runContextPath: ".autolabos/runs/run-1/memory/run_context.json",
@@ -472,5 +473,28 @@ describe("runProjection", () => {
     expect(projection.actionableNode).toBe("analyze_papers");
     expect(projection.blockedByUpstream).toBe(true);
     expect(projection.headline).toContain("generate_hypotheses is blocked because analyze_papers has 0 evidence item(s)");
+  });
+
+  it("surfaces aggregate run usage in projection details when available", () => {
+    const run = makeRun({
+      status: "paused",
+      currentNode: "analyze_papers",
+      usage: {
+        totals: {
+          toolCalls: 4,
+          wallTimeMs: 12_500,
+          costUsd: 1.25,
+          inputTokens: 120,
+          outputTokens: 35
+        },
+        byNode: {},
+        lastUpdatedAt: "2026-03-20T05:35:53.000Z"
+      }
+    });
+    run.graph.currentNode = "analyze_papers";
+
+    const projection = projectRunForDisplay(run);
+
+    expect(projection.detail).toBe("Usage: 4 tool call(s), wall 13s, $1.25, 120 in / 35 out tok.");
   });
 });

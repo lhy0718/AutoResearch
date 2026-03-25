@@ -195,6 +195,31 @@ interface CollectRunRef {
   };
 }
 
+interface CollectBackgroundJobRecord {
+  version: 1;
+  kind: "collect_deferred_enrichment";
+  status: "running" | "completed" | "failed";
+  runId: string;
+  request: SemanticScholarSearchRequest;
+  mode: "replace" | "additional";
+  baseCount: number;
+  bibtexMode: BibtexMode;
+  paperIds: string[];
+  fetchedCount: number;
+  diagnostics: SemanticScholarSearchDiagnostics;
+  newPaperIds: string[];
+  pendingSummary: string;
+  requestedQuery?: string;
+  queryAttempts: CollectQueryAttemptMeta[];
+  scheduledAt: string;
+  updatedAt: string;
+  recoveryCount: number;
+  lastRecoveredAt?: string;
+  lastError?: string;
+}
+
+const COLLECT_BACKGROUND_JOB_FILE = "collect_background_job.json";
+
 export async function waitForCollectEnrichmentJob(runId: string): Promise<void> {
   await activeCollectEnrichmentJobs.get(runId);
 }
@@ -646,7 +671,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           }
         });
 
-        startDetachedEnrichment({
+        await startDetachedEnrichment({
           deps,
           run,
           request: effectiveRequest,
@@ -996,6 +1021,9 @@ async function runEnrichmentPass(input: {
   queryAttempts: CollectQueryAttemptMeta[];
   writeCorpusArtifactsOnProgress: boolean;
   runContextMemory: RunContextMemory;
+  targetCount?: number;
+  processedOffset?: number;
+  updatedOffset?: number;
 }): Promise<{
   pdfRecovered: number;
   bibtexEnriched: number;
@@ -1006,6 +1034,9 @@ async function runEnrichmentPass(input: {
   let processed = 0;
   let updated = 0;
   let changedSinceLastPersist = false;
+  const targetCount = input.targetCount ?? input.papers.length;
+  const processedOffset = Math.max(0, input.processedOffset ?? 0);
+  const updatedOffset = Math.max(0, input.updatedOffset ?? 0);
 
   const persistProgress = async () => {
     if (!changedSinceLastPersist) {
@@ -1028,15 +1059,15 @@ async function runEnrichmentPass(input: {
       fallbackSources: Array.from(input.fallbackSources),
       requestedQuery: input.requestedQuery,
       queryAttempts: input.queryAttempts,
-      enrichment: {
-        blocking: false,
-        status: "pending",
-        targetCount: input.papers.length,
-        processedCount: processed,
-        attemptedCount: processed,
-        updatedCount: updated
-      }
-    });
+        enrichment: {
+          blocking: false,
+          status: "pending",
+          targetCount,
+          processedCount: Math.min(targetCount, processedOffset + processed),
+          attemptedCount: Math.min(targetCount, processedOffset + processed),
+          updatedCount: Math.min(targetCount, updatedOffset + updated)
+        }
+      });
     await persistCollectSnapshot({
       run: input.run,
       rows: Array.from(input.storedRows.values()),
@@ -1126,7 +1157,7 @@ async function runEnrichmentPass(input: {
         runId: input.run.id,
         node: "collect_papers",
         payload: {
-          text: `Collect enrichment progress: processed ${processed}/${input.papers.length}, stored ${input.storedCount}/${input.request.limit}.`
+          text: `Collect enrichment progress: processed ${Math.min(processedOffset + processed, targetCount)}/${targetCount}, stored ${input.storedCount}/${input.request.limit}.`
         }
       });
       await persistProgress();
@@ -1193,6 +1224,117 @@ async function readExistingEnrichmentLogs(run: { id: string }): Promise<CollectE
       }
     })
     .filter((entry): entry is CollectEnrichmentLogEntry => Boolean(entry?.paper_id));
+}
+
+async function readCollectResultMeta(run: { id: string }): Promise<CollectResultMeta | undefined> {
+  const raw = await safeRead(`.autolabos/runs/${run.id}/collect_result.json`);
+  if (!raw.trim()) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(raw) as CollectResultMeta;
+    return typeof parsed?.query === "string" ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function readCollectBackgroundJob(run: { id: string }): Promise<CollectBackgroundJobRecord | undefined> {
+  const raw = await safeRead(`.autolabos/runs/${run.id}/${COLLECT_BACKGROUND_JOB_FILE}`);
+  if (!raw.trim()) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(raw) as CollectBackgroundJobRecord;
+    return isCollectBackgroundJobRecord(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeCollectBackgroundJob(
+  run: CollectRunRef,
+  record: CollectBackgroundJobRecord
+): Promise<void> {
+  await writeRunArtifact(run as any, COLLECT_BACKGROUND_JOB_FILE, JSON.stringify(record, null, 2));
+}
+
+function buildCollectBackgroundJobRecord(input: {
+  runId: string;
+  request: SemanticScholarSearchRequest;
+  mode: "replace" | "additional";
+  baseCount: number;
+  bibtexMode: BibtexMode;
+  paperIds: string[];
+  fetchedCount: number;
+  diagnostics: SemanticScholarSearchDiagnostics;
+  newPaperIds: string[];
+  pendingSummary: string;
+  requestedQuery?: string;
+  queryAttempts: CollectQueryAttemptMeta[];
+  status: "running" | "completed" | "failed";
+  scheduledAt?: string;
+  recoveryCount?: number;
+  lastRecoveredAt?: string;
+  lastError?: string;
+}): CollectBackgroundJobRecord {
+  const now = new Date().toISOString();
+  return {
+    version: 1,
+    kind: "collect_deferred_enrichment",
+    status: input.status,
+    runId: input.runId,
+    request: input.request,
+    mode: input.mode,
+    baseCount: input.baseCount,
+    bibtexMode: input.bibtexMode,
+    paperIds: input.paperIds,
+    fetchedCount: input.fetchedCount,
+    diagnostics: input.diagnostics,
+    newPaperIds: input.newPaperIds,
+    pendingSummary: input.pendingSummary,
+    requestedQuery: input.requestedQuery,
+    queryAttempts: input.queryAttempts,
+    scheduledAt: input.scheduledAt ?? now,
+    updatedAt: now,
+    recoveryCount: input.recoveryCount ?? 0,
+    lastRecoveredAt: input.lastRecoveredAt,
+    lastError: input.lastError
+  };
+}
+
+function reconstructPaperFromStoredRow(row: StoredCorpusRow): SemanticScholarPaper {
+  return {
+    paperId: row.paper_id,
+    title: row.title,
+    abstract: row.abstract || undefined,
+    year: row.year,
+    venue: row.venue,
+    url: row.url || row.landing_url,
+    openAccessPdfUrl: row.pdf_url,
+    authors: row.authors,
+    doi: row.doi,
+    arxivId: row.arxiv_id,
+    citationCount: row.citation_count,
+    influentialCitationCount: row.influential_citation_count,
+    publicationDate: row.publication_date,
+    publicationTypes: row.publication_types,
+    fieldsOfStudy: row.fields_of_study,
+    citationStylesBibtex: row.semantic_scholar_bibtex
+  };
+}
+
+function isCollectBackgroundJobRecord(value: unknown): value is CollectBackgroundJobRecord {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      (value as CollectBackgroundJobRecord).version === 1 &&
+      (value as CollectBackgroundJobRecord).kind === "collect_deferred_enrichment" &&
+      typeof (value as CollectBackgroundJobRecord).runId === "string" &&
+      typeof (value as CollectBackgroundJobRecord).status === "string" &&
+      Array.isArray((value as CollectBackgroundJobRecord).paperIds) &&
+      Array.isArray((value as CollectBackgroundJobRecord).newPaperIds)
+  );
 }
 
 function buildCollectResultMeta(input: {
@@ -1395,8 +1537,8 @@ function buildCollectQueryPlanningFailureMessage(requestedQuery?: string): strin
   return "collect_papers could not build a Semantic Scholar query plan. Automatic topic fallback is disabled, so provide an explicit query or ensure LLM query generation succeeds.";
 }
 
-function startDetachedEnrichment(input: {
-  deps: NodeExecutionDeps;
+async function startDetachedEnrichment(input: {
+  deps: Pick<NodeExecutionDeps, "eventStream" | "runStore">;
   run: CollectRunRef;
   request: SemanticScholarSearchRequest;
   mode: "replace" | "additional";
@@ -1416,7 +1558,12 @@ function startDetachedEnrichment(input: {
   pendingSummary: string;
   requestedQuery?: string;
   queryAttempts: CollectQueryAttemptMeta[];
-}): void {
+  targetCount?: number;
+  processedOffset?: number;
+  updatedOffset?: number;
+  recoveredFromCrash?: boolean;
+  recoveryCount?: number;
+}): Promise<void> {
   if (input.papers.length === 0) {
     return;
   }
@@ -1433,6 +1580,43 @@ function startDetachedEnrichment(input: {
   }
 
   const runContextMemory = new RunContextMemory(input.run.memoryRefs.runContextPath);
+  const targetCount = input.targetCount ?? input.papers.length;
+  const processedOffset = Math.max(0, input.processedOffset ?? 0);
+  const updatedOffset = Math.max(0, input.updatedOffset ?? 0);
+  const paperIds = input.papers.map((paper) => paper.paperId);
+  const lastRecoveredAt = input.recoveredFromCrash ? new Date().toISOString() : undefined;
+  const scheduledAt = (await readCollectBackgroundJob(input.run))?.scheduledAt ?? new Date().toISOString();
+  await writeCollectBackgroundJob(
+    input.run,
+    buildCollectBackgroundJobRecord({
+      runId: input.run.id,
+      request: input.request,
+      mode: input.mode,
+      baseCount: input.baseCount,
+      bibtexMode: input.bibtexMode,
+      paperIds,
+      fetchedCount: input.fetchedCount,
+      diagnostics: input.diagnostics,
+      newPaperIds: Array.from(input.newPaperIds),
+      pendingSummary: input.pendingSummary,
+      requestedQuery: input.requestedQuery,
+      queryAttempts: input.queryAttempts,
+      status: "running",
+      scheduledAt,
+      recoveryCount: input.recoveryCount,
+      lastRecoveredAt
+    })
+  );
+  if (input.recoveredFromCrash) {
+    input.deps.eventStream.emit({
+      type: "OBS_RECEIVED",
+      runId: input.run.id,
+      node: "collect_papers",
+      payload: {
+        text: `Recovered deferred enrichment background task after restart; resuming ${input.papers.length}/${targetCount} remaining paper(s).`
+      }
+    });
+  }
   input.deps.eventStream.emit({
     type: "OBS_RECEIVED",
     runId: input.run.id,
@@ -1469,7 +1653,10 @@ function startDetachedEnrichment(input: {
         requestedQuery: input.requestedQuery,
         queryAttempts: input.queryAttempts,
         writeCorpusArtifactsOnProgress: true,
-        runContextMemory
+        runContextMemory,
+        targetCount,
+        processedOffset,
+        updatedOffset
       });
 
       const completionMeta = buildCollectResultMeta({
@@ -1492,10 +1679,10 @@ function startDetachedEnrichment(input: {
         enrichment: {
           blocking: false,
           status: "completed",
-          targetCount: input.papers.length,
-          processedCount: enrichmentState.processedCount,
-          attemptedCount: enrichmentState.processedCount,
-          updatedCount: enrichmentState.updatedCount
+          targetCount,
+          processedCount: Math.min(targetCount, processedOffset + enrichmentState.processedCount),
+          attemptedCount: Math.min(targetCount, processedOffset + enrichmentState.processedCount),
+          updatedCount: Math.min(targetCount, updatedOffset + enrichmentState.updatedCount)
         }
       });
 
@@ -1520,13 +1707,34 @@ function startDetachedEnrichment(input: {
         summary: buildCollectSummary(completionMeta),
         replaceLatestSummaryIf: input.pendingSummary
       });
+      await writeCollectBackgroundJob(
+        input.run,
+        buildCollectBackgroundJobRecord({
+          runId: input.run.id,
+          request: input.request,
+          mode: input.mode,
+          baseCount: input.baseCount,
+          bibtexMode: input.bibtexMode,
+          paperIds,
+          fetchedCount: input.fetchedCount,
+          diagnostics: input.diagnostics,
+          newPaperIds: Array.from(input.newPaperIds),
+          pendingSummary: input.pendingSummary,
+          requestedQuery: input.requestedQuery,
+          queryAttempts: input.queryAttempts,
+          status: "completed",
+          scheduledAt,
+          recoveryCount: input.recoveryCount,
+          lastRecoveredAt
+        })
+      );
 
       input.deps.eventStream.emit({
         type: "OBS_RECEIVED",
         runId: input.run.id,
         node: "collect_papers",
         payload: {
-          text: `Deferred enrichment finished for ${input.papers.length} paper(s). PDF recovered ${enrichmentState.pdfRecovered}; BibTeX enriched ${enrichmentState.bibtexEnriched}.`
+          text: `Deferred enrichment finished for ${targetCount} paper(s). PDF recovered ${enrichmentState.pdfRecovered}; BibTeX enriched ${enrichmentState.bibtexEnriched}.`
         }
       });
     } catch (error) {
@@ -1551,10 +1759,10 @@ function startDetachedEnrichment(input: {
         enrichment: {
           blocking: false,
           status: "failed",
-          targetCount: input.papers.length,
-          processedCount: input.currentEnrichmentLogs.size,
-          attemptedCount: input.currentEnrichmentLogs.size,
-          updatedCount: 0,
+          targetCount,
+          processedCount: Math.min(targetCount, processedOffset + input.currentEnrichmentLogs.size),
+          attemptedCount: Math.min(targetCount, processedOffset + input.currentEnrichmentLogs.size),
+          updatedCount: Math.min(targetCount, updatedOffset),
           lastError: message
         }
       });
@@ -1581,6 +1789,28 @@ function startDetachedEnrichment(input: {
         summary: buildCollectSummary(failureMeta),
         replaceLatestSummaryIf: input.pendingSummary
       });
+      await writeCollectBackgroundJob(
+        input.run,
+        buildCollectBackgroundJobRecord({
+          runId: input.run.id,
+          request: input.request,
+          mode: input.mode,
+          baseCount: input.baseCount,
+          bibtexMode: input.bibtexMode,
+          paperIds,
+          fetchedCount: input.fetchedCount,
+          diagnostics: input.diagnostics,
+          newPaperIds: Array.from(input.newPaperIds),
+          pendingSummary: input.pendingSummary,
+          requestedQuery: input.requestedQuery,
+          queryAttempts: input.queryAttempts,
+          status: "failed",
+          scheduledAt,
+          recoveryCount: input.recoveryCount,
+          lastRecoveredAt,
+          lastError: message
+        })
+      );
 
       input.deps.eventStream.emit({
         type: "OBS_RECEIVED",
@@ -1596,6 +1826,288 @@ function startDetachedEnrichment(input: {
   })();
 
   activeCollectEnrichmentJobs.set(input.run.id, job);
+}
+
+export async function recoverCollectEnrichmentJobs(input: {
+  eventStream: Pick<NodeExecutionDeps, "eventStream">["eventStream"];
+  runStore: Pick<NodeExecutionDeps, "runStore">["runStore"];
+}): Promise<void> {
+  const runs = await input.runStore.listRuns();
+  for (const run of runs) {
+    const job = await readCollectBackgroundJob(run);
+    if (!job || job.status !== "running" || activeCollectEnrichmentJobs.has(run.id)) {
+      continue;
+    }
+
+    const runRef: CollectRunRef = {
+      id: run.id,
+      memoryRefs: {
+        runContextPath: run.memoryRefs.runContextPath
+      }
+    };
+    const storedRows = new Map<string, StoredCorpusRow>(
+      (await readExistingCorpus(run)).map((row) => [row.paper_id, row])
+    );
+    const persistedEnrichmentLogs = new Map<string, CollectEnrichmentLogEntry>(
+      (await readExistingEnrichmentLogs(run)).map((entry) => [entry.paper_id, entry])
+    );
+    const currentEnrichmentLogs = new Map<string, CollectEnrichmentLogEntry>(persistedEnrichmentLogs);
+    const resultMeta = await readCollectResultMeta(run);
+    const fallbackSources = new Set(resultMeta?.fallbackSources ?? []);
+    const newPaperIds = new Set(job.newPaperIds);
+    const processedOffset = Math.max(
+      persistedEnrichmentLogs.size,
+      Math.min(job.paperIds.length, resultMeta?.enrichment?.processedCount ?? 0)
+    );
+    const updatedOffset = Math.max(0, resultMeta?.enrichment?.updatedCount ?? 0);
+    const pendingPaperIds = job.paperIds.filter((paperId) => !persistedEnrichmentLogs.has(paperId));
+
+    if (resultMeta?.enrichment.status === "completed") {
+      await writeCollectBackgroundJob(
+        runRef,
+        buildCollectBackgroundJobRecord({
+          runId: run.id,
+          request: job.request,
+          mode: job.mode,
+          baseCount: job.baseCount,
+          bibtexMode: job.bibtexMode,
+          paperIds: job.paperIds,
+          fetchedCount: job.fetchedCount,
+          diagnostics: job.diagnostics,
+          newPaperIds: job.newPaperIds,
+          pendingSummary: job.pendingSummary,
+          requestedQuery: job.requestedQuery,
+          queryAttempts: job.queryAttempts,
+          status: "completed",
+          scheduledAt: job.scheduledAt,
+          recoveryCount: job.recoveryCount,
+          lastRecoveredAt: job.lastRecoveredAt
+        })
+      );
+      continue;
+    }
+
+    if (resultMeta?.enrichment.status === "failed") {
+      await writeCollectBackgroundJob(
+        runRef,
+        buildCollectBackgroundJobRecord({
+          runId: run.id,
+          request: job.request,
+          mode: job.mode,
+          baseCount: job.baseCount,
+          bibtexMode: job.bibtexMode,
+          paperIds: job.paperIds,
+          fetchedCount: job.fetchedCount,
+          diagnostics: job.diagnostics,
+          newPaperIds: job.newPaperIds,
+          pendingSummary: job.pendingSummary,
+          requestedQuery: job.requestedQuery,
+          queryAttempts: job.queryAttempts,
+          status: "failed",
+          scheduledAt: job.scheduledAt,
+          recoveryCount: job.recoveryCount,
+          lastRecoveredAt: job.lastRecoveredAt,
+          lastError: resultMeta.enrichment.lastError
+        })
+      );
+      continue;
+    }
+
+    if (pendingPaperIds.length === 0) {
+      const completionMeta = buildCollectResultMeta({
+        request: job.request,
+        fetched: job.fetchedCount,
+        stored: storedRows.size,
+        added: newPaperIds.size,
+        baseCount: job.baseCount,
+        mode: job.mode,
+        diagnostics: job.diagnostics,
+        filters: job.request.filters || {},
+        bibtexMode: job.bibtexMode,
+        completed: true,
+        pdfRecovered: resultMeta?.pdfRecovered ?? 0,
+        bibtexEnriched: resultMeta?.bibtexEnriched ?? 0,
+        enrichmentAttempts: countEnrichmentAttempts(currentEnrichmentLogs),
+        fallbackSources: Array.from(fallbackSources),
+        requestedQuery: job.requestedQuery,
+        queryAttempts: job.queryAttempts,
+        enrichment: {
+          blocking: false,
+          status: "completed",
+          targetCount: job.paperIds.length,
+          processedCount: processedOffset,
+          attemptedCount: processedOffset,
+          updatedCount: updatedOffset
+        }
+      });
+      const runContextMemory = new RunContextMemory(run.memoryRefs.runContextPath);
+      await persistCollectSnapshot({
+        run: runRef,
+        rows: Array.from(storedRows.values()),
+        mode: job.mode,
+        request: job.request,
+        resultMeta: completionMeta,
+        enrichmentLogs: Array.from(persistedEnrichmentLogs.values()),
+        bibtexMode: job.bibtexMode
+      });
+      await syncCollectRunContext({
+        runContextMemory,
+        request: job.request,
+        resultMeta: completionMeta,
+        diagnostics: job.diagnostics
+      });
+      await syncCollectRunRecord({
+        runStore: input.runStore,
+        runId: run.id,
+        summary: buildCollectSummary(completionMeta),
+        replaceLatestSummaryIf: job.pendingSummary
+      });
+      await writeCollectBackgroundJob(
+        runRef,
+        buildCollectBackgroundJobRecord({
+          runId: run.id,
+          request: job.request,
+          mode: job.mode,
+          baseCount: job.baseCount,
+          bibtexMode: job.bibtexMode,
+          paperIds: job.paperIds,
+          fetchedCount: job.fetchedCount,
+          diagnostics: job.diagnostics,
+          newPaperIds: job.newPaperIds,
+          pendingSummary: job.pendingSummary,
+          requestedQuery: job.requestedQuery,
+          queryAttempts: job.queryAttempts,
+          status: "completed",
+          scheduledAt: job.scheduledAt,
+          recoveryCount: job.recoveryCount,
+          lastRecoveredAt: job.lastRecoveredAt
+        })
+      );
+      input.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId: run.id,
+        node: "collect_papers",
+        payload: {
+          text: `Recovered deferred enrichment state after restart; all ${job.paperIds.length} paper(s) were already complete.`
+        }
+      });
+      continue;
+    }
+
+    const missingPaperIds = pendingPaperIds.filter((paperId) => !storedRows.has(paperId));
+    if (missingPaperIds.length > 0) {
+      const message = `Deferred enrichment recovery could not reconstruct ${missingPaperIds.length} queued paper(s): ${missingPaperIds.join(", ")}`;
+      const failureMeta = buildCollectResultMeta({
+        request: job.request,
+        fetched: job.fetchedCount,
+        stored: storedRows.size,
+        added: newPaperIds.size,
+        baseCount: job.baseCount,
+        mode: job.mode,
+        diagnostics: job.diagnostics,
+        filters: job.request.filters || {},
+        bibtexMode: job.bibtexMode,
+        completed: true,
+        pdfRecovered: resultMeta?.pdfRecovered ?? 0,
+        bibtexEnriched: resultMeta?.bibtexEnriched ?? 0,
+        enrichmentAttempts: countEnrichmentAttempts(currentEnrichmentLogs),
+        fallbackSources: Array.from(fallbackSources),
+        requestedQuery: job.requestedQuery,
+        queryAttempts: job.queryAttempts,
+        enrichment: {
+          blocking: false,
+          status: "failed",
+          targetCount: job.paperIds.length,
+          processedCount: processedOffset,
+          attemptedCount: processedOffset,
+          updatedCount: updatedOffset,
+          lastError: message
+        }
+      });
+      const runContextMemory = new RunContextMemory(run.memoryRefs.runContextPath);
+      await persistCollectSnapshot({
+        run: runRef,
+        rows: Array.from(storedRows.values()),
+        mode: job.mode,
+        request: job.request,
+        resultMeta: failureMeta,
+        enrichmentLogs: Array.from(persistedEnrichmentLogs.values()),
+        bibtexMode: job.bibtexMode,
+        writeCorpusArtifacts: false
+      });
+      await syncCollectRunContext({
+        runContextMemory,
+        request: job.request,
+        resultMeta: failureMeta,
+        diagnostics: job.diagnostics
+      });
+      await syncCollectRunRecord({
+        runStore: input.runStore,
+        runId: run.id,
+        summary: buildCollectSummary(failureMeta),
+        replaceLatestSummaryIf: job.pendingSummary
+      });
+      await writeCollectBackgroundJob(
+        runRef,
+        buildCollectBackgroundJobRecord({
+          runId: run.id,
+          request: job.request,
+          mode: job.mode,
+          baseCount: job.baseCount,
+          bibtexMode: job.bibtexMode,
+          paperIds: job.paperIds,
+          fetchedCount: job.fetchedCount,
+          diagnostics: job.diagnostics,
+          newPaperIds: job.newPaperIds,
+          pendingSummary: job.pendingSummary,
+          requestedQuery: job.requestedQuery,
+          queryAttempts: job.queryAttempts,
+          status: "failed",
+          scheduledAt: job.scheduledAt,
+          recoveryCount: job.recoveryCount,
+          lastRecoveredAt: job.lastRecoveredAt,
+          lastError: message
+        })
+      );
+      input.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId: run.id,
+        node: "collect_papers",
+        payload: {
+          text: `Deferred enrichment recovery failed: ${message}`
+        }
+      });
+      continue;
+    }
+
+    await startDetachedEnrichment({
+      deps: input,
+      run: runRef,
+      request: job.request,
+      mode: job.mode,
+      baseCount: job.baseCount,
+      bibtexMode: job.bibtexMode,
+      papers: pendingPaperIds.map((paperId) => reconstructPaperFromStoredRow(storedRows.get(paperId)!)),
+      fetchedCount: job.fetchedCount,
+      diagnostics: job.diagnostics,
+      storedRows,
+      pdfRecovered: resultMeta?.pdfRecovered ?? 0,
+      bibtexEnriched: resultMeta?.bibtexEnriched ?? 0,
+      fallbackSources,
+      currentEnrichmentLogs,
+      persistedEnrichmentLogs,
+      storedCount: storedRows.size,
+      newPaperIds,
+      pendingSummary: job.pendingSummary,
+      requestedQuery: job.requestedQuery,
+      queryAttempts: job.queryAttempts,
+      targetCount: job.paperIds.length,
+      processedOffset,
+      updatedOffset,
+      recoveredFromCrash: true,
+      recoveryCount: job.recoveryCount + 1
+    });
+  }
 }
 
 async function syncCollectRunRecord(input: {

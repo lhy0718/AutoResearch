@@ -1,6 +1,10 @@
-import { CodexCliClient } from "../../integrations/codex/codexCliClient.js";
+import {
+  CodexCliClient,
+  extractCodexCompletionUsageFromEvents
+} from "../../integrations/codex/codexCliClient.js";
 import { OpenAiResponsesTextClient } from "../../integrations/openai/responsesTextClient.js";
 import { OllamaClient } from "../../integrations/ollama/ollamaClient.js";
+import { computeModelUsageCostUsd } from "./modelPricing.js";
 
 export interface LLMCompletionUsage {
   inputTokens?: number;
@@ -67,11 +71,19 @@ export class CodexLLMClient implements LLMClient {
     });
     progress?.flush();
 
+    const codexUsage = extractCodexCompletionUsageFromEvents(result.events);
+    const resolvedModel = codexUsage?.model || opts?.model || this.defaults.model;
+
     return {
       text: result.finalText,
       threadId: result.threadId,
       usage: {
-        costUsd: undefined
+        inputTokens: codexUsage?.inputTokens,
+        outputTokens: codexUsage?.outputTokens,
+        costUsd: computeModelUsageCostUsd(resolvedModel, {
+          inputTokens: codexUsage?.inputTokens,
+          outputTokens: codexUsage?.outputTokens
+        })
       }
     };
   }
@@ -88,7 +100,7 @@ export class OpenAiResponsesLLMClient implements LLMClient {
     opts?: LLMCompleteOptions
   ): Promise<LLMCompletion> {
     opts?.onProgress?.({ type: "status", text: "Submitting request to OpenAI Responses API." });
-    const text = await this.openai.runForText({
+    const result = await this.openai.complete({
       prompt,
       threadId: opts?.threadId,
       systemPrompt: opts?.systemPrompt,
@@ -103,11 +115,9 @@ export class OpenAiResponsesLLMClient implements LLMClient {
     opts?.onProgress?.({ type: "status", text: "Received Responses API output." });
 
     return {
-      text,
-      threadId: this.openai.lastResponseId(),
-      usage: {
-        costUsd: undefined
-      }
+      text: result.text,
+      threadId: result.responseId || this.openai.lastResponseId(),
+      usage: result.usage
     };
   }
 }

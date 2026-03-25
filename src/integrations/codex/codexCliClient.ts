@@ -41,6 +41,12 @@ export interface RunTurnResult {
   events: CodexEvent[];
 }
 
+export interface CodexCompletionUsage {
+  model?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+}
+
 export interface CliCheckResult {
   ok: boolean;
   detail: string;
@@ -768,4 +774,122 @@ function unwrapAgentEvent(event: CodexEvent): CodexEvent {
     }
   }
   return event;
+}
+
+export function extractCodexCompletionUsageFromEvents(events: CodexEvent[]): CodexCompletionUsage | undefined {
+  let discoveredModel: string | undefined;
+
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = unwrapAgentEvent(events[i]);
+    discoveredModel = discoveredModel || extractCodexModel(event);
+
+    const usage = extractCodexUsage(event);
+    if (usage) {
+      return {
+        model: discoveredModel || extractCodexModel(event),
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens
+      };
+    }
+  }
+
+  if (discoveredModel) {
+    return { model: discoveredModel };
+  }
+
+  return undefined;
+}
+
+function extractCodexUsage(value: unknown, depth = 0): { inputTokens?: number; outputTokens?: number } | undefined {
+  if (!value || typeof value !== "object" || depth > 4) {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  const direct = readTokenUsageRecord(record);
+  if (direct) {
+    return direct;
+  }
+
+  for (const key of ["usage", "token_usage", "tokenUsage", "response", "item", "message", "metadata"]) {
+    const nested = extractCodexUsage(record[key], depth + 1);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  if (Array.isArray(record.content)) {
+    for (const part of record.content) {
+      const nested = extractCodexUsage(part, depth + 1);
+      if (nested) {
+        return nested;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function extractCodexModel(value: unknown, depth = 0): string | undefined {
+  if (!value || typeof value !== "object" || depth > 4) {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  const direct =
+    asNonEmptyString(record.model) ||
+    asNonEmptyString(record.model_name) ||
+    asNonEmptyString(record.model_slug);
+  if (direct) {
+    return direct;
+  }
+
+  for (const key of ["response", "item", "message", "metadata"]) {
+    const nested = extractCodexModel(record[key], depth + 1);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  if (Array.isArray(record.content)) {
+    for (const part of record.content) {
+      const nested = extractCodexModel(part, depth + 1);
+      if (nested) {
+        return nested;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function readTokenUsageRecord(record: Record<string, unknown>): {
+  inputTokens?: number;
+  outputTokens?: number;
+} | undefined {
+  const inputTokens =
+    asFiniteNumber(record.input_tokens) ??
+    asFiniteNumber(record.inputTokens) ??
+    asFiniteNumber(record.prompt_tokens) ??
+    asFiniteNumber(record.promptTokens);
+  const outputTokens =
+    asFiniteNumber(record.output_tokens) ??
+    asFiniteNumber(record.outputTokens) ??
+    asFiniteNumber(record.completion_tokens) ??
+    asFiniteNumber(record.completionTokens);
+  if (inputTokens === undefined && outputTokens === undefined) {
+    return undefined;
+  }
+
+  return {
+    inputTokens,
+    outputTokens
+  };
+}
+
+function asFiniteNumber(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return undefined;
+  }
+  return value;
 }

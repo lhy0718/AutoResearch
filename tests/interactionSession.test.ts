@@ -8,7 +8,7 @@ import { resolveAppPaths, ensureScaffold } from "../src/config.js";
 import { InteractionSession } from "../src/interaction/InteractionSession.js";
 import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 import { RunStore } from "../src/core/runs/runStore.js";
-import { InMemoryEventStream } from "../src/core/events.js";
+import { InMemoryEventStream, PersistedEventStream } from "../src/core/events.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { RunRecord } from "../src/types.js";
 
@@ -211,6 +211,12 @@ describe("InteractionSession", () => {
 
     const runContext = new RunContextMemory(path.join(cwd, run.memoryRefs.runContextPath));
     await runContext.put("implement_experiments.script", "print('stale')");
+    await runContext.put("run_experiments.feedback_for_implementer", { summary: "The operation was aborted" });
+    await runContext.put("write_paper.paper_critique", {
+      overall_decision: "backtrack_to_implement",
+      needs_additional_experiments: true,
+      manuscript_claim_risk_summary: "stale critique"
+    });
     await runContext.put("analyze_results.last_summary", "stale analysis");
     await runContext.put("review.last_decision", { outcome: "advance" });
 
@@ -244,6 +250,8 @@ describe("InteractionSession", () => {
     expect(await fs.stat(path.join(runDir, "review", "decision.json")).catch(() => undefined)).toBeUndefined();
     expect(await fs.stat(path.join(runDir, "paper", "main.tex")).catch(() => undefined)).toBeUndefined();
     expect(await runContext.get("implement_experiments.script")).toBeNull();
+    expect(await runContext.get("run_experiments.feedback_for_implementer")).toBeNull();
+    expect(await runContext.get("write_paper.paper_critique")).toBeNull();
     expect(await runContext.get("analyze_results.last_summary")).toBeNull();
     expect(await runContext.get("review.last_decision")).toBeNull();
     expect(persisted?.status).toBe("paused");
@@ -279,6 +287,12 @@ describe("InteractionSession", () => {
     await fs.writeFile(path.join(runDir, "transition_recommendation.json"), JSON.stringify({ action: "advance" }, null, 2), "utf8");
     await fs.writeFile(path.join(runDir, "review", "decision.json"), JSON.stringify({ outcome: "advance" }, null, 2), "utf8");
     await fs.writeFile(path.join(runDir, "paper", "main.tex"), "stale paper\n", "utf8");
+    const runContext = new RunContextMemory(path.join(cwd, run.memoryRefs.runContextPath));
+    await runContext.put("objective_metric.last_evaluation", { status: "met" });
+    await runContext.put("write_paper.paper_critique", {
+      overall_decision: "backtrack_to_implement",
+      needs_additional_experiments: true
+    });
 
     const session = new InteractionSession({
       workspaceRoot: cwd,
@@ -309,6 +323,8 @@ describe("InteractionSession", () => {
     expect(await fs.stat(path.join(runDir, "transition_recommendation.json")).catch(() => undefined)).toBeUndefined();
     expect(await fs.stat(path.join(runDir, "review", "decision.json")).catch(() => undefined)).toBeUndefined();
     expect(await fs.stat(path.join(runDir, "paper", "main.tex")).catch(() => undefined)).toBeUndefined();
+    expect(await runContext.get("objective_metric.last_evaluation")).toMatchObject({ status: "met" });
+    expect(await runContext.get("write_paper.paper_critique")).toBeNull();
     expect(persisted?.currentNode).toBe("analyze_results");
     expect(persisted?.graph.nodeStates.run_experiments.status).toBe("completed");
     expect(persisted?.graph.nodeStates.analyze_results.status).toBe("pending");
@@ -1149,5 +1165,48 @@ describe("InteractionSession", () => {
       run.id,
       expect.objectContaining({ abortSignal: expect.any(AbortSignal) })
     );
+  });
+
+  it("replays persisted run events when selecting a run", async () => {
+    const run = await runStore.createRun({
+      title: "Recovered run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    const eventStream = new PersistedEventStream(path.join(cwd, ".autolabos", "runs"));
+    eventStream.emit({
+      type: "OBS_RECEIVED",
+      runId: run.id,
+      node: "collect_papers",
+      payload: {
+        text: "Recovered deferred enrichment background task after restart."
+      }
+    });
+
+    const session = new InteractionSession({
+      workspaceRoot: cwd,
+      config: {
+        research: {
+          defaultTopic: "topic",
+          defaultConstraints: ["recent papers"],
+          default_objective_metric: "metric"
+        }
+      } as any,
+      runStore,
+      titleGenerator: {} as any,
+      codex: {} as any,
+      openAiTextClient: undefined,
+      eventStream,
+      orchestrator: {} as any,
+      semanticScholarApiKeyConfigured: true
+    });
+    await session.start();
+    await session.selectRun(run.id);
+
+    const replayed = session.snapshot().logs.filter((line) =>
+      line.includes("Recovered deferred enrichment background task after restart.")
+    );
+    expect(replayed).toHaveLength(1);
   });
 });

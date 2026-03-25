@@ -87,6 +87,48 @@ describe("OpenAiResponsesTextClient", () => {
     });
   });
 
+  it("extracts usage and computes USD cost from the Responses API payload", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            id: "resp_usage",
+            model: "gpt-5.4",
+            usage: {
+              input_tokens: 200_000,
+              output_tokens: 50_000
+            },
+            output: [
+              {
+                type: "message",
+                content: [{ type: "output_text", text: "priced reply" }]
+              }
+            ]
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" }
+          }
+        )
+      )
+    );
+
+    const client = new OpenAiResponsesTextClient(async () => "test-key", { model: "gpt-5.4" });
+    const result = await client.complete({ prompt: "hello" });
+
+    expect(result).toMatchObject({
+      text: "priced reply",
+      responseId: "resp_usage",
+      model: "gpt-5.4",
+      usage: {
+        inputTokens: 200_000,
+        outputTokens: 50_000,
+        costUsd: 1.25
+      }
+    });
+  });
+
   it("surfaces the underlying network cause when fetch fails before an HTTP response arrives", async () => {
     vi.stubGlobal(
       "fetch",
@@ -137,6 +179,13 @@ describe("OpenAiResponsesTextClient", () => {
           id: "resp_bg_1",
           status,
           model: "gpt-5.4",
+          usage:
+            status === "completed"
+              ? {
+                  input_tokens: 1_000,
+                  output_tokens: 200
+                }
+              : undefined,
           output:
             status === "completed"
               ? [
@@ -169,6 +218,11 @@ describe("OpenAiResponsesTextClient", () => {
 
     expect(result.text).toBe("background reply");
     expect(result.responseId).toBe("resp_bg_1");
+    expect(result.usage).toEqual({
+      inputTokens: 1_000,
+      outputTokens: 200,
+      costUsd: 0.0055
+    });
     expect(progress).toContain("OpenAI accepted background response resp_bg_1; polling for completion.");
     expect(progress.some((message) => message.includes("is in_progress"))).toBe(true);
   });

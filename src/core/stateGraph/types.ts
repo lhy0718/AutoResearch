@@ -27,6 +27,13 @@ export interface GraphNodeResult {
   error?: string;
   costUsd?: number;
   toolCallsUsed?: number;
+  usage?: {
+    costUsd?: number;
+    toolCalls?: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    wallTimeMs?: number;
+  };
   transitionRecommendation?: TransitionRecommendation;
 }
 

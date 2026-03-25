@@ -6,11 +6,14 @@ import {
   applyScientificWritingPolicy,
   buildScientificValidationArtifact,
   buildWritePaperGateDecision,
-  materializeScientificManuscript
+  materializeScientificManuscript,
+  pageBudgetManager
 } from "../src/core/analysis/scientificWriting.js";
 
 const PAPER_PROFILE = {
   venue_style: "acl_long",
+  target_main_pages: 8,
+  minimum_main_pages: 8,
   main_page_limit: 8,
   references_counted: false,
   appendix_allowed: true,
@@ -464,6 +467,24 @@ function makeTerseDraft(): PaperDraft {
 }
 
 describe("scientificWriting", () => {
+  it("uses target_main_pages for word budgets while preserving a separate minimum_main_pages floor", () => {
+    const report = pageBudgetManager({
+      draft: makeTerseDraft(),
+      profile: {
+        ...PAPER_PROFILE,
+        target_main_pages: 10,
+        minimum_main_pages: 8,
+        main_page_limit: 8
+      }
+    });
+
+    expect(report.target_main_pages).toBe(10);
+    expect(report.minimum_main_pages).toBe(8);
+    expect(report.main_page_limit).toBe(8);
+    expect(report.target_main_words).toBe(4200);
+    expect(report.warnings[0]).toContain("10-page target budget");
+  });
+
   it("expands a terse draft into a richer main paper and appendix when detailed artifacts exist", () => {
     const bundle = makeRichBundle();
     const draft = makeTerseDraft();

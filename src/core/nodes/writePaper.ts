@@ -95,6 +95,8 @@ interface CompiledPdfPageValidationReport {
   validation_mode: "default" | "strict_paper";
   status: "pass" | "warn" | "fail";
   outcome: "ok" | "under_limit" | "measurement_unavailable" | "skipped";
+  minimum_main_pages: number;
+  target_main_pages: number;
   main_page_limit: number;
   compiled_pdf_page_count: number | null;
   pdf_path: string | null;
@@ -215,13 +217,26 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       const basePaperProfile = deps.config.paper_profile;
       const manuscriptFormatTarget = await runContextMemory.get("run_brief.manuscript_format") as
         { columns?: number; main_body_pages?: number; references_excluded_from_page_limit?: boolean; appendices_excluded_from_page_limit?: boolean } | undefined;
+      const briefMainBodyPages =
+        typeof manuscriptFormatTarget?.main_body_pages === "number" ? manuscriptFormatTarget.main_body_pages : undefined;
       const paperProfile: typeof basePaperProfile = manuscriptFormatTarget
         ? {
             ...basePaperProfile,
             column_count: manuscriptFormatTarget.columns === 1 ? 1 : (basePaperProfile.column_count ?? 2),
-            main_page_limit: typeof manuscriptFormatTarget.main_body_pages === "number"
-              ? manuscriptFormatTarget.main_body_pages
-              : basePaperProfile.main_page_limit,
+            target_main_pages:
+              briefMainBodyPages
+              ?? basePaperProfile.target_main_pages
+              ?? basePaperProfile.main_page_limit,
+            minimum_main_pages:
+              briefMainBodyPages
+              ?? basePaperProfile.minimum_main_pages
+              ?? basePaperProfile.main_page_limit
+              ?? basePaperProfile.target_main_pages,
+            main_page_limit:
+              briefMainBodyPages
+              ?? basePaperProfile.minimum_main_pages
+              ?? basePaperProfile.main_page_limit
+              ?? basePaperProfile.target_main_pages,
             references_counted: manuscriptFormatTarget.references_excluded_from_page_limit === false,
             appendix_allowed: manuscriptFormatTarget.appendices_excluded_from_page_limit !== false
           }
@@ -404,13 +419,15 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         "paper/scientific_validation.json",
         `${JSON.stringify(scientificValidationArtifact, null, 2)}\n`
       );
-      await runContextMemory.put("write_paper.scientific_validation", {
-        mode: validationMode,
-        page_budget_status: scientificDraft.page_budget.status,
-        page_budget_column_count: scientificDraft.page_budget.column_count,
-        page_budget_main_page_limit: scientificDraft.page_budget.main_page_limit,
-        page_budget_references_counted: scientificDraft.page_budget.references_counted,
-        page_budget_target_words: scientificDraft.page_budget.target_main_words,
+        await runContextMemory.put("write_paper.scientific_validation", {
+          mode: validationMode,
+          page_budget_status: scientificDraft.page_budget.status,
+          page_budget_column_count: scientificDraft.page_budget.column_count,
+          page_budget_target_main_pages: scientificDraft.page_budget.target_main_pages,
+          page_budget_minimum_main_pages: scientificDraft.page_budget.minimum_main_pages,
+          page_budget_main_page_limit: scientificDraft.page_budget.main_page_limit,
+          page_budget_references_counted: scientificDraft.page_budget.references_counted,
+          page_budget_target_words: scientificDraft.page_budget.target_main_words,
         page_budget_estimated_words: scientificDraft.page_budget.estimated_main_words,
         method_status: scientificDraft.method_completeness.status,
         results_status: scientificDraft.results_richness.status,
@@ -729,7 +746,8 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         run,
         compileResult,
         validationMode,
-        mainPageLimit: scientificDraft.page_budget.main_page_limit
+        minimumMainPages: scientificDraft.page_budget.minimum_main_pages,
+        targetMainPages: scientificDraft.page_budget.target_main_pages
       });
       await writeRunArtifact(
         run,
@@ -1453,7 +1471,8 @@ export async function validateCompiledPdfPageBudget(input: {
   run: Parameters<GraphNodeHandler["execute"]>[0]["run"];
   compileResult: PaperCompileResult;
   validationMode: "default" | "strict_paper";
-  mainPageLimit: number;
+  minimumMainPages: number;
+  targetMainPages: number;
 }): Promise<CompiledPdfPageValidationReport> {
   if (!input.compileResult.pdf_path) {
     return {
@@ -1461,7 +1480,9 @@ export async function validateCompiledPdfPageBudget(input: {
       validation_mode: input.validationMode,
       status: "pass",
       outcome: "skipped",
-      main_page_limit: input.mainPageLimit,
+      minimum_main_pages: input.minimumMainPages,
+      target_main_pages: input.targetMainPages,
+      main_page_limit: input.minimumMainPages,
       compiled_pdf_page_count: null,
       pdf_path: null,
       message: "Compiled PDF page-budget validation was skipped because no PDF artifact was produced."
@@ -1479,25 +1500,29 @@ export async function validateCompiledPdfPageBudget(input: {
       validation_mode: input.validationMode,
       status: input.validationMode === "strict_paper" ? "fail" : "warn",
       outcome: "measurement_unavailable",
-      main_page_limit: input.mainPageLimit,
+      minimum_main_pages: input.minimumMainPages,
+      target_main_pages: input.targetMainPages,
+      main_page_limit: input.minimumMainPages,
       compiled_pdf_page_count: null,
       pdf_path: input.compileResult.pdf_path,
       message:
-        "Compiled PDF page count could not be verified with pdfinfo, so main_page_limit compliance remains unverified."
+        "Compiled PDF page count could not be verified with pdfinfo, so minimum_main_pages compliance remains unverified."
     };
   }
-  if (parsedPageCount < input.mainPageLimit) {
+  if (parsedPageCount < input.minimumMainPages) {
     return {
       checked: true,
       validation_mode: input.validationMode,
       status: input.validationMode === "strict_paper" ? "fail" : "warn",
       outcome: "under_limit",
-      main_page_limit: input.mainPageLimit,
+      minimum_main_pages: input.minimumMainPages,
+      target_main_pages: input.targetMainPages,
+      main_page_limit: input.minimumMainPages,
       compiled_pdf_page_count: parsedPageCount,
       pdf_path: input.compileResult.pdf_path,
       message:
         `Compiled PDF is only ${parsedPageCount} page${parsedPageCount === 1 ? "" : "s"}, below the configured ` +
-        `main_page_limit of ${input.mainPageLimit}.`
+        `minimum_main_pages of ${input.minimumMainPages}.`
     };
   }
   return {
@@ -1505,12 +1530,14 @@ export async function validateCompiledPdfPageBudget(input: {
     validation_mode: input.validationMode,
     status: "pass",
     outcome: "ok",
-    main_page_limit: input.mainPageLimit,
+    minimum_main_pages: input.minimumMainPages,
+    target_main_pages: input.targetMainPages,
+    main_page_limit: input.minimumMainPages,
     compiled_pdf_page_count: parsedPageCount,
     pdf_path: input.compileResult.pdf_path,
     message:
       `Compiled PDF reached ${parsedPageCount} page${parsedPageCount === 1 ? "" : "s"}, meeting the configured ` +
-      `main_page_limit of ${input.mainPageLimit}.`
+      `minimum_main_pages of ${input.minimumMainPages}.`
   };
 }
 

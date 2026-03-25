@@ -814,7 +814,8 @@ function buildOutlinePrompt(bundle: PaperWritingBundle, paperProfile?: PaperProf
       ? [
           `Venue style: ${paperProfile.venue_style}`,
           `Column count: ${paperProfile.column_count ?? 2}`,
-          `Main page limit: ${paperProfile.main_page_limit}`,
+          `Target main pages: ${paperProfile.target_main_pages ?? paperProfile.main_page_limit ?? "unknown"}`,
+          `Minimum main pages: ${paperProfile.minimum_main_pages ?? paperProfile.main_page_limit ?? "unknown"}`,
           `References counted toward limit: ${paperProfile.references_counted}`,
           `Appendix allowed: ${paperProfile.appendix_allowed}`,
           `Appendix preferences: ${(paperProfile.prefer_appendix_for || []).join(", ") || "none"}`

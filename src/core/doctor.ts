@@ -37,6 +37,8 @@ interface RunsFileSnapshot {
 
 interface CompiledPageValidationSnapshot {
   status?: string;
+  minimum_main_pages?: number;
+  target_main_pages?: number;
   main_page_limit?: number;
   compiled_pdf_page_count?: number | null;
   message?: string;
@@ -234,13 +236,23 @@ async function loadLatestPaperPageBudgetCheck(workspaceRoot: string): Promise<Do
   const status = validation.status === "pass" ? "pass" : validation.status === "warn" ? "warn" : "fail";
   const pageCount =
     typeof validation.compiled_pdf_page_count === "number" ? String(validation.compiled_pdf_page_count) : "unknown";
-  const limit = typeof validation.main_page_limit === "number" ? String(validation.main_page_limit) : "unknown";
+  const minimumMainPages = typeof validation.minimum_main_pages === "number"
+    ? String(validation.minimum_main_pages)
+    : typeof validation.main_page_limit === "number"
+      ? String(validation.main_page_limit)
+      : "unknown";
+  const targetMainPages = typeof validation.target_main_pages === "number"
+    ? String(validation.target_main_pages)
+    : typeof validation.main_page_limit === "number"
+      ? String(validation.main_page_limit)
+      : "unknown";
   return {
     name: "paper-page-budget",
     ok: status === "pass",
     detail:
       `Latest compiled paper page-budget check for run ${latestRun.id}: ${status}. ` +
-      `pages=${pageCount}, main_page_limit=${limit}. ${validation.message || ""}`.trim()
+      `pages=${pageCount}, minimum_main_pages=${minimumMainPages}, target_main_pages=${targetMainPages}. ` +
+      `${validation.message || ""}`.trim()
   };
 }
 

@@ -5,7 +5,7 @@ import { RunStore } from "../core/runs/runStore.js";
 import { TitleGenerator } from "../core/runs/titleGenerator.js";
 import { AgentOrchestrator } from "../core/agents/agentOrchestrator.js";
 import { AutonomousRunController, buildDefaultOvernightPolicy, buildDefaultAutonomousPolicy } from "../core/agents/autonomousRunController.js";
-import { EventStream, AutoLabOSEvent } from "../core/events.js";
+import { EventStream, AutoLabOSEvent, readPersistedRunEvents } from "../core/events.js";
 import { buildNaturalAssistantResponse, matchesNaturalAssistantIntent } from "../core/commands/naturalAssistant.js";
 import { buildNaturalAssistantResponseWithLlm } from "../core/commands/naturalLlmAssistant.js";
 import {
@@ -152,6 +152,7 @@ export class InteractionSession {
   private readonly semanticScholarApiKeyConfigured: boolean;
   private readonly listeners = new Set<SessionListener>();
   private readonly corpusInsightsCache = new Map<string, CorpusInsightsCacheEntry>();
+  private readonly seenEventIds = new Set<string>();
 
   private logs: string[] = [];
   private runIndex: RunRecord[] = [];
@@ -182,7 +183,11 @@ export class InteractionSession {
 
   async start(): Promise<void> {
     await this.refreshRunIndex();
+    await this.replayPersistedRunEvents(this.activeRunId);
     this.unsubscribeEvents = this.eventStream.subscribe((event) => {
+      if (!this.rememberEventId(event.id)) {
+        return;
+      }
       const line = formatEventLog(event);
       if (!line) {
         return;
@@ -2037,8 +2042,38 @@ export class InteractionSession {
 
   private async setActiveRunId(runId?: string): Promise<void> {
     this.activeRunId = runId;
+    await this.replayPersistedRunEvents(runId);
     await this.refreshActiveRunInsight();
     this.notify();
+  }
+
+  private async replayPersistedRunEvents(runId?: string): Promise<void> {
+    if (!runId) {
+      return;
+    }
+    const events = readPersistedRunEvents({
+      runsDir: path.join(this.workspaceRoot, ".autolabos", "runs"),
+      runId,
+      limit: 40
+    });
+    for (const event of events) {
+      if (!this.rememberEventId(event.id)) {
+        continue;
+      }
+      const line = formatEventLog(event);
+      if (!line) {
+        continue;
+      }
+      this.pushLog(line);
+    }
+  }
+
+  private rememberEventId(eventId: string): boolean {
+    if (this.seenEventIds.has(eventId)) {
+      return false;
+    }
+    this.seenEventIds.add(eventId);
+    return true;
   }
 
   private async refreshActiveRunInsight(): Promise<void> {
@@ -2163,7 +2198,7 @@ export class InteractionSession {
       }
     }
     const runContext = new RunContextMemory(this.resolveWorkspacePath(run.memoryRefs.runContextPath));
-    for (const key of resetContextKeys(node)) {
+    for (const key of await resolveResetContextKeys(runContext, node)) {
       await runContext.put(key, null);
     }
     return removed;
@@ -2575,43 +2610,44 @@ function resetArtifactTargets(node: GraphNodeId): string[] {
   return [...new Set(resetScopeNodes(node).flatMap((nodeId) => nodeArtifactTargets(nodeId)))];
 }
 
-function nodeContextKeys(node: GraphNodeId): string[] {
+async function resolveResetContextKeys(runContext: RunContextMemory, node: GraphNodeId): Promise<string[]> {
+  const prefixes = resetContextPrefixes(node);
+  if (prefixes.length === 0) {
+    return [];
+  }
+  const existing = await runContext.entries();
+  return existing
+    .map((item) => item.key)
+    .filter((key, index, keys) => prefixes.some((prefix) => key.startsWith(prefix)) && keys.indexOf(key) === index);
+}
+
+function nodeContextPrefixes(node: GraphNodeId): string[] {
   switch (node) {
     case "collect_papers":
-      return ["collect_papers.count", "collect_papers.source", "collect_papers.last_error", "collect_papers.enrichment_last_error", "collect_papers.last_attempt_count", "collect_papers.requested_limit", "collect_papers.request", "collect_papers.last_request", "collect_papers.last_result"];
+      return ["collect_papers."];
     case "analyze_papers":
-      return ["analyze_papers.request", "analyze_papers.evidence_count", "analyze_papers.summary_count", "analyze_papers.full_text_count", "analyze_papers.abstract_fallback_count", "analyze_papers.selected_count", "analyze_papers.total_candidates", "analyze_papers.selection_fingerprint"];
+      return ["analyze_papers."];
     case "generate_hypotheses":
-      return [
-        "generate_hypotheses.request",
-        "generate_hypotheses.top_k",
-        "generate_hypotheses.candidate_count",
-        "generate_hypotheses.source",
-        "generate_hypotheses.pipeline",
-        "generate_hypotheses.summary"
-      ];
+      return ["generate_hypotheses."];
     case "design_experiments":
-      return ["design_experiments.primary"];
+      return ["design_experiments."];
     case "implement_experiments":
-      return ["implement_experiments.script"];
+      return ["implement_experiments."];
+    case "run_experiments":
+      return ["run_experiments.", "objective_metric."];
     case "analyze_results":
-      return ["analyze_results.last_summary", "analyze_results.last_error", "analyze_results.last_synthesis"];
+      return ["analyze_results."];
     case "review":
-      return [
-        "review.packet",
-        "review.last_summary",
-        "review.last_recommendation",
-        "review.last_decision",
-        "review.last_findings_count",
-        "review.last_panel_agreement"
-      ];
+      return ["review."];
+    case "write_paper":
+      return ["write_paper."];
     default:
       return [];
   }
 }
 
-function resetContextKeys(node: GraphNodeId): string[] {
-  return [...new Set(resetScopeNodes(node).flatMap((nodeId) => nodeContextKeys(nodeId)))];
+function resetContextPrefixes(node: GraphNodeId): string[] {
+  return [...new Set(resetScopeNodes(node).flatMap((nodeId) => nodeContextPrefixes(nodeId)))];
 }
 
 function resetScopeNodes(node: GraphNodeId): GraphNodeId[] {

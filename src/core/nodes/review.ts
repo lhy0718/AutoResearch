@@ -233,6 +233,10 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       const blockers = packet.readiness.blocking_checks;
       const warnings = packet.readiness.warning_checks;
       const manual = packet.readiness.manual_checks;
+      const toolCallsUsed = Math.max(1, panel.llm_calls_used + (llmEvalResult.llmUsed ? 1 : 0));
+      const costUsd = (panel.llm_cost_usd ?? 0) + llmEvalCost;
+      const inputTokens = (panel.llm_input_tokens ?? 0) + (llmEvalResult.usage?.inputTokens ?? 0);
+      const outputTokens = (panel.llm_output_tokens ?? 0) + (llmEvalResult.usage?.outputTokens ?? 0);
       const critiqueLabel = preDraftCritique.manuscript_type !== "paper_ready"
         ? ` Manuscript classified as ${preDraftCritique.manuscript_type} (venue: ${preDraftCritique.target_venue_style}).`
         : ` Manuscript classified as paper_ready (venue: ${preDraftCritique.target_venue_style}).`;
@@ -245,8 +249,14 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
               ? `Review panel prepared ${panel.findings.length} finding(s) with ${warnings} warning(s) and ${manual} manual review item(s). The next stage will carry the attached revision checklist or follow the recommended backtrack automatically.${critiqueLabel} Public outputs: ${publicOutputs.outputRootRelative}.`
               : `Review panel completed with outcome ${panel.decision.outcome}.${critiqueLabel} The runtime can continue automatically from the review recommendation. Public outputs: ${publicOutputs.outputRootRelative}.`,
         needsApproval: true,
-        toolCallsUsed: Math.max(1, panel.llm_calls_used + (llmEvalResult.llmUsed ? 1 : 0)),
-        costUsd: (panel.llm_cost_usd ?? 0) + llmEvalCost,
+        toolCallsUsed,
+        costUsd,
+        usage: {
+          toolCalls: toolCallsUsed,
+          costUsd,
+          inputTokens,
+          outputTokens
+        },
         transitionRecommendation
       };
     }
@@ -627,6 +637,8 @@ interface PreReviewSummary {
   prior_compiled_page_validation?: {
     status: string;
     outcome: string;
+    minimum_main_pages: number | null;
+    target_main_pages: number | null;
     main_page_limit: number | null;
     compiled_pdf_page_count: number | null;
     message: string;
@@ -644,6 +656,8 @@ function buildPreReviewSummary(input: {
   priorCompiledPageValidation?: {
     status: string;
     outcome: string;
+    minimum_main_pages: number | null;
+    target_main_pages: number | null;
     main_page_limit: number | null;
     compiled_pdf_page_count: number | null;
     message: string;
@@ -742,6 +756,8 @@ async function loadPriorCompiledPageValidation(runDir: string): Promise<PreRevie
     const parsed = JSON.parse(raw) as {
       status?: unknown;
       outcome?: unknown;
+      minimum_main_pages?: unknown;
+      target_main_pages?: unknown;
       main_page_limit?: unknown;
       compiled_pdf_page_count?: unknown;
       message?: unknown;
@@ -752,6 +768,18 @@ async function loadPriorCompiledPageValidation(runDir: string): Promise<PreRevie
     return {
       status: parsed.status,
       outcome: parsed.outcome,
+      minimum_main_pages:
+        typeof parsed.minimum_main_pages === "number"
+          ? parsed.minimum_main_pages
+          : typeof parsed.main_page_limit === "number"
+            ? parsed.main_page_limit
+            : null,
+      target_main_pages:
+        typeof parsed.target_main_pages === "number"
+          ? parsed.target_main_pages
+          : typeof parsed.main_page_limit === "number"
+            ? parsed.main_page_limit
+            : null,
       main_page_limit: typeof parsed.main_page_limit === "number" ? parsed.main_page_limit : null,
       compiled_pdf_page_count: typeof parsed.compiled_pdf_page_count === "number" ? parsed.compiled_pdf_page_count : null,
       message: parsed.message

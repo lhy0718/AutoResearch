@@ -47,6 +47,20 @@ Recommended:
 6. analyze results
 7. draft only after evidence is sufficient
 
+## Manuscript Format
+Optional manuscript-format targets for writing and validation.
+
+Recommended:
+- columns: 1 or 2
+- main_body_pages: nominal target page count for the main body
+- references_excluded_from_page_limit: true/false
+- appendices_excluded_from_page_limit: true/false
+
+Important:
+- `main_body_pages` is a page-budget target, not a hard upper cap.
+- AutoLabOS uses it to size writing budgets and, unless overridden, as the minimum compiled main-body page floor.
+- If the compiled PDF lands below that floor, the page-budget check warns or fails depending on validation mode.
+
 ## Research Question
 Write one clear research question that could be answered by a small real experiment.
 

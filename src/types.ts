@@ -111,13 +111,40 @@ export interface RunGraphState {
 
 export type RunStatus = "pending" | "running" | "paused" | "completed" | "failed";
 
+export interface RunUsageTotals {
+  costUsd: number;
+  toolCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  wallTimeMs: number;
+}
+
+export interface NodeUsageSummary extends RunUsageTotals {
+  executions: number;
+  lastUpdatedAt?: string;
+}
+
+export interface RunUsageSummary {
+  totals: RunUsageTotals;
+  byNode: Partial<Record<GraphNodeId, NodeUsageSummary>>;
+  lastUpdatedAt?: string;
+}
+
 export interface PaperProfileConfig {
   venue_style: string;
   /** Manuscript rhetoric/style target (e.g. "acl", "neurips", "generic_cs_paper"). */
   target_venue_style?: string;
   /** Number of columns for the main body (1 or 2). Default: 2. */
   column_count: 1 | 2;
-  main_page_limit: number;
+  /** Nominal page-count target used to size word budgets and section allocations. */
+  target_main_pages?: number;
+  /** Minimum compiled main-body pages accepted by the page-budget validator. Defaults to target_main_pages. */
+  minimum_main_pages?: number;
+  /**
+   * @deprecated Compatibility alias. When explicit fields are absent, this seeds both
+   * target_main_pages and minimum_main_pages. Prefer the explicit fields for new configs.
+   */
+  main_page_limit?: number;
   references_counted: boolean;
   appendix_allowed: boolean;
   appendix_format: "double_column" | "single_column";
@@ -125,11 +152,21 @@ export interface PaperProfileConfig {
   estimated_words_per_page?: number;
 }
 
+export interface ResolvedPaperProfileConfig extends Omit<PaperProfileConfig, "target_main_pages" | "minimum_main_pages"> {
+  target_main_pages: number;
+  minimum_main_pages: number;
+  /**
+   * @deprecated Compatibility alias for minimum_main_pages, retained so older run artifacts
+   * and tests can still be interpreted during the migration.
+   */
+  main_page_limit: number;
+}
+
 /** Manuscript format constraints that can be specified in a research brief. */
 export interface ManuscriptFormatTarget {
   /** Number of columns (1 or 2). */
   columns: 1 | 2;
-  /** Target page count for the main paper body. */
+  /** Target page count for the main paper body. This seeds minimum_main_pages unless overridden elsewhere. */
   main_body_pages: number;
   /** Whether the reference list is excluded from the page count. */
   references_excluded_from_page_limit: boolean;
@@ -151,6 +188,7 @@ export interface RunRecord {
   nodeThreads: Partial<Record<GraphNodeId, string>>;
   createdAt: string;
   updatedAt: string;
+  usage?: RunUsageSummary;
   graph: RunGraphState;
   memoryRefs: {
     runContextPath: string;
@@ -215,6 +253,7 @@ export interface AppConfig {
     mode: "agent_approval";
     wizard_enabled: true;
     approval_mode?: WorkflowApprovalMode;
+    budget_guard_usd?: number;
   };
   experiments: {
     runner: "local_python";

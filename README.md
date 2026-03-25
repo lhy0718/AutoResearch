@@ -310,6 +310,8 @@ Briefs carry **core** sections (topic, objective metric) and **governance** sect
 
 </details>
 
+When `## Manuscript Format` is used, `main_body_pages` is treated as the nominal main-body page target, not a hard upper cap. In config, prefer `paper_profile.target_main_pages` and `paper_profile.minimum_main_pages`; the legacy `paper_profile.main_page_limit` field remains as a compatibility alias during migration.
+
 ---
 
 ## Governance Artifact Flow

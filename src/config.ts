@@ -268,6 +268,8 @@ function buildConfigFromWizardAnswers(answers: {
       venue_style: "acl_long",
       target_venue_style: "generic_cs_paper",
       column_count: 2,
+      target_main_pages: 8,
+      minimum_main_pages: 8,
       main_page_limit: 8,
       references_counted: false,
       appendix_allowed: true,
@@ -686,7 +688,8 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
   config.workflow = {
     mode: "agent_approval",
     wizard_enabled: true,
-    approval_mode: normalizeWorkflowApprovalMode(config.workflow.approval_mode)
+    approval_mode: normalizeWorkflowApprovalMode(config.workflow.approval_mode),
+    budget_guard_usd: normalizeBudgetGuardUsd(config.workflow.budget_guard_usd)
   };
   config.experiments = {
     runner: "local_python",
@@ -819,12 +822,23 @@ function normalizeWorkflowApprovalMode(value: unknown): WorkflowApprovalMode {
   return value === "manual" ? "manual" : "minimal";
 }
 
+function normalizeBudgetGuardUsd(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function normalizePaperProfilePageCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(1, Math.round(value)) : undefined;
+}
+
 function normalizePaperProfileConfig(value: AppConfig["paper_profile"] | undefined): AppConfig["paper_profile"] {
   const preferAppendixFor = Array.isArray(value?.prefer_appendix_for)
     ? value?.prefer_appendix_for
         .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
         .map((item) => item.trim())
     : [];
+  const legacyMainPageLimit = normalizePaperProfilePageCount(value?.main_page_limit);
+  const targetMainPages = normalizePaperProfilePageCount(value?.target_main_pages) ?? legacyMainPageLimit ?? 8;
+  const minimumMainPages = normalizePaperProfilePageCount(value?.minimum_main_pages) ?? legacyMainPageLimit ?? targetMainPages;
   const estimatedWordsPerPage =
     typeof value?.estimated_words_per_page === "number" && Number.isFinite(value.estimated_words_per_page)
       ? Math.max(250, Math.round(value.estimated_words_per_page))
@@ -834,10 +848,9 @@ function normalizePaperProfileConfig(value: AppConfig["paper_profile"] | undefin
     venue_style: value?.venue_style?.trim() || "acl_long",
     target_venue_style: value?.target_venue_style?.trim() || undefined,
     column_count: value?.column_count === 1 ? 1 : 2,
-    main_page_limit:
-      typeof value?.main_page_limit === "number" && Number.isFinite(value.main_page_limit)
-        ? Math.max(1, Math.round(value.main_page_limit))
-        : 8,
+    target_main_pages: targetMainPages,
+    minimum_main_pages: minimumMainPages,
+    main_page_limit: minimumMainPages,
     references_counted: Boolean(value?.references_counted),
     appendix_allowed: value?.appendix_allowed !== false,
     appendix_format: value?.appendix_format === "single_column" ? "single_column" : "double_column",

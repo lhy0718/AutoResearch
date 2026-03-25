@@ -1,6 +1,6 @@
 import YAML from "yaml";
 
-import type { PaperProfileConfig } from "../../types.js";
+import type { PaperProfileConfig, ResolvedPaperProfileConfig } from "../../types.js";
 import type { ObjectiveMetricEvaluation, ObjectiveMetricProfile } from "../objectiveMetric.js";
 import type { ConstraintProfile } from "../runConstraints.js";
 import type {
@@ -216,6 +216,9 @@ export interface SectionBudgetEntry {
 export interface PageBudgetManagerReport {
   venue_style: string;
   column_count: 1 | 2;
+  target_main_pages: number;
+  minimum_main_pages: number;
+  /** @deprecated Compatibility alias for minimum_main_pages. */
   main_page_limit: number;
   references_counted: boolean;
   appendix_allowed: boolean;
@@ -398,6 +401,8 @@ export interface WritePaperGateDecision {
 const DEFAULT_PAPER_PROFILE: PaperProfileConfig = {
   venue_style: "acl_long",
   column_count: 2,
+  target_main_pages: 8,
+  minimum_main_pages: 8,
   main_page_limit: 8,
   references_counted: false,
   appendix_allowed: true,
@@ -415,7 +420,7 @@ const DEFAULT_PAPER_PROFILE: PaperProfileConfig = {
 export function resolvePaperProfile(
   profile: Partial<PaperProfileConfig> | undefined,
   constraintProfile?: ConstraintProfile
-): PaperProfileConfig {
+): ResolvedPaperProfileConfig {
   const preferAppendixFor = Array.isArray(profile?.prefer_appendix_for)
     ? profile?.prefer_appendix_for
         .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
@@ -430,17 +435,28 @@ export function resolvePaperProfile(
         ? "acl_short"
         : "acl_long"
       : DEFAULT_PAPER_PROFILE.venue_style);
-  const inferredPageLimit =
+  const legacyMainPageLimit =
     typeof profile?.main_page_limit === "number" && Number.isFinite(profile.main_page_limit)
       ? Math.max(1, Math.round(profile.main_page_limit))
-      : /\bshort\b/iu.test(lengthHint)
-        ? 4
-        : DEFAULT_PAPER_PROFILE.main_page_limit;
+      : undefined;
+  const inferredTargetMainPages =
+    typeof profile?.target_main_pages === "number" && Number.isFinite(profile.target_main_pages)
+      ? Math.max(1, Math.round(profile.target_main_pages))
+      : legacyMainPageLimit
+        ?? (/\bshort\b/iu.test(lengthHint) ? 4 : (DEFAULT_PAPER_PROFILE.target_main_pages || 8));
+  const inferredMinimumMainPages =
+    typeof profile?.minimum_main_pages === "number" && Number.isFinite(profile.minimum_main_pages)
+      ? Math.max(1, Math.round(profile.minimum_main_pages))
+      : legacyMainPageLimit
+        ?? inferredTargetMainPages;
 
   return {
     venue_style: inferredVenueStyle,
+    target_venue_style: cleanString(profile?.target_venue_style) || DEFAULT_PAPER_PROFILE.target_venue_style,
     column_count: profile?.column_count === 1 ? 1 : DEFAULT_PAPER_PROFILE.column_count,
-    main_page_limit: inferredPageLimit,
+    target_main_pages: inferredTargetMainPages,
+    minimum_main_pages: inferredMinimumMainPages,
+    main_page_limit: legacyMainPageLimit ?? inferredMinimumMainPages,
     references_counted:
       typeof profile?.references_counted === "boolean"
         ? profile.references_counted
@@ -847,7 +863,7 @@ export function pageBudgetManager(input: {
 }): PageBudgetManagerReport {
   const profile = resolvePaperProfile(input.profile);
   const estimatedWordsPerPage = profile.estimated_words_per_page || 420;
-  const targetMainWords = profile.main_page_limit * estimatedWordsPerPage;
+  const targetMainWords = profile.target_main_pages * estimatedWordsPerPage;
   const minimumMainWords = Math.round(targetMainWords * 0.62);
   const maximumMainWords = Math.round(targetMainWords * 1.15);
   const estimatedMainWords = estimateDraftWords(input.draft.sections);
@@ -877,7 +893,7 @@ export function pageBudgetManager(input: {
   const warnings: string[] = [];
   if (estimatedMainWords < Math.round(targetMainWords * 0.55)) {
     warnings.push(
-      `Estimated main-body length (${estimatedMainWords} words) is far below the ${profile.main_page_limit}-page target budget.`
+      `Estimated main-body length (${estimatedMainWords} words) is far below the ${profile.target_main_pages}-page target budget.`
     );
   } else if (estimatedMainWords < minimumMainWords) {
     warnings.push(
@@ -894,6 +910,8 @@ export function pageBudgetManager(input: {
   return {
     venue_style: profile.venue_style,
     column_count: profile.column_count,
+    target_main_pages: profile.target_main_pages,
+    minimum_main_pages: profile.minimum_main_pages,
     main_page_limit: profile.main_page_limit,
     references_counted: profile.references_counted,
     appendix_allowed: profile.appendix_allowed,
@@ -3068,7 +3086,7 @@ export function buildScientificValidationArtifact(input: ScientificDraftResult):
       finding: input.evidence_diagnostics.blocked_by_evidence_insufficiency ? "unverifiable" : "repairable",
       message:
         input.page_budget.warnings[0]
-        || `Main-body length remains below the venue-aware ${input.page_budget.main_page_limit}-page target.`,
+        || `Main-body length remains below the venue-aware ${input.page_budget.target_main_pages}-page target.`,
       details: input.page_budget.warnings.slice(1),
       thin_sections: input.evidence_diagnostics.thin_sections,
       missing_evidence_categories: input.evidence_diagnostics.missing_evidence_categories,

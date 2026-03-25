@@ -8,10 +8,11 @@ import {
   buildBibtexEntry,
   buildBibtexFile,
   createCollectPapersNode,
+  recoverCollectEnrichmentJobs,
   waitForAllCollectEnrichmentJobs,
   waitForCollectEnrichmentJob
 } from "../src/core/nodes/collectPapers.js";
-import { InMemoryEventStream } from "../src/core/events.js";
+import { InMemoryEventStream, PersistedEventStream, readPersistedRunEvents } from "../src/core/events.js";
 import { MockLLMClient } from "../src/core/llm/client.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { RunRecord } from "../src/types.js";
@@ -30,6 +31,7 @@ class JsonLLMClient extends MockLLMClient {
 
 afterEach(async () => {
   await waitForAllCollectEnrichmentJobs();
+  vi.unstubAllGlobals();
   process.chdir(ORIGINAL_CWD);
 });
 
@@ -57,6 +59,31 @@ async function readRunContextValue(root: string, runId: string, key: string): Pr
 
 function cloneRun<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function makeRun(runId: string): RunRecord {
+  const now = new Date().toISOString();
+  return {
+    version: 3,
+    workflowVersion: 3,
+    id: runId,
+    title: "Multi-Agent Collaboration",
+    topic: "Multi-agent collaboration",
+    constraints: [],
+    objectiveMetric: "metric",
+    status: "running",
+    currentNode: "collect_papers",
+    latestSummary: undefined,
+    nodeThreads: {},
+    createdAt: now,
+    updatedAt: now,
+    graph: createDefaultGraphState(),
+    memoryRefs: {
+      runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+      longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+      episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
+    }
+  };
 }
 
 describe("collectPapers bibtex", () => {
@@ -2496,5 +2523,225 @@ describe("collectPapers bibtex", () => {
     });
 
     await waitForCollectEnrichmentJob(runId);
+  });
+
+  it("recovers a persisted deferred enrichment job after restart", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-recover-"));
+    process.chdir(root);
+
+    const runId = "run-collect-recover";
+    const pendingSummary =
+      'Semantic Scholar stored 2 papers for "Multi-Agent Collaboration". Deferred enrichment scheduled in background for 2 paper(s).';
+    const run = makeRun(runId);
+    run.status = "paused";
+    run.currentNode = "analyze_papers";
+    run.graph.currentNode = "analyze_papers";
+    run.graph.nodeStates.collect_papers = {
+      ...run.graph.nodeStates.collect_papers,
+      status: "completed",
+      updatedAt: new Date().toISOString(),
+      note: pendingSummary
+    };
+    run.graph.nodeStates.analyze_papers = {
+      ...run.graph.nodeStates.analyze_papers,
+      status: "pending",
+      updatedAt: new Date().toISOString()
+    };
+    run.latestSummary = pendingSummary;
+
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(
+      path.join(runDir, "memory", "run_context.json"),
+      JSON.stringify({ version: 1, items: [] }),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "corpus.jsonl"),
+      [
+        JSON.stringify({
+          paper_id: "paper-1",
+          title: "Paper 1",
+          abstract: "Abstract 1",
+          authors: ["Alice Kim"],
+          arxiv_id: "2501.00001"
+        }),
+        JSON.stringify({
+          paper_id: "paper-2",
+          title: "Paper 2",
+          abstract: "Abstract 2",
+          authors: ["Bob Lee"],
+          arxiv_id: "2501.00002"
+        })
+      ].join("\n") + "\n",
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "collect_enrichment.jsonl"),
+      `${JSON.stringify({
+        paper_id: "paper-1",
+        attempts: [{ stage: "recover", ok: true }],
+        errors: []
+      })}\n`,
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "collect_result.json"),
+      JSON.stringify(
+        {
+          query: "Multi-Agent Collaboration",
+          limit: 2,
+          fetched: 2,
+          stored: 2,
+          added: 2,
+          baseCount: 0,
+          completed: true,
+          mode: "replace",
+          source: "semantic_scholar",
+          attemptCount: 1,
+          attempts: [{ attempt: 1, ok: true, status: 200, endpoint: "search" }],
+          sort: { field: "relevance", order: "desc" },
+          filters: {},
+          bibtexMode: "hybrid",
+          pdfRecovered: 0,
+          bibtexEnriched: 0,
+          fallbackAttempts: 1,
+          fallbackSources: [],
+          queryAttempts: [
+            {
+              query: "Multi-Agent Collaboration",
+              reason: "requested",
+              filtersRelaxed: false,
+              fetched: 2,
+              attemptCount: 1
+            }
+          ],
+          enrichment: {
+            blocking: false,
+            status: "pending",
+            targetCount: 2,
+            processedCount: 1,
+            attemptedCount: 1,
+            updatedCount: 0
+          },
+          timestamp: new Date().toISOString()
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "collect_background_job.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          kind: "collect_deferred_enrichment",
+          status: "running",
+          runId,
+          request: {
+            query: "Multi-Agent Collaboration",
+            limit: 2,
+            sort: { field: "relevance", order: "desc" }
+          },
+          mode: "replace",
+          baseCount: 0,
+          bibtexMode: "hybrid",
+          paperIds: ["paper-1", "paper-2"],
+          fetchedCount: 2,
+          diagnostics: {
+            attemptCount: 1,
+            attempts: [{ attempt: 1, ok: true, status: 200, endpoint: "search" }]
+          },
+          newPaperIds: ["paper-1", "paper-2"],
+          pendingSummary,
+          queryAttempts: [
+            {
+              query: "Multi-Agent Collaboration",
+              reason: "requested",
+              filtersRelaxed: false,
+              fetched: 2,
+              attemptCount: 1
+            }
+          ],
+          scheduledAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          recoveryCount: 0
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    let storedRun = cloneRun(run);
+    const runStore = {
+      listRuns: vi.fn(async () => [cloneRun(storedRun)]),
+      getRun: vi.fn(async () => cloneRun(storedRun)),
+      updateRun: vi.fn(async (updated: RunRecord) => {
+        storedRun = cloneRun(updated);
+      })
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL) => {
+        const url = String(input);
+        if (url === "https://arxiv.org/pdf/2501.00002.pdf") {
+          return new Response("", {
+            status: 200,
+            headers: {
+              "content-type": "application/pdf"
+            }
+          });
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      })
+    );
+
+    const eventStream = new PersistedEventStream(path.join(root, ".autolabos", "runs"));
+    await recoverCollectEnrichmentJobs({
+      runStore: runStore as any,
+      eventStream
+    });
+    await waitForCollectEnrichmentJob(runId);
+
+    const recoveredResult = JSON.parse(await readFile(path.join(runDir, "collect_result.json"), "utf8")) as {
+      pdfRecovered?: number;
+      bibtexEnriched?: number;
+      enrichment?: {
+        status?: string;
+        processedCount?: number;
+      };
+    };
+    expect(recoveredResult.enrichment?.status).toBe("completed");
+    expect(recoveredResult.enrichment?.processedCount).toBe(2);
+    expect(recoveredResult.pdfRecovered).toBe(1);
+    expect(recoveredResult.bibtexEnriched).toBe(1);
+
+    const recoveredJob = JSON.parse(await readFile(path.join(runDir, "collect_background_job.json"), "utf8")) as {
+      status?: string;
+      recoveryCount?: number;
+    };
+    expect(recoveredJob.status).toBe("completed");
+    expect(recoveredJob.recoveryCount).toBe(1);
+
+    const enrichmentRaw = await readFile(path.join(runDir, "collect_enrichment.jsonl"), "utf8");
+    expect(enrichmentRaw).toContain('"paper_id":"paper-1"');
+    expect(enrichmentRaw).toContain('"paper_id":"paper-2"');
+
+    expect(storedRun.latestSummary).toBe(
+      'Semantic Scholar stored 2 papers for "Multi-Agent Collaboration". Deferred enrichment finished for 2 paper(s). PDF recovered 1; BibTeX enriched 1.'
+    );
+    expect(
+      readPersistedRunEvents({
+        runsDir: path.join(root, ".autolabos", "runs"),
+        runId,
+        limit: 20
+      }).some((event) =>
+        String(event.payload?.text ?? "").includes(
+          "Recovered deferred enrichment background task after restart; resuming 1/2 remaining paper(s)."
+        )
+      )
+    ).toBe(true);
   });
 });

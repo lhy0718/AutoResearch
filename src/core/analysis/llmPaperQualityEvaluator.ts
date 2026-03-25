@@ -14,7 +14,7 @@
  * about hard blocks, but the LLM cannot override them.
  */
 
-import type { LLMClient } from "../llm/client.js";
+import type { LLMClient, LLMCompletionUsage } from "../llm/client.js";
 import type { ReviewArtifactPresence } from "../reviewSystem.js";
 import type { AnalysisReport } from "../resultAnalysis.js";
 import type { MinimumGateResult } from "./paperMinimumGate.js";
@@ -194,7 +194,7 @@ export async function runLLMPaperQualityEvaluation(
   input: LLMEvaluatorInput,
   llm: LLMClient,
   opts?: { abortSignal?: AbortSignal; timeoutMs?: number }
-): Promise<{ evaluation: PaperQualityEvaluation; llmUsed: boolean; costUsd?: number }> {
+): Promise<{ evaluation: PaperQualityEvaluation; llmUsed: boolean; costUsd?: number; usage?: LLMCompletionUsage }> {
   const timeoutMs = opts?.timeoutMs ?? 30_000;
 
   try {
@@ -246,7 +246,8 @@ export async function runLLMPaperQualityEvaluation(
         minimum_gate_ceiling: input.minimumGate.ceiling_type
       },
       llmUsed: true,
-      costUsd: completion.usage?.costUsd
+      costUsd: completion.usage?.costUsd,
+      usage: completion.usage
     };
   } catch {
     return { evaluation: buildFallbackEvaluation(input), llmUsed: false };

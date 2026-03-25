@@ -1,6 +1,6 @@
 import { EventStream } from "./events.js";
 import { parseStructuredModelJsonObject } from "./analysis/modelJson.js";
-import { LLMClient } from "./llm/client.js";
+import { LLMClient, LLMCompletionUsage } from "./llm/client.js";
 import { AnalysisFailureCategory, AnalysisPaperClaim, AnalysisReport } from "./resultAnalysis.js";
 import { RunRecord, GraphNodeId } from "../types.js";
 
@@ -136,6 +136,8 @@ export interface ReviewPanelResult {
   decision: ReviewDecision;
   llm_calls_used: number;
   llm_cost_usd?: number;
+  llm_input_tokens?: number;
+  llm_output_tokens?: number;
 }
 
 interface ReviewPanelArgs {
@@ -212,6 +214,8 @@ export async function runReviewPanel(args: ReviewPanelArgs): Promise<ReviewPanel
   const reviewers: SpecialistReviewResult[] = [];
   let llmCallsUsed = 0;
   let llmCostUsd = 0;
+  let llmInputTokens = 0;
+  let llmOutputTokens = 0;
 
   for (const spec of REVIEWER_SPECS) {
     args.eventStream?.emit({
@@ -229,6 +233,8 @@ export async function runReviewPanel(args: ReviewPanelArgs): Promise<ReviewPanel
     if (refined.usedLlm) {
       llmCallsUsed += 1;
       llmCostUsd += refined.costUsd ?? 0;
+      llmInputTokens += refined.usage?.inputTokens ?? 0;
+      llmOutputTokens += refined.usage?.outputTokens ?? 0;
     }
     reviewers.push(refined.result);
   }
@@ -251,7 +257,9 @@ export async function runReviewPanel(args: ReviewPanelArgs): Promise<ReviewPanel
     revision_plan: revisionPlan,
     decision,
     llm_calls_used: llmCallsUsed,
-    llm_cost_usd: llmCallsUsed > 0 ? roundTwo(llmCostUsd) : undefined
+    llm_cost_usd: llmCallsUsed > 0 ? roundTwo(llmCostUsd) : undefined,
+    llm_input_tokens: llmCallsUsed > 0 ? Math.max(0, Math.round(llmInputTokens)) : undefined,
+    llm_output_tokens: llmCallsUsed > 0 ? Math.max(0, Math.round(llmOutputTokens)) : undefined
   };
 }
 
@@ -259,7 +267,7 @@ async function refineReviewerWithLlm(
   args: ReviewPanelArgs,
   spec: ReviewerSpec,
   fallback: SpecialistReviewResult
-): Promise<{ result: SpecialistReviewResult; usedLlm: boolean; costUsd?: number }> {
+): Promise<{ result: SpecialistReviewResult; usedLlm: boolean; costUsd?: number; usage?: LLMCompletionUsage }> {
   const timeoutMs = resolveReviewRefinementTimeoutMs();
   try {
     const completion = await runWithAbortableTimeout(
@@ -287,7 +295,8 @@ async function refineReviewerWithLlm(
     return {
       result: mergeReviewerResults(fallback, parsed.result),
       usedLlm: true,
-      costUsd: completion.usage?.costUsd
+      costUsd: completion.usage?.costUsd,
+      usage: completion.usage
     };
   } catch (error) {
     const reason = describeReviewRefinementFallbackReason(error);

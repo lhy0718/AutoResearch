@@ -66,6 +66,26 @@ async function setup(registry: GraphNodeRegistry) {
   return { paths, store, checkpointStore, runtime };
 }
 
+async function setupWithOptions(
+  registry: GraphNodeRegistry,
+  options?: {
+    approvalMode?: "manual" | "minimal";
+    budgetGuardUsd?: number;
+  }
+) {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), "autolabos-runtime-"));
+  tempDirs.push(cwd);
+  process.chdir(cwd);
+
+  const paths = resolveAppPaths(cwd);
+  await ensureScaffold(paths);
+
+  const store = new RunStore(paths);
+  const checkpointStore = new CheckpointStore(paths);
+  const runtime = new StateGraphRuntime(store, registry, checkpointStore, new InMemoryEventStream(), options);
+  return { paths, store, checkpointStore, runtime };
+}
+
 describe("StateGraphRuntime", () => {
   it("keeps runs.json aligned with before/after checkpoints across a node transition", async () => {
     const registry = new Registry({
@@ -109,6 +129,52 @@ describe("StateGraphRuntime", () => {
     expect(persisted?.currentNode).toBe("analyze_papers");
     expect(persisted?.graph.currentNode).toBe("analyze_papers");
     expect(persisted?.graph.checkpointSeq).toBe(2);
+  });
+
+  it("accumulates successful node usage into the run record and persists it", async () => {
+    const registry = new Registry({
+      collect_papers: {
+        id: "collect_papers",
+        execute: async () => ({
+          status: "success",
+          summary: "collect complete",
+          needsApproval: false,
+          toolCallsUsed: 3,
+          costUsd: 1.25,
+          usage: {
+            inputTokens: 120,
+            outputTokens: 45
+          }
+        })
+      }
+    });
+    const { store, runtime } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Usage success",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    const updated = await runtime.step(run.id);
+
+    expect(updated.usage?.totals.toolCalls).toBe(3);
+    expect(updated.usage?.totals.costUsd).toBe(1.25);
+    expect(updated.usage?.totals.inputTokens).toBe(120);
+    expect(updated.usage?.totals.outputTokens).toBe(45);
+    expect(updated.usage?.totals.wallTimeMs ?? -1).toBeGreaterThanOrEqual(0);
+    expect(updated.usage?.byNode.collect_papers).toMatchObject({
+      toolCalls: 3,
+      costUsd: 1.25,
+      inputTokens: 120,
+      outputTokens: 45,
+      executions: 1
+    });
+
+    const persisted = await store.getRun(run.id);
+    expect(persisted?.usage?.totals.toolCalls).toBe(3);
+    expect(persisted?.usage?.byNode.collect_papers?.executions).toBe(1);
   });
 
 
@@ -208,6 +274,217 @@ describe("StateGraphRuntime", () => {
     expect(latestCheckpoint?.runSnapshot.latestSummary).toBe(rollbackNote);
   });
 
+  it("records usage for failed nodes before rolling back", async () => {
+    const registry = new Registry({
+      implement_experiments: {
+        id: "implement_experiments",
+        execute: async () => ({
+          status: "failure",
+          error: "verification failed",
+          toolCallsUsed: 2,
+          costUsd: 0.4,
+          usage: {
+            inputTokens: 18,
+            outputTokens: 9
+          }
+        })
+      }
+    });
+    const { store, runtime } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Usage failure",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 1;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 1;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    await store.updateRun(run);
+
+    const updated = await runtime.step(run.id);
+
+    expect(updated.currentNode).toBe("design_experiments");
+    expect(updated.usage?.totals.toolCalls).toBe(2);
+    expect(updated.usage?.totals.costUsd).toBe(0.4);
+    expect(updated.usage?.byNode.implement_experiments).toMatchObject({
+      toolCalls: 2,
+      costUsd: 0.4,
+      inputTokens: 18,
+      outputTokens: 9,
+      executions: 1
+    });
+  });
+
+  it("pauses before starting another node when cumulative spend already exceeds the configured budget", async () => {
+    let executions = 0;
+    const registry = new Registry({
+      collect_papers: {
+        id: "collect_papers",
+        execute: async () => {
+          executions += 1;
+          return {
+            status: "success",
+            summary: "collect complete",
+            needsApproval: false,
+            toolCallsUsed: 1
+          };
+        }
+      }
+    });
+    const { store, runtime } = await setupWithOptions(registry, {
+      budgetGuardUsd: 1
+    });
+
+    const run = await store.createRun({
+      title: "Budget pause before step",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.usage = {
+      totals: {
+        costUsd: 1.25,
+        toolCalls: 1,
+        inputTokens: 10,
+        outputTokens: 5,
+        wallTimeMs: 100
+      },
+      byNode: {}
+    };
+    await store.updateRun(run);
+
+    const updated = await runtime.step(run.id);
+
+    expect(executions).toBe(0);
+    expect(updated.status).toBe("paused");
+    expect(updated.currentNode).toBe("collect_papers");
+    expect(updated.graph.nodeStates.collect_papers.note).toContain("Budget guard paused further execution");
+  });
+
+  it("pauses after a successful node when the node pushes cumulative spend above the budget", async () => {
+    const registry = new Registry({
+      collect_papers: {
+        id: "collect_papers",
+        execute: async () => ({
+          status: "success",
+          summary: "collect complete",
+          needsApproval: false,
+          toolCallsUsed: 2,
+          costUsd: 1.25
+        })
+      }
+    });
+    const { store, runtime } = await setupWithOptions(registry, {
+      budgetGuardUsd: 1
+    });
+
+    const run = await store.createRun({
+      title: "Budget pause after success",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    const updated = await runtime.step(run.id);
+
+    expect(updated.status).toBe("paused");
+    expect(updated.currentNode).toBe("analyze_papers");
+    expect(updated.graph.nodeStates.collect_papers.status).toBe("completed");
+    expect(updated.graph.nodeStates.analyze_papers.status).toBe("pending");
+    expect(updated.graph.nodeStates.analyze_papers.note).toContain("Budget guard paused further execution at analyze_papers");
+    expect(updated.usage?.totals.costUsd).toBe(1.25);
+  });
+
+  it("blocks minimal approval auto-advance when cumulative spend exceeds the budget", async () => {
+    const registry = new Registry({
+      generate_hypotheses: {
+        id: "generate_hypotheses",
+        execute: async () => ({
+          status: "success",
+          summary: "hypotheses ready",
+          needsApproval: true,
+          toolCallsUsed: 1,
+          costUsd: 0.6
+        })
+      }
+    });
+    const { store, runtime } = await setupWithOptions(registry, {
+      approvalMode: "minimal",
+      budgetGuardUsd: 0.5
+    });
+
+    const run = await store.createRun({
+      title: "Budget blocks auto approval",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.currentNode = "generate_hypotheses";
+    run.graph.currentNode = "generate_hypotheses";
+    run.status = "running";
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    await store.updateRun(run);
+
+    const updated = await runtime.runUntilPause(run.id);
+
+    expect(updated.status).toBe("paused");
+    expect(updated.currentNode).toBe("generate_hypotheses");
+    expect(updated.graph.nodeStates.generate_hypotheses.status).toBe("needs_approval");
+    expect(updated.graph.nodeStates.generate_hypotheses.note).toContain("Budget guard paused further execution");
+  });
+
+  it("pauses instead of auto-retrying when a failed node pushes cumulative spend above the budget", async () => {
+    const registry = new Registry({
+      implement_experiments: {
+        id: "implement_experiments",
+        execute: async () => ({
+          status: "failure",
+          error: "verification failed",
+          toolCallsUsed: 2,
+          costUsd: 0.4
+        })
+      }
+    });
+    const { store, runtime } = await setupWithOptions(registry, {
+      budgetGuardUsd: 0.2
+    });
+
+    const run = await store.createRun({
+      title: "Budget blocks auto retry",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 2;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 1;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    await store.updateRun(run);
+
+    const updated = await runtime.step(run.id);
+
+    expect(updated.status).toBe("paused");
+    expect(updated.currentNode).toBe("implement_experiments");
+    expect(updated.graph.nodeStates.implement_experiments.status).toBe("pending");
+    expect(updated.graph.nodeStates.implement_experiments.note).toContain("Budget guard paused further execution");
+    expect(updated.usage?.totals.costUsd).toBe(0.4);
+  });
+
   it("uses the highest on-disk checkpoint seq before saving implement_experiments failure checkpoints", async () => {
     const { store, checkpointStore, runtime } = await setup(new Registry({}));
 
@@ -294,6 +571,50 @@ describe("StateGraphRuntime", () => {
     );
     expect(updated.latestSummary).toContain(
       "Auto rollback from generate_hypotheses after 3/3 failed attempts"
+    );
+  });
+
+  it("rolls back implement_experiments immediately when staged LLM execution never produces a runnable artifact", async () => {
+    const registry = new Registry({
+      implement_experiments: {
+        id: "implement_experiments",
+        execute: async () => ({
+          status: "failure",
+          error:
+            "Implementation execution failed before any runnable implementation was produced: implement_experiments staged_llm request timed out after 600000ms",
+          toolCallsUsed: 1
+        })
+      }
+    });
+    const { store, runtime } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Implement timeout rollback",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 3;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 2;
+    run.graph.nodeStates.collect_papers.status = "completed";
+    run.graph.nodeStates.analyze_papers.status = "completed";
+    run.graph.nodeStates.generate_hypotheses.status = "completed";
+    run.graph.nodeStates.design_experiments.status = "completed";
+    await store.updateRun(run);
+
+    const updated = await runtime.step(run.id);
+
+    expect(updated.currentNode).toBe("design_experiments");
+    expect(updated.status).toBe("running");
+    expect(updated.graph.retryCounters.implement_experiments).toBe(0);
+    expect(updated.graph.rollbackCounters.implement_experiments).toBe(1);
+    expect(updated.graph.nodeStates.design_experiments.status).toBe("running");
+    expect(updated.graph.nodeStates.design_experiments.note).toContain(
+      "Auto rollback from implement_experiments after 3/3 failed attempts"
     );
   });
 

@@ -70,6 +70,12 @@ Top-level progression to paper-writing behavior should preserve the distinction 
 
 A paper-scale outcome requires evidence beyond successful orchestration, including baseline/comparator presence, real experiment execution, quantitative comparison, and claim-to-evidence linkage.
 
+Page-budget semantics should also remain explicit:
+
+- `paper_profile.target_main_pages` drives main-body writing budgets
+- `paper_profile.minimum_main_pages` gates the compiled-PDF floor check
+- legacy `paper_profile.main_page_limit` is only a compatibility alias during migration and should not be treated as a hard maximum
+
 ## 6) Research brief contract
 
 A governed run should begin from a research brief that defines the execution contract.

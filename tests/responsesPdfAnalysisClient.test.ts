@@ -16,6 +16,10 @@ describe("ResponsesPdfAnalysisClient", () => {
         JSON.stringify({
           id: "resp_test",
           model: "gpt-5.4",
+          usage: {
+            input_tokens: 1_000,
+            output_tokens: 200
+          },
           output: [
             {
               type: "message",
@@ -46,6 +50,11 @@ describe("ResponsesPdfAnalysisClient", () => {
     });
 
     expect(result.text).toContain("\"summary\":\"ok\"");
+    expect(result.usage).toEqual({
+      inputTokens: 1_000,
+      outputTokens: 200,
+      costUsd: 0.0055
+    });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [, init] = fetchMock.mock.calls[0];
     const body = JSON.parse(String(init?.body));
