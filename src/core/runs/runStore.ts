@@ -1,6 +1,7 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
+import type { Stats } from "node:fs";
 
 import { AppPaths } from "../../config.js";
 import {
@@ -12,7 +13,7 @@ import {
   SlashContextRun,
   TransitionRecommendation
 } from "../../types.js";
-import { ensureDir, readJsonFile, writeJsonFile } from "../../utils/fs.js";
+import { ensureDir, fileExists, normalizeFsPath, readJsonFile, writeJsonFile } from "../../utils/fs.js";
 import { nowIso } from "../../utils/time.js";
 import {
   isRunsFileV1,
@@ -23,6 +24,7 @@ import {
 import { createDefaultGraphState } from "../stateGraph/defaults.js";
 import { RunContextItem } from "../memory/runContextMemory.js";
 import { normalizeRunUsageSummary } from "./runUsage.js";
+import { RunIndexDatabase, toRunArtifactType } from "./runIndexDatabase.js";
 
 export interface CreateRunInput {
   title: string;
@@ -31,99 +33,115 @@ export interface CreateRunInput {
   objectiveMetric: string;
 }
 
+const RUN_RECORD_FILE = "run_record.json";
+
 export class RunStore {
+  private runIndexReady?: Promise<RunIndexDatabase>;
+
   constructor(private readonly paths: AppPaths) {}
 
   async listRuns(): Promise<RunRecord[]> {
-    const runsFile = await this.readRunsFile();
-    const reconciledRuns = await Promise.all(runsFile.runs.map((run) => this.reconcileRunRecord(run)));
-    if (JSON.stringify(runsFile.runs) !== JSON.stringify(reconciledRuns)) {
-      await this.writeRunsFile({
-        version: 3,
-        runs: reconciledRuns
-      });
-    }
-    return [...reconciledRuns].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+    return this.withRunIndex(async (index) => {
+      const indexedRuns = index.listRuns();
+      const reconciledRuns = await Promise.all(indexedRuns.map((run) => this.reconcileRunRecord(run)));
+      const projectedRuns = reconciledRuns.map((run) => projectRunRecord(run));
+      if (JSON.stringify(indexedRuns) !== JSON.stringify(projectedRuns)) {
+        await this.persistProjectedRuns(index, indexedRuns, reconciledRuns);
+      }
+      return [...projectedRuns].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+    });
   }
 
   async getRun(id: string): Promise<RunRecord | undefined> {
-    const runsFile = await this.readRunsFile();
-    const idx = runsFile.runs.findIndex((run) => run.id === id);
-    if (idx < 0) {
-      return undefined;
-    }
+    return this.withRunIndex(async (index) => {
+      const storedSummary = index.getRun(id);
+      if (!storedSummary) {
+        return undefined;
+      }
 
-    const stored = runsFile.runs[idx];
-    const reconciled = await this.reconcileRunRecord(stored);
-    if (JSON.stringify(stored) !== JSON.stringify(reconciled)) {
-      runsFile.runs[idx] = reconciled;
-      await this.writeRunsFile(runsFile);
-    }
+      const stored = await this.readStoredRunRecord(storedSummary);
+      const reconciled = await this.reconcileRunRecord(stored.run);
+      const projected = projectRunRecord(reconciled);
+      if (
+        !stored.hasSnapshot ||
+        JSON.stringify(stored.run) !== JSON.stringify(reconciled) ||
+        JSON.stringify(storedSummary) !== JSON.stringify(projected)
+      ) {
+        await this.persistRunRecord(index, reconciled);
+      }
 
-    return reconciled;
+      return reconciled;
+    });
   }
 
   async searchRuns(query: string): Promise<RunRecord[]> {
     const norm = query.trim().toLowerCase();
-    const runs = await this.listRuns();
     if (!norm) {
-      return runs;
+      return this.listRuns();
     }
 
-    return runs.filter((run) => {
-      return run.id.toLowerCase().includes(norm) || run.title.toLowerCase().includes(norm);
+    return this.withRunIndex(async (index) => {
+      const matchingRuns = index.searchRuns(norm);
+      const reconciledRuns = await Promise.all(matchingRuns.map((run) => this.reconcileRunRecord(run)));
+      const projectedRuns = reconciledRuns.map((run) => projectRunRecord(run));
+      if (JSON.stringify(matchingRuns) !== JSON.stringify(projectedRuns)) {
+        await this.persistProjectedRuns(index, matchingRuns, reconciledRuns);
+      }
+      return projectedRuns;
     });
   }
 
   async createRun(input: CreateRunInput): Promise<RunRecord> {
-    const runsFile = await this.readRunsFile();
-    const ts = nowIso();
-    const id = randomUUID();
-    const graph = createDefaultGraphState();
+    return this.withRunIndex(async (index) => {
+      const ts = nowIso();
+      const id = randomUUID();
+      const graph = createDefaultGraphState();
 
-    const run: RunRecord = {
-      version: 3,
-      workflowVersion: 3,
-      id,
-      title: input.title,
-      topic: input.topic,
-      constraints: input.constraints,
-      objectiveMetric: input.objectiveMetric,
-      status: "pending",
-      currentNode: graph.currentNode,
-      latestSummary: undefined,
-      nodeThreads: {},
-      createdAt: ts,
-      updatedAt: ts,
-      graph,
-      memoryRefs: {
-        runContextPath: `.autolabos/runs/${id}/memory/run_context.json`,
-        longTermPath: `.autolabos/runs/${id}/memory/long_term.jsonl`,
-        episodePath: `.autolabos/runs/${id}/memory/episodes.jsonl`
-      }
-    };
+      const run: RunRecord = {
+        version: 3,
+        workflowVersion: 3,
+        id,
+        title: input.title,
+        topic: input.topic,
+        constraints: input.constraints,
+        objectiveMetric: input.objectiveMetric,
+        status: "pending",
+        currentNode: graph.currentNode,
+        latestSummary: undefined,
+        nodeThreads: {},
+        createdAt: ts,
+        updatedAt: ts,
+        graph,
+        memoryRefs: {
+          runContextPath: `.autolabos/runs/${id}/memory/run_context.json`,
+          longTermPath: `.autolabos/runs/${id}/memory/long_term.jsonl`,
+          episodePath: `.autolabos/runs/${id}/memory/episodes.jsonl`
+        }
+      };
 
-    runsFile.runs.push(run);
-    await this.writeRunsFile(runsFile);
-    await this.ensureRunDirectory(run.id);
-    return run;
+      await this.ensureRunDirectory(run.id);
+      index.upsertRun(projectRunRecord(run));
+      await Promise.all([this.writeRunRecord(run), this.writeRunsMirror(index)]);
+      return run;
+    });
   }
 
   async updateRun(run: RunRecord): Promise<void> {
-    const runsFile = await this.readRunsFile();
-    const idx = runsFile.runs.findIndex((x) => x.id === run.id);
-    if (idx < 0) {
-      throw new Error(`Run not found: ${run.id}`);
-    }
+    await this.withRunIndex(async (index) => {
+      const storedSummary = index.getRun(run.id);
+      if (!storedSummary) {
+        throw new Error(`Run not found: ${run.id}`);
+      }
 
-    const [stored, incoming] = await Promise.all([
-      this.reconcileRunRecord(runsFile.runs[idx]),
-      this.reconcileRunRecord(run)
-    ]);
-    const next = preferFresherRunRecord(stored, incoming);
-    next.updatedAt = maxIso([next.updatedAt, nowIso()]) ?? nowIso();
-    runsFile.runs[idx] = next;
-    await this.writeRunsFile(runsFile);
+      const storedRecord = await this.readStoredRunRecord(storedSummary);
+      const [stored, incoming] = await Promise.all([
+        this.reconcileRunRecord(storedRecord.run),
+        this.reconcileRunRecord(restoreProjectedRunFields(storedRecord.run, run))
+      ]);
+      const next = preferFresherRunRecord(stored, incoming);
+      next.updatedAt = maxIso([next.updatedAt, nowIso()]) ?? nowIso();
+      await this.persistRunRecord(index, next);
+    });
   }
 
   async markNodeStatus(
@@ -168,6 +186,27 @@ export class RunStore {
     }));
   }
 
+  private async withRunIndex<T>(callback: (index: RunIndexDatabase) => Promise<T> | T): Promise<T> {
+    const index = await this.getRunIndex();
+    await this.refreshRunIndexFromRunsFileIfNeeded(index);
+    return callback(index);
+  }
+
+  private async getRunIndex(): Promise<RunIndexDatabase> {
+    this.runIndexReady ??= this.initializeRunIndex();
+    return this.runIndexReady;
+  }
+
+  private async initializeRunIndex(): Promise<RunIndexDatabase> {
+    await ensureDir(this.paths.runsDir);
+    const index = new RunIndexDatabase(this.paths.runsDbFile);
+    await this.refreshRunIndexFromRunsFileIfNeeded(index);
+    if (!(await fileExists(this.paths.runsFile)) && index.countRuns() > 0) {
+      await this.writeRunsMirror(index);
+    }
+    return index;
+  }
+
   private async readRunsFile(): Promise<RunsFile> {
     const raw = await readJsonFile<unknown>(this.paths.runsFile);
 
@@ -197,9 +236,73 @@ export class RunStore {
     await writeJsonFile(this.paths.runsFile, runsFile);
   }
 
+  private async refreshRunIndexFromRunsFileIfNeeded(index: RunIndexDatabase): Promise<void> {
+    let runsFileStat: Stats | undefined;
+    try {
+      runsFileStat = await fs.stat(normalizeFsPath(this.paths.runsFile));
+    } catch {
+      if (index.countRuns() > 0) {
+        await this.writeRunsMirror(index);
+      }
+      return;
+    }
+
+    const mirroredMtimeMs = index.getRunsMirrorMtimeMs();
+    if (index.countRuns() > 0 && mirroredMtimeMs && runsFileStat.mtimeMs <= mirroredMtimeMs + 0.5) {
+      return;
+    }
+
+    const runsFile = await this.readRunsFile();
+    const seededRuns = await Promise.all(runsFile.runs.map((run) => this.readBootstrapRunRecord(run)));
+    const projectedRuns = seededRuns.map((run) => projectRunRecord(run));
+    index.replaceAllRuns(projectedRuns);
+    if (JSON.stringify(runsFile.runs) !== JSON.stringify(projectedRuns)) {
+      await this.writeRunsMirror(index, projectedRuns);
+      return;
+    }
+    await this.recordRunsMirrorMtime(index);
+  }
+
+  private async persistProjectedRuns(index: RunIndexDatabase, storedRuns: RunRecord[], fullRuns: RunRecord[]): Promise<void> {
+    const projectedRuns = fullRuns.map((run) => projectRunRecord(run));
+    const changedIndices = projectedRuns
+      .map((projected, idx) => (JSON.stringify(storedRuns[idx]) === JSON.stringify(projected) ? -1 : idx))
+      .filter((idx) => idx >= 0);
+    if (changedIndices.length === 0) {
+      return;
+    }
+
+    const changedProjectedRuns = changedIndices.map((idx) => projectedRuns[idx]);
+    const changedSnapshotWrites = changedIndices.map(async (idx) => {
+      const persistableRun = await this.readPersistableRun(fullRuns[idx]);
+      await this.writeRunRecord(persistableRun);
+    });
+    index.upsertRuns(changedProjectedRuns);
+    await Promise.all([this.writeRunsMirror(index), ...changedSnapshotWrites]);
+  }
+
+  private async persistRunRecord(index: RunIndexDatabase, run: RunRecord): Promise<void> {
+    const persistableRun = await this.readPersistableRun(run);
+    index.upsertRun(projectRunRecord(persistableRun));
+    await Promise.all([this.writeRunRecord(persistableRun), this.writeRunsMirror(index)]);
+  }
+
+  private async writeRunsMirror(index: RunIndexDatabase, runs = index.listRuns()): Promise<void> {
+    await this.writeRunsFile({
+      version: 3,
+      runs
+    });
+    await this.recordRunsMirrorMtime(index);
+  }
+
+  private async recordRunsMirrorMtime(index: RunIndexDatabase): Promise<void> {
+    const stat = await fs.stat(normalizeFsPath(this.paths.runsFile));
+    index.setRunsMirrorMtimeMs(stat.mtimeMs);
+  }
+
   private async backupBrokenMigrationSource(raw: unknown): Promise<void> {
     const backupPath = `${this.paths.runsFile}.migration-failed-${Date.now()}.bak`;
-    await fs.writeFile(backupPath, `${JSON.stringify(raw, null, 2)}\n`, "utf8");
+    await fs.writeFile(normalizeFsPath(backupPath), `${JSON.stringify(raw, null, 2)}\n`, "utf8");
   }
 
   private async ensureRunDirectory(runId: string): Promise<void> {
@@ -213,6 +316,53 @@ export class RunStore {
       ensureDir(path.join(runRoot, "figures")),
       ensureDir(path.join(runRoot, "paper"))
     ]);
+  }
+
+  private async readStoredRunRecord(
+    run: RunRecord
+  ): Promise<{ run: RunRecord; hasSnapshot: boolean }> {
+    const normalized = normalizeRunRecord(run);
+    const snapshot = await this.readRunRecord(run.id);
+    if (!snapshot) {
+      return {
+        run: normalized,
+        hasSnapshot: false
+      };
+    }
+
+    return {
+      run: compareRunFreshness(normalized, snapshot) > 0 ? normalized : snapshot,
+      hasSnapshot: true
+    };
+  }
+
+  private async readBootstrapRunRecord(run: RunRecord): Promise<RunRecord> {
+    const normalized = normalizeRunRecord(run);
+    const snapshot = await this.readRunRecord(run.id);
+    return snapshot && compareRunFreshness(normalized, snapshot) <= 0 ? snapshot : normalized;
+  }
+
+  private async readPersistableRun(run: RunRecord): Promise<RunRecord> {
+    const snapshot = await this.readRunRecord(run.id);
+    return snapshot ? restoreProjectedRunFields(snapshot, run) : run;
+  }
+
+  private async readRunRecord(runId: string): Promise<RunRecord | undefined> {
+    try {
+      const raw = await readJsonFile<RunRecord>(this.runRecordPath(runId));
+      return normalizeRunRecord(raw);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async writeRunRecord(run: RunRecord): Promise<void> {
+    await this.ensureRunDirectory(run.id);
+    await writeJsonFile(this.runRecordPath(run.id), normalizeRunRecord(run));
+  }
+
+  private runRecordPath(runId: string): string {
+    return path.join(this.paths.runsDir, runId, RUN_RECORD_FILE);
   }
 
   private async reconcileRunRecord(run: RunRecord): Promise<RunRecord> {
@@ -266,9 +416,9 @@ export class RunStore {
       this.readOptionalJson<CollectResultLike>(path.join(runRoot, "collect_result.json")),
       this.readOptionalJson<AnalysisManifestLike>(path.join(runRoot, "analysis_manifest.json")),
       this.readOptionalJson<TransitionRecommendation>(path.join(runRoot, "transition_recommendation.json")),
-      this.readJsonlArtifact(path.join(runRoot, "paper_summaries.jsonl")),
-      this.readJsonlArtifact(path.join(runRoot, "evidence_store.jsonl")),
-      this.readLatestCheckpointSnapshot(runRoot)
+      this.readJsonlArtifact(run.id, path.join(runRoot, "paper_summaries.jsonl")),
+      this.readJsonlArtifact(run.id, path.join(runRoot, "evidence_store.jsonl")),
+      this.readLatestCheckpointSnapshot(run.id, runRoot)
     ]);
 
     return {
@@ -297,7 +447,8 @@ export class RunStore {
 
   private async readOptionalJson<T>(filePath: string): Promise<DerivedJsonFile<T>> {
     try {
-      const [value, stat] = await Promise.all([readJsonFile<T>(filePath), fs.stat(filePath)]);
+      const normalizedPath = normalizeFsPath(filePath);
+      const [value, stat] = await Promise.all([readJsonFile<T>(normalizedPath), fs.stat(normalizedPath)]);
       return {
         value,
         updatedAt: extractUpdatedAtCandidate(value, stat.mtime.toISOString())
@@ -307,14 +458,42 @@ export class RunStore {
     }
   }
 
-  private async readJsonlArtifact(filePath: string): Promise<DerivedCountFile> {
+  private async readJsonlArtifact(runId: string, filePath: string): Promise<DerivedCountFile> {
     try {
-      const [raw, stat] = await Promise.all([fs.readFile(filePath, "utf8"), fs.stat(filePath)]);
+      const normalizedPath = normalizeFsPath(filePath);
+      const [index, stat] = await Promise.all([this.getRunIndex(), fs.stat(normalizedPath)]);
+      const indexed = index.getRunArtifactByPath(runId, normalizedPath);
+      const indexedMetadata = parseRunArtifactMetadata(indexed?.metadataJson);
+      if (
+        indexed?.updatedAt === stat.mtime.toISOString() &&
+        typeof indexedMetadata?.lineCount === "number" &&
+        Number.isFinite(indexedMetadata.lineCount)
+      ) {
+        return {
+          count: indexedMetadata.lineCount,
+          updatedAt: indexed.updatedAt
+        };
+      }
+
+      const raw = await fs.readFile(normalizedPath, "utf8");
+      const count = countNonEmptyLines(raw);
+      const relativePath = path
+        .relative(path.join(this.paths.runsDir, runId), normalizedPath)
+        .replace(/\\/g, "/");
+      index.upsertRunArtifact({
+        runId,
+        artifactType: toRunArtifactType(relativePath),
+        filePath: normalizedPath,
+        updatedAt: stat.mtime.toISOString(),
+        metadataJson: JSON.stringify({
+          relativePath,
+          kind: "jsonl",
+          byteSize: stat.size,
+          lineCount: count
+        })
+      });
       return {
-        count: raw
-          .split(/\r?\n/u)
-          .map((line) => line.trim())
-          .filter((line) => line.length > 0).length,
+        count,
         updatedAt: stat.mtime.toISOString()
       };
     } catch {
@@ -322,23 +501,66 @@ export class RunStore {
     }
   }
 
-  private async readLatestCheckpointSnapshot(runRoot: string): Promise<DerivedCheckpointRecord | undefined> {
+  private async readLatestCheckpointSnapshot(runId: string, runRoot: string): Promise<DerivedCheckpointRecord | undefined> {
     const checkpointsDir = path.join(runRoot, "checkpoints");
+    let latest: DerivedCheckpointRecord | undefined;
+    const index = await this.getRunIndex();
+    const indexedLatest = index.getLatestCheckpoint(runId);
+    if (indexedLatest) {
+      try {
+        const record = await readJsonFile<CheckpointRecordLike>(indexedLatest.filePath);
+        if (record.runSnapshot && typeof record.seq === "number" && Number.isFinite(record.seq)) {
+          latest = {
+            seq: record.seq,
+            createdAt: toOptionalString(record.createdAt),
+            runSnapshot: normalizeRunRecord(record.runSnapshot)
+          };
+        }
+      } catch {
+        // Fall through to latest.json and directory scanning.
+      }
+    }
+
     try {
-      const files = (await fs.readdir(checkpointsDir))
+      const latestPointer = await readJsonFile<{ file?: unknown }>(path.join(checkpointsDir, "latest.json"));
+      const latestFile = toOptionalString(latestPointer.file);
+      if (latestFile) {
+        const record = await readJsonFile<CheckpointRecordLike>(path.join(checkpointsDir, latestFile));
+        if (record.runSnapshot && typeof record.seq === "number" && Number.isFinite(record.seq)) {
+          const candidate: DerivedCheckpointRecord = {
+            seq: record.seq,
+            createdAt: toOptionalString(record.createdAt),
+            runSnapshot: normalizeRunRecord(record.runSnapshot)
+          };
+          if (!latest || compareCheckpointFreshness(candidate, latest) > 0) {
+            latest = candidate;
+          }
+          index.upsertCheckpoint({
+            runId,
+            checkpointSeq: candidate.seq,
+            nodeId: toOptionalGraphNodeId(record.node) ?? candidate.runSnapshot.currentNode,
+            phase: toOptionalCheckpointPhase(record.phase) ?? inferCheckpointPhaseFromFileName(latestFile),
+            createdAt: candidate.createdAt ?? candidate.runSnapshot.updatedAt,
+            filePath: path.join(checkpointsDir, latestFile),
+            snapshotUpdatedAt: candidate.runSnapshot.updatedAt
+          });
+        }
+      }
+    } catch {
+      // Fall back to scanning the checkpoint directory when latest.json is missing or stale.
+    }
+
+    try {
+      const files = (await fs.readdir(normalizeFsPath(checkpointsDir)))
         .filter((file) => file.endsWith(".json") && file !== "latest.json")
         .sort();
       if (files.length === 0) {
-        return undefined;
+        return latest;
       }
 
-      let latest: DerivedCheckpointRecord | undefined;
-      for (const file of files) {
-        const record = await readJsonFile<CheckpointRecordLike>(path.join(checkpointsDir, file));
-        if (!record.runSnapshot || typeof record.seq !== "number" || !Number.isFinite(record.seq)) {
-          continue;
-        }
-
+      const newestFile = files[files.length - 1];
+      const record = await readJsonFile<CheckpointRecordLike>(path.join(checkpointsDir, newestFile));
+      if (record.runSnapshot && typeof record.seq === "number" && Number.isFinite(record.seq)) {
         const candidate: DerivedCheckpointRecord = {
           seq: record.seq,
           createdAt: toOptionalString(record.createdAt),
@@ -347,11 +569,20 @@ export class RunStore {
         if (!latest || compareCheckpointFreshness(candidate, latest) > 0) {
           latest = candidate;
         }
+        index.upsertCheckpoint({
+          runId,
+          checkpointSeq: candidate.seq,
+          nodeId: toOptionalGraphNodeId(record.node) ?? candidate.runSnapshot.currentNode,
+          phase: toOptionalCheckpointPhase(record.phase) ?? inferCheckpointPhaseFromFileName(newestFile),
+          createdAt: candidate.createdAt ?? candidate.runSnapshot.updatedAt,
+          filePath: path.join(checkpointsDir, newestFile),
+          snapshotUpdatedAt: candidate.runSnapshot.updatedAt
+        });
       }
 
       return latest;
     } catch {
-      return undefined;
+      return latest;
     }
   }
 }
@@ -402,6 +633,34 @@ function normalizeRunRecord(run: RunRecord): RunRecord {
   };
 }
 
+function projectRunRecord(run: RunRecord): RunRecord {
+  const normalized = normalizeRunRecord(run);
+  return {
+    ...normalized,
+    graph: {
+      ...normalized.graph,
+      transitionHistory: []
+    }
+  };
+}
+
+function restoreProjectedRunFields(stored: RunRecord, candidate: RunRecord): RunRecord {
+  const normalized = normalizeRunRecord(candidate);
+  if (
+    normalized.graph.transitionHistory.length === 0 &&
+    (stored.graph.transitionHistory?.length ?? 0) > 0
+  ) {
+    return {
+      ...normalized,
+      graph: {
+        ...normalized.graph,
+        transitionHistory: [...stored.graph.transitionHistory]
+      }
+    };
+  }
+  return normalized;
+}
+
 function normalizePendingTransition(
   transition: RunRecord["graph"]["pendingTransition"]
 ): RunRecord["graph"]["pendingTransition"] {
@@ -431,6 +690,10 @@ interface DerivedCountFile {
   updatedAt?: string;
 }
 
+interface RunArtifactMetadataLike {
+  lineCount?: unknown;
+}
+
 interface DerivedRunDetails {
   contextEntries: Map<string, RunContextItem>;
   collectResultFile: DerivedJsonFile<CollectResultLike>;
@@ -454,6 +717,8 @@ interface DerivedCheckpointRecord {
 
 interface CheckpointRecordLike {
   seq?: unknown;
+  node?: unknown;
+  phase?: unknown;
   createdAt?: unknown;
   runSnapshot?: RunRecord;
 }
@@ -854,6 +1119,27 @@ function countSelectedFailedEntries(entries: AnalysisManifestEntryLike[]): numbe
   }).length;
 }
 
+function countNonEmptyLines(raw: string): number {
+  return raw
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0).length;
+}
+
+function parseRunArtifactMetadata(metadataJson: string | undefined): { lineCount?: number } | undefined {
+  if (!metadataJson) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(metadataJson) as RunArtifactMetadataLike;
+    return {
+      lineCount: toFiniteNumber(parsed.lineCount)
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 function countManifestBySourceType(entries: AnalysisManifestEntryLike[], sourceType: string): number | undefined {
   if (entries.length === 0) {
     return undefined;
@@ -906,6 +1192,23 @@ function toOptionalString(value: unknown): string | undefined {
 
 function toFiniteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function toOptionalGraphNodeId(value: unknown): GraphNodeId | undefined {
+  return typeof value === "string" && GRAPH_NODE_ORDER.includes(value as GraphNodeId)
+    ? (value as GraphNodeId)
+    : undefined;
+}
+
+function toOptionalCheckpointPhase(value: unknown): string | undefined {
+  return typeof value === "string" && ["before", "after", "fail", "jump", "retry"].includes(value)
+    ? value
+    : undefined;
+}
+
+function inferCheckpointPhaseFromFileName(fileName: string): string {
+  const inferred = fileName.split("-").pop()?.replace(/\.json$/u, "");
+  return toOptionalCheckpointPhase(inferred) ?? "after";
 }
 
 function maxNumber(values: Array<number | undefined>): number | undefined {

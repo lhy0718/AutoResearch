@@ -28,7 +28,7 @@ Until those conditions are met, treat the 9-node workflow as fixed.
 
 - TUI (`autolabos`) and local web ops UI (`autolabos web`) share the same interaction/runtime layer.
 - Node execution and transitions are controlled by `StateGraphRuntime`.
-- Runtime events are persisted per run in `.autolabos/runs/<run-id>/events.jsonl`; high-churn telemetry should go there rather than into `runs.json`.
+- Runtime events are persisted per run in `.autolabos/runs/<run-id>/events.jsonl`; high-churn telemetry should go there rather than into the run index surfaces.
 - Deferred `collect_papers` recovery state is persisted in `.autolabos/runs/<run-id>/collect_background_job.json` whenever background enrichment is active, so restart recovery stays inspectable.
 - Approval mode and transition recommendation behavior are part of runtime contracts.
 - `/approve` must respect stored non-advance pending transitions (for example `analyze_results -> backtrack_to_design`) instead of advancing by graph order. Explicit manual `/agent run <next-node>` handoffs may resume `pause_for_human` transitions without weakening default approval behavior.
@@ -37,8 +37,9 @@ Harness and runtime work must preserve both TUI and web behaviors unless a chang
 
 ## 3) Artifact model
 
-- Run-scoped source of truth: `.autolabos/runs/<run-id>/...`
-- Lightweight run index/projection: `.autolabos/runs/runs.json` (status, node pointer, aggregate `usage`)
+- Run-scoped source of truth: `.autolabos/runs/<run-id>/...`, including `run_record.json` for the full persisted run snapshot
+- Sqlite-backed operational hot path: `.autolabos/runs/runs.sqlite` for list/get/search/update index traffic plus sqlite-maintained usage, checkpoint, event, and artifact metadata indexes
+- Lightweight compatibility mirror/projection: `.autolabos/runs/runs.json` (status, node pointer, pending transition, aggregate `usage`, without long transition-history payloads)
 - Public mirrored outputs: `outputs/` (single latest-run public bundle)
 - Checkpoints and run context are persisted under each run directory.
 - Design/execution experiment contracts live in `experiment_portfolio.json` and `run_manifest.json`.
@@ -49,7 +50,7 @@ Quality checks should be deterministic and file-based whenever possible.
 
 Public-facing outputs must remain traceable to underlying run artifacts.
 
-Because events, checkpoints, background-job recovery, and execution artifacts already live in per-run files, `runs.json` should stay a summary index rather than a sink for append-only logs. If index write contention becomes material, split the summary index or move it to sqlite instead of pushing more high-volume data into `runs.json`.
+Because events, checkpoints, background-job recovery, and execution artifacts already live in per-run files, long-lived/full-fidelity run state should stay under the run directory and be projected into index surfaces only as needed for list/search flows. In the current rollout, `runs.sqlite` carries the operational run-index hot path plus sqlite-maintained usage/checkpoint/event/artifact indexes, while `runs.json` remains a compatibility mirror for inspection, doctor/harness checks, and legacy fixtures. Append-only artifacts should still live in per-run files rather than in sqlite or `runs.json`; sqlite should mirror their query-heavy metadata, not replace the files themselves.
 
 ## 4) Node-internal loops are bounded
 

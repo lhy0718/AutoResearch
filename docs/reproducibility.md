@@ -21,7 +21,9 @@ Reproducibility claims must be backed by concrete artifacts.
 For each run, preserve:
 
 - run id
-- workflow node progression (`runs.json`) including current node/status and aggregate usage when available
+- workflow node progression (`runs.json`) including current node/status, pending transition state, and aggregate usage when available
+- optional operational sqlite index (`.autolabos/runs/runs.sqlite`) when present; treat it as a hot-path mirror of run-index metadata plus usage/checkpoint/event/artifact lookup tables rather than as the sole reproducibility artifact
+- full persisted run snapshot (`.autolabos/runs/<run-id>/run_record.json`) when debugging run-state divergence or replaying control-flow decisions
 - append-only runtime events (`events.jsonl`)
 - key gate/recovery artifacts (`transition_recommendation.json`, `collect_background_job.json` when present)
 - key generated artifacts in `.autolabos/runs/<run_id>/...`, including trial-group matrix artifacts when present
@@ -36,7 +38,7 @@ For each run, preserve:
 Before marking work complete:
 
 1. Re-run the relevant flow or tests.
-2. Confirm expected artifacts are present, parseable, and consistent across `runs.json`, `events.jsonl`, and run-scoped artifacts.
+2. Confirm expected artifacts are present, parseable, and consistent across `runs.json`, `run_record.json` when present, optional `runs.sqlite` mirrors/indexes, `events.jsonl`, checkpoints, and other run-scoped artifacts.
 3. Record limitations and unresolved uncertainty.
 
 ## 5) Validation surfaces

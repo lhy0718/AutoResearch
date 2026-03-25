@@ -1,7 +1,9 @@
 import path from "node:path";
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 
 import { AgentRoleId, GraphNodeId } from "../types.js";
+import { normalizeFsPath } from "../utils/fs.js";
+import { buildRunsDbFile, IndexedRunEvent, RunIndexDatabase } from "./runs/runIndexDatabase.js";
 
 export type EventType =
   | "PLAN_CREATED"
@@ -71,11 +73,14 @@ export class InMemoryEventStream implements EventStream {
 export class PersistedEventStream implements EventStream {
   private readonly listeners = new Set<EventListener>();
   private readonly items: AutoLabOSEvent[] = [];
+  private readonly runIndex: RunIndexDatabase;
 
   constructor(
     private readonly runsDir: string,
     private readonly retainedHistoryLimit = 1000
-  ) {}
+  ) {
+    this.runIndex = new RunIndexDatabase(buildRunsDbFile(runsDir));
+  }
 
   emit(event: Omit<AutoLabOSEvent, "id" | "timestamp">): AutoLabOSEvent {
     const next = createEventRecord(event);
@@ -83,7 +88,16 @@ export class PersistedEventStream implements EventStream {
     if (this.items.length > this.retainedHistoryLimit) {
       this.items.splice(0, this.items.length - this.retainedHistoryLimit);
     }
-    persistEventToRunLog(this.runsDir, next);
+    const eventPath = persistEventToRunLog(this.runsDir, next);
+    this.runIndex.appendRunEvent({
+      runId: next.runId,
+      eventId: next.id,
+      eventType: next.type,
+      nodeId: next.node,
+      createdAt: next.timestamp,
+      filePath: eventPath,
+      eventJson: JSON.stringify(next)
+    });
     for (const listener of this.listeners) {
       listener(next);
     }
@@ -112,23 +126,30 @@ export function readPersistedRunEvents(input: {
     return [];
   }
 
+  const eventPath = normalizeFsPath(runEventLogPath(input.runsDir, input.runId));
+  if (!existsSync(eventPath)) {
+    return [];
+  }
+
+  const runIndex = new RunIndexDatabase(buildRunsDbFile(input.runsDir));
   try {
-    const raw = readFileSync(runEventLogPath(input.runsDir, input.runId), "utf8");
-    const parsed = raw
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => {
-        try {
-          return JSON.parse(line) as AutoLabOSEvent;
-        } catch {
-          return undefined;
-        }
-      })
-      .filter((event): event is AutoLabOSEvent => isAutoLabOSEvent(event));
+    const indexed = runIndex.listRunEvents(input.runId, limit);
+    if (indexed.length > 0) {
+      return parseIndexedRunEvents(indexed);
+    }
+
+    const parsed = parsePersistedEventLines(readFileSync(eventPath, "utf8"));
+    if (parsed.length > 0) {
+      runIndex.replaceRunEvents(
+        input.runId,
+        parsed.map((event, idx) => toIndexedRunEvent(event, idx + 1, eventPath))
+      );
+    }
     return parsed.slice(-limit);
   } catch {
     return [];
+  } finally {
+    runIndex.close();
   }
 }
 
@@ -140,10 +161,11 @@ function createEventRecord(event: Omit<AutoLabOSEvent, "id" | "timestamp">): Aut
   };
 }
 
-function persistEventToRunLog(runsDir: string, event: AutoLabOSEvent): void {
+function persistEventToRunLog(runsDir: string, event: AutoLabOSEvent): string {
   const eventPath = runEventLogPath(runsDir, event.runId);
   mkdirSync(path.dirname(eventPath), { recursive: true });
   appendFileSync(eventPath, `${JSON.stringify(event)}\n`, "utf8");
+  return normalizeFsPath(eventPath);
 }
 
 function runEventLogPath(runsDir: string, runId: string): string {
@@ -172,4 +194,44 @@ function isAutoLabOSEvent(event: unknown): event is AutoLabOSEvent {
       typeof (event as AutoLabOSEvent).runId === "string" &&
       typeof (event as AutoLabOSEvent).payload === "object"
   );
+}
+
+function parsePersistedEventLines(raw: string): AutoLabOSEvent[] {
+  return raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        return JSON.parse(line) as AutoLabOSEvent;
+      } catch {
+        return undefined;
+      }
+    })
+    .filter((event): event is AutoLabOSEvent => isAutoLabOSEvent(event));
+}
+
+function parseIndexedRunEvents(indexed: IndexedRunEvent[]): AutoLabOSEvent[] {
+  return indexed
+    .map((item) => {
+      try {
+        return JSON.parse(item.eventJson) as AutoLabOSEvent;
+      } catch {
+        return undefined;
+      }
+    })
+    .filter((event): event is AutoLabOSEvent => isAutoLabOSEvent(event));
+}
+
+function toIndexedRunEvent(event: AutoLabOSEvent, eventSeq: number, filePath: string): IndexedRunEvent {
+  return {
+    runId: event.runId,
+    eventSeq,
+    eventId: event.id,
+    eventType: event.type,
+    nodeId: event.node,
+    createdAt: event.timestamp,
+    filePath,
+    eventJson: JSON.stringify(event)
+  };
 }

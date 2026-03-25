@@ -93,6 +93,10 @@ interface AnalysisManifestEntry {
   completedAt?: string;
 }
 
+async function writeAnalysisManifest(run: RunRecord, manifest: AnalysisManifest): Promise<void> {
+  await writeRunArtifact(run, "analysis_manifest.json", `${JSON.stringify(manifest, null, 2)}\n`);
+}
+
 const MAX_AUTO_SELECTION_EXPANSIONS = 2;
 const DEFAULT_SAFE_ANALYSIS_TOP_N = 30;
 const MIN_SELECTION_GUARD_ANCHORS = 2;
@@ -654,7 +658,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             selectionRequestFingerprint,
             corpusFingerprint
           );
-          await writeJsonFile(manifestPath, manifest);
+          await writeAnalysisManifest(run, manifest);
         }
 
         if (!manifest) {
@@ -669,23 +673,23 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           existingSummaryRows = [];
           existingEvidenceRows = [];
           manifest = createFreshManifest(selection, analysisFingerprint, selectionRequestFingerprint, corpusFingerprint);
-          await writeJsonFile(manifestPath, manifest);
+          await writeAnalysisManifest(run, manifest);
         } else if (canExtendExistingManifest && existingManifest) {
           emitLog(
             `Expanding analysis selection from top ${existingManifest.selectedPaperIds.length} to top ${selection.selectedPaperIds.length}; preserving completed analyses and queueing only the new papers.`
           );
-          await writeJsonFile(manifestPath, manifest);
+          await writeAnalysisManifest(run, manifest);
         } else if (retargetedSelection) {
           emitLog(retargetedSelection.logMessage);
           await appendJsonl(run, "paper_summaries.jsonl", existingSummaryRows);
           await appendJsonl(run, "evidence_store.jsonl", existingEvidenceRows);
-          await writeJsonFile(manifestPath, manifest);
+          await writeAnalysisManifest(run, manifest);
         }
 
         const refreshedManifest = hydrateSelectedManifestEntriesFromRows(manifest, selectedRows);
         if (refreshedManifest !== manifest) {
           manifest = refreshedManifest;
-          await writeJsonFile(manifestPath, manifest);
+          await writeAnalysisManifest(run, manifest);
         }
 
         const reconciledState = reconcileManifestWithOutputs(manifest, existingSummaryRows, existingEvidenceRows);
@@ -700,7 +704,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           }
           await appendJsonl(run, "paper_summaries.jsonl", reconciledState.summaryRows);
           await appendJsonl(run, "evidence_store.jsonl", reconciledState.evidenceRows);
-          await writeJsonFile(manifestPath, manifestState);
+          await writeAnalysisManifest(run, manifestState);
         }
         let summaryRowsState = reconciledState.summaryRows;
         let evidenceRowsState = reconciledState.evidenceRows;
@@ -859,7 +863,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                   updatedAt: new Date().toISOString()
                 };
                 nextManifest.updatedAt = new Date().toISOString();
-                await writeJsonFile(manifestPath, nextManifest);
+                await writeAnalysisManifest(run, nextManifest);
                 manifestState = nextManifest;
               });
 
@@ -1012,7 +1016,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                 nextManifest.updatedAt = new Date().toISOString();
                 await appendJsonl(run, "paper_summaries.jsonl", nextSummaryRowsState);
                 await appendJsonl(run, "evidence_store.jsonl", nextEvidenceRowsState);
-                await writeJsonFile(manifestPath, nextManifest);
+                await writeAnalysisManifest(run, nextManifest);
                 await syncAnalysisProgress(runContextMemory, {
                   runContextPath: run.memoryRefs.runContextPath,
                   summaryRows: nextSummaryRowsState,
@@ -1087,7 +1091,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                   updatedAt: new Date().toISOString()
                 };
                 manifestState.updatedAt = new Date().toISOString();
-                await writeJsonFile(manifestPath, manifestState);
+                await writeAnalysisManifest(run, manifestState);
                 await syncAnalyzeRunRecord({
                   runStore: deps.runStore,
                   runId: run.id,

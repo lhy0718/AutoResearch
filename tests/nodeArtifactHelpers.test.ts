@@ -4,7 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const fsMocks = vi.hoisted(() => ({
   writeFile: vi.fn(async () => undefined),
   rename: vi.fn(async () => undefined),
-  rm: vi.fn(async () => undefined)
+  rm: vi.fn(async () => undefined),
+  stat: vi.fn(async () => ({
+    mtime: new Date("2026-03-25T00:00:00.000Z"),
+    size: 16
+  }))
 }));
 
 const fsUtilMocks = vi.hoisted(() => ({
@@ -12,17 +16,34 @@ const fsUtilMocks = vi.hoisted(() => ({
   normalizeFsPath: vi.fn((value: string) => value)
 }));
 
+const runIndexMocks = vi.hoisted(() => ({
+  upsertRunArtifact: vi.fn(() => undefined),
+  getRunArtifactByPath: vi.fn(() => undefined),
+  close: vi.fn(() => undefined)
+}));
+
 vi.mock("node:fs", () => ({
   promises: {
     writeFile: fsMocks.writeFile,
     rename: fsMocks.rename,
-    rm: fsMocks.rm
+    rm: fsMocks.rm,
+    stat: fsMocks.stat
   }
 }));
 
 vi.mock("../src/utils/fs.js", () => ({
   ensureDir: fsUtilMocks.ensureDir,
   normalizeFsPath: fsUtilMocks.normalizeFsPath
+}));
+
+vi.mock("../src/core/runs/runIndexDatabase.js", () => ({
+  buildRunsDbFile: (runsDir: string) => path.join(runsDir, "runs.sqlite"),
+  toRunArtifactType: (relativePath: string) => relativePath.replace(/\.[^.]+$/u, "").replace(/[\\/.-]+/g, "_"),
+  RunIndexDatabase: class {
+    upsertRunArtifact = runIndexMocks.upsertRunArtifact;
+    getRunArtifactByPath = runIndexMocks.getRunArtifactByPath;
+    close = runIndexMocks.close;
+  }
 }));
 
 import { appendJsonl, writeRunArtifact } from "../src/core/nodes/helpers.js";
@@ -34,7 +55,15 @@ describe("node artifact helpers", () => {
     fsMocks.writeFile.mockResolvedValue(undefined);
     fsMocks.rename.mockResolvedValue(undefined);
     fsMocks.rm.mockResolvedValue(undefined);
+    fsMocks.stat.mockResolvedValue({
+      mtime: new Date("2026-03-25T00:00:00.000Z"),
+      size: 16
+    });
     fsUtilMocks.ensureDir.mockResolvedValue(undefined);
+    runIndexMocks.upsertRunArtifact.mockReset();
+    runIndexMocks.getRunArtifactByPath.mockReset();
+    runIndexMocks.getRunArtifactByPath.mockReturnValue(undefined);
+    runIndexMocks.close.mockReset();
   });
 
   it("writes run artifacts via a temp file and rename", async () => {

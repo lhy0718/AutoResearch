@@ -80,6 +80,7 @@ export interface AppPaths {
   configFile: string;
   runsDir: string;
   runsFile: string;
+  runsDbFile: string;
   logsDir: string;
   outputsDir: string;
 }
@@ -127,6 +128,7 @@ export function resolveAppPaths(cwd = process.cwd()): AppPaths {
     configFile: path.join(rootDir, "config.yaml"),
     runsDir,
     runsFile: path.join(runsDir, "runs.json"),
+    runsDbFile: path.join(runsDir, "runs.sqlite"),
     logsDir,
     outputsDir
   };

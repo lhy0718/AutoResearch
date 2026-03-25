@@ -5,6 +5,7 @@ import { promises as fs } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { PersistedEventStream, readPersistedRunEvents } from "../src/core/events.js";
+import { RunIndexDatabase } from "../src/core/runs/runIndexDatabase.js";
 
 describe("persisted event stream", () => {
   it("writes per-run event logs and replays recent events", async () => {
@@ -42,5 +43,14 @@ describe("persisted event stream", () => {
       second.id
     ]);
     expect(readPersistedRunEvents({ runsDir, runId: "run-2", limit: 10 })).toHaveLength(1);
+
+    const index = new RunIndexDatabase(path.join(runsDir, "runs.sqlite"));
+    try {
+      const indexed = index.listRunEvents("run-1", 10);
+      expect(indexed.map((event) => event.eventId)).toEqual([first.id, second.id]);
+      expect(indexed.map((event) => event.eventSeq)).toEqual([1, 2]);
+    } finally {
+      index.close();
+    }
   });
 });

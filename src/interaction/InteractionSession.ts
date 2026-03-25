@@ -1944,19 +1944,20 @@ export class InteractionSession {
   }
 
   private async resolveTargetRun(explicitQuery?: string): Promise<RunRecord | undefined> {
-    const runs = await this.runStore.listRuns();
     if (explicitQuery) {
+      const runs = await this.runStore.listRuns();
       const byQuery = resolveRunByQuery(runs, explicitQuery);
       if (!byQuery) {
         this.pushLog(`Run not found: ${explicitQuery}`);
+        return undefined;
       }
-      return byQuery;
+      return (await this.runStore.getRun(byQuery.id)) ?? byQuery;
     }
     if (!this.activeRunId) {
       this.pushLog("No active run. Use the new run form or /run <run>.");
       return undefined;
     }
-    const active = runs.find((run) => run.id === this.activeRunId);
+    const active = await this.runStore.getRun(this.activeRunId);
     if (!active) {
       this.pushLog(`Active run not found: ${this.activeRunId}`);
       return undefined;
