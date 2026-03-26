@@ -988,7 +988,7 @@ describe("constraint propagation", () => {
 
     expect(designResult.status).toBe("success");
     expect(writeResult.status).toBe("success");
-    expect(llm.calls).toBe(8);
+    expect(llm.calls).toBe(10);
 
     const plan = await readFile(path.join(runDir, "experiment_plan.yaml"), "utf8");
     expect(plan).toContain("last_years: 7");
@@ -1251,7 +1251,7 @@ describe("constraint propagation", () => {
     const result = await node.execute({ run, graph: run.graph });
 
     expect(result.status).toBe("success");
-    expect(llm.calls).toBe(7);
+    expect(llm.calls).toBe(9);
 
     const tex = await readFile(path.join(runDir, "paper", "main.tex"), "utf8");
     expect(tex).toContain("\\section{Introduction}");

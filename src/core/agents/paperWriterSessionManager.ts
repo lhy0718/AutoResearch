@@ -22,6 +22,23 @@ import {
   parsePaperManuscriptJson,
   normalizePaperManuscript
 } from "../analysis/paperManuscript.js";
+import {
+  buildFallbackManuscriptReview,
+  buildFallbackManuscriptReviewAudit,
+  buildManuscriptRepairPrompt,
+  buildManuscriptReviewAuditPrompt,
+  buildManuscriptReviewPrompt,
+  ManuscriptRepairPlanArtifact,
+  ManuscriptQualityIssueSnapshot,
+  ManuscriptReviewAuditArtifact,
+  ManuscriptReviewArtifact,
+  ManuscriptReviewValidationArtifact,
+  normalizeManuscriptReviewAudit,
+  parseManuscriptReviewAuditJson,
+  normalizeManuscriptReview,
+  parseManuscriptReviewJson,
+  ManuscriptStyleLintArtifact
+} from "../analysis/manuscriptQuality.js";
 import { ConstraintProfile } from "../runConstraints.js";
 import { ObjectiveMetricEvaluation, ObjectiveMetricProfile } from "../objectiveMetric.js";
 import { mapCodexEventToAutoLabOSEvents } from "../../integrations/codex/codexEventMapper.js";
@@ -48,7 +65,18 @@ interface PaperWriterReview {
 }
 
 interface SessionTraceEntry {
-  stage: "outline" | "draft" | "review" | "finalize" | "polish" | "validation_repair";
+  stage:
+    | "outline"
+    | "draft"
+    | "review"
+    | "finalize"
+    | "polish"
+    | "validation_repair"
+    | "manuscript_review"
+    | "manuscript_review_retry"
+    | "manuscript_review_audit"
+    | "manuscript_repair_1"
+    | "manuscript_repair_2";
   mode: "codex_session" | "staged_llm";
   threadId?: string;
   fallbackUsed: boolean;
@@ -74,6 +102,32 @@ export interface PaperWriterValidationRepairResult {
   attempted: boolean;
   applied: boolean;
   draft: PaperDraft;
+  source: "codex_session" | "staged_llm" | "fallback";
+  threadId?: string;
+  error?: string;
+}
+
+export interface PaperWriterManuscriptReviewResult {
+  review: ManuscriptReviewArtifact;
+  rawText?: string;
+  source: "codex_session" | "staged_llm" | "fallback";
+  threadId?: string;
+  error?: string;
+}
+
+export interface PaperWriterManuscriptReviewAuditResult {
+  audit: ManuscriptReviewAuditArtifact;
+  rawText?: string;
+  source: "codex_session" | "staged_llm" | "fallback";
+  threadId?: string;
+  error?: string;
+}
+
+export interface PaperWriterManuscriptRepairResult {
+  attempted: boolean;
+  applied: boolean;
+  manuscript: PaperManuscript;
+  rawText?: string;
   source: "codex_session" | "staged_llm" | "fallback";
   threadId?: string;
   error?: string;
@@ -433,6 +487,262 @@ export class PaperWriterSessionManager {
     }
   }
 
+  async reviewManuscript(input: {
+    run: RunRecord;
+    manuscript: PaperManuscript;
+    bundle: PaperWritingBundle;
+    constraintProfile: ConstraintProfile;
+    paperProfile?: PaperProfileConfig;
+    objectiveMetricProfile: ObjectiveMetricProfile;
+    objectiveEvaluation?: ObjectiveMetricEvaluation;
+    stage?: "manuscript_review" | "manuscript_review_retry";
+    passLabel?: string;
+    previousReview?: ManuscriptReviewArtifact;
+    reviewValidation?: ManuscriptReviewValidationArtifact;
+    reviewAudit?: ManuscriptReviewAuditArtifact;
+    abortSignal?: AbortSignal;
+  }): Promise<PaperWriterManuscriptReviewResult> {
+    const runContext = new RunContextMemory(input.run.memoryRefs.runContextPath);
+    let activeThreadId =
+      input.run.nodeThreads.write_paper ||
+      (await runContext.get<string>("write_paper.thread_id"));
+    const useCodexSession =
+      typeof this.deps.codex?.runTurnStream === "function" &&
+      this.deps.config?.providers?.llm_mode !== "openai_api" &&
+      this.deps.config?.providers?.llm_mode !== "ollama";
+    const mode: "codex_session" | "staged_llm" = useCodexSession ? "codex_session" : "staged_llm";
+    const trace = (await runContext.get<SessionTraceEntry[]>("write_paper.session_trace")) || [];
+
+    this.emit(
+      input.run,
+      `Manuscript review started in ${mode} mode${input.passLabel ? ` (${input.passLabel})` : ""}.`
+    );
+
+    try {
+      const reviewStageName = input.stage || "manuscript_review";
+      const reviewStage = await this.runStage({
+        run: input.run,
+        runContext,
+        stage: reviewStageName,
+        mode,
+        threadId: activeThreadId,
+        systemPrompt: buildRoleSystemPrompt("reviewer", this.reviewerRole.sop),
+        prompt: buildManuscriptReviewPrompt({
+          manuscript: input.manuscript,
+          bundle: input.bundle,
+          constraintProfile: input.constraintProfile,
+          paperProfile: input.paperProfile,
+          objectiveMetricProfile: input.objectiveMetricProfile,
+          objectiveEvaluation: input.objectiveEvaluation,
+          passLabel: input.passLabel,
+          previousReview: input.previousReview,
+          reviewValidation: input.reviewValidation,
+          reviewAudit: input.reviewAudit
+        }),
+        agentRole: "reviewer",
+        abortSignal: input.abortSignal,
+        trace
+      });
+      activeThreadId = reviewStage.threadId || activeThreadId;
+      const review = reviewStage.text
+        ? normalizeManuscriptReview(parseManuscriptReviewJson(reviewStage.text), input.manuscript)
+        : buildFallbackManuscriptReview(input.manuscript);
+      await writeRunArtifact(input.run, "paper/session_trace.json", `${JSON.stringify(trace, null, 2)}\n`);
+      await runContext.put("write_paper.thread_id", activeThreadId || null);
+      await runContext.put("write_paper.session_trace", trace);
+      await runContext.put("write_paper.session_manuscript_review", review);
+      await this.persistThreadToRunStore(input.run, activeThreadId);
+      this.emit(input.run, "Manuscript review completed.");
+      return {
+        review,
+        rawText: reviewStage.text,
+        source: mode,
+        threadId: activeThreadId
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.emit(input.run, `Manuscript review failed: ${message}`);
+      return {
+        review: buildFallbackManuscriptReview(input.manuscript),
+        source: "fallback",
+        threadId: activeThreadId,
+        error: message
+      };
+    }
+  }
+
+  async auditManuscriptReview(input: {
+    run: RunRecord;
+    manuscript: PaperManuscript;
+    review: ManuscriptReviewArtifact;
+    validation: ManuscriptReviewValidationArtifact;
+    lint: ManuscriptStyleLintArtifact;
+    traceability: Parameters<typeof buildManuscriptReviewAuditPrompt>[0]["traceability"];
+    passLabel?: string;
+    abortSignal?: AbortSignal;
+  }): Promise<PaperWriterManuscriptReviewAuditResult> {
+    const runContext = new RunContextMemory(input.run.memoryRefs.runContextPath);
+    let activeThreadId =
+      input.run.nodeThreads.write_paper ||
+      (await runContext.get<string>("write_paper.thread_id"));
+    const useCodexSession =
+      typeof this.deps.codex?.runTurnStream === "function" &&
+      this.deps.config?.providers?.llm_mode !== "openai_api" &&
+      this.deps.config?.providers?.llm_mode !== "ollama";
+    const mode: "codex_session" | "staged_llm" = useCodexSession ? "codex_session" : "staged_llm";
+    const trace = (await runContext.get<SessionTraceEntry[]>("write_paper.session_trace")) || [];
+
+    this.emit(
+      input.run,
+      `Manuscript review audit started in ${mode} mode${input.passLabel ? ` (${input.passLabel})` : ""}.`
+    );
+
+    try {
+      const auditStage = await this.runStage({
+        run: input.run,
+        runContext,
+        stage: "manuscript_review_audit",
+        mode,
+        threadId: activeThreadId,
+        systemPrompt: buildRoleSystemPrompt("reviewer", this.reviewerRole.sop),
+        prompt: buildManuscriptReviewAuditPrompt({
+          manuscript: input.manuscript,
+          review: input.review,
+          validation: input.validation,
+          lint: input.lint,
+          traceability: input.traceability,
+          passLabel: input.passLabel
+        }),
+        agentRole: "reviewer",
+        abortSignal: input.abortSignal,
+        trace
+      });
+      activeThreadId = auditStage.threadId || activeThreadId;
+      const audit = auditStage.text
+        ? normalizeManuscriptReviewAudit(
+            parseManuscriptReviewAuditJson(auditStage.text),
+            input.review,
+            input.validation
+          )
+        : buildFallbackManuscriptReviewAudit(input.review, input.validation);
+      await writeRunArtifact(input.run, "paper/session_trace.json", `${JSON.stringify(trace, null, 2)}\n`);
+      await runContext.put("write_paper.thread_id", activeThreadId || null);
+      await runContext.put("write_paper.session_trace", trace);
+      await runContext.put("write_paper.session_manuscript_review_audit", audit);
+      await this.persistThreadToRunStore(input.run, activeThreadId);
+      this.emit(input.run, "Manuscript review audit completed.");
+      return {
+        audit,
+        rawText: auditStage.text,
+        source: mode,
+        threadId: activeThreadId
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.emit(input.run, `Manuscript review audit failed: ${message}`);
+      return {
+        audit: buildFallbackManuscriptReviewAudit(input.review, input.validation),
+        source: "fallback",
+        threadId: activeThreadId,
+        error: message
+      };
+    }
+  }
+
+  async repairManuscript(input: {
+    run: RunRecord;
+    passIndex: 1 | 2;
+    manuscript: PaperManuscript;
+    draft: PaperDraft;
+    bundle: PaperWritingBundle;
+    review: ManuscriptReviewArtifact;
+    lint: ManuscriptStyleLintArtifact;
+    repairPlan: ManuscriptRepairPlanArtifact;
+    objectiveEvaluation?: ObjectiveMetricEvaluation;
+    objectiveMetricProfile?: ObjectiveMetricProfile;
+    remainingAllowedRepairs: number;
+    mustImproveIssues: ManuscriptQualityIssueSnapshot[];
+    abortSignal?: AbortSignal;
+  }): Promise<PaperWriterManuscriptRepairResult> {
+    const runContext = new RunContextMemory(input.run.memoryRefs.runContextPath);
+    let activeThreadId =
+      input.run.nodeThreads.write_paper ||
+      (await runContext.get<string>("write_paper.thread_id"));
+    const useCodexSession =
+      typeof this.deps.codex?.runTurnStream === "function" &&
+      this.deps.config?.providers?.llm_mode !== "openai_api" &&
+      this.deps.config?.providers?.llm_mode !== "ollama";
+    const mode: "codex_session" | "staged_llm" = useCodexSession ? "codex_session" : "staged_llm";
+    const trace = (await runContext.get<SessionTraceEntry[]>("write_paper.session_trace")) || [];
+    const stage = input.passIndex === 1 ? "manuscript_repair_1" : "manuscript_repair_2";
+
+    this.emit(input.run, `Manuscript repair ${input.passIndex} started in ${mode} mode.`);
+
+    try {
+      const repairStage = await this.runStage({
+        run: input.run,
+        runContext,
+        stage,
+        mode,
+        threadId: activeThreadId,
+        systemPrompt: buildRoleSystemPrompt("paper_writer", this.writerRole.sop),
+        prompt: buildManuscriptRepairPrompt({
+          manuscript: input.manuscript,
+          review: input.review,
+          lint: input.lint,
+          repairPlan: input.repairPlan,
+          passIndex: input.passIndex,
+          remainingAllowedRepairs: input.remainingAllowedRepairs,
+          mustImproveIssues: input.mustImproveIssues
+        }),
+        agentRole: "paper_writer",
+        abortSignal: input.abortSignal,
+        trace
+      });
+      activeThreadId = repairStage.threadId || activeThreadId;
+      const manuscript = repairStage.text
+        ? normalizePaperManuscript({
+            raw: parsePaperManuscriptJson(repairStage.text),
+            draft: input.draft,
+            runTitle: input.bundle.runTitle,
+            resultAnalysis: input.bundle.resultAnalysis,
+            objectiveEvaluation: input.objectiveEvaluation,
+            objectiveMetricProfile: input.objectiveMetricProfile,
+            experimentPlan: input.bundle.experimentPlan,
+            fallbackManuscript: input.manuscript
+          })
+        : input.manuscript;
+      await writeRunArtifact(input.run, "paper/session_trace.json", `${JSON.stringify(trace, null, 2)}\n`);
+      await runContext.put("write_paper.thread_id", activeThreadId || null);
+      await runContext.put("write_paper.session_trace", trace);
+      await runContext.put(`write_paper.manuscript_repair_${input.passIndex}`, {
+        applied: true,
+        source: mode
+      });
+      await this.persistThreadToRunStore(input.run, activeThreadId);
+      this.emit(input.run, `Manuscript repair ${input.passIndex} completed.`);
+      return {
+        attempted: true,
+        applied: true,
+        manuscript,
+        rawText: repairStage.text,
+        source: mode,
+        threadId: activeThreadId
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.emit(input.run, `Manuscript repair ${input.passIndex} failed: ${message}`);
+      return {
+        attempted: true,
+        applied: false,
+        manuscript: input.manuscript,
+        source: "fallback",
+        threadId: activeThreadId,
+        error: message
+      };
+    }
+  }
+
   async reviseAfterValidation(input: {
     run: RunRecord;
     bundle: PaperWritingBundle;
@@ -538,7 +848,18 @@ export class PaperWriterSessionManager {
   private async runStage(input: {
     run: RunRecord;
     runContext: RunContextMemory;
-    stage: "outline" | "draft" | "review" | "finalize" | "polish" | "validation_repair";
+    stage:
+      | "outline"
+      | "draft"
+      | "review"
+      | "finalize"
+      | "polish"
+      | "validation_repair"
+      | "manuscript_review"
+      | "manuscript_review_retry"
+      | "manuscript_review_audit"
+      | "manuscript_repair_1"
+      | "manuscript_repair_2";
     mode: "codex_session" | "staged_llm";
     threadId?: string;
     systemPrompt: string;

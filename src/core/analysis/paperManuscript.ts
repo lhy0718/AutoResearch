@@ -129,6 +129,9 @@ interface RawPaperManuscript {
   sections?: unknown;
   tables?: unknown;
   figures?: unknown;
+  appendix_sections?: unknown;
+  appendix_tables?: unknown;
+  appendix_figures?: unknown;
 }
 
 interface RawPaperManuscriptSection {
@@ -150,6 +153,10 @@ interface RawPaperManuscriptFigure {
   bars?: unknown;
 }
 
+interface RawPaperManuscriptEnvelope {
+  revised_manuscript?: unknown;
+}
+
 interface RawPaperManuscriptVisualRow {
   label?: unknown;
   value?: unknown;
@@ -162,11 +169,16 @@ export function parsePaperManuscriptJson(text: string): RawPaperManuscript {
   }
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]+?)```/iu)?.[1]?.trim();
   const candidate = fenced || extractFirstJsonObject(trimmed);
-  const parsed = JSON.parse(candidate) as RawPaperManuscript;
+  const parsed = JSON.parse(candidate) as RawPaperManuscript | RawPaperManuscriptEnvelope;
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("invalid_paper_manuscript_json");
   }
-  return parsed;
+  const record = parsed as RawPaperManuscriptEnvelope;
+  const manuscriptCandidate = record.revised_manuscript;
+  if (manuscriptCandidate && typeof manuscriptCandidate === "object" && !Array.isArray(manuscriptCandidate)) {
+    return manuscriptCandidate as RawPaperManuscript;
+  }
+  return parsed as RawPaperManuscript;
 }
 
 export function buildPaperPolishPrompt(input: {
@@ -238,7 +250,10 @@ export function buildPaperPolishPrompt(input: {
     "    }",
     "  ],",
     '  "tables": [{"caption": "string", "rows": [{"label": "string", "value": 0.0}]}],',
-    '  "figures": [{"caption": "string", "bars": [{"label": "string", "value": 0.0}]}]',
+    '  "figures": [{"caption": "string", "bars": [{"label": "string", "value": 0.0}]}],',
+    '  "appendix_sections": [{"heading": "string", "paragraphs": ["string"]}],',
+    '  "appendix_tables": [{"caption": "string", "rows": [{"label": "string", "value": 0.0}]}],',
+    '  "appendix_figures": [{"caption": "string", "bars": [{"label": "string", "value": 0.0}]}]',
     "}",
     "",
     "Requirements:",
@@ -249,11 +264,22 @@ export function buildPaperPolishPrompt(input: {
     "- Evidence-first does not mean short-by-default: maintain enough detail in Method, Results, Discussion, and Limitations to read like a full scientific paper rather than a summary.",
     "- Keep cautious claim strength and explanatory density separate: weaken overstated claims, but do not collapse sections into one-liners.",
     "- Keep the problem framing, related-work positioning, method, main results, and core limitations in the main paper.",
-    "- Downstream routing will move supporting detail such as repeat-level raw metrics, search-space grids, or environment notes into the appendix.",
+    "- Each major section must play a distinct rhetorical role; do not reuse the same framing sentence across sections.",
+    "- Related Work must organize prior work around comparison axes, not just summarize papers one by one.",
+    "- Discussion must interpret the results rather than restating the Results section.",
+    "- Limitations must name concrete scope limits or evaluation constraints.",
+    "- Tables and figures must be informative and non-redundant. If a figure only restates a table more vaguely, omit the figure.",
+    "- If you include appendix content, limit it to reader-relevant supporting scientific material such as reproducibility details, supplementary setup details, extended metrics, ablations, additional qualitative examples, or a paper-appropriate prompt/template summary.",
+    "- Do not include internal workflow instructions, planning directives, raw artifact references, system prompts, TODO notes, or unresolved author notes anywhere in the manuscript or appendix.",
+    "- Downstream routing may move supporting detail such as repeat-level raw metrics, search-space grids, or environment notes into the appendix.",
     "- Do not include evidence IDs, claim IDs, paper IDs, file paths, JSON field names, or internal artifact names in the prose.",
     "- Do not use the headings Research Context, Writing Constraints, Results Overview, or Claim Trace.",
     "- Keep section headings academic and conventional.",
     "- Avoid log-speak, checklist phrasing, and repeated template language.",
+    "- Do not repeat the same framing sentence in multiple sections.",
+    "- Do not emit both a table and a figure for nearly identical information unless the figure adds a distinct trend, distribution, or tradeoff insight.",
+    "- Do not include internal run instructions, TODO language, or meta commentary.",
+    "- Do not inflate claims beyond the available evidence.",
     "- Include at least one informative result table or figure when the payload supports it.",
     "",
     "Context JSON:",
@@ -269,6 +295,7 @@ export function normalizePaperManuscript(input: {
   objectiveEvaluation?: ObjectiveMetricEvaluation;
   objectiveMetricProfile?: ObjectiveMetricProfile;
   experimentPlan?: ExperimentPlanArtifact;
+  fallbackManuscript?: PaperManuscript;
 }): PaperManuscript {
   const fallback = buildFallbackPaperManuscript({
     draft: input.draft,
@@ -277,6 +304,7 @@ export function normalizePaperManuscript(input: {
     objectiveMetricProfile: input.objectiveMetricProfile,
     experimentPlan: input.experimentPlan
   });
+  const baseManuscript = input.fallbackManuscript || fallback;
   const sections = normalizeManuscriptSections(
     Array.isArray(input.raw?.sections) ? (input.raw?.sections as RawPaperManuscriptSection[]) : []
   );
@@ -286,21 +314,58 @@ export function normalizePaperManuscript(input: {
   const figures = normalizeManuscriptFigures(
     Array.isArray(input.raw?.figures) ? (input.raw?.figures as RawPaperManuscriptFigure[]) : []
   );
+  const appendixSections = normalizeManuscriptSections(
+    Array.isArray(input.raw?.appendix_sections) ? (input.raw?.appendix_sections as RawPaperManuscriptSection[]) : []
+  );
+  const appendixTables = normalizeManuscriptTables(
+    Array.isArray(input.raw?.appendix_tables) ? (input.raw?.appendix_tables as RawPaperManuscriptTable[]) : []
+  );
+  const appendixFigures = normalizeManuscriptFigures(
+    Array.isArray(input.raw?.appendix_figures) ? (input.raw?.appendix_figures as RawPaperManuscriptFigure[]) : []
+  );
+
+  const resolvedSections = preserveSectionSourceRefs(
+    sections.length > 0 ? sections : baseManuscript.sections,
+    baseManuscript.sections
+  );
+  const resolvedTables = preserveVisualSourceRefs(
+    tables.length > 0 ? tables : baseManuscript.tables,
+    baseManuscript.tables
+  );
+  const resolvedFigures = preserveVisualSourceRefs(
+    figures.length > 0 ? figures : baseManuscript.figures,
+    baseManuscript.figures
+  );
+  const resolvedAppendixSections = preserveSectionSourceRefs(
+    appendixSections.length > 0 ? appendixSections : baseManuscript.appendix_sections,
+    baseManuscript.appendix_sections
+  );
+  const resolvedAppendixTables = preserveVisualSourceRefs(
+    appendixTables.length > 0 ? appendixTables : baseManuscript.appendix_tables,
+    baseManuscript.appendix_tables
+  );
+  const resolvedAppendixFigures = preserveVisualSourceRefs(
+    appendixFigures.length > 0 ? appendixFigures : baseManuscript.appendix_figures,
+    baseManuscript.appendix_figures
+  );
 
   return {
     title: choosePaperTitle({
       candidateTitle: input.raw?.title,
       runTitle: input.runTitle || input.draft.title,
-      fallbackTitle: fallback.title
+      fallbackTitle: baseManuscript.title
     }),
-    abstract: cleanString(input.raw?.abstract) || fallback.abstract,
+    abstract: cleanString(input.raw?.abstract) || baseManuscript.abstract,
     keywords:
       normalizeStringArray(input.raw?.keywords).slice(0, 6).length > 0
         ? normalizeStringArray(input.raw?.keywords).slice(0, 6)
-        : fallback.keywords,
-    sections: sections.length > 0 ? sections : fallback.sections,
-    ...(tables.length > 0 ? { tables } : fallback.tables?.length ? { tables: fallback.tables } : {}),
-    ...(figures.length > 0 ? { figures } : fallback.figures?.length ? { figures: fallback.figures } : {})
+        : baseManuscript.keywords,
+    sections: resolvedSections || baseManuscript.sections,
+    ...(resolvedTables?.length ? { tables: resolvedTables } : {}),
+    ...(resolvedFigures?.length ? { figures: resolvedFigures } : {}),
+    ...(resolvedAppendixSections?.length ? { appendix_sections: resolvedAppendixSections } : {}),
+    ...(resolvedAppendixTables?.length ? { appendix_tables: resolvedAppendixTables } : {}),
+    ...(resolvedAppendixFigures?.length ? { appendix_figures: resolvedAppendixFigures } : {})
   };
 }
 
@@ -363,42 +428,43 @@ export function buildPaperTraceability(input: {
   const sectionByHeading = new Map(
     input.draft.sections.map((section) => [normalizeHeadingKey(section.heading), section] as const)
   );
+  const aggregateGrounding = buildAggregateDraftGrounding(input.draft);
 
   return {
-    paragraphs: input.manuscript.sections.flatMap((section, sectionIndex) => {
-      const sourceSection =
-        sectionByHeading.get(normalizeHeadingKey(section.heading)) ||
-        input.draft.sections[Math.min(sectionIndex, Math.max(0, input.draft.sections.length - 1))];
-      const claimIds = collectClaimIdsForSection(input.draft.claims, sourceSection?.heading);
-
-      return section.paragraphs.map((_, paragraphIndex) => {
-        const sourceParagraph =
-          sourceSection?.paragraphs[Math.min(paragraphIndex, Math.max(0, (sourceSection?.paragraphs.length || 1) - 1))];
-        const evidenceIds = uniqueStrings(
-          sourceParagraph?.evidence_ids?.length ? sourceParagraph.evidence_ids : sourceSection?.evidence_ids || []
-        );
-        const citationPaperIds = uniqueStrings(
-          sourceParagraph?.citation_paper_ids?.length
-            ? sourceParagraph.citation_paper_ids
-            : sourceSection?.citation_paper_ids || []
-        );
-        const sourceRefs = buildParagraphSourceRefs({
-          evidenceIds,
-          citationPaperIds,
-          claimIds
-        });
-        return {
-          anchor_id: buildParagraphAnchorId(section.heading, paragraphIndex),
-          manuscript_section: section.heading,
-          paragraph_index: paragraphIndex,
-          source_draft_section: sourceSection?.heading || "",
-          evidence_ids: evidenceIds,
-          citation_paper_ids: citationPaperIds,
-          ...(sourceRefs ? { source_refs: sourceRefs } : {}),
-          ...(claimIds.length > 0 ? { claim_ids: claimIds } : {})
-        };
-      });
-    })
+    paragraphs: [
+      {
+        anchor_id: buildParagraphAnchorId("Title", 0),
+        manuscript_section: "Title",
+        paragraph_index: 0,
+        source_draft_section: "",
+        evidence_ids: aggregateGrounding.evidenceIds,
+        citation_paper_ids: aggregateGrounding.citationPaperIds,
+        ...(aggregateGrounding.sourceRefs ? { source_refs: aggregateGrounding.sourceRefs } : {}),
+        ...(aggregateGrounding.claimIds.length > 0 ? { claim_ids: aggregateGrounding.claimIds } : {})
+      },
+      {
+        anchor_id: buildParagraphAnchorId("Abstract", 0),
+        manuscript_section: "Abstract",
+        paragraph_index: 0,
+        source_draft_section: "",
+        evidence_ids: aggregateGrounding.evidenceIds,
+        citation_paper_ids: aggregateGrounding.citationPaperIds,
+        ...(aggregateGrounding.sourceRefs ? { source_refs: aggregateGrounding.sourceRefs } : {}),
+        ...(aggregateGrounding.claimIds.length > 0 ? { claim_ids: aggregateGrounding.claimIds } : {})
+      },
+      ...buildTraceabilityEntriesForSectionCollection({
+        sections: input.manuscript.sections,
+        draft: input.draft,
+        sectionByHeading,
+        anchorNamespace: "main"
+      }),
+      ...buildTraceabilityEntriesForSectionCollection({
+        sections: input.manuscript.appendix_sections || [],
+        draft: input.draft,
+        sectionByHeading,
+        anchorNamespace: "appendix"
+      })
+    ]
   };
 }
 
@@ -661,6 +727,35 @@ function normalizeManuscriptFigures(
     })
     .filter((figure): figure is PaperManuscriptFigure => Boolean(figure))
     .slice(0, 2);
+}
+
+function preserveSectionSourceRefs<T extends PaperManuscriptSection>(
+  sections: T[] | undefined,
+  fallbackSections: PaperManuscriptSection[] | undefined
+): T[] | undefined {
+  if (!sections?.length) {
+    return sections;
+  }
+  const fallbackByHeading = new Map(
+    (fallbackSections || []).map((section) => [normalizeHeadingKey(section.heading), section] as const)
+  );
+  return sections.map((section) => {
+    const fallback = fallbackByHeading.get(normalizeHeadingKey(section.heading));
+    return fallback?.source_refs?.length ? { ...section, source_refs: fallback.source_refs } : section;
+  });
+}
+
+function preserveVisualSourceRefs<T extends PaperManuscriptTable | PaperManuscriptFigure>(
+  items: T[] | undefined,
+  fallbackItems: Array<PaperManuscriptTable | PaperManuscriptFigure> | undefined
+): T[] | undefined {
+  if (!items?.length) {
+    return items;
+  }
+  return items.map((item, index) => {
+    const fallback = fallbackItems?.[index];
+    return fallback?.source_refs?.length ? { ...item, source_refs: fallback.source_refs } : item;
+  });
 }
 
 function normalizeVisualRows(value: unknown): PaperManuscriptVisualRow[] {
@@ -1052,6 +1147,83 @@ function isBannedHeading(heading: string): boolean {
 
 function buildTraceabilityKey(sectionHeading: string, paragraphIndex: number): string {
   return `${normalizeHeadingKey(sectionHeading)}:${paragraphIndex}`;
+}
+
+function buildAggregateDraftGrounding(draft: PaperDraft): {
+  evidenceIds: string[];
+  citationPaperIds: string[];
+  claimIds: string[];
+  sourceRefs?: PaperSourceRef[];
+} {
+  const evidenceIds = uniqueStrings(
+    draft.sections.flatMap((section) => [
+      ...(section.evidence_ids || []),
+      ...section.paragraphs.flatMap((paragraph) => paragraph.evidence_ids || [])
+    ])
+  );
+  const citationPaperIds = uniqueStrings(
+    draft.sections.flatMap((section) => [
+      ...(section.citation_paper_ids || []),
+      ...section.paragraphs.flatMap((paragraph) => paragraph.citation_paper_ids || [])
+    ])
+  );
+  const claimIds = uniqueStrings(draft.claims.map((claim) => claim.claim_id));
+  return {
+    evidenceIds,
+    citationPaperIds,
+    claimIds,
+    sourceRefs: buildParagraphSourceRefs({
+      evidenceIds,
+      citationPaperIds,
+      claimIds
+    })
+  };
+}
+
+function buildTraceabilityEntriesForSectionCollection(input: {
+  sections: PaperManuscriptSection[];
+  draft: PaperDraft;
+  sectionByHeading: Map<string, PaperDraft["sections"][number]>;
+  anchorNamespace: "main" | "appendix";
+}): PaperTraceabilityEntry[] {
+  return input.sections.flatMap((section, sectionIndex) => {
+    const sourceSection =
+      input.sectionByHeading.get(normalizeHeadingKey(section.heading)) ||
+      input.draft.sections[Math.min(sectionIndex, Math.max(0, input.draft.sections.length - 1))];
+    const claimIds = collectClaimIdsForSection(input.draft.claims, sourceSection?.heading);
+
+    return section.paragraphs.map((_, paragraphIndex) => {
+      const sourceParagraph =
+        sourceSection?.paragraphs[Math.min(paragraphIndex, Math.max(0, (sourceSection?.paragraphs.length || 1) - 1))];
+      const evidenceIds = uniqueStrings(
+        sourceParagraph?.evidence_ids?.length ? sourceParagraph.evidence_ids : sourceSection?.evidence_ids || []
+      );
+      const citationPaperIds = uniqueStrings(
+        sourceParagraph?.citation_paper_ids?.length
+          ? sourceParagraph.citation_paper_ids
+          : sourceSection?.citation_paper_ids || []
+      );
+      const sourceRefs = buildParagraphSourceRefs({
+        evidenceIds,
+        citationPaperIds,
+        claimIds
+      });
+      const anchorHeading =
+        input.anchorNamespace === "appendix"
+          ? `Appendix ${section.heading}`
+          : section.heading;
+      return {
+        anchor_id: buildParagraphAnchorId(anchorHeading, paragraphIndex),
+        manuscript_section: section.heading,
+        paragraph_index: paragraphIndex,
+        source_draft_section: sourceSection?.heading || "",
+        evidence_ids: evidenceIds,
+        citation_paper_ids: citationPaperIds,
+        ...(sourceRefs ? { source_refs: sourceRefs } : {}),
+        ...(claimIds.length > 0 ? { claim_ids: claimIds } : {})
+      };
+    });
+  });
 }
 
 function takeSafeStrings(values: string[], limit: number): string[] {

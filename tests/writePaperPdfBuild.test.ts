@@ -416,6 +416,489 @@ function buildSubmissionValidationFailureResponses(): string[] {
   return [...buildSessionResponses(), manuscript];
 }
 
+function buildManuscriptReviewResponse(input: {
+  decision: "pass" | "repair" | "stop";
+  issues?: Array<{
+    code: string;
+    severity?: "warning" | "fail";
+    section: string;
+    repairable?: boolean;
+    message: string;
+    fix_recommendation: string;
+    supporting_spans?: Array<{
+      section: string;
+      paragraph_index: number;
+      excerpt: string;
+      reason?: string;
+    }>;
+  }>;
+}): string {
+  const status = input.decision === "pass" ? "pass" : input.decision === "repair" ? "warn" : "fail";
+  return JSON.stringify({
+    overall_decision: input.decision,
+    summary: input.decision === "pass" ? "The polished manuscript reads like a paper." : "The polished manuscript needs local revision.",
+    checks: {
+      section_completeness: { status, note: "Checked." },
+      paragraph_redundancy: { status, note: "Checked." },
+      related_work_quality: { status, note: "Checked." },
+      section_transition: { status, note: "Checked." },
+      visual_redundancy: { status, note: "Checked." },
+      appendix_hygiene: { status, note: "Checked." },
+      citation_hygiene: { status, note: "Checked." },
+      alignment: { status, note: "Checked." },
+      rhetorical_overreach: { status, note: "Checked." }
+    },
+    issues: input.issues || []
+  });
+}
+
+function buildManuscriptReviewAuditResponse(input?: {
+  ok?: boolean;
+  artifact_reliability?: "grounded" | "degraded";
+  retry_recommended?: boolean;
+  summary?: string;
+  issues?: Array<{
+    severity?: "warning" | "fail";
+    code: "unsupported_issue" | "missing_major_issue" | "check_issue_mismatch" | "insufficient_grounding";
+    section: string;
+    message: string;
+    fix_recommendation: string;
+  }>;
+}): string {
+  return JSON.stringify({
+    ok: input?.ok ?? true,
+    artifact_reliability: input?.artifact_reliability ?? "grounded",
+    retry_recommended: input?.retry_recommended ?? false,
+    summary: input?.summary ?? "The manuscript review artifact is sufficiently grounded.",
+    issues: input?.issues || []
+  });
+}
+
+function buildPolishedManuscriptResponse(overrides?: Partial<any>): string {
+  return JSON.stringify({
+    title: "Thread-Backed Drafting for More Stable Manuscript Revision",
+    abstract:
+      "We study the problem of manuscript generation for agent collaboration workflows. We evaluate a thread-backed drafting pipeline against a stateless baseline on AgentBench-mini. Across repeated runs, the thread-backed pipeline improves revision stability by 0.05. These results suggest that persistent drafting support can improve revisability within the tested workflow setting.",
+    keywords: ["agent collaboration", "paper writing"],
+    sections: [
+      {
+        heading: "Introduction",
+        paragraphs: [
+          "The central problem in manuscript generation for agent collaboration workflows is that revisions often drift away from grounded evidence and earlier decisions.",
+          "This paper evaluates whether thread-backed drafting can stabilize revision behavior while preserving evidence-grounded writing.",
+          "The main gap is that current artifacts often expose headline outcomes without a venue-aware writing structure that separates core claims from supporting detail. The working hypothesis is that thread-backed drafting improves revisability.."
+        ]
+      },
+      {
+        heading: "Related Work",
+        paragraphs: [
+          "Prior work studies collaborative revision stability, while workflow benchmarking studies orchestration quality at the system level.",
+          "Compared with those strands, this study focuses on whether persistent drafting state improves revisability under the same workflow setting."
+        ]
+      },
+      {
+        heading: "Method",
+        paragraphs: [
+          "We compare a thread-backed drafting workflow with a stateless baseline on the AgentBench-mini benchmark dataset.",
+          "Both conditions use the same staged paper-writing pipeline within the same evaluation setup, and revision stability is the primary metric.",
+          "Preprocessing details remain limited in the current artifacts and should be read conservatively. Model selection and reporting metrics remain partially specified in the current artifacts.",
+          "Cross-validation and repetition details remain partially specified in the current artifacts."
+        ]
+      },
+      {
+        heading: "Results",
+        paragraphs: [
+          "On AgentBench-mini, the thread-backed condition improves revision stability by 0.05 relative to the stateless baseline.",
+          "The main table preserves the exact dataset-level comparison and keeps the claim conservative.",
+          "Stability remained consistent across repeated runs."
+        ]
+      },
+      {
+        heading: "Discussion",
+        paragraphs: [
+          "The result suggests that persistent drafting state reduces avoidable revision drift without implying broad generalization beyond the tested workflow.",
+          "This interpretation matters because the gain is useful even though the evaluation setting remains narrow."
+        ]
+      },
+      {
+        heading: "Limitations",
+        paragraphs: [
+          "The evaluation is limited to one workflow benchmark and a small comparator set, so broader claims would require additional tasks and baselines."
+        ]
+      },
+      {
+        heading: "Conclusion",
+        paragraphs: [
+          "Within the tested workflow setting, thread-backed drafting improves revision stability and supports more consistent manuscript revision.",
+          "The paper therefore reports a dense but cautious empirical narrative grounded in the available artifacts. Detailed protocol and repeat-level evidence are routed to the appendix so the main paper can retain its central logic."
+        ]
+      }
+    ],
+    tables: [
+      {
+        caption: "Exact numeric comparison for revision stability.",
+        rows: [
+          { label: "Stateless baseline", value: 0.71 },
+          { label: "Thread-backed drafting", value: 0.76 }
+        ]
+      }
+    ],
+    appendix_sections: [],
+    appendix_tables: [],
+    appendix_figures: [],
+    ...(overrides || {})
+  });
+}
+
+function buildWrappedRepairResponse(manuscript: Record<string, unknown>, overrides?: Partial<{
+  resolved_target_anchor_ids: string[];
+  changed_location_keys: string[];
+  unchanged_anchor_ids_sample: string[];
+  notes: string;
+}>): string {
+  return JSON.stringify({
+    revised_manuscript: manuscript,
+    resolved_target_anchor_ids: overrides?.resolved_target_anchor_ids || [],
+    changed_location_keys: overrides?.changed_location_keys || [],
+    unchanged_anchor_ids_sample: overrides?.unchanged_anchor_ids_sample || [],
+    notes: overrides?.notes || "Applied only the requested local manuscript edits."
+  });
+}
+
+function buildManuscriptRepairOnceResponses(): string[] {
+  const initial = JSON.parse(buildPolishedManuscriptResponse()) as any;
+  initial.sections[4].paragraphs[0] = initial.sections[0].paragraphs[0];
+  const repaired = JSON.parse(buildPolishedManuscriptResponse()) as any;
+  return [
+    ...buildSessionResponses(),
+    JSON.stringify(initial),
+    buildManuscriptReviewResponse({
+      decision: "repair",
+      issues: [
+        {
+          code: "paragraph_redundancy",
+          severity: "warning",
+          section: "Discussion",
+          repairable: true,
+          message: "Discussion repeats the opening framing from Introduction.",
+          fix_recommendation: "Rewrite the Discussion opening to interpret the results instead of repeating the setup.",
+          supporting_spans: [
+            {
+              section: "Discussion",
+              paragraph_index: 0,
+              excerpt: initial.sections[4].paragraphs[0],
+              reason: "Repeated setup language appears in the discussion opening."
+            }
+          ]
+        }
+      ]
+    }),
+    buildManuscriptReviewAuditResponse(),
+    buildWrappedRepairResponse(repaired, {
+      changed_location_keys: ["paragraph:discussion:0"]
+    }),
+    buildManuscriptReviewResponse({ decision: "pass" }),
+    buildManuscriptReviewAuditResponse()
+  ];
+}
+
+function buildSectionTransitionAdjacentRepairResponses(): string[] {
+  const initial = JSON.parse(buildPolishedManuscriptResponse()) as any;
+  initial.sections[3].paragraphs[0] =
+    "The thread-backed condition improves revision stability by 0.05 relative to the stateless baseline on AgentBench-mini, using the same evaluation setup as the baseline.";
+  initial.sections[3].paragraphs[1] =
+    "The next results paragraph repeats setup details instead of moving into interpretation, so the local transition currently feels abrupt.";
+  const repaired = JSON.parse(buildPolishedManuscriptResponse()) as any;
+  repaired.sections[3].paragraphs[0] =
+    "The thread-backed condition improves revision stability by 0.05 relative to the stateless baseline on AgentBench-mini, establishing the quantitative comparison before interpretation.";
+  repaired.sections[3].paragraphs[1] =
+    "This local transition matters because the next paragraph can now interpret the modest gain without reintroducing the setup.";
+  return [
+    ...buildSessionResponses(),
+    JSON.stringify(initial),
+    buildManuscriptReviewResponse({
+      decision: "repair",
+      issues: [
+        {
+          code: "section_transition",
+          severity: "warning",
+          section: "Results",
+          repairable: true,
+          message: "The results opening does not transition naturally into the following interpretation paragraph.",
+          fix_recommendation: "Revise the local bridge between the two results paragraphs without rewriting the section.",
+          supporting_spans: [
+            {
+              section: "Results",
+              paragraph_index: 0,
+              excerpt: initial.sections[3].paragraphs[0],
+              reason: "This paragraph needs a cleaner bridge into the next results paragraph."
+            }
+          ]
+        }
+      ]
+    }),
+    buildManuscriptReviewAuditResponse(),
+    buildWrappedRepairResponse(repaired, {
+      changed_location_keys: ["paragraph:results:0", "paragraph:results:1"]
+    }),
+    buildManuscriptReviewResponse({ decision: "pass" }),
+    buildManuscriptReviewAuditResponse()
+  ];
+}
+
+function buildIntroductionAlignmentAdjacentRepairResponses(): string[] {
+  const initial = JSON.parse(buildPolishedManuscriptResponse()) as any;
+  initial.sections[0].paragraphs[0] =
+    "Manuscript generation for agent collaboration workflows is difficult because revisions can drift away from grounded evidence and leave the overall story misaligned.";
+  initial.sections[0].paragraphs[1] =
+    "This paper evaluates whether thread-backed drafting can stabilize revision behavior, but the local framing does not yet line up tightly with the abstract and conclusion.";
+  const repaired = JSON.parse(buildPolishedManuscriptResponse()) as any;
+  repaired.sections[0].paragraphs[0] =
+    "Manuscript generation for agent collaboration workflows is difficult because revisions can drift away from grounded evidence and obscure the tested contribution.";
+  repaired.sections[0].paragraphs[1] =
+    "This paper therefore evaluates whether thread-backed drafting stabilizes revision behavior within the tested workflow setting, matching the abstract and conclusion without broadening the claim.";
+  return [
+    ...buildSessionResponses(),
+    JSON.stringify(initial),
+    buildManuscriptReviewResponse({
+      decision: "repair",
+      issues: [
+        {
+          code: "alignment",
+          severity: "warning",
+          section: "Introduction",
+          repairable: true,
+          message: "The introduction framing needs tighter alignment with the abstract and conclusion.",
+          fix_recommendation: "Revise the local introduction framing without rewriting the whole section.",
+          supporting_spans: [
+            {
+              section: "Introduction",
+              paragraph_index: 1,
+              excerpt: initial.sections[0].paragraphs[1],
+              reason: "This framing paragraph should align more closely with the abstract and conclusion."
+            }
+          ]
+        }
+      ]
+    }),
+    buildManuscriptReviewAuditResponse(),
+    buildWrappedRepairResponse(repaired, {
+      changed_location_keys: ["paragraph:introduction:0", "paragraph:introduction:1"]
+    }),
+    buildManuscriptReviewResponse({ decision: "pass" }),
+    buildManuscriptReviewAuditResponse()
+  ];
+}
+
+function buildManuscriptRepairTwiceResponses(options?: { unresolvedAfterSecond?: boolean }): string[] {
+  const repair1 = JSON.parse(buildPolishedManuscriptResponse()) as any;
+  repair1.sections[0].paragraphs[1] =
+    "The introduction frames the contribution around revision stability in the tested workflow setting, rather than repeating the abstract framing.";
+  const repair2 = JSON.parse(buildPolishedManuscriptResponse()) as any;
+  repair2.sections[0].paragraphs[1] = repair1.sections[0].paragraphs[1];
+  repair2.sections[1].paragraphs = [
+    "Prior work studies collaborative revision stability, while workflow benchmarking studies orchestration quality at the system level.",
+    "Compared with those strands, the current study isolates persistent drafting state within a single workflow setting, making the comparison axis explicit rather than leaving it implied."
+  ];
+  const finalDecision = options?.unresolvedAfterSecond
+    ? buildManuscriptReviewResponse({
+        decision: "repair",
+        issues: [
+          {
+            code: "alignment",
+            severity: "warning",
+            section: "Conclusion",
+            repairable: true,
+            message: "Conclusion still needs a slightly tighter alignment with the abstract.",
+            fix_recommendation: "Tighten the conclusion to mirror the abstract's scope."
+          }
+        ]
+      })
+    : buildManuscriptReviewResponse({ decision: "pass" });
+  return [
+    ...buildSessionResponses(),
+    buildPolishedManuscriptResponse(),
+    buildManuscriptReviewResponse({
+      decision: "repair",
+      issues: [
+        {
+          code: "paragraph_redundancy",
+          severity: "warning",
+          section: "Introduction",
+          repairable: true,
+          message: "Introduction and abstract use overlapping framing.",
+          fix_recommendation: "Make the introduction's second paragraph contribution-oriented.",
+          supporting_spans: [
+            {
+              section: "Introduction",
+              paragraph_index: 1,
+              excerpt: "This paper evaluates whether thread-backed drafting can stabilize revision behavior while preserving evidence-grounded writing.",
+              reason: "The contribution framing is too close to the abstract."
+            }
+          ]
+        }
+      ]
+    }),
+    buildManuscriptReviewAuditResponse(),
+    buildWrappedRepairResponse(repair1, {
+      changed_location_keys: ["paragraph:introduction:1"]
+    }),
+    buildManuscriptReviewResponse({
+      decision: "repair",
+      issues: [
+        {
+          code: "related_work_quality",
+          severity: "warning",
+          section: "Related Work",
+          repairable: true,
+          message: "Related Work still needs a sharper comparison axis.",
+          fix_recommendation: "State the comparison axis explicitly and contrast prior strands with the current study.",
+          supporting_spans: [
+            {
+              section: "Related Work",
+              paragraph_index: 1,
+              excerpt: repair1.sections[1].paragraphs[1],
+              reason: "The comparison axis is still underspecified."
+            }
+          ]
+        }
+      ]
+    }),
+    buildManuscriptReviewAuditResponse(),
+    buildWrappedRepairResponse(repair2, {
+      changed_location_keys: ["paragraph:related_work:0", "paragraph:related_work:1"]
+    }),
+    finalDecision,
+    buildManuscriptReviewAuditResponse()
+  ];
+}
+
+function buildRepeatedLintRepairResponses(): string[] {
+  const contaminated = JSON.parse(buildPolishedManuscriptResponse({
+    abstract:
+      "We study the problem of manuscript generation for agent collaboration workflows. We evaluate a thread-backed drafting pipeline against a stateless baseline on AgentBench-mini. Across repeated runs, the thread-backed pipeline improves revision stability by 0.05. These results clearly demonstrate broad applicability beyond the tested workflow setting."
+  })) as any;
+  return [
+    ...buildSessionResponses(),
+    JSON.stringify(contaminated),
+    buildManuscriptReviewResponse({
+      decision: "repair",
+      issues: [
+        {
+          code: "rhetorical_overreach",
+          severity: "fail",
+          section: "Abstract",
+          repairable: true,
+          message: "Abstract overstates the scope of the evidence.",
+          fix_recommendation: "Constrain the abstract to the tested workflow setting.",
+          supporting_spans: [
+            {
+              section: "Abstract",
+              paragraph_index: 0,
+              excerpt: "These results clearly demonstrate broad applicability beyond the tested workflow setting.",
+              reason: "This sentence exceeds the available evidence scope."
+            }
+          ]
+        }
+      ]
+    }),
+    buildManuscriptReviewAuditResponse(),
+    JSON.stringify(contaminated),
+    buildManuscriptReviewResponse({
+      decision: "repair",
+      issues: [
+        {
+          code: "rhetorical_overreach",
+          severity: "fail",
+          section: "Abstract",
+          repairable: true,
+          message: "Abstract still overstates the scope of the evidence.",
+          fix_recommendation: "Constrain the abstract to the tested workflow setting.",
+          supporting_spans: [
+            {
+              section: "Abstract",
+              paragraph_index: 0,
+              excerpt: "These results clearly demonstrate broad applicability beyond the tested workflow setting.",
+              reason: "The same unsupported generalization remains."
+            }
+          ]
+        }
+      ]
+    }),
+    buildManuscriptReviewAuditResponse()
+  ];
+}
+
+function buildOutOfScopeRepairResponses(): string[] {
+  const initial = JSON.parse(buildPolishedManuscriptResponse()) as any;
+  initial.sections[4].paragraphs[0] = initial.sections[0].paragraphs[0];
+  const overbroad = JSON.parse(buildPolishedManuscriptResponse()) as any;
+  overbroad.sections[0].paragraphs[0] = "This unrelated introduction rewrite should violate bounded local repair scope.";
+  overbroad.sections[4].paragraphs[0] =
+    "The discussion now interprets the result instead of repeating the introduction framing.";
+  return [
+    ...buildSessionResponses(),
+    JSON.stringify(initial),
+    buildManuscriptReviewResponse({
+      decision: "repair",
+      issues: [
+        {
+          code: "paragraph_redundancy",
+          severity: "warning",
+          section: "Discussion",
+          repairable: true,
+          message: "Discussion repeats the introduction framing.",
+          fix_recommendation: "Rewrite only the discussion opening so it interprets the result.",
+          supporting_spans: [
+            {
+              section: "Discussion",
+              paragraph_index: 0,
+              excerpt: initial.sections[4].paragraphs[0],
+              reason: "This is the duplicated discussion opening."
+            }
+          ]
+        }
+      ]
+    }),
+    buildManuscriptReviewAuditResponse(),
+    buildWrappedRepairResponse(overbroad, {
+      changed_location_keys: ["paragraph:introduction:0", "paragraph:discussion:0"]
+    }),
+    buildManuscriptReviewResponse({ decision: "pass" }),
+    buildManuscriptReviewAuditResponse()
+  ];
+}
+
+function buildReviewRetryResponses(): string[] {
+  return [
+    ...buildSessionResponses(),
+    buildPolishedManuscriptResponse(),
+    buildManuscriptReviewResponse({
+      decision: "repair",
+      issues: [
+        {
+          code: "alignment",
+          severity: "warning",
+          section: "Abstract",
+          repairable: true,
+          message: "Abstract and conclusion need tighter scope alignment.",
+          fix_recommendation: "Keep both sections scoped to the tested workflow setting.",
+          supporting_spans: [
+            {
+              section: "Abstract",
+              paragraph_index: 9,
+              excerpt: "This span points to a paragraph that does not exist.",
+              reason: "Malformed grounding from the first review."
+            }
+          ]
+        }
+      ]
+    }),
+    buildManuscriptReviewResponse({ decision: "pass" }),
+    buildManuscriptReviewAuditResponse()
+  ];
+}
+
 async function overwriteRunArtifacts(run: RunRecord, files: Record<string, string>): Promise<void> {
   const runDir = path.join(process.cwd(), ".autolabos", "runs", run.id);
   for (const [relativePath, contents] of Object.entries(files)) {
@@ -2119,5 +2602,354 @@ describe("writePaper PDF build", () => {
     expect(eligibility.allowed).toBe(false);
     expect(eligibility.brief_evidence_status).toBe("fail");
     expect(eligibility.manuscript_type).toBe("research_memo");
+  });
+
+  it("runs manuscript review after polish and records manuscript-quality artifacts for a clean manuscript", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-quality-clean-"));
+    process.chdir(root);
+
+    const run = makeRun("run-manuscript-quality-clean");
+    const runDir = await seedRun(root, run);
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient([
+        ...buildSessionResponses(),
+        buildPolishedManuscriptResponse(),
+        buildManuscriptReviewResponse({ decision: "pass" }),
+        buildManuscriptReviewAuditResponse()
+      ]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(await exists(path.join(runDir, "paper", "manuscript_review.json"))).toBe(true);
+    expect(await exists(path.join(runDir, "paper", "manuscript_review_validation.json"))).toBe(true);
+    expect(await exists(path.join(runDir, "paper", "manuscript_review_audit.json"))).toBe(true);
+    expect(await exists(path.join(runDir, "paper", "manuscript_style_lint.json"))).toBe(true);
+    expect(await exists(path.join(runDir, "paper", "manuscript_quality_gate.json"))).toBe(true);
+    expect(await exists(path.join(runDir, "paper", "manuscript_repair_1_report.json"))).toBe(false);
+
+    const traceRaw = await readFile(path.join(runDir, "paper", "session_trace.json"), "utf8");
+    expect(traceRaw.indexOf('"stage": "polish"')).toBeGreaterThanOrEqual(0);
+    expect(traceRaw.indexOf('"stage": "manuscript_review"')).toBeGreaterThan(traceRaw.indexOf('"stage": "polish"'));
+    expect(traceRaw.indexOf('"stage": "manuscript_review_audit"')).toBeGreaterThan(
+      traceRaw.indexOf('"stage": "manuscript_review"')
+    );
+  });
+
+  it("retries manuscript review once when supporting-span validation fails and records validation plus audit artifacts", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-review-retry-"));
+    process.chdir(root);
+
+    const run = makeRun("run-manuscript-review-retry");
+    const runDir = await seedRun(root, run);
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient(buildReviewRetryResponses()),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const validation = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_review_validation.json"), "utf8")
+    ) as { ok: boolean; retry_requested: boolean; artifact_reliability: string };
+    expect(validation.ok).toBe(true);
+    expect(validation.retry_requested).toBe(false);
+    expect(validation.artifact_reliability).toBe("grounded");
+
+    const audit = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_review_audit.json"), "utf8")
+    ) as { ok: boolean; artifact_reliability: string };
+    expect(audit.ok).toBe(true);
+    expect(audit.artifact_reliability).toBe("grounded");
+
+    const traceRaw = await readFile(path.join(runDir, "paper", "session_trace.json"), "utf8");
+    expect(traceRaw).toContain('"stage": "manuscript_review_retry"');
+    expect(traceRaw).toContain('"stage": "manuscript_review_audit"');
+  });
+
+  it("runs one manuscript repair pass for repairable manuscript issues and records artifacts", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-quality-repair1-"));
+    process.chdir(root);
+
+    const run = makeRun("run-manuscript-quality-repair1");
+    const runDir = await seedRun(root, run);
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient(buildManuscriptRepairOnceResponses()),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(await exists(path.join(runDir, "paper", "manuscript_repair_plan_1.json"))).toBe(true);
+    expect(await exists(path.join(runDir, "paper", "manuscript_repair_verification_1.json"))).toBe(true);
+    expect(await exists(path.join(runDir, "paper", "manuscript_repair_1_report.json"))).toBe(true);
+    expect(await exists(path.join(runDir, "paper", "manuscript_repair_2_report.json"))).toBe(false);
+
+    const repairPlan = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_repair_plan_1.json"), "utf8")
+    ) as { targets: Array<{ section: string; paragraph_index?: number; location_key: string }> };
+    expect(repairPlan.targets.some((target) => target.section === "Discussion" && target.paragraph_index === 0)).toBe(true);
+
+    const verification = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_repair_verification_1.json"), "utf8")
+    ) as { locality_ok: boolean; out_of_scope_changes: string[] };
+    expect(verification.locality_ok).toBe(true);
+    expect(verification.out_of_scope_changes).toHaveLength(0);
+
+    const repairReport = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_repair_1_report.json"), "utf8")
+    ) as { pass_index: number; improvement_detected: boolean; stop_or_continue_reason: string };
+    expect(repairReport.pass_index).toBe(1);
+    expect(repairReport.improvement_detected).toBe(true);
+    expect(repairReport.stop_or_continue_reason).toMatch(/resolved|non-blocking|repair/i);
+
+    const round0Review = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_review_round_0.json"), "utf8")
+    ) as {
+      issues: Array<{ supporting_spans?: Array<{ section: string; paragraph_index: number; excerpt: string }> }>;
+    };
+    expect(round0Review.issues[0]?.supporting_spans?.[0]?.section).toBe("Discussion");
+  });
+
+  it("allows a bounded local adjacent-two-paragraph repair for section transitions in one section", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-transition-repair-"));
+    process.chdir(root);
+
+    const run = makeRun("run-manuscript-transition-repair");
+    const runDir = await seedRun(root, run);
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient(buildSectionTransitionAdjacentRepairResponses()),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const repairPlan = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_repair_plan_1.json"), "utf8")
+    ) as { targets: Array<{ section: string; edit_scope: string; allowed_location_keys: string[] }> };
+    expect(
+      repairPlan.targets.some(
+        (target) =>
+          target.section === "Results"
+          && target.edit_scope === "adjacent_two_paragraphs"
+          && target.allowed_location_keys.includes("paragraph:results:0")
+          && target.allowed_location_keys.includes("paragraph:results:1")
+      )
+    ).toBe(true);
+
+    const verification = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_repair_verification_1.json"), "utf8")
+    ) as { locality_ok: boolean; scope_respected: boolean; changed_location_keys: string[] };
+    expect(verification.locality_ok).toBe(true);
+    expect(verification.scope_respected).toBe(true);
+    expect(verification.changed_location_keys).toEqual(
+      expect.arrayContaining(["paragraph:results:0", "paragraph:results:1"])
+    );
+  });
+
+  it("allows a bounded local adjacent-two-paragraph repair for introduction alignment", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-alignment-repair-"));
+    process.chdir(root);
+
+    const run = makeRun("run-manuscript-alignment-repair");
+    const runDir = await seedRun(root, run);
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient(buildIntroductionAlignmentAdjacentRepairResponses()),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const repairPlan = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_repair_plan_1.json"), "utf8")
+    ) as { targets: Array<{ section: string; edit_scope: string; allowed_location_keys: string[] }> };
+    expect(
+      repairPlan.targets.some(
+        (target) =>
+          target.section === "Introduction"
+          && target.edit_scope === "adjacent_two_paragraphs"
+          && target.allowed_location_keys.includes("paragraph:introduction:0")
+          && target.allowed_location_keys.includes("paragraph:introduction:1")
+      )
+    ).toBe(true);
+
+    const verification = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_repair_verification_1.json"), "utf8")
+    ) as { locality_ok: boolean; scope_respected: boolean; changed_location_keys: string[] };
+    expect(verification.locality_ok).toBe(true);
+    expect(verification.scope_respected).toBe(true);
+    expect(verification.changed_location_keys).toEqual(
+      expect.arrayContaining(["paragraph:introduction:0", "paragraph:introduction:1"])
+    );
+  });
+
+  it("stops when a repair changes out-of-scope sections outside the bounded local repair plan", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-quality-locality-stop-"));
+    process.chdir(root);
+
+    const run = makeRun("run-manuscript-quality-locality-stop");
+    const runDir = await seedRun(root, run);
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient(buildOutOfScopeRepairResponses()),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("manuscript-quality gate failed");
+    const verification = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_repair_verification_1.json"), "utf8")
+    ) as { locality_ok: boolean; unexpected_changed_sections: string[] };
+    expect(verification.locality_ok).toBe(false);
+    expect(verification.unexpected_changed_sections).toContain("introduction");
+
+    const gate = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_quality_gate.json"), "utf8")
+    ) as { stop_or_continue_reason: string };
+    expect(gate.stop_or_continue_reason).toMatch(/out-of-scope locations|bounded local repair loop/i);
+  });
+
+  it("allows a second manuscript repair only after improvement and never runs a third repair", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-quality-repair2-"));
+    process.chdir(root);
+
+    const run = makeRun("run-manuscript-quality-repair2");
+    const runDir = await seedRun(root, run);
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient(buildManuscriptRepairTwiceResponses()),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(await exists(path.join(runDir, "paper", "manuscript_repair_1_report.json"))).toBe(true);
+    const round1Gate = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_quality_gate_round_1.json"), "utf8")
+    ) as { action: string; stop_or_continue_reason: string; allowed_max_passes: number };
+    expect(round1Gate.action, round1Gate.stop_or_continue_reason).toBe("repair");
+    expect(round1Gate.allowed_max_passes).toBe(2);
+    expect(await exists(path.join(runDir, "paper", "manuscript_repair_2_report.json"))).toBe(true);
+    expect(await exists(path.join(runDir, "paper", "manuscript_repair_3_report.json"))).toBe(false);
+
+    const gate = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_quality_gate.json"), "utf8")
+    ) as { allowed_max_passes: number };
+    expect(gate.allowed_max_passes).toBe(2);
+
+    const traceRaw = await readFile(path.join(runDir, "paper", "session_trace.json"), "utf8");
+    expect(traceRaw).toContain('"stage": "manuscript_repair_1"');
+    expect(traceRaw).toContain('"stage": "manuscript_repair_2"');
+    expect(traceRaw).not.toContain("manuscript_repair_3");
+  });
+
+  it("stops after the first repair when the same manuscript-quality issue code repeats and does not run a second repair", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-quality-repeat-stop-"));
+    process.chdir(root);
+
+    const run = makeRun("run-manuscript-quality-repeat-stop");
+    const runDir = await seedRun(root, run);
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient(buildRepeatedLintRepairResponses()),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("manuscript-quality gate failed");
+    expect(await exists(path.join(runDir, "paper", "manuscript_repair_1_report.json"))).toBe(true);
+    expect(await exists(path.join(runDir, "paper", "manuscript_repair_2_report.json"))).toBe(false);
+
+    const gate = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_quality_gate.json"), "utf8")
+    ) as { stop_or_continue_reason: string };
+    expect(gate.stop_or_continue_reason).toMatch(/manuscript-quality issue code/i);
   });
 });

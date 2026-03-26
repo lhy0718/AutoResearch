@@ -544,7 +544,7 @@ describe("objective metric propagation", () => {
     expect(tex).toContain("The selected experimental design is Accuracy benchmark");
     expect(tex).toContain("\\begin{table}[t]");
     expect(tex).toContain("Selected reported metrics from the structured results analysis.");
-    expect(tex).toContain("\\begin{figure}[t]");
+    expect(tex).not.toContain("\\begin{figure}[t]");
     expect(tex).not.toContain("Artifact: Performance overview figures/performance.svg.");
     expect(tex).not.toContain("Statistical summary:");
     expect(tex).not.toContain("Failure taxonomy:");

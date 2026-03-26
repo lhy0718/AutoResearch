@@ -6,10 +6,11 @@ import { safeRead, writeRunArtifact } from "./helpers.js";
 import { NodeExecutionDeps } from "./types.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { publishPublicRunOutputs, generatePublicRunReadme } from "../publicOutputPublisher.js";
-import { TransitionRecommendation } from "../../types.js";
+import { PaperProfileConfig, TransitionRecommendation } from "../../types.js";
 import { resolveConstraintProfile } from "../constraintProfile.js";
 import { ensureDir, fileExists } from "../../utils/fs.js";
 import { buildPublicAnalysisDir, buildPublicPaperDir } from "../publicArtifacts.js";
+import type { ConstraintProfile } from "../runConstraints.js";
 import {
   ObjectiveMetricEvaluation,
   resolveObjectiveMetricProfile
@@ -30,6 +31,9 @@ import {
   validatePaperDraft
 } from "../analysis/paperWriting.js";
 import {
+  PaperManuscript,
+  PaperSubmissionValidationReport,
+  PaperTraceabilityReport,
   buildFallbackPaperManuscript,
   buildPaperSubmissionValidation,
   buildPaperTraceability,
@@ -37,12 +41,32 @@ import {
 } from "../analysis/paperManuscript.js";
 import {
   applyGateWarningsToLimitations,
+  appendixConsistencyLinter,
   applyScientificWritingPolicy,
   buildScientificValidationArtifact,
   buildWritePaperGateDecision,
+  ConsistencyLintReport,
+  experimentArtifactLoader,
+  manuscriptConsistencyLinter,
   materializeScientificManuscript
 } from "../analysis/scientificWriting.js";
 import { PaperWriterSessionManager } from "../agents/paperWriterSessionManager.js";
+import {
+  buildManuscriptRepairPlan,
+  buildManuscriptRepairVerificationArtifact,
+  buildManuscriptStyleLint,
+  collectManuscriptQualityIssues,
+  ManuscriptQualityIssueSnapshot,
+  ManuscriptRepairPlanArtifact,
+  ManuscriptRepairVerificationArtifact,
+  ManuscriptReviewAuditArtifact,
+  ManuscriptRepairDecision,
+  ManuscriptRepairReport,
+  ManuscriptReviewArtifact,
+  ManuscriptReviewValidationArtifact,
+  validateManuscriptReviewArtifact,
+  ManuscriptStyleLintArtifact
+} from "../analysis/manuscriptQuality.js";
 import { maybeEnrichRelatedWorkScout } from "../writePaperRelatedWorkEnrichment.js";
 import { maybeRunRelatedWorkScout } from "../writePaperRelatedWorkScout.js";
 import {
@@ -124,6 +148,27 @@ interface PaperDraftValidationRepairReport {
   initial_warning_count: number;
   candidate_warning_count?: number;
   final_warning_count: number;
+}
+
+interface ManuscriptCandidateEvaluation {
+  manuscript: PaperManuscript;
+  traceability: PaperTraceabilityReport;
+  tex: string;
+  submissionValidation: PaperSubmissionValidationReport;
+  styleLint: ManuscriptStyleLintArtifact;
+  consistencyLint: ConsistencyLintReport;
+  appendixLint: ConsistencyLintReport;
+  gateDecision: ReturnType<typeof buildWritePaperGateDecision>;
+}
+
+interface GroundedManuscriptReviewCycleResult {
+  review: ManuscriptReviewArtifact;
+  reviewValidation: ManuscriptReviewValidationArtifact;
+  reviewAudit: ManuscriptReviewAuditArtifact;
+  reviewRaw?: string;
+  auditRaw?: string;
+  toolCallsUsed: number;
+  retryUsed: boolean;
 }
 
 const VALIDATION_REPAIR_WARNING_THRESHOLD = 1;
@@ -471,14 +516,28 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         appendixPlan: scientificDraft.appendix_plan,
         pageBudget: scientificDraft.page_budget
       });
-      const gateDecision = buildWritePaperGateDecision({
-        mode: validationMode,
-        scientificValidation: scientificValidationArtifact,
-        consistencyLint: scientificManuscript.consistency_lint,
-        appendixLint: scientificManuscript.appendix_lint
+      const manuscriptQuality = await runManuscriptQualityLoop({
+        run,
+        sessions,
+        bundle,
+        draft: paperDraft,
+        initialManuscript: scientificManuscript.manuscript,
+        constraintProfile,
+        paperProfile,
+        objectiveMetricProfile,
+        objectiveEvaluation,
+        scientificValidationArtifact,
+        appendixPlan: scientificDraft.appendix_plan,
+        pageBudget: scientificDraft.page_budget,
+        validationMode,
+        citationKeysByPaperId: bibtex.citationKeysByPaperId,
+        unresolvedCitationPaperIds: bibtex.unresolvedPaperIds,
+        template: deps.config?.paper?.template,
+        emitLog,
+        abortSignal,
+        runContextMemory
       });
-
-      // Surface non-blocking gate warnings as explicit limitations
+      const gateDecision = manuscriptQuality.evaluation.gateDecision;
       const nonBlockingWarnings = gateDecision.issues.filter((i) => !i.blocking);
       if (nonBlockingWarnings.length > 0) {
         bundle.gateWarnings = nonBlockingWarnings.map((i) => ({
@@ -490,29 +549,14 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         paperDraft = applyGateWarningsToLimitations(paperDraft, bundle.gateWarnings);
       }
 
-      const manuscript = scientificManuscript.manuscript;
-      const traceability = buildPaperTraceability({
-        draft: paperDraft,
-        manuscript
-      });
-      const tex = renderSubmissionPaperTex({
-        manuscript,
-        traceability,
-        citationKeysByPaperId: bibtex.citationKeysByPaperId,
-        template: deps.config?.paper?.template,
-        paperProfile
-      });
+      const manuscript = manuscriptQuality.evaluation.manuscript;
+      const traceability = manuscriptQuality.evaluation.traceability;
+      const tex = manuscriptQuality.evaluation.tex;
       const evidenceMap = JSON.stringify(buildPaperEvidenceMap(paperDraft), null, 2);
       const traceabilityJson = `${JSON.stringify(traceability, null, 2)}\n`;
       const manuscriptJson = `${JSON.stringify(manuscript, null, 2)}\n`;
       const provenanceMapJson = `${JSON.stringify(scientificManuscript.provenance_map, null, 2)}\n`;
-      const submissionValidation = buildPaperSubmissionValidation({
-        manuscript,
-        tex,
-        traceability,
-        citationKeysByPaperId: bibtex.citationKeysByPaperId,
-        unresolvedCitationPaperIds: bibtex.unresolvedPaperIds
-      });
+      const submissionValidation = manuscriptQuality.evaluation.submissionValidation;
 
       await writeRunArtifact(run, "paper/main.tex", tex);
       await writeRunArtifact(run, "paper/references.bib", bibtex.references);
@@ -527,8 +571,8 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         "paper/consistency_lint.json",
         `${JSON.stringify(
           {
-            manuscript: scientificManuscript.consistency_lint,
-            appendix: scientificManuscript.appendix_lint
+            manuscript: manuscriptQuality.evaluation.consistencyLint,
+            appendix: manuscriptQuality.evaluation.appendixLint
           },
           null,
           2
@@ -559,8 +603,36 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await fs.writeFile(path.join(publicPaperDir, "provenance_map.json"), provenanceMapJson, "utf8");
       await fs.writeFile(path.join(publicPaperDir, "evidence_links.json"), evidenceMap, "utf8");
       await fs.writeFile(path.join(publicPaperDir, "gate_decision.json"), `${JSON.stringify(gateDecision, null, 2)}\n`, "utf8");
+      await fs.writeFile(
+        path.join(publicPaperDir, "manuscript_review.json"),
+        `${JSON.stringify(manuscriptQuality.review, null, 2)}\n`,
+        "utf8"
+      );
+      await fs.writeFile(
+        path.join(publicPaperDir, "manuscript_review_validation.json"),
+        `${JSON.stringify(manuscriptQuality.reviewValidation, null, 2)}\n`,
+        "utf8"
+      );
+      await fs.writeFile(
+        path.join(publicPaperDir, "manuscript_review_audit.json"),
+        `${JSON.stringify(manuscriptQuality.reviewAudit, null, 2)}\n`,
+        "utf8"
+      );
+      await fs.writeFile(
+        path.join(publicPaperDir, "manuscript_style_lint.json"),
+        `${JSON.stringify(manuscriptQuality.evaluation.styleLint, null, 2)}\n`,
+        "utf8"
+      );
+      await fs.writeFile(
+        path.join(publicPaperDir, "manuscript_quality_gate.json"),
+        `${JSON.stringify(manuscriptQuality.repairDecision, null, 2)}\n`,
+        "utf8"
+      );
 
-      const preCompileToolCallsUsed = Math.max(1, 4 - sessionResult.stageFallbacks) + (validationRepair.attempted ? 1 : 0);
+      const preCompileToolCallsUsed =
+        Math.max(1, 4 - sessionResult.stageFallbacks)
+        + (validationRepair.attempted ? 1 : 0)
+        + manuscriptQuality.toolCallsUsed;
       await runContextMemory.put("write_paper.public_dir", publicPaperDir);
       await runContextMemory.put("write_paper.source", sessionResult.source);
       await runContextMemory.put("write_paper.section_count", paperDraft.sections.length);
@@ -571,12 +643,32 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await runContextMemory.put("write_paper.provenance_map", scientificManuscript.provenance_map);
       await runContextMemory.put("write_paper.validation", validation);
       await runContextMemory.put("write_paper.consistency_lint", {
-        manuscript: scientificManuscript.consistency_lint,
-        appendix: scientificManuscript.appendix_lint
+        manuscript: manuscriptQuality.evaluation.consistencyLint,
+        appendix: manuscriptQuality.evaluation.appendixLint
       });
       await runContextMemory.put("write_paper.gate_decision", gateDecision);
       await runContextMemory.put("write_paper.submission_validation", submissionValidation);
       await runContextMemory.put("write_paper.validation_repair", validationRepair);
+      await runContextMemory.put("write_paper.manuscript_review", manuscriptQuality.review);
+      await runContextMemory.put("write_paper.manuscript_review_validation", manuscriptQuality.reviewValidation);
+      await runContextMemory.put("write_paper.manuscript_review_audit", manuscriptQuality.reviewAudit);
+      await runContextMemory.put("write_paper.manuscript_style_lint", manuscriptQuality.evaluation.styleLint);
+      await runContextMemory.put("write_paper.manuscript_quality_gate", manuscriptQuality.repairDecision);
+      await runContextMemory.put("write_paper.manuscript_repair_reports", manuscriptQuality.repairReports);
+      if (manuscriptQuality.repairDecision.action === "stop") {
+        const manuscriptError = buildManuscriptQualityFailureError(manuscriptQuality.repairDecision);
+        emitLog(manuscriptError);
+        await runContextMemory.put("write_paper.last_error", manuscriptError);
+        await runContextMemory.put("write_paper.compile_status", null);
+        await runContextMemory.put("write_paper.compile_report", null);
+        await runContextMemory.put("write_paper.pdf_path", null);
+        return {
+          status: "failure",
+          error: manuscriptError,
+          summary: manuscriptError,
+          toolCallsUsed: preCompileToolCallsUsed
+        };
+      }
       if (gateDecision.status === "warn") {
         emitLog(`Scientific quality gate warnings (${validationMode} mode): ${gateDecision.summary.slice(1).join(" ")}`);
       }
@@ -687,6 +779,31 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
           {
             sourcePath: path.join(runPaperDir, "evidence_links.json"),
             targetRelativePath: "evidence_links.json"
+          },
+          {
+            sourcePath: path.join(runPaperDir, "manuscript_review.json"),
+            targetRelativePath: "manuscript_review.json",
+            optional: true
+          },
+          {
+            sourcePath: path.join(runPaperDir, "manuscript_review_validation.json"),
+            targetRelativePath: "manuscript_review_validation.json",
+            optional: true
+          },
+          {
+            sourcePath: path.join(runPaperDir, "manuscript_review_audit.json"),
+            targetRelativePath: "manuscript_review_audit.json",
+            optional: true
+          },
+          {
+            sourcePath: path.join(runPaperDir, "manuscript_style_lint.json"),
+            targetRelativePath: "manuscript_style_lint.json",
+            optional: true
+          },
+          {
+            sourcePath: path.join(runPaperDir, "manuscript_quality_gate.json"),
+            targetRelativePath: "manuscript_quality_gate.json",
+            optional: true
           },
           {
             sourcePath: path.join(runPaperDir, "main.pdf"),
@@ -1412,6 +1529,884 @@ function describeScientificGateStatus(result: {
     return `fail (${result.blocking_issue_count} blocking issue${result.blocking_issue_count === 1 ? "" : "s"})`;
   }
   return `warn (${result.warning_count} issue${result.warning_count === 1 ? "" : "s"})`;
+}
+
+async function runManuscriptQualityLoop(input: {
+  run: Parameters<GraphNodeHandler["execute"]>[0]["run"];
+  sessions: PaperWriterSessionManager;
+  bundle: PaperWritingBundle;
+  draft: Parameters<typeof buildPaperTraceability>[0]["draft"];
+  initialManuscript: PaperManuscript;
+  constraintProfile: ConstraintProfile;
+  paperProfile: PaperProfileConfig;
+  objectiveMetricProfile: Awaited<ReturnType<typeof resolveObjectiveMetricProfile>>;
+  objectiveEvaluation?: ObjectiveMetricEvaluation;
+  scientificValidationArtifact: ReturnType<typeof buildScientificValidationArtifact>;
+  appendixPlan: Parameters<typeof materializeScientificManuscript>[0]["appendixPlan"];
+  pageBudget: Parameters<typeof materializeScientificManuscript>[0]["pageBudget"];
+  validationMode: "default" | "strict_paper";
+  citationKeysByPaperId: Map<string, string>;
+  unresolvedCitationPaperIds: string[];
+  template?: string;
+  emitLog: (text: string) => void;
+  abortSignal?: AbortSignal;
+  runContextMemory: RunContextMemory;
+}): Promise<{
+  evaluation: ManuscriptCandidateEvaluation;
+  review: ManuscriptReviewArtifact;
+  reviewValidation: ManuscriptReviewValidationArtifact;
+  reviewAudit: ManuscriptReviewAuditArtifact;
+  repairDecision: ManuscriptRepairDecision;
+  repairReports: ManuscriptRepairReport[];
+  toolCallsUsed: number;
+}> {
+  const context = experimentArtifactLoader({
+    bundle: input.bundle,
+    objectiveEvaluation: input.objectiveEvaluation,
+    objectiveMetricProfile: input.objectiveMetricProfile
+  });
+  const repairReports: ManuscriptRepairReport[] = [];
+let toolCallsUsed = 0;
+let currentManuscript = input.initialManuscript;
+  let previousIssues: ManuscriptQualityIssueSnapshot[] | undefined;
+
+  const evaluateCandidate = (manuscript: PaperManuscript): ManuscriptCandidateEvaluation => {
+    const consistencyLint = manuscriptConsistencyLinter({
+      manuscript,
+      context
+    });
+    const appendixLint = appendixConsistencyLinter({
+      manuscript,
+      appendixPlan: input.appendixPlan,
+      pageBudget: input.pageBudget
+    });
+    const gateDecision = buildWritePaperGateDecision({
+      mode: input.validationMode,
+      scientificValidation: input.scientificValidationArtifact,
+      consistencyLint,
+      appendixLint
+    });
+    const traceability = buildPaperTraceability({
+      draft: input.draft,
+      manuscript
+    });
+    const tex = renderSubmissionPaperTex({
+      manuscript,
+      traceability,
+      citationKeysByPaperId: input.citationKeysByPaperId,
+      template: input.template,
+      paperProfile: input.paperProfile
+    });
+    const submissionValidation = buildPaperSubmissionValidation({
+      manuscript,
+      tex,
+      traceability,
+      citationKeysByPaperId: input.citationKeysByPaperId,
+      unresolvedCitationPaperIds: input.unresolvedCitationPaperIds
+    });
+    const styleLint = buildManuscriptStyleLint({
+      manuscript,
+      traceability
+    });
+    return {
+      manuscript,
+      traceability,
+      tex,
+      submissionValidation,
+      styleLint,
+      consistencyLint,
+      appendixLint,
+      gateDecision
+    };
+  };
+
+  const persistRoundArtifacts = async (roundIndex: number, payload: {
+    review: ManuscriptReviewArtifact;
+    reviewRaw?: string;
+    reviewValidation: ManuscriptReviewValidationArtifact;
+    reviewAudit: ManuscriptReviewAuditArtifact;
+    auditRaw?: string;
+    lint: ManuscriptStyleLintArtifact;
+    decision: ManuscriptRepairDecision;
+  }) => {
+    await writeRoundArtifact(input.run, "paper/manuscript_review", roundIndex, payload.review);
+    await writeRunArtifact(input.run, "paper/manuscript_review.json", `${JSON.stringify(payload.review, null, 2)}\n`);
+    await writeRoundTextArtifact(input.run, "paper/manuscript_review", roundIndex, payload.reviewRaw || "");
+    await writeRunArtifact(input.run, "paper/manuscript_review.raw.txt", `${payload.reviewRaw || ""}\n`);
+    await writeRoundArtifact(
+      input.run,
+      "paper/manuscript_review_validation",
+      roundIndex,
+      payload.reviewValidation
+    );
+    await writeRunArtifact(
+      input.run,
+      "paper/manuscript_review_validation.json",
+      `${JSON.stringify(payload.reviewValidation, null, 2)}\n`
+    );
+    await writeRoundArtifact(input.run, "paper/manuscript_review_audit", roundIndex, payload.reviewAudit);
+    await writeRunArtifact(
+      input.run,
+      "paper/manuscript_review_audit.json",
+      `${JSON.stringify(payload.reviewAudit, null, 2)}\n`
+    );
+    await writeRoundTextArtifact(input.run, "paper/manuscript_review_audit", roundIndex, payload.auditRaw || "");
+    await writeRunArtifact(input.run, "paper/manuscript_review_audit.raw.txt", `${payload.auditRaw || ""}\n`);
+    await writeRoundArtifact(input.run, "paper/manuscript_style_lint", roundIndex, payload.lint);
+    await writeRunArtifact(input.run, "paper/manuscript_style_lint.json", `${JSON.stringify(payload.lint, null, 2)}\n`);
+    await writeRoundArtifact(input.run, "paper/manuscript_quality_gate", roundIndex, payload.decision);
+    await writeRunArtifact(input.run, "paper/manuscript_quality_gate.json", `${JSON.stringify(payload.decision, null, 2)}\n`);
+    await input.runContextMemory.put("write_paper.manuscript_review", payload.review);
+    await input.runContextMemory.put("write_paper.manuscript_review_validation", payload.reviewValidation);
+    await input.runContextMemory.put("write_paper.manuscript_review_audit", payload.reviewAudit);
+    await input.runContextMemory.put("write_paper.manuscript_style_lint", payload.lint);
+    await input.runContextMemory.put("write_paper.manuscript_quality_gate", payload.decision);
+  };
+
+  const persistRepairPlanArtifact = async (
+    passIndex: 1 | 2,
+    repairPlan: ManuscriptRepairPlanArtifact
+  ) => {
+    await writeRunArtifact(
+      input.run,
+      `paper/manuscript_repair_plan_${passIndex}.json`,
+      `${JSON.stringify(repairPlan, null, 2)}\n`
+    );
+    await input.runContextMemory.put(`write_paper.manuscript_repair_plan_${passIndex}`, repairPlan);
+  };
+
+  const persistRepairVerificationArtifact = async (
+    passIndex: 1 | 2,
+    verification: ManuscriptRepairVerificationArtifact
+  ) => {
+    await writeRunArtifact(
+      input.run,
+      `paper/manuscript_repair_verification_${passIndex}.json`,
+      `${JSON.stringify(verification, null, 2)}\n`
+    );
+    await input.runContextMemory.put(`write_paper.manuscript_repair_verification_${passIndex}`, verification);
+  };
+
+  const runGroundedReviewCycle = async (cycleInput: {
+    evaluation: ManuscriptCandidateEvaluation;
+    passLabel: string;
+  }): Promise<GroundedManuscriptReviewCycleResult> => {
+    let cycleToolCallsUsed = 0;
+    let retryUsed = false;
+    let reviewResult = await input.sessions.reviewManuscript({
+      run: input.run,
+      manuscript: cycleInput.evaluation.manuscript,
+      bundle: input.bundle,
+      constraintProfile: input.constraintProfile,
+      paperProfile: input.paperProfile,
+      objectiveMetricProfile: input.objectiveMetricProfile,
+      objectiveEvaluation: input.objectiveEvaluation,
+      stage: "manuscript_review",
+      passLabel: cycleInput.passLabel,
+      abortSignal: input.abortSignal
+    });
+    if (reviewResult.source !== "fallback") {
+      cycleToolCallsUsed += 1;
+    }
+
+    let review = reviewResult.review;
+    let reviewRaw = reviewResult.rawText;
+    let validated = validateManuscriptReviewArtifact({
+      review,
+      manuscript: cycleInput.evaluation.manuscript,
+      traceability: cycleInput.evaluation.traceability
+    });
+    review = validated.review;
+    let reviewValidation = validated.validation;
+
+    if (reviewValidation.retry_requested && !retryUsed) {
+      retryUsed = true;
+      reviewResult = await input.sessions.reviewManuscript({
+        run: input.run,
+        manuscript: cycleInput.evaluation.manuscript,
+        bundle: input.bundle,
+        constraintProfile: input.constraintProfile,
+        paperProfile: input.paperProfile,
+        objectiveMetricProfile: input.objectiveMetricProfile,
+        objectiveEvaluation: input.objectiveEvaluation,
+        stage: "manuscript_review_retry",
+        passLabel: `${cycleInput.passLabel} retry`,
+        previousReview: review,
+        reviewValidation,
+        abortSignal: input.abortSignal
+      });
+      if (reviewResult.source !== "fallback") {
+        cycleToolCallsUsed += 1;
+      }
+      review = reviewResult.review;
+      reviewRaw = reviewResult.rawText;
+      validated = validateManuscriptReviewArtifact({
+        review,
+        manuscript: cycleInput.evaluation.manuscript,
+        traceability: cycleInput.evaluation.traceability
+      });
+      review = validated.review;
+      reviewValidation = validated.validation;
+    }
+
+    let auditResult = await input.sessions.auditManuscriptReview({
+      run: input.run,
+      manuscript: cycleInput.evaluation.manuscript,
+      review,
+      validation: reviewValidation,
+      lint: cycleInput.evaluation.styleLint,
+      traceability: cycleInput.evaluation.traceability,
+      passLabel: cycleInput.passLabel,
+      abortSignal: input.abortSignal
+    });
+    if (auditResult.source !== "fallback") {
+      cycleToolCallsUsed += 1;
+    }
+    let reviewAudit = auditResult.audit;
+    let auditRaw = auditResult.rawText;
+
+    if (reviewAudit.retry_recommended && !retryUsed) {
+      retryUsed = true;
+      reviewResult = await input.sessions.reviewManuscript({
+        run: input.run,
+        manuscript: cycleInput.evaluation.manuscript,
+        bundle: input.bundle,
+        constraintProfile: input.constraintProfile,
+        paperProfile: input.paperProfile,
+        objectiveMetricProfile: input.objectiveMetricProfile,
+        objectiveEvaluation: input.objectiveEvaluation,
+        stage: "manuscript_review_retry",
+        passLabel: `${cycleInput.passLabel} retry`,
+        previousReview: review,
+        reviewValidation,
+        reviewAudit,
+        abortSignal: input.abortSignal
+      });
+      if (reviewResult.source !== "fallback") {
+        cycleToolCallsUsed += 1;
+      }
+      review = reviewResult.review;
+      reviewRaw = reviewResult.rawText;
+      validated = validateManuscriptReviewArtifact({
+        review,
+        manuscript: cycleInput.evaluation.manuscript,
+        traceability: cycleInput.evaluation.traceability
+      });
+      review = validated.review;
+      reviewValidation = validated.validation;
+      auditResult = await input.sessions.auditManuscriptReview({
+        run: input.run,
+        manuscript: cycleInput.evaluation.manuscript,
+        review,
+        validation: reviewValidation,
+        lint: cycleInput.evaluation.styleLint,
+        traceability: cycleInput.evaluation.traceability,
+        passLabel: `${cycleInput.passLabel} audit recheck`,
+        abortSignal: input.abortSignal
+      });
+      if (auditResult.source !== "fallback") {
+        cycleToolCallsUsed += 1;
+      }
+      reviewAudit = auditResult.audit;
+      auditRaw = auditResult.rawText;
+    }
+
+    return {
+      review,
+      reviewValidation,
+      reviewAudit,
+      reviewRaw,
+      auditRaw,
+      toolCallsUsed: cycleToolCallsUsed,
+      retryUsed
+    };
+  };
+
+  const resolvePendingRepairPlan = async (inputPlan: {
+    passIndex: 1 | 2;
+    manuscript: PaperManuscript;
+    review: ManuscriptReviewArtifact;
+    lint: ManuscriptStyleLintArtifact;
+    issues: ManuscriptQualityIssueSnapshot[];
+    decision: ManuscriptRepairDecision;
+  }): Promise<{
+    plan: ManuscriptRepairPlanArtifact | undefined;
+    decision: ManuscriptRepairDecision;
+  }> => {
+    if (inputPlan.decision.action !== "repair") {
+      return {
+        plan: undefined,
+        decision: inputPlan.decision
+      };
+    }
+    const repairPlan = buildManuscriptRepairPlan({
+      passIndex: inputPlan.passIndex,
+      manuscript: inputPlan.manuscript,
+      review: inputPlan.review,
+      lint: inputPlan.lint,
+      mustImproveIssues: inputPlan.issues
+    });
+    await persistRepairPlanArtifact(inputPlan.passIndex, repairPlan);
+    if (repairPlan.targets.length > 0 && repairPlan.blocked_targets.length === 0) {
+      return {
+        plan: repairPlan,
+        decision: inputPlan.decision
+      };
+    }
+    return {
+      plan: repairPlan,
+      decision: {
+        ...inputPlan.decision,
+        action: "stop",
+        remaining_allowed_repairs: 0,
+        stop_or_continue_reason:
+          repairPlan.targets.length === 0
+            ? "Repairable manuscript issues remained, but no bounded local repair target could be derived safely."
+            : "Repairable manuscript issues remained, but some issues could not be converted into safe bounded local repair targets."
+      }
+    };
+  };
+
+  let evaluation = evaluateCandidate(currentManuscript);
+  let reviewCycle = await runGroundedReviewCycle({
+    evaluation,
+    passLabel: "initial manuscript review"
+  });
+  toolCallsUsed += reviewCycle.toolCallsUsed;
+  let review = reviewCycle.review;
+  let reviewValidation = reviewCycle.reviewValidation;
+  let reviewAudit = reviewCycle.reviewAudit;
+  let decision = buildInitialManuscriptRepairDecision({
+    review,
+    reviewValidation,
+    reviewAudit,
+    lint: evaluation.styleLint
+  });
+  let pendingRepairPlanResult = await resolvePendingRepairPlan({
+    passIndex: 1,
+    manuscript: evaluation.manuscript,
+    review,
+    lint: evaluation.styleLint,
+    issues: decision.issues_before,
+    decision
+  });
+  let pendingRepairPlan = pendingRepairPlanResult.plan;
+  decision = pendingRepairPlanResult.decision;
+  await persistRoundArtifacts(0, {
+    review,
+    reviewRaw: reviewCycle.reviewRaw,
+    reviewValidation,
+    reviewAudit,
+    auditRaw: reviewCycle.auditRaw,
+    lint: evaluation.styleLint,
+    decision
+  });
+  input.emitLog(
+    `Manuscript quality round 0: decision=${decision.action}, issues=${decision.issues_before.length}, lint=${evaluation.styleLint.issues.length}, review_reliability=${resolveReviewArtifactReliability(reviewValidation, reviewAudit)}.`
+  );
+  if (decision.action === "pass") {
+    return {
+      evaluation,
+      review,
+      reviewValidation,
+      reviewAudit,
+      repairDecision: decision,
+      repairReports,
+      toolCallsUsed
+    };
+  }
+
+  previousIssues = decision.issues_before;
+
+  for (const passIndex of [1, 2] as const) {
+    if (decision.action !== "repair") {
+      break;
+    }
+    const remainingAllowedRepairs = Math.max(0, decision.allowed_max_passes - passIndex);
+    const repairPlan = pendingRepairPlan;
+    if (!repairPlan) {
+      decision = {
+        ...decision,
+        action: "stop",
+        remaining_allowed_repairs: 0,
+        stop_or_continue_reason: "A manuscript repair was requested, but no safe bounded local repair plan was available."
+      };
+      break;
+    }
+    input.emitLog(`Running manuscript repair pass ${passIndex}.`);
+    const manuscriptBeforeRepair = evaluation.manuscript;
+    const repairResult = await input.sessions.repairManuscript({
+      run: input.run,
+      passIndex,
+      manuscript: manuscriptBeforeRepair,
+      draft: input.draft,
+      bundle: input.bundle,
+      review,
+      lint: evaluation.styleLint,
+      repairPlan,
+      objectiveEvaluation: input.objectiveEvaluation,
+      objectiveMetricProfile: input.objectiveMetricProfile,
+      remainingAllowedRepairs,
+      mustImproveIssues: decision.issues_before,
+      abortSignal: input.abortSignal
+    });
+    if (repairResult.source !== "fallback") {
+      toolCallsUsed += 1;
+    }
+    currentManuscript = repairResult.manuscript;
+    evaluation = evaluateCandidate(currentManuscript);
+    reviewCycle = await runGroundedReviewCycle({
+      evaluation,
+      passLabel: `recheck after manuscript repair ${passIndex}`
+    });
+    toolCallsUsed += reviewCycle.toolCallsUsed;
+    review = reviewCycle.review;
+    reviewValidation = reviewCycle.reviewValidation;
+    reviewAudit = reviewCycle.reviewAudit;
+    const repairVerification = buildManuscriptRepairVerificationArtifact({
+      passIndex,
+      before: manuscriptBeforeRepair,
+      after: currentManuscript,
+      repairPlan,
+      reviewAfter: review
+    });
+    await persistRepairVerificationArtifact(passIndex, repairVerification);
+    const issuesAfter = collectManuscriptQualityIssues({
+      review,
+      lint: evaluation.styleLint
+    });
+    decision = buildFollowupManuscriptRepairDecision({
+      passIndex,
+      review,
+      reviewValidation,
+      reviewAudit,
+      repairVerification,
+      previousIssues: previousIssues || [],
+      issuesAfter,
+      gateDecision: evaluation.gateDecision,
+      submissionValidation: evaluation.submissionValidation
+    });
+    pendingRepairPlanResult = await resolvePendingRepairPlan({
+      passIndex: passIndex === 1 ? 2 : 2,
+      manuscript: evaluation.manuscript,
+      review,
+      lint: evaluation.styleLint,
+      issues: issuesAfter,
+      decision
+    });
+    pendingRepairPlan = pendingRepairPlanResult.plan;
+    decision = pendingRepairPlanResult.decision;
+    const report: ManuscriptRepairReport = {
+      pass_index: passIndex,
+      triggered_by: uniqueStrings((previousIssues || []).map((issue) => issue.code)),
+      allowed_max_passes: decision.allowed_max_passes,
+      issues_before: previousIssues || [],
+      issues_after: issuesAfter,
+      improvement_detected: Boolean(decision.improvement_detected),
+      stop_or_continue_reason: decision.stop_or_continue_reason
+    };
+    repairReports.push(report);
+    await writeRunArtifact(
+      input.run,
+      `paper/manuscript_repair_${passIndex}.json`,
+      `${JSON.stringify(repairResult.manuscript, null, 2)}\n`
+    );
+    await writeRunArtifact(
+      input.run,
+      `paper/manuscript_repair_${passIndex}.raw.txt`,
+      `${repairResult.rawText || repairResult.error || ""}\n`
+    );
+    await writeRunArtifact(
+      input.run,
+      `paper/manuscript_repair_${passIndex}_report.json`,
+      `${JSON.stringify(report, null, 2)}\n`
+    );
+    await persistRoundArtifacts(passIndex, {
+      review,
+      reviewRaw: reviewCycle.reviewRaw,
+      reviewValidation,
+      reviewAudit,
+      auditRaw: reviewCycle.auditRaw,
+      lint: evaluation.styleLint,
+      decision
+    });
+    await input.runContextMemory.put(`write_paper.manuscript_repair_${passIndex}`, report);
+    input.emitLog(
+      `Manuscript quality round ${passIndex}: decision=${decision.action}, remaining_issues=${issuesAfter.length}, improvement=${decision.improvement_detected ? "yes" : "no"}, review_reliability=${resolveReviewArtifactReliability(reviewValidation, reviewAudit)}.`
+    );
+    if (decision.action === "pass" || decision.action === "stop") {
+      break;
+    }
+    previousIssues = issuesAfter;
+  }
+
+  if (decision.action === "stop") {
+    await writeRunArtifact(
+      input.run,
+      "paper/manuscript_quality_failure.json",
+      `${JSON.stringify(
+        {
+          generated_at: new Date().toISOString(),
+          reason: decision.stop_or_continue_reason,
+          final_issues: decision.issues_after || decision.issues_before
+        },
+        null,
+        2
+      )}\n`
+    );
+  }
+
+  return {
+    evaluation,
+    review,
+    reviewValidation,
+    reviewAudit,
+    repairDecision: decision,
+    repairReports,
+    toolCallsUsed
+  };
+}
+
+function buildInitialManuscriptRepairDecision(input: {
+  review: ManuscriptReviewArtifact;
+  reviewValidation: ManuscriptReviewValidationArtifact;
+  reviewAudit: ManuscriptReviewAuditArtifact;
+  lint: ManuscriptStyleLintArtifact;
+}): ManuscriptRepairDecision {
+  const issuesBefore = collectManuscriptQualityIssues({
+    review: input.review,
+    lint: input.lint
+  });
+  const reviewReliability = resolveReviewArtifactReliability(input.reviewValidation, input.reviewAudit);
+  const failCount = issuesBefore.filter((issue) => issue.severity === "fail").length;
+  if (issuesBefore.length === 0 && reviewReliability === "degraded") {
+    return {
+      action: "stop",
+      pass_index: 0,
+      triggered_by: [],
+      allowed_max_passes: 1,
+      remaining_allowed_repairs: 0,
+      issues_before: [],
+      stop_or_continue_reason:
+        "The manuscript review artifact remained degraded after bounded validation and audit, so the manuscript cannot be accepted silently."
+    };
+  }
+  if (issuesBefore.length === 0) {
+    return {
+      action: "pass",
+      pass_index: 0,
+      triggered_by: [],
+      allowed_max_passes: 1,
+      remaining_allowed_repairs: 1,
+      issues_before: [],
+      stop_or_continue_reason: "Initial manuscript review and style lint passed."
+    };
+  }
+  if (
+    issuesBefore.every((issue) => issue.repairable) &&
+    (failCount > 0 || input.review.overall_decision === "repair")
+  ) {
+    return {
+      action: "repair",
+      pass_index: 0,
+      triggered_by: uniqueStrings(issuesBefore.map((issue) => issue.code)),
+      allowed_max_passes: 1,
+      remaining_allowed_repairs: 1,
+      issues_before: issuesBefore,
+      stop_or_continue_reason: "Repairable manuscript-quality issues remain after the initial review."
+    };
+  }
+  return {
+    action: "pass",
+    pass_index: 0,
+    triggered_by: uniqueStrings(issuesBefore.map((issue) => issue.code)),
+    allowed_max_passes: 1,
+    remaining_allowed_repairs: 1,
+    issues_before: issuesBefore,
+    stop_or_continue_reason: "Initial manuscript review found only non-blocking manuscript warnings."
+  };
+}
+
+function buildFollowupManuscriptRepairDecision(input: {
+  passIndex: 1 | 2;
+  review: ManuscriptReviewArtifact;
+  reviewValidation: ManuscriptReviewValidationArtifact;
+  reviewAudit: ManuscriptReviewAuditArtifact;
+  repairVerification: ManuscriptRepairVerificationArtifact;
+  previousIssues: ManuscriptQualityIssueSnapshot[];
+  issuesAfter: ManuscriptQualityIssueSnapshot[];
+  gateDecision: ReturnType<typeof buildWritePaperGateDecision>;
+  submissionValidation: PaperSubmissionValidationReport;
+}): ManuscriptRepairDecision {
+  const reviewReliability = resolveReviewArtifactReliability(input.reviewValidation, input.reviewAudit);
+  const improvement = detectIssueImprovement(input.previousIssues, input.issuesAfter);
+  const repeatedIssueSignatures = findRepeatedIssueSignatures(input.previousIssues, input.issuesAfter);
+  const repeatedCriticalIssues = repeatedIssueSignatures.filter((signature) =>
+    CRITICAL_REPEAT_MANUSCRIPT_CODES.has(signature.code)
+  );
+  const remainingFailCount = input.issuesAfter.filter((issue) => issue.severity === "fail").length;
+  if (!input.repairVerification.locality_ok) {
+    return {
+      action: "stop",
+      pass_index: input.passIndex,
+      triggered_by: uniqueStrings(input.previousIssues.map((issue) => issue.code)),
+      allowed_max_passes: 1,
+      remaining_allowed_repairs: 0,
+      issues_before: input.previousIssues,
+      issues_after: input.issuesAfter,
+      improvement_detected: improvement,
+      stop_or_continue_reason: "The manuscript repair changed out-of-scope locations, so the bounded local repair loop stops."
+    };
+  }
+  if (input.issuesAfter.length === 0) {
+    if (reviewReliability === "degraded") {
+      return {
+        action: "stop",
+        pass_index: input.passIndex,
+        triggered_by: uniqueStrings(input.previousIssues.map((issue) => issue.code)),
+        allowed_max_passes: input.passIndex === 1 ? 1 : 2,
+        remaining_allowed_repairs: 0,
+        issues_before: input.previousIssues,
+        issues_after: input.issuesAfter,
+        improvement_detected: improvement,
+        stop_or_continue_reason:
+          "The repaired manuscript is locally clean, but the follow-up manuscript review artifact remained degraded after bounded retry."
+      };
+    }
+    return {
+      action: "pass",
+      pass_index: input.passIndex,
+      triggered_by: uniqueStrings(input.previousIssues.map((issue) => issue.code)),
+      allowed_max_passes: input.passIndex === 1 ? 1 : 2,
+      remaining_allowed_repairs: 0,
+      issues_before: input.previousIssues,
+      issues_after: input.issuesAfter,
+      improvement_detected: improvement,
+      stop_or_continue_reason: `Manuscript repair ${input.passIndex} resolved the remaining manuscript-quality issues.`
+    };
+  }
+  if (input.passIndex >= 2) {
+    return {
+      action: "stop",
+      pass_index: input.passIndex,
+      triggered_by: uniqueStrings(input.previousIssues.map((issue) => issue.code)),
+      allowed_max_passes: 2,
+      remaining_allowed_repairs: 0,
+      issues_before: input.previousIssues,
+      issues_after: input.issuesAfter,
+      improvement_detected: improvement,
+      stop_or_continue_reason: "A third manuscript repair pass is forbidden."
+    };
+  }
+  if (remainingFailCount === 0 && input.review.overall_decision !== "repair") {
+    return {
+      action: "pass",
+      pass_index: input.passIndex,
+      triggered_by: uniqueStrings(input.previousIssues.map((issue) => issue.code)),
+      allowed_max_passes: input.passIndex === 1 ? 1 : 2,
+      remaining_allowed_repairs: 0,
+      issues_before: input.previousIssues,
+      issues_after: input.issuesAfter,
+      improvement_detected: improvement,
+      stop_or_continue_reason: "Only non-blocking manuscript warnings remain after repair."
+    };
+  }
+  if (input.gateDecision.status === "fail" || !input.submissionValidation.ok) {
+    return {
+      action: "stop",
+      pass_index: input.passIndex,
+      triggered_by: uniqueStrings(input.issuesAfter.map((issue) => issue.code)),
+      allowed_max_passes: 1,
+      remaining_allowed_repairs: 0,
+      issues_before: input.previousIssues,
+      issues_after: input.issuesAfter,
+      improvement_detected: improvement,
+      stop_or_continue_reason: "Scientific or submission validation now exposes core failures, so a second manuscript repair is not allowed."
+    };
+  }
+  if (reviewReliability === "degraded") {
+    return {
+      action: "stop",
+      pass_index: input.passIndex,
+      triggered_by: uniqueStrings(input.issuesAfter.map((issue) => issue.code)),
+      allowed_max_passes: 1,
+      remaining_allowed_repairs: 0,
+      issues_before: input.previousIssues,
+      issues_after: input.issuesAfter,
+      improvement_detected: improvement,
+      stop_or_continue_reason:
+        "The follow-up manuscript review artifact remained degraded after bounded validation and audit, so a second manuscript repair is not allowed."
+    };
+  }
+  if (repeatedCriticalIssues.length > 0) {
+    return {
+      action: "stop",
+      pass_index: input.passIndex,
+      triggered_by: repeatedCriticalIssues.map((item) => item.code),
+      allowed_max_passes: 1,
+      remaining_allowed_repairs: 0,
+      issues_before: input.previousIssues,
+      issues_after: input.issuesAfter,
+      improvement_detected: improvement,
+      stop_or_continue_reason: "Critical manuscript-quality issue codes repeated after the first repair pass."
+    };
+  }
+  if (repeatedIssueSignatures.length > 0) {
+    return {
+      action: "stop",
+      pass_index: input.passIndex,
+      triggered_by: uniqueStrings(repeatedIssueSignatures.map((item) => item.code)),
+      allowed_max_passes: 1,
+      remaining_allowed_repairs: 0,
+      issues_before: input.previousIssues,
+      issues_after: input.issuesAfter,
+      improvement_detected: improvement,
+      stop_or_continue_reason: "The same manuscript-quality issue code repeated after repair, so the loop stops instead of retrying silently."
+    };
+  }
+  if (!improvement || worsenedIssues(input.previousIssues, input.issuesAfter)) {
+    return {
+      action: "stop",
+      pass_index: input.passIndex,
+      triggered_by: uniqueStrings(input.issuesAfter.map((issue) => issue.code)),
+      allowed_max_passes: 1,
+      remaining_allowed_repairs: 0,
+      issues_before: input.previousIssues,
+      issues_after: input.issuesAfter,
+      improvement_detected: improvement,
+      stop_or_continue_reason: "The first manuscript repair did not show a reliable quality improvement."
+    };
+  }
+  const narrowScope =
+    input.issuesAfter.every((issue) => issue.repairable) &&
+    input.issuesAfter.length <= 3 &&
+    uniqueStrings(input.issuesAfter.map((issue) => `${issue.source}:${issue.code}`)).length <= 3 &&
+    input.review.overall_decision !== "stop";
+  if (narrowScope) {
+    return {
+      action: "repair",
+      pass_index: input.passIndex,
+      triggered_by: uniqueStrings(input.issuesAfter.map((issue) => issue.code)),
+      allowed_max_passes: 2,
+      remaining_allowed_repairs: 1,
+      issues_before: input.previousIssues,
+      issues_after: input.issuesAfter,
+      improvement_detected: improvement,
+      stop_or_continue_reason: "A second and final manuscript repair is allowed because the remaining issues are narrow, repairable, and improved after pass 1."
+    };
+  }
+  return {
+    action: "stop",
+    pass_index: input.passIndex,
+    triggered_by: uniqueStrings(input.issuesAfter.map((issue) => issue.code)),
+    allowed_max_passes: 1,
+    remaining_allowed_repairs: 0,
+    issues_before: input.previousIssues,
+    issues_after: input.issuesAfter,
+    improvement_detected: improvement,
+    stop_or_continue_reason: "Remaining manuscript issues are too broad for a second local repair pass."
+  };
+}
+
+function detectIssueImprovement(
+  before: ManuscriptQualityIssueSnapshot[],
+  after: ManuscriptQualityIssueSnapshot[]
+): boolean {
+  const beforeFail = before.filter((issue) => issue.severity === "fail").length;
+  const afterFail = after.filter((issue) => issue.severity === "fail").length;
+  if (afterFail < beforeFail) {
+    return true;
+  }
+  const beforeScore = issueSeverityScore(before);
+  const afterScore = issueSeverityScore(after);
+  if (afterScore < beforeScore) {
+    return true;
+  }
+  const beforeCodes = uniqueStrings(before.map((issue) => issue.code));
+  const afterCodes = new Set(after.map((issue) => issue.code));
+  const unresolvedBeforeCodes = beforeCodes.filter((code) => afterCodes.has(code));
+  if (unresolvedBeforeCodes.length < beforeCodes.length) {
+    return true;
+  }
+  return uniqueStrings(after.map(issueSignature)).length < uniqueStrings(before.map(issueSignature)).length;
+}
+
+function worsenedIssues(
+  before: ManuscriptQualityIssueSnapshot[],
+  after: ManuscriptQualityIssueSnapshot[]
+): boolean {
+  return issueSeverityScore(after) > issueSeverityScore(before)
+    || after.filter((issue) => issue.severity === "fail").length > before.filter((issue) => issue.severity === "fail").length;
+}
+
+function issueSeverityScore(issues: ManuscriptQualityIssueSnapshot[]): number {
+  return issues.reduce((sum, issue) => sum + (issue.severity === "fail" ? 2 : 1), 0);
+}
+
+function findRepeatedIssueSignatures(
+  previous: ManuscriptQualityIssueSnapshot[],
+  current: ManuscriptQualityIssueSnapshot[]
+): Array<{ code: string; section: string; severity: "warning" | "fail" }> {
+  const previousSet = new Set(previous.map(issueSignature));
+  return current
+    .filter((issue) => previousSet.has(issueSignature(issue)))
+    .map((issue) => ({
+      code: issue.code,
+      section: issue.section,
+      severity: issue.severity
+    }));
+}
+
+function issueSignature(issue: ManuscriptQualityIssueSnapshot): string {
+  const anchorSignature =
+    issue.anchor_ids && issue.anchor_ids.length > 0
+      ? uniqueStrings(issue.anchor_ids).sort().join("|")
+      : issue.section;
+  return `${issue.source}:${issue.code}:${anchorSignature}:${issue.severity}`;
+}
+
+function resolveReviewArtifactReliability(
+  reviewValidation: ManuscriptReviewValidationArtifact,
+  reviewAudit: ManuscriptReviewAuditArtifact
+): "grounded" | "degraded" {
+  return reviewValidation.artifact_reliability === "grounded" && reviewAudit.artifact_reliability === "grounded"
+    ? "grounded"
+    : "degraded";
+}
+
+async function writeRoundArtifact(
+  run: Parameters<GraphNodeHandler["execute"]>[0]["run"],
+  basePath: string,
+  roundIndex: number,
+  payload: unknown
+): Promise<void> {
+  await writeRunArtifact(run, `${basePath}_round_${roundIndex}.json`, `${JSON.stringify(payload, null, 2)}\n`);
+}
+
+async function writeRoundTextArtifact(
+  run: Parameters<GraphNodeHandler["execute"]>[0]["run"],
+  basePath: string,
+  roundIndex: number,
+  text: string
+): Promise<void> {
+  await writeRunArtifact(run, `${basePath}_round_${roundIndex}.raw.txt`, `${text}\n`);
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.filter((value) => value && value.trim().length > 0))];
+}
+
+const CRITICAL_REPEAT_MANUSCRIPT_CODES = new Set([
+  "rhetorical_overreach",
+  "citation_hygiene",
+  "appendix_hygiene",
+  "appendix_internal_text",
+  "appendix_meta_text",
+  "appendix_raw_artifact_reference"
+]);
+
+function buildManuscriptQualityFailureError(report: ManuscriptRepairDecision): string {
+  return `write_paper generated manuscript artifacts but stopped before scientific/submission acceptance because the manuscript-quality gate failed: ${report.stop_or_continue_reason}`;
 }
 
 function buildSubmissionValidationError(

@@ -785,7 +785,7 @@ export function datasetResultTableBuilder(context: ExperimentArtifactContext): P
 
   return [
     {
-      caption: "Dataset-level outcomes retained in the main paper to anchor the central empirical story.",
+      caption: "Dataset-level numeric comparison retained in the main paper to anchor the central empirical story conservatively.",
       rows
     }
   ];
@@ -812,10 +812,23 @@ export function figureSelectorAndCaptionWriter(context: ExperimentArtifactContex
 
   const caption = sanitizeVisualCaption(
     context.results.figure_captions[0],
-    "Dataset-level outcome summary with uncertainty-aware interpretation retained in the main paper."
+    "Trend-oriented outcome summary retained in the main paper when it adds a distinct visual pattern beyond the table."
   );
 
+  if (!visualCaptionHasDistinctRole(caption) || !barsShowDistinctPattern(bars)) {
+    return [];
+  }
+
   return [{ caption, bars }];
+}
+
+function visualCaptionHasDistinctRole(caption: string): boolean {
+  return /\b(trend|distribution|trade-?off|trajectory|pattern|heterogeneity|variation)\b/iu.test(caption);
+}
+
+function barsShowDistinctPattern(bars: Array<{ label: string; value: number }>): boolean {
+  const roundedValues = [...new Set(bars.map((bar) => Math.round(bar.value * 1000) / 1000))];
+  return bars.length >= 3 && roundedValues.length >= 3;
 }
 
 function hasInternalCaptionToken(caption: string): boolean {
@@ -855,6 +868,37 @@ function sanitizeCandidateFigures(figures: PaperManuscriptFigure[] | undefined):
       "Dataset-level outcome summary with uncertainty-aware interpretation retained in the main paper."
     )
   }));
+}
+
+function dropRedundantFiguresAgainstTables(
+  tables: PaperManuscriptTable[] | undefined,
+  figures: PaperManuscriptFigure[] | undefined
+): PaperManuscriptFigure[] | undefined {
+  if (!tables?.length || !figures?.length) {
+    return figures;
+  }
+  return figures.filter((figure) => {
+    const figureLabels = new Set(figure.bars.map((row) => cleanString(row.label).toLowerCase()));
+    return !tables.some((table) => {
+      const tableLabels = new Set(table.rows.map((row) => cleanString(row.label).toLowerCase()));
+      const overlap = computeSetOverlap(tableLabels, figureLabels);
+      return overlap >= 0.75 && !visualCaptionHasDistinctRole(figure.caption);
+    });
+  });
+}
+
+function computeSetOverlap(left: Set<string>, right: Set<string>): number {
+  const union = new Set([...left, ...right]);
+  if (union.size === 0) {
+    return 0;
+  }
+  let intersection = 0;
+  for (const value of left) {
+    if (right.has(value)) {
+      intersection += 1;
+    }
+  }
+  return intersection / union.size;
 }
 
 export function pageBudgetManager(input: {
@@ -3267,6 +3311,7 @@ export function materializeScientificManuscript(input: {
         source_refs: buildArtifactSourceRefs(["result_analysis.figure_specs", "latest_results.dataset_summaries"])
       }))
     : sanitizeCandidateFigures(input.candidate.figures);
+  const selectedFigures = dropRedundantFiguresAgainstTables(tables, figures);
   const appendixSections = input.appendixPlan.sections.map((section) => ({
     ...section,
     source_refs: buildArtifactSourceRefs([`appendix:${section.heading}`, "latest_results", "result_analysis"])
@@ -3290,7 +3335,7 @@ export function materializeScientificManuscript(input: {
     abstract: rewriteTextForClaimStrength(input.candidate.abstract, context, []),
     sections,
     ...(tables ? { tables } : {}),
-    ...(figures ? { figures } : {}),
+    ...(selectedFigures ? { figures: selectedFigures } : {}),
     appendix_sections: appendixSections,
     appendix_tables: appendixTables,
     appendix_figures: appendixFigures
