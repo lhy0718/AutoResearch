@@ -56,6 +56,7 @@ import {
   buildManuscriptRepairVerificationArtifact,
   buildManuscriptStyleLint,
   collectManuscriptQualityIssues,
+  reconcileManuscriptStyleLintWithReview,
   ManuscriptQualityIssueSnapshot,
   ManuscriptRepairPlanArtifact,
   ManuscriptRepairVerificationArtifact,
@@ -137,6 +138,42 @@ interface PaperInputValidationReport {
   ok: boolean;
   issues: PaperInputValidationIssue[];
 }
+
+interface ManuscriptQualityFailureArtifact {
+  generated_at: string;
+  reason: string;
+  decision_digest: ManuscriptRepairDecision["decision_digest"];
+  summary_lines: string[];
+  triggered_by: string[];
+  review_reliability: "grounded" | "partially_grounded" | "degraded";
+  final_issues: ManuscriptQualityIssueSnapshot[];
+  lint_findings: Array<{
+    code: string;
+    section: string;
+    severity: "warning" | "fail";
+    gate_role?: "primary_signal" | "backstop_only" | "hard_stop";
+    coverage_status?: "primary" | "backstop_only";
+    covered_by_review_issue_code?: string;
+    location_keys?: string[];
+  }>;
+  reviewer_missed_policy_findings: Array<{
+    code: string;
+    section: string;
+    severity: "warning" | "fail";
+    gate_role?: "hard_stop";
+    location_keys?: string[];
+  }>;
+  reviewer_covered_backstop_findings: Array<{
+    code: string;
+    section: string;
+    severity: "warning" | "fail";
+    gate_role?: "backstop_only";
+    covered_by_review_issue_code?: string;
+    location_keys?: string[];
+  }>;
+}
+
+type ManuscriptRepairDecisionCore = Omit<ManuscriptRepairDecision, "summary_lines" | "decision_digest">;
 
 interface PaperDraftValidationRepairReport {
   threshold: number;
@@ -1690,6 +1727,8 @@ let currentManuscript = input.initialManuscript;
   const runGroundedReviewCycle = async (cycleInput: {
     evaluation: ManuscriptCandidateEvaluation;
     passLabel: string;
+    repairPlan?: ManuscriptRepairPlanArtifact;
+    focusLocationKeys?: string[];
   }): Promise<GroundedManuscriptReviewCycleResult> => {
     let cycleToolCallsUsed = 0;
     let retryUsed = false;
@@ -1703,6 +1742,8 @@ let currentManuscript = input.initialManuscript;
       objectiveEvaluation: input.objectiveEvaluation,
       stage: "manuscript_review",
       passLabel: cycleInput.passLabel,
+      repairPlan: cycleInput.repairPlan,
+      focusLocationKeys: cycleInput.focusLocationKeys,
       abortSignal: input.abortSignal
     });
     if (reviewResult.source !== "fallback") {
@@ -1733,6 +1774,8 @@ let currentManuscript = input.initialManuscript;
         passLabel: `${cycleInput.passLabel} retry`,
         previousReview: review,
         reviewValidation,
+        repairPlan: cycleInput.repairPlan,
+        focusLocationKeys: cycleInput.focusLocationKeys,
         abortSignal: input.abortSignal
       });
       if (reviewResult.source !== "fallback") {
@@ -1780,6 +1823,8 @@ let currentManuscript = input.initialManuscript;
         previousReview: review,
         reviewValidation,
         reviewAudit,
+        repairPlan: cycleInput.repairPlan,
+        focusLocationKeys: cycleInput.focusLocationKeys,
         abortSignal: input.abortSignal
       });
       if (reviewResult.source !== "fallback") {
@@ -1810,6 +1855,21 @@ let currentManuscript = input.initialManuscript;
       reviewAudit = auditResult.audit;
       auditRaw = auditResult.rawText;
     }
+
+    reviewValidation = {
+      ...reviewValidation,
+      metrics: {
+        ...reviewValidation.metrics,
+        retry_used: retryUsed
+      }
+    };
+    reviewAudit = {
+      ...reviewAudit,
+      metrics: {
+        ...reviewAudit.metrics,
+        retry_used: retryUsed
+      }
+    };
 
     return {
       review,
@@ -1876,17 +1936,25 @@ let currentManuscript = input.initialManuscript;
   let review = reviewCycle.review;
   let reviewValidation = reviewCycle.reviewValidation;
   let reviewAudit = reviewCycle.reviewAudit;
+  let effectiveStyleLint = reconcileManuscriptStyleLintWithReview({
+    lint: evaluation.styleLint,
+    review
+  });
+  evaluation = {
+    ...evaluation,
+    styleLint: effectiveStyleLint
+  };
   let decision = buildInitialManuscriptRepairDecision({
     review,
     reviewValidation,
     reviewAudit,
-    lint: evaluation.styleLint
+    lint: effectiveStyleLint
   });
   let pendingRepairPlanResult = await resolvePendingRepairPlan({
     passIndex: 1,
     manuscript: evaluation.manuscript,
     review,
-    lint: evaluation.styleLint,
+    lint: effectiveStyleLint,
     issues: decision.issues_before,
     decision
   });
@@ -1898,11 +1966,11 @@ let currentManuscript = input.initialManuscript;
     reviewValidation,
     reviewAudit,
     auditRaw: reviewCycle.auditRaw,
-    lint: evaluation.styleLint,
+    lint: effectiveStyleLint,
     decision
   });
   input.emitLog(
-    `Manuscript quality round 0: decision=${decision.action}, issues=${decision.issues_before.length}, lint=${evaluation.styleLint.issues.length}, review_reliability=${resolveReviewArtifactReliability(reviewValidation, reviewAudit)}.`
+    `Manuscript quality round 0: decision=${decision.action}, issues=${decision.issues_before.length}, lint=${effectiveStyleLint.issues.length}, review_reliability=${resolveReviewArtifactReliability(reviewValidation, reviewAudit)}.`
   );
   if (decision.action === "pass") {
     return {
@@ -1957,12 +2025,26 @@ let currentManuscript = input.initialManuscript;
     evaluation = evaluateCandidate(currentManuscript);
     reviewCycle = await runGroundedReviewCycle({
       evaluation,
-      passLabel: `recheck after manuscript repair ${passIndex}`
+      passLabel: `recheck after manuscript repair ${passIndex}`,
+      repairPlan,
+      focusLocationKeys: uniqueStrings(
+        repairPlan.targets.flatMap((target) =>
+          target.allowed_location_keys.length > 0 ? target.allowed_location_keys : [target.location_key]
+        )
+      )
     });
     toolCallsUsed += reviewCycle.toolCallsUsed;
     review = reviewCycle.review;
     reviewValidation = reviewCycle.reviewValidation;
     reviewAudit = reviewCycle.reviewAudit;
+    effectiveStyleLint = reconcileManuscriptStyleLintWithReview({
+      lint: evaluation.styleLint,
+      review
+    });
+    evaluation = {
+      ...evaluation,
+      styleLint: effectiveStyleLint
+    };
     const repairVerification = buildManuscriptRepairVerificationArtifact({
       passIndex,
       before: manuscriptBeforeRepair,
@@ -1973,7 +2055,7 @@ let currentManuscript = input.initialManuscript;
     await persistRepairVerificationArtifact(passIndex, repairVerification);
     const issuesAfter = collectManuscriptQualityIssues({
       review,
-      lint: evaluation.styleLint
+      lint: effectiveStyleLint
     });
     decision = buildFollowupManuscriptRepairDecision({
       passIndex,
@@ -1990,7 +2072,7 @@ let currentManuscript = input.initialManuscript;
       passIndex: passIndex === 1 ? 2 : 2,
       manuscript: evaluation.manuscript,
       review,
-      lint: evaluation.styleLint,
+      lint: effectiveStyleLint,
       issues: issuesAfter,
       decision
     });
@@ -2003,6 +2085,8 @@ let currentManuscript = input.initialManuscript;
       issues_before: previousIssues || [],
       issues_after: issuesAfter,
       improvement_detected: Boolean(decision.improvement_detected),
+      verification_summary: repairVerification.summary,
+      verification_findings: buildRepairVerificationFindings(repairVerification),
       stop_or_continue_reason: decision.stop_or_continue_reason
     };
     repairReports.push(report);
@@ -2027,7 +2111,7 @@ let currentManuscript = input.initialManuscript;
       reviewValidation,
       reviewAudit,
       auditRaw: reviewCycle.auditRaw,
-      lint: evaluation.styleLint,
+      lint: effectiveStyleLint,
       decision
     });
     await input.runContextMemory.put(`write_paper.manuscript_repair_${passIndex}`, report);
@@ -2045,11 +2129,12 @@ let currentManuscript = input.initialManuscript;
       input.run,
       "paper/manuscript_quality_failure.json",
       `${JSON.stringify(
-        {
-          generated_at: new Date().toISOString(),
-          reason: decision.stop_or_continue_reason,
-          final_issues: decision.issues_after || decision.issues_before
-        },
+        buildManuscriptQualityFailureArtifact({
+          decision,
+          lint: evaluation.styleLint,
+          reviewValidation,
+          reviewAudit
+        }),
         null,
         2
       )}\n`
@@ -2079,8 +2164,9 @@ function buildInitialManuscriptRepairDecision(input: {
   });
   const reviewReliability = resolveReviewArtifactReliability(input.reviewValidation, input.reviewAudit);
   const failCount = issuesBefore.filter((issue) => issue.severity === "fail").length;
+  const nonRepairableFailCount = issuesBefore.filter((issue) => issue.severity === "fail" && !issue.repairable).length;
   if (issuesBefore.length === 0 && reviewReliability === "degraded") {
-    return {
+    return finalizeManuscriptRepairDecision({
       action: "stop",
       pass_index: 0,
       triggered_by: [],
@@ -2089,10 +2175,22 @@ function buildInitialManuscriptRepairDecision(input: {
       issues_before: [],
       stop_or_continue_reason:
         "The manuscript review artifact remained degraded after bounded validation and audit, so the manuscript cannot be accepted silently."
-    };
+    }, reviewReliability);
+  }
+  if (nonRepairableFailCount > 0) {
+    return finalizeManuscriptRepairDecision({
+      action: "stop",
+      pass_index: 0,
+      triggered_by: uniqueStrings(issuesBefore.filter((issue) => issue.severity === "fail" && !issue.repairable).map((issue) => issue.code)),
+      allowed_max_passes: 1,
+      remaining_allowed_repairs: 0,
+      issues_before: issuesBefore,
+      stop_or_continue_reason:
+        "Deterministic hard-stop manuscript policy findings remain outside the repairable local-writing surface."
+    }, reviewReliability);
   }
   if (issuesBefore.length === 0) {
-    return {
+    return finalizeManuscriptRepairDecision({
       action: "pass",
       pass_index: 0,
       triggered_by: [],
@@ -2100,13 +2198,13 @@ function buildInitialManuscriptRepairDecision(input: {
       remaining_allowed_repairs: 1,
       issues_before: [],
       stop_or_continue_reason: "Initial manuscript review and style lint passed."
-    };
+    }, reviewReliability);
   }
   if (
     issuesBefore.every((issue) => issue.repairable) &&
     (failCount > 0 || input.review.overall_decision === "repair")
   ) {
-    return {
+    return finalizeManuscriptRepairDecision({
       action: "repair",
       pass_index: 0,
       triggered_by: uniqueStrings(issuesBefore.map((issue) => issue.code)),
@@ -2114,9 +2212,9 @@ function buildInitialManuscriptRepairDecision(input: {
       remaining_allowed_repairs: 1,
       issues_before: issuesBefore,
       stop_or_continue_reason: "Repairable manuscript-quality issues remain after the initial review."
-    };
+    }, reviewReliability);
   }
-  return {
+  return finalizeManuscriptRepairDecision({
     action: "pass",
     pass_index: 0,
     triggered_by: uniqueStrings(issuesBefore.map((issue) => issue.code)),
@@ -2124,7 +2222,7 @@ function buildInitialManuscriptRepairDecision(input: {
     remaining_allowed_repairs: 1,
     issues_before: issuesBefore,
     stop_or_continue_reason: "Initial manuscript review found only non-blocking manuscript warnings."
-  };
+  }, reviewReliability);
 }
 
 function buildFollowupManuscriptRepairDecision(input: {
@@ -2144,9 +2242,14 @@ function buildFollowupManuscriptRepairDecision(input: {
   const repeatedCriticalIssues = repeatedIssueSignatures.filter((signature) =>
     CRITICAL_REPEAT_MANUSCRIPT_CODES.has(signature.code)
   );
+  const changedVisualReviewIssues = collectChangedVisualReviewIssues(
+    input.review,
+    input.repairVerification.changed_location_keys
+  );
   const remainingFailCount = input.issuesAfter.filter((issue) => issue.severity === "fail").length;
+  const remainingNonRepairableFails = input.issuesAfter.filter((issue) => issue.severity === "fail" && !issue.repairable);
   if (!input.repairVerification.locality_ok) {
-    return {
+    return finalizeManuscriptRepairDecision({
       action: "stop",
       pass_index: input.passIndex,
       triggered_by: uniqueStrings(input.previousIssues.map((issue) => issue.code)),
@@ -2156,11 +2259,46 @@ function buildFollowupManuscriptRepairDecision(input: {
       issues_after: input.issuesAfter,
       improvement_detected: improvement,
       stop_or_continue_reason: "The manuscript repair changed out-of-scope locations, so the bounded local repair loop stops."
-    };
+    }, reviewReliability);
+  }
+  if (
+    changedVisualReviewIssues.some((issue) => issue.severity === "fail")
+    || (input.review.overall_decision === "stop" && changedVisualReviewIssues.length > 0)
+  ) {
+    return finalizeManuscriptRepairDecision({
+      action: "stop",
+      pass_index: input.passIndex,
+      triggered_by: uniqueStrings(changedVisualReviewIssues.map((issue) => issue.code)),
+      allowed_max_passes: input.passIndex === 1 ? 1 : 2,
+      remaining_allowed_repairs: 0,
+      issues_before: input.previousIssues,
+      issues_after: input.issuesAfter,
+      improvement_detected: improvement,
+      stop_or_continue_reason:
+        "The follow-up manuscript review still finds a changed visual or caption issue after repair, so the bounded local repair loop stops."
+    }, reviewReliability);
+  }
+  if (!input.repairVerification.visual_conservatism_ok && changedVisualReviewIssues.length === 0) {
+    return finalizeManuscriptRepairDecision({
+      action: "stop",
+      pass_index: input.passIndex,
+      triggered_by: uniqueStrings([
+        ...input.previousIssues.map((issue) => issue.code),
+        ...(!input.repairVerification.visual_caption_conservatism_ok ? ["visual_caption_overclaim"] : []),
+        ...(!input.repairVerification.visual_label_conservatism_ok ? ["visual_label_overclaim"] : [])
+      ]),
+      allowed_max_passes: input.passIndex === 1 ? 1 : 2,
+      remaining_allowed_repairs: 0,
+      issues_before: input.previousIssues,
+      issues_after: input.issuesAfter,
+      improvement_detected: improvement,
+      stop_or_continue_reason:
+        "The repaired manuscript still contains non-conservative changed visual wording, so the bounded local repair loop stops instead of retrying silently."
+    }, reviewReliability);
   }
   if (input.issuesAfter.length === 0) {
     if (reviewReliability === "degraded") {
-      return {
+      return finalizeManuscriptRepairDecision({
         action: "stop",
         pass_index: input.passIndex,
         triggered_by: uniqueStrings(input.previousIssues.map((issue) => issue.code)),
@@ -2171,9 +2309,9 @@ function buildFollowupManuscriptRepairDecision(input: {
         improvement_detected: improvement,
         stop_or_continue_reason:
           "The repaired manuscript is locally clean, but the follow-up manuscript review artifact remained degraded after bounded retry."
-      };
+      }, reviewReliability);
     }
-    return {
+    return finalizeManuscriptRepairDecision({
       action: "pass",
       pass_index: input.passIndex,
       triggered_by: uniqueStrings(input.previousIssues.map((issue) => issue.code)),
@@ -2183,10 +2321,24 @@ function buildFollowupManuscriptRepairDecision(input: {
       issues_after: input.issuesAfter,
       improvement_detected: improvement,
       stop_or_continue_reason: `Manuscript repair ${input.passIndex} resolved the remaining manuscript-quality issues.`
-    };
+    }, reviewReliability);
+  }
+  if (remainingNonRepairableFails.length > 0) {
+    return finalizeManuscriptRepairDecision({
+      action: "stop",
+      pass_index: input.passIndex,
+      triggered_by: uniqueStrings(remainingNonRepairableFails.map((issue) => issue.code)),
+      allowed_max_passes: input.passIndex === 1 ? 1 : 2,
+      remaining_allowed_repairs: 0,
+      issues_before: input.previousIssues,
+      issues_after: input.issuesAfter,
+      improvement_detected: improvement,
+      stop_or_continue_reason:
+        "Deterministic hard-stop manuscript policy findings remain after repair, so another local manuscript repair is not allowed."
+    }, reviewReliability);
   }
   if (input.passIndex >= 2) {
-    return {
+    return finalizeManuscriptRepairDecision({
       action: "stop",
       pass_index: input.passIndex,
       triggered_by: uniqueStrings(input.previousIssues.map((issue) => issue.code)),
@@ -2196,10 +2348,10 @@ function buildFollowupManuscriptRepairDecision(input: {
       issues_after: input.issuesAfter,
       improvement_detected: improvement,
       stop_or_continue_reason: "A third manuscript repair pass is forbidden."
-    };
+    }, reviewReliability);
   }
   if (remainingFailCount === 0 && input.review.overall_decision !== "repair") {
-    return {
+    return finalizeManuscriptRepairDecision({
       action: "pass",
       pass_index: input.passIndex,
       triggered_by: uniqueStrings(input.previousIssues.map((issue) => issue.code)),
@@ -2209,10 +2361,10 @@ function buildFollowupManuscriptRepairDecision(input: {
       issues_after: input.issuesAfter,
       improvement_detected: improvement,
       stop_or_continue_reason: "Only non-blocking manuscript warnings remain after repair."
-    };
+    }, reviewReliability);
   }
   if (input.gateDecision.status === "fail" || !input.submissionValidation.ok) {
-    return {
+    return finalizeManuscriptRepairDecision({
       action: "stop",
       pass_index: input.passIndex,
       triggered_by: uniqueStrings(input.issuesAfter.map((issue) => issue.code)),
@@ -2222,10 +2374,10 @@ function buildFollowupManuscriptRepairDecision(input: {
       issues_after: input.issuesAfter,
       improvement_detected: improvement,
       stop_or_continue_reason: "Scientific or submission validation now exposes core failures, so a second manuscript repair is not allowed."
-    };
+    }, reviewReliability);
   }
   if (reviewReliability === "degraded") {
-    return {
+    return finalizeManuscriptRepairDecision({
       action: "stop",
       pass_index: input.passIndex,
       triggered_by: uniqueStrings(input.issuesAfter.map((issue) => issue.code)),
@@ -2236,10 +2388,24 @@ function buildFollowupManuscriptRepairDecision(input: {
       improvement_detected: improvement,
       stop_or_continue_reason:
         "The follow-up manuscript review artifact remained degraded after bounded validation and audit, so a second manuscript repair is not allowed."
-    };
+    }, reviewReliability);
+  }
+  if (reviewReliability === "partially_grounded") {
+    return finalizeManuscriptRepairDecision({
+      action: "stop",
+      pass_index: input.passIndex,
+      triggered_by: uniqueStrings(input.issuesAfter.map((issue) => issue.code)),
+      allowed_max_passes: 1,
+      remaining_allowed_repairs: 0,
+      issues_before: input.previousIssues,
+      issues_after: input.issuesAfter,
+      improvement_detected: improvement,
+      stop_or_continue_reason:
+        "The follow-up manuscript review remained only partially grounded, so a second manuscript repair is not allowed."
+    }, reviewReliability);
   }
   if (repeatedCriticalIssues.length > 0) {
-    return {
+    return finalizeManuscriptRepairDecision({
       action: "stop",
       pass_index: input.passIndex,
       triggered_by: repeatedCriticalIssues.map((item) => item.code),
@@ -2249,10 +2415,10 @@ function buildFollowupManuscriptRepairDecision(input: {
       issues_after: input.issuesAfter,
       improvement_detected: improvement,
       stop_or_continue_reason: "Critical manuscript-quality issue codes repeated after the first repair pass."
-    };
+    }, reviewReliability);
   }
   if (repeatedIssueSignatures.length > 0) {
-    return {
+    return finalizeManuscriptRepairDecision({
       action: "stop",
       pass_index: input.passIndex,
       triggered_by: uniqueStrings(repeatedIssueSignatures.map((item) => item.code)),
@@ -2262,10 +2428,10 @@ function buildFollowupManuscriptRepairDecision(input: {
       issues_after: input.issuesAfter,
       improvement_detected: improvement,
       stop_or_continue_reason: "The same manuscript-quality issue code repeated after repair, so the loop stops instead of retrying silently."
-    };
+    }, reviewReliability);
   }
   if (!improvement || worsenedIssues(input.previousIssues, input.issuesAfter)) {
-    return {
+    return finalizeManuscriptRepairDecision({
       action: "stop",
       pass_index: input.passIndex,
       triggered_by: uniqueStrings(input.issuesAfter.map((issue) => issue.code)),
@@ -2275,7 +2441,7 @@ function buildFollowupManuscriptRepairDecision(input: {
       issues_after: input.issuesAfter,
       improvement_detected: improvement,
       stop_or_continue_reason: "The first manuscript repair did not show a reliable quality improvement."
-    };
+    }, reviewReliability);
   }
   const narrowScope =
     input.issuesAfter.every((issue) => issue.repairable) &&
@@ -2283,7 +2449,7 @@ function buildFollowupManuscriptRepairDecision(input: {
     uniqueStrings(input.issuesAfter.map((issue) => `${issue.source}:${issue.code}`)).length <= 3 &&
     input.review.overall_decision !== "stop";
   if (narrowScope) {
-    return {
+    return finalizeManuscriptRepairDecision({
       action: "repair",
       pass_index: input.passIndex,
       triggered_by: uniqueStrings(input.issuesAfter.map((issue) => issue.code)),
@@ -2293,9 +2459,9 @@ function buildFollowupManuscriptRepairDecision(input: {
       issues_after: input.issuesAfter,
       improvement_detected: improvement,
       stop_or_continue_reason: "A second and final manuscript repair is allowed because the remaining issues are narrow, repairable, and improved after pass 1."
-    };
+    }, reviewReliability);
   }
-  return {
+  return finalizeManuscriptRepairDecision({
     action: "stop",
     pass_index: input.passIndex,
     triggered_by: uniqueStrings(input.issuesAfter.map((issue) => issue.code)),
@@ -2305,7 +2471,7 @@ function buildFollowupManuscriptRepairDecision(input: {
     issues_after: input.issuesAfter,
     improvement_detected: improvement,
     stop_or_continue_reason: "Remaining manuscript issues are too broad for a second local repair pass."
-  };
+  }, reviewReliability);
 }
 
 function detectIssueImprovement(
@@ -2365,13 +2531,297 @@ function issueSignature(issue: ManuscriptQualityIssueSnapshot): string {
   return `${issue.source}:${issue.code}:${anchorSignature}:${issue.severity}`;
 }
 
+function collectChangedVisualReviewIssues(
+  review: ManuscriptReviewArtifact,
+  changedLocationKeys: string[]
+): ManuscriptReviewArtifact["issues"] {
+  const changedSet = new Set(changedLocationKeys);
+  return review.issues.filter((issue) =>
+    (issue.visual_targets || []).some((target) => {
+      const locationKey = target.kind === "table"
+        ? `table:${target.index}`
+        : target.kind === "figure"
+          ? `figure:${target.index}`
+          : target.kind === "appendix_table"
+            ? `appendix_table:${target.index}`
+            : `appendix_figure:${target.index}`;
+      return changedSet.has(locationKey);
+    })
+  );
+}
+
 function resolveReviewArtifactReliability(
   reviewValidation: ManuscriptReviewValidationArtifact,
   reviewAudit: ManuscriptReviewAuditArtifact
-): "grounded" | "degraded" {
-  return reviewValidation.artifact_reliability === "grounded" && reviewAudit.artifact_reliability === "grounded"
-    ? "grounded"
-    : "degraded";
+): "grounded" | "partially_grounded" | "degraded" {
+  if (
+    reviewValidation.artifact_reliability === "degraded"
+    || reviewAudit.artifact_reliability === "degraded"
+  ) {
+    return "degraded";
+  }
+  if (
+    reviewValidation.artifact_reliability === "partially_grounded"
+    || reviewAudit.artifact_reliability === "partially_grounded"
+  ) {
+    return "partially_grounded";
+  }
+  return "grounded";
+}
+
+function finalizeManuscriptRepairDecision(
+  decision: ManuscriptRepairDecisionCore,
+  reviewReliability: "grounded" | "partially_grounded" | "degraded"
+): ManuscriptRepairDecision {
+  return {
+    ...decision,
+    decision_digest: buildManuscriptQualityGateDecisionDigest({
+      decision,
+      reviewReliability
+    }),
+    summary_lines: buildManuscriptQualityGateSummaryLines({
+      decision,
+      reviewReliability
+    })
+  };
+}
+
+function buildManuscriptQualityGateDecisionDigest(input: {
+  decision: ManuscriptRepairDecisionCore;
+  reviewReliability: "grounded" | "partially_grounded" | "degraded";
+}): ManuscriptRepairDecision["decision_digest"] {
+  const before = summarizeIssueCounts(input.decision.issues_before);
+  const after = input.decision.issues_after ? summarizeIssueCounts(input.decision.issues_after) : undefined;
+  return {
+    stage:
+      input.decision.pass_index === 0
+        ? "initial_gate"
+        : input.decision.pass_index === 1
+          ? "post_repair_1"
+          : "post_repair_2",
+    action: input.decision.action,
+    review_reliability: input.reviewReliability,
+    issue_counts_before: before,
+    ...(after ? { issue_counts_after: after } : {}),
+    ...(typeof input.decision.improvement_detected === "boolean"
+      ? { improvement_detected: input.decision.improvement_detected }
+      : {}),
+    allowed_max_passes: input.decision.allowed_max_passes,
+    remaining_allowed_repairs: input.decision.remaining_allowed_repairs,
+    triggered_by: input.decision.triggered_by,
+    stop_reason_category: inferManuscriptQualityStopReasonCategory(input.decision, input.reviewReliability)
+  };
+}
+
+function summarizeIssueCounts(
+  issues: ManuscriptQualityIssueSnapshot[]
+): ManuscriptRepairDecision["decision_digest"]["issue_counts_before"] {
+  return {
+    total: issues.length,
+    fail: issues.filter((issue) => issue.severity === "fail").length,
+    warning: issues.filter((issue) => issue.severity === "warning").length
+  };
+}
+
+function inferManuscriptQualityStopReasonCategory(
+  decision: ManuscriptRepairDecisionCore,
+  reviewReliability: "grounded" | "partially_grounded" | "degraded"
+): ManuscriptRepairDecision["decision_digest"]["stop_reason_category"] {
+  if (decision.action === "repair") {
+    return "repairable_manuscript_issue";
+  }
+  if (decision.action === "pass") {
+    return "clean_pass";
+  }
+  if (reviewReliability === "degraded" || reviewReliability === "partially_grounded") {
+    if (
+      /review artifact remained degraded|review artifact remained partially grounded|cannot be accepted silently/iu.test(
+        decision.stop_or_continue_reason
+      )
+    ) {
+      return "review_reliability";
+    }
+  }
+  if (/out-of-scope locations|bounded local repair loop stops/iu.test(decision.stop_or_continue_reason)) {
+    return "locality_violation";
+  }
+  if (
+    decision.triggered_by.some((code) => code.startsWith("appendix_"))
+    || /appendix/i.test(decision.stop_or_continue_reason)
+  ) {
+    return "policy_hard_stop";
+  }
+  if (
+    decision.triggered_by.includes("visual_caption_overclaim")
+    || /visual caption|changed visual|visual surfaces/iu.test(decision.stop_or_continue_reason)
+  ) {
+    return "visual_overclaim";
+  }
+  if (/Scientific or submission validation/iu.test(decision.stop_or_continue_reason)) {
+    return "upstream_scientific_or_submission_failure";
+  }
+  if (/repeated/iu.test(decision.stop_or_continue_reason)) {
+    return "repeated_issue";
+  }
+  if (/did not show a reliable quality improvement/iu.test(decision.stop_or_continue_reason)) {
+    return "no_improvement";
+  }
+  if (/too broad|third manuscript repair pass is forbidden/iu.test(decision.stop_or_continue_reason)) {
+    return "scope_too_broad";
+  }
+  if (reviewReliability === "partially_grounded" || reviewReliability === "degraded") {
+    return "review_reliability";
+  }
+  return "repairable_manuscript_issue";
+}
+
+function buildManuscriptQualityGateSummaryLines(input: {
+  decision: ManuscriptRepairDecisionCore;
+  reviewReliability: "grounded" | "partially_grounded" | "degraded";
+}): string[] {
+  const digest = buildManuscriptQualityGateDecisionDigest(input);
+  const beforeTotal = input.decision.issues_before.length;
+  const beforeFail = input.decision.issues_before.filter((issue) => issue.severity === "fail").length;
+  const afterIssues = input.decision.issues_after;
+  const lines = [
+    `Action: ${input.decision.action}.`,
+    input.decision.pass_index === 0
+      ? "Decision stage: initial manuscript-quality gate."
+      : `Decision stage: post-repair gate after pass ${input.decision.pass_index}.`,
+    `Decision reason: ${input.decision.stop_or_continue_reason}`,
+    `Review reliability: ${input.reviewReliability}.`,
+    `Reason category: ${digest.stop_reason_category}.`,
+    `Issues before: ${beforeTotal} total (${beforeFail} fail).`
+  ];
+  if (afterIssues) {
+    const afterFail = afterIssues.filter((issue) => issue.severity === "fail").length;
+    lines.push(`Issues after: ${afterIssues.length} total (${afterFail} fail).`);
+  }
+  if (typeof input.decision.improvement_detected === "boolean") {
+    lines.push(`Improvement detected: ${input.decision.improvement_detected ? "yes" : "no"}.`);
+  }
+  lines.push(
+    `Allowed max repairs: ${input.decision.allowed_max_passes}; remaining allowed repairs: ${input.decision.remaining_allowed_repairs}.`
+  );
+  if (input.decision.triggered_by.length > 0) {
+    lines.push(`Triggered by: ${input.decision.triggered_by.join(", ")}.`);
+  }
+  return lines;
+}
+
+function buildRepairVerificationFindings(
+  verification: ManuscriptRepairVerificationArtifact
+): ManuscriptRepairReport["verification_findings"] {
+  const findings: ManuscriptRepairReport["verification_findings"] = [];
+  if (verification.out_of_scope_changes.length > 0) {
+    findings.push({
+      code: "out_of_scope_change",
+      severity: "fail",
+      location_keys: verification.out_of_scope_changes,
+      message: "The repair modified locations outside the bounded local repair plan."
+    });
+  }
+  const nonConservativeCaptionChecks = verification.visual_caption_checks.filter((check) => !check.conservative);
+  if (nonConservativeCaptionChecks.length > 0) {
+    findings.push({
+      code: "visual_caption_overclaim",
+      severity: "fail",
+      location_keys: nonConservativeCaptionChecks.map((check) => check.location_key),
+      message: "The repaired manuscript still contains changed visual captions that overstate the takeaway.",
+      concerns: uniqueStrings(nonConservativeCaptionChecks.flatMap((check) => check.concerns))
+    });
+  }
+  const nonConservativeLabelChecks = verification.visual_label_checks.filter((check) => !check.conservative);
+  if (nonConservativeLabelChecks.length > 0) {
+    findings.push({
+      code: "visual_label_overclaim",
+      severity: "fail",
+      location_keys: nonConservativeLabelChecks.map((check) => check.location_key),
+      message: "The repaired manuscript still contains changed visual labels that overstate the takeaway.",
+      concerns: uniqueStrings(nonConservativeLabelChecks.flatMap((check) => check.concerns))
+    });
+  }
+  return findings;
+}
+
+function buildManuscriptQualityFailureArtifact(input: {
+  decision: ManuscriptRepairDecision;
+  lint: ManuscriptStyleLintArtifact;
+  reviewValidation: ManuscriptReviewValidationArtifact;
+  reviewAudit: ManuscriptReviewAuditArtifact;
+}): ManuscriptQualityFailureArtifact {
+  const reviewReliability = resolveReviewArtifactReliability(input.reviewValidation, input.reviewAudit);
+  const lintFindings = input.lint.issues.map((issue) => ({
+    code: issue.code,
+    section: issue.section,
+    severity: issue.severity,
+    gate_role: issue.gate_role,
+    coverage_status: issue.coverage_status,
+    covered_by_review_issue_code: issue.covered_by_review_issue_code,
+    location_keys: issue.location_keys
+  }));
+  const reviewerMissedPolicyFindings = lintFindings
+    .filter((issue) => issue.gate_role === "hard_stop")
+    .map((issue) => ({
+      code: issue.code,
+      section: issue.section,
+      severity: issue.severity,
+      gate_role: "hard_stop" as const,
+      location_keys: issue.location_keys
+    }));
+  const reviewerCoveredBackstopFindings = lintFindings
+    .filter((issue) => issue.gate_role === "backstop_only")
+    .map((issue) => ({
+      code: issue.code,
+      section: issue.section,
+      severity: issue.severity,
+      gate_role: "backstop_only" as const,
+      covered_by_review_issue_code: issue.covered_by_review_issue_code,
+      location_keys: issue.location_keys
+    }));
+  return {
+    generated_at: new Date().toISOString(),
+    reason: input.decision.stop_or_continue_reason,
+    decision_digest: input.decision.decision_digest,
+    summary_lines: buildManuscriptQualityFailureSummaryLines({
+      decision: input.decision,
+      reviewReliability,
+      reviewerMissedPolicyFindings,
+      reviewerCoveredBackstopFindings
+    }),
+    triggered_by: input.decision.triggered_by,
+    review_reliability: reviewReliability,
+    final_issues: input.decision.issues_after || input.decision.issues_before,
+    lint_findings: lintFindings,
+    reviewer_missed_policy_findings: reviewerMissedPolicyFindings,
+    reviewer_covered_backstop_findings: reviewerCoveredBackstopFindings
+  };
+}
+
+function buildManuscriptQualityFailureSummaryLines(input: {
+  decision: ManuscriptRepairDecision;
+  reviewReliability: "grounded" | "partially_grounded" | "degraded";
+  reviewerMissedPolicyFindings: ManuscriptQualityFailureArtifact["reviewer_missed_policy_findings"];
+  reviewerCoveredBackstopFindings: ManuscriptQualityFailureArtifact["reviewer_covered_backstop_findings"];
+}): string[] {
+  const lines = [
+    `Stop reason: ${input.decision.stop_or_continue_reason}`,
+    `Review reliability: ${input.reviewReliability}.`
+  ];
+  if (input.reviewerMissedPolicyFindings.length > 0) {
+    lines.push(
+      `${input.reviewerMissedPolicyFindings.length} deterministic hard-stop finding(s) remained outside reviewer coverage.`
+    );
+  }
+  if (input.reviewerCoveredBackstopFindings.length > 0) {
+    lines.push(
+      `${input.reviewerCoveredBackstopFindings.length} deterministic finding(s) remained as reviewer-covered backstops.`
+    );
+  }
+  if (input.decision.triggered_by.length > 0) {
+    lines.push(`Triggered by: ${input.decision.triggered_by.join(", ")}.`);
+  }
+  return lines;
 }
 
 async function writeRoundArtifact(

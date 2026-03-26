@@ -431,6 +431,11 @@ function buildManuscriptReviewResponse(input: {
       excerpt: string;
       reason?: string;
     }>;
+    visual_targets?: Array<{
+      kind: "table" | "figure" | "appendix_table" | "appendix_figure";
+      index: number;
+      rationale?: string;
+    }>;
   }>;
 }): string {
   const status = input.decision === "pass" ? "pass" : input.decision === "repair" ? "warn" : "fail";
@@ -454,7 +459,7 @@ function buildManuscriptReviewResponse(input: {
 
 function buildManuscriptReviewAuditResponse(input?: {
   ok?: boolean;
-  artifact_reliability?: "grounded" | "degraded";
+  artifact_reliability?: "grounded" | "partially_grounded" | "degraded";
   retry_recommended?: boolean;
   summary?: string;
   issues?: Array<{
@@ -687,6 +692,486 @@ function buildIntroductionAlignmentAdjacentRepairResponses(): string[] {
     }),
     buildManuscriptReviewResponse({ decision: "pass" }),
     buildManuscriptReviewAuditResponse()
+  ];
+}
+
+function buildVisualRedundancyPairRepairResponses(): string[] {
+  const sharedTableRows = [
+    { label: "Stateless baseline", value: 0.71 },
+    { label: "Thread-backed drafting", value: 0.76 },
+    { label: "Observed delta", value: 0.05 }
+  ];
+  const preservedTradeoffBars = [
+    { label: "Latency-optimized", value: 0.52 },
+    { label: "Accuracy-optimized", value: 0.61 },
+    { label: "Balanced operating point", value: 0.57 }
+  ];
+  const initial = JSON.parse(
+    buildPolishedManuscriptResponse({
+      tables: [
+        {
+          caption: "Exact numeric comparison for revision stability.",
+          rows: sharedTableRows
+        }
+      ],
+      figures: [
+        {
+          caption: "A redundant bar chart restating the exact revision-stability comparison.",
+          bars: sharedTableRows
+        },
+        {
+          caption: "A separate tradeoff figure that should remain unchanged.",
+          bars: preservedTradeoffBars
+        }
+      ]
+    })
+  ) as any;
+  const repaired = JSON.parse(
+    buildPolishedManuscriptResponse({
+      tables: [
+        {
+          caption: "Exact numeric comparison for revision stability.",
+          rows: sharedTableRows
+        }
+      ]
+    })
+  ) as any;
+  repaired.figures = [
+    {
+      caption: "A trend-focused figure highlighting the relative stability gap without restating the full table.",
+      bars: [
+        { label: "Relative stability gap", value: 0.05 },
+        { label: "Thread-backed drafting", value: 0.76 },
+        { label: "Stateless baseline", value: 0.71 }
+      ]
+    },
+    {
+      caption: "A separate tradeoff figure that should remain unchanged.",
+      bars: preservedTradeoffBars
+    }
+  ];
+  return [
+    ...buildSessionResponses(),
+    JSON.stringify(initial),
+    buildManuscriptReviewResponse({
+      decision: "repair",
+      summary: "The manuscript reads well overall, but one visual pair is redundant.",
+      issues: [
+        {
+          code: "visual_redundancy",
+          severity: "warning",
+          section: "Results",
+          repairable: true,
+          message: "Figure 1 restates Table 1 instead of adding a distinct visual pattern.",
+          fix_recommendation: "Keep the exact table and revise Figure 1 so it communicates a narrower trend-focused takeaway.",
+          visual_targets: [
+            {
+              kind: "table",
+              index: 0,
+              rationale: "Table 1 is one half of the redundant pair and should remain numerically precise."
+            },
+            {
+              kind: "figure",
+              index: 0,
+              rationale: "Figure 1 is the redundant visual that should be revised into a distinct trend-focused figure."
+            }
+          ]
+        }
+      ]
+    }),
+    buildManuscriptReviewAuditResponse(),
+    buildWrappedRepairResponse(repaired, {
+      changed_location_keys: ["figure:0"]
+    }),
+    buildManuscriptReviewResponse({ decision: "pass" }),
+    buildManuscriptReviewAuditResponse()
+  ];
+}
+
+function buildVisualCaptionOverclaimStopResponses(): string[] {
+  const sharedTableRows = [
+    { label: "Stateless baseline", value: 0.71 },
+    { label: "Thread-backed drafting", value: 0.76 },
+    { label: "Observed delta", value: 0.05 }
+  ];
+  const preservedTradeoffBars = [
+    { label: "Latency-optimized", value: 0.52 },
+    { label: "Accuracy-optimized", value: 0.61 },
+    { label: "Balanced operating point", value: 0.57 }
+  ];
+  const initial = JSON.parse(
+    buildPolishedManuscriptResponse({
+      tables: [
+        {
+          caption: "Exact numeric comparison for revision stability.",
+          rows: sharedTableRows
+        }
+      ],
+      figures: [
+        {
+          caption: "A redundant bar chart restating the exact revision-stability comparison.",
+          bars: sharedTableRows
+        },
+        {
+          caption: "A separate tradeoff figure that should remain unchanged.",
+          bars: preservedTradeoffBars
+        }
+      ]
+    })
+  ) as any;
+  const repaired = JSON.parse(
+    buildPolishedManuscriptResponse({
+      tables: [
+        {
+          caption: "Exact numeric comparison for revision stability.",
+          rows: sharedTableRows
+        }
+      ]
+    })
+  ) as any;
+  repaired.figures = [
+    {
+      caption: "This figure clearly demonstrates broad applicability across domains.",
+      bars: [
+        { label: "Relative stability gap", value: 0.05 },
+        { label: "Thread-backed drafting", value: 0.76 },
+        { label: "Stateless baseline", value: 0.71 }
+      ]
+    },
+    {
+      caption: "A separate tradeoff figure that should remain unchanged.",
+      bars: preservedTradeoffBars
+    }
+  ];
+  return [
+    ...buildSessionResponses(),
+    JSON.stringify(initial),
+    buildManuscriptReviewResponse({
+      decision: "repair",
+      summary: "The manuscript reads well overall, but one visual pair is redundant.",
+      issues: [
+        {
+          code: "visual_redundancy",
+          severity: "warning",
+          section: "Results",
+          repairable: true,
+          message: "Figure 1 restates Table 1 instead of adding a distinct visual pattern.",
+          fix_recommendation: "Keep the exact table and revise Figure 1 so it communicates a narrower trend-focused takeaway.",
+          visual_targets: [
+            { kind: "table", index: 0, rationale: "Table 1 is one half of the redundant pair." },
+            { kind: "figure", index: 0, rationale: "Figure 1 is the redundant visual that should be revised." }
+          ]
+        }
+      ]
+    }),
+    buildManuscriptReviewAuditResponse(),
+    buildWrappedRepairResponse(repaired, {
+      changed_location_keys: ["figure:0"]
+    }),
+    buildManuscriptReviewResponse({
+      decision: "stop",
+      issues: [
+        {
+          code: "rhetorical_overreach",
+          severity: "fail",
+          section: "Results",
+          repairable: false,
+          message: "The changed figure caption now claims broad applicability beyond the tested workflow setting.",
+          fix_recommendation: "Constrain the figure caption to the observed workflow setting and the specific visual takeaway.",
+          visual_targets: [
+            {
+              kind: "figure",
+              index: 0,
+              rationale: "Figure 1 caption is the local overclaiming surface after repair."
+            }
+          ]
+        }
+      ]
+    }),
+    buildManuscriptReviewAuditResponse()
+  ];
+}
+
+function buildAppendixHardStopResponses(): string[] {
+  const contaminated = JSON.parse(
+    buildPolishedManuscriptResponse({
+      appendix_sections: [
+        {
+          heading: "Appendix. Notes",
+          paragraphs: [
+            "TODO: keep topic fixed and inspect .autolabos/runs/run-1/result_analysis.json before finalizing."
+          ]
+        }
+      ]
+    })
+  ) as any;
+  return [
+    ...buildSessionResponses(),
+    JSON.stringify(contaminated),
+    buildManuscriptReviewResponse({ decision: "pass" }),
+    buildManuscriptReviewAuditResponse()
+  ];
+}
+
+function buildAppendixBackstopRepairResponses(): string[] {
+  const contaminated = JSON.parse(
+    buildPolishedManuscriptResponse({
+      appendix_sections: [
+        {
+          heading: "Appendix. Notes",
+          paragraphs: [
+            "TODO: keep topic fixed and inspect .autolabos/runs/run-1/result_analysis.json before finalizing."
+          ]
+        }
+      ]
+    })
+  ) as any;
+  const repaired = JSON.parse(
+    buildPolishedManuscriptResponse({
+      appendix_sections: [
+        {
+          heading: "Appendix. Notes",
+          paragraphs: [
+            "Supplementary protocol notes summarize the repeated-run setup without internal workflow residue."
+          ]
+        }
+      ]
+    })
+  ) as any;
+  return [
+    ...buildSessionResponses(),
+    JSON.stringify(contaminated),
+    buildManuscriptReviewResponse({
+      decision: "repair",
+      issues: [
+        {
+          code: "appendix_hygiene",
+          severity: "fail",
+          section: "Appendix",
+          repairable: true,
+          message: "The appendix contains internal planning language and raw artifact references.",
+          fix_recommendation: "Replace the contaminated appendix note with reader-facing supplementary detail.",
+          supporting_spans: [
+            {
+              section: "Appendix. Notes",
+              paragraph_index: 0,
+              excerpt: contaminated.appendix_sections[0].paragraphs[0],
+              reason: "This appendix paragraph contains internal/meta residue."
+            }
+          ]
+        }
+      ]
+    }),
+    buildManuscriptReviewAuditResponse(),
+    buildWrappedRepairResponse(repaired, {
+      changed_location_keys: ["appendix_paragraph:appendix._notes:0"]
+    }),
+    buildManuscriptReviewResponse({ decision: "pass" }),
+    buildManuscriptReviewAuditResponse()
+  ];
+}
+
+function buildTableCaptionOverclaimStopResponses(): string[] {
+  const sharedTableRows = [
+    { label: "Stateless baseline", value: 0.71 },
+    { label: "Thread-backed drafting", value: 0.76 },
+    { label: "Observed delta", value: 0.05 }
+  ];
+  const initial = JSON.parse(
+    buildPolishedManuscriptResponse({
+      tables: [
+        {
+          caption: "Exact numeric comparison for revision stability.",
+          rows: sharedTableRows
+        }
+      ]
+    })
+  ) as any;
+  const repaired = JSON.parse(
+    buildPolishedManuscriptResponse({
+      tables: [
+        {
+          caption: "This table clearly demonstrates broad applicability across domains.",
+          rows: sharedTableRows
+        }
+      ]
+    })
+  ) as any;
+  return [
+    ...buildSessionResponses(),
+    JSON.stringify(initial),
+    buildManuscriptReviewResponse({
+      decision: "repair",
+      issues: [
+        {
+          code: "visual_redundancy",
+          severity: "warning",
+          section: "Results",
+          repairable: true,
+          message: "Table 1 caption should be narrowed to a scoped numeric comparison.",
+          fix_recommendation: "Keep the numeric table but constrain the caption to the tested setting.",
+          visual_targets: [{ kind: "table", index: 0, rationale: "The table caption is the local repair surface." }]
+        }
+      ]
+    }),
+    buildManuscriptReviewAuditResponse(),
+    buildWrappedRepairResponse(repaired, {
+      changed_location_keys: ["table:0"]
+    }),
+    buildManuscriptReviewResponse({
+      decision: "stop",
+      issues: [
+        {
+          code: "rhetorical_overreach",
+          severity: "fail",
+          section: "Results",
+          repairable: false,
+          message: "The changed table caption now claims broad applicability beyond the tested workflow setting.",
+          fix_recommendation: "Constrain the table caption to the observed numeric comparison within the tested setting.",
+          visual_targets: [{ kind: "table", index: 0, rationale: "Table 1 caption is now the overclaiming surface." }]
+        }
+      ]
+    }),
+    buildManuscriptReviewAuditResponse()
+  ];
+}
+
+function buildVisualLabelOverclaimStopResponses(): string[] {
+  const initial = JSON.parse(
+    buildPolishedManuscriptResponse({
+      figures: [
+        {
+          caption: "A trend-focused figure highlighting the relative stability gap.",
+          bars: [
+            { label: "Relative stability gap", value: 0.05 },
+            { label: "Thread-backed drafting", value: 0.76 },
+            { label: "Stateless baseline", value: 0.71 }
+          ]
+        }
+      ]
+    })
+  ) as any;
+  const repaired = JSON.parse(
+    buildPolishedManuscriptResponse({
+      figures: [
+        {
+          caption: "A trend-focused figure highlighting the relative stability gap.",
+          bars: [
+            { label: "Broad applicability across domains", value: 0.05 },
+            { label: "Thread-backed drafting", value: 0.76 },
+            { label: "Stateless baseline", value: 0.71 }
+          ]
+        }
+      ]
+    })
+  ) as any;
+  return [
+    ...buildSessionResponses(),
+    JSON.stringify(initial),
+    buildManuscriptReviewResponse({
+      decision: "repair",
+      issues: [
+        {
+          code: "visual_redundancy",
+          severity: "warning",
+          section: "Results",
+          repairable: true,
+          message: "Figure 1 should keep a scoped label for the changed trend bar.",
+          fix_recommendation: "Keep the figure focused on the observed stability pattern within the tested setting.",
+          visual_targets: [{ kind: "figure", index: 0, rationale: "Figure 1 is the local repair surface." }]
+        }
+      ]
+    }),
+    buildManuscriptReviewAuditResponse(),
+    buildWrappedRepairResponse(repaired, {
+      changed_location_keys: ["figure:0"]
+    }),
+    buildManuscriptReviewResponse({
+      decision: "stop",
+      issues: [
+        {
+          code: "rhetorical_overreach",
+          severity: "fail",
+          section: "Results",
+          repairable: false,
+          message: "The changed figure label now overstates the scope of the observed pattern.",
+          fix_recommendation: "Replace the changed label with a descriptive, scoped pattern label.",
+          visual_targets: [{ kind: "figure", index: 0, rationale: "Figure 1 label is the local overclaiming surface." }]
+        }
+      ]
+    }),
+    buildManuscriptReviewAuditResponse()
+  ];
+}
+
+function buildPartiallyGroundedRepairStopResponses(): string[] {
+  const repair1 = JSON.parse(buildPolishedManuscriptResponse()) as any;
+  repair1.sections[0].paragraphs[1] =
+    "The introduction now frames the contribution around revision stability in the tested workflow setting.";
+  return [
+    ...buildSessionResponses(),
+    buildPolishedManuscriptResponse(),
+    buildManuscriptReviewResponse({
+      decision: "repair",
+      issues: [
+        {
+          code: "paragraph_redundancy",
+          severity: "warning",
+          section: "Introduction",
+          repairable: true,
+          message: "Introduction framing overlaps with the abstract.",
+          fix_recommendation: "Make the introduction's contribution framing more local and distinct.",
+          supporting_spans: [
+            {
+              section: "Introduction",
+              paragraph_index: 1,
+              excerpt: "This paper evaluates whether thread-backed drafting can stabilize revision behavior while preserving evidence-grounded writing.",
+              reason: "This paragraph repeats the abstract framing too closely."
+            }
+          ]
+        }
+      ]
+    }),
+    buildManuscriptReviewAuditResponse(),
+    buildWrappedRepairResponse(repair1, {
+      changed_location_keys: ["paragraph:introduction:1"]
+    }),
+    buildManuscriptReviewResponse({
+      decision: "repair",
+      issues: [
+        {
+          code: "related_work_quality",
+          severity: "warning",
+          section: "Related Work",
+          repairable: true,
+          message: "Related Work still needs a sharper comparison axis.",
+          fix_recommendation: "State the comparison axis more explicitly.",
+          supporting_spans: [
+            {
+              section: "Related Work",
+              paragraph_index: 1,
+              excerpt: "Compared with those strands, this study focuses on whether persistent drafting state improves revisability under the same workflow setting.",
+              reason: "The comparison axis is still usable but underspecified."
+            }
+          ]
+        }
+      ]
+    }),
+    buildManuscriptReviewAuditResponse({
+      ok: true,
+      artifact_reliability: "partially_grounded",
+      retry_recommended: false,
+      summary: "The follow-up review is usable, but one warning-level grounding mismatch remains.",
+      issues: [
+        {
+          severity: "warning",
+          code: "insufficient_grounding",
+          section: "Related Work",
+          message: "The surviving Related Work issue is directionally useful but not fully grounded enough for another repair pass.",
+          fix_recommendation: "Do not spend a second repair pass on a partially grounded review artifact."
+        }
+      ]
+    })
   ];
 }
 
@@ -2639,6 +3124,17 @@ describe("writePaper PDF build", () => {
     expect(await exists(path.join(runDir, "paper", "manuscript_style_lint.json"))).toBe(true);
     expect(await exists(path.join(runDir, "paper", "manuscript_quality_gate.json"))).toBe(true);
     expect(await exists(path.join(runDir, "paper", "manuscript_repair_1_report.json"))).toBe(false);
+    const gate = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_quality_gate.json"), "utf8")
+    ) as { action: string; summary_lines: string[] };
+    expect(gate.action).toBe("pass");
+    expect(gate.summary_lines).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/Action:\s+pass/i),
+        expect.stringMatching(/Decision stage:\s+initial manuscript-quality gate/i),
+        expect.stringMatching(/Review reliability:/i)
+      ])
+    );
 
     const traceRaw = await readFile(path.join(runDir, "paper", "session_trace.json"), "utf8");
     expect(traceRaw.indexOf('"stage": "polish"')).toBeGreaterThanOrEqual(0);
@@ -2732,9 +3228,17 @@ describe("writePaper PDF build", () => {
 
     const repairReport = JSON.parse(
       await readFile(path.join(runDir, "paper", "manuscript_repair_1_report.json"), "utf8")
-    ) as { pass_index: number; improvement_detected: boolean; stop_or_continue_reason: string };
+    ) as {
+      pass_index: number;
+      improvement_detected: boolean;
+      verification_summary: string;
+      verification_findings: Array<{ code: string }>;
+      stop_or_continue_reason: string;
+    };
     expect(repairReport.pass_index).toBe(1);
     expect(repairReport.improvement_detected).toBe(true);
+    expect(repairReport.verification_summary).toMatch(/bounded-local changes/i);
+    expect(repairReport.verification_findings).toEqual([]);
     expect(repairReport.stop_or_continue_reason).toMatch(/resolved|non-blocking|repair/i);
 
     const round0Review = JSON.parse(
@@ -2743,6 +3247,35 @@ describe("writePaper PDF build", () => {
       issues: Array<{ supporting_spans?: Array<{ section: string; paragraph_index: number; excerpt: string }> }>;
     };
     expect(round0Review.issues[0]?.supporting_spans?.[0]?.section).toBe("Discussion");
+
+    const round0Gate = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_quality_gate_round_0.json"), "utf8")
+    ) as { triggered_by: string[]; summary_lines: string[] };
+    expect(round0Gate.triggered_by).toContain("paragraph_redundancy");
+    expect(round0Gate.triggered_by).not.toContain("duplicate_sentence_pattern");
+    expect(round0Gate.summary_lines).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/Action:\s+repair/i),
+        expect.stringMatching(/Triggered by:\s+.*paragraph_redundancy/i)
+      ])
+    );
+
+    const round0Lint = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_style_lint_round_0.json"), "utf8")
+    ) as {
+      summary: string[];
+      issues: Array<{ code: string; coverage_status?: string; covered_by_review_issue_code?: string }>;
+    };
+    expect(round0Lint.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "duplicate_sentence_pattern",
+          coverage_status: "backstop_only",
+          covered_by_review_issue_code: "paragraph_redundancy"
+        })
+      ])
+    );
+    expect(round0Lint.summary.some((line) => /backstop-only/i.test(line))).toBe(true);
   });
 
   it("allows a bounded local adjacent-two-paragraph repair for section transitions in one section", async () => {
@@ -2839,6 +3372,523 @@ describe("writePaper PDF build", () => {
     );
   });
 
+  it("narrows visual redundancy repair targets to the redundant table/figure pair only", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-visual-pair-repair-"));
+    process.chdir(root);
+
+    const run = makeRun("run-manuscript-visual-pair-repair");
+    const runDir = await seedRun(root, run);
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient(buildVisualRedundancyPairRepairResponses()),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const sessionManuscript = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript.session.json"), "utf8")
+    ) as { tables?: Array<{ rows: Array<{ label: string }> }>; figures?: Array<{ bars: Array<{ label: string }> }> };
+    expect(sessionManuscript.tables?.[0]?.rows).toHaveLength(3);
+    expect(sessionManuscript.figures?.[0]?.bars).toHaveLength(3);
+    expect(sessionManuscript.figures?.[1]?.bars).toHaveLength(3);
+
+    const styleLint = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_style_lint_round_0.json"), "utf8")
+    ) as {
+      summary: string[];
+      issues: Array<{
+        code: string;
+        coverage_status?: string;
+        covered_by_review_issue_code?: string;
+        redundant_visual_pair?: { table_index: number; figure_index: number };
+      }>;
+    };
+    expect(styleLint.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "visual_redundancy",
+          coverage_status: "backstop_only",
+          covered_by_review_issue_code: "visual_redundancy",
+          redundant_visual_pair: expect.objectContaining({ table_index: 0, figure_index: 0 })
+        })
+      ])
+    );
+    expect(styleLint.summary).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/visual-redundancy finding\(s\).*backstop-only/i)
+      ])
+    );
+
+    const round0Review = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_review_round_0.json"), "utf8")
+    ) as {
+      issues: Array<{
+        code: string;
+        visual_targets?: Array<{ kind: string; index: number }>;
+      }>;
+    };
+    expect(round0Review.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "visual_redundancy",
+          visual_targets: expect.arrayContaining([
+            expect.objectContaining({ kind: "table", index: 0 }),
+            expect.objectContaining({ kind: "figure", index: 0 })
+          ])
+        })
+      ])
+    );
+
+    const repairPlan = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_repair_plan_1.json"), "utf8")
+    ) as { targets: Array<{ kind: string; location_key: string; allowed_location_keys: string[] }> };
+    expect(repairPlan.targets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "table", location_key: "table:0", allowed_location_keys: ["table:0"] }),
+        expect.objectContaining({ kind: "figure", location_key: "figure:0", allowed_location_keys: ["figure:0"] })
+      ])
+    );
+    expect(repairPlan.targets.some((target) => target.location_key === "figure:1")).toBe(false);
+
+    const verification = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_repair_verification_1.json"), "utf8")
+    ) as {
+      locality_ok: boolean;
+      changed_location_keys: string[];
+      out_of_scope_changes: string[];
+      visual_caption_conservatism_ok: boolean;
+      visual_caption_checks: Array<{ location_key: string; conservative: boolean; concerns: string[] }>;
+    };
+    expect(verification.locality_ok).toBe(true);
+    expect(verification.changed_location_keys).toEqual(expect.arrayContaining(["figure:0"]));
+    expect(verification.out_of_scope_changes).toHaveLength(0);
+    expect(verification.visual_caption_conservatism_ok).toBe(true);
+    expect(verification.visual_caption_checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          location_key: "figure:0",
+          conservative: true,
+          concerns: []
+        })
+      ])
+    );
+
+    const finalManuscript = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript.json"), "utf8")
+    ) as { figures?: Array<{ caption: string; bars: Array<{ label: string }> }> };
+    expect(finalManuscript.figures).toHaveLength(2);
+    expect(finalManuscript.figures?.[0]?.caption).toContain("trend-focused");
+    expect(finalManuscript.figures?.[0]?.bars).toHaveLength(3);
+    expect(finalManuscript.figures?.[1]?.caption).toContain("remain unchanged");
+    expect(finalManuscript.figures?.[1]?.bars).toHaveLength(3);
+  });
+
+  it("stops after visual repair when the changed figure caption overclaims beyond the evidence", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-visual-caption-stop-"));
+    process.chdir(root);
+
+    const run = makeRun("run-manuscript-visual-caption-stop");
+    const runDir = await seedRun(root, run);
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient(buildVisualCaptionOverclaimStopResponses()),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("manuscript-quality gate failed");
+    expect(await exists(path.join(runDir, "paper", "manuscript_repair_2_report.json"))).toBe(false);
+
+    const verification = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_repair_verification_1.json"), "utf8")
+    ) as {
+      visual_caption_conservatism_ok: boolean;
+      visual_caption_checks: Array<{ location_key: string; conservative: boolean; concerns: string[] }>;
+    };
+    expect(verification.visual_caption_conservatism_ok).toBe(false);
+    expect(verification.visual_caption_checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          location_key: "figure:0",
+          conservative: false,
+          concerns: expect.arrayContaining([
+            "The visual wording claims broad applicability beyond the tested setting."
+          ])
+        })
+      ])
+    );
+
+    const gate = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_quality_gate.json"), "utf8")
+    ) as { stop_or_continue_reason: string; summary_lines: string[] };
+    expect(gate.stop_or_continue_reason).toMatch(/visual caption|bounded local repair loop/i);
+    expect(gate.summary_lines).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/Action:\s+stop/i),
+        expect.stringMatching(/Decision stage:\s+post-repair gate after pass 1/i),
+        expect.stringMatching(/Triggered by:/i)
+      ])
+    );
+
+    const round1Review = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_review_round_1.json"), "utf8")
+    ) as {
+      issues: Array<{
+        code: string;
+        visual_targets?: Array<{ kind: string; index: number }>;
+      }>;
+    };
+    expect(round1Review.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "rhetorical_overreach",
+          visual_targets: expect.arrayContaining([expect.objectContaining({ kind: "figure", index: 0 })])
+        })
+      ])
+    );
+
+    const repairReport = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_repair_1_report.json"), "utf8")
+    ) as {
+      verification_summary: string;
+      verification_findings: Array<{ code: string; location_keys: string[]; concerns?: string[] }>;
+      stop_or_continue_reason: string;
+    };
+    expect(repairReport.verification_summary).toMatch(/changed visual surfaces/i);
+    expect(repairReport.verification_findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "visual_caption_overclaim",
+          location_keys: ["figure:0"],
+          concerns: expect.arrayContaining([
+            "The visual wording claims broad applicability beyond the tested setting."
+          ])
+        })
+      ])
+    );
+    expect(repairReport.stop_or_continue_reason).toMatch(/visual caption|bounded local repair loop/i);
+
+    const failureArtifact = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_quality_failure.json"), "utf8")
+    ) as {
+      summary_lines: string[];
+      lint_findings: Array<{ code: string; gate_role?: string }>;
+      reviewer_missed_policy_findings: Array<{ code: string }>;
+      reviewer_covered_backstop_findings: Array<{ code: string; covered_by_review_issue_code?: string }>;
+    };
+    expect(failureArtifact.summary_lines).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/Stop reason:/i),
+        expect.stringMatching(/Review reliability:/i),
+        expect.stringMatching(/Triggered by:/i)
+      ])
+    );
+    expect(Array.isArray(failureArtifact.lint_findings)).toBe(true);
+    expect(failureArtifact.reviewer_missed_policy_findings).toEqual([]);
+    expect(Array.isArray(failureArtifact.reviewer_covered_backstop_findings)).toBe(true);
+    expect(
+      failureArtifact.reviewer_covered_backstop_findings.every((issue) => issue.gate_role === "backstop_only")
+    ).toBe(true);
+  });
+
+  it("stops immediately when appendix contamination is missed by the reviewer and remains a hard-stop policy finding", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-appendix-hard-stop-"));
+    process.chdir(root);
+
+    const run = makeRun("run-manuscript-appendix-hard-stop");
+    const runDir = await seedRun(root, run);
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient(buildAppendixHardStopResponses()),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(await exists(path.join(runDir, "paper", "manuscript_repair_1_report.json"))).toBe(false);
+
+    const gate = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_quality_gate.json"), "utf8")
+    ) as {
+      action: string;
+      decision_digest: { stop_reason_category: string };
+      summary_lines: string[];
+    };
+    expect(gate.action).toBe("stop");
+    expect(gate.decision_digest.stop_reason_category).toBe("policy_hard_stop");
+    expect(gate.summary_lines).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/Reason category:\s+policy_hard_stop/i)
+      ])
+    );
+
+    const round0Lint = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_style_lint_round_0.json"), "utf8")
+    ) as {
+      issues: Array<{ code: string; gate_role?: string; coverage_status?: string }>;
+    };
+    expect(round0Lint.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "appendix_meta_text",
+          gate_role: "hard_stop",
+          coverage_status: "primary"
+        })
+      ])
+    );
+
+    const failureArtifact = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_quality_failure.json"), "utf8")
+    ) as {
+      decision_digest: { stop_reason_category: string };
+      reviewer_missed_policy_findings: Array<{ code: string; gate_role?: string }>;
+    };
+    expect(failureArtifact.decision_digest.stop_reason_category).toBe("policy_hard_stop");
+    expect(failureArtifact.reviewer_missed_policy_findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "appendix_meta_text",
+          gate_role: "hard_stop"
+        })
+      ])
+    );
+  });
+
+  it("treats appendix contamination as backstop-only when manuscript review already covers the same appendix-local issue", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-appendix-backstop-"));
+    process.chdir(root);
+
+    const run = makeRun("run-manuscript-appendix-backstop");
+    const runDir = await seedRun(root, run);
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient(buildAppendixBackstopRepairResponses()),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const round0Lint = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_style_lint_round_0.json"), "utf8")
+    ) as {
+      issues: Array<{ code: string; gate_role?: string; coverage_status?: string; covered_by_review_issue_code?: string }>;
+    };
+    expect(round0Lint.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "appendix_meta_text",
+          gate_role: "backstop_only",
+          coverage_status: "backstop_only",
+          covered_by_review_issue_code: "appendix_hygiene"
+        })
+      ])
+    );
+
+    const repairPlan = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_repair_plan_1.json"), "utf8")
+    ) as { targets: Array<{ kind: string; location_key: string }> };
+    expect(repairPlan.targets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "appendix_paragraph",
+          location_key: "appendix_paragraph:appendix._notes:0"
+        })
+      ])
+    );
+  });
+
+  it("stops after repair when a changed table caption overclaims beyond the evidence", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-table-caption-stop-"));
+    process.chdir(root);
+
+    const run = makeRun("run-manuscript-table-caption-stop");
+    const runDir = await seedRun(root, run);
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient(buildTableCaptionOverclaimStopResponses()),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    const verification = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_repair_verification_1.json"), "utf8")
+    ) as {
+      visual_caption_conservatism_ok: boolean;
+      visual_caption_checks: Array<{ location_key: string; conservative: boolean; concerns: string[] }>;
+      visual_conservatism_ok: boolean;
+    };
+    expect(verification.visual_caption_conservatism_ok).toBe(false);
+    expect(verification.visual_conservatism_ok).toBe(false);
+    expect(verification.visual_caption_checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          location_key: "table:0",
+          conservative: false,
+          concerns: expect.arrayContaining([
+            "The visual wording claims broad applicability beyond the tested setting."
+          ])
+        })
+      ])
+    );
+  });
+
+  it("stops after repair when a changed visual label overclaims beyond the evidence", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-visual-label-stop-"));
+    process.chdir(root);
+
+    const run = makeRun("run-manuscript-visual-label-stop");
+    const runDir = await seedRun(root, run);
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient(buildVisualLabelOverclaimStopResponses()),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    const verification = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_repair_verification_1.json"), "utf8")
+    ) as {
+      visual_label_conservatism_ok: boolean;
+      visual_label_checks: Array<{ location_key: string; conservative: boolean; concerns: string[]; labels: string[] }>;
+      visual_conservatism_ok: boolean;
+    };
+    expect(verification.visual_label_conservatism_ok).toBe(false);
+    expect(verification.visual_conservatism_ok).toBe(false);
+    expect(verification.visual_label_checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          location_key: "figure:0",
+          conservative: false,
+          labels: expect.arrayContaining(["Broad Applicability Across Domains"]),
+          concerns: expect.arrayContaining([
+            "The visual wording claims broad applicability beyond the tested setting."
+          ])
+        })
+      ])
+    );
+
+    const repairReport = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_repair_1_report.json"), "utf8")
+    ) as { verification_findings: Array<{ code: string; location_keys: string[] }> };
+    expect(repairReport.verification_findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "visual_label_overclaim",
+          location_keys: ["figure:0"]
+        })
+      ])
+    );
+  });
+
+  it("does not allow a second repair when the follow-up review is only partially grounded", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-partially-grounded-stop-"));
+    process.chdir(root);
+
+    const run = makeRun("run-manuscript-partially-grounded-stop");
+    const runDir = await seedRun(root, run);
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient(buildPartiallyGroundedRepairStopResponses()),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(await exists(path.join(runDir, "paper", "manuscript_repair_2_report.json"))).toBe(false);
+
+    const reviewAudit = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_review_audit.json"), "utf8")
+    ) as { artifact_reliability: string; metrics: { retry_used: boolean } };
+    expect(reviewAudit.artifact_reliability).toBe("partially_grounded");
+    expect(reviewAudit.metrics.retry_used).toBe(false);
+
+    const gate = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_quality_gate.json"), "utf8")
+    ) as {
+      action: string;
+      stop_or_continue_reason: string;
+      decision_digest: { stop_reason_category: string; review_reliability: string };
+    };
+    expect(gate.action).toBe("stop");
+    expect(gate.stop_or_continue_reason).toMatch(/partially grounded|second manuscript repair is not allowed/i);
+    expect(gate.decision_digest.stop_reason_category).toBe("review_reliability");
+    expect(gate.decision_digest.review_reliability).toBe("partially_grounded");
+  });
+
   it("stops when a repair changes out-of-scope sections outside the bounded local repair plan", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-quality-locality-stop-"));
     process.chdir(root);
@@ -2902,16 +3952,29 @@ describe("writePaper PDF build", () => {
     expect(await exists(path.join(runDir, "paper", "manuscript_repair_1_report.json"))).toBe(true);
     const round1Gate = JSON.parse(
       await readFile(path.join(runDir, "paper", "manuscript_quality_gate_round_1.json"), "utf8")
-    ) as { action: string; stop_or_continue_reason: string; allowed_max_passes: number };
+    ) as { action: string; stop_or_continue_reason: string; allowed_max_passes: number; summary_lines: string[] };
     expect(round1Gate.action, round1Gate.stop_or_continue_reason).toBe("repair");
     expect(round1Gate.allowed_max_passes).toBe(2);
+    expect(round1Gate.summary_lines).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/Action:\s+repair/i),
+        expect.stringMatching(/Decision stage:\s+post-repair gate after pass 1/i),
+        expect.stringMatching(/Allowed max repairs:\s+2;\s+remaining allowed repairs:\s+1/i)
+      ])
+    );
     expect(await exists(path.join(runDir, "paper", "manuscript_repair_2_report.json"))).toBe(true);
     expect(await exists(path.join(runDir, "paper", "manuscript_repair_3_report.json"))).toBe(false);
 
     const gate = JSON.parse(
       await readFile(path.join(runDir, "paper", "manuscript_quality_gate.json"), "utf8")
-    ) as { allowed_max_passes: number };
+    ) as { allowed_max_passes: number; summary_lines: string[] };
     expect(gate.allowed_max_passes).toBe(2);
+    expect(gate.summary_lines).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/Action:\s+pass/i),
+        expect.stringMatching(/Decision stage:\s+post-repair gate after pass 2/i)
+      ])
+    );
 
     const traceRaw = await readFile(path.join(runDir, "paper", "session_trace.json"), "utf8");
     expect(traceRaw).toContain('"stage": "manuscript_repair_1"');
@@ -2949,7 +4012,13 @@ describe("writePaper PDF build", () => {
 
     const gate = JSON.parse(
       await readFile(path.join(runDir, "paper", "manuscript_quality_gate.json"), "utf8")
-    ) as { stop_or_continue_reason: string };
+    ) as { stop_or_continue_reason: string; summary_lines: string[] };
     expect(gate.stop_or_continue_reason).toMatch(/manuscript-quality issue code/i);
+    expect(gate.summary_lines).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/Action:\s+stop/i),
+        expect.stringMatching(/Improvement detected:\s+no/i)
+      ])
+    );
   });
 });

@@ -89,6 +89,7 @@ import {
   buildAnalyzeResultsInsightCard,
   formatAnalyzeResultsArtifactLines
 } from "../core/resultAnalysisPresentation.js";
+import { loadManuscriptQualityInsightCard } from "../core/manuscriptQualityPresentation.js";
 import {
   shouldSurfaceAnalyzeResultsInsight,
   shouldSurfaceReviewInsight
@@ -4477,6 +4478,16 @@ export class TerminalApp {
     const runDir = path.join(process.cwd(), ".autolabos", "runs", this.activeRunId);
     try {
       const run = await this.runStore.getRun?.(this.activeRunId);
+      if (run?.currentNode === "write_paper") {
+        const manuscriptQualityInsight = await loadManuscriptQualityInsightCard({
+          runDir,
+          readText: safeRead
+        });
+        if (manuscriptQualityInsight) {
+          this.activeRunInsight = manuscriptQualityInsight;
+          return;
+        }
+      }
       const reviewPacket = parseReviewPacket(await safeRead(path.join(runDir, "review", "review_packet.json")));
       if (shouldSurfaceReviewInsight(run?.currentNode) && reviewPacket) {
         this.activeRunInsight = buildReviewInsightCard(reviewPacket);

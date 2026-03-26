@@ -225,6 +225,110 @@ describe("buildFrame", () => {
     expect(plain).toContain("> [REPORT] Analysis report: result_analysis.json");
   });
 
+  it("renders compact manuscript-quality digest lines above recent logs", () => {
+    const frame = buildFrame({
+      appVersion: "1.0.0",
+      busy: false,
+      thinking: false,
+      thinkingFrame: 0,
+      run: makeRun({
+        status: "failed",
+        currentNode: "write_paper",
+        latestSummary: "write_paper stopped at the manuscript quality gate."
+      }),
+      runInsight: {
+        title: "Manuscript quality",
+        lines: [
+          "Status: Stopped.",
+          "Reason category: Policy Hard Stop.",
+          "Review reliability: grounded.",
+          "Triggered by: appendix_hygiene."
+        ],
+        manuscriptQuality: {
+          status: "stopped",
+          stage: "post_repair_1",
+          reasonCategory: "policy_hard_stop",
+          reviewReliability: "grounded",
+          triggeredBy: ["appendix_hygiene"],
+          repairAttempts: {
+            attempted: 1,
+            allowedMax: 2,
+            remaining: 0,
+            improvementDetected: false
+          },
+          issueCounts: {
+            manuscript: 1,
+            hardStopPolicy: 1,
+            backstopOnly: 2,
+            scientificBlockers: 1,
+            submissionBlockers: 0,
+            reviewerMissedPolicy: 1,
+            reviewerCoveredBackstop: 2
+          },
+          issueGroups: {
+            manuscript: [
+              {
+                code: "appendix_hygiene",
+                section: "Appendix",
+                severity: "fail",
+                message: "Appendix still contains internal workflow language.",
+                source: "review"
+              }
+            ],
+            hardStopPolicy: [
+              {
+                code: "appendix_internal_text",
+                section: "Appendix",
+                severity: "fail",
+                message: "Deterministic hard-stop policy finding remained uncovered in Appendix.",
+                source: "style_lint"
+              }
+            ],
+            backstopOnly: [
+              {
+                code: "duplicate_sentence_pattern",
+                section: "Discussion",
+                severity: "warning",
+                message: "Deterministic backstop finding remains recorded for Discussion.",
+                source: "style_lint"
+              }
+            ],
+            scientific: [
+              {
+                code: "missing_baseline",
+                section: "Results",
+                severity: "fail",
+                message: "Baseline comparison is still missing.",
+                source: "scientific_validation"
+              }
+            ],
+            submission: []
+          },
+          artifactRefs: [
+            { label: "Manuscript quality gate", path: "paper/manuscript_quality_gate.json" }
+          ]
+        }
+      },
+      logs: ["ready"],
+      input: "",
+      inputCursor: 0,
+      suggestions: [],
+      selectedSuggestion: 0,
+      colorEnabled: false
+    });
+
+    const plain = frame.lines.map((line) => stripAnsi(line));
+    const insightTitleIndex = plain.indexOf("Manuscript quality");
+    const logsIndex = plain.indexOf("• ready");
+    expect(insightTitleIndex).toBeGreaterThanOrEqual(0);
+    expect(logsIndex).toBeGreaterThan(insightTitleIndex);
+    expect(plain).toContain("• Issue summary: manuscript 1 | hard-stop 1 | backstop 2.");
+    expect(plain).toContain("• Blockers: scientific 1.");
+    expect(plain).toContain("• Repairs 1/2 | remaining 0 | improvement no.");
+    expect(plain).toContain("• Coverage: reviewer-missed policy 1 | reviewer-covered backstop 2.");
+    expect(plain).toContain("• Status: Stopped.");
+  });
+
   it("does not render Busy label", () => {
     const frame = buildFrame({
       appVersion: "1.0.0",

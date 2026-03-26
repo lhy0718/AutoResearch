@@ -19,6 +19,79 @@ export interface PendingPlan {
 export interface RunInsightCard {
   title: string;
   lines: string[];
+  manuscriptQuality?: {
+    status: "pass" | "repairing" | "stopped";
+    stage: "initial_gate" | "post_repair_1" | "post_repair_2";
+    reasonCategory:
+      | "review_reliability"
+      | "policy_hard_stop"
+      | "locality_violation"
+      | "visual_overclaim"
+      | "repeated_issue"
+      | "no_improvement"
+      | "scope_too_broad"
+      | "upstream_scientific_or_submission_failure"
+      | "clean_pass"
+      | "repairable_manuscript_issue";
+    reviewReliability: "grounded" | "partially_grounded" | "degraded";
+    triggeredBy: string[];
+    repairAttempts: {
+      attempted: number;
+      allowedMax: number;
+      remaining: number;
+      improvementDetected?: boolean;
+    };
+    issueCounts: {
+      manuscript: number;
+      hardStopPolicy: number;
+      backstopOnly: number;
+      scientificBlockers: number;
+      submissionBlockers: number;
+      reviewerMissedPolicy: number;
+      reviewerCoveredBackstop: number;
+    };
+    issueGroups: {
+      manuscript: Array<{
+        code: string;
+        section: string;
+        severity: "warning" | "fail";
+        message: string;
+        source: "review" | "style_lint";
+      }>;
+      hardStopPolicy: Array<{
+        code: string;
+        section: string;
+        severity: "warning" | "fail";
+        message: string;
+        source: "style_lint";
+      }>;
+      backstopOnly: Array<{
+        code: string;
+        section: string;
+        severity: "warning" | "fail";
+        message: string;
+        source: "style_lint";
+      }>;
+      scientific: Array<{
+        code: string;
+        section: string;
+        severity: "warning" | "fail";
+        message: string;
+        source: "scientific_validation";
+      }>;
+      submission: Array<{
+        code: string;
+        section: string;
+        severity: "warning" | "fail";
+        message: string;
+        source: "submission_validation";
+      }>;
+    };
+    artifactRefs: Array<{
+      label: string;
+      path: string;
+    }>;
+  };
   actions?: Array<{
     label: string;
     command: string;

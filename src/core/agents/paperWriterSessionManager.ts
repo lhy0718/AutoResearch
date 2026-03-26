@@ -500,6 +500,9 @@ export class PaperWriterSessionManager {
     previousReview?: ManuscriptReviewArtifact;
     reviewValidation?: ManuscriptReviewValidationArtifact;
     reviewAudit?: ManuscriptReviewAuditArtifact;
+    repairPlan?: Parameters<typeof buildManuscriptReviewPrompt>[0]["repairPlan"];
+    repairVerification?: Parameters<typeof buildManuscriptReviewPrompt>[0]["repairVerification"];
+    focusLocationKeys?: string[];
     abortSignal?: AbortSignal;
   }): Promise<PaperWriterManuscriptReviewResult> {
     const runContext = new RunContextMemory(input.run.memoryRefs.runContextPath);
@@ -537,7 +540,10 @@ export class PaperWriterSessionManager {
           passLabel: input.passLabel,
           previousReview: input.previousReview,
           reviewValidation: input.reviewValidation,
-          reviewAudit: input.reviewAudit
+          reviewAudit: input.reviewAudit,
+          repairPlan: input.repairPlan,
+          repairVerification: input.repairVerification,
+          focusLocationKeys: input.focusLocationKeys
         }),
         agentRole: "reviewer",
         abortSignal: input.abortSignal,

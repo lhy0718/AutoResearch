@@ -134,6 +134,9 @@ function buildTranscriptLines(input: RenderFrameInput, wrapWidth: number): strin
       rawLines.push("");
     }
     rawLines.push(renderSectionHeading(input.runInsight.title, input.colorEnabled));
+    for (const line of buildManuscriptQualityInsightDigestLines(input.runInsight)) {
+      rawLines.push(renderInsightLine(line, input.colorEnabled));
+    }
     for (const line of input.runInsight.lines.slice(0, 4)) {
       rawLines.push(renderInsightLine(line, input.colorEnabled));
     }
@@ -162,6 +165,49 @@ function buildTranscriptLines(input: RenderFrameInput, wrapWidth: number): strin
   }
 
   return rawLines.flatMap((line) => wrapAnsiLine(line, wrapWidth));
+}
+
+function buildManuscriptQualityInsightDigestLines(insight: RunInsightCard): string[] {
+  const payload = insight.manuscriptQuality;
+  if (!payload) {
+    return [];
+  }
+
+  const lines: string[] = [];
+  const issueSummaryParts = [
+    `manuscript ${payload.issueCounts.manuscript}`,
+    `hard-stop ${payload.issueCounts.hardStopPolicy}`,
+    `backstop ${payload.issueCounts.backstopOnly}`
+  ];
+  lines.push(`Issue summary: ${issueSummaryParts.join(" | ")}.`);
+
+  const blockerParts: string[] = [];
+  if (payload.issueCounts.scientificBlockers > 0) {
+    blockerParts.push(`scientific ${payload.issueCounts.scientificBlockers}`);
+  }
+  if (payload.issueCounts.submissionBlockers > 0) {
+    blockerParts.push(`submission ${payload.issueCounts.submissionBlockers}`);
+  }
+  if (blockerParts.length > 0) {
+    lines.push(`Blockers: ${blockerParts.join(" | ")}.`);
+  }
+
+  const repairLine = [
+    `Repairs ${payload.repairAttempts.attempted}/${payload.repairAttempts.allowedMax}`,
+    `remaining ${payload.repairAttempts.remaining}`
+  ];
+  if (typeof payload.repairAttempts.improvementDetected === "boolean") {
+    repairLine.push(`improvement ${payload.repairAttempts.improvementDetected ? "yes" : "no"}`);
+  }
+  lines.push(`${repairLine.join(" | ")}.`);
+
+  if (payload.issueCounts.reviewerMissedPolicy > 0 || payload.issueCounts.reviewerCoveredBackstop > 0) {
+    lines.push(
+      `Coverage: reviewer-missed policy ${payload.issueCounts.reviewerMissedPolicy} | reviewer-covered backstop ${payload.issueCounts.reviewerCoveredBackstop}.`
+    );
+  }
+
+  return lines.slice(0, 4);
 }
 
 function buildBottomChrome(input: RenderFrameInput, terminalWidth: number): BottomChromeOutput {

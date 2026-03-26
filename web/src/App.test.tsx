@@ -1031,6 +1031,219 @@ describe("App", () => {
     });
   });
 
+  it("renders the manuscript quality summary with separated issue groups and artifact links", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/bootstrap")) {
+        return new Response(
+          JSON.stringify({
+            configured: true,
+            setupDefaults: {
+              projectName: "AutoLabOS",
+              defaultTopic: "Multi-agent collaboration",
+              defaultConstraints: ["recent papers", "last 5 years"],
+              defaultObjectiveMetric: "state-of-the-art reproducibility"
+            },
+            session: {
+              activeRunId: "run-1",
+              busy: false,
+              logs: [],
+              canCancel: false,
+              activeRunInsight: {
+                title: "Manuscript quality",
+                lines: [
+                  "Status: Stopped.",
+                  "Reason category: Policy Hard Stop.",
+                  "Review reliability: grounded.",
+                  "Triggered by: appendix_hygiene."
+                ],
+                manuscriptQuality: {
+                  status: "stopped",
+                  stage: "post_repair_1",
+                  reasonCategory: "policy_hard_stop",
+                  reviewReliability: "grounded",
+                  triggeredBy: ["appendix_hygiene"],
+                  repairAttempts: {
+                    attempted: 1,
+                    allowedMax: 2,
+                    remaining: 0,
+                    improvementDetected: false
+                  },
+                  issueCounts: {
+                    manuscript: 1,
+                    hardStopPolicy: 1,
+                    backstopOnly: 1,
+                    scientificBlockers: 1,
+                    submissionBlockers: 1,
+                    reviewerMissedPolicy: 1,
+                    reviewerCoveredBackstop: 1
+                  },
+                  issueGroups: {
+                    manuscript: [
+                      {
+                        code: "appendix_hygiene",
+                        section: "Appendix",
+                        severity: "fail",
+                        message: "Appendix still contains internal workflow language.",
+                        source: "review"
+                      }
+                    ],
+                    hardStopPolicy: [
+                      {
+                        code: "appendix_internal_text",
+                        section: "Appendix",
+                        severity: "fail",
+                        message: "Deterministic hard-stop policy finding remained uncovered in Appendix.",
+                        source: "style_lint"
+                      }
+                    ],
+                    backstopOnly: [
+                      {
+                        code: "duplicate_sentence_pattern",
+                        section: "Discussion",
+                        severity: "warning",
+                        message: "Deterministic backstop finding remains recorded for Discussion.",
+                        source: "style_lint"
+                      }
+                    ],
+                    scientific: [
+                      {
+                        code: "missing_baseline",
+                        section: "Results",
+                        severity: "fail",
+                        message: "Baseline comparison is still missing.",
+                        source: "scientific_validation"
+                      }
+                    ],
+                    submission: [
+                      {
+                        code: "citation",
+                        section: "Conclusion",
+                        severity: "fail",
+                        message: "A comparative claim in the conclusion is uncited.",
+                        source: "submission_validation"
+                      }
+                    ]
+                  },
+                  artifactRefs: [
+                    { label: "Manuscript quality gate", path: "paper/manuscript_quality_gate.json" },
+                    { label: "Manuscript quality failure", path: "paper/manuscript_quality_failure.json" },
+                    { label: "Manuscript review", path: "paper/manuscript_review.json" }
+                  ]
+                }
+              }
+            },
+            runs: [
+              {
+                id: "run-1",
+                title: "Run one",
+                topic: "topic",
+                constraints: ["recent papers"],
+                objectiveMetric: "accuracy",
+                status: "failed",
+                currentNode: "write_paper",
+                latestSummary: "write_paper stopped at the manuscript quality gate.",
+                updatedAt: "2026-03-10T10:00:00.000Z",
+                graph: {
+                  currentNode: "write_paper",
+                  checkpointSeq: 7,
+                  retryCounters: {},
+                  rollbackCounters: {},
+                  nodeStates: {
+                    collect_papers: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    analyze_papers: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    generate_hypotheses: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    design_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    implement_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    run_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    analyze_results: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    review: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    write_paper: { status: "failed", updatedAt: "2026-03-10T10:00:00.000Z" }
+                  }
+                }
+              }
+            ]
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.includes("/api/doctor")) {
+        return new Response(JSON.stringify({ configured: true, checks: [] }), { status: 200 });
+      }
+      if (url.includes("/api/knowledge") && !url.includes("/api/knowledge/file")) {
+        return new Response(JSON.stringify({ entries: [] }), { status: 200 });
+      }
+      if (url.includes("/api/runs/") && url.includes("/literature")) {
+        return new Response(JSON.stringify({ literature: emptyLiterature("run-1") }), { status: 200 });
+      }
+      if (url.includes("/api/runs/run-1/artifacts")) {
+        return new Response(JSON.stringify({ artifacts: [] }), { status: 200 });
+      }
+      if (url.includes("/api/runs/run-1/checkpoints")) {
+        return new Response(JSON.stringify({ checkpoints: [] }), { status: 200 });
+      }
+      if (url.includes("/api/runs/run-1") && !url.includes("/actions")) {
+        return new Response(
+          JSON.stringify({
+            run: {
+              id: "run-1",
+              title: "Run one",
+              topic: "topic",
+              constraints: ["recent papers"],
+              objectiveMetric: "accuracy",
+              status: "failed",
+              currentNode: "write_paper",
+              latestSummary: "write_paper stopped at the manuscript quality gate.",
+              updatedAt: "2026-03-10T10:00:00.000Z",
+              graph: {
+                currentNode: "write_paper",
+                checkpointSeq: 7,
+                retryCounters: {},
+                rollbackCounters: {},
+                nodeStates: {
+                  collect_papers: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  analyze_papers: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  generate_hypotheses: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  design_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  implement_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  run_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  analyze_results: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  review: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  write_paper: { status: "failed", updatedAt: "2026-03-10T10:00:00.000Z" }
+                }
+              }
+            }
+          }),
+          { status: 200 }
+        );
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal(
+      "EventSource",
+      class {
+        addEventListener() {}
+        close() {}
+      } as unknown as typeof EventSource
+    );
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Manuscript quality")).toBeInTheDocument();
+      expect(screen.getByText("Stopped")).toBeInTheDocument();
+      expect(screen.getByText("Policy Hard Stop")).toBeInTheDocument();
+      expect(screen.getByText("Repairable manuscript issues")).toBeInTheDocument();
+      expect(screen.getByText("Hard-stop policy findings")).toBeInTheDocument();
+      expect(screen.getByText("Scientific blockers")).toBeInTheDocument();
+      expect(screen.getByText("Submission blockers")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Manuscript quality gate" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Manuscript quality failure" })).toBeInTheDocument();
+    });
+  });
+
   it("renders a structured review packet preview and runs the refresh command", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);

@@ -865,6 +865,218 @@ describe("InteractionSession", () => {
     expect(snapshot.activeRunInsight?.lines.some((line) => line.includes("Review readiness: blocking"))).toBe(true);
   });
 
+  it("surfaces manuscript quality insight during write_paper before falling back to the review packet", async () => {
+    const run = await runStore.createRun({
+      title: "Manuscript quality run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    const current = await runStore.getRun(run.id);
+    if (!current) {
+      throw new Error("expected run");
+    }
+    current.status = "failed";
+    current.currentNode = "write_paper";
+    current.graph.currentNode = "write_paper";
+    current.graph.nodeStates.review.status = "completed";
+    current.graph.nodeStates.write_paper.status = "failed";
+    await runStore.updateRun(current);
+
+    const runDir = path.join(cwd, ".autolabos", "runs", run.id);
+    await fs.mkdir(path.join(runDir, "review"), { recursive: true });
+    await fs.mkdir(path.join(runDir, "paper"), { recursive: true });
+    await fs.writeFile(
+      path.join(runDir, "review", "review_packet.json"),
+      JSON.stringify(
+        {
+          generated_at: "2026-03-26T10:00:00.000Z",
+          readiness: {
+            status: "warning",
+            ready_checks: 4,
+            warning_checks: 1,
+            blocking_checks: 0,
+            manual_checks: 1
+          },
+          objective_status: "met",
+          objective_summary: "The objective was met.",
+          checks: [],
+          suggested_actions: []
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(runDir, "paper", "manuscript_quality_gate.json"),
+      JSON.stringify(
+        {
+          action: "stop",
+          pass_index: 1,
+          triggered_by: ["appendix_hygiene"],
+          allowed_max_passes: 2,
+          remaining_allowed_repairs: 0,
+          issues_before: [
+            {
+              source: "review",
+              code: "appendix_hygiene",
+              severity: "fail",
+              section: "Appendix",
+              repairable: true,
+              message: "Appendix still contains internal workflow language."
+            }
+          ],
+          issues_after: [
+            {
+              source: "review",
+              code: "appendix_hygiene",
+              severity: "fail",
+              section: "Appendix",
+              repairable: true,
+              message: "Appendix still contains internal workflow language."
+            }
+          ],
+          improvement_detected: false,
+          stop_or_continue_reason: "Appendix contamination remained after the first repair.",
+          decision_digest: {
+            stage: "post_repair_1",
+            action: "stop",
+            review_reliability: "grounded",
+            issue_counts_before: { total: 1, fail: 1, warning: 0 },
+            issue_counts_after: { total: 1, fail: 1, warning: 0 },
+            improvement_detected: false,
+            allowed_max_passes: 2,
+            remaining_allowed_repairs: 0,
+            triggered_by: ["appendix_hygiene"],
+            stop_reason_category: "policy_hard_stop"
+          },
+          summary_lines: [
+            "Action: stop.",
+            "Decision reason: Appendix contamination remained after the first repair."
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(runDir, "paper", "manuscript_quality_failure.json"),
+      JSON.stringify(
+        {
+          generated_at: "2026-03-26T10:02:00.000Z",
+          reason: "Appendix contamination remained after the first repair.",
+          decision_digest: {
+            stage: "post_repair_1",
+            action: "stop",
+            review_reliability: "grounded",
+            issue_counts_before: { total: 1, fail: 1, warning: 0 },
+            issue_counts_after: { total: 1, fail: 1, warning: 0 },
+            improvement_detected: false,
+            allowed_max_passes: 2,
+            remaining_allowed_repairs: 0,
+            triggered_by: ["appendix_hygiene"],
+            stop_reason_category: "policy_hard_stop"
+          },
+          summary_lines: [
+            "Action: stop.",
+            "Decision reason: Appendix contamination remained after the first repair."
+          ],
+          triggered_by: ["appendix_hygiene"],
+          review_reliability: "grounded",
+          final_issues: [
+            {
+              source: "review",
+              code: "appendix_hygiene",
+              severity: "fail",
+              section: "Appendix",
+              repairable: true,
+              message: "Appendix still contains internal workflow language."
+            }
+          ],
+          lint_findings: [
+            {
+              code: "appendix_internal_text",
+              section: "Appendix",
+              severity: "fail",
+              gate_role: "hard_stop"
+            }
+          ],
+          reviewer_missed_policy_findings: [
+            {
+              code: "appendix_internal_text",
+              section: "Appendix",
+              severity: "fail",
+              gate_role: "hard_stop"
+            }
+          ],
+          reviewer_covered_backstop_findings: []
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(runDir, "paper", "manuscript_style_lint.json"),
+      JSON.stringify(
+        {
+          mode: "hard_policy_only",
+          checked_rules: ["appendix_hygiene"],
+          ok: false,
+          issues: [
+            {
+              severity: "fail",
+              code: "appendix_internal_text",
+              section: "Appendix",
+              message: "Appendix includes internal workflow text.",
+              fix_recommendation: "Remove internal workflow language.",
+              gate_role: "hard_stop"
+            }
+          ],
+          summary: ["1 appendix hard-stop finding remains."]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const session = new InteractionSession({
+      workspaceRoot: cwd,
+      config: {
+        research: {
+          defaultTopic: "topic",
+          defaultConstraints: ["recent papers"],
+          default_objective_metric: "metric"
+        }
+      } as any,
+      runStore,
+      titleGenerator: {} as any,
+      codex: {} as any,
+      openAiTextClient: undefined,
+      eventStream: new InMemoryEventStream(),
+      orchestrator: {} as any,
+      semanticScholarApiKeyConfigured: true
+    });
+    await session.start();
+    await session.selectRun(run.id);
+
+    const snapshot = session.snapshot();
+
+    expect(snapshot.activeRunInsight?.title).toBe("Manuscript quality");
+    expect(snapshot.activeRunInsight?.manuscriptQuality?.status).toBe("stopped");
+    expect(snapshot.activeRunInsight?.manuscriptQuality?.reasonCategory).toBe("policy_hard_stop");
+    expect(snapshot.activeRunInsight?.manuscriptQuality?.artifactRefs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "paper/manuscript_quality_gate.json" }),
+        expect.objectContaining({ path: "paper/manuscript_quality_failure.json" })
+      ])
+    );
+    expect(snapshot.activeRunInsight?.lines.some((line) => line.includes("Status: Stopped."))).toBe(true);
+  });
+
   it("stops /agent review when approving analyze_results backtracks to design", async () => {
     const run = await runStore.createRun({
       title: "Backtrack before review",

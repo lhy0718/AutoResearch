@@ -229,6 +229,8 @@ export function App() {
     selectedArtifact?.path === "review/review_packet.json" && artifactPreview
       ? parseReviewPacketPreview(artifactPreview)
       : null;
+  const activeInsight =
+    session && selectedRun && session.activeRunId === selectedRun.id ? session.activeRunInsight : null;
   const selectedKnowledgeEntry =
     knowledgeEntries.find((entry) => entry.run_id === (selectedRunId || session?.activeRunId)) || null;
   const activityRun =
@@ -716,17 +718,89 @@ export function App() {
                 <p className="summary-copy">{selectedRun.latestSummary}</p>
               ) : null}
 
-              {session?.activeRunId === selectedRun.id && session.activeRunInsight ? (
-                <section className="inline-panel insight-panel">
-                  <p className="section-kicker">{session.activeRunInsight.title}</p>
+              {activeInsight ? (
+                <section className={`inline-panel insight-panel ${activeInsight.manuscriptQuality ? "manuscript-quality-panel" : ""}`}>
+                  {activeInsight.manuscriptQuality ? (
+                    <div className="manuscript-quality-header">
+                      <p className="section-kicker">{activeInsight.title}</p>
+                      <div className="chip-list manuscript-quality-status-row">
+                        <span className={`status-pill ${manuscriptQualityStatusToneClass(activeInsight.manuscriptQuality.status)}`}>
+                          {formatManuscriptQualityStatus(activeInsight.manuscriptQuality.status)}
+                        </span>
+                        <span className="chip">{formatManuscriptQualityStage(activeInsight.manuscriptQuality.stage)}</span>
+                        <span className="chip">
+                          Repairs {activeInsight.manuscriptQuality.repairAttempts.attempted}/{activeInsight.manuscriptQuality.repairAttempts.allowedMax}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="section-kicker">{activeInsight.title}</p>
+                  )}
+                  {activeInsight.manuscriptQuality ? (
+                    <div className="manuscript-quality-summary">
+                      <div className="manuscript-quality-stat-grid">
+                        <article className="stat-card manuscript-quality-stat-card">
+                          <span className="stat-label">Reason</span>
+                          <strong>{formatManuscriptQualityReason(activeInsight.manuscriptQuality.reasonCategory)}</strong>
+                        </article>
+                        <article className="stat-card manuscript-quality-stat-card">
+                          <span className="stat-label">Triggered By</span>
+                          <strong>{activeInsight.manuscriptQuality.triggeredBy.join(", ") || "No triggers recorded"}</strong>
+                        </article>
+                        <article className="stat-card manuscript-quality-stat-card">
+                          <span className="stat-label">Review Reliability</span>
+                          <strong>{formatManuscriptQualityReliability(activeInsight.manuscriptQuality.reviewReliability)}</strong>
+                        </article>
+                      </div>
+
+                      <div className="manuscript-quality-group-grid">
+                        {buildManuscriptQualityGroupCards(activeInsight.manuscriptQuality).map((group) => (
+                          <article key={group.key} className="manuscript-quality-group-card">
+                            <div className="manuscript-quality-group-header">
+                              <span className="stat-label">{group.label}</span>
+                              <span className={`status-pill ${group.toneClass}`}>{group.items.length}</span>
+                            </div>
+                            <div className="manuscript-quality-group-list">
+                              {group.items.slice(0, 3).map((item) => (
+                                <p key={`${group.key}-${item.code}-${item.section}-${item.message}`} className="manuscript-quality-group-line">
+                                  <strong>{item.code}</strong> · {item.section} · {item.message}
+                                </p>
+                              ))}
+                              {group.items.length > 3 ? (
+                                <p className="manuscript-quality-group-line">
+                                  +{group.items.length - 3} more finding(s)
+                                </p>
+                              ) : null}
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+
+                      {activeInsight.manuscriptQuality.artifactRefs.length ? (
+                        <div className="manuscript-quality-artifacts">
+                          {activeInsight.manuscriptQuality.artifactRefs.map((artifactRef) => (
+                            <button
+                              key={`${artifactRef.label}-${artifactRef.path}`}
+                              className="button button-secondary button-small"
+                              type="button"
+                              disabled={isBusy}
+                              onClick={() => void openInsightReference(artifactRef.path)}
+                            >
+                              {artifactRef.label}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <div className="insight-list">
-                    {session.activeRunInsight.lines.map((line) => (
+                    {activeInsight.lines.map((line) => (
                       <p key={line} className="insight-line">{line}</p>
                     ))}
                   </div>
-                  {session.activeRunInsight.actions?.length ? (
+                  {activeInsight.actions?.length ? (
                     <div className="insight-actions">
-                      {session.activeRunInsight.actions.map((action) => (
+                      {activeInsight.actions.map((action) => (
                         <button
                           key={`${action.label}-${action.command}`}
                           className="button button-secondary button-small insight-action"
@@ -740,9 +814,9 @@ export function App() {
                       ))}
                     </div>
                   ) : null}
-                  {session.activeRunInsight.references?.length ? (
+                  {!activeInsight.manuscriptQuality && activeInsight.references?.length ? (
                     <div className="insight-references">
-                      {session.activeRunInsight.references.map((reference) => {
+                      {activeInsight.references.map((reference) => {
                         const referenceKey = buildInsightReferenceKey(reference);
                         const isExpanded = expandedInsightReferenceKey === referenceKey;
                         return (
@@ -2187,6 +2261,106 @@ function statusToneClass(status?: string): string {
     default:
       return "is-neutral";
   }
+}
+
+function manuscriptQualityStatusToneClass(
+  status: NonNullable<RunInsightCard["manuscriptQuality"]>["status"]
+): string {
+  switch (status) {
+    case "pass":
+      return "is-success";
+    case "repairing":
+      return "is-warning";
+    case "stopped":
+      return "is-danger";
+  }
+}
+
+function formatManuscriptQualityStatus(
+  status: NonNullable<RunInsightCard["manuscriptQuality"]>["status"]
+): string {
+  switch (status) {
+    case "pass":
+      return "Pass";
+    case "repairing":
+      return "Repairing";
+    case "stopped":
+      return "Stopped";
+  }
+}
+
+function formatManuscriptQualityStage(
+  stage: NonNullable<RunInsightCard["manuscriptQuality"]>["stage"]
+): string {
+  switch (stage) {
+    case "initial_gate":
+      return "Initial gate";
+    case "post_repair_1":
+      return "After repair 1";
+    case "post_repair_2":
+      return "After repair 2";
+  }
+}
+
+function formatManuscriptQualityReason(
+  reason: NonNullable<RunInsightCard["manuscriptQuality"]>["reasonCategory"]
+): string {
+  return toHeadline(reason.replace(/_/g, " "));
+}
+
+function formatManuscriptQualityReliability(
+  reliability: NonNullable<RunInsightCard["manuscriptQuality"]>["reviewReliability"]
+): string {
+  return toHeadline(reliability.replace(/_/g, " "));
+}
+
+function buildManuscriptQualityGroupCards(
+  insight: NonNullable<RunInsightCard["manuscriptQuality"]>
+): Array<{
+  key: string;
+  label: string;
+  toneClass: string;
+  items: Array<{
+    code: string;
+    section: string;
+    severity: "warning" | "fail";
+    message: string;
+  }>;
+}> {
+  const groups = [
+    {
+      key: "manuscript",
+      label: "Repairable manuscript issues",
+      toneClass: "is-warning",
+      items: insight.issueGroups.manuscript
+    },
+    {
+      key: "hard-stop",
+      label: "Hard-stop policy findings",
+      toneClass: "is-danger",
+      items: insight.issueGroups.hardStopPolicy
+    },
+    {
+      key: "backstop",
+      label: "Backstop-only findings",
+      toneClass: "is-neutral",
+      items: insight.issueGroups.backstopOnly
+    },
+    {
+      key: "scientific",
+      label: "Scientific blockers",
+      toneClass: "is-danger",
+      items: insight.issueGroups.scientific
+    },
+    {
+      key: "submission",
+      label: "Submission blockers",
+      toneClass: "is-danger",
+      items: insight.issueGroups.submission
+    }
+  ];
+
+  return groups.filter((group) => group.items.length > 0);
 }
 
 function formatTimestamp(value?: string): string {

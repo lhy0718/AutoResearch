@@ -36,6 +36,11 @@ const INTERNAL_ARTIFACT_FILENAMES = [
   "result_analysis.json"
 ] as const;
 
+export const AUTHORED_MAIN_TABLE_SOURCE_REF_ID = "manuscript.authored_main_table";
+export const AUTHORED_MAIN_FIGURE_SOURCE_REF_ID = "manuscript.authored_main_figure";
+export const AUTHORED_APPENDIX_TABLE_SOURCE_REF_ID = "manuscript.authored_appendix_table";
+export const AUTHORED_APPENDIX_FIGURE_SOURCE_REF_ID = "manuscript.authored_appendix_figure";
+
 export interface PaperManuscriptSection {
   heading: string;
   paragraphs: string[];
@@ -308,20 +313,32 @@ export function normalizePaperManuscript(input: {
   const sections = normalizeManuscriptSections(
     Array.isArray(input.raw?.sections) ? (input.raw?.sections as RawPaperManuscriptSection[]) : []
   );
-  const tables = normalizeManuscriptTables(
-    Array.isArray(input.raw?.tables) ? (input.raw?.tables as RawPaperManuscriptTable[]) : []
+  const tables = markVisualsAsAuthored(
+    normalizeManuscriptTables(
+      Array.isArray(input.raw?.tables) ? (input.raw?.tables as RawPaperManuscriptTable[]) : []
+    ),
+    AUTHORED_MAIN_TABLE_SOURCE_REF_ID
   );
-  const figures = normalizeManuscriptFigures(
-    Array.isArray(input.raw?.figures) ? (input.raw?.figures as RawPaperManuscriptFigure[]) : []
+  const figures = markVisualsAsAuthored(
+    normalizeManuscriptFigures(
+      Array.isArray(input.raw?.figures) ? (input.raw?.figures as RawPaperManuscriptFigure[]) : []
+    ),
+    AUTHORED_MAIN_FIGURE_SOURCE_REF_ID
+  );
+  const appendixTables = markVisualsAsAuthored(
+    normalizeManuscriptTables(
+      Array.isArray(input.raw?.appendix_tables) ? (input.raw?.appendix_tables as RawPaperManuscriptTable[]) : []
+    ),
+    AUTHORED_APPENDIX_TABLE_SOURCE_REF_ID
+  );
+  const appendixFigures = markVisualsAsAuthored(
+    normalizeManuscriptFigures(
+      Array.isArray(input.raw?.appendix_figures) ? (input.raw?.appendix_figures as RawPaperManuscriptFigure[]) : []
+    ),
+    AUTHORED_APPENDIX_FIGURE_SOURCE_REF_ID
   );
   const appendixSections = normalizeManuscriptSections(
     Array.isArray(input.raw?.appendix_sections) ? (input.raw?.appendix_sections as RawPaperManuscriptSection[]) : []
-  );
-  const appendixTables = normalizeManuscriptTables(
-    Array.isArray(input.raw?.appendix_tables) ? (input.raw?.appendix_tables as RawPaperManuscriptTable[]) : []
-  );
-  const appendixFigures = normalizeManuscriptFigures(
-    Array.isArray(input.raw?.appendix_figures) ? (input.raw?.appendix_figures as RawPaperManuscriptFigure[]) : []
   );
 
   const resolvedSections = preserveSectionSourceRefs(
@@ -756,6 +773,21 @@ function preserveVisualSourceRefs<T extends PaperManuscriptTable | PaperManuscri
     const fallback = fallbackItems?.[index];
     return fallback?.source_refs?.length ? { ...item, source_refs: fallback.source_refs } : item;
   });
+}
+
+function markVisualsAsAuthored<T extends PaperManuscriptTable | PaperManuscriptFigure>(
+  items: T[],
+  markerId: string
+): T[] {
+  if (!items.length) {
+    return items;
+  }
+  return items.map((item) => ({
+    ...item,
+    source_refs: item.source_refs?.some((ref) => ref.kind === "artifact" && ref.id === markerId)
+      ? item.source_refs
+      : [{ kind: "artifact" as const, id: markerId }, ...(item.source_refs || [])]
+  }));
 }
 
 function normalizeVisualRows(value: unknown): PaperManuscriptVisualRow[] {

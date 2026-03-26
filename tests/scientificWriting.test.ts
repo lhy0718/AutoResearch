@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { PaperDraft, PaperWritingBundle } from "../src/core/analysis/paperWriting.js";
-import type { PaperManuscript } from "../src/core/analysis/paperManuscript.js";
+import {
+  AUTHORED_MAIN_FIGURE_SOURCE_REF_ID,
+  AUTHORED_MAIN_TABLE_SOURCE_REF_ID,
+  type PaperManuscript
+} from "../src/core/analysis/paperManuscript.js";
 import {
   applyScientificWritingPolicy,
   buildScientificValidationArtifact,
@@ -893,6 +897,107 @@ describe("scientificWriting", () => {
       "Dataset-level outcome summary with uncertainty-aware interpretation retained in the main paper."
     );
     expect(manuscript.consistency_lint.issues.some((issue) => issue.kind === "caption_internal_name")).toBe(false);
+  });
+
+  it("preserves authored main-paper visuals so manuscript-quality repair can inspect them later", () => {
+    const bundle = makeRichBundle();
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle,
+      profile: PAPER_PROFILE
+    });
+    const candidate: PaperManuscript = {
+      title: "Repeated Tabular Benchmark",
+      abstract: "A short abstract.",
+      keywords: ["tabular"],
+      sections: scientific.draft.sections.map((section) => ({
+        heading: section.heading,
+        paragraphs: section.paragraphs.map((paragraph) => paragraph.text)
+      })),
+      tables: [
+        {
+          caption: "Exact numeric comparison for revision stability.",
+          rows: [
+            { label: "Stateless baseline", value: 0.71 },
+            { label: "Thread-backed drafting", value: 0.76 }
+          ],
+          source_refs: [{ kind: "artifact", id: AUTHORED_MAIN_TABLE_SOURCE_REF_ID }]
+        }
+      ],
+      figures: [
+        {
+          caption: "A redundant authored figure that still needs manuscript-level review.",
+          bars: [
+            { label: "Stateless baseline", value: 0.71 },
+            { label: "Thread-backed drafting", value: 0.76 }
+          ],
+          source_refs: [{ kind: "artifact", id: AUTHORED_MAIN_FIGURE_SOURCE_REF_ID }]
+        }
+      ]
+    };
+    const manuscript = materializeScientificManuscript({
+      candidate,
+      draft: scientific.draft,
+      bundle,
+      profile: PAPER_PROFILE,
+      appendixPlan: scientific.appendix_plan,
+      pageBudget: scientific.page_budget
+    });
+
+    expect(manuscript.manuscript.tables?.[0]?.caption).toBe("Exact numeric comparison for revision stability.");
+    expect(manuscript.manuscript.figures?.[0]?.caption).toBe(
+      "A redundant authored figure that still needs manuscript-level review."
+    );
+    expect(manuscript.manuscript.figures?.length).toBe(1);
+  });
+
+  it("still prunes redundant unmarked figures that originate from automatic fallback visuals", () => {
+    const bundle = makeRichBundle();
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle,
+      profile: PAPER_PROFILE
+    });
+    const candidate: PaperManuscript = {
+      title: "Repeated Tabular Benchmark",
+      abstract: "A short abstract.",
+      keywords: ["tabular"],
+      sections: scientific.draft.sections.map((section) => ({
+        heading: section.heading,
+        paragraphs: section.paragraphs.map((paragraph) => paragraph.text)
+      })),
+      tables: [
+        {
+          caption: "Selected reported metrics from the structured results analysis.",
+          rows: [
+            { label: "Accuracy", value: 0.91 },
+            { label: "Replication Success Rate", value: 0.94 },
+            { label: "F1", value: 0.88 }
+          ]
+        }
+      ],
+      figures: [
+        {
+          caption: "Objective metric met: accuracy=0.91 >= 0.9.",
+          bars: [
+            { label: "Accuracy", value: 0.91 },
+            { label: "Replication Success Rate", value: 0.94 },
+            { label: "F1", value: 0.88 }
+          ]
+        }
+      ]
+    };
+    const manuscript = materializeScientificManuscript({
+      candidate,
+      draft: scientific.draft,
+      bundle,
+      profile: PAPER_PROFILE,
+      appendixPlan: scientific.appendix_plan,
+      pageBudget: scientific.page_budget
+    });
+
+    expect(manuscript.manuscript.tables?.length).toBe(1);
+    expect(manuscript.manuscript.figures?.length || 0).toBe(0);
   });
 
   it("downgrades numeric_inconsistency to warning when values differ by >50% (likely metric-key mismatch)", () => {

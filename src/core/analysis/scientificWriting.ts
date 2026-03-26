@@ -19,6 +19,7 @@ import type {
   PaperManuscriptSection,
   PaperManuscriptTable
 } from "./paperManuscript.js";
+import { AUTHORED_MAIN_FIGURE_SOURCE_REF_ID } from "./paperManuscript.js";
 
 export type NumericFactKind = "metric" | "count";
 export type NumericFactSource =
@@ -868,6 +869,60 @@ function sanitizeCandidateFigures(figures: PaperManuscriptFigure[] | undefined):
       "Dataset-level outcome summary with uncertainty-aware interpretation retained in the main paper."
     )
   }));
+}
+
+function attachFallbackSourceRefsToTables(
+  tables: PaperManuscriptTable[] | undefined,
+  fallbackIds: string[]
+): PaperManuscriptTable[] | undefined {
+  if (!tables || tables.length === 0) {
+    return tables;
+  }
+  const fallbackSourceRefs = buildArtifactSourceRefs(fallbackIds);
+  return tables.map((table) => ({
+    ...table,
+    ...(table.source_refs?.length ? { source_refs: table.source_refs } : fallbackSourceRefs ? { source_refs: fallbackSourceRefs } : {})
+  }));
+}
+
+function attachFallbackSourceRefsToSections(
+  sections: PaperManuscriptSection[] | undefined,
+  fallbackIds: string[]
+): PaperManuscriptSection[] | undefined {
+  if (!sections || sections.length === 0) {
+    return sections;
+  }
+  const fallbackSourceRefs = buildArtifactSourceRefs(fallbackIds);
+  return sections.map((section) => ({
+    ...section,
+    ...(section.source_refs?.length ? { source_refs: section.source_refs } : fallbackSourceRefs ? { source_refs: fallbackSourceRefs } : {})
+  }));
+}
+
+function attachFallbackSourceRefsToFigures(
+  figures: PaperManuscriptFigure[] | undefined,
+  fallbackIds: string[]
+): PaperManuscriptFigure[] | undefined {
+  if (!figures || figures.length === 0) {
+    return figures;
+  }
+  const fallbackSourceRefs = buildArtifactSourceRefs(fallbackIds);
+  return figures.map((figure) => ({
+    ...figure,
+    ...(figure.source_refs?.length ? { source_refs: figure.source_refs } : fallbackSourceRefs ? { source_refs: fallbackSourceRefs } : {})
+  }));
+}
+
+function hasExplicitAuthoredFigureMarker(
+  figures: PaperManuscriptFigure[] | undefined
+): boolean {
+  return Boolean(
+    figures?.some((figure) =>
+      (figure.source_refs || []).some(
+        (ref) => ref.kind === "artifact" && ref.id === AUTHORED_MAIN_FIGURE_SOURCE_REF_ID
+      )
+    )
+  );
 }
 
 function dropRedundantFiguresAgainstTables(
@@ -3298,30 +3353,42 @@ export function materializeScientificManuscript(input: {
   });
 
   const mainTables = datasetResultTableBuilder(context);
-  const tables = mainTables.length > 0
+  const candidateTables = attachFallbackSourceRefsToTables(
+    sanitizeCandidateTables(input.candidate.tables),
+    ["result_analysis.metric_table", "latest_results.dataset_summaries"]
+  );
+  const derivedTables = mainTables.length > 0
     ? mainTables.map((table) => ({
         ...table,
         source_refs: buildArtifactSourceRefs(["result_analysis.metric_table", "latest_results.dataset_summaries"])
       }))
-    : sanitizeCandidateTables(input.candidate.tables);
+    : undefined;
+  const tables = candidateTables?.length ? candidateTables : derivedTables;
   const mainFigures = figureSelectorAndCaptionWriter(context);
-  const figures = mainFigures.length > 0
+  const candidateFigures = attachFallbackSourceRefsToFigures(
+    sanitizeCandidateFigures(input.candidate.figures),
+    ["result_analysis.figure_specs", "latest_results.dataset_summaries"]
+  );
+  const derivedFigures = mainFigures.length > 0
     ? mainFigures.map((figure) => ({
         ...figure,
         source_refs: buildArtifactSourceRefs(["result_analysis.figure_specs", "latest_results.dataset_summaries"])
       }))
-    : sanitizeCandidateFigures(input.candidate.figures);
-  const selectedFigures = dropRedundantFiguresAgainstTables(tables, figures);
-  const appendixSections = input.appendixPlan.sections.map((section) => ({
+    : undefined;
+  const figures = candidateFigures?.length ? candidateFigures : derivedFigures;
+  const selectedFigures = hasExplicitAuthoredFigureMarker(candidateFigures)
+    ? figures
+    : dropRedundantFiguresAgainstTables(tables, figures);
+  const generatedAppendixSections = input.appendixPlan.sections.map((section) => ({
     ...section,
     source_refs: buildArtifactSourceRefs([`appendix:${section.heading}`, "latest_results", "result_analysis"])
   }));
-  const appendixTables = input.appendixPlan.tables.map((table) => ({
+  const generatedAppendixTables = input.appendixPlan.tables.map((table) => ({
     ...table,
     caption: sanitizeVisualCaption(table.caption, "Extended dataset-level outcomes retained outside the main paper."),
     source_refs: buildArtifactSourceRefs(["appendix:dataset_tables", "latest_results.dataset_summaries"])
   }));
-  const appendixFigures = input.appendixPlan.figures.map((figure) => ({
+  const generatedAppendixFigures = input.appendixPlan.figures.map((figure) => ({
     ...figure,
     caption: sanitizeVisualCaption(
       figure.caption,
@@ -3329,6 +3396,21 @@ export function materializeScientificManuscript(input: {
     ),
     source_refs: buildArtifactSourceRefs(["appendix:figures", "result_analysis.figure_specs"])
   }));
+  const candidateAppendixSections = attachFallbackSourceRefsToSections(
+    input.candidate.appendix_sections,
+    ["appendix:authored_supporting_material", "latest_results", "result_analysis"]
+  );
+  const candidateAppendixTables = attachFallbackSourceRefsToTables(
+    sanitizeCandidateTables(input.candidate.appendix_tables),
+    ["appendix:authored_supporting_material", "latest_results.dataset_summaries"]
+  );
+  const candidateAppendixFigures = attachFallbackSourceRefsToFigures(
+    sanitizeCandidateFigures(input.candidate.appendix_figures),
+    ["appendix:authored_supporting_material", "result_analysis.figure_specs"]
+  );
+  const appendixSections = candidateAppendixSections?.length ? candidateAppendixSections : generatedAppendixSections;
+  const appendixTables = candidateAppendixTables?.length ? candidateAppendixTables : generatedAppendixTables;
+  const appendixFigures = candidateAppendixFigures?.length ? candidateAppendixFigures : generatedAppendixFigures;
 
   const manuscript: PaperManuscript = {
     ...input.candidate,
