@@ -36,6 +36,11 @@ describe("new slash commands", () => {
     expect(suggestions.some((s) => s.applyValue === "/knowledge ")).toBe(true);
   });
 
+  it("includes /artifact in suggestions when typing /ar", () => {
+    const suggestions = buildSuggestions({ input: "/ar", runs, activeRunId: "run-1" });
+    expect(suggestions.some((s) => s.applyValue === "/artifact ")).toBe(true);
+  });
+
   it("shows all new visible commands in root suggestions", () => {
     const suggestions = buildSuggestions({ input: "/", runs, activeRunId: "run-1" });
     expect(suggestions.some((s) => s.key === "cmd:clear")).toBe(true);
@@ -43,6 +48,7 @@ describe("new slash commands", () => {
     expect(suggestions.some((s) => s.key === "cmd:inspect")).toBe(true);
     expect(suggestions.some((s) => s.key === "cmd:session")).toBe(true);
     expect(suggestions.some((s) => s.key === "cmd:knowledge")).toBe(true);
+    expect(suggestions.some((s) => s.key === "cmd:artifact")).toBe(true);
     expect(suggestions.some((s) => s.key === "cmd:stats")).toBe(true);
     expect(suggestions.some((s) => s.key === "cmd:terminal-setup")).toBe(true);
     expect(suggestions.some((s) => s.key === "cmd:theme")).toBe(true);
@@ -168,6 +174,62 @@ describe("diagnostic command transient logs", () => {
     app.handleInspect();
     app.clearTransientLogs();
     expect(app.getRenderableLogs()).toEqual([]);
+  });
+
+  it("lists manuscript-quality artifact shortcuts in the TUI artifact command", async () => {
+    const app = makeApp();
+    app.resolveTargetRun = vi.fn().mockResolvedValue({
+      id: "run-1",
+      title: "Test Run",
+      currentNode: "write_paper",
+      status: "paused"
+    });
+    app.setActiveRunId = vi.fn().mockImplementation(async () => {
+      app.activeRunInsight = {
+        title: "Manuscript quality",
+        lines: [],
+        manuscriptQuality: {
+          status: "stopped",
+          stage: "post_repair_1",
+          reasonCategory: "policy_hard_stop",
+          reviewReliability: "grounded",
+          triggeredBy: ["appendix_hygiene"],
+          repairAttempts: {
+            attempted: 1,
+            allowedMax: 2,
+            remaining: 0
+          },
+          issueCounts: {
+            manuscript: 1,
+            hardStopPolicy: 1,
+            backstopOnly: 0,
+            scientificBlockers: 0,
+            submissionBlockers: 0,
+            reviewerMissedPolicy: 1,
+            reviewerCoveredBackstop: 0
+          },
+          issueGroups: {
+            manuscript: [],
+            hardStopPolicy: [],
+            backstopOnly: [],
+            scientific: [],
+            submission: []
+          },
+          artifactRefs: [
+            {
+              label: "Manuscript quality gate",
+              path: "paper/manuscript_quality_gate.json"
+            }
+          ]
+        }
+      };
+    });
+
+    const result = await app.handleArtifact([]);
+
+    expect(result.ok).toBe(true);
+    expect(app.logs).toContain("Artifact shortcuts for run-1:");
+    expect(app.logs).toContain("- Manuscript quality gate: /artifact paper/manuscript_quality_gate.json");
   });
 });
 

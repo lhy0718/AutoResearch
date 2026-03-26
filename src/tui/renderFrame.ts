@@ -1,4 +1,5 @@
 import { RunInsightCard, RunRecord, SuggestionItem } from "../types.js";
+import { buildArtifactCommandHintLines } from "../core/runArtifactPreview.js";
 import { ContextualGuidance } from "./contextualGuidance.js";
 import { PaintColor, PaintStyle, paint, reset, stripAnsi, TUI_THEME } from "./theme.js";
 import { getDisplayWidth } from "./displayWidth.js";
@@ -207,7 +208,11 @@ function buildManuscriptQualityInsightDigestLines(insight: RunInsightCard): stri
     );
   }
 
-  return lines.slice(0, 4);
+  for (const hint of buildArtifactCommandHintLines(payload.artifactRefs, 2)) {
+    lines.push(hint);
+  }
+
+  return lines.slice(0, 6);
 }
 
 function buildBottomChrome(input: RenderFrameInput, terminalWidth: number): BottomChromeOutput {

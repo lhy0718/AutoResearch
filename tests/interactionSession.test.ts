@@ -181,6 +181,79 @@ describe("InteractionSession", () => {
     expect(result.logs.some((line) => line.includes("Analysis coverage: 1 summaries, 1 evidence rows"))).toBe(true);
   });
 
+  it("previews manuscript-quality artifacts via /artifact", async () => {
+    const run = await runStore.createRun({
+      title: "Artifact run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.currentNode = "write_paper";
+    run.graph.currentNode = "write_paper";
+    run.status = "paused";
+    await runStore.updateRun(run);
+
+    const runDir = path.join(cwd, ".autolabos", "runs", run.id);
+    await fs.mkdir(path.join(runDir, "paper"), { recursive: true });
+    await fs.writeFile(
+      path.join(runDir, "paper", "manuscript_quality_gate.json"),
+      JSON.stringify(
+        {
+          action: "pass",
+          pass_index: 0,
+          triggered_by: [],
+          allowed_max_passes: 2,
+          remaining_allowed_repairs: 2,
+          improvement_detected: true,
+          stop_or_continue_reason: "Clean manuscript quality pass.",
+          issues_before: [],
+          issues_after: [],
+          summary_lines: ["Manuscript quality passed on the initial gate."],
+          decision_digest: {
+            stage: "initial_gate",
+            action: "pass",
+            review_reliability: "grounded",
+            issue_counts_before: 0,
+            issue_counts_after: 0,
+            improvement_detected: true,
+            allowed_max_passes: 2,
+            remaining_allowed_repairs: 2,
+            triggered_by: [],
+            stop_reason_category: "clean_pass"
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const session = new InteractionSession({
+      workspaceRoot: cwd,
+      config: {
+        research: {
+          defaultTopic: "topic",
+          defaultConstraints: ["recent papers"],
+          default_objective_metric: "metric"
+        }
+      } as any,
+      runStore,
+      titleGenerator: {} as any,
+      codex: {} as any,
+      openAiTextClient: undefined,
+      eventStream: new InMemoryEventStream(),
+      orchestrator: {} as any,
+      semanticScholarApiKeyConfigured: true
+    });
+    await session.start();
+    await session.selectRun(run.id);
+
+    const result = await session.submitInput("/artifact paper/manuscript_quality_gate.json");
+
+    expect(result.logs.some((line) => line.includes(`Artifact preview (${run.id}): paper/manuscript_quality_gate.json`))).toBe(true);
+    expect(result.logs.some((line) => line.includes('"action": "pass"'))).toBe(true);
+  });
+
   it("clears downstream artifacts and context when rewinding from an upstream node", async () => {
     const run = await runStore.createRun({
       title: "Reset run",

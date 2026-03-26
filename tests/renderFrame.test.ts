@@ -326,6 +326,7 @@ describe("buildFrame", () => {
     expect(plain).toContain("• Blockers: scientific 1.");
     expect(plain).toContain("• Repairs 1/2 | remaining 0 | improvement no.");
     expect(plain).toContain("• Coverage: reviewer-missed policy 1 | reviewer-covered backstop 2.");
+    expect(plain).toContain("• Manuscript quality gate: /artifact paper/manuscript_quality_gate.json");
     expect(plain).toContain("• Status: Stopped.");
   });
 

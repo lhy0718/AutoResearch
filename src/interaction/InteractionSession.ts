@@ -42,6 +42,11 @@ import {
 } from "../core/resultAnalysisPresentation.js";
 import { loadManuscriptQualityInsightCard } from "../core/manuscriptQualityPresentation.js";
 import {
+  buildArtifactCommandHintLines,
+  parseArtifactSlashArgs,
+  previewRunArtifact
+} from "../core/runArtifactPreview.js";
+import {
   shouldSurfaceAnalyzeResultsInsight,
   shouldSurfaceReviewInsight
 } from "../core/runInsightSelection.js";
@@ -1066,6 +1071,8 @@ export class InteractionSession {
       case "knowledge":
         await this.handleKnowledge(args);
         return { ok: true };
+      case "artifact":
+        return this.handleArtifact(args);
       case "agent":
         return this.handleAgent(args, abortSignal);
       case "approve":
@@ -1086,7 +1093,7 @@ export class InteractionSession {
   private printHelp(): void {
     this.pushLog("Web composer commands:");
     this.pushLog("/help | /runs | /run <run> | /resume <run> | /title <new title>");
-    this.pushLog("/knowledge [run]");
+    this.pushLog("/knowledge [run] | /artifact <path> [--run <run>]");
     this.pushLog("/doctor | /approve | /retry");
     this.pushLog("/agent list | /agent status [run] | /agent graph [run]");
     this.pushLog("/agent review [run] | /agent transition [run] | /agent apply [run] | /agent overnight [run] | /agent autonomous [run]");
@@ -1134,6 +1141,44 @@ export class InteractionSession {
     for (const line of buildRepositoryKnowledgeOverviewLines(index.entries)) {
       this.pushLog(line);
     }
+  }
+
+  private async handleArtifact(args: string[]): Promise<SlashExecutionResult> {
+    const parsed = parseArtifactSlashArgs(args);
+    if (parsed.error) {
+      this.pushLog(parsed.error);
+      return { ok: false, reason: parsed.error };
+    }
+
+    const run = await this.resolveTargetRun(parsed.runQuery);
+    if (!run) {
+      return { ok: false, reason: "target run not found" };
+    }
+
+    await this.setActiveRunId(run.id);
+    if (!parsed.relativePath) {
+      const refs = this.activeRunInsight?.manuscriptQuality?.artifactRefs || [];
+      if (refs.length === 0) {
+        this.pushLog(`No manuscript-quality artifact refs are available for ${run.id}.`);
+        this.pushLog(parsed.usage);
+        return { ok: false, reason: "no manuscript-quality artifact refs available" };
+      }
+      this.pushLog(`Artifact shortcuts for ${run.id}:`);
+      for (const line of buildArtifactCommandHintLines(refs, 5)) {
+        this.pushLog(`- ${line}`);
+      }
+      return { ok: true };
+    }
+
+    const preview = await previewRunArtifact({
+      workspaceRoot: this.workspaceRoot,
+      runId: run.id,
+      relativePath: parsed.relativePath
+    });
+    for (const line of preview.lines) {
+      this.pushLog(line);
+    }
+    return { ok: preview.ok, reason: preview.reason };
   }
 
   private async handleDoctor(): Promise<void> {
