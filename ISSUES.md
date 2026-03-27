@@ -1,12 +1,90 @@
 # ISSUES.md
 
-Last updated: 2026-03-25
+Last updated: 2026-03-27
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
 ---
 
 ## Current issue log
+
+### LV-082 — idle `Ctrl+C` still exits too eagerly instead of clearing the composer and requiring a confirmed second press
+- Status: FIXED
+- Validation target: real `test/` TUI `Ctrl+C` behavior in the idle composer, compared against the locally installed Codex CLI and Claude Code CLI
+- Environment/session context: repo head on 2026-03-27, workspace `/home/hanyong/AutoLabOS/test`, AutoLabOS launched via `node /home/hanyong/AutoLabOS/dist/cli/main.js`, Codex launched via `/home/hanyong/.nvm/versions/node/v24.14.1/bin/codex`, Claude launched via `/home/hanyong/.local/bin/claude`, user requirement that the first idle `Ctrl+C` clear the current input and only a consecutive second press exit.
+- Reproduction steps:
+  1. Launch a fresh AutoLabOS TUI rooted at `test/`, type draft text into the composer, and press `Ctrl+C`.
+  2. Without typing anything else, press `Ctrl+C` again.
+  3. Repeat from an empty composer and compare against local Codex and Claude sessions.
+- Expected behavior: while idle, the first `Ctrl+C` should clear the current composer-local draft or arm an exit warning if the composer is already empty; only a consecutive second `Ctrl+C` within a short confirmation window should exit. Busy turns should continue to interrupt in place.
+- Actual behavior: before the fix, AutoLabOS still routed idle `Ctrl+C` straight to shutdown. Live reference observations showed that both Codex and Claude clear an in-progress draft on the first idle `Ctrl+C`; Claude also warns before exit when the composer is already empty. After the fix, AutoLabOS now clears idle composer-local state on the first `Ctrl+C`, renders `Cleared input. Press Ctrl+C again to exit.` or `Press Ctrl+C again to exit.` as appropriate, exits only on the second consecutive idle `Ctrl+C`, and keeps the busy interrupt behavior from LV-081. The confirmation window is intentionally short: the second press must arrive within 1 second.
+- Fresh vs existing session comparison:
+  - Fresh session: revalidated in a fresh AutoLabOS PTY. Typed draft text cleared on the first `Ctrl+C`, and the warning appeared in both draft and empty-composer paths. Rapid second-press exit was revalidated by sending back-to-back `\u0003\u0003` control bytes inside the same PTY write, which exited cleanly.
+  - Existing session: reopened the TUI in the same `test/` workspace and confirmed the same first-press clear/warn behavior. Rapid second-press exit followed the same back-to-back control-byte validation path.
+  - Divergence: no fresh-vs-existing divergence observed in the actual TUI behavior that was reproducible with this validation harness.
+- Root cause hypothesis:
+  - Type: `refresh_render_bug`
+  - Hypothesis: the earlier LV-081 patch only split busy vs idle handling, so idle `Ctrl+C` still bypassed composer-local cleanup and confirmation state. The TUI needed an explicit idle `Ctrl+C` state machine rather than a direct shutdown branch.
+- Code/test changes:
+  - Code: `src/tui/TerminalApp.ts` now tracks a 1-second idle `Ctrl+C` confirmation window, clears composer-local draft state before exit, shows a transient confirmed-exit hint, and only exits on a consecutive second idle `Ctrl+C`. Busy interrupts remain unchanged.
+  - Tests: `tests/terminalAppPlanExecution.test.ts` now covers idle draft clearing, empty-composer warning, second-press exit, timeout expiry, typing-driven disarm, and selection-menu cleanup.
+- Regression status:
+  - Automated regression test linked: yes, `tests/terminalAppPlanExecution.test.ts`
+  - Re-validation result: FIXED via focused `npx vitest run tests/terminalAppPlanExecution.test.ts`, `npm run build`, real PTY validation in `/home/hanyong/AutoLabOS/test` for fresh and reopened sessions, and a clean `npm test` sweep.
+- Remaining risks: AutoLabOS intentionally chooses the safer Claude-like empty-composer confirmation behavior instead of Codex's immediate empty-composer exit. That is a product choice, not a bug, but it means the idle-empty branch is intentionally not identical to Codex. Separate `write_stdin` calls are still only an approximation of human key timing, so the live validation should keep checking both a rapid second press inside the 1-second window and a delayed second press outside it.
+- Evidence/artifacts: live PTY validation in `/home/hanyong/AutoLabOS/test`; local Codex session on 2026-03-27 showing draft clear on first `Ctrl+C` and exit on the second; local Claude session on 2026-03-27 showing draft clear plus `Press Ctrl-C again to exit`; focused test `tests/terminalAppPlanExecution.test.ts`
+
+### LV-081 — Ctrl+C exits AutoLabOS immediately instead of behaving like a Codex-style interrupt while work is active
+- Status: FIXED
+- Validation target: real `test/` TUI Ctrl+C behavior during idle and active turns, compared against the locally installed Codex CLI
+- Environment/session context: repo head on 2026-03-27, workspace `/home/hanyong/AutoLabOS/test`, AutoLabOS launched via `node /home/hanyong/AutoLabOS/dist/cli/main.js`, Codex launched via `/home/hanyong/.nvm/versions/node/v24.14.1/bin/codex`, user request to align Ctrl+C behavior with Codex CLI.
+- Reproduction steps:
+  1. Launch a fresh AutoLabOS TUI rooted at `test/` and press `Ctrl+C` from the composer.
+  2. Launch another fresh AutoLabOS TUI, start an active turn, and press `Ctrl+C` while work is in flight.
+  3. Launch the local Codex CLI and compare how `Ctrl+C` behaves while the CLI is still active versus when it is idle.
+- Expected behavior: when work is active, `Ctrl+C` should interrupt the current operation and keep the session alive instead of immediately quitting; when idle, exiting remains acceptable.
+- Actual behavior: before the fix, AutoLabOS routed `Ctrl+C` straight to `shutdown({ abortActive: true })`, so the session exited immediately. Local Codex observation showed different behavior while work was active: an early `Ctrl+C` during startup did not terminate the session, and only an idle `Ctrl+C` exited cleanly. After the fix, AutoLabOS now keeps the session alive while active work is in flight, logs `Cancel requested: ...`, and still exits on an idle `Ctrl+C`.
+- Fresh vs existing session comparison:
+  - Fresh session: revalidated in a fresh AutoLabOS PTY. During a live `hello` turn, `Ctrl+C` no longer exited the session and instead triggered the interrupt path; once the session returned to idle, a second `Ctrl+C` exited cleanly.
+  - Existing session: not separately reopened for this issue because the behavior is tied to the current in-memory key handler and the fixed fresh-session live validation already exercised both the active and idle branches.
+  - Divergence: not established yet.
+- Root cause hypothesis:
+  - Type: `refresh_render_bug`
+  - Hypothesis: `TerminalApp.handleKeypress()` treated `Ctrl+C` as an unconditional shutdown signal instead of reusing the existing `cancelCurrentBusyOperation()` path, so active turns could not be interrupted in-place the way Codex keeps the session alive during active work.
+- Code/test changes:
+  - Code: `src/tui/TerminalApp.ts` now routes `Ctrl+C` through a dedicated handler that interrupts busy work in-place, clears queued inputs and steering buffers to avoid replay, and only falls back to shutdown when the session is idle.
+  - Tests: `tests/terminalAppPlanExecution.test.ts` now asserts that busy `Ctrl+C` interrupts instead of shutting down, clears queued state, and that idle `Ctrl+C` still exits.
+- Regression status:
+  - Automated regression test linked: yes, `tests/terminalAppPlanExecution.test.ts`
+  - Re-validation result: FIXED via focused `npx vitest run tests/terminalAppPlanExecution.test.ts`, `npm run build`, live PTY validation in `/home/hanyong/AutoLabOS/test` showing busy-turn interrupt followed by idle exit, and a clean `npm test` sweep.
+- Follow-up risks: the local Codex package only exposes the Node launcher source; the native child still defines some fine-grained interrupt UX internally. The AutoLabOS patch matches the observed high-level contract here: interrupt while busy, exit while idle.
+- Evidence/artifacts: live PTY validation in `/home/hanyong/AutoLabOS/test`; local Codex launcher `/home/hanyong/.nvm/versions/node/v24.14.1/lib/node_modules/@openai/codex/bin/codex.js`; focused test `tests/terminalAppPlanExecution.test.ts`
+
+### LV-080 — unsupported terminals can corrupt TUI input into literal `3u` fragments
+- Status: FIXED
+- Validation target: real `test/` TUI composer input in fresh and reopened sessions, plus the unsupported-terminal boundary that can turn typed input into literal `3u`
+- Environment/session context: repo head on 2026-03-27, workspace `/home/hanyong/AutoLabOS/test`, real PTY TUI launches via `node /home/hanyong/AutoLabOS/dist/cli/main.js`, user-reported symptom `every typed input only inserts "3u"`, plus direct live revalidation after the patch in the default terminal environment and a simulated tmux-style environment (`TERM=screen-256color`, `TMUX=/tmp/fake-tmux`).
+- Reproduction steps:
+  1. Launch a fresh TUI rooted at `test/`, run `/doctor`, then type slash commands and normal composer input.
+  2. Compare the same flow after reopening the TUI in the same workspace.
+  3. For the suspected boundary, compare behavior when the terminal looks like an unsupported/tmux-style environment versus a terminal that confidently supports enhanced keyboard mode.
+- Expected behavior: ordinary typed input should insert the characters the user typed, with no leaked CSI-u tail fragments such as `3u`; unsupported terminals should fall back to plain input handling instead of enabling keyboard protocols they may not understand.
+- Actual behavior: the user reported that every attempted input only inserted `3u`. In local PTY validation before the fix, `/doctor`, `/artifact result_analysis.json`, and plain input like `hello` all behaved normally in both fresh and reopened sessions, so the corruption never reproduced under the default terminal environment. After the fix, the same inputs still worked in fresh and reopened sessions, and a tmux-style launch also accepted `hello` normally instead of leaking `3u`.
+- Fresh vs existing session comparison:
+  - Fresh session: before and after the fix, local PTY validation accepted `/doctor`, `/artifact result_analysis.json`, and plain `hello` input normally in a fresh default-environment session. After the fix, a fresh tmux-style session also accepted `hello` without corruption.
+  - Existing session: reopening the same `test/` workspace after the fix still accepted `/artifact result_analysis.json` and normal input with no corruption.
+  - Divergence: no local fresh-vs-existing divergence observed; the evidence stayed concentrated at the terminal capability boundary rather than persisted state or resume state.
+- Root cause hypothesis:
+  - Type: `refresh_render_bug`
+  - Hypothesis: `TerminalApp.attachKeyboard()` always enabled CSI-u keyboard enhancement and modifyOtherKeys whenever stdout was a TTY, even when `detectLikelyEnhancedNewlineSupport()` had already classified the terminal as unsupported. In those terminals, the unsupported control sequence could leak back into the composer as literal tail text such as `3u`.
+- Code/test changes:
+  - Code: `src/tui/TerminalApp.ts` now gates CSI-u keyboard enhancement and modifyOtherKeys behind the existing terminal-capability heuristic, tracks whether enhanced keyboard mode was actually enabled, and only sends the disable sequences when that mode was active.
+  - Tests: `tests/terminalAppPlanExecution.test.ts` now covers both unsupported and supported attach/detach paths so unsupported terminals do not emit `\x1b[>7u` / `\x1b[>4;1m`, while supported terminals still emit the enable/disable pairs.
+- Regression status:
+  - Automated regression test linked: yes, `tests/terminalAppPlanExecution.test.ts`
+  - Re-validation result: FIXED via focused `npx vitest run tests/terminalAppPlanExecution.test.ts`, `npm run build`, same-flow real PTY revalidation in `/home/hanyong/AutoLabOS/test` for fresh/default, reopened/default, and fresh tmux-style sessions, plus a clean full `npm test` rerun after one unrelated flaky `tests/analyzePapers.test.ts` timeout passed on isolated rerun and the subsequent full sweep.
+- Follow-up risks: the guard is intentionally conservative, so some terminals that support enhanced keyboard mode but do not match the current heuristic may fall back to `Ctrl+J newline` until a safer capability signal is added. The patch protects input correctness first.
+- Evidence/artifacts: user report in the coding session on 2026-03-27; local PTY validation from `/home/hanyong/AutoLabOS/test`; `/home/hanyong/AutoLabOS/test/.autolabos/runs/411d5215-b03a-46e4-bf89-ea5a42513288/result_analysis.json`; focused test `tests/terminalAppPlanExecution.test.ts`
 
 ### LV-079 — downstream analyze failure can roll a successful real collect run back into a second provider search
 - Status: FIXED

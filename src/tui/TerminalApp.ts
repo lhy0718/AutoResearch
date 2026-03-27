@@ -294,6 +294,11 @@ export class TerminalApp {
   private activeBusyLabel?: string;
   private activeBusyPromise?: Promise<void>;
   private shutdownAbortGraceMs = 1500;
+  private lastIdleCtrlCAt = 0;
+  private ctrlCExitArmUntil = 0;
+  private ctrlCExitHint?: string;
+  private ctrlCExitArmTimer?: NodeJS.Timeout;
+  private readonly ctrlCExitArmWindowMs = 1000;
   private creatingRunFromBrief = false;
   private creatingRunTargetId?: string;
   private collectProgress?: CollectProgressState;
@@ -318,6 +323,7 @@ export class TerminalApp {
   private rawKeyboardSequenceBuffer = "";
   private rawTerminalQueryBuffer = "";
   private mouseTrackingEnabled = false;
+  private enhancedKeyboardModeEnabled = false;
   private commandModeDraft?: { input: string; cursor: number };
   private suppressMouseKeypresses = false;
 
@@ -384,12 +390,17 @@ export class TerminalApp {
 
     if (process.stdout.isTTY) {
       applyCodexSurfaceTheme(await resolveTerminalBackground(process.stdin, process.stdout));
-      process.stdout.write(ENABLE_KEYBOARD_ENHANCEMENT);
-      process.stdout.write(ENABLE_MODIFY_OTHER_KEYS);
+      this.enhancedKeyboardModeEnabled = this.shouldEnableEnhancedKeyboardMode();
+      if (this.enhancedKeyboardModeEnabled) {
+        process.stdout.write(ENABLE_KEYBOARD_ENHANCEMENT);
+        process.stdout.write(ENABLE_MODIFY_OTHER_KEYS);
+      }
       this.mouseTrackingEnabled = this.shouldEnableMouseTracking();
       if (this.mouseTrackingEnabled) {
         process.stdout.write(ENABLE_MOUSE_SGR);
       }
+    } else {
+      this.enhancedKeyboardModeEnabled = false;
     }
 
     readline.emitKeypressEvents(process.stdin);
@@ -404,20 +415,27 @@ export class TerminalApp {
       if (this.mouseTrackingEnabled) {
         process.stdout.write(DISABLE_MOUSE_SGR);
       }
-      process.stdout.write(DISABLE_MODIFY_OTHER_KEYS);
-      process.stdout.write(DISABLE_KEYBOARD_ENHANCEMENT);
+      if (this.enhancedKeyboardModeEnabled) {
+        process.stdout.write(DISABLE_MODIFY_OTHER_KEYS);
+        process.stdout.write(DISABLE_KEYBOARD_ENHANCEMENT);
+      }
     }
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(false);
     }
     this.rawKeyboardSequenceBuffer = "";
     this.mouseTrackingEnabled = false;
+    this.enhancedKeyboardModeEnabled = false;
   }
 
   private shouldEnableMouseTracking(): boolean {
     const term = (process.env.TERM ?? "").toLowerCase();
     const termProgram = (process.env.TERM_PROGRAM ?? "").toLowerCase();
     return !(process.env.TMUX || termProgram === "tmux" || term.startsWith("screen"));
+  }
+
+  private shouldEnableEnhancedKeyboardMode(): boolean {
+    return this.enhancedNewlineSupported;
   }
 
   private isReturnKey(key: readline.Key): boolean {
@@ -634,9 +652,13 @@ export class TerminalApp {
       return;
     }
 
+    if (this.shouldDisarmCtrlCExitForKeypress(str, key)) {
+      this.resetCtrlCExitConfirmation();
+    }
+
     if (this.activeSelectionMenu) {
       if (key.ctrl && key.name === "c") {
-        await this.shutdown({ abortActive: true });
+        await this.handleCtrlC();
         return;
       }
       if (key.name === "up" || (key.ctrl && key.name === "p")) {
@@ -676,7 +698,7 @@ export class TerminalApp {
     }
 
     if (key.ctrl && key.name === "c") {
-      await this.shutdown({ abortActive: true });
+      await this.handleCtrlC();
       return;
     }
 
@@ -1786,6 +1808,148 @@ export class TerminalApp {
       this.render();
       return;
     }
+  }
+
+  private async handleCtrlC(): Promise<void> {
+    const now = Date.now();
+    this.expireCtrlCExitArmIfNeeded();
+    if (this.busy) {
+      this.resetCtrlCExitConfirmation();
+      this.interruptCurrentBusyTurn();
+      return;
+    }
+    if (this.isRecentIdleCtrlC(now)) {
+      this.resetCtrlCExitConfirmation();
+      await this.shutdown({ abortActive: true });
+      return;
+    }
+    const clearedComposerState = this.clearComposerStateForCtrlC();
+    this.armCtrlCExit(
+      clearedComposerState ? "Cleared input. Press Ctrl+C again to exit." : "Press Ctrl+C again to exit.",
+      now
+    );
+    this.render();
+  }
+
+  private clearComposerStateForCtrlC(): boolean {
+    let cleared = false;
+
+    if (this.activeSelectionMenu) {
+      const resolve = this.activeSelectionMenu.resolve;
+      this.activeSelectionMenu = undefined;
+      resolve(undefined);
+      cleared = true;
+    }
+
+    if (this.commandModeDraft) {
+      this.commandModeDraft = undefined;
+      cleared = true;
+    }
+
+    if (this.historyCursor !== -1 || this.historyDraft.length > 0) {
+      this.exitHistoryBrowsing();
+      this.historyDraft = "";
+      cleared = true;
+    }
+
+    if (this.input.length > 0 || this.cursorIndex !== 0) {
+      this.input = "";
+      this.cursorIndex = 0;
+      cleared = true;
+    }
+
+    if (this.suggestions.length > 0 || this.selectedSuggestion !== 0) {
+      this.suggestions = [];
+      this.selectedSuggestion = 0;
+      cleared = true;
+    }
+
+    return cleared;
+  }
+
+  private isRecentIdleCtrlC(now = Date.now()): boolean {
+    return this.lastIdleCtrlCAt > 0 && now - this.lastIdleCtrlCAt <= this.ctrlCExitArmWindowMs;
+  }
+
+  private expireCtrlCExitArmIfNeeded(): void {
+    if (this.ctrlCExitArmUntil > 0 && Date.now() > this.ctrlCExitArmUntil) {
+      this.resetCtrlCExitConfirmation();
+    }
+  }
+
+  private armCtrlCExit(message: string, now = Date.now()): void {
+    this.clearCtrlCExitHint();
+    this.lastIdleCtrlCAt = now;
+    this.ctrlCExitArmUntil = now + this.ctrlCExitArmWindowMs;
+    this.ctrlCExitHint = message;
+    this.ctrlCExitArmTimer = setTimeout(() => {
+      this.resetCtrlCExitConfirmation();
+      if (!this.stopped) {
+        this.render();
+      }
+    }, this.ctrlCExitArmWindowMs);
+    this.ctrlCExitArmTimer.unref?.();
+  }
+
+  private clearCtrlCExitHint(): void {
+    if (this.ctrlCExitArmTimer) {
+      clearTimeout(this.ctrlCExitArmTimer);
+      this.ctrlCExitArmTimer = undefined;
+    }
+    this.ctrlCExitArmUntil = 0;
+    this.ctrlCExitHint = undefined;
+  }
+
+  private resetCtrlCExitConfirmation(): void {
+    this.clearCtrlCExitHint();
+    this.lastIdleCtrlCAt = 0;
+  }
+
+  private getCtrlCExitHint(): string | undefined {
+    this.expireCtrlCExitArmIfNeeded();
+    return this.ctrlCExitHint;
+  }
+
+  private shouldDisarmCtrlCExitForKeypress(str: string, key: readline.Key): boolean {
+    if (key.ctrl && key.name === "c") {
+      return false;
+    }
+
+    if (this.hasPrintableUserInput(str)) {
+      return true;
+    }
+
+    return new Set([
+      "return",
+      "enter",
+      "escape",
+      "backspace",
+      "delete",
+      "up",
+      "down",
+      "left",
+      "right",
+      "pageup",
+      "pagedown",
+      "home",
+      "end",
+      "tab"
+    ]).has(key.name ?? "");
+  }
+
+  private hasPrintableUserInput(str: string): boolean {
+    return /[^\u0000-\u001f\u007f]/u.test(str);
+  }
+  private interruptCurrentBusyTurn(): void {
+    const clearedQueuedInputs = this.queuedInputs.length;
+    this.queuedInputs = [];
+    this.pendingNaturalCommand = undefined;
+    this.steeringBufferDuringThinking = [];
+    if (clearedQueuedInputs > 0) {
+      this.pushLog(`Cleared ${clearedQueuedInputs} queued input(s) after interrupt.`);
+    }
+    this.cancelCurrentBusyOperation();
+    this.render();
   }
 
   private isAbortError(error: unknown): boolean {
@@ -4954,7 +5118,8 @@ export class TerminalApp {
 
     const progressLine = this.getTransientProgressLog(run);
     const statusLines = this.buildProjectedStatusLines(run);
-    const extras = [...statusLines, ...(progressLine ? [progressLine] : [])];
+    const ctrlCExitHint = this.getCtrlCExitHint();
+    const extras = [...statusLines, ...(progressLine ? [progressLine] : []), ...(ctrlCExitHint ? [ctrlCExitHint] : [])];
 
     if (this.transientLogs.length === 0 && extras.length === 0) {
       return [...this.logs];
@@ -5303,6 +5468,7 @@ export class TerminalApp {
       return;
     }
     this.stopped = true;
+    this.resetCtrlCExitConfirmation();
     this.detachProcessTerminationHandlers();
     this.queuedInputs = [];
     this.pendingNaturalCommand = undefined;

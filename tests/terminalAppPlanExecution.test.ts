@@ -1179,36 +1179,128 @@ describe("TerminalApp pending natural plan execution", () => {
     }
   });
 
-  it("shuts down on ctrl+c while busy instead of replaying queued inputs", async () => {
+  it("interrupts busy work on ctrl+c instead of shutting down", async () => {
     const app = makeApp();
     app.busy = true;
+    app.queuedInputs.push("/approve");
+    app.pendingNaturalCommand = { kind: "collect", prompt: "collect more", execute: vi.fn() };
+    app.steeringBufferDuringThinking = ["narrow the scope"];
     app.cancelCurrentBusyOperation = vi.fn();
     app.shutdown = vi.fn();
 
     await app.handleKeypress("", { ctrl: true, name: "c" });
 
-    expect(app.shutdown).toHaveBeenCalledTimes(1);
-    expect(app.shutdown).toHaveBeenCalledWith({ abortActive: true });
-    expect(app.cancelCurrentBusyOperation).not.toHaveBeenCalled();
+    expect(app.cancelCurrentBusyOperation).toHaveBeenCalledTimes(1);
+    expect(app.shutdown).not.toHaveBeenCalled();
+    expect(app.queuedInputs).toEqual([]);
+    expect(app.pendingNaturalCommand).toBeUndefined();
+    expect(app.steeringBufferDuringThinking).toEqual([]);
   });
 
-  it("still shuts down on ctrl+c when idle", async () => {
+  it("clears idle composer state and arms exit confirmation on ctrl+c", async () => {
     const app = makeApp();
     app.busy = false;
-    app.cancelCurrentBusyOperation = vi.fn();
+    app.input = "draft note";
+    app.cursorIndex = app.input.length;
+    app.commandModeDraft = { input: "saved draft", cursor: 5 };
+    app.historyCursor = 0;
+    app.historyDraft = "history draft";
+    app.suggestions = [{ title: "/doctor", description: "Doctor", applyValue: "/doctor" }];
+    app.selectedSuggestion = 0;
+    app.shutdown = vi.fn();
+    const resolveMenu = vi.fn();
+    app.activeSelectionMenu = {
+      title: "Select",
+      options: [{ value: "y", label: "Yes" }],
+      selectedIndex: 0,
+      resolve: resolveMenu
+    };
+
+    await app.handleKeypress("", { ctrl: true, name: "c" });
+
+    expect(app.shutdown).not.toHaveBeenCalled();
+    expect(app.input).toBe("");
+    expect(app.cursorIndex).toBe(0);
+    expect(app.commandModeDraft).toBeUndefined();
+    expect(app.historyCursor).toBe(-1);
+    expect(app.historyDraft).toBe("");
+    expect(app.suggestions).toEqual([]);
+    expect(app.activeSelectionMenu).toBeUndefined();
+    expect(resolveMenu).toHaveBeenCalledWith(undefined);
+    expect(app.getRenderableLogs()).toContain("Cleared input. Press Ctrl+C again to exit.");
+  });
+
+  it("arms exit confirmation on ctrl+c when the idle composer is already empty", async () => {
+    const app = makeApp();
+    app.busy = false;
     app.shutdown = vi.fn();
 
     await app.handleKeypress("", { ctrl: true, name: "c" });
 
-    expect(app.shutdown).toHaveBeenCalledTimes(1);
-    expect(app.shutdown).toHaveBeenCalledWith({ abortActive: true });
-    expect(app.cancelCurrentBusyOperation).not.toHaveBeenCalled();
+    expect(app.shutdown).not.toHaveBeenCalled();
+    expect(app.getRenderableLogs()).toContain("Press Ctrl+C again to exit.");
   });
 
-  it("clears queued slash inputs when shutdown interrupts a busy operation", async () => {
+  it("shuts down on a second idle ctrl+c within the confirmation window", async () => {
     const app = makeApp();
-    const drainQueuedInputs = vi.fn(async () => {});
-    app.drainQueuedInputs = drainQueuedInputs;
+    app.busy = false;
+    app.shutdown = vi.fn();
+
+    await app.handleKeypress("", { ctrl: true, name: "c" });
+    await app.handleKeypress("", { ctrl: true, name: "c" });
+
+    expect(app.shutdown).toHaveBeenCalledTimes(1);
+    expect(app.shutdown).toHaveBeenCalledWith({ abortActive: true });
+  });
+
+  it("re-arms instead of exiting when the ctrl+c confirmation window expires", async () => {
+    vi.useFakeTimers();
+    const app = makeApp();
+    app.busy = false;
+    app.shutdown = vi.fn();
+
+    try {
+      await app.handleKeypress("", { ctrl: true, name: "c" });
+      vi.advanceTimersByTime(1001);
+      await app.handleKeypress("", { ctrl: true, name: "c" });
+
+      expect(app.shutdown).not.toHaveBeenCalled();
+      expect(app.getRenderableLogs()).toContain("Press Ctrl+C again to exit.");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("disarms exit confirmation once the user resumes typing", async () => {
+    const app = makeApp();
+    app.busy = false;
+    app.shutdown = vi.fn();
+
+    await app.handleKeypress("", { ctrl: true, name: "c" });
+    await app.handleKeypress("a", { sequence: "a", name: "a" });
+    await app.handleKeypress("", { ctrl: true, name: "c" });
+
+    expect(app.shutdown).not.toHaveBeenCalled();
+    expect(app.input).toBe("");
+    expect(app.getRenderableLogs()).toContain("Cleared input. Press Ctrl+C again to exit.");
+  });
+
+  it("keeps the ctrl+c exit confirmation armed across meaningless keypress noise", async () => {
+    const app = makeApp();
+    app.busy = false;
+    app.shutdown = vi.fn();
+
+    await app.handleKeypress("", { ctrl: true, name: "c" });
+    await app.handleKeypress("", { name: undefined });
+    await app.handleKeypress("\u0003", { sequence: "\u0003", name: undefined });
+    await app.handleKeypress("", { ctrl: true, name: "c" });
+
+    expect(app.shutdown).toHaveBeenCalledTimes(1);
+    expect(app.shutdown).toHaveBeenCalledWith({ abortActive: true });
+  });
+
+  it("clears queued slash inputs when ctrl+c interrupts a busy operation", async () => {
+    const app = makeApp();
     app.onQuit = vi.fn();
     app.detachKeyboard = vi.fn();
 
@@ -1231,12 +1323,14 @@ describe("TerminalApp pending natural plan execution", () => {
     await started;
     app.queuedInputs.push("/approve");
 
-    await app.shutdown({ abortActive: true });
+    await app.handleKeypress("", { ctrl: true, name: "c" });
     await busyPromise;
 
-    expect(app.stopped).toBe(true);
+    expect(app.stopped).toBe(false);
+    expect(app.onQuit).not.toHaveBeenCalled();
     expect(app.queuedInputs).toEqual([]);
-    expect(drainQueuedInputs).not.toHaveBeenCalled();
+    expect(app.logs.some((line: string) => line.includes("Cleared 1 queued input(s) after interrupt."))).toBe(true);
+    expect(app.logs.some((line: string) => line.includes("Canceled: /brief"))).toBe(true);
     expect(app.logs.some((line: string) => line.includes("Running queued input: /approve"))).toBe(false);
   });
 
@@ -1972,6 +2066,80 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(app.resolveNewlineHintLabel()).toBe("Shift+Enter newline");
   });
 
+  it("does not enable enhanced keyboard mode on unsupported terminals", async () => {
+    const app = makeApp();
+    app.enhancedNewlineSupported = false;
+
+    const writeSpy = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    const stdoutIsTTY = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+    const stdinIsTTY = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+    Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+    Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
+    process.env.TERM = "screen-256color";
+    process.env.TMUX = "/tmp/fake-tmux";
+
+    try {
+      await app.attachKeyboard();
+      app.detachKeyboard();
+
+      const output = writeSpy.mock.calls.map(([chunk]) => String(chunk)).join("");
+      expect(output).not.toContain("\x1b[>7u");
+      expect(output).not.toContain("\x1b[>4;1m");
+      expect(output).not.toContain("\x1b[<u");
+      expect(output).not.toContain("\x1b[>4;0m");
+    } finally {
+      if (stdoutIsTTY) {
+        Object.defineProperty(process.stdout, "isTTY", stdoutIsTTY);
+      } else {
+        delete (process.stdout as NodeJS.WriteStream & { isTTY?: boolean }).isTTY;
+      }
+      if (stdinIsTTY) {
+        Object.defineProperty(process.stdin, "isTTY", stdinIsTTY);
+      } else {
+        delete (process.stdin as NodeJS.ReadStream & { isTTY?: boolean }).isTTY;
+      }
+      delete process.env.TERM;
+      delete process.env.TMUX;
+      writeSpy.mockRestore();
+    }
+  });
+
+  it("enables and disables enhanced keyboard mode only when supported", async () => {
+    const app = makeApp();
+    app.enhancedNewlineSupported = true;
+
+    const writeSpy = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    const stdoutIsTTY = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+    const stdinIsTTY = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+    Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+    Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
+    process.env.TERM = "wezterm";
+
+    try {
+      await app.attachKeyboard();
+      app.detachKeyboard();
+
+      const output = writeSpy.mock.calls.map(([chunk]) => String(chunk)).join("");
+      expect(output).toContain("\x1b[>7u");
+      expect(output).toContain("\x1b[>4;1m");
+      expect(output).toContain("\x1b[<u");
+      expect(output).toContain("\x1b[>4;0m");
+    } finally {
+      if (stdoutIsTTY) {
+        Object.defineProperty(process.stdout, "isTTY", stdoutIsTTY);
+      } else {
+        delete (process.stdout as NodeJS.WriteStream & { isTTY?: boolean }).isTTY;
+      }
+      if (stdinIsTTY) {
+        Object.defineProperty(process.stdin, "isTTY", stdinIsTTY);
+      } else {
+        delete (process.stdin as NodeJS.ReadStream & { isTTY?: boolean }).isTTY;
+      }
+      delete process.env.TERM;
+      writeSpy.mockRestore();
+    }
+  });
+
   it("hides slash suggestions once the draft becomes multiline", () => {
     const app = makeApp();
     app.input = "/brief\nextra";
@@ -2054,9 +2222,8 @@ describe("TerminalApp pending natural plan execution", () => {
 
     await app.handleKeypress("", { ctrl: true, name: "c" });
 
-    expect(app.cancelCurrentBusyOperation).not.toHaveBeenCalled();
-    expect(app.shutdown).toHaveBeenCalledTimes(1);
-    expect(app.shutdown).toHaveBeenCalledWith({ abortActive: true });
+    expect(app.cancelCurrentBusyOperation).toHaveBeenCalledTimes(1);
+    expect(app.shutdown).not.toHaveBeenCalled();
     expect(resolve).not.toHaveBeenCalled();
   });
 
