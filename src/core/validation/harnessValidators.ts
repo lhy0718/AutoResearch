@@ -103,6 +103,8 @@ export async function validateRunArtifactStructure(
   }
 
   const reviewPacketPath = path.join(runDir, "review", "review_packet.json");
+  const reviewMinimumGatePath = path.join(runDir, "review", "minimum_gate.json");
+  const reviewCritiquePath = path.join(runDir, "review", "paper_critique.json");
   const reviewCompleted = isNodeCompleted(nodeStates, "review");
   const reviewPacketPresent = await fileExists(reviewPacketPath);
   const reviewDecision = await readJsonObjectIfPresent(reviewDecisionPath, runId, issues);
@@ -134,6 +136,20 @@ export async function validateRunArtifactStructure(
           issues
         });
       }
+      await requireJsonObject({
+        filePath: reviewMinimumGatePath,
+        missingCode: "review_minimum_gate_missing",
+        malformedCode: "review_minimum_gate_malformed",
+        runId,
+        issues
+      });
+      await requireJsonObject({
+        filePath: reviewCritiquePath,
+        missingCode: "review_paper_critique_missing",
+        malformedCode: "review_paper_critique_malformed",
+        runId,
+        issues
+      });
     }
   }
 
@@ -173,6 +189,49 @@ export async function validateRunArtifactStructure(
           runDir
         }
       );
+      const claims = Array.isArray((evidenceLinks as { claims?: unknown[] }).claims)
+        ? (evidenceLinks as { claims?: unknown[] }).claims || []
+        : [];
+      if (claims.length > 0) {
+        await requireJsonObject({
+          filePath: path.join(runDir, "paper", "claim_evidence_table.json"),
+          missingCode: "paper_claim_evidence_table_missing",
+          malformedCode: "paper_claim_evidence_table_malformed",
+          runId,
+          issues
+        });
+        await requireJsonObject({
+          filePath: path.join(runDir, "paper", "verified_registry.json"),
+          missingCode: "paper_verified_registry_missing",
+          malformedCode: "paper_verified_registry_malformed",
+          runId,
+          issues
+        });
+        await requireJsonObject({
+          filePath: path.join(runDir, "paper", "claim_status_table.json"),
+          missingCode: "paper_claim_status_table_missing",
+          malformedCode: "paper_claim_status_table_malformed",
+          runId,
+          issues
+        });
+        await requireJsonObject({
+          filePath: path.join(runDir, "paper", "evidence_gate_decision.json"),
+          missingCode: "paper_evidence_gate_decision_missing",
+          malformedCode: "paper_evidence_gate_decision_malformed",
+          runId,
+          issues
+        });
+      }
+    }
+    const paperReadiness = await requireJsonObject({
+      filePath: path.join(runDir, "paper", "paper_readiness.json"),
+      missingCode: "paper_readiness_missing",
+      malformedCode: "paper_readiness_malformed",
+      runId,
+      issues
+    });
+    if (paperReadiness) {
+      validatePaperReadinessPayload(paperReadiness, path.join(runDir, "paper", "paper_readiness.json"), runId, issues);
     }
     await validatePaperResultConsistency({
       runId,
@@ -856,6 +915,54 @@ async function validateEvidenceLinksPayload(
     issues.push({
       code: "paper_claim_linkage_imbalance",
       message: `Only ${claimsWithConcreteLinks}/${claims.length} claims have concrete evidence/citation linkage.`,
+      filePath,
+      runId
+    });
+  }
+}
+
+function validatePaperReadinessPayload(
+  payload: Record<string, unknown>,
+  filePath: string,
+  runId: string,
+  issues: HarnessValidationIssue[]
+): void {
+  const paperReady = payload.paper_ready;
+  const readinessState = asString(payload.readiness_state);
+  const evidenceGateStatus = asString(payload.evidence_gate_status);
+  const scientificValidationStatus = asString(payload.scientific_validation_status);
+
+  if (typeof paperReady !== "boolean") {
+    issues.push({
+      code: "paper_readiness_flag_missing",
+      message: "paper/paper_readiness.json must include a boolean paper_ready field.",
+      filePath,
+      runId
+    });
+  }
+
+  if (!readinessState) {
+    issues.push({
+      code: "paper_readiness_state_missing",
+      message: "paper/paper_readiness.json must include a non-empty readiness_state.",
+      filePath,
+      runId
+    });
+  }
+
+  if (evidenceGateStatus && !["pass", "warn", "fail"].includes(evidenceGateStatus)) {
+    issues.push({
+      code: "paper_readiness_evidence_gate_invalid",
+      message: "paper/paper_readiness.json contains an invalid evidence_gate_status.",
+      filePath,
+      runId
+    });
+  }
+
+  if (scientificValidationStatus && !["pass", "warn", "fail"].includes(scientificValidationStatus)) {
+    issues.push({
+      code: "paper_readiness_scientific_gate_invalid",
+      message: "paper/paper_readiness.json contains an invalid scientific_validation_status.",
       filePath,
       runId
     });

@@ -73,6 +73,14 @@ export interface DoctorResponse {
   configured: boolean;
   checks: DoctorCheck[];
   harness?: HarnessValidationReport;
+  readiness?: {
+    blocked: boolean;
+    approvalMode: "manual" | "minimal";
+    executionApprovalMode: "manual" | "risk_ack" | "full_auto";
+    dependencyMode: "local" | "docker" | "remote_gpu" | "plan_only";
+    sessionMode: "fresh" | "existing";
+    failedChecks: string[];
+  };
 }
 
 export interface KnowledgeResponse {

@@ -2846,6 +2846,208 @@ describe("objective metric propagation", () => {
     expect(triageRaw).toContain('"final_category": "invalid_metrics"');
   });
 
+  it("blocks run_experiments when sentinel watchdog finds NaN/Inf-like metrics", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-sentinel-nan-"));
+    process.chdir(root);
+
+    const runId = "run-sentinel-nan";
+    const run = makeRun(runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    const memoryDir = path.join(runDir, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "implement_experiments.run_command",
+            value: "python3 experiment.py",
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.cwd",
+            value: root,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.metrics_path",
+            value: `.autolabos/runs/${runId}/metrics.json`,
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const runNode = createRunExperimentsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                accuracy: "NaN",
+                f1: 0.71
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "done",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await runNode.execute({ run, graph: run.graph });
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("Sentinel watchdog blocked the run");
+    expect(result.error).toContain("NaN");
+
+    const reportRaw = await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8");
+    expect(reportRaw).toContain('"stage": "metrics"');
+    expect(reportRaw).toContain("Sentinel watchdog blocked the run");
+
+    const triage = JSON.parse(await readFile(path.join(runDir, "run_experiments_panel", "triage.json"), "utf8")) as {
+      watchdog: { sentinel_findings: Array<{ code: string; severity: string }> };
+    };
+    expect(triage.watchdog.sentinel_findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "nan_or_inf_metric",
+          severity: "fail"
+        })
+      ])
+    );
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    expect(await memory.get("implement_experiments.runner_feedback")).toMatchObject({
+      status: "fail",
+      stage: "metrics"
+    });
+    expect(await memory.get("run_experiments.last_error")).toMatch(/Sentinel watchdog blocked the run/u);
+  });
+
+  it("records warning-only sentinel findings when metrics stay parseable but suspicious", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-sentinel-warning-"));
+    process.chdir(root);
+
+    const runId = "run-sentinel-warning";
+    const run = makeRun(runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    const memoryDir = path.join(runDir, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "implement_experiments.run_command",
+            value: "python3 experiment.py",
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.cwd",
+            value: root,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.metrics_path",
+            value: `.autolabos/runs/${runId}/metrics.json`,
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const runNode = createRunExperimentsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                accuracy: 1.4,
+                citation_reliability: 0.21
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "done",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await runNode.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+
+    const triage = JSON.parse(await readFile(path.join(runDir, "run_experiments_panel", "triage.json"), "utf8")) as {
+      watchdog: {
+        sentinel_findings: Array<{
+          code: string;
+          severity: string;
+          downgrade_to_unverified?: boolean;
+        }>;
+      };
+    };
+    expect(triage.watchdog.sentinel_findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "statistical_anomaly",
+          severity: "warning"
+        }),
+        expect.objectContaining({
+          code: "citation_reliability_anomaly",
+          severity: "warning",
+          downgrade_to_unverified: true
+        })
+      ])
+    );
+  });
+
   it("counts both preflight and run commands when command execution fails after preflight", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-tool-calls-"));
     process.chdir(root);

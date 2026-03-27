@@ -61,6 +61,15 @@ describe("harness validators", () => {
     await writeJson(path.join(runDir, "transition_recommendation.json"), { action: "advance" });
     await writeJson(path.join(runDir, "review", "decision.json"), { outcome: "advance" });
     await writeJson(path.join(runDir, "review", "revision_plan.json"), { required_actions: [] });
+    await writeJson(path.join(runDir, "review", "minimum_gate.json"), {
+      passed: true,
+      ceiling_type: "unrestricted"
+    });
+    await writeJson(path.join(runDir, "review", "paper_critique.json"), {
+      stage: "pre_draft_review",
+      manuscript_type: "paper_scale_candidate",
+      paper_readiness_state: "paper_scale_candidate"
+    });
     await writeJson(path.join(runDir, "review", "review_packet.json"), {
       readiness: { status: "ready" },
       checks: [{ id: "c1", status: "ready" }],
@@ -80,6 +89,82 @@ describe("harness validators", () => {
           citation_paper_ids: ["paper_1"]
         }
       ]
+    });
+    await writeJson(path.join(runDir, "paper", "claim_evidence_table.json"), {
+      generated_at: new Date().toISOString(),
+      claims: [
+        {
+          claim_id: "c1",
+          section_heading: "Results",
+          evidence_source_type: "experiment",
+          artifact_refs: ["ev_1"],
+          citation_refs: ["paper_1"],
+          strength: "high"
+        }
+      ]
+    });
+    await writeJson(path.join(runDir, "paper", "verified_registry.json"), {
+      generated_at: new Date().toISOString(),
+      counts: {
+        verified: 1,
+        unverified: 0,
+        blocked: 0,
+        inferred: 0
+      },
+      blocked_citation_paper_ids: [],
+      summary_lines: ["VerifiedRegistry citation statuses: verified=1, inferred=0, unverified=0, blocked=0."],
+      entries: [
+        {
+          citation_paper_id: "paper_1",
+          resolved_paper_id: "paper_1",
+          title: "Paper 1",
+          status: "verified",
+          repaired: false,
+          bibtex_mode: "stored",
+          doi: "10.1000/test",
+          notes: [],
+          attempts: []
+        }
+      ]
+    });
+    await writeJson(path.join(runDir, "paper", "claim_status_table.json"), {
+      generated_at: new Date().toISOString(),
+      counts: {
+        verified: 1,
+        unverified: 0,
+        blocked: 0,
+        inferred: 0
+      },
+      claims: [
+        {
+          claim_id: "c1",
+          section_heading: "Results",
+          status: "verified",
+          primary_source_present: true,
+          run_artifact_present: true,
+          reproduction_trace_present: true,
+          artifact_refs: ["ev_1"],
+          citation_refs: ["paper_1"],
+          claim_ids_in_trace: ["c1"],
+          notes: []
+        }
+      ]
+    });
+    await writeJson(path.join(runDir, "paper", "evidence_gate_decision.json"), {
+      generated_at: new Date().toISOString(),
+      status: "pass",
+      blocking_issue_count: 0,
+      warning_count: 0,
+      issues: [],
+      summary_lines: ["ok"]
+    });
+    await writeJson(path.join(runDir, "paper", "paper_readiness.json"), {
+      generated_at: new Date().toISOString(),
+      paper_ready: false,
+      readiness_state: "paper_scale_candidate",
+      evidence_gate_status: "pass",
+      scientific_validation_status: "pass",
+      submission_validation_ok: true
     });
 
     const result = await validateRunArtifactStructure({
@@ -119,6 +204,8 @@ describe("harness validators", () => {
     const codes = result.issues.map((item) => item.code);
     expect(codes).toContain("review_decision_missing");
     expect(codes).toContain("review_revision_plan_missing");
+    expect(codes).toContain("review_minimum_gate_missing");
+    expect(codes).toContain("review_paper_critique_missing");
   });
 
   it("reports placeholder evidence mappings in paper evidence links", async () => {
@@ -149,6 +236,38 @@ describe("harness validators", () => {
     expect(codes).toContain("paper_claim_id_placeholder");
     expect(codes).toContain("paper_claim_statement_placeholder");
     expect(codes).toContain("paper_claim_linkage_placeholder");
+  });
+
+  it("reports missing paper readiness and claim status artifacts when paper claims exist", async () => {
+    const runDir = createTempRunDir("autolabos-harness-validator-paper-contract-");
+    await mkdir(path.join(runDir, "paper"), { recursive: true });
+    await writeFile(path.join(runDir, "paper", "main.tex"), "\\section{Results}\n", "utf8");
+    await writeFile(path.join(runDir, "paper", "references.bib"), "@article{key, title={A}}\n", "utf8");
+    await writeJson(path.join(runDir, "paper", "evidence_links.json"), {
+      claims: [
+        {
+          claim_id: "c1",
+          statement: "The method improved accuracy.",
+          evidence_ids: ["ev_1"],
+          citation_paper_ids: ["paper_1"]
+        }
+      ]
+    });
+
+    const result = await validateRunArtifactStructure({
+      runId: "run-paper-contract-missing",
+      runDir,
+      nodeStates: makeNodeStates({
+        write_paper: "completed"
+      })
+    });
+
+    const codes = result.issues.map((item) => item.code);
+    expect(codes).toContain("paper_claim_evidence_table_missing");
+    expect(codes).toContain("paper_verified_registry_missing");
+    expect(codes).toContain("paper_claim_status_table_missing");
+    expect(codes).toContain("paper_evidence_gate_decision_missing");
+    expect(codes).toContain("paper_readiness_missing");
   });
 
   it("reports missing metrics/objective artifacts when later nodes are marked completed", async () => {

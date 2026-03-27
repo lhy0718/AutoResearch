@@ -42,6 +42,7 @@ import {
   RunExperimentsExecutionPlan,
   RunExperimentsRerunDecision,
   RunExperimentsTriageAttempt,
+  setSentinelFindings,
   setMetricsState
 } from "../runExperimentsPanel.js";
 
@@ -668,6 +669,44 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           }
           parsedMetrics = parsed as Record<string, unknown>;
           watchdog = setMetricsState(watchdog, "valid", logFile);
+          const sentinelFindings = detectSentinelWatchdogFindings(parsedMetrics);
+          watchdog = setSentinelFindings(watchdog, sentinelFindings);
+          if (sentinelFindings.some((finding) => finding.severity === "fail")) {
+            const sentinelMessage = sentinelFindings.map((finding) => finding.message).join(" ");
+            await persistPanelState();
+            await persistRunVerifierReport(
+              run,
+              runContext,
+              buildRunVerifierReport({
+                status: "fail",
+                trigger,
+                stage: "metrics",
+                summary: sentinelMessage,
+                command: primaryCommand,
+                cwd: resolved.cwd,
+                metricsPath: resolved.metricsPath,
+                exitCode: obs.exit_code ?? 0,
+                stdout: obs.stdout,
+                stderr: sentinelMessage,
+                logFile,
+                suggestedNextAction:
+                  "Repair the metrics writer so NaN/Inf-like outputs are removed before the run is accepted."
+              })
+            );
+            await persistRunFailureState(runContext, {
+              command: primaryCommand,
+              cwd: resolved.cwd,
+              logFile,
+              exitCode: obs.exit_code ?? 0,
+              error: sentinelMessage
+            });
+            await recordRunFailure(sentinelMessage, "structural");
+            return {
+              status: "failure",
+              error: sentinelMessage,
+              toolCallsUsed: preflightToolCallsUsed + primaryAttemptsUsed
+            };
+          }
           rerunDecision = {
             decision: "not_needed",
             reason:
@@ -948,8 +987,81 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         needsApproval: true,
         toolCallsUsed: preflightToolCallsUsed + primaryAttemptsUsed + supplementalRuns.toolCallsUsed
       };
+  }
+};
+}
+
+function detectSentinelWatchdogFindings(
+  metrics: Record<string, unknown>
+): Array<{
+  code: "nan_or_inf_metric" | "statistical_anomaly" | "citation_reliability_anomaly";
+  severity: "warning" | "fail";
+  message: string;
+  requires_human_review: boolean;
+  downgrade_to_unverified?: boolean;
+}> {
+  const findings: Array<{
+    code: "nan_or_inf_metric" | "statistical_anomaly" | "citation_reliability_anomaly";
+    severity: "warning" | "fail";
+    message: string;
+    requires_human_review: boolean;
+    downgrade_to_unverified?: boolean;
+  }> = [];
+  const flat = flattenMetricValues(metrics);
+
+  for (const entry of flat) {
+    if (typeof entry.value === "string" && /^(nan|inf|-inf|infinity|-infinity)$/iu.test(entry.value.trim())) {
+      findings.push({
+        code: "nan_or_inf_metric",
+        severity: "fail",
+        message: `Sentinel watchdog blocked the run because ${entry.path} resolved to ${entry.value}.`,
+        requires_human_review: true
+      });
+      return findings;
     }
-  };
+  }
+
+  for (const entry of flat) {
+    if (typeof entry.value !== "number" || !Number.isFinite(entry.value)) {
+      continue;
+    }
+    if (/(accuracy|f1|precision|recall|auc|success_rate|pass_rate|win_rate|p_value)$/iu.test(entry.path)) {
+      if (entry.value < 0 || entry.value > 1) {
+        findings.push({
+          code: "statistical_anomaly",
+          severity: "warning",
+          message: `Sentinel watchdog flagged ${entry.path}=${entry.value}, which falls outside the expected [0, 1] range.`,
+          requires_human_review: true
+        });
+      }
+    }
+    if (/(citation_reliability|citation_confidence)$/iu.test(entry.path) && entry.value < 0.5) {
+      findings.push({
+        code: "citation_reliability_anomaly",
+        severity: "warning",
+        message: `Sentinel watchdog flagged low citation reliability at ${entry.path}=${entry.value}.`,
+        requires_human_review: true,
+        downgrade_to_unverified: true
+      });
+    }
+  }
+
+  return findings;
+}
+
+function flattenMetricValues(
+  value: unknown,
+  prefix = ""
+): Array<{ path: string; value: unknown }> {
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) => flattenMetricValues(item, prefix ? `${prefix}[${index}]` : `[${index}]`));
+  }
+  if (value && typeof value === "object") {
+    return Object.entries(value).flatMap(([key, nested]) =>
+      flattenMetricValues(nested, prefix ? `${prefix}.${key}` : key)
+    );
+  }
+  return [{ path: prefix || "value", value }];
 }
 
 async function resolveManagedSupplementalPlan(

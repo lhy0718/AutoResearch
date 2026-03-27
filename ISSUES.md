@@ -8,6 +8,32 @@ This file was compacted on 2026-03-22 to remove duplicated template fragments, m
 
 ## Current issue log
 
+### LV-083 — `/doctor` wrongly blocks the default local snapshot-isolation execution mode as if containerization were missing
+- Status: FIXED
+- Validation target: real `test/` TUI `/doctor` readiness output after the doctor/evidence-gate contract expansion
+- Environment/session context: repo head on 2026-03-27, workspace `/home/hanyong/AutoLabOS/test`, AutoLabOS launched via `node /home/hanyong/AutoLabOS/dist/cli/main.js`, default experiment config `allow_network=false`, `candidate_isolation=attempt_snapshot_restore`, active resumed session with replayed history.
+- Reproduction steps:
+  1. Launch a real TUI rooted at `test/`.
+  2. Run `/doctor`.
+  3. Inspect the readiness-related lines in the TUI output.
+- Expected behavior: the repository's default local execution mode should count as ready when a bounded local isolation strategy is configured and network access remains disabled; `/doctor` should not require docker/remote containerization for the default local path.
+- Actual behavior: before the fix, `/doctor` reported `x [FAIL] experiment-containerization: Code execution is expected but no containerized/high-risk isolation requirement was inferred.` even though the current default config already used `candidate_isolation=attempt_snapshot_restore`. After the fix, live `/doctor` revalidation showed `+ [OK] experiment-containerization: Code execution is expected and local repository isolation is configured via attempt_snapshot_restore.` The same live run still showed `experiment-web-restriction` as a real fail because that workspace currently had `allow_network=true`, which is now surfaced honestly instead of inferred away.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately re-run before the fix because the incorrect doctor classification reproduced immediately in the first real `test/` session.
+  - Existing session: reproduced in the resumed `test/` TUI session used for live `/doctor` validation.
+  - Divergence: not established; the symptom was tied to the doctor readiness contract rather than replay-specific state.
+- Root cause hypothesis:
+  - Type: `refresh_render_bug`
+  - Hypothesis: the new doctor readiness check equated "safe code execution" with docker/remote containerization only, ignoring the repository's existing local isolation contract (`attempt_snapshot_restore` / `attempt_worktree`) and not actually checking the configured `allow_network` flag.
+- Code/test changes:
+  - Code: `src/core/doctor.ts` now treats configured local candidate isolation as a valid readiness path for local execution, and `experiment-web-restriction` now checks the real `allow_network` setting instead of inferring success unconditionally. `src/tui/TerminalApp.ts`, `src/interaction/InteractionSession.ts`, and `src/web/server.ts` now pass `allow_network` into `/doctor`.
+  - Tests: `tests/doctorHarnessIntegration.test.ts` now covers the default local snapshot-isolation + disabled-network readiness path.
+- Regression status:
+  - Automated regression test linked: yes, `tests/doctorHarnessIntegration.test.ts`
+  - Re-validation result: FIXED via `npx vitest run tests/doctorHarnessIntegration.test.ts`, `npm run build`, `npm run validate:harness`, `npm run test:web`, a clean full `npm test` rerun, and real PTY `/doctor` revalidation in `/home/hanyong/AutoLabOS/test`.
+- Follow-up risks: remote/docker dependency modes still need to keep their stricter isolation semantics, so the doctor contract should continue distinguishing "local bounded isolation" from "containerized/high-risk isolation required by dependency mode."
+- Evidence/artifacts: real PTY `/doctor` validation in `/home/hanyong/AutoLabOS/test` on 2026-03-27; `src/config.ts` default experiment config; `src/core/doctor.ts`
+
 ### LV-082 — idle `Ctrl+C` still exits too eagerly instead of clearing the composer and requiring a confirmed second press
 - Status: FIXED
 - Validation target: real `test/` TUI `Ctrl+C` behavior in the idle composer, compared against the locally installed Codex CLI and Claude Code CLI

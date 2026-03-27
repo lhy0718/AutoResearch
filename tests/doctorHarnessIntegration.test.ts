@@ -37,6 +37,9 @@ describe("runDoctorReport", () => {
     expect(report.harness?.status).toBe("ok");
     expect(report.harness?.findings).toEqual([]);
     expect(report.harness?.targets.find((target) => target.scope === "workspace")?.runStoreCount).toBe(1);
+    expect(report.readiness.blocked).toBe(false);
+    expect(report.readiness.executionApprovalMode).toBe("manual");
+    expect(report.readiness.failedChecks).toEqual([]);
   });
 
   it("includes the latest compiled paper page-budget check when available", async () => {
@@ -69,6 +72,69 @@ describe("runDoctorReport", () => {
     expect(buildDoctorHighlightLines(report)).toEqual([
       expect.stringContaining("[ATTN] paper page budget:")
     ]);
+  });
+
+  it("captures readiness snapshot fields for approval mode and workspace write probing", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-readiness-");
+    await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
+    await writeJson(path.join(workspace, ".autolabos", "runs", "runs.json"), { runs: [] });
+
+    const report = await runDoctorReport(createCodexStub(), {
+      workspaceRoot: workspace,
+      includeHarnessValidation: false,
+      approvalMode: "manual",
+      executionApprovalMode: "risk_ack",
+      dependencyMode: "docker",
+      sessionMode: "existing",
+      codeExecutionExpected: true,
+      candidateIsolation: "attempt_worktree"
+    });
+
+    expect(report.readiness.approvalMode).toBe("manual");
+    expect(report.readiness.executionApprovalMode).toBe("risk_ack");
+    expect(report.readiness.dependencyMode).toBe("docker");
+    expect(report.readiness.sessionMode).toBe("existing");
+    expect(report.readiness.workspaceProbePath).toContain(workspace);
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "workspace-write",
+        ok: true
+      })
+    );
+  });
+
+  it("treats local snapshot isolation plus disabled network as ready for code execution", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-local-isolation-");
+    await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
+    await writeJson(path.join(workspace, ".autolabos", "runs", "runs.json"), { runs: [] });
+
+    const report = await runDoctorReport(createCodexStub(), {
+      workspaceRoot: workspace,
+      includeHarnessValidation: false,
+      approvalMode: "manual",
+      executionApprovalMode: "manual",
+      dependencyMode: "local",
+      sessionMode: "existing",
+      codeExecutionExpected: true,
+      candidateIsolation: "attempt_snapshot_restore",
+      allowNetwork: false
+    });
+
+    expect(report.readiness.blocked).toBe(false);
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "experiment-containerization",
+        ok: true,
+        detail: expect.stringContaining("attempt_snapshot_restore")
+      })
+    );
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "experiment-web-restriction",
+        ok: true,
+        detail: expect.stringContaining("network access remains disabled")
+      })
+    );
   });
 });
 

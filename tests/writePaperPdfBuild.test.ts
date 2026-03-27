@@ -1,6 +1,6 @@
 import path from "node:path";
 import { tmpdir } from "node:os";
-import { mkdtemp, mkdir, readFile, writeFile, access } from "node:fs/promises";
+import { appendFile, mkdtemp, mkdir, readFile, writeFile, access } from "node:fs/promises";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -202,6 +202,64 @@ function buildSessionResponses(): string[] {
   const review = JSON.stringify({
     summary: "The draft is coherent and grounded.",
     revision_notes: ["Keep the PDF-compilation framing explicit."],
+    unsupported_claims: [],
+    missing_sections: [],
+    missing_citations: []
+  });
+  return [outline, draft, review, draft];
+}
+
+function buildExternalCitationResponses(): string[] {
+  const outline = JSON.stringify({
+    title: "Externally Verified Citation Paper",
+    abstract_focus: ["persistent drafting", "citation verification"],
+    section_headings: ["Introduction", "Method", "Results", "Conclusion"],
+    key_claim_themes: ["External citation verification repairs missing corpus references."],
+    citation_plan: ["Recovered External Title"]
+  });
+  const draft = JSON.stringify({
+    title: "Externally Verified Citation Paper",
+    abstract: "A paper-writing workflow that can recover missing citations through bounded external verification.",
+    keywords: ["agent collaboration", "citation verification"],
+    sections: [
+      {
+        heading: "Introduction",
+        paragraphs: ["This paper grounds its framing in an externally recovered citation."],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["Recovered External Title"]
+      },
+      {
+        heading: "Method",
+        paragraphs: ["The manuscript cites a missing reference and lets the registry repair it conservatively."],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["Recovered External Title"]
+      },
+      {
+        heading: "Results",
+        paragraphs: ["Bounded external verification restored the missing citation without broadening the claim ceiling."],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["Recovered External Title"]
+      },
+      {
+        heading: "Conclusion",
+        paragraphs: ["External citation repair stays local to bibliography support rather than changing the evidence bar."],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["Recovered External Title"]
+      }
+    ],
+    claims: [
+      {
+        claim_id: "c1",
+        statement: "Bounded external verification restored the missing citation without broadening the claim ceiling.",
+        section_heading: "Results",
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["Recovered External Title"]
+      }
+    ]
+  });
+  const review = JSON.stringify({
+    summary: "The draft is coherent and keeps the citation repair bounded.",
+    revision_notes: ["Keep the citation repair strictly bibliographic."],
     unsupported_claims: [],
     missing_sections: [],
     missing_citations: []
@@ -2194,6 +2252,99 @@ describe("writePaper PDF build", () => {
     });
   });
 
+  it("recovers missing citations through bounded external verification before building references", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-external-citation-"));
+    process.chdir(root);
+
+    const run = makeRun("run-paper-external-citation");
+    const runDir = await seedRun(root, run);
+    await appendFile(
+      path.join(runDir, "paper_summaries.jsonl"),
+      `${JSON.stringify({
+        paper_id: "Recovered External Title",
+        title: "Recovered External Title",
+        source_type: "full_text",
+        summary: "A placeholder summary keeps the citation id alive through draft normalization.",
+        key_findings: ["The missing citation should be recovered externally before bibliography generation."],
+        limitations: ["This summary exists only to exercise the bounded external citation-repair path."],
+        datasets: [],
+        metrics: [],
+        novelty: "External citation verification",
+        reproducibility_notes: []
+      })}\n`,
+      "utf8"
+    );
+    const node = createWritePaperNode({
+      config: {
+        providers: {
+          llm_mode: "openai_api"
+        },
+        paper: {
+          build_pdf: false
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient(buildExternalCitationResponses()),
+      pdfTextLlm: {} as any,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {
+        async searchPapers(request: { query: string; limit: number }) {
+          expect(request.query).toBe("Recovered External Title");
+          expect(request.limit).toBe(5);
+          return [
+            {
+              paperId: "s2_recovered_external",
+              title: "Recovered External Title",
+              abstract: "Recovered from bounded external verification.",
+              authors: ["Eve Resolver"],
+              year: 2025,
+              venue: "ACL",
+              doi: "10.1000/recovered-external",
+              url: "https://example.org/recovered-external",
+              citationStylesBibtex:
+                "@article{recovered_external,title={Recovered External Title},doi={10.1000/recovered-external},url={https://example.org/recovered-external}}"
+            }
+          ];
+        }
+      } as any,
+      responsesPdfAnalysis: {
+        hasApiKey: async () => false
+      } as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+
+    const verifiedRegistry = JSON.parse(
+      await readFile(path.join(runDir, "paper", "verified_registry.json"), "utf8")
+    ) as {
+      counts: Record<string, number>;
+      entries: Array<{
+        citation_paper_id: string;
+        status: string;
+        resolved_via?: string;
+        provider?: string;
+      }>;
+    };
+    expect(verifiedRegistry.counts.unverified).toBe(1);
+    const externalEntry = verifiedRegistry.entries.find(
+      (entry) => entry.citation_paper_id === "Recovered External Title"
+    );
+    expect(externalEntry).toMatchObject({
+      citation_paper_id: "Recovered External Title",
+      status: "unverified",
+      resolved_via: "external_provider",
+      provider: "semantic_scholar"
+    });
+
+    const references = await readFile(path.join(runDir, "paper", "references.bib"), "utf8");
+    expect(references).toContain("Recovered External Title");
+    expect(references).toContain("10.1000/recovered-external");
+  });
+
   it("runs one validation repair pass before rendering when warnings accumulate", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-validation-repair-"));
     process.chdir(root);
@@ -2502,10 +2653,30 @@ describe("writePaper PDF build", () => {
       };
     };
     expect(manifest.generated_files).toEqual(
-      expect.arrayContaining(["paper/main.tex", "paper/references.bib", "paper/evidence_links.json", "paper/main.pdf"])
+      expect.arrayContaining([
+        "paper/main.tex",
+        "paper/references.bib",
+        "paper/evidence_links.json",
+        "paper/claim_evidence_table.json",
+        "paper/verified_registry.json",
+        "paper/claim_status_table.json",
+        "paper/evidence_gate_decision.json",
+        "paper/paper_readiness.json",
+        "paper/main.pdf"
+      ])
     );
     expect(manifest.sections?.paper?.generated_files).toEqual(
-      expect.arrayContaining(["paper/main.tex", "paper/references.bib", "paper/evidence_links.json", "paper/main.pdf"])
+      expect.arrayContaining([
+        "paper/main.tex",
+        "paper/references.bib",
+        "paper/evidence_links.json",
+        "paper/claim_evidence_table.json",
+        "paper/verified_registry.json",
+        "paper/claim_status_table.json",
+        "paper/evidence_gate_decision.json",
+        "paper/paper_readiness.json",
+        "paper/main.pdf"
+      ])
     );
   });
 
@@ -3123,6 +3294,11 @@ describe("writePaper PDF build", () => {
     expect(await exists(path.join(runDir, "paper", "manuscript_review_audit.json"))).toBe(true);
     expect(await exists(path.join(runDir, "paper", "manuscript_style_lint.json"))).toBe(true);
     expect(await exists(path.join(runDir, "paper", "manuscript_quality_gate.json"))).toBe(true);
+    expect(await exists(path.join(runDir, "paper", "claim_evidence_table.json"))).toBe(true);
+    expect(await exists(path.join(runDir, "paper", "verified_registry.json"))).toBe(true);
+    expect(await exists(path.join(runDir, "paper", "claim_status_table.json"))).toBe(true);
+    expect(await exists(path.join(runDir, "paper", "evidence_gate_decision.json"))).toBe(true);
+    expect(await exists(path.join(runDir, "paper", "paper_readiness.json"))).toBe(true);
     expect(await exists(path.join(runDir, "paper", "manuscript_repair_1_report.json"))).toBe(false);
     const gate = JSON.parse(
       await readFile(path.join(runDir, "paper", "manuscript_quality_gate.json"), "utf8")
@@ -3142,6 +3318,23 @@ describe("writePaper PDF build", () => {
     expect(traceRaw.indexOf('"stage": "manuscript_review_audit"')).toBeGreaterThan(
       traceRaw.indexOf('"stage": "manuscript_review"')
     );
+
+    const claimStatus = JSON.parse(
+      await readFile(path.join(runDir, "paper", "claim_status_table.json"), "utf8")
+    ) as { counts: { verified: number } };
+    expect(claimStatus.counts.verified).toBeGreaterThan(0);
+
+    const verifiedRegistry = JSON.parse(
+      await readFile(path.join(runDir, "paper", "verified_registry.json"), "utf8")
+    ) as { counts: { verified: number; inferred: number; blocked: number } };
+    expect(verifiedRegistry.counts.verified + verifiedRegistry.counts.inferred).toBeGreaterThan(0);
+    expect(verifiedRegistry.counts.blocked).toBe(0);
+
+    const paperReadiness = JSON.parse(
+      await readFile(path.join(runDir, "paper", "paper_readiness.json"), "utf8")
+    ) as { paper_ready: boolean; evidence_gate_status: string };
+    expect(typeof paperReadiness.paper_ready).toBe("boolean");
+    expect(paperReadiness.evidence_gate_status).toBe("pass");
   });
 
   it("retries manuscript review once when supporting-span validation fails and records validation plus audit artifacts", async () => {

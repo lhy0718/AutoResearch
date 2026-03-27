@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import { stdout as output } from "node:process";
 import YAML from "yaml";
 
-import { AppConfig, RunsFile, WorkflowApprovalMode } from "./types.js";
+import { AppConfig, ExecutionApprovalMode, RunsFile, WorkflowApprovalMode } from "./types.js";
 import {
   buildCodexModelSelectionChoices,
   DEFAULT_CODEX_MODEL,
@@ -252,7 +252,8 @@ function buildConfigFromWizardAnswers(answers: {
     workflow: {
       mode: "agent_approval",
       wizard_enabled: true,
-      approval_mode: "minimal"
+      approval_mode: "minimal",
+      execution_approval_mode: "manual"
     },
     experiments: {
       runner: "local_python",
@@ -584,7 +585,8 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
     config.workflow = {
       mode: "agent_approval",
       wizard_enabled: true,
-      approval_mode: "minimal"
+      approval_mode: "minimal",
+      execution_approval_mode: "manual"
     };
   }
 
@@ -691,6 +693,7 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
     mode: "agent_approval",
     wizard_enabled: true,
     approval_mode: normalizeWorkflowApprovalMode(config.workflow.approval_mode),
+    execution_approval_mode: normalizeExecutionApprovalMode(config.workflow.execution_approval_mode),
     budget_guard_usd: normalizeBudgetGuardUsd(config.workflow.budget_guard_usd)
   };
   config.experiments = {
@@ -822,6 +825,13 @@ function normalizePrimaryLlmMode(
 
 function normalizeWorkflowApprovalMode(value: unknown): WorkflowApprovalMode {
   return value === "manual" ? "manual" : "minimal";
+}
+
+function normalizeExecutionApprovalMode(value: unknown): ExecutionApprovalMode {
+  if (value === "risk_ack" || value === "full_auto") {
+    return value;
+  }
+  return "manual";
 }
 
 function normalizeBudgetGuardUsd(value: unknown): number | undefined {

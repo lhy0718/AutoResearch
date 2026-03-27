@@ -1192,10 +1192,22 @@ export class InteractionSession {
       ollamaResearchModel: this.config.providers.ollama?.research_model,
       ollamaVisionModel: this.config.providers.ollama?.vision_model,
       workspaceRoot: this.workspaceRoot,
+      approvalMode: this.config.workflow.approval_mode,
+      executionApprovalMode: this.config.workflow.execution_approval_mode,
+      dependencyMode: "local",
+      sessionMode: this.activeRunId ? "existing" : "fresh",
+      codeExecutionExpected: true,
+      candidateIsolation: this.config.experiments.candidate_isolation,
+      allowNetwork: this.config.experiments.allow_network,
       includeHarnessValidation: true,
       includeHarnessTestRecords: false,
       maxHarnessFindings: 30
     });
+    this.pushLog(
+      `[${report.readiness.blocked ? "ATTN" : "OK"}] readiness: approval=${report.readiness.approvalMode}, `
+        + `execution=${report.readiness.executionApprovalMode}, dependency=${report.readiness.dependencyMode}, `
+        + `session=${report.readiness.sessionMode}`
+    );
     for (const line of buildDoctorHighlightLines(report)) {
       this.pushLog(line);
     }

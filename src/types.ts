@@ -51,6 +51,7 @@ export const AGENT_ROLE_ORDER: AgentRoleId[] = [
 export type NodeStatus = "pending" | "running" | "needs_approval" | "completed" | "failed" | "skipped";
 export type AgentStatus = NodeStatus;
 export type WorkflowApprovalMode = "manual" | "minimal";
+export type ExecutionApprovalMode = "manual" | "risk_ack" | "full_auto";
 
 export type TransitionAction =
   | "advance"
@@ -253,6 +254,7 @@ export interface AppConfig {
     mode: "agent_approval";
     wizard_enabled: true;
     approval_mode?: WorkflowApprovalMode;
+    execution_approval_mode?: ExecutionApprovalMode;
     budget_guard_usd?: number;
   };
   experiments: {

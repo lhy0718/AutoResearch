@@ -31,6 +31,10 @@ import {
   validatePaperDraft
 } from "../analysis/paperWriting.js";
 import {
+  buildVerifiedRegistryWithExternalLookup,
+  VerifiedRegistryArtifact
+} from "../analysis/verifiedRegistry.js";
+import {
   PaperManuscript,
   PaperSubmissionValidationReport,
   PaperTraceabilityReport,
@@ -137,6 +141,76 @@ interface PaperInputValidationIssue {
 interface PaperInputValidationReport {
   ok: boolean;
   issues: PaperInputValidationIssue[];
+}
+
+type ClaimEvidenceStatus = "verified" | "unverified" | "blocked" | "inferred";
+
+interface ClaimEvidenceTableRow {
+  claim_id: string;
+  statement: string;
+  section_heading: string;
+  evidence_source_type: "literature" | "experiment" | "qualitative_observation" | "limitation";
+  artifact_refs: string[];
+  citation_refs: string[];
+  strength: "high" | "medium" | "low";
+  downgrade_note?: string;
+}
+
+interface ClaimStatusRow {
+  claim_id: string;
+  statement: string;
+  section_heading: string;
+  status: ClaimEvidenceStatus;
+  primary_source_present: boolean;
+  run_artifact_present: boolean;
+  reproduction_trace_present: boolean;
+  artifact_refs: string[];
+  citation_refs: string[];
+  claim_ids_in_trace: string[];
+  citation_statuses: Array<{
+    citation_paper_id: string;
+    resolved_paper_id?: string;
+    status: ClaimEvidenceStatus;
+    repaired: boolean;
+  }>;
+  notes: string[];
+}
+
+interface ClaimStatusTableArtifact {
+  generated_at: string;
+  counts: Record<ClaimEvidenceStatus, number>;
+  claims: ClaimStatusRow[];
+}
+
+interface EvidenceGateIssue {
+  severity: "warning" | "fail";
+  code: string;
+  claim_id: string;
+  section_heading: string;
+  message: string;
+  fix_recommendation: string;
+}
+
+interface EvidenceGateDecisionArtifact {
+  generated_at: string;
+  status: "pass" | "warn" | "fail";
+  blocking_issue_count: number;
+  warning_count: number;
+  issues: EvidenceGateIssue[];
+  summary_lines: string[];
+}
+
+interface PaperReadinessArtifact {
+  generated_at: string;
+  paper_ready: boolean;
+  readiness_state: ManuscriptType;
+  reason: string;
+  triggered_by: string[];
+  evidence_gate_status: EvidenceGateDecisionArtifact["status"];
+  scientific_validation_status: "pass" | "warn" | "fail";
+  submission_validation_ok: boolean;
+  manuscript_quality_action: ManuscriptRepairDecision["action"];
+  claim_status_counts: Record<ClaimEvidenceStatus, number>;
 }
 
 interface ManuscriptQualityFailureArtifact {
@@ -533,7 +607,41 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       }
 
       const citedPaperIds = collectPaperCitationIds(paperDraft, bundle);
-      const bibtex = buildPaperBibtex(bundle.corpus, citedPaperIds);
+      const verifiedRegistryResult = await buildVerifiedRegistryWithExternalLookup({
+        citedPaperIds,
+        corpus: bundle.corpus,
+        externalProviders: {
+          semanticScholar: deps.semanticScholar,
+          openAlex: deps.openAlex,
+          crossref: deps.crossref,
+          arxiv: deps.arxiv
+        },
+        abortSignal
+      });
+      const verifiedRegistry = verifiedRegistryResult.artifact;
+      const bibtex = buildPaperBibtex(
+        dedupeCorpusRowsById([
+          ...bundle.corpus,
+          ...verifiedRegistryResult.supplemental_corpus_rows
+        ]),
+        uniqueStrings(
+          verifiedRegistry.entries
+            .filter((entry) => entry.status !== "blocked")
+            .map((entry) => entry.resolved_paper_id || entry.citation_paper_id)
+            .filter(Boolean) as string[]
+        )
+      );
+      for (const entry of verifiedRegistry.entries) {
+        const resolvedPaperId = entry.resolved_paper_id || entry.citation_paper_id;
+        const citationKey = bibtex.citationKeysByPaperId.get(resolvedPaperId);
+        if (citationKey) {
+          bibtex.citationKeysByPaperId.set(entry.citation_paper_id, citationKey);
+        }
+      }
+      const unresolvedCitationPaperIds = uniqueStrings([
+        ...bibtex.unresolvedPaperIds,
+        ...verifiedRegistry.blocked_citation_paper_ids
+      ]);
       const manuscriptCandidate = validationRepair.applied
         ? buildFallbackPaperManuscript({
             draft: paperDraft,
@@ -568,7 +676,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         pageBudget: scientificDraft.page_budget,
         validationMode,
         citationKeysByPaperId: bibtex.citationKeysByPaperId,
-        unresolvedCitationPaperIds: bibtex.unresolvedPaperIds,
+        unresolvedCitationPaperIds,
         template: deps.config?.paper?.template,
         emitLog,
         abortSignal,
@@ -589,15 +697,43 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       const manuscript = manuscriptQuality.evaluation.manuscript;
       const traceability = manuscriptQuality.evaluation.traceability;
       const tex = manuscriptQuality.evaluation.tex;
-      const evidenceMap = JSON.stringify(buildPaperEvidenceMap(paperDraft), null, 2);
+      const evidenceMapObject = buildPaperEvidenceMap(paperDraft);
+      const evidenceMap = JSON.stringify(evidenceMapObject, null, 2);
       const traceabilityJson = `${JSON.stringify(traceability, null, 2)}\n`;
       const manuscriptJson = `${JSON.stringify(manuscript, null, 2)}\n`;
       const provenanceMapJson = `${JSON.stringify(scientificManuscript.provenance_map, null, 2)}\n`;
       const submissionValidation = manuscriptQuality.evaluation.submissionValidation;
+      const claimEvidenceTable = buildClaimEvidenceTableArtifact(evidenceMapObject);
+      const claimStatusTable = buildClaimStatusTableArtifact({
+        evidenceMap: evidenceMapObject,
+        traceability,
+        verifiedRegistry
+      });
+      const evidenceGateDecision = buildEvidenceGateDecisionArtifact(claimStatusTable);
 
       await writeRunArtifact(run, "paper/main.tex", tex);
       await writeRunArtifact(run, "paper/references.bib", bibtex.references);
       await writeRunArtifact(run, "paper/evidence_links.json", evidenceMap);
+      await writeRunArtifact(
+        run,
+        "paper/claim_evidence_table.json",
+        `${JSON.stringify(claimEvidenceTable, null, 2)}\n`
+      );
+      await writeRunArtifact(
+        run,
+        "paper/verified_registry.json",
+        `${JSON.stringify(verifiedRegistry, null, 2)}\n`
+      );
+      await writeRunArtifact(
+        run,
+        "paper/claim_status_table.json",
+        `${JSON.stringify(claimStatusTable, null, 2)}\n`
+      );
+      await writeRunArtifact(
+        run,
+        "paper/evidence_gate_decision.json",
+        `${JSON.stringify(evidenceGateDecision, null, 2)}\n`
+      );
       await writeRunArtifact(run, "paper/draft.json", `${JSON.stringify(paperDraft, null, 2)}\n`);
       await writeRunArtifact(run, "paper/manuscript.json", manuscriptJson);
       await writeRunArtifact(run, "paper/traceability.json", traceabilityJson);
@@ -639,6 +775,26 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await fs.writeFile(path.join(publicPaperDir, "traceability.json"), traceabilityJson, "utf8");
       await fs.writeFile(path.join(publicPaperDir, "provenance_map.json"), provenanceMapJson, "utf8");
       await fs.writeFile(path.join(publicPaperDir, "evidence_links.json"), evidenceMap, "utf8");
+      await fs.writeFile(
+        path.join(publicPaperDir, "claim_evidence_table.json"),
+        `${JSON.stringify(claimEvidenceTable, null, 2)}\n`,
+        "utf8"
+      );
+      await fs.writeFile(
+        path.join(publicPaperDir, "verified_registry.json"),
+        `${JSON.stringify(verifiedRegistry, null, 2)}\n`,
+        "utf8"
+      );
+      await fs.writeFile(
+        path.join(publicPaperDir, "claim_status_table.json"),
+        `${JSON.stringify(claimStatusTable, null, 2)}\n`,
+        "utf8"
+      );
+      await fs.writeFile(
+        path.join(publicPaperDir, "evidence_gate_decision.json"),
+        `${JSON.stringify(evidenceGateDecision, null, 2)}\n`,
+        "utf8"
+      );
       await fs.writeFile(path.join(publicPaperDir, "gate_decision.json"), `${JSON.stringify(gateDecision, null, 2)}\n`, "utf8");
       await fs.writeFile(
         path.join(publicPaperDir, "manuscript_review.json"),
@@ -678,6 +834,10 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await runContextMemory.put("write_paper.last_manuscript", manuscript);
       await runContextMemory.put("write_paper.traceability", traceability);
       await runContextMemory.put("write_paper.provenance_map", scientificManuscript.provenance_map);
+      await runContextMemory.put("write_paper.claim_evidence_table", claimEvidenceTable);
+      await runContextMemory.put("write_paper.verified_registry", verifiedRegistry);
+      await runContextMemory.put("write_paper.claim_status_table", claimStatusTable);
+      await runContextMemory.put("write_paper.evidence_gate_decision", evidenceGateDecision);
       await runContextMemory.put("write_paper.validation", validation);
       await runContextMemory.put("write_paper.consistency_lint", {
         manuscript: manuscriptQuality.evaluation.consistencyLint,
@@ -708,6 +868,23 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       }
       if (gateDecision.status === "warn") {
         emitLog(`Scientific quality gate warnings (${validationMode} mode): ${gateDecision.summary.slice(1).join(" ")}`);
+      }
+      if (evidenceGateDecision.status === "warn") {
+        emitLog(`Evidence gate warnings: ${evidenceGateDecision.summary_lines.join(" ")}`);
+      }
+      if (evidenceGateDecision.status === "fail") {
+        const evidenceGateError = buildEvidenceGateFailureError(evidenceGateDecision);
+        emitLog(evidenceGateError);
+        await runContextMemory.put("write_paper.last_error", evidenceGateError);
+        await runContextMemory.put("write_paper.compile_status", null);
+        await runContextMemory.put("write_paper.compile_report", null);
+        await runContextMemory.put("write_paper.pdf_path", null);
+        return {
+          status: "failure",
+          error: evidenceGateError,
+          summary: evidenceGateError,
+          toolCallsUsed: preCompileToolCallsUsed
+        };
       }
       if (gateDecision.status === "fail") {
         const gateError = buildScientificGateFailureError(gateDecision);
@@ -761,7 +938,21 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         "paper/paper_critique.json",
         `${JSON.stringify(postDraftCritique, null, 2)}\n`
       );
+      const paperReadiness = buildPaperReadinessArtifact({
+        critique: postDraftCritique,
+        evidenceGateDecision,
+        claimStatusTable,
+        scientificGateStatus: gateDecision.status,
+        submissionValidationOk: submissionValidation.ok,
+        manuscriptQualityAction: manuscriptQuality.repairDecision.action
+      });
+      await writeRunArtifact(
+        run,
+        "paper/paper_readiness.json",
+        `${JSON.stringify(paperReadiness, null, 2)}\n`
+      );
       await runContextMemory.put("write_paper.paper_critique", postDraftCritique);
+      await runContextMemory.put("write_paper.paper_readiness", paperReadiness);
       await runContextMemory.put("write_paper.manuscript_type", postDraftCritique.manuscript_type);
       await runContextMemory.put("write_paper.target_venue_style", postDraftCritique.target_venue_style);
       emitLog(
@@ -816,6 +1007,31 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
           {
             sourcePath: path.join(runPaperDir, "evidence_links.json"),
             targetRelativePath: "evidence_links.json"
+          },
+          {
+            sourcePath: path.join(runPaperDir, "claim_evidence_table.json"),
+            targetRelativePath: "claim_evidence_table.json",
+            optional: true
+          },
+          {
+            sourcePath: path.join(runPaperDir, "verified_registry.json"),
+            targetRelativePath: "verified_registry.json",
+            optional: true
+          },
+          {
+            sourcePath: path.join(runPaperDir, "claim_status_table.json"),
+            targetRelativePath: "claim_status_table.json",
+            optional: true
+          },
+          {
+            sourcePath: path.join(runPaperDir, "evidence_gate_decision.json"),
+            targetRelativePath: "evidence_gate_decision.json",
+            optional: true
+          },
+          {
+            sourcePath: path.join(runPaperDir, "paper_readiness.json"),
+            targetRelativePath: "paper_readiness.json",
+            optional: true
           },
           {
             sourcePath: path.join(runPaperDir, "manuscript_review.json"),
@@ -2846,6 +3062,16 @@ function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.filter((value) => value && value.trim().length > 0))];
 }
 
+function dedupeCorpusRowsById<T extends { paper_id: string }>(rows: T[]): T[] {
+  const byId = new Map<string, T>();
+  for (const row of rows) {
+    if (!byId.has(row.paper_id)) {
+      byId.set(row.paper_id, row);
+    }
+  }
+  return [...byId.values()];
+}
+
 const CRITICAL_REPEAT_MANUSCRIPT_CODES = new Set([
   "rhetorical_overreach",
   "citation_hygiene",
@@ -2855,8 +3081,269 @@ const CRITICAL_REPEAT_MANUSCRIPT_CODES = new Set([
   "appendix_raw_artifact_reference"
 ]);
 
+function buildClaimEvidenceTableArtifact(
+  evidenceMap: ReturnType<typeof buildPaperEvidenceMap>
+): { generated_at: string; claims: ClaimEvidenceTableRow[] } {
+  return {
+    generated_at: new Date().toISOString(),
+    claims: evidenceMap.claims.map((claim) => {
+      const sourceType = classifyClaimEvidenceSourceType(claim.section_heading, claim.evidence_ids, claim.citation_paper_ids);
+      const strength = classifyClaimStrength(claim.evidence_ids.length, claim.citation_paper_ids.length);
+      return {
+        claim_id: claim.claim_id,
+        statement: claim.statement,
+        section_heading: claim.section_heading,
+        evidence_source_type: sourceType,
+        artifact_refs: claim.evidence_ids,
+        citation_refs: claim.citation_paper_ids,
+        strength,
+        ...(strength === "low"
+          ? { downgrade_note: "Claim support is weak and should remain conservative." }
+          : {})
+      };
+    })
+  };
+}
+
+function buildClaimStatusTableArtifact(input: {
+  evidenceMap: ReturnType<typeof buildPaperEvidenceMap>;
+  traceability: PaperTraceabilityReport;
+  verifiedRegistry: VerifiedRegistryArtifact;
+}): ClaimStatusTableArtifact {
+  const traceabilityByClaimId = new Map<string, PaperTraceabilityReport["paragraphs"]>();
+  const registryByCitationPaperId = new Map(
+    input.verifiedRegistry.entries.map((entry) => [entry.citation_paper_id, entry] as const)
+  );
+  for (const paragraph of input.traceability.paragraphs) {
+    for (const claimId of paragraph.claim_ids || []) {
+      const existing = traceabilityByClaimId.get(claimId) || [];
+      existing.push(paragraph);
+      traceabilityByClaimId.set(claimId, existing);
+    }
+  }
+
+  const claims = input.evidenceMap.claims.map((claim) => {
+    const traceEntries = traceabilityByClaimId.get(claim.claim_id) || [];
+    const citationStatuses = claim.citation_paper_ids
+      .map((citationPaperId) => registryByCitationPaperId.get(citationPaperId))
+      .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+      .map((entry) => ({
+        citation_paper_id: entry.citation_paper_id,
+        resolved_paper_id: entry.resolved_paper_id,
+        status: entry.status,
+        repaired: entry.repaired
+      }));
+    const usableCitationSupport = citationStatuses.some((entry) => entry.status !== "blocked");
+    const blockedCitationSupport = citationStatuses.filter((entry) => entry.status === "blocked");
+    const weakCitationSupport = citationStatuses.filter(
+      (entry) => entry.status === "unverified" || entry.status === "inferred"
+    );
+    const primarySourcePresent = usableCitationSupport || claim.evidence_ids.length > 0;
+    const runArtifactPresent = claim.evidence_ids.length > 0;
+    const reproductionTracePresent = traceEntries.length > 0;
+    const notes: string[] = [];
+    let status: ClaimEvidenceStatus;
+
+    if (blockedCitationSupport.length > 0) {
+      notes.push(
+        `Blocked citation source(s): ${blockedCitationSupport.map((entry) => entry.citation_paper_id).join(", ")}.`
+      );
+    }
+    if (weakCitationSupport.length > 0) {
+      notes.push(
+        `Weak citation source(s): ${weakCitationSupport
+          .map((entry) => `${entry.citation_paper_id}:${entry.status}`)
+          .join(", ")}.`
+      );
+    }
+
+    if (primarySourcePresent && runArtifactPresent && reproductionTracePresent && blockedCitationSupport.length === 0) {
+      status = "verified";
+    } else if (primarySourcePresent && reproductionTracePresent && blockedCitationSupport.length === 0) {
+      status = "inferred";
+      notes.push("Primary source and traceability exist, but no run artifact is directly attached to this claim.");
+    } else if (runArtifactPresent && reproductionTracePresent) {
+      status = blockedCitationSupport.length > 0 ? "unverified" : "inferred";
+      if (blockedCitationSupport.length > 0) {
+        notes.push("Run artifacts support the claim, but one or more literature citations remain blocked.");
+      }
+    } else if (primarySourcePresent || runArtifactPresent || reproductionTracePresent) {
+      status = "unverified";
+      if (!primarySourcePresent) {
+        notes.push("Primary source coverage is incomplete.");
+      }
+      if (!reproductionTracePresent) {
+        notes.push("No traceability paragraph could be linked back to this claim.");
+      }
+    } else {
+      status = "blocked";
+      notes.push("The claim has neither traceability nor concrete source support.");
+    }
+
+    return {
+      claim_id: claim.claim_id,
+      statement: claim.statement,
+      section_heading: claim.section_heading,
+      status,
+      primary_source_present: primarySourcePresent,
+      run_artifact_present: runArtifactPresent,
+      reproduction_trace_present: reproductionTracePresent,
+      artifact_refs: claim.evidence_ids,
+      citation_refs: claim.citation_paper_ids,
+      claim_ids_in_trace: traceEntries.flatMap((entry) => entry.claim_ids || []).filter(Boolean),
+      citation_statuses: citationStatuses,
+      notes
+    };
+  });
+
+  return {
+    generated_at: new Date().toISOString(),
+    counts: {
+      verified: claims.filter((claim) => claim.status === "verified").length,
+      unverified: claims.filter((claim) => claim.status === "unverified").length,
+      blocked: claims.filter((claim) => claim.status === "blocked").length,
+      inferred: claims.filter((claim) => claim.status === "inferred").length
+    },
+    claims
+  };
+}
+
+function buildEvidenceGateDecisionArtifact(
+  claimStatusTable: ClaimStatusTableArtifact
+): EvidenceGateDecisionArtifact {
+  const issues: EvidenceGateIssue[] = [];
+  for (const claim of claimStatusTable.claims) {
+    if (claim.status === "blocked") {
+      issues.push({
+        severity: "fail",
+        code: "claim_evidence_blocked",
+        claim_id: claim.claim_id,
+        section_heading: claim.section_heading,
+        message: `Claim ${claim.claim_id} in ${claim.section_heading} has no usable evidence/traceability support.`,
+        fix_recommendation: "Link the claim to concrete evidence or remove/rewrite it before paper acceptance."
+      });
+      continue;
+    }
+    if (claim.status === "unverified") {
+      issues.push({
+        severity: "warning",
+        code: "claim_evidence_unverified",
+        claim_id: claim.claim_id,
+        section_heading: claim.section_heading,
+        message: `Claim ${claim.claim_id} in ${claim.section_heading} is only partially grounded.`,
+        fix_recommendation: "Add the missing source or traceability link, or weaken the claim wording."
+      });
+      continue;
+    }
+    if (claim.status === "inferred") {
+      issues.push({
+        severity: "warning",
+        code: "claim_evidence_inferred",
+        claim_id: claim.claim_id,
+        section_heading: claim.section_heading,
+        message: `Claim ${claim.claim_id} in ${claim.section_heading} is inferential and should stay conservative.`,
+        fix_recommendation: "Keep the rhetoric explicitly inferential or add direct run-artifact support."
+      });
+    }
+  }
+
+  const blockingIssueCount = issues.filter((issue) => issue.severity === "fail").length;
+  const warningCount = issues.filter((issue) => issue.severity === "warning").length;
+  return {
+    generated_at: new Date().toISOString(),
+    status: blockingIssueCount > 0 ? "fail" : warningCount > 0 ? "warn" : "pass",
+    blocking_issue_count: blockingIssueCount,
+    warning_count: warningCount,
+    issues,
+    summary_lines:
+      issues.length === 0
+        ? ["All major claims remain grounded within the available evidence ceiling."]
+        : [
+            `Claim evidence statuses: verified=${claimStatusTable.counts.verified}, inferred=${claimStatusTable.counts.inferred}, unverified=${claimStatusTable.counts.unverified}, blocked=${claimStatusTable.counts.blocked}.`,
+            ...issues.slice(0, 3).map((issue) => issue.message)
+          ]
+  };
+}
+
+function buildPaperReadinessArtifact(input: {
+  critique: PaperCritique;
+  evidenceGateDecision: EvidenceGateDecisionArtifact;
+  claimStatusTable: ClaimStatusTableArtifact;
+  scientificGateStatus: "pass" | "warn" | "fail";
+  submissionValidationOk: boolean;
+  manuscriptQualityAction: ManuscriptRepairDecision["action"];
+}): PaperReadinessArtifact {
+  const paperReady =
+    input.critique.manuscript_type === "paper_ready"
+    && input.evidenceGateDecision.status !== "fail"
+    && input.scientificGateStatus !== "fail"
+    && input.submissionValidationOk
+    && input.manuscriptQualityAction !== "stop";
+  const triggeredBy = [
+    ...(input.evidenceGateDecision.status === "fail" ? ["evidence_gate"] : []),
+    ...(input.scientificGateStatus === "fail" ? ["scientific_validation"] : []),
+    ...(!input.submissionValidationOk ? ["submission_validation"] : []),
+    ...(input.manuscriptQualityAction === "stop" ? ["manuscript_quality"] : [])
+  ];
+  return {
+    generated_at: new Date().toISOString(),
+    paper_ready: paperReady,
+    readiness_state: paperReady ? "paper_ready" : input.critique.manuscript_type,
+    reason: paperReady
+      ? "The manuscript passed manuscript-quality, evidence, scientific, and submission gates."
+      : input.evidenceGateDecision.status === "fail"
+        ? "paper_ready is blocked because at least one major claim remained blocked at the evidence gate."
+        : !input.submissionValidationOk
+          ? "paper_ready is blocked because submission validation failed."
+          : input.scientificGateStatus === "fail"
+            ? "paper_ready is blocked because the scientific validation gate failed."
+            : `paper_ready remains ${input.critique.manuscript_type} after post-draft critique.`,
+    triggered_by: triggeredBy,
+    evidence_gate_status: input.evidenceGateDecision.status,
+    scientific_validation_status: input.scientificGateStatus,
+    submission_validation_ok: input.submissionValidationOk,
+    manuscript_quality_action: input.manuscriptQualityAction,
+    claim_status_counts: input.claimStatusTable.counts
+  };
+}
+
+function classifyClaimEvidenceSourceType(
+  sectionHeading: string,
+  evidenceIds: string[],
+  citationPaperIds: string[]
+): ClaimEvidenceTableRow["evidence_source_type"] {
+  if (/limit/i.test(sectionHeading)) {
+    return "limitation";
+  }
+  if (evidenceIds.length > 0) {
+    return "experiment";
+  }
+  if (citationPaperIds.length > 0) {
+    return "literature";
+  }
+  return "qualitative_observation";
+}
+
+function classifyClaimStrength(
+  evidenceCount: number,
+  citationCount: number
+): ClaimEvidenceTableRow["strength"] {
+  if (evidenceCount > 0 && citationCount > 0) {
+    return "high";
+  }
+  if (evidenceCount > 0 || citationCount > 0) {
+    return "medium";
+  }
+  return "low";
+}
+
 function buildManuscriptQualityFailureError(report: ManuscriptRepairDecision): string {
   return `write_paper generated manuscript artifacts but stopped before scientific/submission acceptance because the manuscript-quality gate failed: ${report.stop_or_continue_reason}`;
+}
+
+function buildEvidenceGateFailureError(report: EvidenceGateDecisionArtifact): string {
+  const lead = report.issues[0]?.message || "claim evidence gate failed";
+  return `write_paper generated manuscript artifacts but stopped before scientific/submission acceptance because the evidence gate failed: ${lead}`;
 }
 
 function buildSubmissionValidationError(

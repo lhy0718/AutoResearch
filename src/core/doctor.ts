@@ -24,11 +24,35 @@ export interface DoctorRunOptions {
   includeHarnessValidation?: boolean;
   includeHarnessTestRecords?: boolean;
   maxHarnessFindings?: number;
+  approvalMode?: "manual" | "minimal";
+  executionApprovalMode?: "manual" | "risk_ack" | "full_auto";
+  dependencyMode?: "local" | "docker" | "remote_gpu" | "plan_only";
+  sessionMode?: "fresh" | "existing";
+  codeExecutionExpected?: boolean;
+  candidateIsolation?: "attempt_snapshot_restore" | "attempt_worktree";
+  manualOverride?: boolean;
+  allowNetwork?: boolean;
 }
 
 export interface DoctorReport {
   checks: DoctorCheck[];
   harness?: HarnessValidationReport;
+  readiness: DoctorReadinessSnapshot;
+}
+
+export interface DoctorReadinessSnapshot {
+  generatedAt: string;
+  workspaceRoot: string;
+  workspaceProbePath: string;
+  blocked: boolean;
+  approvalMode: "manual" | "minimal";
+  executionApprovalMode: "manual" | "risk_ack" | "full_auto";
+  dependencyMode: "local" | "docker" | "remote_gpu" | "plan_only";
+  sessionMode: "fresh" | "existing";
+  containerizationRequired: boolean;
+  webRestrictionRequired: boolean;
+  manualOverride: boolean;
+  failedChecks: string[];
 }
 
 interface RunsFileSnapshot {
@@ -49,6 +73,18 @@ export async function runDoctorReport(
   opts?: DoctorRunOptions
 ): Promise<DoctorReport> {
   const checks: DoctorCheck[] = [];
+  const workspaceRoot = opts?.workspaceRoot || process.cwd();
+  const approvalMode = opts?.approvalMode === "manual" ? "manual" : "minimal";
+  const executionApprovalMode = normalizeExecutionApprovalMode(opts?.executionApprovalMode);
+  const dependencyMode = normalizeDependencyMode(opts?.dependencyMode);
+  const sessionMode = opts?.sessionMode === "existing" ? "existing" : "fresh";
+  const localIsolationConfigured = Boolean(opts?.candidateIsolation);
+  const containerizationRequired = Boolean(
+    opts?.codeExecutionExpected && (dependencyMode === "docker" || dependencyMode === "remote_gpu")
+  );
+  const webRestrictionRequired = Boolean(opts?.codeExecutionExpected && dependencyMode !== "plan_only");
+  const allowNetwork = opts?.allowNetwork === true;
+  const manualOverride = opts?.manualOverride === true;
   const requiresCodexChecks =
     !opts ||
     opts.llmMode === "codex_chatgpt_only" ||
@@ -76,6 +112,73 @@ export async function runDoctorReport(
   if (opts?.llmMode === "codex_chatgpt_only" && opts.codexResearchModel) {
     checks.push(buildCodexModelCheck("codex-research-backend-model", "research backend", opts.codexResearchModel));
   }
+
+  const workspaceWriteProbe = await probeWorkspaceWriteability(workspaceRoot);
+  checks.push({
+    name: "workspace-write",
+    ok: workspaceWriteProbe.ok,
+    detail: workspaceWriteProbe.ok
+      ? `Workspace write probe succeeded at ${workspaceWriteProbe.probePath}`
+      : `Workspace write probe failed at ${workspaceWriteProbe.probePath}: ${workspaceWriteProbe.detail}`
+  });
+  checks.push({
+    name: "web-access",
+    ok: dependencyMode !== "plan_only",
+    detail:
+      dependencyMode !== "plan_only"
+        ? `Web access is expected for dependency mode ${dependencyMode}.`
+        : "Plan-only mode selected; external web access is not required."
+  });
+  checks.push({
+    name: "dependency-mode",
+    ok: true,
+    detail: `Run dependency mode: ${dependencyMode}`
+  });
+  checks.push({
+    name: "session-mode",
+    ok: true,
+    detail: `Session mode: ${sessionMode}`
+  });
+  checks.push({
+    name: "approval-mode",
+    ok: true,
+    detail: `Workflow approval mode: ${approvalMode}`
+  });
+  checks.push({
+    name: "execution-approval-mode",
+    ok: !(executionApprovalMode === "full_auto" && dependencyMode !== "plan_only"),
+    detail:
+      executionApprovalMode === "full_auto" && dependencyMode !== "plan_only"
+        ? "Execution approval mode full_auto is only valid for smoke/plan-only work; use manual or risk_ack here."
+        : `Execution approval mode: ${executionApprovalMode}`
+  });
+  if (opts?.codeExecutionExpected) {
+    checks.push({
+      name: "experiment-containerization",
+      ok: containerizationRequired || localIsolationConfigured,
+      detail: containerizationRequired
+        ? `Code execution is expected and dependency mode ${dependencyMode} requires containerized/high-risk isolation.`
+        : localIsolationConfigured
+          ? `Code execution is expected and local repository isolation is configured via ${opts?.candidateIsolation}.`
+          : "Code execution is expected but no candidate isolation strategy is configured."
+    });
+    checks.push({
+      name: "experiment-web-restriction",
+      ok: !webRestrictionRequired || !allowNetwork,
+      detail: !webRestrictionRequired
+        ? "Code execution is not expected to need web restriction."
+        : allowNetwork
+          ? "Code execution is expected but allow_network is enabled; disable it unless the run explicitly justifies network access."
+          : "Code execution is expected and network access remains disabled."
+    });
+  }
+  checks.push({
+    name: "manual-override",
+    ok: !manualOverride,
+    detail: manualOverride
+      ? "manual_override is enabled for this workspace/run. Revalidate before treating the run as ready."
+      : "No manual override is active."
+  });
 
   checks.push(await runBinaryCheck("python3", ["--version"], "python"));
   checks.push(await runBinaryCheck("pip3", ["--version"], "pip"));
@@ -156,14 +259,35 @@ export async function runDoctorReport(
   const includeHarnessValidation = opts?.includeHarnessValidation !== false;
   const harness = includeHarnessValidation
     ? await runHarnessValidation({
-        workspaceRoot: opts?.workspaceRoot || process.cwd(),
+        workspaceRoot,
         includeWorkspaceRuns: true,
         includeTestRunStores: opts?.includeHarnessTestRecords === true,
         maxFindings: opts?.maxHarnessFindings || 60
       })
     : undefined;
 
-  return { checks, harness };
+  const failedChecks = checks.filter((check) => !check.ok).map((check) => check.name);
+  return {
+    checks,
+    harness,
+    readiness: {
+      generatedAt: new Date().toISOString(),
+      workspaceRoot,
+      workspaceProbePath: workspaceWriteProbe.probePath,
+      blocked: failedChecks.length > 0 || harness?.status === "fail",
+      approvalMode,
+      executionApprovalMode,
+      dependencyMode,
+      sessionMode,
+      containerizationRequired,
+      webRestrictionRequired,
+      manualOverride,
+      failedChecks: [
+        ...failedChecks,
+        ...(harness?.status === "fail" ? ["harness-validation"] : [])
+      ]
+    }
+  };
 }
 
 export async function runDoctor(
@@ -172,6 +296,53 @@ export async function runDoctor(
 ): Promise<DoctorCheck[]> {
   const report = await runDoctorReport(codex, opts);
   return report.checks;
+}
+
+function normalizeExecutionApprovalMode(
+  value: DoctorRunOptions["executionApprovalMode"]
+): "manual" | "risk_ack" | "full_auto" {
+  if (value === "risk_ack" || value === "full_auto") {
+    return value;
+  }
+  return "manual";
+}
+
+function normalizeDependencyMode(
+  value: DoctorRunOptions["dependencyMode"]
+): "local" | "docker" | "remote_gpu" | "plan_only" {
+  if (value === "docker" || value === "remote_gpu" || value === "plan_only") {
+    return value;
+  }
+  return "local";
+}
+
+async function probeWorkspaceWriteability(
+  workspaceRoot: string
+): Promise<{ ok: boolean; probePath: string; detail: string }> {
+  const candidateProbeDir = path.join(workspaceRoot, "test");
+  const probeDir = await directoryExists(candidateProbeDir) ? candidateProbeDir : workspaceRoot;
+  const probePath = path.join(probeDir, `.autolabos-doctor-write-probe-${process.pid}.tmp`);
+  try {
+    await fs.mkdir(probeDir, { recursive: true });
+    await fs.writeFile(probePath, "ok\n", "utf8");
+    await fs.rm(probePath, { force: true });
+    return { ok: true, probePath, detail: "write probe succeeded" };
+  } catch (error) {
+    return {
+      ok: false,
+      probePath,
+      detail: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+async function directoryExists(dirPath: string): Promise<boolean> {
+  try {
+    const stat = await fs.stat(dirPath);
+    return stat.isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 export function buildDoctorHighlightLines(report: DoctorReport): string[] {

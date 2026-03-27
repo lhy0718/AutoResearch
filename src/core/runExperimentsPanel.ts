@@ -55,6 +55,13 @@ export interface RunExperimentsWatchdogState {
   cleared_supplemental_outputs: string[];
   metrics_state: "not_checked" | "missing" | "present" | "invalid" | "valid";
   latest_log_file?: string;
+  sentinel_findings: Array<{
+    code: "nan_or_inf_metric" | "statistical_anomaly" | "citation_reliability_anomaly";
+    severity: "warning" | "fail";
+    message: string;
+    requires_human_review: boolean;
+    downgrade_to_unverified?: boolean;
+  }>;
   supplemental_outputs: Array<{
     profile: string;
     status: "pass" | "fail" | "skipped";
@@ -156,6 +163,7 @@ export function createRunExperimentsWatchdogState(input: {
     previous_metrics_backup: input.previousMetricsBackup,
     cleared_supplemental_outputs: input.clearedSupplementalOutputs || [],
     metrics_state: "not_checked",
+    sentinel_findings: [],
     supplemental_outputs: []
   };
 }
@@ -236,6 +244,16 @@ export function setMetricsState(
     ...watchdog,
     metrics_state: state,
     latest_log_file: latestLogFile || watchdog.latest_log_file
+  };
+}
+
+export function setSentinelFindings(
+  watchdog: RunExperimentsWatchdogState,
+  findings: RunExperimentsWatchdogState["sentinel_findings"]
+): RunExperimentsWatchdogState {
+  return {
+    ...watchdog,
+    sentinel_findings: findings
   };
 }
 

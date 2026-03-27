@@ -249,6 +249,13 @@ class AutoLabOSWebController {
           ollamaResearchModel: this.runtime.config.providers.ollama?.research_model,
           ollamaVisionModel: this.runtime.config.providers.ollama?.vision_model,
           workspaceRoot: this.cwd,
+          approvalMode: this.runtime.config.workflow.approval_mode,
+          executionApprovalMode: this.runtime.config.workflow.execution_approval_mode,
+          dependencyMode: "local",
+          sessionMode: "fresh",
+          codeExecutionExpected: true,
+          candidateIsolation: this.runtime.config.experiments.candidate_isolation,
+          allowNetwork: this.runtime.config.experiments.allow_network,
           includeHarnessValidation: true,
           includeHarnessTestRecords: false,
           maxHarnessFindings: 40
@@ -256,7 +263,19 @@ class AutoLabOSWebController {
         return jsonResponse(
           res,
           200,
-          { configured: true, checks: report.checks, harness: report.harness } satisfies DoctorResponse
+          {
+            configured: true,
+            checks: report.checks,
+            harness: report.harness,
+            readiness: {
+              blocked: report.readiness.blocked,
+              approvalMode: report.readiness.approvalMode,
+              executionApprovalMode: report.readiness.executionApprovalMode,
+              dependencyMode: report.readiness.dependencyMode,
+              sessionMode: report.readiness.sessionMode,
+              failedChecks: report.readiness.failedChecks
+            }
+          } satisfies DoctorResponse
         );
       }
 

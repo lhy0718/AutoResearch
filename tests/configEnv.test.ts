@@ -130,7 +130,8 @@ function makeConfig(): AppConfig {
     workflow: {
       mode: "agent_approval",
       wizard_enabled: true,
-      approval_mode: "minimal"
+      approval_mode: "minimal",
+      execution_approval_mode: "manual"
     },
     experiments: {
       runner: "local_python",
@@ -182,6 +183,17 @@ describe("config .env overrides", () => {
     const loaded = await loadConfig(paths);
 
     expect(loaded.workflow.approval_mode).toBe("minimal");
+  });
+
+  it("defaults workflow execution_approval_mode to manual when omitted", async () => {
+    const { paths } = await createWorkspace();
+    const config = makeConfig();
+    delete config.workflow.execution_approval_mode;
+    await saveConfig(paths, config);
+
+    const loaded = await loadConfig(paths);
+
+    expect(loaded.workflow.execution_approval_mode).toBe("manual");
   });
 
   it("uses SEMANTIC_SCHOLAR_API_KEY from .env when config.yaml is empty", async () => {
