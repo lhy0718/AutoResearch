@@ -7,6 +7,7 @@ export interface ConfigSummary {
   projectName: string;
   workflowMode: "agent_approval";
   approvalMode: "manual" | "minimal";
+  executionApprovalMode?: "manual" | "risk_ack" | "full_auto";
   llmMode: "codex_chatgpt_only" | "openai_api" | "ollama";
   pdfMode: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
   researchBackendModel: string;
@@ -15,6 +16,8 @@ export interface ConfigSummary {
   researchBackendReasoning: string | undefined;
   chatReasoning: string | undefined;
   experimentReasoning: string | undefined;
+  networkPolicy?: "blocked" | "declared" | "required";
+  networkPurpose?: "logging" | "artifact_upload" | "model_download" | "dataset_fetch" | "remote_inference" | "other";
 }
 
 export interface WebConfigFormData {
@@ -40,6 +43,8 @@ export interface WebConfigFormData {
   ollamaResearchModel: string;
   ollamaExperimentModel: string;
   ollamaVisionModel: string;
+  networkPolicy: "blocked" | "declared" | "required";
+  networkPurpose: "" | "logging" | "artifact_upload" | "model_download" | "dataset_fetch" | "remote_inference" | "other";
 }
 
 export interface WebConfigOptions {
@@ -79,6 +84,11 @@ export interface DoctorResponse {
     executionApprovalMode: "manual" | "risk_ack" | "full_auto";
     dependencyMode: "local" | "docker" | "remote_gpu" | "plan_only";
     sessionMode: "fresh" | "existing";
+    networkPolicy?: "blocked" | "declared" | "required";
+    networkPurpose?: "logging" | "artifact_upload" | "model_download" | "dataset_fetch" | "remote_inference" | "other";
+    networkDeclarationPresent: boolean;
+    networkApprovalSatisfied: boolean;
+    warningChecks: string[];
     failedChecks: string[];
   };
 }

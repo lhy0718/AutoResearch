@@ -19,6 +19,27 @@ export interface PendingPlan {
 export interface RunInsightCard {
   title: string;
   lines: string[];
+  readinessRisks?: {
+    stage: "review" | "paper";
+    readinessState: string;
+    paperReady: boolean;
+    riskCounts: {
+      total: number;
+      blocked: number;
+      warning: number;
+    };
+    risks: Array<{
+      code: string;
+      section: string;
+      severity: "warning" | "fail";
+      message: string;
+      source: "review_readiness" | "paper_readiness";
+    }>;
+    artifactRefs: Array<{
+      label: string;
+      path: string;
+    }>;
+  };
   manuscriptQuality?: {
     status: "pass" | "repairing" | "stopped";
     stage: "initial_gate" | "post_repair_1" | "post_repair_2";
@@ -45,6 +66,7 @@ export interface RunInsightCard {
       manuscript: number;
       hardStopPolicy: number;
       backstopOnly: number;
+      readinessRisks?: number;
       scientificBlockers: number;
       submissionBlockers: number;
       reviewerMissedPolicy: number;
@@ -71,6 +93,13 @@ export interface RunInsightCard {
         severity: "warning" | "fail";
         message: string;
         source: "style_lint";
+      }>;
+      readiness?: Array<{
+        code: string;
+        section: string;
+        severity: "warning" | "fail";
+        message: string;
+        source: "paper_readiness";
       }>;
       scientific: Array<{
         code: string;
@@ -160,6 +189,7 @@ export interface ConfigSummary {
   projectName: string;
   workflowMode: "agent_approval";
   approvalMode: "manual" | "minimal";
+  executionApprovalMode?: "manual" | "risk_ack" | "full_auto";
   llmMode: "codex_chatgpt_only" | "openai_api" | "ollama";
   pdfMode: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
   researchBackendModel: string;
@@ -168,6 +198,8 @@ export interface ConfigSummary {
   researchBackendReasoning: string | undefined;
   chatReasoning: string | undefined;
   experimentReasoning: string | undefined;
+  networkPolicy?: "blocked" | "declared" | "required";
+  networkPurpose?: "logging" | "artifact_upload" | "model_download" | "dataset_fetch" | "remote_inference" | "other";
 }
 
 export interface WebConfigFormData {
@@ -193,6 +225,8 @@ export interface WebConfigFormData {
   ollamaResearchModel: string;
   ollamaExperimentModel: string;
   ollamaVisionModel: string;
+  networkPolicy: "blocked" | "declared" | "required";
+  networkPurpose: "" | "logging" | "artifact_upload" | "model_download" | "dataset_fetch" | "remote_inference" | "other";
 }
 
 export interface WebConfigOptions {
@@ -225,6 +259,7 @@ export interface CheckpointEntry {
 export interface DoctorCheck {
   name: string;
   ok: boolean;
+  status?: "ok" | "warning" | "fail";
   detail: string;
 }
 
@@ -278,6 +313,11 @@ export interface DoctorResponse {
     executionApprovalMode: "manual" | "risk_ack" | "full_auto";
     dependencyMode: "local" | "docker" | "remote_gpu" | "plan_only";
     sessionMode: "fresh" | "existing";
+    networkPolicy?: "blocked" | "declared" | "required";
+    networkPurpose?: "logging" | "artifact_upload" | "model_download" | "dataset_fetch" | "remote_inference" | "other";
+    networkDeclarationPresent: boolean;
+    networkApprovalSatisfied: boolean;
+    warningChecks: string[];
     failedChecks: string[];
   };
 }

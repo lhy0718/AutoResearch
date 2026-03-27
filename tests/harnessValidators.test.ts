@@ -70,6 +70,41 @@ describe("harness validators", () => {
       manuscript_type: "paper_scale_candidate",
       paper_readiness_state: "paper_scale_candidate"
     });
+    await writeJson(path.join(runDir, "review", "readiness_risks.json"), {
+      generated_at: new Date().toISOString(),
+      paper_ready: false,
+      readiness_state: "paper_scale_candidate",
+      risk_count: 1,
+      blocked_count: 0,
+      warning_count: 2,
+      summary_lines: ["Readiness risks: blocked=0, warning=2, readiness_state=paper_scale_candidate."],
+      risks: [
+        {
+          risk_code: "review_paper_scale_paper_scale_candidate",
+          severity: "warning",
+          category: "paper_scale",
+          status: "unverified",
+          message: "Pre-draft critique classified the run as paper_scale_candidate, not paper_ready.",
+          triggered_by: ["paper_critique"],
+          affected_claim_ids: [],
+          affected_citation_ids: [],
+          recommended_action: "Keep the run explicitly downgraded until stronger evidence upgrades the critique outcome.",
+          recheck_condition: "The pre-draft critique upgrades the run to paper_ready."
+        },
+        {
+          risk_code: "review_network_dependency_declared_logging",
+          severity: "warning",
+          category: "network_dependency",
+          status: "unverified",
+          message: "This run declares a network dependency for logging; keep its outputs marked as network-assisted until the dependency is no longer needed.",
+          triggered_by: ["network_policy"],
+          affected_claim_ids: [],
+          affected_citation_ids: [],
+          recommended_action: "Document the external dependency and prefer a prewarmed/offline path when practical.",
+          recheck_condition: "The dependency is either removed or kept explicitly declared with the appropriate approval mode."
+        }
+      ]
+    });
     await writeJson(path.join(runDir, "review", "review_packet.json"), {
       readiness: { status: "ready" },
       checks: [{ id: "c1", status: "ready" }],
@@ -166,6 +201,41 @@ describe("harness validators", () => {
       scientific_validation_status: "pass",
       submission_validation_ok: true
     });
+    await writeJson(path.join(runDir, "paper", "readiness_risks.json"), {
+      generated_at: new Date().toISOString(),
+      paper_ready: false,
+      readiness_state: "paper_scale_candidate",
+      risk_count: 1,
+      blocked_count: 0,
+      warning_count: 2,
+      summary_lines: ["Readiness risks: blocked=0, warning=2, readiness_state=paper_scale_candidate."],
+      risks: [
+        {
+          risk_code: "paper_scale_paper_scale_candidate",
+          severity: "warning",
+          category: "paper_scale",
+          status: "unverified",
+          message: "The post-draft critique still classifies the run as paper_scale_candidate, not paper_ready.",
+          triggered_by: ["paper_critique"],
+          affected_claim_ids: [],
+          affected_citation_ids: [],
+          recommended_action: "Keep the manuscript downgraded until stronger evidence is available.",
+          recheck_condition: "The critique upgrades the manuscript to paper_ready."
+        },
+        {
+          risk_code: "paper_network_dependency_declared_logging",
+          severity: "warning",
+          category: "network_dependency",
+          status: "unverified",
+          message: "This run declares a network dependency for logging; keep its outputs marked as network-assisted until the dependency is no longer needed.",
+          triggered_by: ["network_policy"],
+          affected_claim_ids: [],
+          affected_citation_ids: [],
+          recommended_action: "Document the external dependency and prefer a prewarmed/offline path when practical.",
+          recheck_condition: "The dependency is either removed or kept explicitly declared with the appropriate approval mode."
+        }
+      ]
+    });
 
     const result = await validateRunArtifactStructure({
       runId: "run-pass",
@@ -206,6 +276,7 @@ describe("harness validators", () => {
     expect(codes).toContain("review_revision_plan_missing");
     expect(codes).toContain("review_minimum_gate_missing");
     expect(codes).toContain("review_paper_critique_missing");
+    expect(codes).toContain("review_readiness_risks_missing");
   });
 
   it("reports placeholder evidence mappings in paper evidence links", async () => {

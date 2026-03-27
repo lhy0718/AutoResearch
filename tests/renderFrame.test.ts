@@ -260,6 +260,7 @@ describe("buildFrame", () => {
             manuscript: 1,
             hardStopPolicy: 1,
             backstopOnly: 2,
+            readinessRisks: 1,
             scientificBlockers: 1,
             submissionBlockers: 0,
             reviewerMissedPolicy: 1,
@@ -293,6 +294,15 @@ describe("buildFrame", () => {
                 source: "style_lint"
               }
             ],
+            readiness: [
+              {
+                code: "paper_scale_paper_scale_candidate",
+                section: "Paper scale",
+                severity: "warning",
+                message: "The post-draft critique still classifies the run as paper_scale_candidate, not paper_ready.",
+                source: "paper_readiness"
+              }
+            ],
             scientific: [
               {
                 code: "missing_baseline",
@@ -322,12 +332,71 @@ describe("buildFrame", () => {
     const logsIndex = plain.indexOf("• ready");
     expect(insightTitleIndex).toBeGreaterThanOrEqual(0);
     expect(logsIndex).toBeGreaterThan(insightTitleIndex);
-    expect(plain).toContain("• Issue summary: manuscript 1 | hard-stop 1 | backstop 2.");
+    expect(plain).toContain("• Issue summary: manuscript 1 | hard-stop 1 | backstop 2 | readiness 1.");
     expect(plain).toContain("• Blockers: scientific 1.");
+    expect(plain).toContain("• Readiness risks: blocked 0 | warning 1.");
     expect(plain).toContain("• Repairs 1/2 | remaining 0 | improvement no.");
     expect(plain).toContain("• Coverage: reviewer-missed policy 1 | reviewer-covered backstop 2.");
     expect(plain).toContain("• Manuscript quality gate: /artifact paper/manuscript_quality_gate.json");
     expect(plain).toContain("• Status: Stopped.");
+  });
+
+  it("renders review-stage readiness-risk digest lines above recent logs", () => {
+    const frame = buildFrame({
+      appVersion: "1.0.0",
+      busy: false,
+      thinking: false,
+      thinkingFrame: 0,
+      run: makeRun({
+        status: "paused",
+        currentNode: "review",
+        latestSummary: "Review packet prepared."
+      }),
+      runInsight: {
+        title: "Review packet",
+        lines: [
+          "Review readiness: blocking (3 ready, 1 warning, 1 blocking, 1 manual)",
+          "Objective: met - Objective metric met."
+        ],
+        readinessRisks: {
+          stage: "review",
+          readinessState: "blocked_for_paper_scale",
+          paperReady: false,
+          riskCounts: {
+            total: 1,
+            blocked: 1,
+            warning: 0
+          },
+          risks: [
+            {
+              code: "review_minimum_gate_blocked_for_paper_scale",
+              section: "Paper scale",
+              severity: "fail",
+              message: "Minimum gate: 3 check(s) failed — ceiling: blocked_for_paper_scale.",
+              source: "review_readiness"
+            }
+          ],
+          artifactRefs: [
+            { label: "Review readiness risks", path: "review/readiness_risks.json" }
+          ]
+        },
+        actions: [
+          { label: "Jump to design", command: "/agent jump design_experiments --force" }
+        ]
+      },
+      logs: ["ready"],
+      input: "",
+      inputCursor: 0,
+      suggestions: [],
+      selectedSuggestion: 0,
+      colorEnabled: false
+    });
+
+    const plain = frame.lines.map((line) => stripAnsi(line));
+    expect(plain).toContain("• Readiness state: blocked_for_paper_scale.");
+    expect(plain).toContain("• Readiness risks: blocked 1 | warning 0.");
+    expect(plain.some((line) => line.includes("• Primary risk: Paper scale · Minimum gate: 3 check(s) failed"))).toBe(true);
+    expect(plain).toContain("• Review readiness risks: /artifact review/readiness_risks.json");
   });
 
   it("does not render Busy label", () => {

@@ -196,6 +196,43 @@ describe("config .env overrides", () => {
     expect(loaded.workflow.execution_approval_mode).toBe("manual");
   });
 
+  it("defaults experiment network_policy to blocked when allow_network is disabled", async () => {
+    const { paths } = await createWorkspace();
+    const config = makeConfig();
+    delete config.experiments.network_policy;
+    delete config.experiments.network_purpose;
+    await saveConfig(paths, config);
+
+    const loaded = await loadConfig(paths);
+
+    expect(loaded.experiments.allow_network).toBe(false);
+    expect(loaded.experiments.network_policy).toBe("blocked");
+    expect(loaded.experiments.network_purpose).toBeUndefined();
+  });
+
+  it("preserves declared experiment network policy and purpose when setup saves a network-enabled workspace", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autolabos-config-network-"));
+    const paths = resolveAppPaths(cwd);
+    await ensureScaffold(paths);
+
+    await runNonInteractiveSetup(paths, {
+      projectName: "AutoLabOS",
+      defaultTopic: "Multi-agent collaboration",
+      defaultConstraints: ["recent papers"],
+      defaultObjectiveMetric: "reproducibility",
+      llmMode: "codex_chatgpt_only",
+      semanticScholarApiKey: "semantic-key",
+      networkPolicy: "declared",
+      networkPurpose: "logging"
+    });
+
+    const loaded = await loadConfig(paths);
+
+    expect(loaded.experiments.allow_network).toBe(true);
+    expect(loaded.experiments.network_policy).toBe("declared");
+    expect(loaded.experiments.network_purpose).toBe("logging");
+  });
+
   it("uses SEMANTIC_SCHOLAR_API_KEY from .env when config.yaml is empty", async () => {
     delete process.env.SEMANTIC_SCHOLAR_API_KEY;
     const { cwd, paths } = await createWorkspace();

@@ -213,6 +213,12 @@ p {
   border-color: rgba(139, 95, 26, 0.18);
 }
 
+.status-pill.is-warning-strong {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--warning-soft) 55%, var(--danger-soft) 45%);
+  border-color: rgba(162, 59, 48, 0.24);
+}
+
 .status-pill.is-neutral {
   color: var(--muted);
 }
@@ -1090,6 +1096,17 @@ button:disabled,
 
 .doctor-item h4 {
   margin-bottom: 4px;
+}
+
+.doctor-item.warning-strong {
+  border-color: rgba(162, 59, 48, 0.18);
+  background: linear-gradient(180deg, rgba(251, 241, 220, 0.96), rgba(248, 232, 228, 0.92));
+}
+
+.doctor-emphasis {
+  margin-top: 8px;
+  font-weight: 600;
+  color: var(--danger);
 }
 
 .doctor-harness-findings {

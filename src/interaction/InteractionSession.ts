@@ -19,7 +19,7 @@ import {
   isStructuredActionTimeoutError,
   looksLikeStructuredActionRequest
 } from "../core/commands/naturalActionIntent.js";
-import { buildDoctorHighlightLines, runDoctorReport } from "../core/doctor.js";
+import { buildDoctorHighlightLines, getDoctorCheckStatus, runDoctorReport } from "../core/doctor.js";
 import { resolveRunByQuery } from "../core/runs/runResolver.js";
 import { RunContextMemory } from "../core/memory/runContextMemory.js";
 import { parseSlashCommand } from "../core/commands/parseSlash.js";
@@ -36,6 +36,7 @@ import {
   formatReviewPacketLines,
   parseReviewPacket
 } from "../core/reviewPacket.js";
+import { parseReadinessRiskArtifact } from "../core/readinessRisks.js";
 import {
   buildAnalyzeResultsInsightCard,
   formatAnalyzeResultsArtifactLines
@@ -1157,11 +1158,14 @@ export class InteractionSession {
 
     await this.setActiveRunId(run.id);
     if (!parsed.relativePath) {
-      const refs = this.activeRunInsight?.manuscriptQuality?.artifactRefs || [];
+      const refs = [
+        ...(this.activeRunInsight?.manuscriptQuality?.artifactRefs || []),
+        ...(this.activeRunInsight?.readinessRisks?.artifactRefs || [])
+      ];
       if (refs.length === 0) {
-        this.pushLog(`No manuscript-quality artifact refs are available for ${run.id}.`);
+        this.pushLog(`No insight artifact refs are available for ${run.id}.`);
         this.pushLog(parsed.usage);
-        return { ok: false, reason: "no manuscript-quality artifact refs available" };
+        return { ok: false, reason: "no insight artifact refs available" };
       }
       this.pushLog(`Artifact shortcuts for ${run.id}:`);
       for (const line of buildArtifactCommandHintLines(refs, 5)) {
@@ -1199,6 +1203,8 @@ export class InteractionSession {
       codeExecutionExpected: true,
       candidateIsolation: this.config.experiments.candidate_isolation,
       allowNetwork: this.config.experiments.allow_network,
+      networkPolicy: this.config.experiments.network_policy,
+      networkPurpose: this.config.experiments.network_purpose,
       includeHarnessValidation: true,
       includeHarnessTestRecords: false,
       maxHarnessFindings: 30
@@ -1206,13 +1212,13 @@ export class InteractionSession {
     this.pushLog(
       `[${report.readiness.blocked ? "ATTN" : "OK"}] readiness: approval=${report.readiness.approvalMode}, `
         + `execution=${report.readiness.executionApprovalMode}, dependency=${report.readiness.dependencyMode}, `
-        + `session=${report.readiness.sessionMode}`
+        + `session=${report.readiness.sessionMode}, network=${formatDoctorNetworkSummary(report.readiness)}`
     );
     for (const line of buildDoctorHighlightLines(report)) {
       this.pushLog(line);
     }
     for (const check of report.checks) {
-      this.pushLog(`[${check.ok ? "OK" : "FAIL"}] ${check.name}: ${check.detail}`);
+      this.pushLog(`[${formatDoctorCheckLabel(check)}] ${check.name}: ${check.detail}`);
     }
     if (report.harness) {
       this.pushLog(
@@ -2168,8 +2174,11 @@ export class InteractionSession {
         }
       }
       const reviewPacket = parseReviewPacket(await safeRead(path.join(runDir, "review", "review_packet.json")));
+      const reviewReadinessRisks = parseReadinessRiskArtifact(
+        await safeRead(path.join(runDir, "review", "readiness_risks.json"))
+      );
       if (shouldSurfaceReviewInsight(run?.currentNode) && reviewPacket) {
-        this.activeRunInsight = buildReviewInsightCard(reviewPacket);
+        this.activeRunInsight = buildReviewInsightCard(reviewPacket, reviewReadinessRisks);
         return;
       }
       const report = shouldSurfaceAnalyzeResultsInsight(run?.currentNode)
@@ -2180,7 +2189,7 @@ export class InteractionSession {
         return;
       }
       this.activeRunInsight = shouldSurfaceReviewInsight(run?.currentNode) && reviewPacket
-        ? buildReviewInsightCard(reviewPacket)
+        ? buildReviewInsightCard(reviewPacket, reviewReadinessRisks)
         : undefined;
     } catch {
       this.activeRunInsight = undefined;
@@ -2858,4 +2867,28 @@ async function readAnalyzeSelectionCount(manifestPath: string): Promise<{ select
   } catch {
     return undefined;
   }
+}
+
+function formatDoctorCheckLabel(check: { ok: boolean; status?: "ok" | "warning" | "fail" }): "OK" | "WARN" | "FAIL" {
+  const status = getDoctorCheckStatus(check);
+  if (status === "warning") {
+    return "WARN";
+  }
+  return status === "fail" ? "FAIL" : "OK";
+}
+
+function formatDoctorNetworkSummary(readiness: {
+  networkPolicy?: "blocked" | "declared" | "required";
+  networkPurpose?: "logging" | "artifact_upload" | "model_download" | "dataset_fetch" | "remote_inference" | "other";
+  networkDeclarationPresent: boolean;
+}): string {
+  if (readiness.networkPolicy === "blocked") {
+    return "offline";
+  }
+  if (!readiness.networkDeclarationPresent) {
+    return "undeclared-enabled";
+  }
+  return readiness.networkPurpose
+    ? `${readiness.networkPolicy}:${readiness.networkPurpose}`
+    : (readiness.networkPolicy || "undeclared-enabled");
 }

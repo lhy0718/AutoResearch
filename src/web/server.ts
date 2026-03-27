@@ -87,6 +87,8 @@ interface SetupRequestBody {
   ollamaResearchModel?: string;
   ollamaExperimentModel?: string;
   ollamaVisionModel?: string;
+  networkPolicy?: "blocked" | "declared" | "required";
+  networkPurpose?: "logging" | "artifact_upload" | "model_download" | "dataset_fetch" | "remote_inference" | "other" | "";
   semanticScholarApiKey?: string;
   openAiApiKey?: string;
 }
@@ -192,6 +194,14 @@ class AutoLabOSWebController {
         if (body.llmMode === "openai_api" && !openAiApiKey) {
           return jsonResponse(res, 400, { error: "openAiApiKey is required for the selected provider/mode." });
         }
+        if (
+          (body.networkPolicy === "declared" || body.networkPolicy === "required")
+          && !body.networkPurpose?.trim()
+        ) {
+          return jsonResponse(res, 400, {
+            error: "networkPurpose is required when experiment network policy is declared or required."
+          });
+        }
         const config = await runNonInteractiveSetup(this.paths, {
           projectName: body.projectName,
           defaultTopic: body.defaultTopic,
@@ -216,7 +226,11 @@ class AutoLabOSWebController {
           ollamaChatModel: body.ollamaChatModel,
           ollamaResearchModel: body.ollamaResearchModel,
           ollamaExperimentModel: body.ollamaExperimentModel,
-          ollamaVisionModel: body.ollamaVisionModel
+          ollamaVisionModel: body.ollamaVisionModel,
+          networkPolicy: body.networkPolicy,
+          networkPurpose: body.networkPurpose?.trim()
+            ? (body.networkPurpose as "logging" | "artifact_upload" | "model_download" | "dataset_fetch" | "remote_inference" | "other")
+            : undefined
         });
         await ensureScaffold(this.paths);
         const runtime = (
@@ -256,6 +270,8 @@ class AutoLabOSWebController {
           codeExecutionExpected: true,
           candidateIsolation: this.runtime.config.experiments.candidate_isolation,
           allowNetwork: this.runtime.config.experiments.allow_network,
+          networkPolicy: this.runtime.config.experiments.network_policy,
+          networkPurpose: this.runtime.config.experiments.network_purpose,
           includeHarnessValidation: true,
           includeHarnessTestRecords: false,
           maxHarnessFindings: 40
@@ -273,6 +289,11 @@ class AutoLabOSWebController {
               executionApprovalMode: report.readiness.executionApprovalMode,
               dependencyMode: report.readiness.dependencyMode,
               sessionMode: report.readiness.sessionMode,
+              networkPolicy: report.readiness.networkPolicy,
+              networkPurpose: report.readiness.networkPurpose,
+              networkDeclarationPresent: report.readiness.networkDeclarationPresent,
+              networkApprovalSatisfied: report.readiness.networkApprovalSatisfied,
+              warningChecks: report.readiness.warningChecks,
               failedChecks: report.readiness.failedChecks
             }
           } satisfies DoctorResponse
@@ -656,6 +677,7 @@ function summarizeConfig(config: AutoLabOSRuntime["config"]): ConfigSummary {
     projectName: config.project_name,
     workflowMode: config.workflow.mode,
     approvalMode: config.workflow.approval_mode || "minimal",
+    executionApprovalMode: config.workflow.execution_approval_mode || "manual",
     llmMode: config.providers.llm_mode,
     pdfMode,
     researchBackendModel,
@@ -683,7 +705,9 @@ function summarizeConfig(config: AutoLabOSRuntime["config"]): ConfigSummary {
         ? config.providers.openai.experiment_reasoning_effort || config.providers.openai.reasoning_effort
         : config.providers.llm_mode === "ollama"
           ? undefined
-          : config.providers.codex.experiment_reasoning_effort || config.providers.codex.reasoning_effort
+          : config.providers.codex.experiment_reasoning_effort || config.providers.codex.reasoning_effort,
+    networkPolicy: config.experiments.network_policy || (config.experiments.allow_network ? undefined : "blocked"),
+    networkPurpose: config.experiments.network_purpose
   };
 }
 
@@ -732,7 +756,11 @@ function buildConfigFormData(
     ollamaChatModel: config?.providers.ollama?.chat_model || DEFAULT_OLLAMA_CHAT_MODEL,
     ollamaResearchModel: config?.providers.ollama?.research_model || DEFAULT_OLLAMA_RESEARCH_MODEL,
     ollamaExperimentModel: config?.providers.ollama?.experiment_model || DEFAULT_OLLAMA_EXPERIMENT_MODEL,
-    ollamaVisionModel: config?.providers.ollama?.vision_model || DEFAULT_OLLAMA_VISION_MODEL
+    ollamaVisionModel: config?.providers.ollama?.vision_model || DEFAULT_OLLAMA_VISION_MODEL,
+    networkPolicy:
+      config?.experiments.network_policy
+      || (config?.experiments.allow_network ? "declared" : "blocked"),
+    networkPurpose: config?.experiments.network_purpose || ""
   };
 }
 

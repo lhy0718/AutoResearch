@@ -135,7 +135,7 @@ function buildTranscriptLines(input: RenderFrameInput, wrapWidth: number): strin
       rawLines.push("");
     }
     rawLines.push(renderSectionHeading(input.runInsight.title, input.colorEnabled));
-    for (const line of buildManuscriptQualityInsightDigestLines(input.runInsight)) {
+    for (const line of buildRunInsightDigestLines(input.runInsight)) {
       rawLines.push(renderInsightLine(line, input.colorEnabled));
     }
     for (const line of input.runInsight.lines.slice(0, 4)) {
@@ -168,6 +168,16 @@ function buildTranscriptLines(input: RenderFrameInput, wrapWidth: number): strin
   return rawLines.flatMap((line) => wrapAnsiLine(line, wrapWidth));
 }
 
+function buildRunInsightDigestLines(insight: RunInsightCard): string[] {
+  if (insight.manuscriptQuality) {
+    return buildManuscriptQualityInsightDigestLines(insight);
+  }
+  if (insight.readinessRisks) {
+    return buildReadinessRiskInsightDigestLines(insight);
+  }
+  return [];
+}
+
 function buildManuscriptQualityInsightDigestLines(insight: RunInsightCard): string[] {
   const payload = insight.manuscriptQuality;
   if (!payload) {
@@ -180,6 +190,10 @@ function buildManuscriptQualityInsightDigestLines(insight: RunInsightCard): stri
     `hard-stop ${payload.issueCounts.hardStopPolicy}`,
     `backstop ${payload.issueCounts.backstopOnly}`
   ];
+  const readinessRiskCount = payload.issueCounts.readinessRisks ?? payload.issueGroups.readiness?.length ?? 0;
+  if (readinessRiskCount > 0) {
+    issueSummaryParts.push(`readiness ${readinessRiskCount}`);
+  }
   lines.push(`Issue summary: ${issueSummaryParts.join(" | ")}.`);
 
   const blockerParts: string[] = [];
@@ -208,10 +222,35 @@ function buildManuscriptQualityInsightDigestLines(insight: RunInsightCard): stri
     );
   }
 
+  if (readinessRiskCount > 0) {
+    const blockedReadiness =
+      payload.issueGroups.readiness?.filter((issue) => issue.severity === "fail").length ?? 0;
+    lines.push(`Readiness risks: blocked ${blockedReadiness} | warning ${Math.max(0, readinessRiskCount - blockedReadiness)}.`);
+  }
+
   for (const hint of buildArtifactCommandHintLines(payload.artifactRefs, 2)) {
     lines.push(hint);
   }
 
+  return lines.slice(0, 6);
+}
+
+function buildReadinessRiskInsightDigestLines(insight: RunInsightCard): string[] {
+  const payload = insight.readinessRisks;
+  if (!payload) {
+    return [];
+  }
+  const lines: string[] = [
+    `Readiness state: ${payload.readinessState}.`,
+    `Readiness risks: blocked ${payload.riskCounts.blocked} | warning ${payload.riskCounts.warning}.`
+  ];
+  if (payload.risks[0]) {
+    const primaryLabel = payload.risks[0].section?.trim() || payload.risks[0].code;
+    lines.push(`Primary risk: ${primaryLabel} · ${truncateForInsight(payload.risks[0].message, 96)}`);
+  }
+  for (const hint of buildArtifactCommandHintLines(payload.artifactRefs, 2)) {
+    lines.push(hint);
+  }
   return lines.slice(0, 6);
 }
 

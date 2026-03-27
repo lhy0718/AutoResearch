@@ -3,7 +3,14 @@ import { promises as fs } from "node:fs";
 import { stdout as output } from "node:process";
 import YAML from "yaml";
 
-import { AppConfig, ExecutionApprovalMode, RunsFile, WorkflowApprovalMode } from "./types.js";
+import {
+  AppConfig,
+  ExecutionApprovalMode,
+  ExperimentNetworkPolicy,
+  ExperimentNetworkPurpose,
+  RunsFile,
+  WorkflowApprovalMode
+} from "./types.js";
 import {
   buildCodexModelSelectionChoices,
   DEFAULT_CODEX_MODEL,
@@ -110,6 +117,8 @@ export interface NonInteractiveSetupInput {
   ollamaResearchModel?: string;
   ollamaExperimentModel?: string;
   ollamaVisionModel?: string;
+  networkPolicy?: ExperimentNetworkPolicy;
+  networkPurpose?: ExperimentNetworkPurpose;
 }
 
 export interface SetupWizardOptions {
@@ -196,6 +205,8 @@ function buildConfigFromWizardAnswers(answers: {
   ollamaResearchModel?: string;
   ollamaExperimentModel?: string;
   ollamaVisionModel?: string;
+  networkPolicy?: ExperimentNetworkPolicy;
+  networkPurpose?: ExperimentNetworkPurpose;
 }): AppConfig {
   const codexChatSelection = resolveCodexModelSelection(answers.codexChatModelChoice);
   const codexResearchBackendSelection = resolveCodexModelSelection(answers.codexResearchBackendModelChoice);
@@ -258,7 +269,12 @@ function buildConfigFromWizardAnswers(answers: {
     experiments: {
       runner: "local_python",
       timeout_sec: 3600,
-      allow_network: false,
+      allow_network: answers.networkPolicy === "declared" || answers.networkPolicy === "required",
+      network_policy: answers.networkPolicy || "blocked",
+      network_purpose:
+        answers.networkPolicy === "declared" || answers.networkPolicy === "required"
+          ? answers.networkPurpose
+          : undefined,
       candidate_isolation: "attempt_snapshot_restore"
     },
     paper: {
@@ -479,7 +495,9 @@ export async function runNonInteractiveSetup(
     ollamaChatModel: input.ollamaChatModel,
     ollamaResearchModel: input.ollamaResearchModel,
     ollamaExperimentModel: input.ollamaExperimentModel,
-    ollamaVisionModel: input.ollamaVisionModel
+    ollamaVisionModel: input.ollamaVisionModel,
+    networkPolicy: input.networkPolicy || "blocked",
+    networkPurpose: input.networkPurpose
   });
 
   await saveConfig(paths, config);
@@ -696,10 +714,21 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
     execution_approval_mode: normalizeExecutionApprovalMode(config.workflow.execution_approval_mode),
     budget_guard_usd: normalizeBudgetGuardUsd(config.workflow.budget_guard_usd)
   };
+  const allowNetwork = config.experiments?.allow_network === true;
+  const normalizedNetworkPolicy = normalizeExperimentNetworkPolicy(
+    config.experiments?.network_policy,
+    allowNetwork
+  );
   config.experiments = {
     runner: "local_python",
     timeout_sec: Math.max(1, config.experiments?.timeout_sec || 3600),
-    allow_network: config.experiments?.allow_network === true,
+    allow_network: allowNetwork,
+    network_policy: normalizedNetworkPolicy,
+    network_purpose:
+      normalizedNetworkPolicy
+      && normalizedNetworkPolicy !== "blocked"
+        ? normalizeExperimentNetworkPurpose(config.experiments?.network_purpose)
+        : undefined,
     candidate_isolation:
       config.experiments?.candidate_isolation === "attempt_worktree"
         ? "attempt_worktree"
@@ -770,6 +799,35 @@ function parseDotEnv(raw: string): Record<string, string> {
     result[key] = value;
   }
   return result;
+}
+
+function normalizeExperimentNetworkPolicy(
+  value: unknown,
+  allowNetwork: boolean
+): ExperimentNetworkPolicy | undefined {
+  if (!allowNetwork) {
+    return "blocked";
+  }
+  if (value === "declared" || value === "required") {
+    return value;
+  }
+  return undefined;
+}
+
+function normalizeExperimentNetworkPurpose(
+  value: unknown
+): ExperimentNetworkPurpose | undefined {
+  if (
+    value === "logging"
+    || value === "artifact_upload"
+    || value === "model_download"
+    || value === "dataset_fetch"
+    || value === "remote_inference"
+    || value === "other"
+  ) {
+    return value;
+  }
+  return undefined;
 }
 
 export async function upsertEnvVar(filePath: string, key: string, value: string): Promise<void> {

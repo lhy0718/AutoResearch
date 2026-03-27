@@ -100,6 +100,26 @@ describe("manuscriptQualityPresentation", () => {
         ],
         summary: ["1 appendix hard-stop finding remains."]
       },
+      readinessRisks: {
+        paper_ready: false,
+        readiness_state: "paper_scale_candidate",
+        risk_count: 1,
+        blocked_count: 0,
+        warning_count: 1,
+        summary_lines: ["Readiness risks: blocked=0, warning=1, readiness_state=paper_scale_candidate."],
+        risks: [
+          {
+            risk_code: "paper_scale_paper_scale_candidate",
+            severity: "warning",
+            category: "paper_scale",
+            status: "unverified",
+            message: "The post-draft critique still classifies the run as paper_scale_candidate, not paper_ready.",
+            triggered_by: ["paper_critique"],
+            affected_claim_ids: [],
+            affected_citation_ids: []
+          }
+        ]
+      },
       scientificValidation: {
         issues: [
           {
@@ -128,6 +148,7 @@ describe("manuscriptQualityPresentation", () => {
         reviewValidation: true,
         reviewAudit: true,
         styleLint: true,
+        readinessRisks: true,
         scientificValidation: true,
         submissionValidation: true,
         latestRepairVerificationPath: "paper/manuscript_repair_verification_1.json"
@@ -170,10 +191,20 @@ describe("manuscriptQualityPresentation", () => {
         })
       ])
     );
+    expect(card.manuscriptQuality?.issueGroups.readiness).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "paper_scale_paper_scale_candidate",
+          source: "paper_readiness"
+        })
+      ])
+    );
+    expect(card.manuscriptQuality?.issueCounts.readinessRisks).toBe(1);
     expect(card.manuscriptQuality?.artifactRefs).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ label: "Manuscript quality gate", path: "paper/manuscript_quality_gate.json" }),
         expect.objectContaining({ label: "Manuscript quality failure", path: "paper/manuscript_quality_failure.json" }),
+        expect.objectContaining({ label: "Readiness risks", path: "paper/readiness_risks.json" }),
         expect.objectContaining({ label: "Repair verification 1", path: "paper/manuscript_repair_verification_1.json" })
       ])
     );

@@ -35,6 +35,12 @@ import {
   VerifiedRegistryArtifact
 } from "../analysis/verifiedRegistry.js";
 import {
+  buildNetworkDependencyReadinessRisks,
+  buildReadinessRiskArtifact,
+  type ReadinessRisk,
+  type ReadinessRiskArtifact
+} from "../readinessRisks.js";
+import {
   PaperManuscript,
   PaperSubmissionValidationReport,
   PaperTraceabilityReport,
@@ -822,6 +828,27 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         "utf8"
       );
 
+      const fallbackReadinessRisks = buildFallbackPaperReadinessRiskArtifact({
+        preDraftCritique,
+        verifiedRegistry,
+        claimStatusTable,
+        evidenceGateDecision,
+        scientificGateStatus: gateDecision.status,
+        submissionValidationOk: submissionValidation.ok,
+        manuscriptQualityAction: manuscriptQuality.repairDecision.action,
+        config: deps.config
+      });
+      await writeRunArtifact(
+        run,
+        "paper/readiness_risks.json",
+        `${JSON.stringify(fallbackReadinessRisks, null, 2)}\n`
+      );
+      await fs.writeFile(
+        path.join(publicPaperDir, "readiness_risks.json"),
+        `${JSON.stringify(fallbackReadinessRisks, null, 2)}\n`,
+        "utf8"
+      );
+
       const preCompileToolCallsUsed =
         Math.max(1, 4 - sessionResult.stageFallbacks)
         + (validationRepair.attempted ? 1 : 0)
@@ -852,6 +879,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await runContextMemory.put("write_paper.manuscript_style_lint", manuscriptQuality.evaluation.styleLint);
       await runContextMemory.put("write_paper.manuscript_quality_gate", manuscriptQuality.repairDecision);
       await runContextMemory.put("write_paper.manuscript_repair_reports", manuscriptQuality.repairReports);
+      await runContextMemory.put("write_paper.readiness_risks", fallbackReadinessRisks);
       if (manuscriptQuality.repairDecision.action === "stop") {
         const manuscriptError = buildManuscriptQualityFailureError(manuscriptQuality.repairDecision);
         emitLog(manuscriptError);
@@ -939,20 +967,37 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         `${JSON.stringify(postDraftCritique, null, 2)}\n`
       );
       const paperReadiness = buildPaperReadinessArtifact({
-        critique: postDraftCritique,
+        manuscriptType: postDraftCritique.manuscript_type,
         evidenceGateDecision,
         claimStatusTable,
         scientificGateStatus: gateDecision.status,
         submissionValidationOk: submissionValidation.ok,
         manuscriptQualityAction: manuscriptQuality.repairDecision.action
       });
+      const readinessRisks = buildPaperReadinessRiskArtifact({
+        manuscriptType: postDraftCritique.manuscript_type,
+        paperReadiness,
+        verifiedRegistry,
+        claimStatusTable,
+        evidenceGateDecision,
+        scientificGateStatus: gateDecision.status,
+        submissionValidationOk: submissionValidation.ok,
+        manuscriptQualityAction: manuscriptQuality.repairDecision.action,
+        config: deps.config
+      });
       await writeRunArtifact(
         run,
         "paper/paper_readiness.json",
         `${JSON.stringify(paperReadiness, null, 2)}\n`
       );
+      await writeRunArtifact(
+        run,
+        "paper/readiness_risks.json",
+        `${JSON.stringify(readinessRisks, null, 2)}\n`
+      );
       await runContextMemory.put("write_paper.paper_critique", postDraftCritique);
       await runContextMemory.put("write_paper.paper_readiness", paperReadiness);
+      await runContextMemory.put("write_paper.readiness_risks", readinessRisks);
       await runContextMemory.put("write_paper.manuscript_type", postDraftCritique.manuscript_type);
       await runContextMemory.put("write_paper.target_venue_style", postDraftCritique.target_venue_style);
       emitLog(
@@ -1031,6 +1076,11 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
           {
             sourcePath: path.join(runPaperDir, "paper_readiness.json"),
             targetRelativePath: "paper_readiness.json",
+            optional: true
+          },
+          {
+            sourcePath: path.join(runPaperDir, "readiness_risks.json"),
+            targetRelativePath: "readiness_risks.json",
             optional: true
           },
           {
@@ -3072,6 +3122,14 @@ function dedupeCorpusRowsById<T extends { paper_id: string }>(rows: T[]): T[] {
   return [...byId.values()];
 }
 
+function sanitizeRiskCodeFragment(value: string): string {
+  const normalized = value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return normalized || "item";
+}
+
 const CRITICAL_REPEAT_MANUSCRIPT_CODES = new Set([
   "rhetorical_overreach",
   "citation_hygiene",
@@ -3266,7 +3324,7 @@ function buildEvidenceGateDecisionArtifact(
 }
 
 function buildPaperReadinessArtifact(input: {
-  critique: PaperCritique;
+  manuscriptType: ManuscriptType;
   evidenceGateDecision: EvidenceGateDecisionArtifact;
   claimStatusTable: ClaimStatusTableArtifact;
   scientificGateStatus: "pass" | "warn" | "fail";
@@ -3274,7 +3332,7 @@ function buildPaperReadinessArtifact(input: {
   manuscriptQualityAction: ManuscriptRepairDecision["action"];
 }): PaperReadinessArtifact {
   const paperReady =
-    input.critique.manuscript_type === "paper_ready"
+    input.manuscriptType === "paper_ready"
     && input.evidenceGateDecision.status !== "fail"
     && input.scientificGateStatus !== "fail"
     && input.submissionValidationOk
@@ -3288,7 +3346,7 @@ function buildPaperReadinessArtifact(input: {
   return {
     generated_at: new Date().toISOString(),
     paper_ready: paperReady,
-    readiness_state: paperReady ? "paper_ready" : input.critique.manuscript_type,
+    readiness_state: paperReady ? "paper_ready" : input.manuscriptType,
     reason: paperReady
       ? "The manuscript passed manuscript-quality, evidence, scientific, and submission gates."
       : input.evidenceGateDecision.status === "fail"
@@ -3297,7 +3355,7 @@ function buildPaperReadinessArtifact(input: {
           ? "paper_ready is blocked because submission validation failed."
           : input.scientificGateStatus === "fail"
             ? "paper_ready is blocked because the scientific validation gate failed."
-            : `paper_ready remains ${input.critique.manuscript_type} after post-draft critique.`,
+            : `paper_ready remains ${input.manuscriptType} after post-draft critique.`,
     triggered_by: triggeredBy,
     evidence_gate_status: input.evidenceGateDecision.status,
     scientific_validation_status: input.scientificGateStatus,
@@ -3305,6 +3363,205 @@ function buildPaperReadinessArtifact(input: {
     manuscript_quality_action: input.manuscriptQualityAction,
     claim_status_counts: input.claimStatusTable.counts
   };
+}
+
+function buildPaperReadinessRiskArtifact(input: {
+  manuscriptType: ManuscriptType;
+  paperReadiness: PaperReadinessArtifact;
+  verifiedRegistry: VerifiedRegistryArtifact;
+  claimStatusTable: ClaimStatusTableArtifact;
+  evidenceGateDecision: EvidenceGateDecisionArtifact;
+  scientificGateStatus: "pass" | "warn" | "fail";
+  submissionValidationOk: boolean;
+  manuscriptQualityAction: ManuscriptRepairDecision["action"];
+  config: NodeExecutionDeps["config"];
+}): ReadinessRiskArtifact {
+  const risks: ReadinessRisk[] = buildNetworkDependencyReadinessRisks({
+    source: "paper",
+    allowNetwork: input.config.experiments?.allow_network === true,
+    networkPolicy: input.config.experiments?.network_policy,
+    networkPurpose: input.config.experiments?.network_purpose,
+    executionApprovalMode: input.config.workflow?.execution_approval_mode
+  });
+
+  for (const entry of input.verifiedRegistry.entries) {
+    if (entry.status !== "blocked" && entry.status !== "unverified") {
+      continue;
+    }
+    risks.push({
+      risk_code: `citation_source_${entry.status}_${sanitizeRiskCodeFragment(entry.citation_paper_id)}`,
+      severity: entry.status === "blocked" ? "blocked" : "warning",
+      category: "citation_source",
+      status: entry.status,
+      message:
+        entry.status === "blocked"
+          ? `Citation source ${entry.citation_paper_id} remained unresolved after bounded verification.`
+          : `Citation source ${entry.citation_paper_id} was repaired but remains below fully verified status.`,
+      triggered_by: ["verified_registry", "evidence_gate"],
+      affected_claim_ids: [],
+      affected_citation_ids: [entry.citation_paper_id],
+      recommended_action:
+        entry.status === "blocked"
+          ? "Provide a stable source row or remove the unsupported citation before claiming paper readiness."
+          : "Keep the citation wording conservative or promote it to a fully verified source.",
+      recheck_condition:
+        entry.status === "blocked"
+          ? "A direct corpus source or externally verified locator becomes available for this citation."
+          : "The repaired citation is replaced with a direct corpus-backed or fully verified source."
+    });
+  }
+
+  for (const claim of input.claimStatusTable.claims) {
+    if (claim.status !== "blocked" && claim.status !== "unverified") {
+      continue;
+    }
+    risks.push({
+      risk_code: `claim_evidence_${claim.status}_${sanitizeRiskCodeFragment(claim.claim_id)}`,
+      severity: claim.status === "blocked" ? "blocked" : "warning",
+      category: "claim_evidence",
+      status: claim.status,
+      message:
+        claim.status === "blocked"
+          ? `Claim ${claim.claim_id} in ${claim.section_heading} lacks enough usable evidence or traceability for paper readiness.`
+          : `Claim ${claim.claim_id} in ${claim.section_heading} remains only partially grounded.`,
+      triggered_by: ["claim_status_table", "evidence_gate"],
+      affected_claim_ids: [claim.claim_id],
+      affected_citation_ids: claim.citation_refs,
+      recommended_action:
+        claim.status === "blocked"
+          ? "Add concrete evidence and traceability, or remove/rewrite the claim."
+          : "Add the missing source support or weaken the claim wording further.",
+      recheck_condition:
+        claim.status === "blocked"
+          ? "The claim gains concrete evidence and traceability links."
+          : "The claim is re-linked to verified evidence or downgraded enough to remove the grounding gap."
+    });
+  }
+
+  if (input.scientificGateStatus === "fail") {
+    risks.push({
+      risk_code: "scientific_validation_fail",
+      severity: "blocked",
+      category: "scientific_validation",
+      status: "blocked",
+      message: "Scientific validation failed, so the manuscript cannot be treated as paper-ready.",
+      triggered_by: ["scientific_validation"],
+      affected_claim_ids: [],
+      affected_citation_ids: [],
+      recommended_action: "Address the scientific validation failures before treating the manuscript as paper-scale.",
+      recheck_condition: "Scientific validation returns pass or warn without blocking issues."
+    });
+  }
+
+  if (!input.submissionValidationOk) {
+    risks.push({
+      risk_code: "submission_validation_fail",
+      severity: "blocked",
+      category: "submission_validation",
+      status: "blocked",
+      message: "Submission validation failed, so the paper bundle is not yet safe to hand off as paper-ready.",
+      triggered_by: ["submission_validation"],
+      affected_claim_ids: [],
+      affected_citation_ids: [],
+      recommended_action: "Resolve the submission validation errors before final paper handoff.",
+      recheck_condition: "Submission validation passes cleanly."
+    });
+  }
+
+  if (input.manuscriptQualityAction === "stop") {
+    risks.push({
+      risk_code: "manuscript_quality_stop",
+      severity: "blocked",
+      category: "manuscript_quality",
+      status: "blocked",
+      message: "The manuscript-quality loop stopped before acceptance, so readiness remains blocked.",
+      triggered_by: ["manuscript_quality"],
+      affected_claim_ids: [],
+      affected_citation_ids: [],
+      recommended_action: "Resolve the remaining manuscript-quality blockers or accept an honest downgrade.",
+      recheck_condition: "The manuscript-quality gate passes without a stop decision."
+    });
+  }
+
+  if (input.manuscriptType !== "paper_ready") {
+    const blocked = input.manuscriptType === "blocked_for_paper_scale";
+    risks.push({
+      risk_code: `paper_scale_${sanitizeRiskCodeFragment(input.manuscriptType)}`,
+      severity: blocked ? "blocked" : "warning",
+      category: "paper_scale",
+      status: blocked ? "blocked" : "unverified",
+      message: blocked
+        ? "The post-draft critique still classifies the run as blocked for paper scale."
+        : `The post-draft critique still classifies the run as ${input.manuscriptType}, not paper_ready.`,
+      triggered_by: ["paper_critique", ...input.paperReadiness.triggered_by],
+      affected_claim_ids: [],
+      affected_citation_ids: [],
+      recommended_action: blocked
+        ? "Backtrack or downgrade rather than presenting the current manuscript as paper-ready."
+        : "Keep the manuscript explicitly downgraded until stronger evidence or critique outcomes are available.",
+      recheck_condition: "The post-draft critique classifies the manuscript as paper_ready."
+    });
+  }
+
+  return buildReadinessRiskArtifact({
+    paperReady: input.paperReadiness.paper_ready,
+    readinessState: input.paperReadiness.readiness_state,
+    risks
+  });
+}
+
+function buildFallbackPaperReadinessRiskArtifact(input: {
+  preDraftCritique: PaperCritique | null;
+  verifiedRegistry: VerifiedRegistryArtifact;
+  claimStatusTable: ClaimStatusTableArtifact;
+  evidenceGateDecision: EvidenceGateDecisionArtifact;
+  scientificGateStatus: "pass" | "warn" | "fail";
+  submissionValidationOk: boolean;
+  manuscriptQualityAction: ManuscriptRepairDecision["action"];
+  config: NodeExecutionDeps["config"];
+}): ReadinessRiskArtifact {
+  const manuscriptType = resolveFallbackReadinessState(input);
+  const paperReadiness = buildPaperReadinessArtifact({
+    manuscriptType,
+    evidenceGateDecision: input.evidenceGateDecision,
+    claimStatusTable: input.claimStatusTable,
+    scientificGateStatus: input.scientificGateStatus,
+    submissionValidationOk: input.submissionValidationOk,
+    manuscriptQualityAction: input.manuscriptQualityAction
+  });
+  return buildPaperReadinessRiskArtifact({
+    manuscriptType,
+    paperReadiness,
+    verifiedRegistry: input.verifiedRegistry,
+    claimStatusTable: input.claimStatusTable,
+    evidenceGateDecision: input.evidenceGateDecision,
+    scientificGateStatus: input.scientificGateStatus,
+    submissionValidationOk: input.submissionValidationOk,
+    manuscriptQualityAction: input.manuscriptQualityAction,
+    config: input.config
+  });
+}
+
+function resolveFallbackReadinessState(input: {
+  preDraftCritique: PaperCritique | null;
+  evidenceGateDecision: EvidenceGateDecisionArtifact;
+  scientificGateStatus: "pass" | "warn" | "fail";
+  submissionValidationOk: boolean;
+  manuscriptQualityAction: ManuscriptRepairDecision["action"];
+}): ManuscriptType {
+  const critiqueType = input.preDraftCritique?.manuscript_type;
+  if (
+    input.manuscriptQualityAction === "stop"
+    || input.evidenceGateDecision.status === "fail"
+    || input.scientificGateStatus === "fail"
+    || !input.submissionValidationOk
+  ) {
+    if (critiqueType === "system_validation_note" || critiqueType === "research_memo") {
+      return critiqueType;
+    }
+    return "blocked_for_paper_scale";
+  }
+  return critiqueType ?? "paper_scale_candidate";
 }
 
 function classifyClaimEvidenceSourceType(

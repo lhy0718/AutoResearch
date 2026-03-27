@@ -132,7 +132,111 @@ describe("runDoctorReport", () => {
       expect.objectContaining({
         name: "experiment-web-restriction",
         ok: true,
+        status: "ok",
         detail: expect.stringContaining("network access remains disabled")
+      })
+    );
+  });
+
+  it("downgrades declared networked execution to a warning instead of a hard failure", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-network-declared-");
+    await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
+    await writeJson(path.join(workspace, ".autolabos", "runs", "runs.json"), { runs: [] });
+
+    const report = await runDoctorReport(createCodexStub(), {
+      workspaceRoot: workspace,
+      includeHarnessValidation: false,
+      approvalMode: "manual",
+      executionApprovalMode: "risk_ack",
+      dependencyMode: "local",
+      sessionMode: "fresh",
+      codeExecutionExpected: true,
+      candidateIsolation: "attempt_snapshot_restore",
+      allowNetwork: true,
+      networkPolicy: "declared",
+      networkPurpose: "logging"
+    });
+
+    expect(report.readiness.blocked).toBe(false);
+    expect(report.readiness.networkPolicy).toBe("declared");
+    expect(report.readiness.networkPurpose).toBe("logging");
+    expect(report.readiness.networkDeclarationPresent).toBe(true);
+    expect(report.readiness.warningChecks).toContain("experiment-web-restriction");
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "experiment-web-restriction",
+        ok: true,
+        status: "warning",
+        detail: expect.stringContaining("network dependency for logging")
+      })
+    );
+    expect(buildDoctorHighlightLines(report)).toContain(
+      "[WARN] declared network dependency: logging. Results should remain auditable as a network-assisted run."
+    );
+  });
+
+  it("surfaces required networked execution as a stronger warning with explicit highlight guidance", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-network-required-");
+    await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
+    await writeJson(path.join(workspace, ".autolabos", "runs", "runs.json"), { runs: [] });
+
+    const report = await runDoctorReport(createCodexStub(), {
+      workspaceRoot: workspace,
+      includeHarnessValidation: false,
+      approvalMode: "manual",
+      executionApprovalMode: "risk_ack",
+      dependencyMode: "remote_gpu",
+      sessionMode: "fresh",
+      codeExecutionExpected: true,
+      candidateIsolation: "attempt_snapshot_restore",
+      allowNetwork: true,
+      networkPolicy: "required",
+      networkPurpose: "remote_inference"
+    });
+
+    expect(report.readiness.blocked).toBe(false);
+    expect(report.readiness.networkPolicy).toBe("required");
+    expect(report.readiness.networkPurpose).toBe("remote_inference");
+    expect(report.readiness.warningChecks).toContain("experiment-web-restriction");
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "experiment-web-restriction",
+        ok: true,
+        status: "warning",
+        detail: expect.stringContaining("network-critical dependency for remote_inference")
+      })
+    );
+    expect(buildDoctorHighlightLines(report)).toContain(
+      "[ATTN] required network dependency: remote_inference. Treat this run as network-assisted and keep explicit operator review in the loop."
+    );
+  });
+
+  it("fails doctor readiness when network access is enabled without a declared policy", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-network-undeclared-");
+    await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
+    await writeJson(path.join(workspace, ".autolabos", "runs", "runs.json"), { runs: [] });
+
+    const report = await runDoctorReport(createCodexStub(), {
+      workspaceRoot: workspace,
+      includeHarnessValidation: false,
+      approvalMode: "manual",
+      executionApprovalMode: "manual",
+      dependencyMode: "local",
+      sessionMode: "fresh",
+      codeExecutionExpected: true,
+      candidateIsolation: "attempt_snapshot_restore",
+      allowNetwork: true
+    });
+
+    expect(report.readiness.blocked).toBe(true);
+    expect(report.readiness.networkDeclarationPresent).toBe(false);
+    expect(report.readiness.failedChecks).toContain("experiment-web-restriction");
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "experiment-web-restriction",
+        ok: false,
+        status: "fail",
+        detail: expect.stringContaining("missing a declared network_policy/network_purpose")
       })
     );
   });

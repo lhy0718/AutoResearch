@@ -52,6 +52,15 @@ export type NodeStatus = "pending" | "running" | "needs_approval" | "completed" 
 export type AgentStatus = NodeStatus;
 export type WorkflowApprovalMode = "manual" | "minimal";
 export type ExecutionApprovalMode = "manual" | "risk_ack" | "full_auto";
+export type ExperimentNetworkPolicy = "blocked" | "declared" | "required";
+export type ExperimentNetworkPurpose =
+  | "logging"
+  | "artifact_upload"
+  | "model_download"
+  | "dataset_fetch"
+  | "remote_inference"
+  | "other";
+export type DoctorCheckStatus = "ok" | "warning" | "fail";
 
 export type TransitionAction =
   | "advance"
@@ -261,6 +270,8 @@ export interface AppConfig {
     runner: "local_python";
     timeout_sec: number;
     allow_network: boolean;
+    network_policy?: ExperimentNetworkPolicy;
+    network_purpose?: ExperimentNetworkPurpose;
     candidate_isolation?: "attempt_snapshot_restore" | "attempt_worktree";
   };
   paper: {
@@ -279,6 +290,7 @@ export interface AppConfig {
 export interface DoctorCheck {
   name: string;
   ok: boolean;
+  status?: DoctorCheckStatus;
   detail: string;
 }
 
@@ -307,6 +319,27 @@ export interface PendingPlan {
 export interface RunInsightCard {
   title: string;
   lines: string[];
+  readinessRisks?: {
+    stage: "review" | "paper";
+    readinessState: string;
+    paperReady: boolean;
+    riskCounts: {
+      total: number;
+      blocked: number;
+      warning: number;
+    };
+    risks: Array<{
+      code: string;
+      section: string;
+      severity: "warning" | "fail";
+      message: string;
+      source: "review_readiness" | "paper_readiness";
+    }>;
+    artifactRefs: Array<{
+      label: string;
+      path: string;
+    }>;
+  };
   manuscriptQuality?: {
     status: "pass" | "repairing" | "stopped";
     stage: "initial_gate" | "post_repair_1" | "post_repair_2";
@@ -333,6 +366,7 @@ export interface RunInsightCard {
       manuscript: number;
       hardStopPolicy: number;
       backstopOnly: number;
+      readinessRisks?: number;
       scientificBlockers: number;
       submissionBlockers: number;
       reviewerMissedPolicy: number;
@@ -359,6 +393,13 @@ export interface RunInsightCard {
         severity: "warning" | "fail";
         message: string;
         source: "style_lint";
+      }>;
+      readiness?: Array<{
+        code: string;
+        section: string;
+        severity: "warning" | "fail";
+        message: string;
+        source: "paper_readiness";
       }>;
       scientific: Array<{
         code: string;

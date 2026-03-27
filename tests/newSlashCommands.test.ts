@@ -231,6 +231,53 @@ describe("diagnostic command transient logs", () => {
     expect(app.logs).toContain("Artifact shortcuts for run-1:");
     expect(app.logs).toContain("- Manuscript quality gate: /artifact paper/manuscript_quality_gate.json");
   });
+
+  it("lists review readiness-risk artifact shortcuts in the TUI artifact command", async () => {
+    const app = makeApp();
+    app.resolveTargetRun = vi.fn().mockResolvedValue({
+      id: "run-1",
+      title: "Test Run",
+      currentNode: "review",
+      status: "paused"
+    });
+    app.setActiveRunId = vi.fn().mockImplementation(async () => {
+      app.activeRunInsight = {
+        title: "Review packet",
+        lines: [],
+        readinessRisks: {
+          stage: "review",
+          readinessState: "blocked_for_paper_scale",
+          paperReady: false,
+          riskCounts: {
+            total: 1,
+            blocked: 1,
+            warning: 0
+          },
+          risks: [
+            {
+              code: "review_minimum_gate_blocked_for_paper_scale",
+              section: "Paper scale",
+              severity: "fail",
+              message: "Minimum gate: 3 check(s) failed — ceiling: blocked_for_paper_scale.",
+              source: "review_readiness"
+            }
+          ],
+          artifactRefs: [
+            {
+              label: "Review readiness risks",
+              path: "review/readiness_risks.json"
+            }
+          ]
+        }
+      };
+    });
+
+    const result = await app.handleArtifact([]);
+
+    expect(result.ok).toBe(true);
+    expect(app.logs).toContain("Artifact shortcuts for run-1:");
+    expect(app.logs).toContain("- Review readiness risks: /artifact review/readiness_risks.json");
+  });
 });
 
 describe("mouse event suppression", () => {

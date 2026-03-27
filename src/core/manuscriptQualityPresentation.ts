@@ -1,6 +1,7 @@
 import path from "node:path";
 
 import { RunInsightCard } from "../types.js";
+import { formatReadinessRiskSection, type ReadinessRiskArtifact } from "./readinessRisks.js";
 import { PaperSubmissionValidationReport } from "./analysis/paperManuscript.js";
 import {
   ManuscriptRepairDecision,
@@ -44,6 +45,7 @@ interface ManuscriptQualityArtifactPresence {
   reviewValidation: boolean;
   reviewAudit: boolean;
   styleLint: boolean;
+  readinessRisks: boolean;
   scientificValidation: boolean;
   submissionValidation: boolean;
   latestRepairVerificationPath?: string;
@@ -54,6 +56,7 @@ interface ManuscriptQualityInsightInput {
   failure?: ManuscriptQualityFailureArtifact;
   review?: ManuscriptReviewArtifact;
   styleLint?: ManuscriptStyleLintArtifact;
+  readinessRisks?: ReadinessRiskArtifact;
   scientificValidation?: ScientificValidationArtifact;
   submissionValidation?: PaperSubmissionValidationReport;
   artifactPresence: ManuscriptQualityArtifactPresence;
@@ -77,6 +80,7 @@ export async function loadManuscriptQualityInsightCard(input: {
   );
   const reviewAuditRaw = await input.readText(path.join(input.runDir, "paper", "manuscript_review_audit.json"));
   const styleLintRaw = await input.readText(path.join(input.runDir, "paper", "manuscript_style_lint.json"));
+  const readinessRisksRaw = await input.readText(path.join(input.runDir, "paper", "readiness_risks.json"));
   const scientificValidationRaw = await input.readText(path.join(input.runDir, "paper", "scientific_validation.json"));
   const submissionValidationRaw = await input.readText(path.join(input.runDir, "paper", "submission_validation.json"));
 
@@ -93,6 +97,7 @@ export async function loadManuscriptQualityInsightCard(input: {
     failure: parseJsonArtifact<ManuscriptQualityFailureArtifact>(failureRaw),
     review: parseJsonArtifact<ManuscriptReviewArtifact>(reviewRaw),
     styleLint: parseJsonArtifact<ManuscriptStyleLintArtifact>(styleLintRaw),
+    readinessRisks: parseJsonArtifact<ReadinessRiskArtifact>(readinessRisksRaw),
     scientificValidation: parseJsonArtifact<ScientificValidationArtifact>(scientificValidationRaw),
     submissionValidation: parseJsonArtifact<PaperSubmissionValidationReport>(submissionValidationRaw),
     artifactPresence: {
@@ -101,6 +106,7 @@ export async function loadManuscriptQualityInsightCard(input: {
       reviewValidation: hasArtifact(reviewValidationRaw),
       reviewAudit: hasArtifact(reviewAuditRaw),
       styleLint: hasArtifact(styleLintRaw),
+      readinessRisks: hasArtifact(readinessRisksRaw),
       scientificValidation: hasArtifact(scientificValidationRaw),
       submissionValidation: hasArtifact(submissionValidationRaw),
       latestRepairVerificationPath:
@@ -117,6 +123,7 @@ export function buildManuscriptQualityInsightCard(input: ManuscriptQualityInsigh
   const repairableIssues = resolveDisplayedIssues(input).filter((issue) => issue.repairable);
   const hardStopPolicyFindings = resolveHardStopPolicyFindings(input);
   const backstopOnlyFindings = resolveBackstopOnlyFindings(input);
+  const readinessRisks = resolveReadinessRisks(input.readinessRisks);
   const scientificBlockers = resolveScientificBlockers(input.scientificValidation);
   const submissionBlockers = resolveSubmissionBlockers(input.submissionValidation);
   const status = resolveInsightStatus({
@@ -137,6 +144,7 @@ export function buildManuscriptQualityInsightCard(input: ManuscriptQualityInsigh
     reviewReliability,
     decision: input.decision,
     failure: input.failure,
+    readinessRisks,
     scientificBlockers,
     submissionBlockers
   });
@@ -160,6 +168,7 @@ export function buildManuscriptQualityInsightCard(input: ManuscriptQualityInsigh
         manuscript: repairableIssues.length,
         hardStopPolicy: hardStopPolicyFindings.length,
         backstopOnly: backstopOnlyFindings.length,
+        readinessRisks: readinessRisks.length,
         scientificBlockers: scientificBlockers.length,
         submissionBlockers: submissionBlockers.length,
         reviewerMissedPolicy: input.failure?.reviewer_missed_policy_findings.length || 0,
@@ -175,6 +184,7 @@ export function buildManuscriptQualityInsightCard(input: ManuscriptQualityInsigh
         })),
         hardStopPolicy: hardStopPolicyFindings,
         backstopOnly: backstopOnlyFindings,
+        readiness: readinessRisks,
         scientific: scientificBlockers,
         submission: submissionBlockers
       },
@@ -242,6 +252,20 @@ function resolveBackstopOnlyFindings(
   }));
 }
 
+function resolveReadinessRisks(
+  readinessRisks?: ReadinessRiskArtifact
+): NonNullable<InsightPayload["issueGroups"]["readiness"]> {
+  return (
+    readinessRisks?.risks.map((risk) => ({
+      code: risk.risk_code,
+      section: formatReadinessRiskSection(risk.category),
+      severity: risk.severity === "blocked" ? ("fail" as const) : ("warning" as const),
+      message: risk.message,
+      source: "paper_readiness" as const
+    })) || []
+  );
+}
+
 function resolveScientificBlockers(
   scientificValidation?: ScientificValidationArtifact
 ): InsightPayload["issueGroups"]["scientific"] {
@@ -307,6 +331,7 @@ function buildInsightLines(input: {
   reviewReliability: InsightPayload["reviewReliability"];
   decision: ManuscriptRepairDecision;
   failure?: ManuscriptQualityFailureArtifact;
+  readinessRisks: NonNullable<InsightPayload["issueGroups"]["readiness"]>;
   scientificBlockers: InsightPayload["issueGroups"]["scientific"];
   submissionBlockers: InsightPayload["issueGroups"]["submission"];
 }): string[] {
@@ -325,6 +350,8 @@ function buildInsightLines(input: {
     lines.push(`Scientific blocker: ${truncateOneLine(input.scientificBlockers[0].message, 170)}`);
   } else if (input.submissionBlockers[0]) {
     lines.push(`Submission blocker: ${truncateOneLine(input.submissionBlockers[0].message, 170)}`);
+  } else if (input.readinessRisks[0]) {
+    lines.push(`Readiness risk: ${truncateOneLine(input.readinessRisks[0].message, 170)}`);
   }
   for (const line of leadSummaryLines) {
     if (lines.length >= 6) {
@@ -372,6 +399,12 @@ function buildArtifactRefs(input: ManuscriptQualityInsightInput): InsightPayload
     refs.push({
       label: "Style lint",
       path: "paper/manuscript_style_lint.json"
+    });
+  }
+  if (input.artifactPresence.readinessRisks) {
+    refs.push({
+      label: "Readiness risks",
+      path: "paper/readiness_risks.json"
     });
   }
   if (input.artifactPresence.latestRepairVerificationPath) {

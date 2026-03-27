@@ -1150,6 +1150,119 @@ describe("InteractionSession", () => {
     expect(snapshot.activeRunInsight?.lines.some((line) => line.includes("Status: Stopped."))).toBe(true);
   });
 
+  it("surfaces review-stage readiness risks inside the review insight", async () => {
+    const run = await runStore.createRun({
+      title: "Review readiness run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    const current = await runStore.getRun(run.id);
+    if (!current) {
+      throw new Error("expected run");
+    }
+    current.status = "paused";
+    current.currentNode = "review";
+    current.graph.currentNode = "review";
+    current.graph.nodeStates.review.status = "needs_approval";
+    await runStore.updateRun(current);
+
+    const runDir = path.join(cwd, ".autolabos", "runs", run.id);
+    await fs.mkdir(path.join(runDir, "review"), { recursive: true });
+    await fs.writeFile(
+      path.join(runDir, "review", "review_packet.json"),
+      JSON.stringify(
+        {
+          generated_at: "2026-03-27T10:00:00.000Z",
+          readiness: {
+            status: "blocking",
+            ready_checks: 3,
+            warning_checks: 1,
+            blocking_checks: 1,
+            manual_checks: 1
+          },
+          objective_status: "met",
+          objective_summary: "The objective was met.",
+          checks: [
+            {
+              id: "evidence_bundle",
+              label: "Evidence bundle",
+              status: "blocking",
+              detail: "Missing required paper inputs: evidence_store.jsonl."
+            }
+          ],
+          suggested_actions: ["/agent jump design_experiments --force"]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(runDir, "review", "readiness_risks.json"),
+      JSON.stringify(
+        {
+          generated_at: "2026-03-27T10:00:00.000Z",
+          paper_ready: false,
+          readiness_state: "blocked_for_paper_scale",
+          risk_count: 1,
+          blocked_count: 1,
+          warning_count: 0,
+          summary_lines: ["Readiness risks: blocked=1, warning=0, readiness_state=blocked_for_paper_scale."],
+          risks: [
+            {
+              risk_code: "review_minimum_gate_blocked_for_paper_scale",
+              severity: "blocked",
+              category: "paper_scale",
+              status: "blocked",
+              message: "Minimum gate: 3 check(s) failed — ceiling: blocked_for_paper_scale.",
+              triggered_by: ["minimum_gate"],
+              affected_claim_ids: [],
+              affected_citation_ids: [],
+              recommended_action: "Backtrack to recover the missing evidence floor instead of treating the run as paper-scale.",
+              recheck_condition: "The review minimum gate passes without any failed checks."
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const session = new InteractionSession({
+      workspaceRoot: cwd,
+      config: {
+        research: {
+          defaultTopic: "topic",
+          defaultConstraints: ["recent papers"],
+          default_objective_metric: "metric"
+        }
+      } as any,
+      runStore,
+      titleGenerator: {} as any,
+      codex: {} as any,
+      openAiTextClient: undefined,
+      eventStream: new InMemoryEventStream(),
+      orchestrator: {} as any,
+      semanticScholarApiKeyConfigured: true
+    });
+    await session.start();
+    await session.selectRun(run.id);
+
+    const snapshot = session.snapshot();
+
+    expect(snapshot.activeRunInsight?.title).toBe("Review packet");
+    expect(snapshot.activeRunInsight?.readinessRisks?.readinessState).toBe("blocked_for_paper_scale");
+    expect(snapshot.activeRunInsight?.readinessRisks?.riskCounts.blocked).toBe(1);
+    expect(snapshot.activeRunInsight?.readinessRisks?.artifactRefs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "review/readiness_risks.json" })
+      ])
+    );
+    expect(snapshot.activeRunInsight?.lines.some((line) => line.includes("Paper readiness risks: blocked 1"))).toBe(true);
+  });
+
   it("stops /agent review when approving analyze_results backtracks to design", async () => {
     const run = await runStore.createRun({
       title: "Backtrack before review",

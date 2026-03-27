@@ -2,7 +2,13 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 
-import { DoctorCheck } from "../types.js";
+import {
+  DoctorCheck,
+  DoctorCheckStatus,
+  ExecutionApprovalMode,
+  ExperimentNetworkPolicy,
+  ExperimentNetworkPurpose
+} from "../types.js";
 import { CodexCliClient } from "../integrations/codex/codexCliClient.js";
 import { RECOMMENDED_CODEX_MODEL } from "../integrations/codex/modelCatalog.js";
 import { OllamaClient } from "../integrations/ollama/ollamaClient.js";
@@ -32,6 +38,8 @@ export interface DoctorRunOptions {
   candidateIsolation?: "attempt_snapshot_restore" | "attempt_worktree";
   manualOverride?: boolean;
   allowNetwork?: boolean;
+  networkPolicy?: ExperimentNetworkPolicy;
+  networkPurpose?: ExperimentNetworkPurpose;
 }
 
 export interface DoctorReport {
@@ -49,9 +57,14 @@ export interface DoctorReadinessSnapshot {
   executionApprovalMode: "manual" | "risk_ack" | "full_auto";
   dependencyMode: "local" | "docker" | "remote_gpu" | "plan_only";
   sessionMode: "fresh" | "existing";
+  networkPolicy?: ExperimentNetworkPolicy;
+  networkPurpose?: ExperimentNetworkPurpose;
+  networkDeclarationPresent: boolean;
+  networkApprovalSatisfied: boolean;
   containerizationRequired: boolean;
   webRestrictionRequired: boolean;
   manualOverride: boolean;
+  warningChecks: string[];
   failedChecks: string[];
 }
 
@@ -84,6 +97,11 @@ export async function runDoctorReport(
   );
   const webRestrictionRequired = Boolean(opts?.codeExecutionExpected && dependencyMode !== "plan_only");
   const allowNetwork = opts?.allowNetwork === true;
+  const networkPolicy = normalizeDoctorNetworkPolicy(opts?.networkPolicy, allowNetwork);
+  const networkPurpose = normalizeDoctorNetworkPurpose(opts?.networkPurpose);
+  const networkDeclarationPresent = !allowNetwork || Boolean(networkPolicy && networkPurpose);
+  const networkApprovalSatisfied =
+    !allowNetwork || executionApprovalMode === "manual" || executionApprovalMode === "risk_ack";
   const manualOverride = opts?.manualOverride === true;
   const requiresCodexChecks =
     !opts ||
@@ -164,12 +182,23 @@ export async function runDoctorReport(
     });
     checks.push({
       name: "experiment-web-restriction",
-      ok: !webRestrictionRequired || !allowNetwork,
-      detail: !webRestrictionRequired
-        ? "Code execution is not expected to need web restriction."
-        : allowNetwork
-          ? "Code execution is expected but allow_network is enabled; disable it unless the run explicitly justifies network access."
-          : "Code execution is expected and network access remains disabled."
+      ok: !webRestrictionRequired || !allowNetwork || (networkDeclarationPresent && networkApprovalSatisfied),
+      status: resolveExperimentWebRestrictionStatus({
+        webRestrictionRequired,
+        allowNetwork,
+        networkPolicy,
+        networkPurpose,
+        networkDeclarationPresent,
+        networkApprovalSatisfied
+      }),
+      detail: buildExperimentWebRestrictionDetail({
+        webRestrictionRequired,
+        allowNetwork,
+        networkPolicy,
+        networkPurpose,
+        networkDeclarationPresent,
+        executionApprovalMode
+      })
     });
   }
   checks.push({
@@ -266,9 +295,15 @@ export async function runDoctorReport(
       })
     : undefined;
 
-  const failedChecks = checks.filter((check) => !check.ok).map((check) => check.name);
+  const normalizedChecks = checks.map(normalizeDoctorCheck);
+  const failedChecks = normalizedChecks
+    .filter((check) => getDoctorCheckStatus(check) === "fail")
+    .map((check) => check.name);
+  const warningChecks = normalizedChecks
+    .filter((check) => getDoctorCheckStatus(check) === "warning")
+    .map((check) => check.name);
   return {
-    checks,
+    checks: normalizedChecks,
     harness,
     readiness: {
       generatedAt: new Date().toISOString(),
@@ -279,9 +314,14 @@ export async function runDoctorReport(
       executionApprovalMode,
       dependencyMode,
       sessionMode,
+      networkPolicy,
+      networkPurpose,
+      networkDeclarationPresent,
+      networkApprovalSatisfied,
       containerizationRequired,
       webRestrictionRequired,
       manualOverride,
+      warningChecks,
       failedChecks: [
         ...failedChecks,
         ...(harness?.status === "fail" ? ["harness-validation"] : [])
@@ -305,6 +345,35 @@ function normalizeExecutionApprovalMode(
     return value;
   }
   return "manual";
+}
+
+function normalizeDoctorNetworkPolicy(
+  value: DoctorRunOptions["networkPolicy"],
+  allowNetwork: boolean
+): ExperimentNetworkPolicy | undefined {
+  if (!allowNetwork) {
+    return "blocked";
+  }
+  if (value === "declared" || value === "required") {
+    return value;
+  }
+  return undefined;
+}
+
+function normalizeDoctorNetworkPurpose(
+  value: DoctorRunOptions["networkPurpose"]
+): ExperimentNetworkPurpose | undefined {
+  if (
+    value === "logging"
+    || value === "artifact_upload"
+    || value === "model_download"
+    || value === "dataset_fetch"
+    || value === "remote_inference"
+    || value === "other"
+  ) {
+    return value;
+  }
+  return undefined;
 }
 
 function normalizeDependencyMode(
@@ -346,13 +415,29 @@ async function directoryExists(dirPath: string): Promise<boolean> {
 }
 
 export function buildDoctorHighlightLines(report: DoctorReport): string[] {
-  const pageBudgetCheck = report.checks.find((check) => check.name === "paper-page-budget");
-  if (!pageBudgetCheck) {
-    return [];
+  const lines: string[] = [];
+  const networkCheck = report.checks.find((check) => check.name === "experiment-web-restriction");
+  const networkStatus = networkCheck ? getDoctorCheckStatus(networkCheck) : undefined;
+  if (networkStatus === "warning") {
+    if (report.readiness.networkPolicy === "required") {
+      lines.push(
+        `[ATTN] required network dependency: ${report.readiness.networkPurpose || "unspecified"}. ` +
+        "Treat this run as network-assisted and keep explicit operator review in the loop."
+      );
+    } else if (report.readiness.networkPolicy === "declared") {
+      lines.push(
+        `[WARN] declared network dependency: ${report.readiness.networkPurpose || "unspecified"}. ` +
+        "Results should remain auditable as a network-assisted run."
+      );
+    }
   }
-  return [
-    `${pageBudgetCheck.ok ? "[OK]" : "[ATTN]"} paper page budget: ${pageBudgetCheck.detail}`
-  ];
+  const pageBudgetCheck = report.checks.find((check) => check.name === "paper-page-budget");
+  if (pageBudgetCheck) {
+    lines.push(
+      `${pageBudgetCheck.ok ? "[OK]" : "[ATTN]"} paper page budget: ${pageBudgetCheck.detail}`
+    );
+  }
+  return lines;
 }
 
 function buildCodexModelCheck(name: string, label: string, model: string): DoctorCheck {
@@ -371,6 +456,65 @@ function buildCodexModelCheck(name: string, label: string, model: string): Docto
     ok: true,
     detail: `Configured Codex ${label} model ${normalized} is suitable for rerank and paper analysis.`
   };
+}
+
+export function getDoctorCheckStatus(check: { ok: boolean; status?: DoctorCheckStatus }): DoctorCheckStatus {
+  return check.status || (check.ok ? "ok" : "fail");
+}
+
+function normalizeDoctorCheck(check: DoctorCheck): DoctorCheck {
+  const status = getDoctorCheckStatus(check);
+  return {
+    ...check,
+    status,
+    ok: status !== "fail"
+  };
+}
+
+function resolveExperimentWebRestrictionStatus(input: {
+  webRestrictionRequired: boolean;
+  allowNetwork: boolean;
+  networkPolicy?: ExperimentNetworkPolicy;
+  networkPurpose?: ExperimentNetworkPurpose;
+  networkDeclarationPresent: boolean;
+  networkApprovalSatisfied: boolean;
+}): DoctorCheckStatus {
+  if (!input.webRestrictionRequired || !input.allowNetwork) {
+    return "ok";
+  }
+  if (!input.networkDeclarationPresent || !input.networkPolicy || !input.networkPurpose) {
+    return "fail";
+  }
+  if (!input.networkApprovalSatisfied) {
+    return "fail";
+  }
+  return "warning";
+}
+
+function buildExperimentWebRestrictionDetail(input: {
+  webRestrictionRequired: boolean;
+  allowNetwork: boolean;
+  networkPolicy?: ExperimentNetworkPolicy;
+  networkPurpose?: ExperimentNetworkPurpose;
+  networkDeclarationPresent: boolean;
+  executionApprovalMode: ExecutionApprovalMode;
+}): string {
+  if (!input.webRestrictionRequired) {
+    return "Code execution is not expected to need web restriction.";
+  }
+  if (!input.allowNetwork) {
+    return "Code execution is expected and network access remains disabled.";
+  }
+  if (!input.networkDeclarationPresent || !input.networkPolicy || !input.networkPurpose) {
+    return "Code execution is expected and allow_network is enabled, but the run is missing a declared network_policy/network_purpose contract.";
+  }
+  if (input.executionApprovalMode === "full_auto") {
+    return `Code execution declares a ${input.networkPolicy} network dependency for ${input.networkPurpose}, but execution approval mode full_auto is not allowed for network-enabled runs.`;
+  }
+  if (input.networkPolicy === "required") {
+    return `Code execution declares a network-critical dependency for ${input.networkPurpose}; reproducibility caveats and explicit operator review remain required.`;
+  }
+  return `Code execution declares a network dependency for ${input.networkPurpose}; keep the run in manual or risk_ack mode and treat the result as network-assisted.`;
 }
 
 async function loadLatestPaperPageBudgetCheck(workspaceRoot: string): Promise<DoctorCheck | undefined> {

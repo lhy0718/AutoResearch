@@ -2343,6 +2343,21 @@ describe("writePaper PDF build", () => {
     const references = await readFile(path.join(runDir, "paper", "references.bib"), "utf8");
     expect(references).toContain("Recovered External Title");
     expect(references).toContain("10.1000/recovered-external");
+
+    const readinessRisks = JSON.parse(
+      await readFile(path.join(runDir, "paper", "readiness_risks.json"), "utf8")
+    ) as {
+      risks: Array<{ category: string; affected_citation_ids: string[]; status: string }>;
+    };
+    expect(readinessRisks.risks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          category: "citation_source",
+          status: "unverified",
+          affected_citation_ids: ["Recovered External Title"]
+        })
+      ])
+    );
   });
 
   it("runs one validation repair pass before rendering when warnings accumulate", async () => {
@@ -2662,6 +2677,7 @@ describe("writePaper PDF build", () => {
         "paper/claim_status_table.json",
         "paper/evidence_gate_decision.json",
         "paper/paper_readiness.json",
+        "paper/readiness_risks.json",
         "paper/main.pdf"
       ])
     );
@@ -2675,6 +2691,7 @@ describe("writePaper PDF build", () => {
         "paper/claim_status_table.json",
         "paper/evidence_gate_decision.json",
         "paper/paper_readiness.json",
+        "paper/readiness_risks.json",
         "paper/main.pdf"
       ])
     );
@@ -3041,6 +3058,22 @@ describe("writePaper PDF build", () => {
     expect(gateDecision.evidence_summary.blocked_by_evidence_insufficiency).toBe(true);
     expect(await exists(path.join(runDir, "paper", "manuscript.json"))).toBe(true);
     expect(await exists(path.join(runDir, "paper", "provenance_map.json"))).toBe(true);
+    const readinessRisks = JSON.parse(
+      await readFile(path.join(runDir, "paper", "readiness_risks.json"), "utf8")
+    ) as {
+      readiness_state: string;
+      risks: Array<{ category: string; status: string; severity: string }>;
+    };
+    expect(readinessRisks.readiness_state).toBe("blocked_for_paper_scale");
+    expect(readinessRisks.risks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          category: "scientific_validation",
+          status: "blocked",
+          severity: "blocked"
+        })
+      ])
+    );
   });
 
   it("routes medium-quality runs through main paper plus appendix without failing the default gate", async () => {
@@ -3299,6 +3332,7 @@ describe("writePaper PDF build", () => {
     expect(await exists(path.join(runDir, "paper", "claim_status_table.json"))).toBe(true);
     expect(await exists(path.join(runDir, "paper", "evidence_gate_decision.json"))).toBe(true);
     expect(await exists(path.join(runDir, "paper", "paper_readiness.json"))).toBe(true);
+    expect(await exists(path.join(runDir, "paper", "readiness_risks.json"))).toBe(true);
     expect(await exists(path.join(runDir, "paper", "manuscript_repair_1_report.json"))).toBe(false);
     const gate = JSON.parse(
       await readFile(path.join(runDir, "paper", "manuscript_quality_gate.json"), "utf8")
@@ -3335,6 +3369,11 @@ describe("writePaper PDF build", () => {
     ) as { paper_ready: boolean; evidence_gate_status: string };
     expect(typeof paperReadiness.paper_ready).toBe("boolean");
     expect(paperReadiness.evidence_gate_status).toBe("pass");
+    const readinessRisks = JSON.parse(
+      await readFile(path.join(runDir, "paper", "readiness_risks.json"), "utf8")
+    ) as { risk_count: number; summary_lines: string[] };
+    expect(readinessRisks.risk_count).toBeGreaterThanOrEqual(0);
+    expect(readinessRisks.summary_lines.length).toBeGreaterThan(0);
   });
 
   it("retries manuscript review once when supporting-span validation fails and records validation plus audit artifacts", async () => {

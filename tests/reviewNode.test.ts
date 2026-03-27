@@ -284,7 +284,15 @@ describe("review node", () => {
     );
 
     const node = createReviewNode({
-      config: {} as any,
+      config: {
+        workflow: { execution_approval_mode: "risk_ack" },
+        experiments: {
+          allow_network: true,
+          network_policy: "declared",
+          network_purpose: "logging"
+        },
+        paper_profile: { target_venue_style: "generic_cs_paper" }
+      } as any,
       runStore: {} as any,
       eventStream: new InMemoryEventStream(),
       llm: new MockLLMClient(),
@@ -313,6 +321,22 @@ describe("review node", () => {
     expect(packet.readiness.status).toBe("ready");
     expect(packet.readiness.blocking_checks).toBe(0);
     expect(packet.suggested_actions).toContain("/agent run write_paper");
+    const readinessRiskArtifact = JSON.parse(
+      await readFile(path.join(runDir, "review", "readiness_risks.json"), "utf8")
+    ) as {
+      readiness_state: string;
+      risks: Array<{ category: string; status: string; risk_code: string }>;
+    };
+    expect(readinessRiskArtifact.readiness_state).toBe("paper_ready");
+    expect(readinessRiskArtifact.risks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          category: "network_dependency",
+          status: "unverified",
+          risk_code: "review_network_dependency_declared_logging"
+        })
+      ])
+    );
 
     const checklist = await readFile(path.join(runDir, "review", "checklist.md"), "utf8");
     expect(checklist).toContain("# Review checklist");
@@ -329,6 +353,9 @@ describe("review node", () => {
     );
     expect(await readFile(path.join(publicReviewDir, "checklist.md"), "utf8")).toContain("Consensus: high");
     expect(await readFile(path.join(publicReviewDir, "decision.json"), "utf8")).toContain('"outcome": "advance"');
+    expect(await readFile(path.join(publicReviewDir, "readiness_risks.json"), "utf8")).toContain(
+      '"review_network_dependency_declared_logging"'
+    );
     expect(typeof (await readFile(path.join(publicReviewDir, "findings.jsonl"), "utf8"))).toBe("string");
 
     const manifest = JSON.parse(await readFile(buildPublicRunManifestPath(root, run), "utf8")) as {
@@ -344,7 +371,8 @@ describe("review node", () => {
         "review/review_packet.json",
         "review/checklist.md",
         "review/decision.json",
-        "review/findings.jsonl"
+        "review/findings.jsonl",
+        "review/readiness_risks.json"
       ])
     );
     expect(manifest.sections?.review?.generated_files).toEqual(
@@ -352,13 +380,15 @@ describe("review node", () => {
         "review/review_packet.json",
         "review/checklist.md",
         "review/decision.json",
-        "review/findings.jsonl"
+        "review/findings.jsonl",
+        "review/readiness_risks.json"
       ])
     );
 
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);
     expect(await memory.get("review.last_summary")).toContain("accuracy=0.91");
     expect(await memory.get("review.last_decision")).toMatchObject({ outcome: "advance" });
+    expect(await memory.get("review.readiness_risks")).toMatchObject({ readiness_state: "paper_ready" });
   });
 
   it("marks missing evidence inputs as blocking", async () => {
@@ -485,6 +515,23 @@ describe("review node", () => {
     });
     expect(packet.suggested_actions).toContain("/agent review");
     expect(packet.suggested_actions).toContain("/agent jump design_experiments --force");
+    const readinessRiskArtifact = JSON.parse(
+      await readFile(path.join(runDir, "review", "readiness_risks.json"), "utf8")
+    ) as {
+      risk_count: number;
+      blocked_count: number;
+      risks: Array<{ category: string; status: string }>;
+    };
+    expect(readinessRiskArtifact.risk_count).toBeGreaterThan(0);
+    expect(readinessRiskArtifact.blocked_count).toBeGreaterThan(0);
+    expect(readinessRiskArtifact.risks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          category: "paper_scale",
+          status: "blocked"
+        })
+      ])
+    );
   });
 
   it("keeps explicit baseline names in pre_review_summary when they come from analysis metrics instead of comparison labels", async () => {

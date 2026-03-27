@@ -1,5 +1,6 @@
 import { RunInsightCard } from "../types.js";
 import { AnalysisFailureCategory, AnalysisReport } from "./resultAnalysis.js";
+import { formatReadinessRiskSection, type ReadinessRiskArtifact } from "./readinessRisks.js";
 
 export type ReviewCheckStatus = "ready" | "warning" | "blocking" | "manual";
 export type ReviewReadinessStatus = "ready" | "warning" | "blocking";
@@ -281,7 +282,7 @@ export function summarizeReviewReadiness(
   };
 }
 
-export function formatReviewPacketLines(packet: ReviewPacket): string[] {
+export function formatReviewPacketLines(packet: ReviewPacket, readinessRisks?: ReadinessRiskArtifact): string[] {
   const lines = [
     `Review readiness: ${packet.readiness.status} (${packet.readiness.ready_checks} ready, ${packet.readiness.warning_checks} warning, ${packet.readiness.blocking_checks} blocking, ${packet.readiness.manual_checks} manual)`,
     `Objective: ${packet.objective_status} - ${packet.objective_summary}`
@@ -324,13 +325,44 @@ export function formatReviewPacketLines(packet: ReviewPacket): string[] {
     lines.push(`Suggested: ${packet.suggested_actions.slice(0, 3).join(" | ")}`);
   }
 
+  if (readinessRisks?.risk_count) {
+    lines.push(
+      `Paper readiness risks: blocked ${readinessRisks.blocked_count}, warning ${readinessRisks.warning_count}, state ${readinessRisks.readiness_state}`
+    );
+  }
+
   return lines;
 }
 
-export function buildReviewInsightCard(packet: ReviewPacket): RunInsightCard {
+export function buildReviewInsightCard(packet: ReviewPacket, readinessRisks?: ReadinessRiskArtifact): RunInsightCard {
   return {
     title: "Review packet",
-    lines: formatReviewPacketLines(packet),
+    lines: formatReviewPacketLines(packet, readinessRisks),
+    readinessRisks: readinessRisks
+      ? {
+          stage: "review",
+          readinessState: readinessRisks.readiness_state,
+          paperReady: readinessRisks.paper_ready,
+          riskCounts: {
+            total: readinessRisks.risk_count,
+            blocked: readinessRisks.blocked_count,
+            warning: readinessRisks.warning_count
+          },
+          risks: readinessRisks.risks.map((risk) => ({
+            code: risk.risk_code,
+            section: formatReadinessRiskSection(risk.category),
+            severity: risk.severity === "blocked" ? ("fail" as const) : ("warning" as const),
+            message: risk.message,
+            source: "review_readiness" as const
+          })),
+          artifactRefs: [
+            {
+              label: "Review readiness risks",
+              path: "review/readiness_risks.json"
+            }
+          ]
+        }
+      : undefined,
     actions: packet.suggested_actions.slice(0, 3).map((command) => ({
       label: labelReviewAction(command),
       command

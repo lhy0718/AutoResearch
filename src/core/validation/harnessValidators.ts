@@ -105,6 +105,7 @@ export async function validateRunArtifactStructure(
   const reviewPacketPath = path.join(runDir, "review", "review_packet.json");
   const reviewMinimumGatePath = path.join(runDir, "review", "minimum_gate.json");
   const reviewCritiquePath = path.join(runDir, "review", "paper_critique.json");
+  const reviewReadinessRiskPath = path.join(runDir, "review", "readiness_risks.json");
   const reviewCompleted = isNodeCompleted(nodeStates, "review");
   const reviewPacketPresent = await fileExists(reviewPacketPath);
   const reviewDecision = await readJsonObjectIfPresent(reviewDecisionPath, runId, issues);
@@ -150,6 +151,16 @@ export async function validateRunArtifactStructure(
         runId,
         issues
       });
+      const reviewReadinessRisks = await requireJsonObject({
+        filePath: reviewReadinessRiskPath,
+        missingCode: "review_readiness_risks_missing",
+        malformedCode: "review_readiness_risks_malformed",
+        runId,
+        issues
+      });
+      if (reviewReadinessRisks) {
+        validateReadinessRiskPayload(reviewReadinessRisks, reviewReadinessRiskPath, runId, issues);
+      }
     }
   }
 
@@ -232,6 +243,21 @@ export async function validateRunArtifactStructure(
     });
     if (paperReadiness) {
       validatePaperReadinessPayload(paperReadiness, path.join(runDir, "paper", "paper_readiness.json"), runId, issues);
+      const readinessRisks = await requireJsonObject({
+        filePath: path.join(runDir, "paper", "readiness_risks.json"),
+        missingCode: "paper_readiness_risks_missing",
+        malformedCode: "paper_readiness_risks_malformed",
+        runId,
+        issues
+      });
+      if (readinessRisks) {
+        validateReadinessRiskPayload(
+          readinessRisks,
+          path.join(runDir, "paper", "readiness_risks.json"),
+          runId,
+          issues
+        );
+      }
     }
     await validatePaperResultConsistency({
       runId,
@@ -966,6 +992,95 @@ function validatePaperReadinessPayload(
       filePath,
       runId
     });
+  }
+}
+
+function validateReadinessRiskPayload(
+  payload: Record<string, unknown>,
+  filePath: string,
+  runId: string,
+  issues: HarnessValidationIssue[]
+): void {
+  const readinessState = asString(payload.readiness_state);
+  const risks = Array.isArray(payload.risks) ? payload.risks : null;
+
+  if (!readinessState) {
+    issues.push({
+      code: "paper_readiness_risks_state_missing",
+      message: "paper/readiness_risks.json must include a non-empty readiness_state.",
+      filePath,
+      runId
+    });
+  }
+
+  if (!risks) {
+    issues.push({
+      code: "paper_readiness_risks_array_missing",
+      message: "paper/readiness_risks.json must include a risks array.",
+      filePath,
+      runId
+    });
+    return;
+  }
+
+  for (const risk of risks) {
+    const record = isRecord(risk) ? risk : null;
+    if (!record) {
+      issues.push({
+        code: "paper_readiness_risks_item_invalid",
+        message: "paper/readiness_risks.json contains a non-object risk entry.",
+        filePath,
+        runId
+      });
+      continue;
+    }
+    const riskCode = asString(record.risk_code);
+    const severity = asString(record.severity);
+    const category = asString(record.category);
+    const status = asString(record.status);
+    if (!riskCode) {
+      issues.push({
+        code: "paper_readiness_risk_code_missing",
+        message: "paper/readiness_risks.json contains a risk without a risk_code.",
+        filePath,
+        runId
+      });
+    }
+    if (severity && !["warning", "blocked"].includes(severity)) {
+      issues.push({
+        code: "paper_readiness_risk_severity_invalid",
+        message: "paper/readiness_risks.json contains an invalid risk severity.",
+        filePath,
+        runId
+      });
+    }
+    if (
+      category
+      && ![
+        "citation_source",
+        "claim_evidence",
+        "scientific_validation",
+        "submission_validation",
+        "manuscript_quality",
+        "paper_scale",
+        "network_dependency"
+      ].includes(category)
+    ) {
+      issues.push({
+        code: "paper_readiness_risk_category_invalid",
+        message: "paper/readiness_risks.json contains an invalid risk category.",
+        filePath,
+        runId
+      });
+    }
+    if (status && !["unverified", "blocked"].includes(status)) {
+      issues.push({
+        code: "paper_readiness_risk_status_invalid",
+        message: "paper/readiness_risks.json contains an invalid risk status.",
+        filePath,
+        runId
+      });
+    }
   }
 }
 

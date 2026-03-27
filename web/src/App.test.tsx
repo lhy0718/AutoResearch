@@ -201,7 +201,9 @@ describe("App", () => {
         ollamaChatModel: "qwen3.5:27b",
         ollamaResearchModel: "qwen3.5:35b-a3b",
         ollamaExperimentModel: "qwen2.5-coder:32b",
-        ollamaVisionModel: "qwen3.5:35b-a3b"
+        ollamaVisionModel: "qwen3.5:35b-a3b",
+        networkPolicy: "blocked",
+        networkPurpose: ""
       }
     };
 
@@ -228,6 +230,8 @@ describe("App", () => {
         expect(body.ollamaExperimentModel).toBeDefined();
         expect(body.ollamaVisionModel).toBeDefined();
         expect(body.openAiApiKey).toBe("");
+        expect(body.networkPolicy).toBe("blocked");
+        expect(body.networkPurpose).toBe("");
         return new Response(JSON.stringify({ bootstrap: bootstrapPayload }), { status: 200 });
       }
       throw new Error(`Unexpected fetch: ${url}`);
@@ -325,7 +329,9 @@ describe("App", () => {
         openAiResearchBackendModel: "gpt-5.4",
         openAiResearchBackendReasoningEffort: "medium",
         openAiExperimentModel: "gpt-5.4",
-        openAiExperimentReasoningEffort: "medium"
+        openAiExperimentReasoningEffort: "medium",
+        networkPolicy: "blocked",
+        networkPurpose: ""
       }
     };
 
@@ -356,6 +362,8 @@ describe("App", () => {
         expect(body.responsesPdfModel).toBeUndefined();
         expect(body.codexPdfModelChoice).toBeUndefined();
         expect(body.openAiPdfModel).toBeUndefined();
+        expect(body.networkPolicy).toBe("blocked");
+        expect(body.networkPurpose).toBe("");
         return new Response(JSON.stringify({ bootstrap: bootstrapPayload }), { status: 200 });
       }
       throw new Error(`Unexpected fetch: ${url}`);
@@ -409,6 +417,171 @@ describe("App", () => {
           method: "POST"
         })
       );
+    });
+  });
+
+  it("renders warning-aware doctor checks for declared networked runs", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/bootstrap")) {
+        return new Response(
+          JSON.stringify({
+            configured: true,
+            setupDefaults: {
+              projectName: "AutoLabOS",
+              defaultTopic: "Multi-agent collaboration",
+              defaultConstraints: ["recent papers", "last 5 years"],
+              defaultObjectiveMetric: "state-of-the-art reproducibility"
+            },
+            session: {
+              busy: false,
+              logs: [],
+              canCancel: false
+            },
+            runs: []
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.includes("/api/doctor")) {
+        return new Response(
+          JSON.stringify({
+            configured: true,
+            checks: [
+              {
+                name: "experiment-web-restriction",
+                ok: true,
+                status: "warning",
+                detail: "Code execution declares a network dependency for logging; keep the run in manual or risk_ack mode and treat the result as network-assisted."
+              }
+            ],
+            readiness: {
+              blocked: false,
+              approvalMode: "minimal",
+              executionApprovalMode: "risk_ack",
+              dependencyMode: "local",
+              sessionMode: "fresh",
+              networkPolicy: "declared",
+              networkPurpose: "logging",
+              networkDeclarationPresent: true,
+              networkApprovalSatisfied: true,
+              warningChecks: ["experiment-web-restriction"],
+              failedChecks: []
+            }
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.includes("/api/knowledge") && !url.includes("/api/knowledge/file")) {
+        return new Response(JSON.stringify({ entries: [] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ artifacts: [], checkpoints: [], literature: emptyLiterature("run-1") }), { status: 200 });
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal(
+      "EventSource",
+      class {
+        addEventListener() {}
+        close() {}
+      } as unknown as typeof EventSource
+    );
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Doctor" })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Doctor" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("experiment-web-restriction")).toBeInTheDocument();
+      expect(screen.getByText("WARN")).toBeInTheDocument();
+      expect(screen.getByText(/network dependency for logging/i)).toBeInTheDocument();
+    });
+  });
+
+  it("renders stronger emphasis for required network doctor checks", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/bootstrap")) {
+        return new Response(
+          JSON.stringify({
+            configured: true,
+            setupDefaults: {
+              projectName: "AutoLabOS",
+              defaultTopic: "Multi-agent collaboration",
+              defaultConstraints: ["recent papers", "last 5 years"],
+              defaultObjectiveMetric: "state-of-the-art reproducibility"
+            },
+            session: {
+              busy: false,
+              logs: [],
+              canCancel: false
+            },
+            runs: []
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.includes("/api/doctor")) {
+        return new Response(
+          JSON.stringify({
+            configured: true,
+            checks: [
+              {
+                name: "experiment-web-restriction",
+                ok: true,
+                status: "warning",
+                detail: "Code execution declares a network-critical dependency for remote_inference; reproducibility caveats and explicit operator review remain required."
+              }
+            ],
+            readiness: {
+              blocked: false,
+              approvalMode: "minimal",
+              executionApprovalMode: "risk_ack",
+              dependencyMode: "remote_gpu",
+              sessionMode: "fresh",
+              networkPolicy: "required",
+              networkPurpose: "remote_inference",
+              networkDeclarationPresent: true,
+              networkApprovalSatisfied: true,
+              warningChecks: ["experiment-web-restriction"],
+              failedChecks: []
+            }
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.includes("/api/knowledge") && !url.includes("/api/knowledge/file")) {
+        return new Response(JSON.stringify({ entries: [] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ artifacts: [], checkpoints: [], literature: emptyLiterature("run-1") }), { status: 200 });
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal(
+      "EventSource",
+      class {
+        addEventListener() {}
+        close() {}
+      } as unknown as typeof EventSource
+    );
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Doctor" })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Doctor" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("experiment-web-restriction")).toBeInTheDocument();
+      expect(screen.getByText("REQUIRED")).toBeInTheDocument();
+      expect(screen.getByText(/network-critical dependency for remote_inference/i)).toBeInTheDocument();
+      expect(screen.getByText(/Network is required for this run/i)).toBeInTheDocument();
     });
   });
 
@@ -1073,6 +1246,7 @@ describe("App", () => {
                     manuscript: 1,
                     hardStopPolicy: 1,
                     backstopOnly: 1,
+                    readinessRisks: 1,
                     scientificBlockers: 1,
                     submissionBlockers: 1,
                     reviewerMissedPolicy: 1,
@@ -1106,6 +1280,15 @@ describe("App", () => {
                         source: "style_lint"
                       }
                     ],
+                    readiness: [
+                      {
+                        code: "paper_scale_paper_scale_candidate",
+                        section: "Paper scale",
+                        severity: "warning",
+                        message: "The post-draft critique still classifies the run as paper_scale_candidate, not paper_ready.",
+                        source: "paper_readiness"
+                      }
+                    ],
                     scientific: [
                       {
                         code: "missing_baseline",
@@ -1128,6 +1311,7 @@ describe("App", () => {
                   artifactRefs: [
                     { label: "Manuscript quality gate", path: "paper/manuscript_quality_gate.json" },
                     { label: "Manuscript quality failure", path: "paper/manuscript_quality_failure.json" },
+                    { label: "Readiness risks", path: "paper/readiness_risks.json" },
                     { label: "Manuscript review", path: "paper/manuscript_review.json" }
                   ]
                 }
@@ -1237,10 +1421,190 @@ describe("App", () => {
       expect(screen.getByText("Policy Hard Stop")).toBeInTheDocument();
       expect(screen.getByText("Repairable manuscript issues")).toBeInTheDocument();
       expect(screen.getByText("Hard-stop policy findings")).toBeInTheDocument();
+      expect(screen.getByText("Paper readiness risks")).toBeInTheDocument();
       expect(screen.getByText("Scientific blockers")).toBeInTheDocument();
       expect(screen.getByText("Submission blockers")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Manuscript quality gate" })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Manuscript quality failure" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Readiness risks" })).toBeInTheDocument();
+    });
+  });
+
+  it("renders review-stage readiness risks in the selected-run insight panel", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/bootstrap")) {
+        return new Response(
+          JSON.stringify({
+            configured: true,
+            setupDefaults: {
+              projectName: "AutoLabOS",
+              defaultTopic: "Multi-agent collaboration",
+              defaultConstraints: ["recent papers", "last 5 years"],
+              defaultObjectiveMetric: "state-of-the-art reproducibility"
+            },
+            session: {
+              activeRunId: "run-1",
+              busy: false,
+              logs: [],
+              canCancel: false,
+              activeRunInsight: {
+                title: "Review packet",
+                lines: [
+                  "Review packet refreshed.",
+                  "Paper readiness risks: blocked 1, warning 0, state blocked_for_paper_scale."
+                ],
+                readinessRisks: {
+                  stage: "review",
+                  readinessState: "blocked_for_paper_scale",
+                  paperReady: false,
+                  riskCounts: {
+                    total: 1,
+                    blocked: 1,
+                    warning: 0
+                  },
+                  risks: [
+                    {
+                      code: "review_minimum_gate_blocked_for_paper_scale",
+                      section: "Paper scale",
+                      severity: "fail",
+                      message: "Minimum gate: 3 check(s) failed — ceiling: blocked_for_paper_scale.",
+                      source: "review_readiness"
+                    }
+                  ],
+                  artifactRefs: [{ label: "Review readiness risks", path: "review/readiness_risks.json" }]
+                }
+              }
+            },
+            runs: [
+              {
+                id: "run-1",
+                title: "Run one",
+                topic: "topic",
+                constraints: ["recent papers"],
+                objectiveMetric: "accuracy",
+                status: "paused",
+                currentNode: "review",
+                latestSummary: "Review packet prepared.",
+                updatedAt: "2026-03-10T10:00:00.000Z",
+                graph: {
+                  currentNode: "review",
+                  checkpointSeq: 4,
+                  retryCounters: {},
+                  rollbackCounters: {},
+                  nodeStates: {
+                    collect_papers: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    analyze_papers: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    generate_hypotheses: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    design_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    implement_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    run_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    analyze_results: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    review: { status: "needs_approval", updatedAt: "2026-03-10T10:00:00.000Z" },
+                    write_paper: { status: "pending", updatedAt: "2026-03-10T10:00:00.000Z" }
+                  }
+                }
+              }
+            ]
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.includes("/api/doctor")) {
+        return new Response(JSON.stringify({ configured: true, checks: [] }), { status: 200 });
+      }
+      if (url.includes("/api/knowledge") && !url.includes("/api/knowledge/file")) {
+        return new Response(JSON.stringify({ entries: [] }), { status: 200 });
+      }
+      if (url.includes("/api/runs/run-1/artifacts")) {
+        return new Response(JSON.stringify({ artifacts: [] }), { status: 200 });
+      }
+      if (url.includes("/api/runs/run-1/checkpoints")) {
+        return new Response(JSON.stringify({ checkpoints: [] }), { status: 200 });
+      }
+      if (url.includes("/api/runs/run-1") && !url.includes("/actions")) {
+        return new Response(
+          JSON.stringify({
+            run: {
+              id: "run-1",
+              title: "Run one",
+              topic: "topic",
+              constraints: ["recent papers"],
+              objectiveMetric: "accuracy",
+              status: "paused",
+              currentNode: "review",
+              latestSummary: "Review packet prepared.",
+              updatedAt: "2026-03-10T10:00:00.000Z",
+              graph: {
+                currentNode: "review",
+                checkpointSeq: 4,
+                retryCounters: {},
+                rollbackCounters: {},
+                nodeStates: {
+                  collect_papers: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  analyze_papers: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  generate_hypotheses: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  design_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  implement_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  run_experiments: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  analyze_results: { status: "completed", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  review: { status: "needs_approval", updatedAt: "2026-03-10T10:00:00.000Z" },
+                  write_paper: { status: "pending", updatedAt: "2026-03-10T10:00:00.000Z" }
+                }
+              }
+            }
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.includes("/api/runs/run-1/artifact?path=review%2Freadiness_risks.json")) {
+        return new Response(
+          JSON.stringify({
+            generated_at: "2026-03-10T10:00:00.000Z",
+            paper_ready: false,
+            readiness_state: "blocked_for_paper_scale",
+            risk_count: 1,
+            blocked_count: 1,
+            warning_count: 0,
+            risks: [
+              {
+                risk_code: "review_minimum_gate_blocked_for_paper_scale",
+                severity: "blocked",
+                category: "paper_scale",
+                status: "blocked",
+                message: "Minimum gate: 3 check(s) failed — ceiling: blocked_for_paper_scale.",
+                triggered_by: ["minimum_gate"],
+                affected_claim_ids: [],
+                affected_citation_ids: [],
+                recommended_action: "Backtrack and raise the review minimum gate before drafting.",
+                recheck_condition: "Minimum gate passes with the required evidence floor."
+              }
+            ],
+            summary_lines: ["Readiness risks: blocked=1, warning=0, readiness_state=blocked_for_paper_scale."]
+          }),
+          { status: 200 }
+        );
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal(
+      "EventSource",
+      class {
+        addEventListener() {}
+        close() {}
+      } as unknown as typeof EventSource
+    );
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Review packet")).toBeInTheDocument();
+      expect(screen.getByText("Paper readiness risks")).toBeInTheDocument();
+      expect(screen.getByText("Readiness State")).toBeInTheDocument();
+      expect(screen.getByText("blocked_for_paper_scale")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Review readiness risks" })).toBeInTheDocument();
     });
   });
 

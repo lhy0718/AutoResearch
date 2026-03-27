@@ -113,6 +113,7 @@ export function App() {
   const [knowledgePreviewPath, setKnowledgePreviewPath] = useState<string | null>(null);
   const [knowledgePreviewContent, setKnowledgePreviewContent] = useState<string | null>(null);
   const [doctorChecks, setDoctorChecks] = useState<DoctorCheck[]>([]);
+  const [doctorReadiness, setDoctorReadiness] = useState<DoctorResponse["readiness"] | null>(null);
   const [doctorHarness, setDoctorHarness] = useState<HarnessValidationReport | null>(null);
   const [commandInput, setCommandInput] = useState("");
   const [runSearch, setRunSearch] = useState("");
@@ -267,6 +268,7 @@ export function App() {
   async function refreshDoctor() {
     const response = await api<DoctorResponse>("/api/doctor");
     setDoctorChecks(response.checks);
+    setDoctorReadiness(response.readiness || null);
     setDoctorHarness(response.harness || null);
   }
 
@@ -779,6 +781,62 @@ export function App() {
                       {activeInsight.manuscriptQuality.artifactRefs.length ? (
                         <div className="manuscript-quality-artifacts">
                           {activeInsight.manuscriptQuality.artifactRefs.map((artifactRef) => (
+                            <button
+                              key={`${artifactRef.label}-${artifactRef.path}`}
+                              className="button button-secondary button-small"
+                              type="button"
+                              disabled={isBusy}
+                              onClick={() => void openInsightReference(artifactRef.path)}
+                            >
+                              {artifactRef.label}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : activeInsight.readinessRisks ? (
+                    <div className="manuscript-quality-summary">
+                      <div className="manuscript-quality-stat-grid">
+                        <article className="stat-card manuscript-quality-stat-card">
+                          <span className="stat-label">Readiness State</span>
+                          <strong>{activeInsight.readinessRisks.readinessState}</strong>
+                        </article>
+                        <article className="stat-card manuscript-quality-stat-card">
+                          <span className="stat-label">Blocked Risks</span>
+                          <strong>{activeInsight.readinessRisks.riskCounts.blocked}</strong>
+                        </article>
+                        <article className="stat-card manuscript-quality-stat-card">
+                          <span className="stat-label">Warning Risks</span>
+                          <strong>{activeInsight.readinessRisks.riskCounts.warning}</strong>
+                        </article>
+                      </div>
+
+                      <div className="manuscript-quality-group-grid">
+                        {buildReadinessRiskGroupCards(activeInsight.readinessRisks).map((group) => (
+                          <article key={group.key} className="manuscript-quality-group-card">
+                            <div className="manuscript-quality-group-header">
+                              <span className="stat-label">{group.label}</span>
+                              <span className={`status-pill ${group.toneClass}`}>{group.items.length}</span>
+                            </div>
+                            <div className="manuscript-quality-group-list">
+                              {group.items.slice(0, 3).map((item) => (
+                                <p key={`${group.key}-${item.code}-${item.section}-${item.message}`} className="manuscript-quality-group-line">
+                                  <strong>{item.code}</strong> · {item.section} · {item.message}
+                                </p>
+                              ))}
+                              {group.items.length > 3 ? (
+                                <p className="manuscript-quality-group-line">
+                                  +{group.items.length - 3} more finding(s)
+                                </p>
+                              ) : null}
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+
+                      {activeInsight.readinessRisks.artifactRefs.length ? (
+                        <div className="manuscript-quality-artifacts">
+                          {activeInsight.readinessRisks.artifactRefs.map((artifactRef) => (
                             <button
                               key={`${artifactRef.label}-${artifactRef.path}`}
                               className="button button-secondary button-small"
@@ -1425,11 +1483,19 @@ export function App() {
                 <div className="inline-empty">Doctor checks will appear after bootstrap completes.</div>
               ) : (
                 doctorChecks.map((check) => (
-                  <article key={check.name} className={`doctor-item ${check.ok ? "ok" : "fail"}`}>
-                    <span className={`status-pill ${check.ok ? "is-success" : "is-danger"}`}>{check.ok ? "OK" : "FAIL"}</span>
+                  <article
+                    key={check.name}
+                    className={`doctor-item ${doctorCheckToneClass(check)}${isStrongRequiredNetworkWarning(check, doctorReadiness) ? " warning-strong" : ""}`}
+                  >
+                    <span className={`status-pill ${doctorCheckPillClass(check, doctorReadiness)}`}>{doctorCheckLabel(check, doctorReadiness)}</span>
                     <div>
                       <h4>{check.name}</h4>
                       <p>{check.detail}</p>
+                      {isStrongRequiredNetworkWarning(check, doctorReadiness) ? (
+                        <p className="doctor-emphasis">
+                          Network is required for this run. Treat outputs as network-assisted and keep operator review in the loop.
+                        </p>
+                      ) : null}
                     </div>
                   </article>
                 ))
@@ -1561,6 +1627,57 @@ function ConfigEditorForm(props: ConfigEditorFormProps) {
       <p className="form-help">
         Workflow mode is fixed to Agent approval. Approval mode defaults to Minimal. Overnight is a separate
         autonomy preset, not a third workflow mode.
+      </p>
+
+      <div className="section-heading">
+        <div>
+          <p className="section-kicker">Execution policy</p>
+          <h3>Experiment network policy</h3>
+        </div>
+      </div>
+      <div className="inline-fields">
+        <label>
+          Network policy
+          <select
+            disabled={props.disabled}
+            value={props.form.networkPolicy}
+            onChange={(event) =>
+              patchSetupForm(props.onChange, {
+                networkPolicy: event.target.value as SetupFormState["networkPolicy"],
+                networkPurpose: event.target.value === "blocked" ? "" : props.form.networkPurpose
+              })
+            }
+          >
+            <option value="blocked">Blocked (offline default)</option>
+            <option value="declared">Declared dependency</option>
+            <option value="required">Required dependency</option>
+          </select>
+        </label>
+        <label>
+          Network purpose
+          <select
+            disabled={props.disabled || props.form.networkPolicy === "blocked"}
+            required={props.form.networkPolicy !== "blocked"}
+            value={props.form.networkPurpose}
+            onChange={(event) =>
+              patchSetupForm(props.onChange, {
+                networkPurpose: event.target.value as SetupFormState["networkPurpose"]
+              })
+            }
+          >
+            <option value="">Select a purpose</option>
+            <option value="logging">Logging</option>
+            <option value="artifact_upload">Artifact upload</option>
+            <option value="model_download">Model download</option>
+            <option value="dataset_fetch">Dataset fetch</option>
+            <option value="remote_inference">Remote inference</option>
+            <option value="other">Other</option>
+          </select>
+        </label>
+      </div>
+      <p className="form-help">
+        Use Blocked for the offline default. Declared and Required runs keep network access auditable in `/doctor`
+        and require manual or risk-ack execution modes rather than silent full-auto execution.
       </p>
 
       <div className="inline-fields">
@@ -1788,13 +1905,14 @@ function createEmptySetupForm(): SetupFormState {
 
 function createSetupFormFromBootstrap(bootstrap: BootstrapResponse): SetupFormState {
   return {
-    ...(bootstrap.configForm || {
-      ...createDefaultConfigForm(),
-      projectName: bootstrap.setupDefaults.projectName,
-      defaultTopic: bootstrap.setupDefaults.defaultTopic,
-      defaultConstraints: bootstrap.setupDefaults.defaultConstraints.join(", "),
-      defaultObjectiveMetric: bootstrap.setupDefaults.defaultObjectiveMetric
-    }),
+    ...createDefaultConfigForm(),
+    ...(bootstrap.configForm || {}),
+    projectName: bootstrap.configForm?.projectName || bootstrap.setupDefaults.projectName,
+    defaultTopic: bootstrap.configForm?.defaultTopic || bootstrap.setupDefaults.defaultTopic,
+    defaultConstraints:
+      bootstrap.configForm?.defaultConstraints || bootstrap.setupDefaults.defaultConstraints.join(", "),
+    defaultObjectiveMetric:
+      bootstrap.configForm?.defaultObjectiveMetric || bootstrap.setupDefaults.defaultObjectiveMetric,
     semanticScholarApiKey: "",
     openAiApiKey: ""
   };
@@ -1823,7 +1941,9 @@ function createDefaultConfigForm(): WebConfigFormData {
     ollamaChatModel: DEFAULT_OLLAMA_CHAT_MODEL,
     ollamaResearchModel: DEFAULT_OLLAMA_RESEARCH_MODEL,
     ollamaExperimentModel: DEFAULT_OLLAMA_EXPERIMENT_MODEL,
-    ollamaVisionModel: DEFAULT_OLLAMA_VISION_MODEL
+    ollamaVisionModel: DEFAULT_OLLAMA_VISION_MODEL,
+    networkPolicy: "blocked",
+    networkPurpose: ""
   };
 }
 
@@ -1958,6 +2078,57 @@ function updateOpenAiResearchBackendEffort(
 
 function getEffortOptions(optionsByModel: Record<string, string[]>, model: string): string[] {
   return optionsByModel[model] || ["medium"];
+}
+
+function normalizeDoctorCheckStatus(check: DoctorCheck): "ok" | "warning" | "fail" {
+  return check.status || (check.ok ? "ok" : "fail");
+}
+
+function doctorCheckLabel(
+  check: DoctorCheck,
+  readiness?: DoctorResponse["readiness"] | null
+): "OK" | "WARN" | "FAIL" | "REQUIRED" {
+  if (isStrongRequiredNetworkWarning(check, readiness)) {
+    return "REQUIRED";
+  }
+  const status = normalizeDoctorCheckStatus(check);
+  if (status === "warning") {
+    return "WARN";
+  }
+  return status === "fail" ? "FAIL" : "OK";
+}
+
+function doctorCheckPillClass(
+  check: DoctorCheck,
+  readiness?: DoctorResponse["readiness"] | null
+): "is-success" | "is-warning" | "is-warning-strong" | "is-danger" {
+  if (isStrongRequiredNetworkWarning(check, readiness)) {
+    return "is-warning-strong";
+  }
+  const status = normalizeDoctorCheckStatus(check);
+  if (status === "warning") {
+    return "is-warning";
+  }
+  return status === "fail" ? "is-danger" : "is-success";
+}
+
+function doctorCheckToneClass(check: DoctorCheck): "ok" | "warning" | "fail" {
+  const status = normalizeDoctorCheckStatus(check);
+  if (status === "warning") {
+    return "warning";
+  }
+  return status === "fail" ? "fail" : "ok";
+}
+
+function isStrongRequiredNetworkWarning(
+  check: DoctorCheck,
+  readiness?: DoctorResponse["readiness"] | null
+): boolean {
+  return (
+    check.name === "experiment-web-restriction"
+    && normalizeDoctorCheckStatus(check) === "warning"
+    && readiness?.networkPolicy === "required"
+  );
 }
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
@@ -2347,6 +2518,14 @@ function buildManuscriptQualityGroupCards(
       items: insight.issueGroups.backstopOnly
     },
     {
+      key: "readiness",
+      label: "Paper readiness risks",
+      toneClass: (insight.issueGroups.readiness || []).some((item) => item.severity === "fail")
+        ? "is-danger"
+        : "is-warning",
+      items: insight.issueGroups.readiness || []
+    },
+    {
       key: "scientific",
       label: "Scientific blockers",
       toneClass: "is-danger",
@@ -2361,6 +2540,24 @@ function buildManuscriptQualityGroupCards(
   ];
 
   return groups.filter((group) => group.items.length > 0);
+}
+
+function buildReadinessRiskGroupCards(
+  insight: NonNullable<RunInsightCard["readinessRisks"]>
+): Array<{
+  key: string;
+  label: string;
+  toneClass: string;
+  items: typeof insight.risks;
+}> {
+  return [
+    {
+      key: "readiness",
+      label: "Paper readiness risks",
+      toneClass: insight.risks.some((item) => item.severity === "fail") ? "is-danger" : "is-warning",
+      items: insight.risks
+    }
+  ].filter((group) => group.items.length > 0);
 }
 
 function formatTimestamp(value?: string): string {

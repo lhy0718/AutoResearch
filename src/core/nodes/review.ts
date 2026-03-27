@@ -22,6 +22,12 @@ import { FailureMemory } from "../experiments/failureMemory.js";
 import { evaluateMinimumGate } from "../analysis/paperMinimumGate.js";
 import { runLLMPaperQualityEvaluation } from "../analysis/llmPaperQualityEvaluator.js";
 import type { BriefEvidenceAssessment } from "../analysis/briefEvidenceValidator.js";
+import {
+  buildNetworkDependencyReadinessRisks,
+  buildReadinessRiskArtifact,
+  type ReadinessRisk,
+  type ReadinessRiskArtifact
+} from "../readinessRisks.js";
 
 export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
@@ -73,6 +79,8 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         abortSignal
       });
       const packet = buildReviewPacket(report, presence, panel);
+      const briefEvidenceAssessment =
+        (await runContextMemory.get<BriefEvidenceAssessment>("analyze_results.brief_evidence_assessment")) ?? undefined;
 
       // --- Layer 1: Deterministic minimum gate ---
       const minimumGate = evaluateMinimumGate({
@@ -80,8 +88,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         report,
         topic: run.topic,
         objectiveMetric: run.objectiveMetric,
-        briefEvidenceAssessment:
-          (await runContextMemory.get<BriefEvidenceAssessment>("analyze_results.brief_evidence_assessment")) ?? undefined
+        briefEvidenceAssessment
       });
       await writeRunArtifact(
         run,
@@ -145,9 +152,15 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         minimumGate,
         llmEvalResult.evaluation,
         run.graph.researchCycle,
-        (await runContextMemory.get<BriefEvidenceAssessment>("analyze_results.brief_evidence_assessment")) ?? undefined
+        briefEvidenceAssessment
       );
       const markdown = renderReviewChecklist(run, packet, panel);
+      const readinessRisks = buildReviewReadinessRiskArtifact({
+        critique: preDraftCritique,
+        minimumGate,
+        briefEvidenceAssessment,
+        config: deps.config
+      });
 
       const findingsPath = await writeRunArtifact(run, "review/findings.jsonl", renderJsonl(panel.findings));
       await writeRunArtifact(run, "review/scorecard.json", `${JSON.stringify(panel.scorecard, null, 2)}\n`);
@@ -167,6 +180,11 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         run,
         "review/paper_critique.json",
         `${JSON.stringify(preDraftCritique, null, 2)}\n`
+      );
+      const readinessRiskPath = await writeRunArtifact(
+        run,
+        "review/readiness_risks.json",
+        `${JSON.stringify(readinessRisks, null, 2)}\n`
       );
       const reviewPacketPath = await writeRunArtifact(run, "review/review_packet.json", `${JSON.stringify(packet, null, 2)}\n`);
       const checklistPath = await writeRunArtifact(run, "review/checklist.md", markdown);
@@ -199,6 +217,10 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
           {
             sourcePath: critiquePath,
             targetRelativePath: "paper_critique.json"
+          },
+          {
+            sourcePath: readinessRiskPath,
+            targetRelativePath: "readiness_risks.json"
           }
         ]
       });
@@ -213,6 +235,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       await runContextMemory.put("review.target_venue_style", preDraftCritique.target_venue_style);
       await runContextMemory.put("review.minimum_gate", minimumGate);
       await runContextMemory.put("review.paper_quality_evaluation", llmEvalResult.evaluation);
+      await runContextMemory.put("review.readiness_risks", readinessRisks);
 
       deps.eventStream.emit({
         type: "OBS_RECEIVED",
@@ -262,6 +285,105 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       };
     }
   };
+}
+
+function buildReviewReadinessRiskArtifact(input: {
+  critique: PaperCritique;
+  minimumGate: ReturnType<typeof evaluateMinimumGate>;
+  briefEvidenceAssessment?: BriefEvidenceAssessment;
+  config: NodeExecutionDeps["config"];
+}): ReadinessRiskArtifact {
+  const risks: ReadinessRisk[] = buildNetworkDependencyReadinessRisks({
+    source: "review",
+    allowNetwork: input.config.experiments?.allow_network === true,
+    networkPolicy: input.config.experiments?.network_policy,
+    networkPurpose: input.config.experiments?.network_purpose,
+    executionApprovalMode: input.config.workflow?.execution_approval_mode
+  });
+  const claimEvidenceCheck = input.minimumGate.checks.find((check) => check.id === "claim_evidence_linkage");
+  if (claimEvidenceCheck && !claimEvidenceCheck.passed) {
+    risks.push({
+      risk_code: "review_claim_evidence_gap",
+      severity: input.minimumGate.ceiling_type === "blocked_for_paper_scale" ? "blocked" : "warning",
+      category: "claim_evidence",
+      status: input.minimumGate.ceiling_type === "blocked_for_paper_scale" ? "blocked" : "unverified",
+      message: claimEvidenceCheck.detail,
+      triggered_by: ["minimum_gate"],
+      affected_claim_ids: [],
+      affected_citation_ids: [],
+      recommended_action: "Strengthen claim-to-evidence linkage before advancing this run toward paper readiness.",
+      recheck_condition: "The review minimum gate passes the claim-to-evidence linkage check."
+    });
+  }
+
+  if (!input.minimumGate.passed) {
+    const blocked =
+      input.minimumGate.ceiling_type === "blocked_for_paper_scale"
+      || input.minimumGate.ceiling_type === "system_validation_note";
+    risks.push({
+      risk_code: `review_minimum_gate_${input.minimumGate.ceiling_type}`,
+      severity: blocked ? "blocked" : "warning",
+      category: "paper_scale",
+      status: blocked ? "blocked" : "unverified",
+      message: input.minimumGate.summary,
+      triggered_by: ["minimum_gate"],
+      affected_claim_ids: [],
+      affected_citation_ids: [],
+      recommended_action: blocked
+        ? "Backtrack to recover the missing evidence floor instead of treating the run as paper-scale."
+        : "Treat the run as downgraded until the missing minimum-gate checks are repaired.",
+      recheck_condition: "The review minimum gate passes without any failed checks."
+    });
+  }
+
+  if (input.briefEvidenceAssessment?.enabled && input.briefEvidenceAssessment.status !== "not_applicable") {
+    if (input.briefEvidenceAssessment.status === "fail" || input.briefEvidenceAssessment.status === "warn") {
+      const blocked = input.briefEvidenceAssessment.status === "fail";
+      risks.push({
+        risk_code: `brief_evidence_${input.briefEvidenceAssessment.status}`,
+        severity: blocked ? "blocked" : "warning",
+        category: "paper_scale",
+        status: blocked ? "blocked" : "unverified",
+        message: input.briefEvidenceAssessment.summary,
+        triggered_by: ["brief_evidence_assessment"],
+        affected_claim_ids: [],
+        affected_citation_ids: [],
+        recommended_action: blocked
+          ? "Repair the brief-governed evidence floor before allowing progression to paper drafting."
+          : "Keep the run explicitly downgraded until the brief evidence warnings are cleared or accepted.",
+        recheck_condition: "The brief evidence assessment returns pass without outstanding failures."
+      });
+    }
+  }
+
+  if (input.critique.manuscript_type !== "paper_ready") {
+    const blocked =
+      input.critique.manuscript_type === "blocked_for_paper_scale"
+      || input.critique.manuscript_type === "system_validation_note";
+    risks.push({
+      risk_code: `review_paper_scale_${input.critique.manuscript_type}`,
+      severity: blocked ? "blocked" : "warning",
+      category: "paper_scale",
+      status: blocked ? "blocked" : "unverified",
+      message: blocked
+        ? `Pre-draft critique classified the run as ${input.critique.manuscript_type}.`
+        : `Pre-draft critique classified the run as ${input.critique.manuscript_type}, not paper_ready.`,
+      triggered_by: ["paper_critique"],
+      affected_claim_ids: [],
+      affected_citation_ids: [],
+      recommended_action: blocked
+        ? "Backtrack or downgrade instead of drifting into write_paper as if the run were paper-ready."
+        : "Keep the output explicitly downgraded until stronger evidence upgrades the critique outcome.",
+      recheck_condition: "The pre-draft critique upgrades the run to paper_ready."
+    });
+  }
+
+  const paperReady = input.critique.manuscript_type === "paper_ready" && risks.every((risk) => risk.severity !== "blocked");
+  return buildReadinessRiskArtifact({
+    paperReady,
+    readinessState: paperReady ? "paper_ready" : input.critique.manuscript_type,
+    risks
+  });
 }
 
 function buildReviewTransitionRecommendation(
