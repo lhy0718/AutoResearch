@@ -1,7 +1,7 @@
 import path from "node:path";
 import os from "node:os";
 import { mkdtempSync, rmSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -22,15 +22,18 @@ afterEach(() => {
 describe("runDoctorReport", () => {
   it("includes harness diagnostics for current workspace runs", async () => {
     const workspace = createTempWorkspace("autolabos-doctor-harness-");
+    await seedDoctorTooling(workspace);
     await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
     await writeJson(path.join(workspace, ".autolabos", "runs", "runs.json"), { runs: [] });
 
-    const report = await runDoctorReport(createCodexStub(), {
-      workspaceRoot: workspace,
-      includeHarnessValidation: true,
-      includeHarnessTestRecords: false,
-      maxHarnessFindings: 10
-    });
+    const report = await withWorkspacePath(workspace, () =>
+      runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        includeHarnessValidation: true,
+        includeHarnessTestRecords: false,
+        maxHarnessFindings: 10
+      })
+    );
 
     expect(report.checks.length).toBeGreaterThan(0);
     expect(report.harness).toBeDefined();
@@ -44,6 +47,7 @@ describe("runDoctorReport", () => {
 
   it("includes the latest compiled paper page-budget check when available", async () => {
     const workspace = createTempWorkspace("autolabos-doctor-page-budget-");
+    await seedDoctorTooling(workspace);
     await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
     await writeJson(path.join(workspace, ".autolabos", "runs", "runs.json"), {
       runs: [{ id: "run-1", updatedAt: "2026-03-19T12:00:00.000Z" }]
@@ -57,10 +61,12 @@ describe("runDoctorReport", () => {
       message: "Compiled PDF is only 3 pages, below the configured minimum_main_pages of 8."
     });
 
-    const report = await runDoctorReport(createCodexStub(), {
-      workspaceRoot: workspace,
-      includeHarnessValidation: false
-    });
+    const report = await withWorkspacePath(workspace, () =>
+      runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        includeHarnessValidation: false
+      })
+    );
 
     expect(report.checks).toContainEqual(
       expect.objectContaining({
@@ -77,19 +83,22 @@ describe("runDoctorReport", () => {
 
   it("captures readiness snapshot fields for approval mode and workspace write probing", async () => {
     const workspace = createTempWorkspace("autolabos-doctor-readiness-");
+    await seedDoctorTooling(workspace);
     await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
     await writeJson(path.join(workspace, ".autolabos", "runs", "runs.json"), { runs: [] });
 
-    const report = await runDoctorReport(createCodexStub(), {
-      workspaceRoot: workspace,
-      includeHarnessValidation: false,
-      approvalMode: "manual",
-      executionApprovalMode: "risk_ack",
-      dependencyMode: "docker",
-      sessionMode: "existing",
-      codeExecutionExpected: true,
-      candidateIsolation: "attempt_worktree"
-    });
+    const report = await withWorkspacePath(workspace, () =>
+      runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        includeHarnessValidation: false,
+        approvalMode: "manual",
+        executionApprovalMode: "risk_ack",
+        dependencyMode: "docker",
+        sessionMode: "existing",
+        codeExecutionExpected: true,
+        candidateIsolation: "attempt_worktree"
+      })
+    );
 
     expect(report.readiness.approvalMode).toBe("manual");
     expect(report.readiness.executionApprovalMode).toBe("risk_ack");
@@ -107,20 +116,23 @@ describe("runDoctorReport", () => {
 
   it("treats local snapshot isolation plus disabled network as ready for code execution", async () => {
     const workspace = createTempWorkspace("autolabos-doctor-local-isolation-");
+    await seedDoctorTooling(workspace);
     await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
     await writeJson(path.join(workspace, ".autolabos", "runs", "runs.json"), { runs: [] });
 
-    const report = await runDoctorReport(createCodexStub(), {
-      workspaceRoot: workspace,
-      includeHarnessValidation: false,
-      approvalMode: "manual",
-      executionApprovalMode: "manual",
-      dependencyMode: "local",
-      sessionMode: "existing",
-      codeExecutionExpected: true,
-      candidateIsolation: "attempt_snapshot_restore",
-      allowNetwork: false
-    });
+    const report = await withWorkspacePath(workspace, () =>
+      runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        includeHarnessValidation: false,
+        approvalMode: "manual",
+        executionApprovalMode: "manual",
+        dependencyMode: "local",
+        sessionMode: "existing",
+        codeExecutionExpected: true,
+        candidateIsolation: "attempt_snapshot_restore",
+        allowNetwork: false
+      })
+    );
 
     expect(report.readiness.blocked).toBe(false);
     expect(report.checks).toContainEqual(
@@ -142,22 +154,25 @@ describe("runDoctorReport", () => {
 
   it("downgrades declared networked execution to a warning instead of a hard failure", async () => {
     const workspace = createTempWorkspace("autolabos-doctor-network-declared-");
+    await seedDoctorTooling(workspace);
     await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
     await writeJson(path.join(workspace, ".autolabos", "runs", "runs.json"), { runs: [] });
 
-    const report = await runDoctorReport(createCodexStub(), {
-      workspaceRoot: workspace,
-      includeHarnessValidation: false,
-      approvalMode: "manual",
-      executionApprovalMode: "risk_ack",
-      dependencyMode: "local",
-      sessionMode: "fresh",
-      codeExecutionExpected: true,
-      candidateIsolation: "attempt_snapshot_restore",
-      allowNetwork: true,
-      networkPolicy: "declared",
-      networkPurpose: "logging"
-    });
+    const report = await withWorkspacePath(workspace, () =>
+      runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        includeHarnessValidation: false,
+        approvalMode: "manual",
+        executionApprovalMode: "risk_ack",
+        dependencyMode: "local",
+        sessionMode: "fresh",
+        codeExecutionExpected: true,
+        candidateIsolation: "attempt_snapshot_restore",
+        allowNetwork: true,
+        networkPolicy: "declared",
+        networkPurpose: "logging"
+      })
+    );
 
     expect(report.readiness.blocked).toBe(false);
     expect(report.readiness.networkPolicy).toBe("declared");
@@ -179,22 +194,25 @@ describe("runDoctorReport", () => {
 
   it("surfaces required networked execution as a stronger warning with explicit highlight guidance", async () => {
     const workspace = createTempWorkspace("autolabos-doctor-network-required-");
+    await seedDoctorTooling(workspace);
     await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
     await writeJson(path.join(workspace, ".autolabos", "runs", "runs.json"), { runs: [] });
 
-    const report = await runDoctorReport(createCodexStub(), {
-      workspaceRoot: workspace,
-      includeHarnessValidation: false,
-      approvalMode: "manual",
-      executionApprovalMode: "risk_ack",
-      dependencyMode: "remote_gpu",
-      sessionMode: "fresh",
-      codeExecutionExpected: true,
-      candidateIsolation: "attempt_snapshot_restore",
-      allowNetwork: true,
-      networkPolicy: "required",
-      networkPurpose: "remote_inference"
-    });
+    const report = await withWorkspacePath(workspace, () =>
+      runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        includeHarnessValidation: false,
+        approvalMode: "manual",
+        executionApprovalMode: "risk_ack",
+        dependencyMode: "remote_gpu",
+        sessionMode: "fresh",
+        codeExecutionExpected: true,
+        candidateIsolation: "attempt_snapshot_restore",
+        allowNetwork: true,
+        networkPolicy: "required",
+        networkPurpose: "remote_inference"
+      })
+    );
 
     expect(report.readiness.blocked).toBe(false);
     expect(report.readiness.networkPolicy).toBe("required");
@@ -215,20 +233,23 @@ describe("runDoctorReport", () => {
 
   it("fails doctor readiness when network access is enabled without a declared policy", async () => {
     const workspace = createTempWorkspace("autolabos-doctor-network-undeclared-");
+    await seedDoctorTooling(workspace);
     await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
     await writeJson(path.join(workspace, ".autolabos", "runs", "runs.json"), { runs: [] });
 
-    const report = await runDoctorReport(createCodexStub(), {
-      workspaceRoot: workspace,
-      includeHarnessValidation: false,
-      approvalMode: "manual",
-      executionApprovalMode: "manual",
-      dependencyMode: "local",
-      sessionMode: "fresh",
-      codeExecutionExpected: true,
-      candidateIsolation: "attempt_snapshot_restore",
-      allowNetwork: true
-    });
+    const report = await withWorkspacePath(workspace, () =>
+      runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        includeHarnessValidation: false,
+        approvalMode: "manual",
+        executionApprovalMode: "manual",
+        dependencyMode: "local",
+        sessionMode: "fresh",
+        codeExecutionExpected: true,
+        candidateIsolation: "attempt_snapshot_restore",
+        allowNetwork: true
+      })
+    );
 
     expect(report.readiness.blocked).toBe(true);
     expect(report.readiness.networkDeclarationPresent).toBe(false);
@@ -256,6 +277,34 @@ function createTempWorkspace(prefix: string): string {
   const dir = mkdtempSync(path.join(os.tmpdir(), prefix));
   tempDirs.push(dir);
   return dir;
+}
+
+async function seedDoctorTooling(workspace: string): Promise<void> {
+  const binDir = path.join(workspace, "bin");
+  await mkdir(binDir, { recursive: true });
+  await writeExecutable(path.join(binDir, "python3"), "#!/bin/sh\nexit 0\n");
+  await writeExecutable(path.join(binDir, "pip3"), "#!/bin/sh\nexit 0\n");
+  await writeExecutable(path.join(binDir, "pdflatex"), "#!/bin/sh\nexit 0\n");
+}
+
+async function writeExecutable(filePath: string, content: string): Promise<void> {
+  await writeFile(filePath, content, "utf8");
+  await chmod(filePath, 0o755);
+}
+
+async function withWorkspacePath<T>(workspace: string, fn: () => Promise<T>): Promise<T> {
+  const originalPath = process.env.PATH;
+  const binDir = path.join(workspace, "bin");
+  process.env.PATH = `${binDir}${path.delimiter}${originalPath || ""}`;
+  try {
+    return await fn();
+  } finally {
+    if (originalPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = originalPath;
+    }
+  }
 }
 
 async function writeJson(filePath: string, value: unknown): Promise<void> {
