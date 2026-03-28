@@ -3,10 +3,12 @@ export interface OperatorSummaryReference {
   path: string;
 }
 
+export type OperatorSummaryStage = "analysis" | "review" | "paper";
+
 export interface OperatorSummaryInput {
   runId: string;
   title: string;
-  stage: "analysis" | "review" | "paper";
+  stage: OperatorSummaryStage;
   summary: string[];
   decision?: string;
   blockers?: string[];
@@ -44,6 +46,43 @@ export function renderOperatorSummaryMarkdown(input: OperatorSummaryInput): stri
     ""
   );
   return `${lines.join("\n")}\n`;
+}
+
+export function renderOperatorHistoryMarkdown(input: OperatorSummaryInput): string {
+  const lines: string[] = [
+    `# Operator Stage Note`,
+    "",
+    `- Run: ${input.runId}`,
+    `- Title: ${input.title}`,
+    `- Stage: ${input.stage}`,
+    `- Scope: stage`,
+    ""
+  ];
+
+  appendSection(lines, "Summary", input.summary);
+  appendSection(lines, "Decision", input.decision ? [input.decision] : []);
+  appendSection(lines, "Blockers", input.blockers || []);
+  appendSection(lines, "Open Questions", input.openQuestions || []);
+  appendSection(lines, "Next Actions", input.nextActions || []);
+
+  if (input.references && input.references.length > 0) {
+    lines.push("## Artifact Map", "");
+    for (const reference of input.references) {
+      lines.push(`- ${reference.label}: \`${reference.path}\``);
+    }
+    lines.push("");
+  }
+
+  lines.push(
+    "This stage note is a human-readable mirror of the canonical run artifacts for the listed stage.",
+    ""
+  );
+  return `${lines.join("\n")}\n`;
+}
+
+export function buildOperatorHistoryRelativePath(stage: OperatorSummaryStage): string {
+  const order = stage === "analysis" ? "0001" : stage === "review" ? "0002" : "0003";
+  return `operator_history/${order}-${stage}.md`;
 }
 
 function appendSection(target: string[], heading: string, items: string[]): void {

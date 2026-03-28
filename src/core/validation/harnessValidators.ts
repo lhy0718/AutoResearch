@@ -1,7 +1,7 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
 
-import { GraphNodeId } from "../../types.js";
+import { GraphNodeId, RunOperatorStatusArtifact, RunValidationScope } from "../../types.js";
 import { fileExists } from "../../utils/fs.js";
 
 export interface HarnessValidationIssue {
@@ -22,6 +22,7 @@ export interface RunArtifactValidationResult {
   runId: string;
   checked: string[];
   issues: HarnessValidationIssue[];
+  validationScope: RunValidationScope;
 }
 
 export interface IssueLogValidationResult {
@@ -65,6 +66,7 @@ export async function validateRunArtifactStructure(
   const issues: HarnessValidationIssue[] = [];
   const checked = new Set<string>();
   const { runId, runDir, nodeStates, runStatus } = input;
+  const runStatusPath = path.join(runDir, "run_status.json");
   const eventsPath = path.join(runDir, "events.jsonl");
   const collectBackgroundJobPath = path.join(runDir, "collect_background_job.json");
   const experimentPortfolioPath = path.join(runDir, "experiment_portfolio.json");
@@ -75,8 +77,15 @@ export async function validateRunArtifactStructure(
   const transitionPath = path.join(runDir, "transition_recommendation.json");
   const reviewDecisionPath = path.join(runDir, "review", "decision.json");
 
+  const runStatusArtifact = await readJsonObjectIfPresent(runStatusPath, runId, issues);
+  const validationScope = resolveValidationScope(runStatusArtifact);
+  if (runStatusArtifact) {
+    checked.add("run_status");
+    validateRunStatusPayload(runStatusArtifact, runStatusPath, runId, issues);
+  }
+
   const eventsPresent = await fileExists(eventsPath);
-  if (hasRunProgress(nodeStates, runStatus) || eventsPresent) {
+  if ((validationScope === "full_run" && (hasRunProgress(nodeStates, runStatus) || eventsPresent)) || eventsPresent) {
     checked.add("events_log");
     const events = await requireJsonLinesObjects({
       filePath: eventsPath,
@@ -109,7 +118,13 @@ export async function validateRunArtifactStructure(
   const reviewCompleted = isNodeCompleted(nodeStates, "review");
   const reviewPacketPresent = await fileExists(reviewPacketPath);
   const reviewDecision = await readJsonObjectIfPresent(reviewDecisionPath, runId, issues);
-  if (reviewCompleted || reviewPacketPresent) {
+  if (validationScope === "live_fixture") {
+    await validateLiveFixtureReviewArtifacts({
+      runDir,
+      runId,
+      issues
+    });
+  } else if (reviewCompleted || reviewPacketPresent) {
     checked.add("review_packet");
     const reviewPacket = await requireJsonObject({
       filePath: reviewPacketPath,
@@ -167,7 +182,13 @@ export async function validateRunArtifactStructure(
   const writePaperCompleted = isNodeCompleted(nodeStates, "write_paper");
   const mainTexPath = path.join(runDir, "paper", "main.tex");
   const mainTexPresent = await fileExists(mainTexPath);
-  if (writePaperCompleted || mainTexPresent || runStatus === "completed") {
+  if (validationScope === "live_fixture") {
+    await validateLiveFixturePaperArtifacts({
+      runDir,
+      runId,
+      issues
+    });
+  } else if (writePaperCompleted || mainTexPresent || runStatus === "completed") {
     checked.add("paper_artifacts");
     await requireNonEmptyText({
       filePath: mainTexPath,
@@ -395,7 +416,8 @@ export async function validateRunArtifactStructure(
   return {
     runId,
     checked: [...checked].sort(),
-    issues
+    issues,
+    validationScope
   };
 }
 
@@ -1081,6 +1103,147 @@ function validateReadinessRiskPayload(
         runId
       });
     }
+  }
+}
+
+function validateRunStatusPayload(
+  payload: Record<string, unknown>,
+  filePath: string,
+  runId: string,
+  issues: HarnessValidationIssue[]
+): void {
+  if (payload.version !== 1) {
+    issues.push({
+      code: "run_status_version_invalid",
+      message: "run_status.json must declare version=1.",
+      filePath,
+      runId
+    });
+  }
+  if (asString(payload.run_id) !== runId) {
+    issues.push({
+      code: "run_status_run_id_mismatch",
+      message: `run_status.json references run_id ${asString(payload.run_id) || "(missing)"}, expected ${runId}.`,
+      filePath,
+      runId
+    });
+  }
+  if (!asString(payload.current_node)) {
+    issues.push({
+      code: "run_status_current_node_missing",
+      message: "run_status.json must include current_node.",
+      filePath,
+      runId
+    });
+  }
+  if (!asString(payload.lifecycle_status)) {
+    issues.push({
+      code: "run_status_lifecycle_status_missing",
+      message: "run_status.json must include lifecycle_status.",
+      filePath,
+      runId
+    });
+  }
+  if (!asString(payload.recommended_next_action)) {
+    issues.push({
+      code: "run_status_recommended_next_action_missing",
+      message: "run_status.json must include recommended_next_action.",
+      filePath,
+      runId
+    });
+  }
+  const validationScope = asString(payload.validation_scope);
+  if (validationScope && !["full_run", "live_fixture"].includes(validationScope)) {
+    issues.push({
+      code: "run_status_validation_scope_invalid",
+      message: "run_status.json must use validation_scope full_run or live_fixture.",
+      filePath,
+      runId
+    });
+  }
+}
+
+function resolveValidationScope(payload?: Record<string, unknown>): RunValidationScope {
+  const scope = asString(payload?.validation_scope);
+  return scope === "live_fixture" ? "live_fixture" : "full_run";
+}
+
+async function validateLiveFixtureReviewArtifacts(input: {
+  runDir: string;
+  runId: string;
+  issues: HarnessValidationIssue[];
+}): Promise<void> {
+  const reviewPacketPath = path.join(input.runDir, "review", "review_packet.json");
+  const minimumGatePath = path.join(input.runDir, "review", "minimum_gate.json");
+  const critiquePath = path.join(input.runDir, "review", "paper_critique.json");
+  const readinessRiskPath = path.join(input.runDir, "review", "readiness_risks.json");
+  const decisionPath = path.join(input.runDir, "review", "decision.json");
+
+  const reviewPacket = await readJsonObjectIfPresent(reviewPacketPath, input.runId, input.issues);
+  if (reviewPacket) {
+    validateReviewPacketPayload(reviewPacket, reviewPacketPath, input.runId, input.issues);
+  }
+  const minimumGate = await readJsonObjectIfPresent(minimumGatePath, input.runId, input.issues);
+  if (minimumGate && !asString(minimumGate.ceiling_type)) {
+    input.issues.push({
+      code: "review_minimum_gate_ceiling_missing",
+      message: "review/minimum_gate.json must include ceiling_type when present.",
+      filePath: minimumGatePath,
+      runId: input.runId
+    });
+  }
+  const critique = await readJsonObjectIfPresent(critiquePath, input.runId, input.issues);
+  if (critique && typeof critique.blocking_issues_count !== "number") {
+    input.issues.push({
+      code: "review_paper_critique_blocking_count_missing",
+      message: "review/paper_critique.json must include blocking_issues_count when present.",
+      filePath: critiquePath,
+      runId: input.runId
+    });
+  }
+  const readinessRisks = await readJsonObjectIfPresent(readinessRiskPath, input.runId, input.issues);
+  if (readinessRisks) {
+    validateReadinessRiskPayload(readinessRisks, readinessRiskPath, input.runId, input.issues);
+  }
+  await readJsonObjectIfPresent(decisionPath, input.runId, input.issues);
+}
+
+async function validateLiveFixturePaperArtifacts(input: {
+  runDir: string;
+  runId: string;
+  issues: HarnessValidationIssue[];
+}): Promise<void> {
+  const paperDir = path.join(input.runDir, "paper");
+  const mainTexPath = path.join(paperDir, "main.tex");
+  const referencesPath = path.join(paperDir, "references.bib");
+  const paperReadinessPath = path.join(paperDir, "paper_readiness.json");
+  const readinessRiskPath = path.join(paperDir, "readiness_risks.json");
+
+  if (await fileExists(mainTexPath)) {
+    await requireNonEmptyText({
+      filePath: mainTexPath,
+      missingCode: "paper_main_tex_missing",
+      emptyCode: "paper_main_tex_empty",
+      runId: input.runId,
+      issues: input.issues
+    });
+  }
+  if (await fileExists(referencesPath)) {
+    await requireNonEmptyText({
+      filePath: referencesPath,
+      missingCode: "paper_references_missing",
+      emptyCode: "paper_references_empty",
+      runId: input.runId,
+      issues: input.issues
+    });
+  }
+  const paperReadiness = await readJsonObjectIfPresent(paperReadinessPath, input.runId, input.issues);
+  if (paperReadiness) {
+    validatePaperReadinessPayload(paperReadiness, paperReadinessPath, input.runId, input.issues);
+  }
+  const readinessRisks = await readJsonObjectIfPresent(readinessRiskPath, input.runId, input.issues);
+  if (readinessRisks) {
+    validateReadinessRiskPayload(readinessRisks, readinessRiskPath, input.runId, input.issues);
   }
 }
 

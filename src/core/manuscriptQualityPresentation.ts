@@ -137,10 +137,19 @@ export function buildManuscriptQualityInsightCard(input: ManuscriptQualityInsigh
     scientificBlockerCount: scientificBlockers.length,
     submissionBlockerCount: submissionBlockers.length
   });
+  const displayReasonLabel = resolveDisplayReasonLabel({
+    status,
+    reasonCategory,
+    readinessRiskCount: readinessRisks.length,
+    scientificBlockerCount: scientificBlockers.length,
+    submissionBlockerCount: submissionBlockers.length,
+    hardStopPolicyCount: hardStopPolicyFindings.length
+  });
   const stage = decisionDigest.stage as InsightStage;
   const lines = buildInsightLines({
     status,
     reasonCategory,
+    displayReasonLabel,
     reviewReliability,
     decision: input.decision,
     failure: input.failure,
@@ -156,6 +165,7 @@ export function buildManuscriptQualityInsightCard(input: ManuscriptQualityInsigh
       status,
       stage,
       reasonCategory,
+      displayReasonLabel,
       reviewReliability,
       triggeredBy: [...input.decision.triggered_by],
       repairAttempts: {
@@ -328,6 +338,7 @@ function resolveInsightReasonCategory(input: {
 function buildInsightLines(input: {
   status: InsightStatus;
   reasonCategory: InsightReasonCategory;
+  displayReasonLabel: string;
   reviewReliability: InsightPayload["reviewReliability"];
   decision: ManuscriptRepairDecision;
   failure?: ManuscriptQualityFailureArtifact;
@@ -340,7 +351,7 @@ function buildInsightLines(input: {
     input.decision.summary_lines.filter((line) => line.trim().length > 0);
   const lines = [
     `Status: ${formatInsightStatus(input.status)}.`,
-    `Reason category: ${formatReasonCategory(input.reasonCategory)}.`,
+    `Reason: ${input.displayReasonLabel}.`,
     `Review reliability: ${input.reviewReliability}.`
   ];
   if (input.decision.triggered_by.length > 0) {
@@ -362,6 +373,44 @@ function buildInsightLines(input: {
     }
   }
   return lines.slice(0, 6);
+}
+
+function resolveDisplayReasonLabel(input: {
+  status: InsightStatus;
+  reasonCategory: InsightReasonCategory;
+  readinessRiskCount: number;
+  scientificBlockerCount: number;
+  submissionBlockerCount: number;
+  hardStopPolicyCount: number;
+}): string {
+  if (input.status === "pass") {
+    return "Passed";
+  }
+  if (input.status === "repairing") {
+    return "Repair required";
+  }
+  if (input.hardStopPolicyCount > 0 || input.reasonCategory === "policy_hard_stop") {
+    return "Policy hard stop";
+  }
+  if (input.readinessRiskCount > 0 || input.scientificBlockerCount > 0 || input.submissionBlockerCount > 0) {
+    return "Paper-readiness stop";
+  }
+  if (input.reasonCategory === "review_reliability") {
+    return "Review reliability stop";
+  }
+  if (input.reasonCategory === "visual_overclaim") {
+    return "Visual overclaim stop";
+  }
+  if (input.reasonCategory === "locality_violation") {
+    return "Locality violation";
+  }
+  if (input.reasonCategory === "repeated_issue") {
+    return "Repeated issue";
+  }
+  if (input.reasonCategory === "scope_too_broad") {
+    return "Scope too broad";
+  }
+  return "Stopped after review";
 }
 
 function buildArtifactRefs(input: ManuscriptQualityInsightInput): InsightPayload["artifactRefs"] {

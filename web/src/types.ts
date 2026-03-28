@@ -54,6 +54,7 @@ export interface RunInsightCard {
       | "upstream_scientific_or_submission_failure"
       | "clean_pass"
       | "repairable_manuscript_issue";
+    displayReasonLabel?: string;
     reviewReliability: "grounded" | "partially_grounded" | "degraded";
     triggeredBy: string[];
     repairAttempts: {
@@ -145,6 +146,54 @@ export type RunRecommendedNextAction =
   | "rerun_after_fix"
   | "waiting_for_input"
   | "completed";
+export type RunValidationScope = "full_run" | "live_fixture";
+export type RunNetworkDependencySeverity = "info" | "warning" | "attention" | "blocking";
+
+export interface RunStatusFailureSeed {
+  key: string;
+  summary: string;
+  remediation: string;
+}
+
+export interface RunOperatorStatusArtifact {
+  version: 1;
+  generated_at: string;
+  run_id: string;
+  title: string;
+  current_node: NodeId;
+  lifecycle_status: RunLifecycleStatus;
+  approval_mode: "manual" | "minimal";
+  last_event_at: string;
+  analysis_ready: boolean;
+  review_ready: boolean;
+  paper_ready: boolean;
+  recommended_next_action: RunRecommendedNextAction;
+  blocker_summary?: string;
+  blocking_reasons: string[];
+  warning_reasons: string[];
+  dominant_failure?: RunStatusFailureSeed;
+  review_gate: {
+    status?: "missing" | "ready" | "warning" | "blocking";
+    decision_outcome?: string;
+    recommended_transition?: string;
+    score_overall?: number;
+    operator_label?: string;
+  };
+  paper_gate: {
+    status?: "missing" | "passed" | "warning" | "blocking";
+    readiness_state?: string;
+    reason?: string;
+    operator_label?: string;
+  };
+  network_dependency: {
+    enabled: boolean;
+    policy?: "blocked" | "declared" | "required";
+    purpose?: "logging" | "artifact_upload" | "model_download" | "dataset_fetch" | "remote_inference" | "other";
+    severity: RunNetworkDependencySeverity;
+    operator_label: string;
+  };
+  validation_scope: RunValidationScope;
+}
 
 export interface RunJobFailureAggregate {
   key: string;
@@ -172,6 +221,12 @@ export interface RunJobProjection {
   paper_readiness_state?: string;
   paper_readiness_reason?: string;
   blocker_summary?: string;
+  review_gate_label?: string;
+  paper_gate_label?: string;
+  blocking_reasons?: string[];
+  warning_reasons?: string[];
+  network_dependency?: RunOperatorStatusArtifact["network_dependency"];
+  validation_scope?: RunValidationScope;
 }
 
 export interface RunJobsSnapshot {

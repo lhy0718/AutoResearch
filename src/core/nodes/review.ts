@@ -6,7 +6,11 @@ import { buildReviewPacket } from "../reviewPacket.js";
 import { ReviewArtifactPresence, runReviewPanel } from "../reviewSystem.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { publishPublicRunOutputs } from "../publicOutputPublisher.js";
-import { renderOperatorSummaryMarkdown } from "../operatorSummary.js";
+import {
+  buildOperatorHistoryRelativePath,
+  renderOperatorHistoryMarkdown,
+  renderOperatorSummaryMarkdown
+} from "../operatorSummary.js";
 import { safeRead, writeRunArtifact } from "./helpers.js";
 import { NodeExecutionDeps } from "./types.js";
 import { TransitionRecommendation } from "../../types.js";
@@ -29,6 +33,7 @@ import {
   type ReadinessRisk,
   type ReadinessRiskArtifact
 } from "../readinessRisks.js";
+import { buildRunOperatorStatus } from "../runs/runStatus.js";
 
 export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
@@ -187,41 +192,63 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         "review/readiness_risks.json",
         `${JSON.stringify(readinessRisks, null, 2)}\n`
       );
+      const operatorSummaryInput = {
+        runId: run.id,
+        title: run.title,
+        stage: "review" as const,
+        summary: [
+          packet.objective_summary,
+          `Review readiness: ${packet.readiness.status}.`,
+          `Panel scorecard: ${panel.scorecard.overall_score_1_to_5}/5 overall across ${panel.reviewers.length} reviewer(s).`,
+          `Paper quality: ${llmEvalResult.evaluation.overall_score_1_to_10}/10 (${llmEvalResult.evaluation.paper_worthiness}).`
+        ],
+        decision: `${panel.decision.outcome}${panel.decision.recommended_transition ? ` -> ${panel.decision.recommended_transition}` : ""}. ${panel.decision.summary}`,
+        blockers: [
+          ...preDraftCritique.blocking_issues.slice(0, 3).map((issue) => issue.summary),
+          ...readinessRisks.risks.filter((risk) => risk.severity === "blocked").slice(0, 2).map((risk) => risk.message)
+        ],
+        openQuestions: [
+          ...panel.decision.required_actions.slice(0, 2),
+          ...llmEvalResult.evaluation.weaknesses.slice(0, 2)
+        ].slice(0, 3),
+        nextActions: packet.suggested_actions.slice(0, 3),
+        references: [
+          { label: "Review packet", path: "review/review_packet.json" },
+          { label: "Review scorecard", path: "review/scorecard.json" },
+          { label: "Paper critique", path: "review/paper_critique.json" },
+          { label: "Review decision", path: "review/decision.json" },
+          { label: "Minimum gate", path: "review/minimum_gate.json" },
+          { label: "Readiness risks", path: "review/readiness_risks.json" }
+        ]
+      };
       const operatorSummaryPath = await writeRunArtifact(
         run,
         "operator_summary.md",
-        renderOperatorSummaryMarkdown({
-          runId: run.id,
-          title: run.title,
-          stage: "review",
-          summary: [
-            packet.objective_summary,
-            `Review readiness: ${packet.readiness.status}.`,
-            `Panel scorecard: ${panel.scorecard.overall_score_1_to_5}/5 overall across ${panel.reviewers.length} reviewer(s).`,
-            `Paper quality: ${llmEvalResult.evaluation.overall_score_1_to_10}/10 (${llmEvalResult.evaluation.paper_worthiness}).`
-          ],
-          decision: `${panel.decision.outcome}${panel.decision.recommended_transition ? ` -> ${panel.decision.recommended_transition}` : ""}. ${panel.decision.summary}`,
-          blockers: [
-            ...preDraftCritique.blocking_issues.slice(0, 3).map((issue) => issue.summary),
-            ...readinessRisks.risks.filter((risk) => risk.severity === "blocked").slice(0, 2).map((risk) => risk.message)
-          ],
-          openQuestions: [
-            ...panel.decision.required_actions.slice(0, 2),
-            ...llmEvalResult.evaluation.weaknesses.slice(0, 2)
-          ].slice(0, 3),
-          nextActions: packet.suggested_actions.slice(0, 3),
-          references: [
-            { label: "Review packet", path: "review/review_packet.json" },
-            { label: "Review scorecard", path: "review/scorecard.json" },
-            { label: "Paper critique", path: "review/paper_critique.json" },
-            { label: "Review decision", path: "review/decision.json" },
-            { label: "Minimum gate", path: "review/minimum_gate.json" },
-            { label: "Readiness risks", path: "review/readiness_risks.json" }
-          ]
-        })
+        renderOperatorSummaryMarkdown(operatorSummaryInput)
+      );
+      const operatorHistoryPath = await writeRunArtifact(
+        run,
+        buildOperatorHistoryRelativePath("review"),
+        renderOperatorHistoryMarkdown(operatorSummaryInput)
       );
       const reviewPacketPath = await writeRunArtifact(run, "review/review_packet.json", `${JSON.stringify(packet, null, 2)}\n`);
       const checklistPath = await writeRunArtifact(run, "review/checklist.md", markdown);
+      const runStatus = await buildRunOperatorStatus({
+        workspaceRoot: process.cwd(),
+        run,
+        currentNode: "review",
+        lifecycleStatus: "needs_approval",
+        approvalMode: deps.config?.workflow?.approval_mode === "manual" ? "manual" : "minimal",
+        networkPolicy:
+          deps.config?.experiments?.network_policy
+          || (deps.config?.experiments?.allow_network ? "declared" : "blocked"),
+        networkPurpose: deps.config?.experiments?.network_purpose
+      });
+      const runStatusPath = await writeRunArtifact(
+        run,
+        "run_status.json",
+        `${JSON.stringify(runStatus, null, 2)}\n`
+      );
       const publicOutputs = await publishPublicRunOutputs({
         workspaceRoot: process.cwd(),
         run,
@@ -270,6 +297,14 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
           {
             sourcePath: operatorSummaryPath,
             targetRelativePath: "operator_summary.md"
+          },
+          {
+            sourcePath: operatorHistoryPath,
+            targetRelativePath: buildOperatorHistoryRelativePath("review")
+          },
+          {
+            sourcePath: runStatusPath,
+            targetRelativePath: "run_status.json"
           }
         ]
       });

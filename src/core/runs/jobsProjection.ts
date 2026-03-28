@@ -2,11 +2,14 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 
 import {
+  ExperimentNetworkPolicy,
+  ExperimentNetworkPurpose,
   GraphNodeId,
+  RunLifecycleStatus,
+  RunOperatorStatusArtifact,
   RunJobFailureAggregate,
   RunJobProjection,
   RunJobsSnapshot,
-  RunLifecycleStatus,
   RunRecord,
   RunRecommendedNextAction,
   WorkflowApprovalMode
@@ -14,12 +17,7 @@ import {
 import { fileExists } from "../../utils/fs.js";
 import { parseAnalysisReport } from "../resultAnalysis.js";
 import { formatReadinessRiskSection, parseReadinessRiskArtifact, type ReadinessRiskArtifact } from "../readinessRisks.js";
-
-interface ReviewCritiqueProjection {
-  blocking_issues_count?: number;
-  paper_readiness_state?: string;
-  overall_decision?: string;
-}
+import { buildRunOperatorStatus, readRunOperatorStatus } from "./runStatus.js";
 
 interface ReviewPacketProjection {
   readiness?: {
@@ -33,13 +31,6 @@ interface ReviewPacketProjection {
 
 interface ReviewScorecardProjection {
   overall_score_1_to_5?: number;
-}
-
-interface PaperReadinessProjection {
-  paper_ready?: boolean;
-  readiness_state?: string;
-  reason?: string;
-  triggered_by?: string[];
 }
 
 interface FailureSeed {
@@ -78,13 +69,17 @@ export async function buildRunJobsSnapshot(input: {
   workspaceRoot: string;
   runs: RunRecord[];
   approvalMode: WorkflowApprovalMode;
+  networkPolicy?: ExperimentNetworkPolicy;
+  networkPurpose?: ExperimentNetworkPurpose;
 }): Promise<RunJobsSnapshot> {
   const projected = await Promise.all(
     input.runs.map((run) =>
       buildRunJobProjectionInternal({
         workspaceRoot: input.workspaceRoot,
         run,
-        approvalMode: input.approvalMode
+        approvalMode: input.approvalMode,
+        networkPolicy: input.networkPolicy,
+        networkPurpose: input.networkPurpose
       })
     )
   );
@@ -102,6 +97,8 @@ export async function buildAnalyzeResultsOperatorSummary(input: {
   workspaceRoot: string;
   run: RunRecord;
   approvalMode: WorkflowApprovalMode;
+  networkPolicy?: ExperimentNetworkPolicy;
+  networkPurpose?: ExperimentNetworkPurpose;
 }): Promise<AnalyzeResultsOperatorSummary> {
   const projected = await buildRunJobProjectionInternal(input);
   const runDir = buildRunDir(input.workspaceRoot, input.run.id);
@@ -124,7 +121,8 @@ export async function buildAnalyzeResultsOperatorSummary(input: {
     maybeArtifactRef(projected.review_ready, "Paper critique", "review/paper_critique.json"),
     maybeArtifactRef(projected.review_ready, "Review minimum gate", "review/minimum_gate.json"),
     maybeArtifactRef(projected.review_ready, "Review readiness risks", "review/readiness_risks.json"),
-    maybeArtifactRef(projected.paper_ready || Boolean(projected.paper_readiness_state), "Paper readiness", "paper/paper_readiness.json")
+    maybeArtifactRef(projected.paper_ready || Boolean(projected.paper_readiness_state), "Paper readiness", "paper/paper_readiness.json"),
+    maybeArtifactRef(await fileExists(path.join(runDir, "run_status.json")), "Run status", "run_status.json")
   ].filter((item): item is { label: string; path: string } => Boolean(item));
 
   const lines = [
@@ -147,26 +145,24 @@ export async function buildAnalyzeResultsOperatorSummary(input: {
 
   if (!projected.review_ready) {
     lines.push("Review gate: not started yet or still missing one of the required review artifacts.");
-  } else if (projected.review_gate_status || projected.review_decision_outcome) {
-    const transitionHint = projected.review_recommended_transition
-      ? ` -> ${projected.review_recommended_transition}`
-      : "";
-    const decisionHint = projected.review_decision_outcome
-      ? `${projected.review_decision_outcome}${transitionHint}`
-      : projected.review_gate_status;
-    lines.push(`Review gate: ${decisionHint}.`);
+  } else if (projected.review_gate_label || projected.review_decision_outcome || projected.review_gate_status) {
+    lines.push(`Review gate: ${projected.review_gate_label || projected.review_gate_status}.`);
   }
 
   if (typeof projected.review_score_overall === "number") {
     lines.push(`Review scorecard: ${projected.review_score_overall}/5 overall.`);
   }
 
-  if (projected.paper_readiness_state) {
-    lines.push(`Paper readiness state: ${projected.paper_readiness_state}.`);
+  if (projected.paper_gate_label || projected.paper_readiness_state) {
+    lines.push(`Paper readiness state: ${projected.paper_gate_label || projected.paper_readiness_state}.`);
   }
 
   if (projected.blocker_summary) {
     lines.push(`Blocker: ${projected.blocker_summary}`);
+  }
+
+  if (projected.network_dependency?.enabled || projected.network_dependency?.severity === "blocking") {
+    lines.push(`Network dependency: ${projected.network_dependency.operator_label}.`);
   }
 
   lines.push(`Next: ${projected.recommended_next_action}.`);
@@ -233,72 +229,11 @@ async function buildRunJobProjectionInternal(input: {
   workspaceRoot: string;
   run: RunRecord;
   approvalMode: WorkflowApprovalMode;
+  networkPolicy?: ExperimentNetworkPolicy;
+  networkPurpose?: ExperimentNetworkPurpose;
 }): Promise<RunJobProjectionInternal> {
-  const runDir = buildRunDir(input.workspaceRoot, input.run.id);
-  const analysisReady = await hasArtifacts(runDir, ["result_analysis.json", "transition_recommendation.json"]);
-  const reviewReady = await hasArtifacts(runDir, [
-    "review/review_packet.json",
-    "review/paper_critique.json",
-    "review/minimum_gate.json",
-    "review/readiness_risks.json"
-  ]);
-  const paperReadiness = await readJsonArtifact<PaperReadinessProjection>(
-    path.join(runDir, "paper", "paper_readiness.json")
-  );
-  const paperReady = Boolean(paperReadiness?.paper_ready);
-  const reviewRisks = await readReadinessRisks(path.join(runDir, "review", "readiness_risks.json"));
-  const paperRisks = await readReadinessRisks(path.join(runDir, "paper", "readiness_risks.json"));
-  const reviewCritique = await readJsonArtifact<ReviewCritiqueProjection>(
-    path.join(runDir, "review", "paper_critique.json")
-  );
-  const reviewPacket = await readJsonArtifact<ReviewPacketProjection>(
-    path.join(runDir, "review", "review_packet.json")
-  );
-  const reviewScorecard = await readJsonArtifact<ReviewScorecardProjection>(
-    path.join(runDir, "review", "scorecard.json")
-  );
-  const lifecycleStatus = deriveLifecycleStatus(input.run);
-  const lastEventAt = await readLastEventTimestamp(runDir, input.run.updatedAt);
-  const dominantFailure = deriveDominantFailure({
-    run: input.run,
-    reviewRisks,
-    paperRisks,
-    reviewCritique,
-    paperReadiness
-  });
-  const recommendedNextAction = deriveRecommendedNextAction({
-    run: input.run,
-    lifecycleStatus,
-    analysisReady,
-    reviewReady,
-    paperReady,
-    dominantFailure: Boolean(dominantFailure)
-  });
-
-  return {
-    run_id: input.run.id,
-    title: input.run.title,
-    current_node: input.run.currentNode,
-    lifecycle_status: lifecycleStatus,
-    approval_mode: input.approvalMode,
-    last_event_at: lastEventAt,
-    recommended_next_action: recommendedNextAction,
-    analysis_ready: analysisReady,
-    review_ready: reviewReady,
-    paper_ready: paperReady,
-    review_gate_status: normalizeReviewGateStatus(reviewPacket?.readiness?.status),
-    review_decision_outcome: asNonEmptyString(reviewPacket?.decision?.outcome),
-    review_recommended_transition: asNonEmptyString(reviewPacket?.decision?.recommended_transition),
-    review_score_overall:
-      typeof reviewScorecard?.overall_score_1_to_5 === "number"
-        ? Number(reviewScorecard.overall_score_1_to_5.toFixed(1))
-        : undefined,
-    paper_readiness_state:
-      asNonEmptyString(paperReadiness?.readiness_state) || asNonEmptyString(reviewCritique?.paper_readiness_state),
-    paper_readiness_reason: asNonEmptyString(paperReadiness?.reason),
-    blocker_summary: dominantFailure?.summary,
-    dominantFailure
-  };
+  const status = await loadOrBuildRunStatus(input);
+  return projectRunStatus(status);
 }
 
 function stripInternalProjection(input: RunJobProjectionInternal): RunJobProjection {
@@ -319,7 +254,13 @@ function stripInternalProjection(input: RunJobProjectionInternal): RunJobProject
     review_score_overall: input.review_score_overall,
     paper_readiness_state: input.paper_readiness_state,
     paper_readiness_reason: input.paper_readiness_reason,
-    blocker_summary: input.blocker_summary
+    blocker_summary: input.blocker_summary,
+    review_gate_label: input.review_gate_label,
+    paper_gate_label: input.paper_gate_label,
+    blocking_reasons: input.blocking_reasons,
+    warning_reasons: input.warning_reasons,
+    network_dependency: input.network_dependency,
+    validation_scope: input.validation_scope
   };
 }
 
@@ -355,122 +296,9 @@ function summarizeFailures(input: RunJobProjectionInternal[]): RunJobFailureAggr
     .slice(0, 3);
 }
 
-function deriveLifecycleStatus(run: RunRecord): RunLifecycleStatus {
-  const currentStatus = run.graph.nodeStates[run.currentNode]?.status;
-  if (currentStatus === "needs_approval") {
-    return "needs_approval";
-  }
-  return run.status;
-}
-
-function deriveRecommendedNextAction(input: {
-  run: RunRecord;
-  lifecycleStatus: RunLifecycleStatus;
-  analysisReady: boolean;
-  reviewReady: boolean;
-  paperReady: boolean;
-  dominantFailure: boolean;
-}): RunRecommendedNextAction {
-  if (input.run.status === "completed" && input.paperReady) {
-    return "completed";
-  }
-  if (
-    (input.lifecycleStatus === "needs_approval" && input.run.currentNode === "review")
-    || (input.analysisReady && !input.reviewReady && (input.run.currentNode === "analyze_results" || input.run.currentNode === "review"))
-    || (input.reviewReady && !input.paperReady && input.run.currentNode === "review")
-  ) {
-    return "resume_review";
-  }
-  if (input.dominantFailure) {
-    return input.run.status === "failed" ? "rerun_after_fix" : "inspect_blocker";
-  }
-  if (input.lifecycleStatus === "needs_approval" || input.run.status === "paused") {
-    return "waiting_for_input";
-  }
-  if (input.run.status === "failed") {
-    return "rerun_after_fix";
-  }
-  if (input.run.status === "completed") {
-    return input.paperReady ? "completed" : "inspect_blocker";
-  }
-  return "waiting_for_input";
-}
-
-function deriveDominantFailure(input: {
-  run: RunRecord;
-  reviewRisks?: ReadinessRiskArtifact;
-  paperRisks?: ReadinessRiskArtifact;
-  reviewCritique?: ReviewCritiqueProjection;
-  paperReadiness?: PaperReadinessProjection;
-}): FailureSeed | undefined {
-  const runtimeError = compactOneLine(
-    input.run.graph.nodeStates[input.run.currentNode]?.lastError
-      || input.run.graph.nodeStates[input.run.currentNode]?.note,
-    180
-  );
-  if (runtimeError) {
-    return {
-      key: `runtime:${input.run.currentNode}`,
-      summary: runtimeError,
-      remediation: `Inspect the latest ${input.run.currentNode} artifact or event log before retrying the run.`
-    };
-  }
-
-  const blockedPaperRisk = input.paperRisks?.risks.find((risk) => risk.severity === "blocked");
-  if (blockedPaperRisk) {
-    return {
-      key: `paper:${blockedPaperRisk.category}:${blockedPaperRisk.risk_code}`,
-      summary: blockedPaperRisk.message,
-      remediation: blockedPaperRisk.recommended_action
-    };
-  }
-
-  const blockedReviewRisk = input.reviewRisks?.risks.find((risk) => risk.severity === "blocked");
-  if (blockedReviewRisk) {
-    return {
-      key: `review:${blockedReviewRisk.category}:${blockedReviewRisk.risk_code}`,
-      summary: blockedReviewRisk.message,
-      remediation: blockedReviewRisk.recommended_action
-    };
-  }
-
-  if ((input.reviewCritique?.blocking_issues_count || 0) > 0) {
-    return {
-      key: "review:paper_critique",
-      summary: `${input.reviewCritique?.blocking_issues_count} blocking critique issue(s) remain before paper drafting.`,
-      remediation: "Inspect review/paper_critique.json and resolve the blocking issues before advancing to write_paper."
-    };
-  }
-
-  if (input.paperReadiness && input.paperReadiness.paper_ready === false && asNonEmptyString(input.paperReadiness.reason)) {
-    const summarizedReason = compactOneLine(input.paperReadiness.reason, 180);
-    return {
-      key: "paper:readiness",
-      summary: summarizedReason || "Paper readiness remains blocked by unresolved paper-level requirements.",
-      remediation: "Inspect paper/paper_readiness.json and paper/readiness_risks.json before treating the run as complete."
-    };
-  }
-
-  return undefined;
-}
-
-async function hasArtifacts(runDir: string, paths: string[]): Promise<boolean> {
-  for (const relativePath of paths) {
-    if (!(await fileExists(path.join(runDir, relativePath)))) {
-      return false;
-    }
-  }
-  return true;
-}
-
 async function readAnalysisReport(filePath: string) {
   const raw = await readTextArtifact(filePath);
   return raw ? parseAnalysisReport(raw) : undefined;
-}
-
-async function readReadinessRisks(filePath: string): Promise<ReadinessRiskArtifact | undefined> {
-  const raw = await readTextArtifact(filePath);
-  return raw ? parseReadinessRiskArtifact(raw) : undefined;
 }
 
 async function readJsonArtifact<T>(filePath: string): Promise<T | undefined> {
@@ -491,30 +319,6 @@ async function readTextArtifact(filePath: string): Promise<string | undefined> {
   } catch {
     return undefined;
   }
-}
-
-async function readLastEventTimestamp(runDir: string, fallback: string): Promise<string> {
-  const eventsPath = path.join(runDir, "events.jsonl");
-  try {
-    const raw = await fs.readFile(eventsPath, "utf8");
-    const lines = raw
-      .split(/\r?\n/u)
-      .map((line) => line.trim())
-      .filter(Boolean);
-    for (let index = lines.length - 1; index >= 0; index -= 1) {
-      try {
-        const parsed = JSON.parse(lines[index]) as { timestamp?: string };
-        if (typeof parsed.timestamp === "string" && parsed.timestamp.trim().length > 0) {
-          return parsed.timestamp;
-        }
-      } catch {
-        continue;
-      }
-    }
-  } catch {
-    // fall through
-  }
-  return fallback;
 }
 
 function maybeArtifactRef(
@@ -546,19 +350,6 @@ function compactOneLine(value: string | undefined, maxLength: number): string | 
   return `${normalized.slice(0, maxLength - 3)}...`;
 }
 
-function asNonEmptyString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
-}
-
-function normalizeReviewGateStatus(
-  value: "ready" | "warning" | "blocking" | undefined
-): RunJobProjection["review_gate_status"] {
-  if (value === "ready" || value === "warning" || value === "blocking") {
-    return value;
-  }
-  return undefined;
-}
-
 function yesNo(value: boolean): string {
   return value ? "yes" : "no";
 }
@@ -576,6 +367,7 @@ export function formatRecommendedNextAction(action: RunRecommendedNextAction): s
     case "completed":
       return "Completed";
   }
+  return action;
 }
 
 export function formatRunJobLifecycleStatus(status: RunLifecycleStatus): string {
@@ -593,6 +385,7 @@ export function formatRunJobLifecycleStatus(status: RunLifecycleStatus): string 
     case "failed":
       return "Failed";
   }
+  return status;
 }
 
 export function formatRunJobProjectionLines(input: {
@@ -604,9 +397,11 @@ export function formatRunJobProjectionLines(input: {
     `  last event: ${input.projection.last_event_at}`
   ];
   if (input.projection.review_gate_status || input.projection.review_decision_outcome || typeof input.projection.review_score_overall === "number") {
-    const gateLabel = input.projection.review_decision_outcome
-      ? `${input.projection.review_decision_outcome}${input.projection.review_recommended_transition ? ` -> ${input.projection.review_recommended_transition}` : ""}`
-      : input.projection.review_gate_status || "missing";
+    const gateLabel =
+      input.projection.review_gate_label
+      || (input.projection.review_decision_outcome
+        ? `${input.projection.review_decision_outcome}${input.projection.review_recommended_transition ? ` -> ${input.projection.review_recommended_transition}` : ""}`
+        : input.projection.review_gate_status || "missing");
     const scoreLabel = typeof input.projection.review_score_overall === "number"
       ? ` | score=${input.projection.review_score_overall}/5`
       : "";
@@ -616,7 +411,13 @@ export function formatRunJobProjectionLines(input: {
     const paperDetail = input.projection.paper_readiness_reason
       ? ` | ${compactOneLine(input.projection.paper_readiness_reason, 120)}`
       : "";
-    lines.push(`  paper state: ${input.projection.paper_readiness_state}${paperDetail}`);
+    lines.push(`  paper state: ${input.projection.paper_gate_label || input.projection.paper_readiness_state}${paperDetail}`);
+  }
+  if (input.projection.network_dependency) {
+    lines.push(`  network: ${input.projection.network_dependency.operator_label}`);
+  }
+  if (input.projection.validation_scope && input.projection.validation_scope !== "full_run") {
+    lines.push(`  validation scope: ${input.projection.validation_scope}`);
   }
   if (input.projection.blocker_summary) {
     lines.push(`  blocker: ${compactOneLine(input.projection.blocker_summary, 180)}`);
@@ -646,4 +447,60 @@ export function formatReadinessSummaryLine(risks: ReadinessRiskArtifact | undefi
     return undefined;
   }
   return `${formatReadinessRiskSection(dominant.category)}: ${compactOneLine(dominant.message, 160)}`;
+}
+
+async function loadOrBuildRunStatus(input: {
+  workspaceRoot: string;
+  run: RunRecord;
+  approvalMode: WorkflowApprovalMode;
+  networkPolicy?: ExperimentNetworkPolicy;
+  networkPurpose?: ExperimentNetworkPurpose;
+}): Promise<RunOperatorStatusArtifact> {
+  const runDir = buildRunDir(input.workspaceRoot, input.run.id);
+  const existing = await readRunOperatorStatus(runDir);
+  if (existing) {
+    return existing;
+  }
+  return buildRunOperatorStatus({
+    workspaceRoot: input.workspaceRoot,
+    run: input.run,
+    approvalMode: input.approvalMode,
+    networkPolicy: input.networkPolicy,
+    networkPurpose: input.networkPurpose
+  });
+}
+
+function projectRunStatus(status: RunOperatorStatusArtifact): RunJobProjectionInternal {
+  return {
+    run_id: status.run_id,
+    title: status.title,
+    current_node: status.current_node,
+    lifecycle_status: status.lifecycle_status,
+    approval_mode: status.approval_mode,
+    last_event_at: status.last_event_at,
+    recommended_next_action: status.recommended_next_action,
+    analysis_ready: status.analysis_ready,
+    review_ready: status.review_ready,
+    paper_ready: status.paper_ready,
+    review_gate_status: status.review_gate.status,
+    review_decision_outcome: status.review_gate.decision_outcome,
+    review_recommended_transition: status.review_gate.recommended_transition,
+    review_score_overall: status.review_gate.score_overall,
+    paper_readiness_state: status.paper_gate.readiness_state,
+    paper_readiness_reason: status.paper_gate.reason,
+    blocker_summary: status.blocker_summary,
+    review_gate_label: status.review_gate.operator_label,
+    paper_gate_label: status.paper_gate.operator_label,
+    blocking_reasons: [...status.blocking_reasons],
+    warning_reasons: [...status.warning_reasons],
+    network_dependency: status.network_dependency,
+    validation_scope: status.validation_scope,
+    dominantFailure: status.dominant_failure
+      ? {
+          key: status.dominant_failure.key,
+          summary: status.dominant_failure.summary,
+          remediation: status.dominant_failure.remediation
+        }
+      : undefined
+  };
 }

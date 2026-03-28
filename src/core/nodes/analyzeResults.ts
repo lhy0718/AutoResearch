@@ -8,7 +8,11 @@ import { NodeExecutionDeps } from "./types.js";
 import { LongTermStore } from "../memory/longTermStore.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { publishPublicRunOutputs } from "../publicOutputPublisher.js";
-import { renderOperatorSummaryMarkdown } from "../operatorSummary.js";
+import {
+  buildOperatorHistoryRelativePath,
+  renderOperatorHistoryMarkdown,
+  renderOperatorSummaryMarkdown
+} from "../operatorSummary.js";
 import {
   evaluateObjectiveMetric,
   normalizeObjectiveMetricProfile,
@@ -52,6 +56,7 @@ import {
 } from "../experiments/attemptDecision.js";
 import { evaluateBriefEvidenceAgainstResults } from "../analysis/briefEvidenceValidator.js";
 import { parseMarkdownRunBriefSections } from "../runs/runBriefParser.js";
+import { buildRunOperatorStatus } from "../runs/runStatus.js";
 
 export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
@@ -376,30 +381,51 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         "transition_recommendation.json",
         JSON.stringify(transitionRecommendation, null, 2)
       );
+      const operatorSummaryInput = {
+        runId: run.id,
+        title: run.title,
+        stage: "analysis" as const,
+        summary: [
+          buildAnalyzeResultsCompletionSummary(summary),
+          `Next governed gate: ${transitionRecommendation.targetNode || "review"} via ${transitionRecommendation.action}.`
+        ],
+        decision: `Transition recommendation: ${transitionRecommendation.action}${transitionRecommendation.targetNode ? ` -> ${transitionRecommendation.targetNode}` : ""}. ${transitionRecommendation.reason}`,
+        blockers: (summary.failure_taxonomy || []).slice(0, 3).map((item) => item.summary),
+        openQuestions: (summary.synthesis?.discussion_points || []).slice(0, 3),
+        nextActions:
+          (summary.synthesis?.follow_up_actions || []).slice(0, 3).length > 0
+            ? (summary.synthesis?.follow_up_actions || []).slice(0, 3)
+            : [transitionRecommendation.reason, "Enter review and inspect the review packet before treating the run as paper-ready."],
+        references: [
+          { label: "Analysis report", path: "result_analysis.json" },
+          { label: "Transition recommendation", path: "transition_recommendation.json" },
+          { label: "Latest results", path: "latest_results.json" }
+        ]
+      };
       const operatorSummaryPath = await writeRunArtifact(
         run,
         "operator_summary.md",
-        renderOperatorSummaryMarkdown({
-          runId: run.id,
-          title: run.title,
-          stage: "analysis",
-          summary: [
-            buildAnalyzeResultsCompletionSummary(summary),
-            `Next governed gate: ${transitionRecommendation.targetNode || "review"} via ${transitionRecommendation.action}.`
-          ],
-          decision: `Transition recommendation: ${transitionRecommendation.action}${transitionRecommendation.targetNode ? ` -> ${transitionRecommendation.targetNode}` : ""}. ${transitionRecommendation.reason}`,
-          blockers: (summary.failure_taxonomy || []).slice(0, 3).map((item) => item.summary),
-          openQuestions: (summary.synthesis?.discussion_points || []).slice(0, 3),
-          nextActions:
-            (summary.synthesis?.follow_up_actions || []).slice(0, 3).length > 0
-              ? (summary.synthesis?.follow_up_actions || []).slice(0, 3)
-              : [transitionRecommendation.reason, "Enter review and inspect the review packet before treating the run as paper-ready."],
-          references: [
-            { label: "Analysis report", path: "result_analysis.json" },
-            { label: "Transition recommendation", path: "transition_recommendation.json" },
-            { label: "Latest results", path: "latest_results.json" }
-          ]
-        })
+        renderOperatorSummaryMarkdown(operatorSummaryInput)
+      );
+      const operatorHistoryPath = await writeRunArtifact(
+        run,
+        buildOperatorHistoryRelativePath("analysis"),
+        renderOperatorHistoryMarkdown(operatorSummaryInput)
+      );
+      const runStatus = await buildRunOperatorStatus({
+        workspaceRoot: process.cwd(),
+        run,
+        currentNode: "analyze_results",
+        approvalMode: deps.config?.workflow?.approval_mode === "manual" ? "manual" : "minimal",
+        networkPolicy:
+          deps.config?.experiments?.network_policy
+          || (deps.config?.experiments?.allow_network ? "declared" : "blocked"),
+        networkPurpose: deps.config?.experiments?.network_purpose
+      });
+      const runStatusPath = await writeRunArtifact(
+        run,
+        "run_status.json",
+        `${JSON.stringify(runStatus, null, 2)}\n`
       );
       const figureSvg = renderPerformanceFigureSvg(summary);
       let performanceFigurePath: string | undefined;
@@ -463,6 +489,14 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
           {
             sourcePath: operatorSummaryPath,
             targetRelativePath: "operator_summary.md"
+          },
+          {
+            sourcePath: operatorHistoryPath,
+            targetRelativePath: buildOperatorHistoryRelativePath("analysis")
+          },
+          {
+            sourcePath: runStatusPath,
+            targetRelativePath: "run_status.json"
           }
         ]
       });

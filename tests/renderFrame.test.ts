@@ -240,7 +240,7 @@ describe("buildFrame", () => {
         title: "Manuscript quality",
         lines: [
           "Status: Stopped.",
-          "Reason category: Policy Hard Stop.",
+          "Reason: Policy hard stop.",
           "Review reliability: grounded.",
           "Triggered by: appendix_hygiene."
         ],
@@ -248,6 +248,7 @@ describe("buildFrame", () => {
           status: "stopped",
           stage: "post_repair_1",
           reasonCategory: "policy_hard_stop",
+          displayReasonLabel: "Policy hard stop",
           reviewReliability: "grounded",
           triggeredBy: ["appendix_hygiene"],
           repairAttempts: {

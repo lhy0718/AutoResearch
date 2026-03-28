@@ -8,6 +8,7 @@ import {
   validateLiveValidationIssueFile,
   validateRunArtifactStructure
 } from "./harnessValidators.js";
+import { RunValidationScope } from "../../types.js";
 
 export type HarnessIssueKind =
   | "missing_artifact"
@@ -69,9 +70,11 @@ export async function runHarnessValidation(options: HarnessValidationOptions): P
   const includeTestRunStores = options.includeTestRunStores !== false;
   const maxFindings = Math.max(1, options.maxFindings || 200);
   const findings: HarnessValidationFinding[] = [];
+  const observedValidationScopes = new Set<RunValidationScope>();
 
   let issueEntryCount = 0;
   let resolvedIssuesPath = issuesPath;
+  let missingIssueLogFinding: HarnessValidationFinding | undefined;
   if (!(await fileExists(resolvedIssuesPath))) {
     // Fall back to parent directory (e.g. project root when workspace is test/)
     const parentCandidate = path.join(path.dirname(workspaceRoot), "ISSUES.md");
@@ -86,14 +89,14 @@ export async function runHarnessValidation(options: HarnessValidationOptions): P
       findings.push(classifyFinding(issue, "issue_log"));
     }
   } else {
-    findings.push({
+    missingIssueLogFinding = {
       code: "issues_file_missing",
       message: "ISSUES.md is missing, so live-validation records cannot be verified.",
       filePath: issuesPath,
       kind: "malformed_issue",
       remediation: "Create ISSUES.md using docs/live-validation-issue-template.md and record active validation issues.",
       scope: "issue_log"
-    });
+    };
   }
 
   const sources = await collectRunStoreSources({
@@ -159,11 +162,21 @@ export async function runHarnessValidation(options: HarnessValidationOptions): P
         nodeStates: run.graph?.nodeStates,
         runStatus: run.status
       });
+      observedValidationScopes.add(result.validationScope);
       for (const issue of result.issues) {
         const finding = classifyFinding(issue, source.scope);
         finding.runStorePath = source.runStorePath;
         findings.push(finding);
       }
+    }
+  }
+
+  if (missingIssueLogFinding) {
+    const onlyLiveFixtures =
+      observedValidationScopes.size > 0
+      && [...observedValidationScopes].every((scope) => scope === "live_fixture");
+    if (!onlyLiveFixtures) {
+      findings.push(missingIssueLogFinding);
     }
   }
 

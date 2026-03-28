@@ -511,6 +511,13 @@ describe("objective metric propagation", () => {
     expect(await readFile(path.join(root, "outputs", "results", "operator_summary.md"), "utf8")).toContain(
       "Transition recommendation: advance -> review."
     );
+    expect(await readFile(path.join(runDir, "run_status.json"), "utf8")).toContain('"current_node": "analyze_results"');
+    expect(await readFile(path.join(root, "outputs", "results", "run_status.json"), "utf8")).toContain(
+      '"recommended_next_action": "resume_review"'
+    );
+    expect(await readFile(path.join(root, "outputs", "results", "operator_history", "0001-analysis.md"), "utf8")).toContain(
+      "# Operator Stage Note"
+    );
 
     const reviewResult = await reviewNode.execute({ run, graph: run.graph });
     expect(reviewResult.status).toBe("success");

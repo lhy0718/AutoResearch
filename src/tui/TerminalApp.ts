@@ -2685,7 +2685,11 @@ export class TerminalApp {
     const snapshot = await buildRunJobsSnapshot({
       workspaceRoot: process.cwd(),
       runs,
-      approvalMode: this.config.workflow?.approval_mode || "minimal"
+      approvalMode: this.config.workflow?.approval_mode || "minimal",
+      networkPolicy:
+        this.config.experiments?.network_policy
+        || (this.config.experiments?.allow_network ? "declared" : "blocked"),
+      networkPurpose: this.config.experiments?.network_purpose
     });
     if (parsed.template) {
       for (const line of buildJobsTemplateLines({ snapshot, window: parsed.template })) {
@@ -2770,7 +2774,11 @@ export class TerminalApp {
     const summary = await buildAnalyzeResultsOperatorSummary({
       workspaceRoot: process.cwd(),
       run,
-      approvalMode: this.config.workflow?.approval_mode || "minimal"
+      approvalMode: this.config.workflow?.approval_mode || "minimal",
+      networkPolicy:
+        this.config.experiments?.network_policy
+        || (this.config.experiments?.allow_network ? "declared" : "blocked"),
+      networkPurpose: this.config.experiments?.network_purpose
     });
     await this.setActiveRunId(run.id);
     for (const line of summary.lines) {

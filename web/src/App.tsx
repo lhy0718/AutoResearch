@@ -616,12 +616,22 @@ export function App() {
                     <div className="run-list-bottom">
                       {job.review_gate_status ? (
                         <span className="run-meta">
-                          Review: {formatReviewGateStatus(job.review_gate_status, job.review_decision_outcome, job.review_recommended_transition)}
+                          Review: {job.review_gate_label || formatReviewGateStatus(job.review_gate_status, job.review_decision_outcome, job.review_recommended_transition)}
                           {typeof job.review_score_overall === "number" ? ` · ${job.review_score_overall}/5` : ""}
                         </span>
                       ) : null}
                       {job.paper_readiness_state ? (
                         <span className="run-meta">Paper: {job.paper_readiness_state}</span>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {job?.network_dependency || job?.validation_scope === "live_fixture" ? (
+                    <div className="run-list-bottom">
+                      {job.network_dependency ? (
+                        <span className="run-meta">Network: {job.network_dependency.operator_label}</span>
+                      ) : null}
+                      {job.validation_scope === "live_fixture" ? (
+                        <span className="run-meta">Scope: Live fixture</span>
                       ) : null}
                     </div>
                   ) : null}
@@ -773,7 +783,7 @@ export function App() {
                     {selectedJob.review_gate_status ? (
                       <article className="stat-card">
                         <span className="stat-label">Review gate</span>
-                        <strong>{formatReviewGateStatus(selectedJob.review_gate_status, selectedJob.review_decision_outcome, selectedJob.review_recommended_transition)}</strong>
+                        <strong>{selectedJob.review_gate_label || formatReviewGateStatus(selectedJob.review_gate_status, selectedJob.review_decision_outcome, selectedJob.review_recommended_transition)}</strong>
                       </article>
                     ) : null}
                     {typeof selectedJob.review_score_overall === "number" ? (
@@ -785,7 +795,19 @@ export function App() {
                     {selectedJob.paper_readiness_state ? (
                       <article className="stat-card">
                         <span className="stat-label">Paper state</span>
-                        <strong>{selectedJob.paper_readiness_state}</strong>
+                        <strong>{selectedJob.paper_gate_label || selectedJob.paper_readiness_state}</strong>
+                      </article>
+                    ) : null}
+                    {selectedJob.network_dependency ? (
+                      <article className="stat-card">
+                        <span className="stat-label">Network</span>
+                        <strong>{selectedJob.network_dependency.operator_label}</strong>
+                      </article>
+                    ) : null}
+                    {selectedJob.validation_scope === "live_fixture" ? (
+                      <article className="stat-card">
+                        <span className="stat-label">Validation scope</span>
+                        <strong>Live fixture</strong>
                       </article>
                     ) : null}
                   </>
@@ -831,7 +853,7 @@ export function App() {
                       <div className="manuscript-quality-stat-grid">
                         <article className="stat-card manuscript-quality-stat-card">
                           <span className="stat-label">Reason</span>
-                          <strong>{formatManuscriptQualityReason(activeInsight.manuscriptQuality.reasonCategory)}</strong>
+                          <strong>{activeInsight.manuscriptQuality.displayReasonLabel || formatManuscriptQualityReason(activeInsight.manuscriptQuality.reasonCategory)}</strong>
                         </article>
                         <article className="stat-card manuscript-quality-stat-card">
                           <span className="stat-label">Triggered By</span>

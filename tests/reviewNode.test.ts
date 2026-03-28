@@ -363,6 +363,13 @@ describe("review node", () => {
     expect(await readFile(path.join(root, "outputs", "results", "operator_summary.md"), "utf8")).toContain(
       "Panel scorecard:"
     );
+    expect(await readFile(path.join(runDir, "run_status.json"), "utf8")).toContain('"current_node": "review"');
+    expect(await readFile(path.join(root, "outputs", "results", "run_status.json"), "utf8")).toContain(
+      '"recommended_next_action": "resume_review"'
+    );
+    expect(await readFile(path.join(root, "outputs", "results", "operator_history", "0002-review.md"), "utf8")).toContain(
+      "# Operator Stage Note"
+    );
 
     const manifest = JSON.parse(await readFile(buildPublicRunManifestPath(root, run), "utf8")) as {
       generated_files: string[];
@@ -383,7 +390,9 @@ describe("review node", () => {
         "review/decision.json",
         "review/findings.jsonl",
         "review/readiness_risks.json",
-        "results/operator_summary.md"
+        "results/operator_summary.md",
+        "results/run_status.json",
+        "results/operator_history/0002-review.md"
       ])
     );
     expect(manifest.sections?.review?.generated_files).toEqual(
@@ -397,7 +406,7 @@ describe("review node", () => {
       ])
     );
     expect(manifest.sections?.results?.generated_files).toEqual(
-      expect.arrayContaining(["results/operator_summary.md"])
+      expect.arrayContaining(["results/operator_summary.md", "results/run_status.json", "results/operator_history/0002-review.md"])
     );
 
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);

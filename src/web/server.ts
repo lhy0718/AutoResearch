@@ -561,7 +561,11 @@ class AutoLabOSWebController {
       ? await buildRunJobsSnapshot({
           workspaceRoot: this.cwd,
           runs,
-          approvalMode: this.runtime.config.workflow.approval_mode || "minimal"
+          approvalMode: this.runtime.config.workflow.approval_mode || "minimal",
+          networkPolicy:
+            this.runtime.config.experiments.network_policy
+            || (this.runtime.config.experiments.allow_network ? "declared" : "blocked"),
+          networkPurpose: this.runtime.config.experiments.network_purpose
         })
       : emptyJobsSnapshot();
     return {

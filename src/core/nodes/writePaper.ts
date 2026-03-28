@@ -6,7 +6,11 @@ import { safeRead, writeRunArtifact } from "./helpers.js";
 import { NodeExecutionDeps } from "./types.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { publishPublicRunOutputs, generatePublicRunReadme } from "../publicOutputPublisher.js";
-import { renderOperatorSummaryMarkdown } from "../operatorSummary.js";
+import {
+  buildOperatorHistoryRelativePath,
+  renderOperatorHistoryMarkdown,
+  renderOperatorSummaryMarkdown
+} from "../operatorSummary.js";
 import { PaperProfileConfig, TransitionRecommendation } from "../../types.js";
 import { resolveConstraintProfile } from "../constraintProfile.js";
 import { ensureDir, fileExists } from "../../utils/fs.js";
@@ -91,6 +95,7 @@ import {
 } from "../paperCritique.js";
 import type { BriefEvidenceAssessment } from "../analysis/briefEvidenceValidator.js";
 import type { ManuscriptType } from "../paperCritique.js";
+import { buildRunOperatorStatus } from "../runs/runStatus.js";
 
 interface PaperCompileCommandResult {
   step: string;
@@ -1001,31 +1006,52 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await runContextMemory.put("write_paper.readiness_risks", readinessRisks);
       await runContextMemory.put("write_paper.manuscript_type", postDraftCritique.manuscript_type);
       await runContextMemory.put("write_paper.target_venue_style", postDraftCritique.target_venue_style);
+      const operatorSummaryInput = {
+        runId: run.id,
+        title: run.title,
+        stage: "paper" as const,
+        summary: [
+          `Paper readiness: ${paperReadiness.readiness_state}.`,
+          paperReadiness.reason,
+          `Venue: ${postDraftCritique.target_venue_style}. Manuscript decision: ${postDraftCritique.overall_decision}.`
+        ],
+        decision: `paper_ready=${paperReadiness.paper_ready}; evidence_gate=${paperReadiness.evidence_gate_status}; scientific_validation=${paperReadiness.scientific_validation_status}.`,
+        blockers: readinessRisks.risks.filter((risk) => risk.severity === "blocked").slice(0, 4).map((risk) => risk.message),
+        openQuestions: readinessRisks.risks.filter((risk) => risk.severity === "warning").slice(0, 3).map((risk) => risk.message),
+        nextActions: readinessRisks.risks.slice(0, 3).map((risk) => risk.recommended_action),
+        references: [
+          { label: "Paper readiness", path: "paper/paper_readiness.json" },
+          { label: "Paper critique", path: "paper/paper_critique.json" },
+          { label: "Readiness risks", path: "paper/readiness_risks.json" },
+          { label: "Claim evidence table", path: "paper/claim_evidence_table.json" },
+          { label: "Evidence gate decision", path: "paper/evidence_gate_decision.json" },
+          { label: "Main TeX", path: "paper/main.tex" }
+        ]
+      };
       const operatorSummaryPath = await writeRunArtifact(
         run,
         "operator_summary.md",
-        renderOperatorSummaryMarkdown({
-          runId: run.id,
-          title: run.title,
-          stage: "paper",
-          summary: [
-            `Paper readiness: ${paperReadiness.readiness_state}.`,
-            paperReadiness.reason,
-            `Venue: ${postDraftCritique.target_venue_style}. Manuscript decision: ${postDraftCritique.overall_decision}.`
-          ],
-          decision: `paper_ready=${paperReadiness.paper_ready}; evidence_gate=${paperReadiness.evidence_gate_status}; scientific_validation=${paperReadiness.scientific_validation_status}.`,
-          blockers: readinessRisks.risks.filter((risk) => risk.severity === "blocked").slice(0, 4).map((risk) => risk.message),
-          openQuestions: readinessRisks.risks.filter((risk) => risk.severity === "warning").slice(0, 3).map((risk) => risk.message),
-          nextActions: readinessRisks.risks.slice(0, 3).map((risk) => risk.recommended_action),
-          references: [
-            { label: "Paper readiness", path: "paper/paper_readiness.json" },
-            { label: "Paper critique", path: "paper/paper_critique.json" },
-            { label: "Readiness risks", path: "paper/readiness_risks.json" },
-            { label: "Claim evidence table", path: "paper/claim_evidence_table.json" },
-            { label: "Evidence gate decision", path: "paper/evidence_gate_decision.json" },
-            { label: "Main TeX", path: "paper/main.tex" }
-          ]
-        })
+        renderOperatorSummaryMarkdown(operatorSummaryInput)
+      );
+      const operatorHistoryPath = await writeRunArtifact(
+        run,
+        buildOperatorHistoryRelativePath("paper"),
+        renderOperatorHistoryMarkdown(operatorSummaryInput)
+      );
+      const runStatus = await buildRunOperatorStatus({
+        workspaceRoot: process.cwd(),
+        run,
+        currentNode: "write_paper",
+        approvalMode: deps.config?.workflow?.approval_mode === "manual" ? "manual" : "minimal",
+        networkPolicy:
+          deps.config?.experiments?.network_policy
+          || (deps.config?.experiments?.allow_network ? "declared" : "blocked"),
+        networkPurpose: deps.config?.experiments?.network_purpose
+      });
+      const runStatusPath = await writeRunArtifact(
+        run,
+        "run_status.json",
+        `${JSON.stringify(runStatus, null, 2)}\n`
       );
       emitLog(
         `Post-draft critique: manuscript_type=${postDraftCritique.manuscript_type}, ` +
@@ -1170,6 +1196,14 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
           {
             sourcePath: operatorSummaryPath,
             targetRelativePath: "operator_summary.md"
+          },
+          {
+            sourcePath: operatorHistoryPath,
+            targetRelativePath: buildOperatorHistoryRelativePath("paper")
+          },
+          {
+            sourcePath: runStatusPath,
+            targetRelativePath: "run_status.json"
           }
         ]
       });

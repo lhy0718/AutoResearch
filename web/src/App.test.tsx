@@ -1290,7 +1290,7 @@ describe("App", () => {
                 title: "Manuscript quality",
                 lines: [
                   "Status: Stopped.",
-                  "Reason category: Policy Hard Stop.",
+                  "Reason: Policy hard stop.",
                   "Review reliability: grounded.",
                   "Triggered by: appendix_hygiene."
                 ],
@@ -1298,6 +1298,7 @@ describe("App", () => {
                   status: "stopped",
                   stage: "post_repair_1",
                   reasonCategory: "policy_hard_stop",
+                  displayReasonLabel: "Policy hard stop",
                   reviewReliability: "grounded",
                   triggeredBy: ["appendix_hygiene"],
                   repairAttempts: {
@@ -1482,7 +1483,7 @@ describe("App", () => {
     await waitFor(() => {
       expect(screen.getByText("Manuscript quality")).toBeInTheDocument();
       expect(screen.getByText("Stopped")).toBeInTheDocument();
-      expect(screen.getByText("Policy Hard Stop")).toBeInTheDocument();
+      expect(screen.getByText("Policy hard stop")).toBeInTheDocument();
       expect(screen.getByText("Repairable manuscript issues")).toBeInTheDocument();
       expect(screen.getByText("Hard-stop policy findings")).toBeInTheDocument();
       expect(screen.getByText("Paper readiness risks")).toBeInTheDocument();

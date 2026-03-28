@@ -2680,7 +2680,9 @@ describe("writePaper PDF build", () => {
         "paper/paper_critique.json",
         "paper/readiness_risks.json",
         "paper/main.pdf",
-        "results/operator_summary.md"
+        "results/operator_summary.md",
+        "results/run_status.json",
+        "results/operator_history/0003-paper.md"
       ])
     );
     expect(manifest.sections?.paper?.generated_files).toEqual(
@@ -2703,6 +2705,13 @@ describe("writePaper PDF build", () => {
     );
     expect(await readFile(path.join(root, "outputs", "results", "operator_summary.md"), "utf8")).toContain(
       "Venue:"
+    );
+    expect(await readFile(path.join(runDir, "run_status.json"), "utf8")).toContain('"current_node": "write_paper"');
+    expect(await readFile(path.join(root, "outputs", "results", "run_status.json"), "utf8")).toContain(
+      '"operator_label": "Research memo"'
+    );
+    expect(await readFile(path.join(root, "outputs", "results", "operator_history", "0003-paper.md"), "utf8")).toContain(
+      "# Operator Stage Note"
     );
   });
 
