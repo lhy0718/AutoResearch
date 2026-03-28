@@ -53,10 +53,13 @@ export interface DoctorReadinessSnapshot {
   workspaceRoot: string;
   workspaceProbePath: string;
   blocked: boolean;
+  llmMode?: "codex_chatgpt_only" | "openai_api" | "ollama";
+  pdfAnalysisMode?: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
   approvalMode: "manual" | "minimal";
   executionApprovalMode: "manual" | "risk_ack" | "full_auto";
   dependencyMode: "local" | "docker" | "remote_gpu" | "plan_only";
   sessionMode: "fresh" | "existing";
+  candidateIsolation?: "attempt_snapshot_restore" | "attempt_worktree";
   networkPolicy?: ExperimentNetworkPolicy;
   networkPurpose?: ExperimentNetworkPurpose;
   networkDeclarationPresent: boolean;
@@ -310,10 +313,13 @@ export async function runDoctorReport(
       workspaceRoot,
       workspaceProbePath: workspaceWriteProbe.probePath,
       blocked: failedChecks.length > 0 || harness?.status === "fail",
+      llmMode: opts?.llmMode,
+      pdfAnalysisMode: opts?.pdfAnalysisMode,
       approvalMode,
       executionApprovalMode,
       dependencyMode,
       sessionMode,
+      candidateIsolation: opts?.candidateIsolation,
       networkPolicy,
       networkPurpose,
       networkDeclarationPresent,
@@ -416,6 +422,17 @@ async function directoryExists(dirPath: string): Promise<boolean> {
 
 export function buildDoctorHighlightLines(report: DoctorReport): string[] {
   const lines: string[] = [];
+  const profileMark = report.readiness.blocked
+    ? "[ATTN]"
+    : report.readiness.warningChecks.length > 0
+      ? "[WARN]"
+      : "[OK]";
+  const isolationLabel = report.readiness.candidateIsolation || "not-configured";
+  lines.push(
+    `${profileMark} profile: llm=${report.readiness.llmMode || "unknown"}, `
+      + `pdf=${report.readiness.pdfAnalysisMode || "unknown"}, `
+      + `dependency=${report.readiness.dependencyMode}, isolation=${isolationLabel}.`
+  );
   const networkCheck = report.checks.find((check) => check.name === "experiment-web-restriction");
   const networkStatus = networkCheck ? getDoctorCheckStatus(networkCheck) : undefined;
   if (networkStatus === "warning") {
@@ -430,6 +447,25 @@ export function buildDoctorHighlightLines(report: DoctorReport): string[] {
         "Results should remain auditable as a network-assisted run."
       );
     }
+  }
+  const providerFailures = report.readiness.failedChecks.filter((check) =>
+    check === "openai-api-key"
+      || check === "codex-cli"
+      || check === "codex-login"
+      || check.startsWith("ollama-")
+      || check === "python"
+      || check === "pip"
+      || check === "latex"
+      || check === "pdftotext"
+      || check === "pdfinfo"
+      || check === "pdftoppm"
+  );
+  if (providerFailures.length > 0) {
+    lines.push(`[ATTN] provider/runtime blockers: ${providerFailures.join(", ")}.`);
+  }
+  const degradedChecks = report.readiness.warningChecks.filter((check) => check !== "experiment-web-restriction");
+  if (degradedChecks.length > 0) {
+    lines.push(`[WARN] degraded checks: ${degradedChecks.join(", ")}.`);
   }
   const pageBudgetCheck = report.checks.find((check) => check.name === "paper-page-budget");
   if (pageBudgetCheck) {

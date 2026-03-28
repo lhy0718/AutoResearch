@@ -360,6 +360,9 @@ describe("review node", () => {
     expect(await readFile(path.join(root, "outputs", "results", "operator_summary.md"), "utf8")).toContain(
       "Canonical JSON artifacts remain the source of truth"
     );
+    expect(await readFile(path.join(root, "outputs", "results", "operator_summary.md"), "utf8")).toContain(
+      "Panel scorecard:"
+    );
 
     const manifest = JSON.parse(await readFile(buildPublicRunManifestPath(root, run), "utf8")) as {
       generated_files: string[];
@@ -375,6 +378,7 @@ describe("review node", () => {
     expect(manifest.generated_files).toEqual(
       expect.arrayContaining([
         "review/review_packet.json",
+        "review/scorecard.json",
         "review/checklist.md",
         "review/decision.json",
         "review/findings.jsonl",
@@ -385,6 +389,7 @@ describe("review node", () => {
     expect(manifest.sections?.review?.generated_files).toEqual(
       expect.arrayContaining([
         "review/review_packet.json",
+        "review/scorecard.json",
         "review/checklist.md",
         "review/decision.json",
         "review/findings.jsonl",

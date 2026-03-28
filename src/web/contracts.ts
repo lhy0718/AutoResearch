@@ -81,10 +81,13 @@ export interface DoctorResponse {
   harness?: HarnessValidationReport;
   readiness?: {
     blocked: boolean;
+    llmMode?: "codex_chatgpt_only" | "openai_api" | "ollama";
+    pdfAnalysisMode?: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
     approvalMode: "manual" | "minimal";
     executionApprovalMode: "manual" | "risk_ack" | "full_auto";
     dependencyMode: "local" | "docker" | "remote_gpu" | "plan_only";
     sessionMode: "fresh" | "existing";
+    candidateIsolation?: "attempt_snapshot_restore" | "attempt_worktree";
     networkPolicy?: "blocked" | "declared" | "required";
     networkPurpose?: "logging" | "artifact_upload" | "model_download" | "dataset_fetch" | "remote_inference" | "other";
     networkDeclarationPresent: boolean;

@@ -1224,9 +1224,11 @@ export class InteractionSession {
       maxHarnessFindings: 30
     });
     this.pushLog(
-      `[${report.readiness.blocked ? "ATTN" : "OK"}] readiness: approval=${report.readiness.approvalMode}, `
+      `[${report.readiness.blocked ? "ATTN" : "OK"}] readiness: llm=${report.readiness.llmMode || "unknown"}, `
+        + `pdf=${report.readiness.pdfAnalysisMode || "unknown"}, approval=${report.readiness.approvalMode}, `
         + `execution=${report.readiness.executionApprovalMode}, dependency=${report.readiness.dependencyMode}, `
-        + `session=${report.readiness.sessionMode}, network=${formatDoctorNetworkSummary(report.readiness)}`
+        + `session=${report.readiness.sessionMode}, isolation=${report.readiness.candidateIsolation || "not-configured"}, `
+        + `network=${formatDoctorNetworkSummary(report.readiness)}`
     );
     for (const line of buildDoctorHighlightLines(report)) {
       this.pushLog(line);

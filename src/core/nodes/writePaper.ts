@@ -1010,7 +1010,8 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
           stage: "paper",
           summary: [
             `Paper readiness: ${paperReadiness.readiness_state}.`,
-            paperReadiness.reason
+            paperReadiness.reason,
+            `Venue: ${postDraftCritique.target_venue_style}. Manuscript decision: ${postDraftCritique.overall_decision}.`
           ],
           decision: `paper_ready=${paperReadiness.paper_ready}; evidence_gate=${paperReadiness.evidence_gate_status}; scientific_validation=${paperReadiness.scientific_validation_status}.`,
           blockers: readinessRisks.risks.filter((risk) => risk.severity === "blocked").slice(0, 4).map((risk) => risk.message),
@@ -1018,6 +1019,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
           nextActions: readinessRisks.risks.slice(0, 3).map((risk) => risk.recommended_action),
           references: [
             { label: "Paper readiness", path: "paper/paper_readiness.json" },
+            { label: "Paper critique", path: "paper/paper_critique.json" },
             { label: "Readiness risks", path: "paper/readiness_risks.json" },
             { label: "Claim evidence table", path: "paper/claim_evidence_table.json" },
             { label: "Evidence gate decision", path: "paper/evidence_gate_decision.json" },
@@ -1101,6 +1103,11 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
           {
             sourcePath: path.join(runPaperDir, "paper_readiness.json"),
             targetRelativePath: "paper_readiness.json",
+            optional: true
+          },
+          {
+            sourcePath: path.join(runPaperDir, "paper_critique.json"),
+            targetRelativePath: "paper_critique.json",
             optional: true
           },
           {

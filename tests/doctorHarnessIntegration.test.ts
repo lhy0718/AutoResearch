@@ -70,6 +70,7 @@ describe("runDoctorReport", () => {
       })
     );
     expect(buildDoctorHighlightLines(report)).toEqual([
+      expect.stringContaining("profile: llm="),
       expect.stringContaining("[ATTN] paper page budget:")
     ]);
   });
@@ -94,6 +95,7 @@ describe("runDoctorReport", () => {
     expect(report.readiness.executionApprovalMode).toBe("risk_ack");
     expect(report.readiness.dependencyMode).toBe("docker");
     expect(report.readiness.sessionMode).toBe("existing");
+    expect(report.readiness.candidateIsolation).toBe("attempt_worktree");
     expect(report.readiness.workspaceProbePath).toContain(workspace);
     expect(report.checks).toContainEqual(
       expect.objectContaining({

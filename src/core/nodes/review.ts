@@ -164,7 +164,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       });
 
       const findingsPath = await writeRunArtifact(run, "review/findings.jsonl", renderJsonl(panel.findings));
-      await writeRunArtifact(run, "review/scorecard.json", `${JSON.stringify(panel.scorecard, null, 2)}\n`);
+      const scorecardPath = await writeRunArtifact(run, "review/scorecard.json", `${JSON.stringify(panel.scorecard, null, 2)}\n`);
       await writeRunArtifact(
         run,
         "review/consistency_report.json",
@@ -196,18 +196,25 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
           stage: "review",
           summary: [
             packet.objective_summary,
-            `Review readiness: ${packet.readiness.status}.`
+            `Review readiness: ${packet.readiness.status}.`,
+            `Panel scorecard: ${panel.scorecard.overall_score_1_to_5}/5 overall across ${panel.reviewers.length} reviewer(s).`,
+            `Paper quality: ${llmEvalResult.evaluation.overall_score_1_to_10}/10 (${llmEvalResult.evaluation.paper_worthiness}).`
           ],
           decision: `${panel.decision.outcome}${panel.decision.recommended_transition ? ` -> ${panel.decision.recommended_transition}` : ""}. ${panel.decision.summary}`,
           blockers: [
             ...preDraftCritique.blocking_issues.slice(0, 3).map((issue) => issue.summary),
             ...readinessRisks.risks.filter((risk) => risk.severity === "blocked").slice(0, 2).map((risk) => risk.message)
           ],
-          openQuestions: panel.decision.required_actions.slice(0, 3),
+          openQuestions: [
+            ...panel.decision.required_actions.slice(0, 2),
+            ...llmEvalResult.evaluation.weaknesses.slice(0, 2)
+          ].slice(0, 3),
           nextActions: packet.suggested_actions.slice(0, 3),
           references: [
             { label: "Review packet", path: "review/review_packet.json" },
+            { label: "Review scorecard", path: "review/scorecard.json" },
             { label: "Paper critique", path: "review/paper_critique.json" },
+            { label: "Review decision", path: "review/decision.json" },
             { label: "Minimum gate", path: "review/minimum_gate.json" },
             { label: "Readiness risks", path: "review/readiness_risks.json" }
           ]
@@ -228,6 +235,10 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
           {
             sourcePath: reviewPacketPath,
             targetRelativePath: "review_packet.json"
+          },
+          {
+            sourcePath: scorecardPath,
+            targetRelativePath: "scorecard.json"
           },
           {
             sourcePath: checklistPath,

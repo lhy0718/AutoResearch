@@ -2677,6 +2677,7 @@ describe("writePaper PDF build", () => {
         "paper/claim_status_table.json",
         "paper/evidence_gate_decision.json",
         "paper/paper_readiness.json",
+        "paper/paper_critique.json",
         "paper/readiness_risks.json",
         "paper/main.pdf",
         "results/operator_summary.md"
@@ -2692,12 +2693,16 @@ describe("writePaper PDF build", () => {
         "paper/claim_status_table.json",
         "paper/evidence_gate_decision.json",
         "paper/paper_readiness.json",
+        "paper/paper_critique.json",
         "paper/readiness_risks.json",
         "paper/main.pdf"
       ])
     );
     expect(await readFile(path.join(root, "outputs", "results", "operator_summary.md"), "utf8")).toContain(
       "Paper readiness:"
+    );
+    expect(await readFile(path.join(root, "outputs", "results", "operator_summary.md"), "utf8")).toContain(
+      "Venue:"
     );
   });
 

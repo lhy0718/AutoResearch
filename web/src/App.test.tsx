@@ -457,10 +457,13 @@ describe("App", () => {
             ],
             readiness: {
               blocked: false,
+              llmMode: "openai_api",
+              pdfAnalysisMode: "responses_api_pdf",
               approvalMode: "minimal",
               executionApprovalMode: "risk_ack",
               dependencyMode: "local",
               sessionMode: "fresh",
+              candidateIsolation: "attempt_snapshot_restore",
               networkPolicy: "declared",
               networkPurpose: "logging",
               networkDeclarationPresent: true,
@@ -499,6 +502,9 @@ describe("App", () => {
       expect(screen.getByText("experiment-web-restriction")).toBeInTheDocument();
       expect(screen.getByText("WARN")).toBeInTheDocument();
       expect(screen.getByText(/network dependency for logging/i)).toBeInTheDocument();
+      expect(screen.getByText("Readiness profile")).toBeInTheDocument();
+      expect(screen.getByText("openai_api / responses_api_pdf")).toBeInTheDocument();
+      expect(screen.getByText("attempt_snapshot_restore")).toBeInTheDocument();
     });
   });
 
@@ -539,10 +545,13 @@ describe("App", () => {
             ],
             readiness: {
               blocked: false,
+              llmMode: "openai_api",
+              pdfAnalysisMode: "responses_api_pdf",
               approvalMode: "minimal",
               executionApprovalMode: "risk_ack",
               dependencyMode: "remote_gpu",
               sessionMode: "fresh",
+              candidateIsolation: "attempt_snapshot_restore",
               networkPolicy: "required",
               networkPurpose: "remote_inference",
               networkDeclarationPresent: true,

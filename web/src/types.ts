@@ -165,7 +165,12 @@ export interface RunJobProjection {
   analysis_ready: boolean;
   review_ready: boolean;
   paper_ready: boolean;
+  review_gate_status?: "missing" | "ready" | "warning" | "blocking";
+  review_decision_outcome?: string;
+  review_recommended_transition?: string;
+  review_score_overall?: number;
   paper_readiness_state?: string;
+  paper_readiness_reason?: string;
   blocker_summary?: string;
 }
 
@@ -346,10 +351,13 @@ export interface DoctorResponse {
   harness?: HarnessValidationReport;
   readiness?: {
     blocked: boolean;
+    llmMode?: "codex_chatgpt_only" | "openai_api" | "ollama";
+    pdfAnalysisMode?: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
     approvalMode: "manual" | "minimal";
     executionApprovalMode: "manual" | "risk_ack" | "full_auto";
     dependencyMode: "local" | "docker" | "remote_gpu" | "plan_only";
     sessionMode: "fresh" | "existing";
+    candidateIsolation?: "attempt_snapshot_restore" | "attempt_worktree";
     networkPolicy?: "blocked" | "declared" | "required";
     networkPurpose?: "logging" | "artifact_upload" | "model_download" | "dataset_fetch" | "remote_inference" | "other";
     networkDeclarationPresent: boolean;

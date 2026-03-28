@@ -70,7 +70,11 @@ describe("jobsProjection", () => {
     );
     await fs.writeFile(
       path.join(runDir, "review", "review_packet.json"),
-      JSON.stringify({ generated_at: "", checks: [], readiness: { status: "ready", ready_checks: 1, warning_checks: 0, blocking_checks: 0, manual_checks: 1 }, objective_status: "met", objective_summary: "The target metric was met.", suggested_actions: [] }, null, 2)
+      JSON.stringify({ generated_at: "", checks: [], readiness: { status: "ready", ready_checks: 1, warning_checks: 0, blocking_checks: 0, manual_checks: 1 }, objective_status: "met", objective_summary: "The target metric was met.", suggested_actions: [], decision: { outcome: "advance", recommended_transition: "write_paper" } }, null, 2)
+    );
+    await fs.writeFile(
+      path.join(runDir, "review", "scorecard.json"),
+      JSON.stringify({ overall_score_1_to_5: 4.2 }, null, 2)
     );
     await fs.writeFile(
       path.join(runDir, "review", "paper_critique.json"),
@@ -99,6 +103,10 @@ describe("jobsProjection", () => {
       analysis_ready: true,
       review_ready: true,
       paper_ready: false,
+      review_gate_status: "ready",
+      review_decision_outcome: "advance",
+      review_recommended_transition: "write_paper",
+      review_score_overall: 4.2,
       recommended_next_action: "resume_review",
       blocker_summary: "A baseline is still missing before paper drafting."
     });
@@ -151,6 +159,7 @@ describe("jobsProjection", () => {
     expect(summary.review_ready).toBe(false);
     expect(summary.recommended_next_action).toBe("resume_review");
     expect(summary.lines.some((line) => line.includes("Transition: advance -> review"))).toBe(true);
+    expect(summary.lines).toContain("Review gate: not started yet or still missing one of the required review artifacts.");
     expect(summary.artifact_refs.map((item) => item.path)).toContain("result_analysis.json");
     expect(summary.artifact_refs.map((item) => item.path)).toContain("transition_recommendation.json");
   });
@@ -165,5 +174,6 @@ describe("jobsProjection", () => {
       window: "3d"
     });
     expect(lines[0]).toContain("3-day operator check-in template");
+    expect(lines[2]).toContain("Review-adjacent runs");
   });
 });

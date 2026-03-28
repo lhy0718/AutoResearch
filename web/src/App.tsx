@@ -612,6 +612,19 @@ export function App() {
                       <span className="run-meta">A/R/P: {formatReadinessTriple(job)}</span>
                     </div>
                   ) : null}
+                  {job?.review_gate_status || job?.paper_readiness_state ? (
+                    <div className="run-list-bottom">
+                      {job.review_gate_status ? (
+                        <span className="run-meta">
+                          Review: {formatReviewGateStatus(job.review_gate_status, job.review_decision_outcome, job.review_recommended_transition)}
+                          {typeof job.review_score_overall === "number" ? ` · ${job.review_score_overall}/5` : ""}
+                        </span>
+                      ) : null}
+                      {job.paper_readiness_state ? (
+                        <span className="run-meta">Paper: {job.paper_readiness_state}</span>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </button>
               );
             })
@@ -622,9 +635,12 @@ export function App() {
             <p className="section-kicker">Top failures</p>
             <div className="manuscript-quality-group-list">
               {bootstrap.jobs.top_failures.map((failure) => (
-                <p key={failure.key} className="manuscript-quality-group-line">
-                  <strong>{Math.round(failure.recurrence_probability * 100)}%</strong> · {failure.reason}
-                </p>
+                <div key={failure.key} className="manuscript-quality-group-line">
+                  <p>
+                    <strong>{Math.round(failure.recurrence_probability * 100)}%</strong> · {failure.reason}
+                  </p>
+                  <p className="doctor-harness-meta">Fix: {failure.remediation}</p>
+                </div>
               ))}
             </div>
           </section>
@@ -754,6 +770,24 @@ export function App() {
                       <span className="stat-label">Readiness</span>
                       <strong>{formatReadinessTriple(selectedJob)}</strong>
                     </article>
+                    {selectedJob.review_gate_status ? (
+                      <article className="stat-card">
+                        <span className="stat-label">Review gate</span>
+                        <strong>{formatReviewGateStatus(selectedJob.review_gate_status, selectedJob.review_decision_outcome, selectedJob.review_recommended_transition)}</strong>
+                      </article>
+                    ) : null}
+                    {typeof selectedJob.review_score_overall === "number" ? (
+                      <article className="stat-card">
+                        <span className="stat-label">Review score</span>
+                        <strong>{selectedJob.review_score_overall}/5</strong>
+                      </article>
+                    ) : null}
+                    {selectedJob.paper_readiness_state ? (
+                      <article className="stat-card">
+                        <span className="stat-label">Paper state</span>
+                        <strong>{selectedJob.paper_readiness_state}</strong>
+                      </article>
+                    ) : null}
                   </>
                 ) : null}
               </div>
@@ -1533,6 +1567,29 @@ export function App() {
 
           {activeTab === "doctor" ? (
             <div className="doctor-list">
+              {doctorReadiness ? (
+                <section className="subtle-card">
+                  <p className="section-kicker">Readiness profile</p>
+                  <div className="stat-grid">
+                    <article className="stat-card">
+                      <span className="stat-label">Backend</span>
+                      <strong>{formatDoctorBackendSummary(doctorReadiness)}</strong>
+                    </article>
+                    <article className="stat-card">
+                      <span className="stat-label">Runtime</span>
+                      <strong>{formatDoctorRuntimeSummary(doctorReadiness)}</strong>
+                    </article>
+                    <article className="stat-card">
+                      <span className="stat-label">Isolation</span>
+                      <strong>{doctorReadiness.candidateIsolation || "not-configured"}</strong>
+                    </article>
+                    <article className="stat-card">
+                      <span className="stat-label">Network</span>
+                      <strong>{formatDoctorNetworkSummary(doctorReadiness)}</strong>
+                    </article>
+                  </div>
+                </section>
+              ) : null}
               {doctorChecks.length === 0 ? (
                 <div className="inline-empty">Doctor checks will appear after bootstrap completes.</div>
               ) : (
@@ -2439,6 +2496,48 @@ function formatReadinessTriple(input: {
   paper_ready: boolean;
 }): string {
   return `${input.analysis_ready ? "yes" : "no"}/${input.review_ready ? "yes" : "no"}/${input.paper_ready ? "yes" : "no"}`;
+}
+
+function formatReviewGateStatus(
+  status: NonNullable<RunJobProjection["review_gate_status"]>,
+  decision?: string,
+  transition?: string
+): string {
+  if (decision) {
+    return transition ? `${decision} -> ${transition}` : decision;
+  }
+  switch (status) {
+    case "ready":
+      return "Ready";
+    case "warning":
+      return "Warning";
+    case "blocking":
+      return "Blocking";
+    case "missing":
+      return "Missing";
+  }
+}
+
+function formatDoctorBackendSummary(readiness: NonNullable<DoctorResponse["readiness"]>): string {
+  const llm = readiness.llmMode || "unknown";
+  const pdf = readiness.pdfAnalysisMode || "unknown";
+  return `${llm} / ${pdf}`;
+}
+
+function formatDoctorRuntimeSummary(readiness: NonNullable<DoctorResponse["readiness"]>): string {
+  return `${readiness.dependencyMode} · ${readiness.sessionMode} · ${readiness.executionApprovalMode}`;
+}
+
+function formatDoctorNetworkSummary(readiness: NonNullable<DoctorResponse["readiness"]>): string {
+  if (readiness.networkPolicy === "blocked") {
+    return "offline";
+  }
+  if (!readiness.networkDeclarationPresent) {
+    return "undeclared-enabled";
+  }
+  return readiness.networkPurpose
+    ? `${readiness.networkPolicy}:${readiness.networkPurpose}`
+    : (readiness.networkPolicy || "undeclared-enabled");
 }
 
 function labelArtifactKind(value: ArtifactEntry["kind"]): string {

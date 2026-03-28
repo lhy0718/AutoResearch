@@ -383,14 +383,17 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
           runId: run.id,
           title: run.title,
           stage: "analysis",
-          summary: [buildAnalyzeResultsCompletionSummary(summary)],
+          summary: [
+            buildAnalyzeResultsCompletionSummary(summary),
+            `Next governed gate: ${transitionRecommendation.targetNode || "review"} via ${transitionRecommendation.action}.`
+          ],
           decision: `Transition recommendation: ${transitionRecommendation.action}${transitionRecommendation.targetNode ? ` -> ${transitionRecommendation.targetNode}` : ""}. ${transitionRecommendation.reason}`,
           blockers: (summary.failure_taxonomy || []).slice(0, 3).map((item) => item.summary),
           openQuestions: (summary.synthesis?.discussion_points || []).slice(0, 3),
           nextActions:
             (summary.synthesis?.follow_up_actions || []).slice(0, 3).length > 0
               ? (summary.synthesis?.follow_up_actions || []).slice(0, 3)
-              : [transitionRecommendation.reason],
+              : [transitionRecommendation.reason, "Enter review and inspect the review packet before treating the run as paper-ready."],
           references: [
             { label: "Analysis report", path: "result_analysis.json" },
             { label: "Transition recommendation", path: "transition_recommendation.json" },

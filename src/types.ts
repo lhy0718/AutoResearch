@@ -465,7 +465,12 @@ export interface RunJobProjection {
   analysis_ready: boolean;
   review_ready: boolean;
   paper_ready: boolean;
+  review_gate_status?: "missing" | "ready" | "warning" | "blocking";
+  review_decision_outcome?: string;
+  review_recommended_transition?: string;
+  review_score_overall?: number;
   paper_readiness_state?: string;
+  paper_readiness_reason?: string;
   blocker_summary?: string;
 }
 

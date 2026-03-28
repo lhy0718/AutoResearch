@@ -21,6 +21,20 @@ interface ReviewCritiqueProjection {
   overall_decision?: string;
 }
 
+interface ReviewPacketProjection {
+  readiness?: {
+    status?: "ready" | "warning" | "blocking";
+  };
+  decision?: {
+    outcome?: string;
+    recommended_transition?: string;
+  };
+}
+
+interface ReviewScorecardProjection {
+  overall_score_1_to_5?: number;
+}
+
 interface PaperReadinessProjection {
   paper_ready?: boolean;
   readiness_state?: string;
@@ -77,7 +91,9 @@ export async function buildRunJobsSnapshot(input: {
 
   return {
     generated_at: new Date().toISOString(),
-    runs: projected.map(stripInternalProjection),
+    runs: projected
+      .sort((left, right) => Date.parse(right.last_event_at) - Date.parse(left.last_event_at))
+      .map(stripInternalProjection),
     top_failures: summarizeFailures(projected)
   };
 }
@@ -93,13 +109,21 @@ export async function buildAnalyzeResultsOperatorSummary(input: {
   const transitionRecommendation = await readJsonArtifact<Record<string, unknown>>(
     path.join(runDir, "transition_recommendation.json")
   );
+  const reviewPacket = await readJsonArtifact<ReviewPacketProjection>(
+    path.join(runDir, "review", "review_packet.json")
+  );
+  const reviewScorecard = await readJsonArtifact<ReviewScorecardProjection>(
+    path.join(runDir, "review", "scorecard.json")
+  );
 
   const artifactRefs = [
     maybeArtifactRef(projected.analysis_ready, "Analysis report", "result_analysis.json"),
     maybeArtifactRef(projected.analysis_ready, "Transition recommendation", "transition_recommendation.json"),
-    maybeArtifactRef(projected.review_ready, "Review packet", "review/review_packet.json"),
+    maybeArtifactRef(Boolean(reviewPacket), "Review packet", "review/review_packet.json"),
+    maybeArtifactRef(Boolean(reviewScorecard), "Review scorecard", "review/scorecard.json"),
     maybeArtifactRef(projected.review_ready, "Paper critique", "review/paper_critique.json"),
     maybeArtifactRef(projected.review_ready, "Review minimum gate", "review/minimum_gate.json"),
+    maybeArtifactRef(projected.review_ready, "Review readiness risks", "review/readiness_risks.json"),
     maybeArtifactRef(projected.paper_ready || Boolean(projected.paper_readiness_state), "Paper readiness", "paper/paper_readiness.json")
   ].filter((item): item is { label: string; path: string } => Boolean(item));
 
@@ -119,6 +143,26 @@ export async function buildAnalyzeResultsOperatorSummary(input: {
         ? ` -> ${transitionRecommendation.targetNode}`
         : "";
     lines.push(`Transition: ${transitionRecommendation.action}${target}.`);
+  }
+
+  if (!projected.review_ready) {
+    lines.push("Review gate: not started yet or still missing one of the required review artifacts.");
+  } else if (projected.review_gate_status || projected.review_decision_outcome) {
+    const transitionHint = projected.review_recommended_transition
+      ? ` -> ${projected.review_recommended_transition}`
+      : "";
+    const decisionHint = projected.review_decision_outcome
+      ? `${projected.review_decision_outcome}${transitionHint}`
+      : projected.review_gate_status;
+    lines.push(`Review gate: ${decisionHint}.`);
+  }
+
+  if (typeof projected.review_score_overall === "number") {
+    lines.push(`Review scorecard: ${projected.review_score_overall}/5 overall.`);
+  }
+
+  if (projected.paper_readiness_state) {
+    lines.push(`Paper readiness state: ${projected.paper_readiness_state}.`);
   }
 
   if (projected.blocker_summary) {
@@ -148,9 +192,16 @@ export function buildJobsTemplateLines(input: {
 }): string[] {
   const activeCount = input.snapshot.runs.filter((run) => run.lifecycle_status !== "completed").length;
   const blockedCount = input.snapshot.runs.filter((run) => run.recommended_next_action === "inspect_blocker").length;
+  const reviewPendingCount = input.snapshot.runs.filter(
+    (run) => run.recommended_next_action === "resume_review" || run.current_node === "review"
+  ).length;
+  const paperBlockedCount = input.snapshot.runs.filter(
+    (run) => Boolean(run.paper_readiness_state) && !run.paper_ready
+  ).length;
   return [
     `${input.window === "3d" ? "3-day" : "7-day"} operator check-in template`,
     `Runs in view: ${input.snapshot.runs.length}. Active: ${activeCount}. Blocked for inspection: ${blockedCount}.`,
+    `Review-adjacent runs: ${reviewPendingCount}. Paper-blocked runs: ${paperBlockedCount}.`,
     "1. Confirm the current_node and recommended_next_action for the top active runs.",
     "2. Inspect one blocker artifact before retrying any failed or paused run.",
     "3. Verify whether review is the next governed gate before treating a run as paper-ready.",
@@ -200,6 +251,12 @@ async function buildRunJobProjectionInternal(input: {
   const reviewCritique = await readJsonArtifact<ReviewCritiqueProjection>(
     path.join(runDir, "review", "paper_critique.json")
   );
+  const reviewPacket = await readJsonArtifact<ReviewPacketProjection>(
+    path.join(runDir, "review", "review_packet.json")
+  );
+  const reviewScorecard = await readJsonArtifact<ReviewScorecardProjection>(
+    path.join(runDir, "review", "scorecard.json")
+  );
   const lifecycleStatus = deriveLifecycleStatus(input.run);
   const lastEventAt = await readLastEventTimestamp(runDir, input.run.updatedAt);
   const dominantFailure = deriveDominantFailure({
@@ -229,8 +286,16 @@ async function buildRunJobProjectionInternal(input: {
     analysis_ready: analysisReady,
     review_ready: reviewReady,
     paper_ready: paperReady,
+    review_gate_status: normalizeReviewGateStatus(reviewPacket?.readiness?.status),
+    review_decision_outcome: asNonEmptyString(reviewPacket?.decision?.outcome),
+    review_recommended_transition: asNonEmptyString(reviewPacket?.decision?.recommended_transition),
+    review_score_overall:
+      typeof reviewScorecard?.overall_score_1_to_5 === "number"
+        ? Number(reviewScorecard.overall_score_1_to_5.toFixed(1))
+        : undefined,
     paper_readiness_state:
       asNonEmptyString(paperReadiness?.readiness_state) || asNonEmptyString(reviewCritique?.paper_readiness_state),
+    paper_readiness_reason: asNonEmptyString(paperReadiness?.reason),
     blocker_summary: dominantFailure?.summary,
     dominantFailure
   };
@@ -248,7 +313,12 @@ function stripInternalProjection(input: RunJobProjectionInternal): RunJobProject
     analysis_ready: input.analysis_ready,
     review_ready: input.review_ready,
     paper_ready: input.paper_ready,
+    review_gate_status: input.review_gate_status,
+    review_decision_outcome: input.review_decision_outcome,
+    review_recommended_transition: input.review_recommended_transition,
+    review_score_overall: input.review_score_overall,
     paper_readiness_state: input.paper_readiness_state,
+    paper_readiness_reason: input.paper_readiness_reason,
     blocker_summary: input.blocker_summary
   };
 }
@@ -480,6 +550,15 @@ function asNonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
+function normalizeReviewGateStatus(
+  value: "ready" | "warning" | "blocking" | undefined
+): RunJobProjection["review_gate_status"] {
+  if (value === "ready" || value === "warning" || value === "blocking") {
+    return value;
+  }
+  return undefined;
+}
+
 function yesNo(value: boolean): string {
   return value ? "yes" : "no";
 }
@@ -524,6 +603,21 @@ export function formatRunJobProjectionLines(input: {
     `  readiness: analysis=${yesNo(input.projection.analysis_ready)} review=${yesNo(input.projection.review_ready)} paper=${yesNo(input.projection.paper_ready)} | next=${input.projection.recommended_next_action}`,
     `  last event: ${input.projection.last_event_at}`
   ];
+  if (input.projection.review_gate_status || input.projection.review_decision_outcome || typeof input.projection.review_score_overall === "number") {
+    const gateLabel = input.projection.review_decision_outcome
+      ? `${input.projection.review_decision_outcome}${input.projection.review_recommended_transition ? ` -> ${input.projection.review_recommended_transition}` : ""}`
+      : input.projection.review_gate_status || "missing";
+    const scoreLabel = typeof input.projection.review_score_overall === "number"
+      ? ` | score=${input.projection.review_score_overall}/5`
+      : "";
+    lines.push(`  review gate: ${gateLabel}${scoreLabel}`);
+  }
+  if (input.projection.paper_readiness_state) {
+    const paperDetail = input.projection.paper_readiness_reason
+      ? ` | ${compactOneLine(input.projection.paper_readiness_reason, 120)}`
+      : "";
+    lines.push(`  paper state: ${input.projection.paper_readiness_state}${paperDetail}`);
+  }
   if (input.projection.blocker_summary) {
     lines.push(`  blocker: ${compactOneLine(input.projection.blocker_summary, 180)}`);
   }
