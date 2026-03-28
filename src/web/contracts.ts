@@ -1,4 +1,4 @@
-import { DoctorCheck, PendingPlan, RunRecord, WebSessionState } from "../types.js";
+import { DoctorCheck, PendingPlan, RunJobsSnapshot, RunRecord, WebSessionState } from "../types.js";
 import type { RunLiteratureIndex } from "../core/literatureIndex.js";
 import type { HarnessValidationReport } from "../core/validation/harnessValidationService.js";
 import type { RepositoryKnowledgeEntry } from "../core/repositoryKnowledge.js";
@@ -68,6 +68,7 @@ export interface BootstrapResponse {
   };
   session: WebSessionState;
   runs: RunRecord[];
+  jobs?: RunJobsSnapshot;
   activeRunId?: string;
   configSummary?: ConfigSummary;
   configForm?: WebConfigFormData;

@@ -138,6 +138,43 @@ export interface RunInsightCard {
   }>;
 }
 
+export type RunLifecycleStatus = "pending" | "running" | "paused" | "completed" | "failed" | "needs_approval";
+export type RunRecommendedNextAction =
+  | "inspect_blocker"
+  | "resume_review"
+  | "rerun_after_fix"
+  | "waiting_for_input"
+  | "completed";
+
+export interface RunJobFailureAggregate {
+  key: string;
+  reason: string;
+  occurrence_count: number;
+  recurrence_probability: number;
+  remediation: string;
+}
+
+export interface RunJobProjection {
+  run_id: string;
+  title: string;
+  current_node: NodeId;
+  lifecycle_status: RunLifecycleStatus;
+  approval_mode: "manual" | "minimal";
+  last_event_at: string;
+  recommended_next_action: RunRecommendedNextAction;
+  analysis_ready: boolean;
+  review_ready: boolean;
+  paper_ready: boolean;
+  paper_readiness_state?: string;
+  blocker_summary?: string;
+}
+
+export interface RunJobsSnapshot {
+  generated_at: string;
+  runs: RunJobProjection[];
+  top_failures: RunJobFailureAggregate[];
+}
+
 export interface WebSessionState {
   activeRunId?: string;
   busy: boolean;
@@ -417,6 +454,7 @@ export interface BootstrapResponse {
   };
   session: WebSessionState;
   runs: RunRecord[];
+  jobs?: RunJobsSnapshot;
   activeRunId?: string;
   configSummary?: ConfigSummary;
   configForm?: WebConfigFormData;

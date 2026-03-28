@@ -508,6 +508,9 @@ describe("objective metric propagation", () => {
     expect(await readFile(path.join(publicAnalysisDir, "transition_recommendation.json"), "utf8")).toContain(
       '"action": "advance"'
     );
+    expect(await readFile(path.join(root, "outputs", "results", "operator_summary.md"), "utf8")).toContain(
+      "Transition recommendation: advance -> review."
+    );
 
     const reviewResult = await reviewNode.execute({ run, graph: run.graph });
     expect(reviewResult.status).toBe("success");

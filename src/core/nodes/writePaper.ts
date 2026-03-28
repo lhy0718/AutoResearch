@@ -6,6 +6,7 @@ import { safeRead, writeRunArtifact } from "./helpers.js";
 import { NodeExecutionDeps } from "./types.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { publishPublicRunOutputs, generatePublicRunReadme } from "../publicOutputPublisher.js";
+import { renderOperatorSummaryMarkdown } from "../operatorSummary.js";
 import { PaperProfileConfig, TransitionRecommendation } from "../../types.js";
 import { resolveConstraintProfile } from "../constraintProfile.js";
 import { ensureDir, fileExists } from "../../utils/fs.js";
@@ -1000,6 +1001,30 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await runContextMemory.put("write_paper.readiness_risks", readinessRisks);
       await runContextMemory.put("write_paper.manuscript_type", postDraftCritique.manuscript_type);
       await runContextMemory.put("write_paper.target_venue_style", postDraftCritique.target_venue_style);
+      const operatorSummaryPath = await writeRunArtifact(
+        run,
+        "operator_summary.md",
+        renderOperatorSummaryMarkdown({
+          runId: run.id,
+          title: run.title,
+          stage: "paper",
+          summary: [
+            `Paper readiness: ${paperReadiness.readiness_state}.`,
+            paperReadiness.reason
+          ],
+          decision: `paper_ready=${paperReadiness.paper_ready}; evidence_gate=${paperReadiness.evidence_gate_status}; scientific_validation=${paperReadiness.scientific_validation_status}.`,
+          blockers: readinessRisks.risks.filter((risk) => risk.severity === "blocked").slice(0, 4).map((risk) => risk.message),
+          openQuestions: readinessRisks.risks.filter((risk) => risk.severity === "warning").slice(0, 3).map((risk) => risk.message),
+          nextActions: readinessRisks.risks.slice(0, 3).map((risk) => risk.recommended_action),
+          references: [
+            { label: "Paper readiness", path: "paper/paper_readiness.json" },
+            { label: "Readiness risks", path: "paper/readiness_risks.json" },
+            { label: "Claim evidence table", path: "paper/claim_evidence_table.json" },
+            { label: "Evidence gate decision", path: "paper/evidence_gate_decision.json" },
+            { label: "Main TeX", path: "paper/main.tex" }
+          ]
+        })
+      );
       emitLog(
         `Post-draft critique: manuscript_type=${postDraftCritique.manuscript_type}, ` +
         `decision=${postDraftCritique.overall_decision}, ` +
@@ -1127,6 +1152,17 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
             sourcePath: path.join(runPaperDir, "compiled_page_validation.json"),
             targetRelativePath: "compiled_page_validation.json",
             optional: true
+          }
+        ]
+      });
+      await publishPublicRunOutputs({
+        workspaceRoot: process.cwd(),
+        run,
+        section: "results",
+        files: [
+          {
+            sourcePath: operatorSummaryPath,
+            targetRelativePath: "operator_summary.md"
           }
         ]
       });

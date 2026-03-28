@@ -254,6 +254,116 @@ describe("InteractionSession", () => {
     expect(result.logs.some((line) => line.includes('"action": "pass"'))).toBe(true);
   });
 
+  it("projects operator jobs via /jobs without mutating the run record", async () => {
+    const run = await runStore.createRun({
+      title: "Jobs run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.currentNode = "review";
+    run.graph.currentNode = "review";
+    run.status = "paused";
+    run.graph.nodeStates.review.status = "needs_approval";
+    await runStore.updateRun(run);
+
+    const runDir = path.join(cwd, ".autolabos", "runs", run.id);
+    await fs.mkdir(path.join(runDir, "review"), { recursive: true });
+    await fs.writeFile(path.join(runDir, "events.jsonl"), `${JSON.stringify({ timestamp: "2026-03-28T12:00:00.000Z" })}\n`, "utf8");
+    await fs.writeFile(path.join(runDir, "result_analysis.json"), JSON.stringify({ overview: { objective_status: "met", objective_summary: "objective met" } }, null, 2), "utf8");
+    await fs.writeFile(path.join(runDir, "transition_recommendation.json"), JSON.stringify({ action: "advance", targetNode: "review", reason: "Ready for review." }, null, 2), "utf8");
+    await fs.writeFile(path.join(runDir, "review", "review_packet.json"), JSON.stringify({ generated_at: "", checks: [], readiness: { status: "ready", ready_checks: 1, warning_checks: 0, blocking_checks: 0, manual_checks: 1 }, objective_status: "met", objective_summary: "objective met", suggested_actions: [] }, null, 2), "utf8");
+    await fs.writeFile(path.join(runDir, "review", "paper_critique.json"), JSON.stringify({ blocking_issues_count: 0, paper_readiness_state: "paper_scale_candidate" }, null, 2), "utf8");
+    await fs.writeFile(path.join(runDir, "review", "minimum_gate.json"), JSON.stringify({ passed: true }, null, 2), "utf8");
+    await fs.writeFile(path.join(runDir, "review", "readiness_risks.json"), JSON.stringify({ generated_at: "", paper_ready: false, readiness_state: "blocked_for_paper_scale", risk_count: 1, blocked_count: 1, warning_count: 0, risks: [{ risk_code: "review_blocked", severity: "blocked", category: "paper_scale", status: "blocked", message: "A baseline is still missing.", triggered_by: ["minimum_gate"], affected_claim_ids: [], affected_citation_ids: [], recommended_action: "Add a baseline.", recheck_condition: "A baseline exists." }], summary_lines: [] }, null, 2), "utf8");
+
+    const session = new InteractionSession({
+      workspaceRoot: cwd,
+      config: {
+        research: {
+          defaultTopic: "topic",
+          defaultConstraints: ["recent papers"],
+          default_objective_metric: "metric"
+        },
+        workflow: {
+          approval_mode: "manual"
+        }
+      } as any,
+      runStore,
+      titleGenerator: {} as any,
+      codex: {} as any,
+      openAiTextClient: undefined,
+      eventStream: new InMemoryEventStream(),
+      orchestrator: {} as any,
+      semanticScholarApiKeyConfigured: true
+    });
+    await session.start();
+
+    const result = await session.submitInput("/jobs");
+
+    expect(result.logs.some((line) => line.includes("Jobs view (1 run(s))"))).toBe(true);
+    expect(result.logs.some((line) => line.includes(`readiness: analysis=yes review=yes paper=no | next=resume_review`))).toBe(true);
+    expect(result.logs.some((line) => line.includes("Top failures:"))).toBe(true);
+  });
+
+  it("summarizes analyze_results and review entry readiness via /analyze-results", async () => {
+    const run = await runStore.createRun({
+      title: "Analyze helper run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.currentNode = "analyze_results";
+    run.graph.currentNode = "analyze_results";
+    run.status = "paused";
+    run.graph.nodeStates.analyze_results.status = "completed";
+    await runStore.updateRun(run);
+
+    const runDir = path.join(cwd, ".autolabos", "runs", run.id);
+    await fs.mkdir(runDir, { recursive: true });
+    await fs.writeFile(
+      path.join(runDir, "result_analysis.json"),
+      JSON.stringify({
+        mean_score: 8.2,
+        overview: { objective_status: "met", objective_summary: "Accuracy exceeded the baseline target." },
+        failure_taxonomy: [],
+        synthesis: { follow_up_actions: ["Enter review and confirm the claim-evidence mapping."] },
+        transition_recommendation: { action: "advance", targetNode: "review", reason: "Ready for the review gate." }
+      }, null, 2),
+      "utf8"
+    );
+    await fs.writeFile(path.join(runDir, "transition_recommendation.json"), JSON.stringify({ action: "advance", targetNode: "review", reason: "Ready for the review gate." }, null, 2), "utf8");
+
+    const session = new InteractionSession({
+      workspaceRoot: cwd,
+      config: {
+        research: {
+          defaultTopic: "topic",
+          defaultConstraints: ["recent papers"],
+          default_objective_metric: "metric"
+        },
+        workflow: {
+          approval_mode: "minimal"
+        }
+      } as any,
+      runStore,
+      titleGenerator: {} as any,
+      codex: {} as any,
+      openAiTextClient: undefined,
+      eventStream: new InMemoryEventStream(),
+      orchestrator: {} as any,
+      semanticScholarApiKeyConfigured: true
+    });
+    await session.start();
+
+    const result = await session.submitInput(`/analyze-results ${run.id}`);
+
+    expect(result.logs.some((line) => line.includes(`Analyze-results operator view for ${run.id}.`))).toBe(true);
+    expect(result.logs.some((line) => line.includes("Readiness: analysis=yes, review=no, paper=no."))).toBe(true);
+    expect(result.logs.some((line) => line.includes("Next: resume_review."))).toBe(true);
+    expect(result.logs.some((line) => line.includes(`/artifact result_analysis.json --run ${run.id}`))).toBe(true);
+  });
+
   it("clears downstream artifacts and context when rewinding from an upstream node", async () => {
     const run = await runStore.createRun({
       title: "Reset run",

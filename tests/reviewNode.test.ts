@@ -357,11 +357,17 @@ describe("review node", () => {
       '"review_network_dependency_declared_logging"'
     );
     expect(typeof (await readFile(path.join(publicReviewDir, "findings.jsonl"), "utf8"))).toBe("string");
+    expect(await readFile(path.join(root, "outputs", "results", "operator_summary.md"), "utf8")).toContain(
+      "Canonical JSON artifacts remain the source of truth"
+    );
 
     const manifest = JSON.parse(await readFile(buildPublicRunManifestPath(root, run), "utf8")) as {
       generated_files: string[];
       sections?: {
         review?: {
+          generated_files: string[];
+        };
+        results?: {
           generated_files: string[];
         };
       };
@@ -372,7 +378,8 @@ describe("review node", () => {
         "review/checklist.md",
         "review/decision.json",
         "review/findings.jsonl",
-        "review/readiness_risks.json"
+        "review/readiness_risks.json",
+        "results/operator_summary.md"
       ])
     );
     expect(manifest.sections?.review?.generated_files).toEqual(
@@ -383,6 +390,9 @@ describe("review node", () => {
         "review/findings.jsonl",
         "review/readiness_risks.json"
       ])
+    );
+    expect(manifest.sections?.results?.generated_files).toEqual(
+      expect.arrayContaining(["results/operator_summary.md"])
     );
 
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);

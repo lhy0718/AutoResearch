@@ -39,8 +39,9 @@ import {
 import { runDoctorReport } from "../core/doctor.js";
 import { writeRunLiteratureIndex } from "../core/literatureIndex.js";
 import { readRepositoryKnowledgeIndex } from "../core/repositoryKnowledge.js";
+import { buildRunJobsSnapshot } from "../core/runs/jobsProjection.js";
 import { bootstrapAutoLabOSRuntime, AutoLabOSRuntime } from "../runtime/createRuntime.js";
-import { GraphNodeId, PendingPlan, RunRecord, WebSessionState } from "../types.js";
+import { GraphNodeId, PendingPlan, RunJobsSnapshot, RunRecord, WebSessionState } from "../types.js";
 import { InteractionSession } from "../interaction/InteractionSession.js";
 import { listRunArtifacts, readRunArtifact } from "./artifacts.js";
 import {
@@ -555,6 +556,14 @@ class AutoLabOSWebController {
 
   private async buildBootstrapResponse(): Promise<BootstrapResponse> {
     const config = this.runtime?.config;
+    const runs = this.runtime ? await this.runtime.runStore.listRuns() : [];
+    const jobs = this.runtime
+      ? await buildRunJobsSnapshot({
+          workspaceRoot: this.cwd,
+          runs,
+          approvalMode: this.runtime.config.workflow.approval_mode || "minimal"
+        })
+      : emptyJobsSnapshot();
     return {
       configured: Boolean(this.runtime && this.session),
       setupDefaults: {
@@ -565,7 +574,8 @@ class AutoLabOSWebController {
           config?.research.default_objective_metric || "state-of-the-art reproducibility"
       },
       session: this.session?.snapshot() || emptySessionState(),
-      runs: this.runtime ? await this.runtime.runStore.listRuns() : [],
+      runs,
+      jobs,
       activeRunId: this.session?.getActiveRunId(),
       configSummary: config ? summarizeConfig(config) : undefined,
       configForm: buildConfigFormData(config, this.cwd),
@@ -797,6 +807,14 @@ function emptySessionState(): WebSessionState {
     logs: [],
     canCancel: false,
     activeRunInsight: undefined
+  };
+}
+
+function emptyJobsSnapshot(): RunJobsSnapshot {
+  return {
+    generated_at: new Date(0).toISOString(),
+    runs: [],
+    top_failures: []
   };
 }
 

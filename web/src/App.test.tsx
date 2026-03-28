@@ -633,7 +633,33 @@ describe("App", () => {
                   }
                 }
               }
-            ]
+            ],
+            jobs: {
+              generated_at: "2026-03-10T10:00:00.000Z",
+              runs: [
+                {
+                  run_id: "run-1",
+                  title: "Run one",
+                  current_node: "analyze_results",
+                  lifecycle_status: "paused",
+                  approval_mode: "minimal",
+                  last_event_at: "2026-03-10T10:00:00.000Z",
+                  recommended_next_action: "resume_review",
+                  analysis_ready: true,
+                  review_ready: false,
+                  paper_ready: false
+                }
+              ],
+              top_failures: [
+                {
+                  key: "analysis:transition",
+                  reason: "Review has not started yet for the analyzed run.",
+                  occurrence_count: 1,
+                  recurrence_probability: 1,
+                  remediation: "Resume review from the analyze_results recommendation."
+                }
+              ]
+            }
           }),
           { status: 200 }
         );
@@ -980,7 +1006,33 @@ describe("App", () => {
                   }
                 }
               }
-            ]
+            ],
+            jobs: {
+              generated_at: "2026-03-10T10:00:00.000Z",
+              runs: [
+                {
+                  run_id: "run-1",
+                  title: "Run one",
+                  current_node: "analyze_results",
+                  lifecycle_status: "paused",
+                  approval_mode: "minimal",
+                  last_event_at: "2026-03-10T10:00:00.000Z",
+                  recommended_next_action: "resume_review",
+                  analysis_ready: true,
+                  review_ready: false,
+                  paper_ready: false,
+                  blocker_summary: "Review has not started yet; inspect the review packet inputs before approving the transition."
+                }
+              ],
+              top_failures: [
+                {
+                  key: "review-gap",
+                  reason: "Review is still pending after analysis completed.",
+                  recurrence_probability: 0.67,
+                  remediation: "Resume review and inspect the review packet before moving forward."
+                }
+              ]
+            }
           }),
           { status: 200 }
         );
@@ -1173,6 +1225,9 @@ describe("App", () => {
       expect(screen.getByText("Confidence 95%")).toBeInTheDocument();
       expect(screen.getByText("Full structured report with grounded analysis details.")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /analysis report/i })).toBeInTheDocument();
+      expect(screen.getByText("Top failures")).toBeInTheDocument();
+      expect(screen.getByText("Next: Resume review")).toBeInTheDocument();
+      expect(screen.getByText("A/R/P: yes/no/no")).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole("button", { name: /comparison: treatment vs baseline/i }));

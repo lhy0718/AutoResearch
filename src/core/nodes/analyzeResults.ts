@@ -8,6 +8,7 @@ import { NodeExecutionDeps } from "./types.js";
 import { LongTermStore } from "../memory/longTermStore.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { publishPublicRunOutputs } from "../publicOutputPublisher.js";
+import { renderOperatorSummaryMarkdown } from "../operatorSummary.js";
 import {
   evaluateObjectiveMetric,
   normalizeObjectiveMetricProfile,
@@ -375,12 +376,34 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         "transition_recommendation.json",
         JSON.stringify(transitionRecommendation, null, 2)
       );
+      const operatorSummaryPath = await writeRunArtifact(
+        run,
+        "operator_summary.md",
+        renderOperatorSummaryMarkdown({
+          runId: run.id,
+          title: run.title,
+          stage: "analysis",
+          summary: [buildAnalyzeResultsCompletionSummary(summary)],
+          decision: `Transition recommendation: ${transitionRecommendation.action}${transitionRecommendation.targetNode ? ` -> ${transitionRecommendation.targetNode}` : ""}. ${transitionRecommendation.reason}`,
+          blockers: (summary.failure_taxonomy || []).slice(0, 3).map((item) => item.summary),
+          openQuestions: (summary.synthesis?.discussion_points || []).slice(0, 3),
+          nextActions:
+            (summary.synthesis?.follow_up_actions || []).slice(0, 3).length > 0
+              ? (summary.synthesis?.follow_up_actions || []).slice(0, 3)
+              : [transitionRecommendation.reason],
+          references: [
+            { label: "Analysis report", path: "result_analysis.json" },
+            { label: "Transition recommendation", path: "transition_recommendation.json" },
+            { label: "Latest results", path: "latest_results.json" }
+          ]
+        })
+      );
       const figureSvg = renderPerformanceFigureSvg(summary);
       let performanceFigurePath: string | undefined;
       if (figureSvg) {
         performanceFigurePath = await writeRunArtifact(run, "figures/performance.svg", figureSvg);
       }
-       const publicOutputs = await publishPublicRunOutputs({
+      const publicOutputs = await publishPublicRunOutputs({
         workspaceRoot: process.cwd(),
         run,
         runContext: runContextMemory,
@@ -426,6 +449,17 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
             sourcePath: evidenceAssessmentPath,
             targetRelativePath: "evidence_scale_assessment.json",
             optional: true
+          }
+        ]
+      });
+      await publishPublicRunOutputs({
+        workspaceRoot: process.cwd(),
+        run,
+        section: "results",
+        files: [
+          {
+            sourcePath: operatorSummaryPath,
+            targetRelativePath: "operator_summary.md"
           }
         ]
       });

@@ -2678,7 +2678,8 @@ describe("writePaper PDF build", () => {
         "paper/evidence_gate_decision.json",
         "paper/paper_readiness.json",
         "paper/readiness_risks.json",
-        "paper/main.pdf"
+        "paper/main.pdf",
+        "results/operator_summary.md"
       ])
     );
     expect(manifest.sections?.paper?.generated_files).toEqual(
@@ -2694,6 +2695,9 @@ describe("writePaper PDF build", () => {
         "paper/readiness_risks.json",
         "paper/main.pdf"
       ])
+    );
+    expect(await readFile(path.join(root, "outputs", "results", "operator_summary.md"), "utf8")).toContain(
+      "Paper readiness:"
     );
   });
 

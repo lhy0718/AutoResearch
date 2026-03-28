@@ -218,10 +218,18 @@ export function App() {
         return run.id.toLowerCase().includes(query) || run.title.toLowerCase().includes(query);
       });
   const activeTabLabel = DETAIL_TABS.find((tab) => tab.id === activeTab)?.label || "Inspector";
+  const jobRows = bootstrap?.jobs?.runs || [];
   const completedNodeCount = selectedRun
     ? NODE_ORDER.filter((node) => selectedRun.graph.nodeStates[node].status === "completed").length
     : 0;
-  const selectedRunStatusClass = selectedRun ? statusToneClass(selectedRun.status) : "is-neutral";
+  const selectedJob = selectedRun
+    ? jobRows.find((job) => job.run_id === selectedRun.id) || null
+    : null;
+  const selectedRunStatusClass = selectedJob
+    ? statusToneClass(selectedJob.lifecycle_status)
+    : selectedRun
+      ? statusToneClass(selectedRun.status)
+      : "is-neutral";
   const isBusy = Boolean(session?.busy || uiActivity);
   const activeBusyLabel = session?.busy
     ? session.busyLabel || uiActivity?.label || "Working..."
@@ -575,28 +583,52 @@ export function App() {
           {filteredRuns.length === 0 ? (
             <div className="inline-empty">No runs match this search yet.</div>
           ) : (
-            filteredRuns.map((run) => (
-              <button
-                key={run.id}
-                className={`run-list-item ${selectedRunId === run.id ? "selected" : ""}`}
-                type="button"
-                disabled={isBusy}
-                onClick={() => {
-                  void runSlashSelection(run.id);
-                }}
-              >
-                <div className="run-list-top">
-                  <span className="run-title">{run.title}</span>
-                  <span className={`status-pill ${statusToneClass(run.status)}`}>{formatStatusLabel(run.status)}</span>
-                </div>
-                <div className="run-list-bottom">
-                  <span className="run-meta">{formatNodeLabel(run.currentNode)}</span>
-                  <span className="run-meta">{formatTimestamp(run.updatedAt)}</span>
-                </div>
-              </button>
-            ))
+            filteredRuns.map((run) => {
+              const job = jobRows.find((item) => item.run_id === run.id) || null;
+              const lifecycleStatus = job?.lifecycle_status || run.status;
+              return (
+                <button
+                  key={run.id}
+                  className={`run-list-item ${selectedRunId === run.id ? "selected" : ""}`}
+                  type="button"
+                  disabled={isBusy}
+                  onClick={() => {
+                    void runSlashSelection(run.id);
+                  }}
+                >
+                  <div className="run-list-top">
+                    <span className="run-title">{run.title}</span>
+                    <span className={`status-pill ${statusToneClass(lifecycleStatus)}`}>
+                      {formatStatusLabel(lifecycleStatus)}
+                    </span>
+                  </div>
+                  <div className="run-list-bottom">
+                    <span className="run-meta">{formatNodeLabel(run.currentNode)}</span>
+                    <span className="run-meta">{formatTimestamp(job?.last_event_at || run.updatedAt)}</span>
+                  </div>
+                  {job ? (
+                    <div className="run-list-bottom">
+                      <span className="run-meta">Next: {formatRunRecommendedAction(job.recommended_next_action)}</span>
+                      <span className="run-meta">A/R/P: {formatReadinessTriple(job)}</span>
+                    </div>
+                  ) : null}
+                </button>
+              );
+            })
           )}
         </div>
+        {bootstrap.jobs?.top_failures?.length ? (
+          <section className="subtle-card">
+            <p className="section-kicker">Top failures</p>
+            <div className="manuscript-quality-group-list">
+              {bootstrap.jobs.top_failures.map((failure) => (
+                <p key={failure.key} className="manuscript-quality-group-line">
+                  <strong>{Math.round(failure.recurrence_probability * 100)}%</strong> · {failure.reason}
+                </p>
+              ))}
+            </div>
+          </section>
+        ) : null}
       </aside>
 
       <main className="main-column">
@@ -636,7 +668,9 @@ export function App() {
                   <p className="eyebrow">Selected run</p>
                   <div className="title-row">
                     <h2>{selectedRun.title}</h2>
-                    <span className={`status-pill ${selectedRunStatusClass}`}>{formatStatusLabel(selectedRun.status)}</span>
+                    <span className={`status-pill ${selectedRunStatusClass}`}>
+                      {formatStatusLabel(selectedJob?.lifecycle_status || selectedRun.status)}
+                    </span>
                   </div>
                   <p className="run-topic">{selectedRun.topic}</p>
                 </div>
@@ -706,7 +740,27 @@ export function App() {
                   <span className="stat-label">Checkpoint</span>
                   <strong>#{selectedRun.graph.checkpointSeq}</strong>
                 </article>
+                {selectedJob ? (
+                  <>
+                    <article className="stat-card">
+                      <span className="stat-label">Approval mode</span>
+                      <strong>{labelApprovalMode(selectedJob.approval_mode)}</strong>
+                    </article>
+                    <article className="stat-card">
+                      <span className="stat-label">Next action</span>
+                      <strong>{formatRunRecommendedAction(selectedJob.recommended_next_action)}</strong>
+                    </article>
+                    <article className="stat-card">
+                      <span className="stat-label">Readiness</span>
+                      <strong>{formatReadinessTriple(selectedJob)}</strong>
+                    </article>
+                  </>
+                ) : null}
               </div>
+
+              {selectedJob?.blocker_summary ? (
+                <p className="summary-copy">{selectedJob.blocker_summary}</p>
+              ) : null}
 
               {selectedRun.constraints.length > 0 ? (
                 <div className="chip-list">
@@ -2362,6 +2416,31 @@ function labelApprovalMode(value: ConfigSummary["approvalMode"] | undefined): st
   return value === "manual" ? "Approval: Manual" : "Approval: Minimal";
 }
 
+function formatRunRecommendedAction(
+  value: "inspect_blocker" | "resume_review" | "rerun_after_fix" | "waiting_for_input" | "completed"
+): string {
+  switch (value) {
+    case "inspect_blocker":
+      return "Inspect blocker";
+    case "resume_review":
+      return "Resume review";
+    case "rerun_after_fix":
+      return "Rerun after fix";
+    case "waiting_for_input":
+      return "Waiting for input";
+    case "completed":
+      return "Completed";
+  }
+}
+
+function formatReadinessTriple(input: {
+  analysis_ready: boolean;
+  review_ready: boolean;
+  paper_ready: boolean;
+}): string {
+  return `${input.analysis_ready ? "yes" : "no"}/${input.review_ready ? "yes" : "no"}/${input.paper_ready ? "yes" : "no"}`;
+}
+
 function labelArtifactKind(value: ArtifactEntry["kind"]): string {
   switch (value) {
     case "json":
@@ -2419,6 +2498,8 @@ function buildInsightReferenceKey(reference: NonNullable<RunInsightCard["referen
 
 function statusToneClass(status?: string): string {
   switch (status) {
+    case "needs_approval":
+      return "is-warning";
     case "completed":
       return "is-success";
     case "running":

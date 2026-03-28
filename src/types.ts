@@ -438,6 +438,43 @@ export interface RunInsightCard {
   }>;
 }
 
+export type RunLifecycleStatus = RunStatus | "needs_approval";
+export type RunRecommendedNextAction =
+  | "inspect_blocker"
+  | "resume_review"
+  | "rerun_after_fix"
+  | "waiting_for_input"
+  | "completed";
+
+export interface RunJobFailureAggregate {
+  key: string;
+  reason: string;
+  occurrence_count: number;
+  recurrence_probability: number;
+  remediation: string;
+}
+
+export interface RunJobProjection {
+  run_id: string;
+  title: string;
+  current_node: GraphNodeId;
+  lifecycle_status: RunLifecycleStatus;
+  approval_mode: WorkflowApprovalMode;
+  last_event_at: string;
+  recommended_next_action: RunRecommendedNextAction;
+  analysis_ready: boolean;
+  review_ready: boolean;
+  paper_ready: boolean;
+  paper_readiness_state?: string;
+  blocker_summary?: string;
+}
+
+export interface RunJobsSnapshot {
+  generated_at: string;
+  runs: RunJobProjection[];
+  top_failures: RunJobFailureAggregate[];
+}
+
 export interface WebSessionState {
   activeRunId?: string;
   busy: boolean;

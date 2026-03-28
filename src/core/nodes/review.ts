@@ -6,6 +6,7 @@ import { buildReviewPacket } from "../reviewPacket.js";
 import { ReviewArtifactPresence, runReviewPanel } from "../reviewSystem.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { publishPublicRunOutputs } from "../publicOutputPublisher.js";
+import { renderOperatorSummaryMarkdown } from "../operatorSummary.js";
 import { safeRead, writeRunArtifact } from "./helpers.js";
 import { NodeExecutionDeps } from "./types.js";
 import { TransitionRecommendation } from "../../types.js";
@@ -186,6 +187,32 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         "review/readiness_risks.json",
         `${JSON.stringify(readinessRisks, null, 2)}\n`
       );
+      const operatorSummaryPath = await writeRunArtifact(
+        run,
+        "operator_summary.md",
+        renderOperatorSummaryMarkdown({
+          runId: run.id,
+          title: run.title,
+          stage: "review",
+          summary: [
+            packet.objective_summary,
+            `Review readiness: ${packet.readiness.status}.`
+          ],
+          decision: `${panel.decision.outcome}${panel.decision.recommended_transition ? ` -> ${panel.decision.recommended_transition}` : ""}. ${panel.decision.summary}`,
+          blockers: [
+            ...preDraftCritique.blocking_issues.slice(0, 3).map((issue) => issue.summary),
+            ...readinessRisks.risks.filter((risk) => risk.severity === "blocked").slice(0, 2).map((risk) => risk.message)
+          ],
+          openQuestions: panel.decision.required_actions.slice(0, 3),
+          nextActions: packet.suggested_actions.slice(0, 3),
+          references: [
+            { label: "Review packet", path: "review/review_packet.json" },
+            { label: "Paper critique", path: "review/paper_critique.json" },
+            { label: "Minimum gate", path: "review/minimum_gate.json" },
+            { label: "Readiness risks", path: "review/readiness_risks.json" }
+          ]
+        })
+      );
       const reviewPacketPath = await writeRunArtifact(run, "review/review_packet.json", `${JSON.stringify(packet, null, 2)}\n`);
       const checklistPath = await writeRunArtifact(run, "review/checklist.md", markdown);
       const publicOutputs = await publishPublicRunOutputs({
@@ -221,6 +248,17 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
           {
             sourcePath: readinessRiskPath,
             targetRelativePath: "readiness_risks.json"
+          }
+        ]
+      });
+      await publishPublicRunOutputs({
+        workspaceRoot: process.cwd(),
+        run,
+        section: "results",
+        files: [
+          {
+            sourcePath: operatorSummaryPath,
+            targetRelativePath: "operator_summary.md"
           }
         ]
       });

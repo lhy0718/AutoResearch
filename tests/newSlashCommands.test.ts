@@ -41,6 +41,16 @@ describe("new slash commands", () => {
     expect(suggestions.some((s) => s.applyValue === "/artifact ")).toBe(true);
   });
 
+  it("includes /jobs in suggestions when typing /jo", () => {
+    const suggestions = buildSuggestions({ input: "/jo", runs, activeRunId: "run-1" });
+    expect(suggestions.some((s) => s.applyValue === "/jobs ")).toBe(true);
+  });
+
+  it("includes /analyze-results in suggestions when typing /an", () => {
+    const suggestions = buildSuggestions({ input: "/an", runs, activeRunId: "run-1" });
+    expect(suggestions.some((s) => s.applyValue === "/analyze-results ")).toBe(true);
+  });
+
   it("shows all new visible commands in root suggestions", () => {
     const suggestions = buildSuggestions({ input: "/", runs, activeRunId: "run-1" });
     expect(suggestions.some((s) => s.key === "cmd:clear")).toBe(true);
@@ -49,6 +59,8 @@ describe("new slash commands", () => {
     expect(suggestions.some((s) => s.key === "cmd:session")).toBe(true);
     expect(suggestions.some((s) => s.key === "cmd:knowledge")).toBe(true);
     expect(suggestions.some((s) => s.key === "cmd:artifact")).toBe(true);
+    expect(suggestions.some((s) => s.key === "cmd:jobs")).toBe(true);
+    expect(suggestions.some((s) => s.key === "cmd:analyze-results")).toBe(true);
     expect(suggestions.some((s) => s.key === "cmd:stats")).toBe(true);
     expect(suggestions.some((s) => s.key === "cmd:terminal-setup")).toBe(true);
     expect(suggestions.some((s) => s.key === "cmd:theme")).toBe(true);

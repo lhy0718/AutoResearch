@@ -21,6 +21,14 @@ import {
 } from "../core/commands/naturalActionIntent.js";
 import { buildDoctorHighlightLines, getDoctorCheckStatus, runDoctorReport } from "../core/doctor.js";
 import { resolveRunByQuery } from "../core/runs/runResolver.js";
+import {
+  buildAnalyzeResultsOperatorSummary,
+  buildJobsTemplateLines,
+  buildRunJobsSnapshot,
+  formatFailureAggregateLines,
+  formatRunJobProjectionLines,
+  parseJobsCommandArgs
+} from "../core/runs/jobsProjection.js";
 import { RunContextMemory } from "../core/memory/runContextMemory.js";
 import { parseSlashCommand } from "../core/commands/parseSlash.js";
 import { getPdfAnalysisModeForConfig } from "../config.js";
@@ -1063,12 +1071,17 @@ export class InteractionSession {
       case "runs":
         await this.handleRuns(args);
         return { ok: true };
+      case "jobs":
+        await this.handleJobs(args);
+        return { ok: true };
       case "run":
         return this.handleRunSelect(args, false);
       case "resume":
         return this.handleRunSelect(args, true);
       case "title":
         return this.handleTitle(args);
+      case "analyze-results":
+        return this.handleAnalyzeResults(args);
       case "knowledge":
         await this.handleKnowledge(args);
         return { ok: true };
@@ -1093,7 +1106,8 @@ export class InteractionSession {
 
   private printHelp(): void {
     this.pushLog("Web composer commands:");
-    this.pushLog("/help | /runs | /run <run> | /resume <run> | /title <new title>");
+    this.pushLog("/help | /runs | /jobs [query|--template 3d|7d] | /run <run> | /resume <run> | /title <new title>");
+    this.pushLog("/analyze-results [run]");
     this.pushLog("/knowledge [run] | /artifact <path> [--run <run>]");
     this.pushLog("/doctor | /approve | /retry");
     this.pushLog("/agent list | /agent status [run] | /agent graph [run]");
@@ -1249,6 +1263,35 @@ export class InteractionSession {
     }
   }
 
+  private async handleJobs(args: string[]): Promise<void> {
+    const parsed = parseJobsCommandArgs(args);
+    const runs = parsed.query ? await this.runStore.searchRuns(parsed.query) : await this.runStore.listRuns();
+    if (runs.length === 0) {
+      this.pushLog("No runs found for the jobs view.");
+      return;
+    }
+    const snapshot = await buildRunJobsSnapshot({
+      workspaceRoot: this.workspaceRoot,
+      runs,
+      approvalMode: this.config.workflow?.approval_mode || "minimal"
+    });
+    if (parsed.template) {
+      for (const line of buildJobsTemplateLines({ snapshot, window: parsed.template })) {
+        this.pushLog(line);
+      }
+      return;
+    }
+    this.pushLog(`Jobs view (${snapshot.runs.length} run(s)):`);
+    for (const projection of snapshot.runs.slice(0, 20)) {
+      for (const line of formatRunJobProjectionLines({ projection })) {
+        this.pushLog(line);
+      }
+    }
+    for (const line of formatFailureAggregateLines(snapshot.top_failures)) {
+      this.pushLog(line);
+    }
+  }
+
   private async handleRunSelect(args: string[], resume: boolean): Promise<SlashExecutionResult> {
     const query = args.join(" ").trim();
     if (!query) {
@@ -1287,6 +1330,32 @@ export class InteractionSession {
     await this.setActiveRunId(run.id);
     await this.refreshRunIndex();
     this.pushLog(`Updated title: ${previousTitle} -> ${parsed.title}`);
+    return { ok: true };
+  }
+
+  private async handleAnalyzeResults(args: string[]): Promise<SlashExecutionResult> {
+    const runQuery = args.join(" ").trim() || undefined;
+    const run = await this.resolveTargetRun(runQuery);
+    if (!run) {
+      return { ok: false, reason: "target run not found" };
+    }
+
+    const summary = await buildAnalyzeResultsOperatorSummary({
+      workspaceRoot: this.workspaceRoot,
+      run,
+      approvalMode: this.config.workflow?.approval_mode || "minimal"
+    });
+
+    await this.setActiveRunId(run.id);
+    for (const line of summary.lines) {
+      this.pushLog(line);
+    }
+    if (summary.artifact_refs.length > 0) {
+      this.pushLog("Artifact shortcuts:");
+      for (const artifactRef of summary.artifact_refs) {
+        this.pushLog(`- ${artifactRef.label}: /artifact ${artifactRef.path} --run ${run.id}`);
+      }
+    }
     return { ok: true };
   }
 
