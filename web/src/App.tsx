@@ -238,6 +238,8 @@ export function App() {
     selectedArtifact?.path === "review/review_packet.json" && artifactPreview
       ? parseReviewPacketPreview(artifactPreview)
       : null;
+  const selectedCompletenessChecklistArtifact =
+    artifacts.find((artifact) => artifact.path === "run_completeness_checklist.json") || null;
   const activeInsight =
     session && selectedRun && session.activeRunId === selectedRun.id ? session.activeRunInsight : null;
   const selectedKnowledgeEntry =
@@ -808,6 +810,19 @@ export function App() {
                       <article className="stat-card">
                         <span className="stat-label">Validation scope</span>
                         <strong>Live fixture</strong>
+                      </article>
+                    ) : null}
+                    {selectedCompletenessChecklistArtifact ? (
+                      <article className="stat-card">
+                        <span className="stat-label">Completeness</span>
+                        <button
+                          className="button button-secondary button-small"
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() => void openInsightReference("run_completeness_checklist.json")}
+                        >
+                          Open checklist
+                        </button>
                       </article>
                     ) : null}
                   </>

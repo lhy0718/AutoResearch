@@ -64,6 +64,24 @@ Use `/doctor` in TUI or the web Doctor tab first when triaging live issues.
 - Harness diagnostics summarize issue-log integrity and run artifact consistency for the current workspace.
 - Findings include a problem class and a short remediation hint so triage can move directly to reproduction/fix.
 
+### Fixture scope note
+
+When a temp workspace exists only to validate operator surfaces, it may declare
+`run_status.json.validation_scope = "live_fixture"`.
+
+- This does not loosen the contract for normal runs.
+- It allows harness/doctor to evaluate the fixture against the smaller artifact set
+  that the validation target actually needs.
+- Live fixtures should still emit a matching `run_completeness_checklist.json` so the
+  reduced scope is explicit and inspectable.
+- Real live-validation workspaces should live under `test/`, not `/tmp`.
+- Reuse the shared fixture helper in `tests/helpers/liveFixtureWorkspace.ts` when
+  constructing review/paper operator workspaces.
+- The helper creates workspaces under `test/.live/` and copies `test/.env` into the
+  fixture root when present, so `/doctor` sees the same workspace-local secret surface
+  as a normal `test/` run.
+- Do not hand-write `run_status.json` and checklist payloads separately.
+
 ## 5) Live bug -> regression test workflow
 
 When a live bug is confirmed:

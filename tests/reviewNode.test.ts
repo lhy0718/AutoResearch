@@ -364,8 +364,12 @@ describe("review node", () => {
       "Panel scorecard:"
     );
     expect(await readFile(path.join(runDir, "run_status.json"), "utf8")).toContain('"current_node": "review"');
+    expect(await readFile(path.join(runDir, "run_completeness_checklist.json"), "utf8")).toContain('"validation_scope": "full_run"');
     expect(await readFile(path.join(root, "outputs", "results", "run_status.json"), "utf8")).toContain(
       '"recommended_next_action": "resume_review"'
+    );
+    expect(await readFile(path.join(root, "outputs", "results", "run_completeness_checklist.json"), "utf8")).toContain(
+      `"run_id": "${run.id}"`
     );
     expect(await readFile(path.join(root, "outputs", "results", "operator_history", "0002-review.md"), "utf8")).toContain(
       "# Operator Stage Note"
@@ -392,6 +396,7 @@ describe("review node", () => {
         "review/readiness_risks.json",
         "results/operator_summary.md",
         "results/run_status.json",
+        "results/run_completeness_checklist.json",
         "results/operator_history/0002-review.md"
       ])
     );
@@ -406,7 +411,12 @@ describe("review node", () => {
       ])
     );
     expect(manifest.sections?.results?.generated_files).toEqual(
-      expect.arrayContaining(["results/operator_summary.md", "results/run_status.json", "results/operator_history/0002-review.md"])
+      expect.arrayContaining([
+        "results/operator_summary.md",
+        "results/run_status.json",
+        "results/run_completeness_checklist.json",
+        "results/operator_history/0002-review.md"
+      ])
     );
 
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);

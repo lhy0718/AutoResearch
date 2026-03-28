@@ -34,6 +34,7 @@ import {
   type ReadinessRiskArtifact
 } from "../readinessRisks.js";
 import { buildRunOperatorStatus } from "../runs/runStatus.js";
+import { buildRunCompletenessChecklist } from "../runs/runCompletenessChecklist.js";
 
 export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
@@ -305,6 +306,27 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
           {
             sourcePath: runStatusPath,
             targetRelativePath: "run_status.json"
+          }
+        ]
+      });
+      const completenessChecklist = await buildRunCompletenessChecklist({
+        workspaceRoot: process.cwd(),
+        run,
+        currentNode: "review"
+      });
+      const completenessChecklistPath = await writeRunArtifact(
+        run,
+        "run_completeness_checklist.json",
+        `${JSON.stringify(completenessChecklist, null, 2)}\n`
+      );
+      await publishPublicRunOutputs({
+        workspaceRoot: process.cwd(),
+        run,
+        section: "results",
+        files: [
+          {
+            sourcePath: completenessChecklistPath,
+            targetRelativePath: "run_completeness_checklist.json"
           }
         ]
       });

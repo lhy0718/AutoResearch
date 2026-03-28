@@ -495,6 +495,22 @@ export interface RunOperatorStatusArtifact {
   validation_scope: RunValidationScope;
 }
 
+export interface RunCompletenessChecklistArtifact {
+  version: 1;
+  generated_at: string;
+  run_id: string;
+  validation_scope: RunValidationScope;
+  run_record_present: boolean;
+  events_present: boolean;
+  checkpoints_present: boolean;
+  latest_checkpoint_present: boolean;
+  public_results_mirror_present: boolean;
+  node_artifact_presence: Record<string, boolean>;
+  missing_required: string[];
+  missing_optional: string[];
+  summary: string;
+}
+
 export interface RunJobFailureAggregate {
   key: string;
   reason: string;

@@ -96,6 +96,7 @@ import {
 import type { BriefEvidenceAssessment } from "../analysis/briefEvidenceValidator.js";
 import type { ManuscriptType } from "../paperCritique.js";
 import { buildRunOperatorStatus } from "../runs/runStatus.js";
+import { buildRunCompletenessChecklist } from "../runs/runCompletenessChecklist.js";
 
 interface PaperCompileCommandResult {
   step: string;
@@ -1204,6 +1205,27 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
           {
             sourcePath: runStatusPath,
             targetRelativePath: "run_status.json"
+          }
+        ]
+      });
+      const completenessChecklist = await buildRunCompletenessChecklist({
+        workspaceRoot: process.cwd(),
+        run,
+        currentNode: "write_paper"
+      });
+      const completenessChecklistPath = await writeRunArtifact(
+        run,
+        "run_completeness_checklist.json",
+        `${JSON.stringify(completenessChecklist, null, 2)}\n`
+      );
+      await publishPublicRunOutputs({
+        workspaceRoot: process.cwd(),
+        run,
+        section: "results",
+        files: [
+          {
+            sourcePath: completenessChecklistPath,
+            targetRelativePath: "run_completeness_checklist.json"
           }
         ]
       });

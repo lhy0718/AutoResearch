@@ -1,12 +1,34 @@
 # ISSUES.md
 
-Last updated: 2026-03-27
+Last updated: 2026-03-28
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
+Usage rules:
+- `ISSUES.md` is for reproduced live-validation defects and tracked research/paper-readiness risks.
+- `TODO.md` is for forward-looking follow-ups, proposal-only work, and backlog items.
+- Canonical workflow and policy still live in `AGENTS.md` and `docs/`.
+
 ---
 
-## Current issue log
+## Current active status
+
+- Active live-validation defects: none currently open in this file.
+- Active research/paper-readiness watchlist: see `Research and paper-readiness watchlist` below.
+- Current watchlist snapshot:
+  - `R-001` Result-table discipline and claim→evidence linkage — `MITIGATED`
+  - `R-002` Scientific gate warnings surfacing — `MITIGATED`
+  - `R-003` System-validation paper shape over-promotion — `MITIGATED`
+  - `P-001` Baseline/comparator packaging — `MITIGATED`
+  - `P-002` Compact quantitative result packaging — `MITIGATED`
+  - `P-003` Related-work depth signaling — `MITIGATED`
+- If a new runtime/UI defect is reproduced, add it above the fixed log with a fresh `LV-*` identifier and one dominant root-cause class.
+
+---
+
+## Recent fixed live validation issues
+
+Most recent first. These remain in full detail because they are the closest regression context for current TUI/web and governed-run behavior.
 
 ### LV-083 — `/doctor` wrongly blocks the default local snapshot-isolation execution mode as if containerization were missing
 - Status: FIXED
@@ -570,7 +592,9 @@ This file was compacted on 2026-03-22 to remove duplicated template fragments, m
 
 ---
 
-## Open risks
+## Research and paper-readiness watchlist
+
+These are not active interactive defects. They stay here as mitigated or watchlist-style research/paper-readiness risks so they do not get lost in the fixed live-validation timeline.
 
 ### R-001 — Result-table discipline and claim→evidence linkage
 - Status: MITIGATED
@@ -602,239 +626,8 @@ This file was compacted on 2026-03-22 to remove duplicated template fragments, m
 
 ---
 
-## Recent live validation log
+## Historical archive
 
-### LV-065 — TUI startup could leak the OSC 11 terminal background response into the composer input
-- Status: FIXED
-- Validation target: fresh first-run TUI startup in tmux
-- Environment/session context: repo head on 2026-03-22, fresh tmux-backed TUI startup in the workspace root.
-- Reproduction steps:
-  1. Start the TUI in tmux with terminal background probing enabled.
-  2. Observe the composer immediately after startup.
-  3. Check whether the OSC 11 terminal response is injected into input text.
-- Expected behavior: terminal background probing should not leak raw OSC 11 responses into the composer.
-- Actual behavior: raw `11;rgb:...` content could appear in the input buffer on startup.
-- Fresh vs existing session comparison:
-  - Fresh session: reproduced on startup before the fix.
-  - Existing session: not observed as a resume-only issue; the symptom was startup-specific.
-- Root cause hypothesis:
-  - Type: `in_memory_projection_bug`
-  - Hypothesis: OSC 11 background-query responses were reaching readline keypress handling and being projected into the composer.
-- Code/test changes:
-  - `src/tui/TerminalApp.ts`
-  - `tests/terminalAppPlanExecution.test.ts`
-- Regression status:
-  - Automated regression test linked: yes, `tests/terminalAppPlanExecution.test.ts`.
-  - Re-validation result: `npm run build`, `npm test`, fresh tmux startup revalidation, and a general PTY check confirmed no leaked `11;rgb:...` text.
+Older fixed live-validation entries, compact archived summaries, and legacy draft items have been moved out of this main operator-facing file.
 
-### LV-064 — Ctrl+C inside an active TUI selection menu canceled only the menu instead of exiting the app
-- Status: FIXED
-- Validation target: live TUI selection menu opened from `/model`
-- Environment/session context: live TUI session with an active selection menu opened from `/model`.
-- Reproduction steps:
-  1. Launch the TUI and open the `/model` selection menu.
-  2. Press Ctrl+C while the menu is active.
-  3. Observe whether the app exits or only the menu closes.
-- Expected behavior: Ctrl+C should trigger global shutdown even while a selection menu is active.
-- Actual behavior: the menu was canceled but the app remained open.
-- Fresh vs existing session comparison:
-  - Fresh session: reproduced in a fresh TUI launch.
-  - Existing session: no divergence noted; the bug was tied to the active menu state.
-- Root cause hypothesis:
-  - Type: `refresh_render_bug`
-  - Hypothesis: active selection handling consumed Ctrl+C as a menu cancel instead of forwarding it to global shutdown.
-- Code/test changes:
-  - `src/tui/TerminalApp.ts`
-  - `tests/terminalAppPlanExecution.test.ts`
-- Regression status:
-  - Automated regression test linked: yes, `tests/terminalAppPlanExecution.test.ts`.
-  - Re-validation result: `npm run build`, `npm test`, and live tmux revalidation confirmed `/model` followed by Ctrl+C exits immediately.
-
-### LV-063 — OpenAI first-run setup asked reasoning effort before the relevant model was chosen
-- Status: FIXED
-- Validation target: fresh first-run setup under `providers.llm_mode=openai_api`
-- Environment/session context: fresh first-run setup under `providers.llm_mode=openai_api` in both TUI and web bootstrap flows.
-- Reproduction steps:
-  1. Start from an unconfigured workspace with `providers.llm_mode=openai_api`.
-  2. Open the first-run setup flow in TUI or web.
-  3. Observe the ordering of model and reasoning prompts.
-- Expected behavior: OpenAI setup should ask for the relevant model before reasoning effort and should not show PDF-specific controls.
-- Actual behavior: OpenAI inherited Codex-first prompt ordering and separate PDF-specific controls.
-- Fresh vs existing session comparison:
-  - Fresh session: reproduced on first-run setup.
-  - Existing session: not the dominant boundary because the issue was first-run projection.
-- Root cause hypothesis:
-  - Type: `in_memory_projection_bug`
-  - Hypothesis: provider-gated onboarding and setup projection were too broad, so OpenAI could inherit Codex-first prompt ordering and separate PDF-specific controls.
-- Code/test changes:
-  - `src/config.ts`
-  - `web/src/App.tsx`
-  - `tests/configEnv.test.ts`
-  - `web/src/App.test.tsx`
-- Regression status:
-  - Automated regression test linked: yes, `tests/configEnv.test.ts` and `web/src/App.test.tsx`.
-  - Re-validation result: `npm run build`, `npm test`, focused config/web regressions, fresh TUI onboarding checks for OpenAI/Codex/Ollama, and fresh web bootstrap checks all passed.
-
-### LV-062 — Fresh paper-scale runs could hang indefinitely in `analyze_papers` because Responses PDF planner/extractor/reviewer timeouts defaulted to unbounded waits
-- Status: FIXED
-- Validation target: fresh `collect_papers -> analyze_papers` path under `providers.llm_mode=openai_api`
-- Environment/session context: fresh paper-scale run under `providers.llm_mode=openai_api`, `collect_papers -> analyze_papers` boundary.
-- Reproduction steps:
-  1. Start a fresh paper-scale run under OpenAI mode.
-  2. Let `collect_papers` finish and enter `analyze_papers`.
-  3. Observe whether planner/extractor/reviewer waits are bounded when remote PDF analysis slows or stalls.
-- Expected behavior: planner, extractor, and reviewer waits should remain bounded so fallback can proceed.
-- Actual behavior: zero default timeouts let remote PDF analysis wait indefinitely and block fallback.
-- Fresh vs existing session comparison:
-  - Fresh session: reproduced on a fresh paper-scale run.
-  - Existing session: no separate divergence established; the issue was already visible on fresh progression.
-- Root cause hypothesis:
-  - Type: `persisted_state_bug`
-  - Hypothesis: default planner/extractor/reviewer timeouts were zero, so remote PDF analysis could wait indefinitely and block fallback.
-- Code/test changes:
-  - `src/core/analysis/paperAnalyzer.ts`
-  - `tests/paperAnalyzer.test.ts`
-  - `tests/analyzePapers.test.ts`
-- Regression status:
-  - Automated regression test linked: yes, `tests/paperAnalyzer.test.ts` and `tests/analyzePapers.test.ts`.
-  - Re-validation result: targeted regressions, `npm test`, and harness validation passed.
-
-### LV-061 — Rebooted host could leave a false-positive live TUI session lock when the saved PID was reused by a non-TUI process
-- Status: FIXED
-- Validation target: fresh TUI launch with a stale `tui-session-lock.json`
-- Environment/session context: fresh TUI launch after a reboot-style stale `tui-session-lock.json` remained in the workspace.
-- Reproduction steps:
-  1. Leave behind a stale `tui-session-lock.json` with a reused PID.
-  2. Launch the TUI after a reboot-style environment change.
-  3. Observe whether startup treats the reused PID as a live TUI owner.
-- Expected behavior: startup should reject stale locks owned by unrelated reused PIDs.
-- Actual behavior: startup trusted PID reachability alone and treated a reused PID as a live TUI owner.
-- Fresh vs existing session comparison:
-  - Fresh session: reproduced on a fresh launch after the stale lock remained.
-  - Existing session: not the relevant boundary because the symptom occurred before the app fully resumed.
-- Root cause hypothesis:
-  - Type: `persisted_state_bug`
-  - Hypothesis: startup trusted PID reachability alone and treated a reused PID as a live TUI owner.
-- Code/test changes:
-  - `src/tui/TerminalApp.ts`
-  - `tests/terminalAppLaunch.test.ts`
-- Regression status:
-  - Automated regression test linked: yes, `tests/terminalAppLaunch.test.ts`.
-  - Re-validation result: targeted regression plus live reboot-style stale-lock revalidation passed.
-
-### LV-060 — fallback paper drafting leaked internal artifact paths into submission prose
-- Status: FIXED
-- Validation target: `write_paper` fallback drafting after staged LLM failures
-- Environment/session context: `write_paper` fallback drafting after staged LLM failures during a governed paper-writing attempt.
-- Reproduction steps:
-  1. Reach `write_paper` and force the staged LLM path to fail.
-  2. Let the fallback drafting path produce submission prose.
-  3. Inspect the draft for leaked internal runtime paths.
-- Expected behavior: fallback drafting should not leak internal artifact paths such as `.autolabos/` into submission prose.
-- Actual behavior: raw run constraints were copied into fallback drafting and polish prompts, leaking internal artifact paths.
-- Fresh vs existing session comparison:
-  - Fresh session: reproduced on the first fallback drafting attempt after staged failure.
-  - Existing session: no material divergence noted.
-- Root cause hypothesis:
-  - Type: `in_memory_projection_bug`
-  - Hypothesis: raw run constraints were copied into fallback drafting and polish prompts, leaking internal artifact paths such as `.autolabos/` into submission prose.
-- Code/test changes:
-  - `src/core/analysis/paperWriting.ts`
-  - `src/core/analysis/paperManuscript.ts`
-  - `tests/paperSubmissionSanitization.test.ts`
-- Regression status:
-  - Automated regression test linked: yes, `tests/paperSubmissionSanitization.test.ts`.
-  - Re-validation result: deterministic sanitization regression plus same-flow live retry confirmed path leakage was removed.
-
-### LV-059 — `write_paper` hard-failed on staged LLM fetch errors instead of degrading to stage-level fallback
-- Status: FIXED
-- Validation target: `review -> write_paper` under `providers.llm_mode=openai_api`
-- Environment/session context: `review -> write_paper` under `providers.llm_mode=openai_api`, with staged LLM fetch errors injected.
-- Reproduction steps:
-  1. Reach `write_paper` under OpenAI mode.
-  2. Force staged LLM fetch errors during drafting.
-  3. Observe whether the node degrades to fallback or hard-fails.
-- Expected behavior: staged LLM fetch errors should degrade to stage-level fallback rather than killing the node.
-- Actual behavior: the staged-LLM paper-writing path awaited provider completions without the fallback wrapper used elsewhere.
-- Fresh vs existing session comparison:
-  - Fresh session: reproduced on a fresh `review -> write_paper` attempt.
-  - Existing session: no distinct resume-only divergence was required to trigger it.
-- Root cause hypothesis:
-  - Type: `in_memory_projection_bug`
-  - Hypothesis: the staged-LLM paper-writing path awaited provider completions without the fallback wrapper used elsewhere.
-- Code/test changes:
-  - `src/core/agents/paperWriterSessionManager.ts`
-  - `tests/paperWriterSessionManager.test.ts`
-- Regression status:
-  - Automated regression test linked: yes, `tests/paperWriterSessionManager.test.ts`.
-  - Re-validation result: targeted regression passed and same-flow live revalidation confirmed the node no longer dies on staged fetch failures.
-
-### LV-058 — `run_experiments` could monopolize host responsiveness during heavy local model execution
-- Status: FIXED
-- Validation target: governed local Python execution in `run_experiments`
-- Environment/session context: governed local Python execution in `run_experiments` on a host sensitive to heavy local-model startup load.
-- Reproduction steps:
-  1. Launch a governed local Python experiment run that loads a heavy local model.
-  2. Observe host responsiveness while `run_experiments` is active.
-  3. Compare whether thread and priority limits keep the machine responsive.
-- Expected behavior: local experiment execution should remain bounded enough that the host stays responsive.
-- Actual behavior: local shell commands ran with unconstrained thread settings and normal priority, allowing model-loading work to saturate the host.
-- Fresh vs existing session comparison:
-  - Fresh session: reproduced on a fresh governed local execution.
-  - Existing session: no divergence noted; the symptom followed the execution mode, not resume state.
-- Root cause hypothesis:
-  - Type: `race_timing_bug`
-  - Hypothesis: local shell commands ran with unconstrained thread settings and normal priority, allowing model-loading work to saturate the host.
-- Code/test changes:
-  - `src/tools/aciLocalAdapter.ts`
-  - `tests/aciLocalAdapter.test.ts`
-- Regression status:
-  - Automated regression test linked: yes, `tests/aciLocalAdapter.test.ts`.
-  - Re-validation result: `npm run build`, `npm test`, `npm run validate:harness`, and same-run responsiveness probes all passed.
-
----
-
-## Archived summary
-
-| ID | Summary | Status |
-|---|---|---|
-| LV-054 | Failed-run natural steering ignored persisted transition recommendations | fixed |
-| LV-053 | Duplicate TUI sessions in the same workspace could overlap recovery and execution | fixed |
-| LV-052 | Fatal runner failures could leave `run_experiments` stuck in `running` | fixed |
-| LV-051 | Recovered bundles could repeat an invalid bounded local scope | fix landed; live same-flow revalidation was pending at the time |
-| LV-050 | `implement_experiments` could resume a stale thread after a design backtrack changed the plan | fixed |
-| LV-049 | Canonical run-root `metrics.json` could be missing while public metrics existed | fixed |
-| LV-048 | `generate_hypotheses` could hang after review-driven backtrack because staged LLM calls had no timeout/fallback boundary | fixed |
-| LV-047 | Review pre-summary could drop explicit baseline/comparator information already present in artifacts | fixed |
-| LV-046 | `implement_experiments` could reuse a stale public bundle after a design retry changed the plan | fixed / superseded by later bundle freshness validation |
-| LV-045 | `design_experiments` retry could hang after loading retry context without committing a new panel | fixed |
-| LV-044 | `run_experiments` could omit required `--run-dir` and `--metrics-path` arguments | fixed |
-| LV-043 | Design retry ignored bounded failure evidence from the previous cycle | fixed |
-| LV-040 | Codex runtime could fail when default `~/.codex` was not writable in the sandbox | fixed |
-| LV-038 | `analyze_papers` selection regression could prune preserved artifacts before the guard fired | deterministic fix landed; clean same-flow live revalidation was pending at the time |
-| LV-037 | Reopening the TUI could auto-retry an actively running `analyze_papers` node and misproject progress | fixed |
-| LV-036 | `collect_papers` retry could leave a stale aborted-fetch error visible while the node was running | fixed |
-| LV-035 | Brief-driven collect fallback could collapse a paper-scale topic into a generic Semantic Scholar query | fixed |
-| LV-034 | `/new` could create a non-paper-scale brief and `/brief start` could run it anyway | fixed |
-| LV-033 | Review critique could create an infinite backtrack loop | fixed |
-| LV-032 | `/resume` did not trigger `continueSupervisedRun()` | fixed |
-| LV-031 | `implement_experiments` could generate CPU-only code despite available GPU | fixed |
-| LV-030 | TUI could crash with unhandled `EIO` when stdout disconnected during render | fixed |
-| LV-029b | `recoverStaleRunningNode()` could reset status without triggering execution | fixed |
-| LV-029 | Stale `running` node state could persist after TUI kill / resume | fixed |
-| LV-028 | Harness validation could miss `ISSUES.md` when the workspace was a subdirectory | fixed |
-
----
-
-## Legacy draft issues to re-triage
-
-These older notes were removed from the main timeline because the previous document had conflicting reused LV IDs or partially duplicated template prose. Re-enter them with a fresh LV ID only after fresh reproduction.
-
-| Legacy ID | Previous title | Last known state |
-|---|---|---|
-| H-039 | `implement_experiments` started with an empty branch focus when localization missed the governed experiment workspace | fixed |
-| H-041 | `implement_experiments` paused because Codex API streaming disconnected in the sandboxed validation environment | environment blocker / needs fresh reproduction |
-| H-042 | `implement_experiments` could materialize and execute the governed bundle but leave workflow state behind the artifacts | needs fresh reproduction |
-| H-063 | `implement_experiments` ignored `providers.llm_mode` and still launched Codex under `openai_api` | fixed |
-| H-064 | Provider slot routing drift left experiment work on the generic task slot and kept `/doctor` Codex-centric under non-Codex modes | fixed |
-| H-065 | Recovered `implement_experiments` bundles could preserve `--dry-run` and hand them off as real execution | superseded by later bundle-validation work; re-triage if reproduced |
+If we need to resurrect one of those older cases, use git history rather than treating them as current active work.

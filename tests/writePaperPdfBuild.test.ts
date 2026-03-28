@@ -2682,6 +2682,7 @@ describe("writePaper PDF build", () => {
         "paper/main.pdf",
         "results/operator_summary.md",
         "results/run_status.json",
+        "results/run_completeness_checklist.json",
         "results/operator_history/0003-paper.md"
       ])
     );
@@ -2707,8 +2708,14 @@ describe("writePaper PDF build", () => {
       "Venue:"
     );
     expect(await readFile(path.join(runDir, "run_status.json"), "utf8")).toContain('"current_node": "write_paper"');
+    expect(await readFile(path.join(runDir, "run_completeness_checklist.json"), "utf8")).toContain(
+      '"validation_scope": "full_run"'
+    );
     expect(await readFile(path.join(root, "outputs", "results", "run_status.json"), "utf8")).toContain(
       '"operator_label": "Research memo"'
+    );
+    expect(await readFile(path.join(root, "outputs", "results", "run_completeness_checklist.json"), "utf8")).toContain(
+      `"run_id": "${run.id}"`
     );
     expect(await readFile(path.join(root, "outputs", "results", "operator_history", "0003-paper.md"), "utf8")).toContain(
       "# Operator Stage Note"

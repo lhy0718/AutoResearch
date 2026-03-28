@@ -9,6 +9,10 @@ import {
   classifyHarnessIssueCode,
   runHarnessValidation
 } from "../src/core/validation/harnessValidationService.js";
+import {
+  buildMinimalLiveFixtureReviewArtifacts,
+  writeLiveFixtureWorkspace
+} from "./helpers/liveFixtureWorkspace.js";
 
 const tempDirs: string[] = [];
 
@@ -86,6 +90,25 @@ describe("harnessValidationService", () => {
     });
 
     expect(report.findings.some((f) => f.code === "issues_file_missing")).toBe(true);
+  });
+
+  it("suppresses issues_file_missing when every observed run declares validation_scope=live_fixture", async () => {
+    const workspace = createTempWorkspace("autolabos-harness-live-fixture-");
+    await writeLiveFixtureWorkspace({
+      workspaceRoot: workspace,
+      runId: "fixture-run",
+      includeConfig: false,
+      artifacts: buildMinimalLiveFixtureReviewArtifacts("2026-03-28T12:00:00.000Z"),
+      now: "2026-03-28T12:00:00.000Z"
+    });
+
+    const report = await runHarnessValidation({
+      workspaceRoot: workspace,
+      includeWorkspaceRuns: true,
+      includeTestRunStores: false
+    });
+
+    expect(report.findings.some((f) => f.code === "issues_file_missing")).toBe(false);
   });
 
   it("ignores transient test/.tmp run stores when scanning reproducibility records", async () => {

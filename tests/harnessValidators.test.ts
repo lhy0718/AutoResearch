@@ -10,6 +10,10 @@ import {
   validateLiveValidationIssueMarkdown,
   validateRunArtifactStructure
 } from "../src/core/validation/harnessValidators.js";
+import {
+  buildMinimalLiveFixtureReviewArtifacts,
+  writeLiveFixtureWorkspace
+} from "./helpers/liveFixtureWorkspace.js";
 
 const tempDirs: string[] = [];
 
@@ -23,6 +27,64 @@ afterEach(() => {
 });
 
 describe("harness validators", () => {
+  it("accepts a live_fixture run status paired with a completeness checklist", async () => {
+    const workspace = createTempWorkspace("autolabos-harness-validator-live-fixture-");
+    const { runDir } = await writeLiveFixtureWorkspace({
+      workspaceRoot: workspace,
+      runId: "run-live-fixture",
+      includeConfig: false,
+      artifacts: buildMinimalLiveFixtureReviewArtifacts("2026-03-28T12:00:00.000Z", "run-live-fixture"),
+      now: "2026-03-28T12:00:00.000Z"
+    });
+
+    const result = await validateRunArtifactStructure({
+      runId: "run-live-fixture",
+      runDir,
+      nodeStates: makeNodeStates({})
+    });
+
+    expect(result.validationScope).toBe("live_fixture");
+    expect(result.checked).toEqual(expect.arrayContaining(["run_status", "run_completeness_checklist"]));
+    expect(result.issues).toEqual([]);
+  });
+
+  it("reports a missing completeness checklist when run_status.json is present", async () => {
+    const runDir = createTempRunDir("autolabos-harness-validator-status-without-checklist-");
+    await writeJson(path.join(runDir, "run_status.json"), {
+      version: 1,
+      generated_at: new Date().toISOString(),
+      run_id: "run-status-only",
+      title: "Status without checklist",
+      current_node: "analyze_results",
+      lifecycle_status: "running",
+      approval_mode: "manual",
+      last_event_at: new Date().toISOString(),
+      analysis_ready: true,
+      review_ready: false,
+      paper_ready: false,
+      recommended_next_action: "resume_review",
+      blocking_reasons: [],
+      warning_reasons: [],
+      review_gate: {},
+      paper_gate: {},
+      network_dependency: {
+        enabled: false,
+        policy: "blocked",
+        severity: "info",
+        operator_label: "Offline"
+      },
+      validation_scope: "full_run"
+    });
+
+    const result = await validateRunArtifactStructure({
+      runId: "run-status-only",
+      runDir,
+      nodeStates: makeNodeStates({})
+    });
+
+    expect(result.issues.map((item) => item.code)).toContain("run_completeness_checklist_missing");
+  });
+
   it("accepts a structurally complete run bundle", async () => {
     const runDir = createTempRunDir("autolabos-harness-validator-pass-");
     await mkdir(path.join(runDir, "review"), { recursive: true });
@@ -598,6 +660,12 @@ describe("harness validators", () => {
 });
 
 function createTempRunDir(prefix: string): string {
+  const dir = mkdtempSync(path.join(os.tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
+function createTempWorkspace(prefix: string): string {
   const dir = mkdtempSync(path.join(os.tmpdir(), prefix));
   tempDirs.push(dir);
   return dir;

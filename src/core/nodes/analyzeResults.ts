@@ -57,6 +57,7 @@ import {
 import { evaluateBriefEvidenceAgainstResults } from "../analysis/briefEvidenceValidator.js";
 import { parseMarkdownRunBriefSections } from "../runs/runBriefParser.js";
 import { buildRunOperatorStatus } from "../runs/runStatus.js";
+import { buildRunCompletenessChecklist } from "../runs/runCompletenessChecklist.js";
 
 export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
@@ -497,6 +498,27 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
           {
             sourcePath: runStatusPath,
             targetRelativePath: "run_status.json"
+          }
+        ]
+      });
+      const completenessChecklist = await buildRunCompletenessChecklist({
+        workspaceRoot: process.cwd(),
+        run,
+        currentNode: "analyze_results"
+      });
+      const completenessChecklistPath = await writeRunArtifact(
+        run,
+        "run_completeness_checklist.json",
+        `${JSON.stringify(completenessChecklist, null, 2)}\n`
+      );
+      await publishPublicRunOutputs({
+        workspaceRoot: process.cwd(),
+        run,
+        section: "results",
+        files: [
+          {
+            sourcePath: completenessChecklistPath,
+            targetRelativePath: "run_completeness_checklist.json"
           }
         ]
       });

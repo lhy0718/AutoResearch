@@ -512,8 +512,14 @@ describe("objective metric propagation", () => {
       "Transition recommendation: advance -> review."
     );
     expect(await readFile(path.join(runDir, "run_status.json"), "utf8")).toContain('"current_node": "analyze_results"');
+    expect(await readFile(path.join(runDir, "run_completeness_checklist.json"), "utf8")).toContain(
+      '"validation_scope": "full_run"'
+    );
     expect(await readFile(path.join(root, "outputs", "results", "run_status.json"), "utf8")).toContain(
       '"recommended_next_action": "resume_review"'
+    );
+    expect(await readFile(path.join(root, "outputs", "results", "run_completeness_checklist.json"), "utf8")).toContain(
+      '"run_id": "run-objective-propagation"'
     );
     expect(await readFile(path.join(root, "outputs", "results", "operator_history", "0001-analysis.md"), "utf8")).toContain(
       "# Operator Stage Note"
@@ -583,7 +589,8 @@ describe("objective metric propagation", () => {
         "analysis/result_analysis.json",
         "analysis/transition_recommendation.json",
         "review/review_packet.json",
-        "paper/main.tex"
+        "paper/main.tex",
+        "results/run_completeness_checklist.json"
       ])
     );
     expect(publicManifest.sections?.experiment?.generated_files).toEqual(

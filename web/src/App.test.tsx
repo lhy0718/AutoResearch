@@ -1060,6 +1060,13 @@ describe("App", () => {
           JSON.stringify({
             artifacts: [
               {
+                path: "run_completeness_checklist.json",
+                kind: "json",
+                size: 384,
+                modifiedAt: "2026-03-10T10:00:00.000Z",
+                previewable: true
+              },
+              {
                 path: "figures/performance.svg",
                 kind: "image",
                 size: 128,
@@ -1209,6 +1216,9 @@ describe("App", () => {
       if (url.includes("/api/runs/run-1/artifact?path=result_analysis.json")) {
         return new Response('{"analysis_version":1}', { status: 200 });
       }
+      if (url.includes("/api/runs/run-1/artifact?path=run_completeness_checklist.json")) {
+        return new Response('{"summary":"3/3 required completeness checks present"}', { status: 200 });
+      }
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
@@ -1234,9 +1244,18 @@ describe("App", () => {
       expect(screen.getByText("Confidence 95%")).toBeInTheDocument();
       expect(screen.getByText("Full structured report with grounded analysis details.")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /analysis report/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /open checklist/i })).toBeInTheDocument();
       expect(screen.getByText("Top failures")).toBeInTheDocument();
       expect(screen.getByText("Next: Resume review")).toBeInTheDocument();
       expect(screen.getByText("A/R/P: yes/no/no")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /open checklist/i }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([url]) => String(url) === "/api/runs/run-1/artifact?path=run_completeness_checklist.json")
+      ).toBe(true);
     });
 
     fireEvent.click(screen.getByRole("button", { name: /comparison: treatment vs baseline/i }));

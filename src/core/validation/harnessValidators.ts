@@ -1,7 +1,12 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
 
-import { GraphNodeId, RunOperatorStatusArtifact, RunValidationScope } from "../../types.js";
+import {
+  GraphNodeId,
+  RunCompletenessChecklistArtifact,
+  RunOperatorStatusArtifact,
+  RunValidationScope
+} from "../../types.js";
 import { fileExists } from "../../utils/fs.js";
 
 export interface HarnessValidationIssue {
@@ -67,6 +72,7 @@ export async function validateRunArtifactStructure(
   const checked = new Set<string>();
   const { runId, runDir, nodeStates, runStatus } = input;
   const runStatusPath = path.join(runDir, "run_status.json");
+  const runCompletenessChecklistPath = path.join(runDir, "run_completeness_checklist.json");
   const eventsPath = path.join(runDir, "events.jsonl");
   const collectBackgroundJobPath = path.join(runDir, "collect_background_job.json");
   const experimentPortfolioPath = path.join(runDir, "experiment_portfolio.json");
@@ -82,6 +88,27 @@ export async function validateRunArtifactStructure(
   if (runStatusArtifact) {
     checked.add("run_status");
     validateRunStatusPayload(runStatusArtifact, runStatusPath, runId, issues);
+  }
+  if (runStatusArtifact || (await fileExists(runCompletenessChecklistPath))) {
+    checked.add("run_completeness_checklist");
+    const completenessChecklist = runStatusArtifact
+      ? await requireJsonObject({
+          filePath: runCompletenessChecklistPath,
+          missingCode: "run_completeness_checklist_missing",
+          malformedCode: "run_completeness_checklist_malformed",
+          runId,
+          issues
+        })
+      : await readJsonObjectIfPresent(runCompletenessChecklistPath, runId, issues);
+    if (completenessChecklist) {
+      validateRunCompletenessChecklistPayload(
+        completenessChecklist,
+        runCompletenessChecklistPath,
+        runId,
+        validationScope,
+        issues
+      );
+    }
   }
 
   const eventsPresent = await fileExists(eventsPath);
@@ -1157,6 +1184,74 @@ function validateRunStatusPayload(
     issues.push({
       code: "run_status_validation_scope_invalid",
       message: "run_status.json must use validation_scope full_run or live_fixture.",
+      filePath,
+      runId
+    });
+  }
+}
+
+function validateRunCompletenessChecklistPayload(
+  payload: Record<string, unknown>,
+  filePath: string,
+  runId: string,
+  expectedValidationScope: RunValidationScope,
+  issues: HarnessValidationIssue[]
+): void {
+  const artifact = payload as Partial<RunCompletenessChecklistArtifact>;
+  if (artifact.version !== 1) {
+    issues.push({
+      code: "run_completeness_checklist_version_invalid",
+      message: "run_completeness_checklist.json must declare version=1.",
+      filePath,
+      runId
+    });
+  }
+  if (asString(artifact.run_id) !== runId) {
+    issues.push({
+      code: "run_completeness_checklist_run_id_mismatch",
+      message:
+        `run_completeness_checklist.json references run_id ${asString(artifact.run_id) || "(missing)"}, expected ${runId}.`,
+      filePath,
+      runId
+    });
+  }
+  const validationScope = asString(artifact.validation_scope);
+  if (!validationScope || !["full_run", "live_fixture"].includes(validationScope)) {
+    issues.push({
+      code: "run_completeness_checklist_validation_scope_invalid",
+      message: "run_completeness_checklist.json must use validation_scope full_run or live_fixture.",
+      filePath,
+      runId
+    });
+  } else if (validationScope !== expectedValidationScope) {
+    issues.push({
+      code: "run_completeness_checklist_validation_scope_mismatch",
+      message:
+        `run_completeness_checklist.json uses validation_scope ${validationScope}, expected ${expectedValidationScope}.`,
+      filePath,
+      runId
+    });
+  }
+  if (!asString(artifact.summary)) {
+    issues.push({
+      code: "run_completeness_checklist_summary_missing",
+      message: "run_completeness_checklist.json must include summary.",
+      filePath,
+      runId
+    });
+  }
+  if (!Array.isArray(artifact.missing_required)) {
+    issues.push({
+      code: "run_completeness_checklist_missing_required_invalid",
+      message: "run_completeness_checklist.json must include missing_required as an array.",
+      filePath,
+      runId
+    });
+  }
+  if (!Array.isArray(artifact.missing_optional)) {
+    issues.push({
+      code: "run_completeness_checklist_missing_optional_invalid",
+      message: "run_completeness_checklist.json must include missing_optional as an array.",
       filePath,
       runId
     });
