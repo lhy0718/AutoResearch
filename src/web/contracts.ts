@@ -1,7 +1,15 @@
-import { DoctorCheck, PendingPlan, RunJobsSnapshot, RunRecord, WebSessionState } from "../types.js";
+import {
+  DoctorCheck,
+  ExecutionProfile,
+  PendingPlan,
+  RunJobsSnapshot,
+  RunQueueSnapshot,
+  RunRecord,
+  WebSessionState
+} from "../types.js";
 import type { RunLiteratureIndex } from "../core/literatureIndex.js";
 import type { HarnessValidationReport } from "../core/validation/harnessValidationService.js";
-import type { RepositoryKnowledgeEntry } from "../core/repositoryKnowledge.js";
+import type { RepositoryKnowledgeEntry, RepositoryKnowledgeIndex } from "../core/repositoryKnowledge.js";
 
 export interface ConfigSummary {
   projectName: string;
@@ -60,6 +68,7 @@ export interface WebConfigOptions {
 
 export interface BootstrapResponse {
   configured: boolean;
+  execution_profile?: ExecutionProfile;
   setupDefaults: {
     projectName: string;
     defaultTopic: string;
@@ -69,11 +78,14 @@ export interface BootstrapResponse {
   session: WebSessionState;
   runs: RunRecord[];
   jobs?: RunJobsSnapshot;
+  jobQueue?: RunQueueSnapshot;
   activeRunId?: string;
   configSummary?: ConfigSummary;
   configForm?: WebConfigFormData;
   configOptions?: WebConfigOptions;
 }
+
+export interface JobsResponse extends RunQueueSnapshot {}
 
 export interface DoctorResponse {
   configured: boolean;
@@ -98,7 +110,7 @@ export interface DoctorResponse {
   };
 }
 
-export interface KnowledgeResponse {
+export interface KnowledgeResponse extends RepositoryKnowledgeIndex {
   entries: RepositoryKnowledgeEntry[];
 }
 

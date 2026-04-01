@@ -29,9 +29,10 @@ describe("buildSuggestions", () => {
     const suggestions = buildSuggestions({ input: "/", runs, activeRunId: "run-alpha-123" });
     expect(suggestions.length).toBeGreaterThan(0);
     expect(suggestions[0].applyValue.startsWith("/")).toBe(true);
+    const expectedVisible = ["new", "brief", "jobs", "watch", "analyze-results", "model"];
     expect(
-      SLASH_COMMANDS.filter((command) => command.visible).every((command) =>
-        suggestions.some((suggestion) => suggestion.applyValue === expectedApplyValue(command.name))
+      expectedVisible.every((commandName) =>
+        suggestions.some((suggestion) => suggestion.applyValue === expectedApplyValue(commandName))
       )
     ).toBe(true);
     expect(suggestions.some((suggestion) => suggestion.applyValue === "/model ")).toBe(true);

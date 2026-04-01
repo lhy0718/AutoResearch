@@ -7,6 +7,10 @@ describe("resolveCliAction", () => {
     expect(resolveCliAction([])).toEqual({ kind: "run" });
   });
 
+  it("supports node option package selection for run mode", () => {
+    expect(resolveCliAction(["--package", "fast"])).toEqual({ kind: "run", packageName: "fast" });
+  });
+
   it("supports --help", () => {
     expect(resolveCliAction(["--help"]).kind).toBe("help");
   });
@@ -44,6 +48,11 @@ describe("resolveCliAction", () => {
 
   it("rejects init subcommand", () => {
     const action = resolveCliAction(["init"]);
+    expect(action.kind).toBe("error");
+  });
+
+  it("rejects unknown package names", () => {
+    const action = resolveCliAction(["--package", "turbo"]);
     expect(action.kind).toBe("error");
   });
 });

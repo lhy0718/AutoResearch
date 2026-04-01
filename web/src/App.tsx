@@ -1,4 +1,4 @@
-import { Dispatch, FormEvent, SetStateAction, startTransition, useEffect, useRef, useState } from "react";
+import { Dispatch, FormEvent, ReactNode, SetStateAction, startTransition, useEffect, useRef, useState } from "react";
 
 import {
   ArtifactEntry,
@@ -115,6 +115,7 @@ export function App() {
   const [doctorChecks, setDoctorChecks] = useState<DoctorCheck[]>([]);
   const [doctorReadiness, setDoctorReadiness] = useState<DoctorResponse["readiness"] | null>(null);
   const [doctorHarness, setDoctorHarness] = useState<HarnessValidationReport | null>(null);
+  const [liveJobQueue, setLiveJobQueue] = useState<BootstrapResponse["jobQueue"] | null>(null);
   const [commandInput, setCommandInput] = useState("");
   const [runSearch, setRunSearch] = useState("");
   const [activeTab, setActiveTab] = useState<TabId>("logs");
@@ -134,6 +135,7 @@ export function App() {
     void refreshBootstrap();
     void refreshDoctor();
     void refreshKnowledge();
+    void refreshJobs();
   }, []);
 
   useEffect(() => {
@@ -194,12 +196,14 @@ export function App() {
         });
       }
       startTransition(() => {
+        void refreshJobs();
         void refreshKnowledge();
       });
     });
     source.addEventListener("bootstrap", () => {
       startTransition(() => {
         void refreshBootstrap();
+        void refreshJobs();
         void refreshKnowledge();
       });
     });
@@ -207,6 +211,15 @@ export function App() {
       source.close();
     };
   }, [selectedRunId]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void refreshJobs();
+    }, 5000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, []);
 
   const filteredRuns = !bootstrap
     ? []
@@ -219,6 +232,12 @@ export function App() {
       });
   const activeTabLabel = DETAIL_TABS.find((tab) => tab.id === activeTab)?.label || "Inspector";
   const jobRows = bootstrap?.jobs?.runs || [];
+  const rawJobQueue = liveJobQueue || bootstrap?.jobQueue;
+  const jobQueue = {
+    running: rawJobQueue?.running || [],
+    waiting: rawJobQueue?.waiting || [],
+    stalled: rawJobQueue?.stalled || []
+  };
   const completedNodeCount = selectedRun
     ? NODE_ORDER.filter((node) => selectedRun.graph.nodeStates[node].status === "completed").length
     : 0;
@@ -251,6 +270,18 @@ export function App() {
   async function refreshBootstrap() {
     const data = await api<BootstrapResponse>("/api/bootstrap");
     setBootstrap(data);
+    if (data.jobQueue) {
+      setLiveJobQueue(data.jobQueue);
+    }
+  }
+
+  async function refreshJobs() {
+    try {
+      const data = await api<BootstrapResponse["jobQueue"]>("/api/jobs");
+      setLiveJobQueue(data);
+    } catch {
+      // Older tests and reduced backends may not expose /api/jobs yet.
+    }
   }
 
   async function refreshRunDetails(runId: string) {
@@ -657,6 +688,16 @@ export function App() {
             </div>
           </section>
         ) : null}
+        <section className="subtle-card">
+          <p className="section-kicker">Live watch</p>
+          {renderLiveWatchTable(jobQueue)}
+        </section>
+        <section className="subtle-card">
+          <p className="section-kicker">Background jobs</p>
+          {renderJobBucket("Running", jobQueue.running)}
+          {renderJobBucket("Waiting", jobQueue.waiting)}
+          {renderJobBucket("Stalled", jobQueue.stalled)}
+        </section>
       </aside>
 
       <main className="main-column">
@@ -2536,6 +2577,115 @@ function formatReadinessTriple(input: {
   paper_ready: boolean;
 }): string {
   return `${input.analysis_ready ? "yes" : "no"}/${input.review_ready ? "yes" : "no"}/${input.paper_ready ? "yes" : "no"}`;
+}
+
+function renderJobBucket(
+  label: string,
+  jobs: Array<{
+    run_id: string;
+    node: string;
+    status: string;
+    elapsed_seconds: number;
+    source?: "run" | "collect_background_job";
+    recommendation_line?: string;
+  }>
+): ReactNode {
+  return (
+    <div className="manuscript-quality-group-list">
+      <p className="doctor-harness-meta">
+        {label} ({jobs.length})
+      </p>
+      {jobs.length === 0 ? (
+        <div className="manuscript-quality-group-line">
+          <p>None</p>
+        </div>
+      ) : (
+        jobs.map((job) => (
+          <div key={`${label}:${job.run_id}:${job.node}:${job.source || "run"}`} className="manuscript-quality-group-line">
+            <p>
+              <strong>{job.run_id}</strong> · {formatNodeLabel(job.node as NodeId)} · {job.status} · {formatElapsedSeconds(job.elapsed_seconds)}
+            </p>
+            <p className="doctor-harness-meta">
+              {job.source === "collect_background_job" ? "Background collect" : "Node run"}
+              {job.recommendation_line ? ` · ${job.recommendation_line}` : ""}
+            </p>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+function renderLiveWatchTable(
+  snapshot: NonNullable<BootstrapResponse["jobQueue"]>
+): ReactNode {
+  const normalized = {
+    running: snapshot?.running || [],
+    waiting: snapshot?.waiting || [],
+    stalled: snapshot?.stalled || []
+  };
+  const rows = [
+    ...normalized.running.map((job) => ({ bucket: "running" as const, job })),
+    ...normalized.waiting.map((job) => ({ bucket: "waiting" as const, job })),
+    ...normalized.stalled.map((job) => ({ bucket: "stalled" as const, job }))
+  ];
+
+  if (rows.length === 0) {
+    return (
+      <div className="manuscript-quality-group-list">
+        <div className="manuscript-quality-group-line">
+          <p>No active jobs</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="live-watch-table">
+      <div className="live-watch-header">
+        <span>run_id</span>
+        <span>current_node</span>
+        <span>node_status</span>
+        <span>run_status</span>
+        <span>elapsed</span>
+      </div>
+      {rows.map(({ bucket, job }) => {
+        const toneClass =
+          bucket === "stalled" || job.status === "needs_approval"
+            ? "live-watch-row is-warning"
+            : "live-watch-row";
+        return (
+          <div
+            key={`live-watch:${bucket}:${job.run_id}:${job.node}:${job.source || "run"}`}
+            className={toneClass}
+          >
+            <span>{job.run_id.slice(0, 8)}</span>
+            <span>{job.source === "collect_background_job" ? `${formatNodeLabel(job.node as NodeId)} [bg]` : formatNodeLabel(job.node as NodeId)}</span>
+            <span>{job.status}</span>
+            <span>{bucket}</span>
+            <span>{formatElapsedSeconds(job.elapsed_seconds)}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function formatElapsedSeconds(totalSeconds: number): string {
+  if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) {
+    return "0s";
+  }
+  if (totalSeconds < 60) {
+    return `${Math.floor(totalSeconds)}s`;
+  }
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) {
+    return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
 }
 
 function formatReviewGateStatus(

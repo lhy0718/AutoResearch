@@ -14,6 +14,152 @@ function expectVisibleText(text: string): void {
 }
 
 describe("App", () => {
+  it("renders grouped background jobs from the bootstrap payload", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/bootstrap")) {
+          return new Response(
+            JSON.stringify({
+              configured: true,
+              setupDefaults: {
+                projectName: "AutoLabOS",
+                defaultTopic: "topic",
+                defaultConstraints: ["recent papers"],
+                defaultObjectiveMetric: "metric"
+              },
+              session: {
+                busy: false,
+                logs: [],
+                canCancel: false
+              },
+              runs: [],
+              jobs: {
+                generated_at: "2026-04-01T12:00:00.000Z",
+                runs: [],
+                top_failures: []
+              },
+              jobQueue: {
+                running: [
+                  {
+                    run_id: "run-1",
+                    node: "collect_papers",
+                    status: "running",
+                    started_at: "2026-04-01T11:55:00.000Z",
+                    elapsed_seconds: 300,
+                    source: "collect_background_job"
+                  }
+                ],
+                waiting: [
+                  {
+                    run_id: "run-2",
+                    node: "review",
+                    status: "needs_approval",
+                    started_at: "2026-04-01T11:50:00.000Z",
+                    elapsed_seconds: 600,
+                    source: "run"
+                  }
+                ],
+                stalled: [
+                  {
+                    run_id: "run-3",
+                    node: "run_experiments",
+                    status: "running",
+                    started_at: "2026-04-01T11:00:00.000Z",
+                    elapsed_seconds: 3600,
+                    source: "run",
+                    recommended_action: "manual review",
+                    recommendation_line: "Recommended action: manual review."
+                  }
+                ]
+              }
+            }),
+            { status: 200 }
+          );
+        }
+        if (url.includes("/api/jobs")) {
+          return new Response(
+            JSON.stringify({
+              running: [
+                {
+                  run_id: "run-1",
+                  node: "collect_papers",
+                  status: "running",
+                  started_at: "2026-04-01T11:55:00.000Z",
+                  elapsed_seconds: 300,
+                  source: "collect_background_job"
+                }
+              ],
+              waiting: [
+                {
+                  run_id: "run-2",
+                  node: "review",
+                  status: "needs_approval",
+                  started_at: "2026-04-01T11:50:00.000Z",
+                  elapsed_seconds: 600,
+                  source: "run"
+                }
+              ],
+              stalled: [
+                {
+                  run_id: "run-3",
+                  node: "run_experiments",
+                  status: "running",
+                  started_at: "2026-04-01T11:00:00.000Z",
+                  elapsed_seconds: 3600,
+                  source: "run",
+                  recommended_action: "manual review",
+                  recommendation_line: "Recommended action: manual review."
+                }
+              ]
+            }),
+            { status: 200 }
+          );
+        }
+        if (url.includes("/api/doctor")) {
+          return new Response(JSON.stringify({ configured: true, checks: [] }), { status: 200 });
+        }
+        if (url.includes("/api/knowledge") && !url.includes("/api/knowledge/file")) {
+          return new Response(JSON.stringify({ entries: [] }), { status: 200 });
+        }
+        if (url.includes("/api/runs/") && url.includes("/literature")) {
+          return new Response(JSON.stringify({ literature: emptyLiterature("run-1") }), { status: 200 });
+        }
+        return new Response(JSON.stringify({}), { status: 200 });
+      })
+    );
+    vi.stubGlobal(
+      "EventSource",
+      class {
+        addEventListener() {}
+        close() {}
+      } as unknown as typeof EventSource
+    );
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Background jobs")).toBeInTheDocument();
+      expect(screen.getByText("Live watch")).toBeInTheDocument();
+      expect(screen.getByText("run_status")).toBeInTheDocument();
+      expect(screen.getByText("waiting")).toBeInTheDocument();
+      expect(screen.getByText("Running (1)")).toBeInTheDocument();
+      expect(screen.getByText("Waiting (1)")).toBeInTheDocument();
+      expect(screen.getByText("Stalled (1)")).toBeInTheDocument();
+      expect(screen.getByText(/Recommended action: manual review\./i)).toBeInTheDocument();
+    });
+
+    const liveWatchCard = screen.getByText("Live watch").closest("section");
+    const backgroundJobsCard = screen.getByText("Background jobs").closest("section");
+    expect(liveWatchCard).not.toBeNull();
+    expect(backgroundJobsCard).not.toBeNull();
+    expect(within(liveWatchCard as HTMLElement).getByText("run-2")).toBeInTheDocument();
+    expect(within(backgroundJobsCard as HTMLElement).getByText("run-2")).toBeInTheDocument();
+    expect(within(liveWatchCard as HTMLElement).getByText("run-3")).toBeInTheDocument();
+    expect(within(backgroundJobsCard as HTMLElement).getByText("run-3")).toBeInTheDocument();
+  });
+
   it("renders onboarding without a PDF mode prompt when the workspace is not configured", async () => {
     vi.stubGlobal(
       "fetch",

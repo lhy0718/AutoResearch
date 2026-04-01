@@ -9,6 +9,8 @@ export type NodeId =
   | "review"
   | "write_paper";
 
+export type ExecutionProfile = "local" | "docker" | "remote" | "plan_only";
+
 export interface PendingPlan {
   sourceInput: string;
   displayCommands: string[];
@@ -235,6 +237,23 @@ export interface RunJobsSnapshot {
   top_failures: RunJobFailureAggregate[];
 }
 
+export interface RunQueueJobSummary {
+  run_id: string;
+  node: NodeId;
+  status: string;
+  started_at: string;
+  elapsed_seconds: number;
+  recommended_action?: "retry" | "manual review";
+  recommendation_line?: string;
+  source?: "run" | "collect_background_job";
+}
+
+export interface RunQueueSnapshot {
+  running: RunQueueJobSummary[];
+  waiting: RunQueueJobSummary[];
+  stalled: RunQueueJobSummary[];
+}
+
 export interface WebSessionState {
   activeRunId?: string;
   busy: boolean;
@@ -435,6 +454,7 @@ export interface RepositoryKnowledgeEntry {
   run_id: string;
   title: string;
   topic: string;
+  topic_slug?: string;
   objective_metric: string;
   latest_summary?: string;
   latest_published_section: string;
@@ -442,6 +462,12 @@ export interface RepositoryKnowledgeEntry {
   public_output_root: string;
   public_manifest: string;
   knowledge_note: string;
+  entry_kind?: "published_outputs" | "completed_run";
+  final_node?: string;
+  final_status?: string;
+  paper_ready?: boolean;
+  review_decision?: string;
+  key_metrics?: string[];
   research_question?: string;
   analysis_summary?: string;
   manuscript_type?: string;
@@ -449,6 +475,8 @@ export interface RepositoryKnowledgeEntry {
 }
 
 export interface KnowledgeResponse {
+  version: 1;
+  updated_at: string;
   entries: RepositoryKnowledgeEntry[];
 }
 
@@ -512,6 +540,7 @@ export interface LiteratureResponse {
 
 export interface BootstrapResponse {
   configured: boolean;
+  execution_profile?: ExecutionProfile;
   setupDefaults: {
     projectName: string;
     defaultTopic: string;
@@ -521,6 +550,7 @@ export interface BootstrapResponse {
   session: WebSessionState;
   runs: RunRecord[];
   jobs?: RunJobsSnapshot;
+  jobQueue?: RunQueueSnapshot;
   activeRunId?: string;
   configSummary?: ConfigSummary;
   configForm?: WebConfigFormData;

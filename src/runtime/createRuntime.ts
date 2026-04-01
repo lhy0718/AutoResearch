@@ -10,7 +10,7 @@ import {
   runSetupWizard,
   saveConfig
 } from "../config.js";
-import { AppConfig } from "../types.js";
+import { AppConfig, ExecutionProfile, NodeOptionPackageName } from "../types.js";
 import { RunStore } from "../core/runs/runStore.js";
 import { TitleGenerator } from "../core/runs/titleGenerator.js";
 import { CodexCliClient } from "../integrations/codex/codexCliClient.js";
@@ -31,10 +31,13 @@ import { OllamaClient } from "../integrations/ollama/ollamaClient.js";
 import { OllamaPdfAnalysisClient } from "../integrations/ollama/ollamaPdfAnalysisClient.js";
 import { DEFAULT_OLLAMA_BASE_URL } from "../integrations/ollama/modelCatalog.js";
 import { recoverCollectEnrichmentJobs } from "../core/nodes/collectPapers.js";
+import { detectExecutionProfile } from "./executionProfile.js";
+import { resolveNodeOptionsForPackage } from "../core/stateGraph/defaults.js";
 
 export interface AutoLabOSRuntime {
   paths: AppPaths;
   config: AppConfig;
+  executionProfile: ExecutionProfile;
   runStore: RunStore;
   titleGenerator: TitleGenerator;
   codex: CodexCliClient;
@@ -50,6 +53,8 @@ export interface RuntimeBootstrap {
   configured: boolean;
   firstRunSetup: boolean;
   paths: AppPaths;
+  executionProfile?: ExecutionProfile;
+  nodeOptionPackageName?: NodeOptionPackageName;
   config?: AppConfig;
   runtime?: AutoLabOSRuntime;
 }
@@ -57,35 +62,57 @@ export interface RuntimeBootstrap {
 export async function bootstrapAutoLabOSRuntime(opts?: {
   cwd?: string;
   allowInteractiveSetup?: boolean;
+  nodeOptionPackageName?: NodeOptionPackageName;
 }): Promise<RuntimeBootstrap> {
   const paths = resolveAppPaths(opts?.cwd || process.cwd());
+  const executionProfile = await detectExecutionProfile();
   const firstRunSetup = !(await configExists(paths));
 
   if (firstRunSetup && !opts?.allowInteractiveSetup) {
     return {
       configured: false,
       firstRunSetup,
-      paths
+      paths,
+      executionProfile
     };
   }
 
   const config = firstRunSetup ? await runSetupWizard(paths) : await loadConfig(paths);
   await ensureScaffold(paths);
+  const runtimeConfig: AppConfig = {
+    ...config,
+    runtime: {
+      ...(config.runtime || {}),
+      execution_profile: executionProfile,
+      node_option_package: opts?.nodeOptionPackageName,
+      resolved_node_options: resolveNodeOptionsForPackage(opts?.nodeOptionPackageName)
+    }
+  };
 
   return {
     configured: true,
     firstRunSetup,
     paths,
-    config,
-    runtime: await createAutoLabOSRuntime(paths, config)
+    executionProfile,
+    nodeOptionPackageName: opts?.nodeOptionPackageName,
+    config: runtimeConfig,
+    runtime: await createAutoLabOSRuntime(
+      paths,
+      runtimeConfig,
+      executionProfile,
+      opts?.nodeOptionPackageName
+    )
   };
 }
 
 export async function createAutoLabOSRuntime(
   paths: AppPaths,
-  config: AppConfig
+  config: AppConfig,
+  executionProfile?: ExecutionProfile,
+  nodeOptionPackageName?: NodeOptionPackageName
 ): Promise<AutoLabOSRuntime> {
-  const runStore = new RunStore(paths);
+  const resolvedExecutionProfile = executionProfile || (await detectExecutionProfile());
+  const runStore = new RunStore(paths, { nodeOptionPackageName });
   const codex = new CodexCliClient(paths.cwd, {
     model: config.providers.codex.model || "gpt-5.3-codex",
     reasoningEffort: config.providers.codex.reasoning_effort || "xhigh",
@@ -223,6 +250,7 @@ export async function createAutoLabOSRuntime(
 
   const nodeRegistry = new DefaultNodeRegistry({
     config,
+    executionProfile: resolvedExecutionProfile,
     runStore,
     eventStream,
     llm,
@@ -252,6 +280,7 @@ export async function createAutoLabOSRuntime(
   return {
     paths,
     config,
+    executionProfile: resolvedExecutionProfile,
     runStore,
     titleGenerator,
     codex,

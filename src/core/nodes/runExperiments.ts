@@ -45,6 +45,7 @@ import {
   setSentinelFindings,
   setMetricsState
 } from "../runExperimentsPanel.js";
+import { wrapCommandForExecutionProfile } from "../../runtime/executionProfile.js";
 
 type SupplementalProfileName = "quick_check" | "confirmatory";
 
@@ -132,6 +133,33 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
       await runContext.put("run_experiments.triage", null);
       await runContext.put("run_experiments.portfolio", null);
       await runContext.put("run_experiments.run_manifest", null);
+
+      if (deps.executionProfile === "plan_only") {
+        const summary = "Skipped code execution because the detected execution profile is plan_only.";
+        const report = buildRunVerifierReport({
+          status: "skipped",
+          trigger,
+          stage: "policy",
+          summary,
+          suggestedNextAction: "Switch to a local, docker, or remote execution environment before retrying run_experiments."
+        });
+        deps.eventStream.emit({
+          type: "OBS_RECEIVED",
+          runId: run.id,
+          node: "run_experiments",
+          agentRole: "runner",
+          payload: {
+            text: summary
+          }
+        });
+        await persistRunVerifierReport(run, runContext, report);
+        return {
+          status: "skipped",
+          reason: "plan_only_mode",
+          summary,
+          toolCallsUsed: 0
+        };
+      }
 
       const defaultMetricsPath = path.join(process.cwd(), ".autolabos", "runs", run.id, "metrics.json");
       const failureMemory = FailureMemory.forRun(run.id);
@@ -286,7 +314,11 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
 
       executionPlan = buildRunExperimentsExecutionPlan({
         trigger,
-        command: resolved.command,
+        command: wrapCommandForExecutionProfile({
+          profile: deps.executionProfile || "local",
+          command: resolved.command,
+          cwd: resolved.cwd
+        }),
         cwd: resolved.cwd,
         metricsPath: resolved.metricsPath,
         source: resolved.source,
@@ -294,12 +326,22 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         budgetProfile: comparisonContract?.budget_profile,
         evaluatorContractId: comparisonContract?.evaluator_contract_id,
         baselineCandidateIds: comparisonContract?.baseline_candidate_ids,
-        testCommand: resolved.testCommand,
+        testCommand: resolved.testCommand
+          ? wrapCommandForExecutionProfile({
+              profile: deps.executionProfile || "local",
+              command: resolved.testCommand,
+              cwd: resolved.testCwd || resolved.cwd
+            })
+          : undefined,
         testCwd: resolved.testCwd,
         portfolio: experimentPortfolio,
         supplementalProfiles: managedSupplementalPlan?.profiles.map((profile) => ({
           profile: profile.profile,
-          command: profile.command,
+          command: wrapCommandForExecutionProfile({
+            profile: deps.executionProfile || "local",
+            command: profile.command,
+            cwd: profile.workingDir
+          }),
           metricsPath: profile.metricsPath
         }))
       });
@@ -309,23 +351,30 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
       });
       await persistPanelState();
 
-      const preflightToolCallsUsed = resolved.testCommand ? 1 : 0;
+      const profiledTestCommand = resolved.testCommand
+        ? wrapCommandForExecutionProfile({
+            profile: deps.executionProfile || "local",
+            command: resolved.testCommand,
+            cwd: resolved.testCwd || resolved.cwd
+          })
+        : undefined;
+      const preflightToolCallsUsed = profiledTestCommand ? 1 : 0;
 
-      if (resolved.testCommand) {
+      if (profiledTestCommand) {
         deps.eventStream.emit({
           type: "TOOL_CALLED",
           runId: run.id,
           node: "run_experiments",
           agentRole: "runner",
           payload: {
-            command: resolved.testCommand,
+            command: profiledTestCommand,
             cwd: resolved.testCwd || resolved.cwd,
             source: "preflight_test"
           }
         });
 
         const testObs = await deps.aci.runTests(
-          resolved.testCommand,
+          profiledTestCommand,
           resolved.testCwd || resolved.cwd,
           abortSignal
         );
@@ -336,7 +385,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
               attempt: 1,
               stage: "preflight",
               summary: testObs.stderr || "Preflight tests failed",
-              command: resolved.testCommand,
+              command: profiledTestCommand,
               cwd: resolved.testCwd || resolved.cwd,
               exitCode: testObs.exit_code ?? 1,
               policyBlocked: policyBlock.blocked
@@ -354,7 +403,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             summary: testObs.stderr || "Preflight tests failed",
             policyRuleId: policyBlock.ruleId,
             policyReason: policyBlock.reason,
-            command: resolved.testCommand,
+            command: profiledTestCommand,
             cwd: resolved.testCwd || resolved.cwd,
             exitCode: testObs.exit_code ?? 1,
             stdout: testObs.stdout,
@@ -423,13 +472,18 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         previousMetricsBackup,
         clearedSupplementalOutputs
       });
-      const primaryCommand = shouldForceFreshManagedStandardRun({
+      let primaryCommand = shouldForceFreshManagedStandardRun({
         command: resolved.command,
         experimentMode,
         previousMetricsBackup
       })
         ? appendFreshFlag(resolved.command)
         : resolved.command;
+      primaryCommand = wrapCommandForExecutionProfile({
+        profile: deps.executionProfile || "local",
+        command: primaryCommand,
+        cwd: resolved.cwd
+      });
       if (executionPlan && executionPlan.command !== primaryCommand) {
         executionPlan = {
           ...executionPlan,
@@ -1597,7 +1651,7 @@ function formatRunLabel(experimentMode: string, trigger = "manual"): string {
 }
 
 function buildRunVerifierReport(input: {
-  status: "pass" | "fail";
+  status: "pass" | "fail" | "skipped";
   trigger: RunVerifierTrigger;
   stage: "preflight_test" | "command" | "metrics" | "policy" | "success";
   summary: string;

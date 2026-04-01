@@ -40,15 +40,18 @@ import { getDoctorAggregateStatus, mapDoctorCheckForApi, runDoctorReport } from 
 import { CodexCliClient } from "../integrations/codex/codexCliClient.js";
 import { writeRunLiteratureIndex } from "../core/literatureIndex.js";
 import { readRepositoryKnowledgeIndex } from "../core/repositoryKnowledge.js";
+import { buildRunQueueSnapshot } from "../core/runs/jobQueue.js";
 import { buildRunJobsSnapshot } from "../core/runs/jobsProjection.js";
 import { bootstrapAutoLabOSRuntime, AutoLabOSRuntime } from "../runtime/createRuntime.js";
-import { GraphNodeId, PendingPlan, RunJobsSnapshot, RunRecord, WebSessionState } from "../types.js";
+import { detectExecutionProfile, executionProfileToDependencyMode } from "../runtime/executionProfile.js";
+import { GraphNodeId, PendingPlan, RunJobsSnapshot, RunQueueSnapshot, RunRecord, WebSessionState } from "../types.js";
 import { InteractionSession } from "../interaction/InteractionSession.js";
 import { listRunArtifacts, readRunArtifact } from "./artifacts.js";
 import {
   BootstrapResponse,
   ConfigSummary,
   DoctorResponse,
+  JobsResponse,
   KnowledgeFileResponse,
   KnowledgeResponse,
   LiteratureResponse,
@@ -156,6 +159,7 @@ class AutoLabOSWebController {
     const session = new InteractionSession({
       workspaceRoot: this.cwd,
       config: runtime.config,
+      executionProfile: runtime.executionProfile,
       runStore: runtime.runStore,
       titleGenerator: runtime.titleGenerator,
       codex: runtime.codex,
@@ -183,6 +187,22 @@ class AutoLabOSWebController {
 
       if (pathname === "/api/bootstrap" && method === "GET") {
         return jsonResponse(res, 200, await this.buildBootstrapResponse());
+      }
+
+      if (pathname === "/api/jobs" && method === "GET") {
+        if (!this.runtime) {
+          return jsonResponse(res, 200, emptyJobQueueSnapshot());
+        }
+        const runs = await this.runtime.runStore.listRuns();
+        const payload: JobsResponse = await buildRunQueueSnapshot({
+          workspaceRoot: this.cwd,
+          runs
+        });
+        return jsonResponse(
+          res,
+          200,
+          payload
+        );
       }
 
       if (pathname === "/api/setup" && method === "POST") {
@@ -258,13 +278,15 @@ class AutoLabOSWebController {
             reasoningEffort: "medium",
             fastMode: false
           });
+          const executionProfile = await detectExecutionProfile();
           const report = await runDoctorReport(codex, {
             workspaceRoot: this.cwd,
             openAiApiKeyConfigured: await hasOpenAiApiKey(this.cwd),
             includeHarnessValidation: true,
             includeHarnessTestRecords: false,
             maxHarnessFindings: 40,
-            codeExecutionExpected: false
+            codeExecutionExpected: false,
+            dependencyMode: executionProfileToDependencyMode(executionProfile)
           });
           return jsonResponse(
             res,
@@ -302,7 +324,7 @@ class AutoLabOSWebController {
           workspaceRoot: this.cwd,
           approvalMode: this.runtime.config.workflow.approval_mode,
           executionApprovalMode: this.runtime.config.workflow.execution_approval_mode,
-          dependencyMode: "local",
+          dependencyMode: executionProfileToDependencyMode(this.runtime.executionProfile),
           sessionMode: "fresh",
           codeExecutionExpected: true,
           candidateIsolation: this.runtime.config.experiments.candidate_isolation,
@@ -340,7 +362,7 @@ class AutoLabOSWebController {
 
       if (pathname === "/api/knowledge" && method === "GET") {
         const knowledge = await readRepositoryKnowledgeIndex(this.cwd);
-        return jsonResponse(res, 200, { entries: knowledge.entries } satisfies KnowledgeResponse);
+        return jsonResponse(res, 200, knowledge satisfies KnowledgeResponse);
       }
 
       if (pathname === "/api/knowledge/file" && method === "GET") {
@@ -605,8 +627,15 @@ class AutoLabOSWebController {
           networkPurpose: this.runtime.config.experiments.network_purpose
         })
       : emptyJobsSnapshot();
+    const jobQueue = this.runtime
+      ? await buildRunQueueSnapshot({
+          workspaceRoot: this.cwd,
+          runs
+        })
+      : emptyJobQueueSnapshot();
     return {
       configured: Boolean(this.runtime && this.session),
+      execution_profile: this.runtime?.executionProfile || (await detectExecutionProfile()),
       setupDefaults: {
         projectName: path.basename(this.cwd),
         defaultTopic: config?.research.default_topic || "Multi-agent collaboration",
@@ -617,6 +646,7 @@ class AutoLabOSWebController {
       session: this.session?.snapshot() || emptySessionState(),
       runs,
       jobs,
+      jobQueue,
       activeRunId: this.session?.getActiveRunId(),
       configSummary: config ? summarizeConfig(config) : undefined,
       configForm: buildConfigFormData(config, this.cwd),
@@ -856,6 +886,14 @@ function emptyJobsSnapshot(): RunJobsSnapshot {
     generated_at: new Date(0).toISOString(),
     runs: [],
     top_failures: []
+  };
+}
+
+function emptyJobQueueSnapshot(): RunQueueSnapshot {
+  return {
+    running: [],
+    waiting: [],
+    stalled: []
   };
 }
 

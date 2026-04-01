@@ -49,6 +49,7 @@
     "test:web": "npm --prefix web run test",
     "test:watch": "vitest",
     "eval:harness": "tsx src/cli/main.ts eval-harness",
+    "evolve:skills": "bash scripts/evolve-skills.sh",
     "validate:harness": "tsx src/cli/validateHarness.ts",
     "test:smoke:natural-collect": "bash tests/smoke/run_natural_collect_pending_command.sh",
     "test:smoke:natural-collect-execute": "bash tests/smoke/run_natural_collect_execute_and_verify_artifacts.sh",

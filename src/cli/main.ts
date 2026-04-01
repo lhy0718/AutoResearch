@@ -14,6 +14,7 @@ function printHelp(): void {
     "",
     "Usage:",
     "  autolabos",
+    "  autolabos --package <fast|thorough|paper_scale>",
     "  autolabos web [--host 127.0.0.1] [--port 4317]",
     "  autolabos compare-analysis --run <run-id> [--limit 3] [--no-judge]",
     "  autolabos eval-harness [--run <run-id>] [--limit 10] [--output outputs/eval-harness/latest.json]",
@@ -70,7 +71,9 @@ async function main(): Promise<void> {
     return;
   }
 
-  await runAutoLabOSApp();
+  await runAutoLabOSApp({
+    packageName: action.kind === "run" ? action.packageName : undefined
+  });
 }
 
 main().catch((error) => {

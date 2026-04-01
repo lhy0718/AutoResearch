@@ -38,8 +38,9 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Generated media / local previews
+# Generated outputs / local previews
 output/
+outputs/
 
 # python
 __pycache__/

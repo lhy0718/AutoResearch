@@ -21,8 +21,9 @@ export interface GraphNodeContext {
 }
 
 export interface GraphNodeResult {
-  status: "success" | "failure";
+  status: "success" | "failure" | "skipped";
   summary?: string;
+  reason?: string;
   needsApproval?: boolean;
   error?: string;
   costUsd?: number;

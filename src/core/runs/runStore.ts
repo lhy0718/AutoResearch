@@ -7,6 +7,7 @@ import { AppPaths } from "../../config.js";
 import {
   GRAPH_NODE_ORDER,
   GraphNodeId,
+  NodeOptionPackageName,
   NodeStatus,
   RunRecord,
   RunsFile,
@@ -26,6 +27,7 @@ import { RunContextItem } from "../memory/runContextMemory.js";
 import { normalizeRunUsageSummary } from "./runUsage.js";
 import { RunIndexDatabase, toRunArtifactType } from "./runIndexDatabase.js";
 import { buildRunCheckpointsDirPath, buildRunRecordPath, buildRunRootPath } from "./runPaths.js";
+import { indexRunKnowledge } from "../repositoryKnowledge.js";
 
 export interface CreateRunInput {
   title: string;
@@ -37,7 +39,12 @@ export interface CreateRunInput {
 export class RunStore {
   private runIndexReady?: Promise<RunIndexDatabase>;
 
-  constructor(private readonly paths: AppPaths) {}
+  constructor(
+    private readonly paths: AppPaths,
+    private readonly options: {
+      nodeOptionPackageName?: NodeOptionPackageName;
+    } = {}
+  ) {}
 
   async listRuns(): Promise<RunRecord[]> {
     return this.withRunIndex(async (index) => {
@@ -94,7 +101,7 @@ export class RunStore {
     return this.withRunIndex(async (index) => {
       const ts = nowIso();
       const id = randomUUID();
-      const graph = createDefaultGraphState();
+      const graph = createDefaultGraphState(this.options.nodeOptionPackageName);
 
       const run: RunRecord = {
         version: 3,
@@ -284,6 +291,12 @@ export class RunStore {
     const persistableRun = await this.readPersistableRun(run);
     index.upsertRun(projectRunRecord(persistableRun));
     await Promise.all([this.writeRunRecord(persistableRun), this.writeRunsMirror(index)]);
+    if (persistableRun.status === "completed" || persistableRun.status === "failed") {
+      await indexRunKnowledge({
+        workspaceRoot: this.paths.cwd,
+        run: persistableRun
+      });
+    }
   }
 
   private async writeRunsMirror(index: RunIndexDatabase, runs = index.listRuns()): Promise<void> {

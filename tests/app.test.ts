@@ -45,7 +45,8 @@ describe("runAutoLabOSApp", () => {
 
     expect(bootstrapAutoLabOSRuntime).toHaveBeenCalledWith({
       cwd: process.cwd(),
-      allowInteractiveSetup: true
+      allowInteractiveSetup: true,
+      nodeOptionPackageName: undefined
     });
     expect(runNonInteractiveSetup).not.toHaveBeenCalled();
     expect(configExists).not.toHaveBeenCalled();
@@ -80,6 +81,26 @@ describe("runAutoLabOSApp", () => {
         onQuit: expect.any(Function)
       })
     );
+  });
+
+  it("forwards the selected node option package into runtime bootstrap", async () => {
+    const runtime = makeRuntime();
+    bootstrapAutoLabOSRuntime.mockResolvedValue({
+      configured: true,
+      firstRunSetup: false,
+      paths: { cwd: process.cwd() },
+      config: runtime.config,
+      runtime
+    });
+
+    const { runAutoLabOSApp } = await import("../src/app.js");
+    await runAutoLabOSApp({ packageName: "fast" });
+
+    expect(bootstrapAutoLabOSRuntime).toHaveBeenCalledWith({
+      cwd: process.cwd(),
+      allowInteractiveSetup: true,
+      nodeOptionPackageName: "fast"
+    });
   });
 });
 

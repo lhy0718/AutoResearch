@@ -135,9 +135,9 @@ export class StateGraphRuntime {
       run.graph.pendingTransition = result.transitionRecommendation;
       run.graph.nodeStates[node] = {
         ...run.graph.nodeStates[node],
-        status: result.needsApproval ? "needs_approval" : "completed",
+        status: result.status === "skipped" ? "skipped" : result.needsApproval ? "needs_approval" : "completed",
         updatedAt: new Date().toISOString(),
-        note: result.summary,
+        note: result.summary || result.reason,
         lastError: undefined
       };
       run.status = result.needsApproval ? "paused" : "running";

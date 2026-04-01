@@ -1,4 +1,4 @@
-import { AppConfig } from "../../types.js";
+import { AppConfig, ExecutionProfile } from "../../types.js";
 import { EventStream } from "../events.js";
 import { LLMClient } from "../llm/client.js";
 import { RunStore } from "../runs/runStore.js";
@@ -14,6 +14,7 @@ import { OllamaPdfAnalysisClient } from "../../integrations/ollama/ollamaPdfAnal
 
 export interface NodeExecutionDeps {
   config: AppConfig;
+  executionProfile?: ExecutionProfile;
   runStore: RunStore;
   eventStream: EventStream;
   llm: LLMClient;

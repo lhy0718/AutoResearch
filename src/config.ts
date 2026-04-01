@@ -169,6 +169,7 @@ function stripLegacyPdfConfig(config: AppConfig): AppConfig {
     }
   } as AppConfig & {
     analysis?: unknown;
+    runtime?: unknown;
     providers: {
       codex: AppConfig["providers"]["codex"] & { pdf_model?: unknown; pdf_fast_mode?: unknown };
       openai: AppConfig["providers"]["openai"] & { pdf_model?: unknown };
@@ -176,6 +177,7 @@ function stripLegacyPdfConfig(config: AppConfig): AppConfig {
   };
 
   delete sanitized.analysis;
+  delete sanitized.runtime;
   delete sanitized.providers.codex.pdf_model;
   delete sanitized.providers.codex.pdf_fast_mode;
   delete sanitized.providers.openai.pdf_model;

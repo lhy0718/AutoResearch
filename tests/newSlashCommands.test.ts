@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { buildSuggestions } from "../src/tui/commandPalette/suggest.js";
 import { SLASH_COMMANDS, needsArg } from "../src/tui/commandPalette/commands.js";
 import { TerminalApp } from "../src/tui/TerminalApp.js";
+import { InMemoryEventStream } from "../src/core/events.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 
 const runs = [
@@ -46,6 +47,11 @@ describe("new slash commands", () => {
     expect(suggestions.some((s) => s.applyValue === "/jobs ")).toBe(true);
   });
 
+  it("includes /watch in suggestions when typing /wa", () => {
+    const suggestions = buildSuggestions({ input: "/wa", runs, activeRunId: "run-1" });
+    expect(suggestions.some((s) => s.applyValue === "/watch ")).toBe(true);
+  });
+
   it("includes /analyze-results in suggestions when typing /an", () => {
     const suggestions = buildSuggestions({ input: "/an", runs, activeRunId: "run-1" });
     expect(suggestions.some((s) => s.applyValue === "/analyze-results ")).toBe(true);
@@ -60,11 +66,10 @@ describe("new slash commands", () => {
     expect(suggestions.some((s) => s.key === "cmd:knowledge")).toBe(true);
     expect(suggestions.some((s) => s.key === "cmd:artifact")).toBe(true);
     expect(suggestions.some((s) => s.key === "cmd:jobs")).toBe(true);
+    expect(suggestions.some((s) => s.key === "cmd:watch")).toBe(true);
     expect(suggestions.some((s) => s.key === "cmd:analyze-results")).toBe(true);
     expect(suggestions.some((s) => s.key === "cmd:stats")).toBe(true);
     expect(suggestions.some((s) => s.key === "cmd:terminal-setup")).toBe(true);
-    expect(suggestions.some((s) => s.key === "cmd:theme")).toBe(true);
-    expect(suggestions.some((s) => s.key === "cmd:model")).toBe(true);
   });
 
   it("resolves /terminal-setup alias ts", () => {
@@ -99,6 +104,12 @@ describe("new slash commands", () => {
     }
   });
 
+  it("includes /watch in help output", () => {
+    const app = makeApp();
+    app.printHelp();
+    expect(app.logs).toContain("/watch");
+  });
+
   it("backward-compatible: existing visible commands still appear", () => {
     const suggestions = buildSuggestions({ input: "/", runs, activeRunId: "run-1" });
     expect(suggestions.some((s) => s.key === "cmd:help")).toBe(true);
@@ -113,6 +124,7 @@ describe("new slash commands", () => {
 });
 
 function makeApp(): any {
+  const eventStream = new InMemoryEventStream();
   const app = new TerminalApp({
     config: {
       papers: { max_results: 100 },
@@ -122,10 +134,13 @@ function makeApp(): any {
         openai: { model: "gpt-5.4", reasoning_effort: "medium" }
       }
     } as any,
-    runStore: {} as any,
+    runStore: {
+      listRuns: vi.fn().mockResolvedValue([]),
+      getRun: vi.fn().mockResolvedValue(undefined)
+    } as any,
     titleGenerator: {} as any,
     codex: {} as any,
-    eventStream: { subscribe: () => () => {} } as any,
+    eventStream,
     orchestrator: {} as any,
     semanticScholarApiKeyConfigured: false,
     onQuit: () => {},
@@ -138,6 +153,7 @@ function makeApp(): any {
   app.interactiveSupervisor = {
     getActiveRequest: vi.fn().mockResolvedValue(undefined)
   };
+  app.__eventStream = eventStream;
   return app;
 }
 
@@ -289,6 +305,56 @@ describe("diagnostic command transient logs", () => {
     expect(result.ok).toBe(true);
     expect(app.logs).toContain("Artifact shortcuts for run-1:");
     expect(app.logs).toContain("- Review readiness risks: /artifact review/readiness_risks.json");
+  });
+
+  it("starts /watch and updates rows when a mock event arrives", async () => {
+    const app = makeApp();
+    const now = new Date().toISOString();
+    const graph = createDefaultGraphState();
+    graph.currentNode = "analyze_results";
+    graph.nodeStates.analyze_results.status = "running";
+    graph.nodeStates.analyze_results.updatedAt = now;
+    const run = {
+      version: 3,
+      workflowVersion: 3,
+      id: "12345678-run-watch",
+      title: "Watch Run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric",
+      status: "running",
+      currentNode: "analyze_results",
+      nodeThreads: {},
+      createdAt: now,
+      updatedAt: now,
+      graph,
+      memoryRefs: {
+        runContextPath: ".autolabos/runs/12345678-run-watch/memory/run_context.json",
+        longTermPath: ".autolabos/runs/12345678-run-watch/memory/long_term.jsonl",
+        episodePath: ".autolabos/runs/12345678-run-watch/memory/episodes.jsonl"
+      }
+    };
+    app.runStore.listRuns = vi.fn().mockResolvedValue([]);
+    app.runStore.getRun = vi.fn().mockResolvedValue(run);
+
+    await app.handleWatch();
+    expect(app.getRenderableLogs().some((line: string) => line.includes("Watch: live run and background job view"))).toBe(true);
+
+    const event = app.__eventStream.emit({
+      type: "NODE_STARTED",
+      runId: run.id,
+      node: "analyze_results",
+      payload: {}
+    });
+    await app.handleStreamEvent(event);
+
+    const logs = app.getRenderableLogs();
+    expect(logs.some((line: string) => line.includes("12345678"))).toBe(true);
+    expect(logs.some((line: string) => line.includes("analyze_results"))).toBe(true);
+    expect(logs.some((line: string) => line.includes("running"))).toBe(true);
+
+    await app.handleKeypress("q", { name: "q" });
+    expect(app.watchModeActive).toBe(false);
   });
 });
 

@@ -1,5 +1,7 @@
+import { NodeOptionPackageName } from "../types.js";
+
 export type CliAction =
-  | { kind: "run" }
+  | { kind: "run"; packageName?: NodeOptionPackageName }
   | { kind: "web"; host?: string; port?: number }
   | { kind: "compare-analysis"; runId: string; limit: number; judge: boolean }
   | { kind: "eval-harness"; runIds: string[]; limit: number; outputPath?: string }
@@ -10,6 +12,11 @@ export type CliAction =
 export function resolveCliAction(args: string[]): CliAction {
   if (args.length === 0) {
     return { kind: "run" };
+  }
+
+  const packageParse = parseRunPackageArgs(args);
+  if (packageParse) {
+    return packageParse;
   }
 
   const first = args[0];
@@ -149,4 +156,37 @@ export function resolveCliAction(args: string[]): CliAction {
     message:
       "Unsupported CLI arguments. Run `autolabos`, `autolabos web`, `autolabos compare-analysis`, `autolabos eval-harness`, or use slash commands inside the TUI."
   };
+}
+
+const VALID_NODE_OPTION_PACKAGES: NodeOptionPackageName[] = ["fast", "thorough", "paper_scale"];
+
+function parseRunPackageArgs(args: string[]): CliAction | undefined {
+  if (args[0] !== "--package") {
+    return undefined;
+  }
+
+  const packageName = args[1];
+  if (!packageName) {
+    return { kind: "error", message: "Missing value for --package." };
+  }
+
+  if (!isNodeOptionPackageName(packageName)) {
+    return {
+      kind: "error",
+      message: `Unsupported package: ${packageName}. Expected one of ${VALID_NODE_OPTION_PACKAGES.join(", ")}.`
+    };
+  }
+
+  if (args.length > 2) {
+    return {
+      kind: "error",
+      message: `Unsupported run argument: ${args[2]}`
+    };
+  }
+
+  return { kind: "run", packageName };
+}
+
+function isNodeOptionPackageName(value: string): value is NodeOptionPackageName {
+  return VALID_NODE_OPTION_PACKAGES.includes(value as NodeOptionPackageName);
 }

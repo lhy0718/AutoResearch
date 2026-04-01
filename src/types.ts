@@ -52,6 +52,9 @@ export type NodeStatus = "pending" | "running" | "needs_approval" | "completed" 
 export type AgentStatus = NodeStatus;
 export type WorkflowApprovalMode = "manual" | "minimal";
 export type ExecutionApprovalMode = "manual" | "risk_ack" | "full_auto";
+export type ExecutionProfile = "local" | "docker" | "remote" | "plan_only";
+export type EvidenceDepth = "shallow" | "deep";
+export type NodeOptionPackageName = "fast" | "thorough" | "paper_scale";
 export type ExperimentNetworkPolicy = "blocked" | "declared" | "required";
 export type ExperimentNetworkPurpose =
   | "logging"
@@ -105,6 +108,20 @@ export interface RetryPolicy {
   maxAutoRollbacksPerNode: number;
   /** Maximum backward jumps the minimal-approval runtime may auto-apply before pausing for human review. */
   maxAutoBackwardJumps?: number;
+}
+
+export interface NodeOptions {
+  node?: GraphNodeId | "all";
+  maxAttemptsPerNode: number;
+  skipLLMReview: boolean;
+  evidenceDepth: EvidenceDepth;
+  requireBaselineComparator?: boolean;
+}
+
+export interface NodeOptionPackage {
+  name: NodeOptionPackageName;
+  description: string;
+  nodeOverrides: Partial<NodeOptions>[];
 }
 
 export interface RunGraphState {
@@ -284,6 +301,12 @@ export interface AppConfig {
   paths: {
     runs_dir: string;
     logs_dir: string;
+  };
+  /** Runtime-only environment detection. This is attached in memory and stripped before persisting config.yaml. */
+  runtime?: {
+    execution_profile?: ExecutionProfile;
+    node_option_package?: NodeOptionPackageName;
+    resolved_node_options?: NodeOptions;
   };
 }
 
@@ -551,6 +574,25 @@ export interface RunJobsSnapshot {
   generated_at: string;
   runs: RunJobProjection[];
   top_failures: RunJobFailureAggregate[];
+}
+
+export type RunQueueRecommendedAction = "retry" | "manual review";
+
+export interface RunQueueJobSummary {
+  run_id: string;
+  node: GraphNodeId;
+  status: string;
+  started_at: string;
+  elapsed_seconds: number;
+  recommended_action?: RunQueueRecommendedAction;
+  recommendation_line?: string;
+  source?: "run" | "collect_background_job";
+}
+
+export interface RunQueueSnapshot {
+  running: RunQueueJobSummary[];
+  waiting: RunQueueJobSummary[];
+  stalled: RunQueueJobSummary[];
 }
 
 export interface WebSessionState {

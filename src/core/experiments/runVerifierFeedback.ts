@@ -4,7 +4,7 @@ export type RunVerifierStage = "preflight_test" | "command" | "metrics" | "polic
 
 export interface RunVerifierReport {
   source: "run_experiments";
-  status: "pass" | "fail";
+  status: "pass" | "fail" | "skipped";
   trigger: RunVerifierTrigger;
   stage: RunVerifierStage;
   summary: string;

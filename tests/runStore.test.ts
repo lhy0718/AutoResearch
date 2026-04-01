@@ -1,5 +1,5 @@
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 
@@ -13,6 +13,10 @@ import { CheckpointStore } from "../src/core/stateGraph/checkpointStore.js";
 import { RunStore } from "../src/core/runs/runStore.js";
 import { RunRecord } from "../src/types.js";
 import { readJsonFile } from "../src/utils/fs.js";
+import {
+  buildRepositoryKnowledgeIndexPath,
+  buildRepositoryKnowledgeNotePath
+} from "../src/core/repositoryKnowledge.js";
 
 const tempDirs: string[] = [];
 
@@ -51,6 +55,24 @@ describe("RunStore", () => {
     expect(fetched?.title).toBe("Test Run Title");
   });
 
+  it("applies the fast node option package to new run retry policy", async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), "autolabos-runstore-fast-package-"));
+    tempDirs.push(cwd);
+    const paths = resolveAppPaths(cwd);
+    await ensureScaffold(paths);
+
+    const store = new RunStore(paths, { nodeOptionPackageName: "fast" });
+    const run = await store.createRun({
+      title: "Fast Package Run",
+      topic: "ai agent",
+      constraints: [],
+      objectiveMetric: "accuracy"
+    });
+
+    expect(run.graph.retryPolicy.maxAttemptsPerNode).toBe(1);
+    expect(run.graph.retryPolicy.maxAutoRollbacksPerNode).toBe(2);
+  });
+
   it("searches runs by id and title", async () => {
     const cwd = mkdtempSync(path.join(os.tmpdir(), "autolabos-runsearch-"));
     tempDirs.push(cwd);
@@ -70,6 +92,74 @@ describe("RunStore", () => {
 
     const byTitle = await store.searchRuns("benchmark");
     expect(byTitle.length).toBe(1);
+  });
+
+  it("indexes completed run knowledge into the repository knowledge store", async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), "autolabos-runstore-knowledge-"));
+    tempDirs.push(cwd);
+    const paths = resolveAppPaths(cwd);
+    await ensureScaffold(paths);
+
+    const store = new RunStore(paths);
+    const run = await store.createRun({
+      title: "Knowledge Indexed Run",
+      topic: "Adaptive reasoning under budget",
+      constraints: [],
+      objectiveMetric: "accuracy"
+    });
+
+    const runRoot = path.join(paths.runsDir, run.id);
+    await mkdir(path.join(runRoot, "review"), { recursive: true });
+    await mkdir(path.join(runRoot, "paper"), { recursive: true });
+    await writeFile(
+      path.join(runRoot, "result_analysis.json"),
+      JSON.stringify(
+        {
+          mean_score: 0.82,
+          overview: {
+            objective_status: "met",
+            objective_summary: "Accuracy cleared the baseline target."
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runRoot, "review", "decision.json"),
+      JSON.stringify({ outcome: "advance_to_write_paper" }, null, 2),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runRoot, "paper", "paper_readiness.json"),
+      JSON.stringify({ paper_ready: true, readiness_state: "paper_ready" }, null, 2),
+      "utf8"
+    );
+
+    run.status = "completed";
+    run.currentNode = "write_paper";
+    run.graph.currentNode = "write_paper";
+    run.updatedAt = new Date().toISOString();
+    await store.updateRun(run);
+
+    const knowledgeIndex = await readJsonFile<{ entries: Array<Record<string, unknown>> }>(
+      buildRepositoryKnowledgeIndexPath(cwd)
+    );
+    const note = await readFile(buildRepositoryKnowledgeNotePath(cwd, run.id), "utf8");
+    const entry = knowledgeIndex.entries.find((item) => item.run_id === run.id);
+
+    expect(entry).toBeTruthy();
+    expect(entry?.topic_slug).toBe("adaptive-reasoning-under-budget");
+    expect(entry?.final_node).toBe("write_paper");
+    expect(entry?.paper_ready).toBe(true);
+    expect(entry?.review_decision).toBe("advance_to_write_paper");
+    expect(Array.isArray(entry?.key_metrics)).toBe(true);
+    expect(note).toContain(`- Run ID: ${run.id}`);
+    expect(note).toContain("- Topic slug: adaptive-reasoning-under-budget");
+    expect(note).toContain("- Paper ready: yes");
+    expect(note).toContain("- objective_status: met");
+    expect(note).toContain("- mean_score: 0.82");
   });
 
   it("bootstraps the sqlite index from runs.json and fresher run_record snapshots", async () => {

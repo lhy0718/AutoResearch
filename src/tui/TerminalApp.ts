@@ -4,7 +4,18 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 import { spawn } from "node:child_process";
 
-import { AGENT_ORDER, AgentId, AppConfig, GraphNodeId, RunInsightCard, RunRecord, SuggestionItem } from "../types.js";
+import {
+  AGENT_ORDER,
+  AgentId,
+  AppConfig,
+  ExecutionProfile,
+  GraphNodeId,
+  RunInsightCard,
+  RunQueueRecommendedAction,
+  RunQueueSnapshot,
+  RunRecord,
+  SuggestionItem
+} from "../types.js";
 import { RunStore } from "../core/runs/runStore.js";
 import { TitleGenerator } from "../core/runs/titleGenerator.js";
 import { CodexCliClient, CodexReasoningEffort } from "../integrations/codex/codexCliClient.js";
@@ -55,6 +66,7 @@ import {
 } from "../core/commands/naturalActionIntent.js";
 import { buildDoctorHighlightLines, getDoctorCheckStatus, runDoctorReport } from "../core/doctor.js";
 import { resolveRunByQuery } from "../core/runs/runResolver.js";
+import { buildRunQueueSnapshot } from "../core/runs/jobQueue.js";
 import {
   buildAnalyzeResultsOperatorSummary,
   buildJobsTemplateLines,
@@ -66,6 +78,7 @@ import {
 import { askLine } from "../utils/prompt.js";
 import { ensureDir, fileExists } from "../utils/fs.js";
 import { getDefaultPdfAnalysisModeForLlmMode, getPdfAnalysisModeForConfig, resolveOpenAiApiKey, upsertEnvVar } from "../config.js";
+import { executionProfileToDependencyMode } from "../runtime/executionProfile.js";
 import { AgentOrchestrator } from "../core/agents/agentOrchestrator.js";
 import { AutonomousRunController, buildDefaultOvernightPolicy, buildDefaultAutonomousPolicy } from "../core/agents/autonomousRunController.js";
 import { RunContextMemory } from "../core/memory/runContextMemory.js";
@@ -116,7 +129,7 @@ import {
 import { buildRunLiteratureIndexLines, writeRunLiteratureIndex } from "../core/literatureIndex.js";
 import { getAppVersion } from "./version.js";
 import { buildAnimatedStatusText, buildFrame, buildThinkingText, RenderFrameOutput, SelectionMenuOption } from "./renderFrame.js";
-import { applyCodexSurfaceTheme, parseTerminalBackgroundResponse, supportsColor, TUI_THEME, type RgbColor } from "./theme.js";
+import { applyCodexSurfaceTheme, paint, parseTerminalBackgroundResponse, supportsColor, TUI_THEME, type RgbColor } from "./theme.js";
 import { OpenAiResponsesTextClient } from "../integrations/openai/responsesTextClient.js";
 import { OllamaClient } from "../integrations/ollama/ollamaClient.js";
 import { OllamaLLMClient } from "../core/llm/client.js";
@@ -170,6 +183,7 @@ const COLLECT_SUMMARY_PREFIXES = ["Semantic Scholar stored", "Artifacts cleared 
 
 interface TerminalAppDeps {
   config: AppConfig;
+  executionProfile?: ExecutionProfile;
   runStore: RunStore;
   titleGenerator: TitleGenerator;
   codex: CodexCliClient;
@@ -180,6 +194,22 @@ interface TerminalAppDeps {
   semanticScholarApiKeyConfigured: boolean;
   onQuit: () => void;
   saveConfig: (nextConfig: AppConfig) => Promise<void>;
+}
+
+interface WatchComposerSnapshot {
+  input: string;
+  cursorIndex: number;
+}
+
+interface WatchRow {
+  runId: string;
+  currentNode: string;
+  nodeStatus: string;
+  runStatus: string;
+  elapsedSeconds: number;
+  highlight?: "warning" | "danger";
+  source?: "run" | "collect_background_job";
+  recommendation?: RunQueueRecommendedAction;
 }
 
 interface ActiveNaturalRequest {
@@ -261,6 +291,7 @@ const STALE_RUNNING_NODE_RECOVERY_MS = 5 * 60 * 1000;
 
 export class TerminalApp {
   private readonly config: AppConfig;
+  private readonly executionProfile: ExecutionProfile;
   private readonly runStore: RunStore;
   private readonly titleGenerator: TitleGenerator;
   private readonly codex: CodexCliClient;
@@ -295,6 +326,9 @@ export class TerminalApp {
   private thinkingFrame = 0;
   private thinkingTimer?: NodeJS.Timeout;
   private queuedInputs: string[] = [];
+  private watchModeActive = false;
+  private watchModeTimer?: NodeJS.Timeout;
+  private watchComposerSnapshot?: WatchComposerSnapshot;
   private activeSelectionMenu?: ActiveSelectionMenu;
   private drainingQueuedInputs = false;
   private activeNaturalRequest?: ActiveNaturalRequest;
@@ -346,6 +380,7 @@ export class TerminalApp {
 
   constructor(deps: TerminalAppDeps) {
     this.config = deps.config;
+    this.executionProfile = deps.executionProfile || deps.config.runtime?.execution_profile || "local";
     this.runStore = deps.runStore;
     this.titleGenerator = deps.titleGenerator;
     this.codex = deps.codex;
@@ -658,6 +693,18 @@ export class TerminalApp {
     }
 
     if (this.shouldIgnoreEnhancedEnterEcho(key)) {
+      return;
+    }
+
+    if (this.watchModeActive) {
+      if (key.ctrl && key.name === "c") {
+        this.stopWatchMode();
+        return;
+      }
+      if (!key.ctrl && !key.meta && str.toLowerCase() === "q") {
+        this.stopWatchMode();
+        return;
+      }
       return;
     }
 
@@ -2030,6 +2077,9 @@ export class TerminalApp {
       case "jobs":
         await this.handleJobs(args);
         return { ok: true };
+      case "watch":
+        await this.handleWatch();
+        return { ok: true };
       case "run":
         return this.handleRunSelect(args, false);
       case "resume":
@@ -2054,7 +2104,7 @@ export class TerminalApp {
         this.handleClear();
         return { ok: true };
       case "queue":
-        this.handleQueue(args);
+        await this.handleQueue(args);
         return { ok: true };
       case "inspect":
         this.handleInspect();
@@ -2092,6 +2142,7 @@ export class TerminalApp {
     this.pushLog("/new");
     this.pushLog("/brief start <path|--latest>");
     this.pushLog("/jobs [query|--template 3d|7d]");
+    this.pushLog("/watch");
     this.pushLog("/analyze-results [run]");
     this.pushLog("/approve");
     this.pushLog("/knowledge [run]");
@@ -2113,7 +2164,49 @@ export class TerminalApp {
     this.render();
   }
 
-  private handleQueue(args: string[]): void {
+  private async handleWatch(): Promise<void> {
+    if (this.watchModeActive) {
+      await this.refreshWatchView();
+      return;
+    }
+
+    await this.refreshRunIndex();
+    this.watchComposerSnapshot = {
+      input: this.input,
+      cursorIndex: this.cursorIndex
+    };
+    this.input = "";
+    this.cursorIndex = 0;
+    this.updateSuggestions();
+    this.watchModeActive = true;
+    this.watchModeTimer = setInterval(() => {
+      void this.refreshWatchView();
+    }, 1000);
+    await this.refreshWatchView();
+  }
+
+  private stopWatchMode(options?: { skipRender?: boolean }): void {
+    if (!this.watchModeActive) {
+      return;
+    }
+    this.watchModeActive = false;
+    if (this.watchModeTimer) {
+      clearInterval(this.watchModeTimer);
+      this.watchModeTimer = undefined;
+    }
+    this.clearTransientLogs();
+    if (this.watchComposerSnapshot) {
+      this.input = this.watchComposerSnapshot.input;
+      this.cursorIndex = this.watchComposerSnapshot.cursorIndex;
+      this.watchComposerSnapshot = undefined;
+    }
+    this.updateSuggestions();
+    if (!options?.skipRender) {
+      this.render();
+    }
+  }
+
+  private async handleQueue(args: string[]): Promise<void> {
     const sub = args[0]?.toLowerCase();
     if (sub === "clear") {
       const count = this.queuedInputs.length;
@@ -2133,15 +2226,213 @@ export class TerminalApp {
       this.render();
       return;
     }
-    if (this.queuedInputs.length === 0) {
-      this.pushTransientLog("Queue is empty.");
-    } else {
+    if (this.queuedInputs.length > 0) {
       this.pushTransientLog(`Queued inputs (${this.queuedInputs.length}):`);
       for (const [i, queued] of this.queuedInputs.entries()) {
         this.pushTransientLog(`  ${i}: ${oneLine(queued)}`);
       }
     }
+
+    const runs = await this.runStore.listRuns();
+    const snapshot = await buildRunQueueSnapshot({
+      workspaceRoot: process.cwd(),
+      runs
+    });
+    const hasBuckets = snapshot.running.length > 0 || snapshot.waiting.length > 0 || snapshot.stalled.length > 0;
+
+    if (this.queuedInputs.length === 0 && !hasBuckets) {
+      this.pushTransientLog("Queue is empty.");
+      this.render();
+      return;
+    }
+
+    if (hasBuckets) {
+      this.pushTransientLog("Run jobs:");
+      this.renderRunQueueBucket("running", snapshot.running);
+      this.renderRunQueueBucket("waiting", snapshot.waiting);
+      this.renderRunQueueBucket("stalled", snapshot.stalled);
+    }
     this.render();
+  }
+
+  private async refreshWatchView(): Promise<void> {
+    if (!this.watchModeActive) {
+      return;
+    }
+
+    const runs = this.runIndex.length > 0 ? this.runIndex : await this.runStore.listRuns();
+    const snapshot = await buildRunQueueSnapshot({
+      workspaceRoot: process.cwd(),
+      runs
+    });
+
+    this.transientLogs = this.buildWatchLines(snapshot, runs);
+    this.render();
+  }
+
+  private buildWatchLines(snapshot: RunQueueSnapshot, runs: RunRecord[]): string[] {
+    const buckets = this.buildWatchBuckets(snapshot, runs);
+    const lines = [
+      "Watch: live run and background job view. Press q or Ctrl+C to return.",
+      "",
+      ...this.renderWatchBucket("running", buckets.running),
+      ...this.renderWatchBucket("waiting", buckets.waiting),
+      ...this.renderWatchBucket("stalled", buckets.stalled)
+    ];
+    return lines;
+  }
+
+  private buildWatchBuckets(
+    snapshot: RunQueueSnapshot,
+    runs: RunRecord[]
+  ): { running: WatchRow[]; waiting: WatchRow[]; stalled: WatchRow[] } {
+    const running: WatchRow[] = [];
+    const waiting: WatchRow[] = [];
+    const stalled: WatchRow[] = [];
+    const runsById = new Map(runs.map((run) => [run.id, run]));
+    const stalledRunKeys = new Map(
+      snapshot.stalled
+        .filter((job) => job.source !== "collect_background_job")
+        .map((job) => [`${job.run_id}:${job.node}`, job])
+    );
+
+    const activeRuns = runs
+      .filter((run) => run.status !== "completed")
+      .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+
+    for (const run of activeRuns) {
+      const node = run.currentNode;
+      const nodeState = run.graph.nodeStates[node];
+      const startedAt = nodeState?.updatedAt || run.updatedAt;
+      const key = `${run.id}:${node}`;
+      const stalledJob = stalledRunKeys.get(key);
+      const row: WatchRow = {
+        runId: run.id,
+        currentNode: node,
+        nodeStatus: nodeState?.status || run.status,
+        runStatus: run.status,
+        elapsedSeconds: this.resolveElapsedSeconds(startedAt),
+        highlight:
+          run.status === "failed"
+            ? "danger"
+            : nodeState?.status === "needs_approval"
+              ? "warning"
+              : undefined,
+        recommendation:
+          stalledJob?.recommended_action || (run.status === "failed" ? this.recommendFailedRunAction(run, node) : undefined)
+      };
+
+      if (stalledJob || run.status === "failed") {
+        stalled.push(row);
+      } else if (row.nodeStatus === "needs_approval" || row.nodeStatus === "pending" || run.status === "paused" || run.status === "pending") {
+        waiting.push(row);
+      } else if (row.nodeStatus === "running" || run.status === "running") {
+        running.push(row);
+      }
+    }
+
+    const backgroundJobs = [
+      ...snapshot.running.filter((job) => job.source === "collect_background_job").map((job) => ({ bucket: "running" as const, job })),
+      ...snapshot.stalled.filter((job) => job.source === "collect_background_job").map((job) => ({ bucket: "stalled" as const, job }))
+    ];
+
+    for (const { bucket, job } of backgroundJobs) {
+      const run = runsById.get(job.run_id);
+      const row: WatchRow = {
+        runId: job.run_id,
+        currentNode: `${job.node} [bg]`,
+        nodeStatus: bucket === "stalled" ? "stalled" : job.status,
+        runStatus: run?.status || "running",
+        elapsedSeconds: job.elapsed_seconds,
+        source: "collect_background_job",
+        highlight: run?.status === "failed" ? "danger" : undefined,
+        recommendation: bucket === "stalled" ? job.recommended_action : undefined
+      };
+      if (bucket === "stalled") {
+        stalled.push(row);
+      } else {
+        running.push(row);
+      }
+    }
+
+    return { running, waiting, stalled };
+  }
+
+  private renderWatchBucket(label: "running" | "waiting" | "stalled", rows: WatchRow[]): string[] {
+    const lines = [`${label} (${rows.length}):`];
+    if (rows.length === 0) {
+      lines.push("  - none");
+      return lines;
+    }
+
+    lines.push("  run_id   current_node             node_status       run_status       elapsed");
+    for (const row of rows) {
+      const line = [
+        `  ${row.runId.slice(0, 8).padEnd(8)}`,
+        row.currentNode.padEnd(24),
+        row.nodeStatus.padEnd(16),
+        row.runStatus.padEnd(16),
+        formatElapsedSeconds(row.elapsedSeconds).padStart(8)
+      ].join(" ");
+      lines.push(this.highlightWatchLine(line, row.highlight));
+      if (label === "stalled" && row.recommendation) {
+        lines.push(`    action: ${row.recommendation}`);
+      }
+    }
+    return lines;
+  }
+
+  private highlightWatchLine(line: string, highlight?: "warning" | "danger"): string {
+    if (!highlight) {
+      return line;
+    }
+    return paint(
+      line,
+      highlight === "danger"
+        ? { fg: TUI_THEME.danger, bold: true }
+        : { fg: TUI_THEME.warning, bold: true },
+      this.colorEnabled
+    );
+  }
+
+  private resolveElapsedSeconds(startedAt: string): number {
+    const started = Date.parse(startedAt);
+    if (!Number.isFinite(started)) {
+      return 0;
+    }
+    return Math.max(0, Math.floor((Date.now() - started) / 1000));
+  }
+
+  private recommendFailedRunAction(run: RunRecord, node: GraphNodeId): RunQueueRecommendedAction {
+    const attempts = run.graph.retryCounters[node] ?? 0;
+    return attempts < run.graph.retryPolicy.maxAttemptsPerNode ? "retry" : "manual review";
+  }
+
+  private renderRunQueueBucket(
+    label: "running" | "waiting" | "stalled",
+    jobs: Array<{
+      run_id: string;
+      node: GraphNodeId;
+      status: string;
+      elapsed_seconds: number;
+      source?: "run" | "collect_background_job";
+      recommendation_line?: string;
+    }>
+  ): void {
+    this.pushTransientLog(`${label} (${jobs.length}):`);
+    if (jobs.length === 0) {
+      this.pushTransientLog("  - none");
+      return;
+    }
+    for (const job of jobs) {
+      const source = job.source === "collect_background_job" ? "background collect" : "node run";
+      this.pushTransientLog(
+        `  - ${job.run_id} | ${job.node} | ${job.status} | ${formatElapsedSeconds(job.elapsed_seconds)} | ${source}`
+      );
+      if (job.recommendation_line) {
+        this.pushTransientLog(`    ${job.recommendation_line}`);
+      }
+    }
   }
 
   private handleInspect(): void {
@@ -2611,7 +2902,7 @@ export class TerminalApp {
       workspaceRoot: process.cwd(),
       approvalMode: this.config.workflow.approval_mode,
       executionApprovalMode: this.config.workflow.execution_approval_mode,
-      dependencyMode: "local",
+      dependencyMode: executionProfileToDependencyMode(this.executionProfile),
       sessionMode: this.activeRunId ? "existing" : "fresh",
       codeExecutionExpected: true,
       candidateIsolation: this.config.experiments.candidate_isolation,
@@ -4644,7 +4935,9 @@ export class TerminalApp {
     try {
       await this.refreshRunFromStore(event.runId);
       await this.refreshRunProjectionHints(event.runId);
-      if (this.activeRunId === event.runId) {
+      if (this.watchModeActive) {
+        await this.refreshWatchView();
+      } else if (this.activeRunId === event.runId) {
         this.render();
       }
     } catch {
@@ -4656,6 +4949,10 @@ export class TerminalApp {
       return;
     }
     this.pushLog(line);
+    if (this.watchModeActive) {
+      await this.refreshWatchView();
+      return;
+    }
     this.render();
   }
 
@@ -5019,8 +5316,9 @@ export class TerminalApp {
 
   private render(): void {
     const run = this.getRenderableRun();
+    const watchModeActive = this.watchModeActive;
     const guidance =
-      this.input.trim().length === 0 && this.suggestions.length === 0 && !this.activeSelectionMenu
+      !watchModeActive && this.input.trim().length === 0 && this.suggestions.length === 0 && !this.activeSelectionMenu
         ? this.getContextualGuidance(run)
         : undefined;
     const terminalWidth = this.resolveTerminalWidth();
@@ -5041,13 +5339,13 @@ export class TerminalApp {
       footerItems: this.buildFooterItems(run),
       queueLength: this.queuedInputs.length,
       run,
-      runInsight: this.activeRunInsight,
+      runInsight: watchModeActive ? undefined : this.activeRunInsight,
       logs: this.getRenderableLogs(run),
-      input: this.input,
-      inputCursor: this.cursorIndex,
+      input: watchModeActive ? "" : this.input,
+      inputCursor: watchModeActive ? 0 : this.cursorIndex,
       newlineHintLabel: this.resolveNewlineHintLabel(),
-      suggestions: this.suggestions,
-      selectedSuggestion: this.selectedSuggestion,
+      suggestions: watchModeActive ? [] : this.suggestions,
+      selectedSuggestion: watchModeActive ? 0 : this.selectedSuggestion,
       colorEnabled: this.colorEnabled,
       transcriptScrollOffset: requestedScrollOffset,
       guidance,
@@ -5075,13 +5373,13 @@ export class TerminalApp {
         footerItems: this.buildFooterItems(run),
         queueLength: this.queuedInputs.length,
         run,
-        runInsight: this.activeRunInsight,
+        runInsight: watchModeActive ? undefined : this.activeRunInsight,
         logs: this.getRenderableLogs(run),
-        input: this.input,
-        inputCursor: this.cursorIndex,
+        input: watchModeActive ? "" : this.input,
+        inputCursor: watchModeActive ? 0 : this.cursorIndex,
         newlineHintLabel: this.resolveNewlineHintLabel(),
-        suggestions: this.suggestions,
-        selectedSuggestion: this.selectedSuggestion,
+        suggestions: watchModeActive ? [] : this.suggestions,
+        selectedSuggestion: watchModeActive ? 0 : this.selectedSuggestion,
         colorEnabled: this.colorEnabled,
         transcriptScrollOffset: requestedScrollOffset,
         guidance,
@@ -5159,6 +5457,10 @@ export class TerminalApp {
   }
 
   private buildFooterItems(run?: RunRecord): string[] {
+    if (this.watchModeActive) {
+      return ["watch live", "q/Ctrl+C to exit"];
+    }
+
     const items: string[] = [];
 
     if (this.isCreatingRunFromBrief()) {
@@ -5211,6 +5513,10 @@ export class TerminalApp {
   }
 
   private getRenderableLogs(run?: RunRecord): string[] {
+    if (this.watchModeActive) {
+      return [...this.transientLogs];
+    }
+
     if (this.thinking) {
       if (this.transientLogs.length === 0) {
         return this.logs;
@@ -5569,6 +5875,7 @@ export class TerminalApp {
     if (this.stopped) {
       return;
     }
+    this.stopWatchMode({ skipRender: true });
     this.stopped = true;
     this.resetCtrlCExitConfirmation();
     this.detachProcessTerminationHandlers();
@@ -7286,6 +7593,23 @@ function formatDoctorNetworkSummary(readiness: {
   return readiness.networkPurpose
     ? `${readiness.networkPolicy}:${readiness.networkPurpose}`
     : (readiness.networkPolicy || "undeclared-enabled");
+}
+
+function formatElapsedSeconds(totalSeconds: number): string {
+  if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) {
+    return "0s";
+  }
+  if (totalSeconds < 60) {
+    return `${Math.floor(totalSeconds)}s`;
+  }
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) {
+    return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
 }
 
 function detectInitialGuidanceLanguage(): GuidanceLanguage {

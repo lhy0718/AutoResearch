@@ -32,6 +32,7 @@ import {
 import { RunContextMemory } from "../core/memory/runContextMemory.js";
 import { parseSlashCommand } from "../core/commands/parseSlash.js";
 import { getPdfAnalysisModeForConfig } from "../config.js";
+import { executionProfileToDependencyMode } from "../runtime/executionProfile.js";
 import { parseAnalysisReport } from "../core/resultAnalysis.js";
 import {
   extractRunBrief,
@@ -71,6 +72,7 @@ import { OllamaClient } from "../integrations/ollama/ollamaClient.js";
 import { OllamaLLMClient } from "../core/llm/client.js";
 import {
   AppConfig,
+  ExecutionProfile,
   GraphNodeId,
   RunRecord,
   WebSessionState,
@@ -127,6 +129,7 @@ interface CorpusInsightsCacheEntry {
 export interface InteractionSessionDeps {
   workspaceRoot: string;
   config: AppConfig;
+  executionProfile?: ExecutionProfile;
   runStore: RunStore;
   titleGenerator: TitleGenerator;
   codex: CodexCliClient;
@@ -158,6 +161,7 @@ export interface CreateRunFromBriefRequest {
 export class InteractionSession {
   private readonly workspaceRoot: string;
   private readonly config: AppConfig;
+  private readonly executionProfile: ExecutionProfile;
   private readonly runStore: RunStore;
   private readonly titleGenerator: TitleGenerator;
   private readonly codex: CodexCliClient;
@@ -187,6 +191,7 @@ export class InteractionSession {
   constructor(deps: InteractionSessionDeps) {
     this.workspaceRoot = deps.workspaceRoot;
     this.config = deps.config;
+    this.executionProfile = deps.executionProfile || deps.config.runtime?.execution_profile || "local";
     this.runStore = deps.runStore;
     this.titleGenerator = deps.titleGenerator;
     this.codex = deps.codex;
@@ -1212,7 +1217,7 @@ export class InteractionSession {
       workspaceRoot: this.workspaceRoot,
       approvalMode: this.config.workflow.approval_mode,
       executionApprovalMode: this.config.workflow.execution_approval_mode,
-      dependencyMode: "local",
+      dependencyMode: executionProfileToDependencyMode(this.executionProfile),
       sessionMode: this.activeRunId ? "existing" : "fresh",
       codeExecutionExpected: true,
       candidateIsolation: this.config.experiments.candidate_isolation,
