@@ -2948,7 +2948,7 @@ async function readAnalyzeSelectionCount(manifestPath: string): Promise<{ select
   }
 }
 
-function formatDoctorCheckLabel(check: { ok: boolean; status?: "ok" | "warning" | "fail" }): "OK" | "WARN" | "FAIL" {
+function formatDoctorCheckLabel(check: { ok: boolean; status?: "ok" | "warn" | "warning" | "fail" }): "OK" | "WARN" | "FAIL" {
   const status = getDoctorCheckStatus(check);
   if (status === "warning") {
     return "WARN";

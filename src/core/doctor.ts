@@ -2,6 +2,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 
+import { resolveAppPaths } from "../config.js";
 import {
   DoctorCheck,
   DoctorCheckStatus,
@@ -48,6 +49,8 @@ export interface DoctorReport {
   readiness: DoctorReadinessSnapshot;
 }
 
+export type DoctorAggregateStatus = "ok" | "warn" | "fail";
+
 export interface DoctorReadinessSnapshot {
   generatedAt: string;
   workspaceRoot: string;
@@ -84,12 +87,15 @@ interface CompiledPageValidationSnapshot {
   message?: string;
 }
 
+const MINIMUM_DOCTOR_FREE_SPACE_BYTES = 500 * 1024 * 1024;
+
 export async function runDoctorReport(
   codex: CodexCliClient,
   opts?: DoctorRunOptions
 ): Promise<DoctorReport> {
   const checks: DoctorCheck[] = [];
   const workspaceRoot = opts?.workspaceRoot || process.cwd();
+  const paths = resolveAppPaths(workspaceRoot);
   const approvalMode = opts?.approvalMode === "manual" ? "manual" : "minimal";
   const executionApprovalMode = normalizeExecutionApprovalMode(opts?.executionApprovalMode);
   const dependencyMode = normalizeDependencyMode(opts?.dependencyMode);
@@ -133,6 +139,20 @@ export async function runDoctorReport(
   if (opts?.llmMode === "codex_chatgpt_only" && opts.codexResearchModel) {
     checks.push(buildCodexModelCheck("codex-research-backend-model", "research backend", opts.codexResearchModel));
   }
+
+  checks.push(await runConfigExistsCheck(paths.configFile));
+
+  const runsDirWriteProbe = await probeRunsDirectoryWriteability(paths.runsDir);
+  checks.push({
+    name: "runs-dir-write",
+    ok: runsDirWriteProbe.ok,
+    detail: runsDirWriteProbe.ok
+      ? `Run store write probe succeeded at ${runsDirWriteProbe.probePath}`
+      : `Run store write probe failed at ${runsDirWriteProbe.probePath}: ${runsDirWriteProbe.detail}`
+  });
+
+  checks.push(await runDiskFreeSpaceCheck(workspaceRoot));
+  checks.push(runNodeVersionCheck(readCurrentNodeVersion()));
 
   const workspaceWriteProbe = await probeWorkspaceWriteability(workspaceRoot);
   checks.push({
@@ -411,6 +431,27 @@ async function probeWorkspaceWriteability(
   }
 }
 
+async function probeRunsDirectoryWriteability(
+  runsDir: string
+): Promise<{ ok: boolean; probePath: string; detail: string }> {
+  const probePath = path.join(runsDir, `.autolabos-doctor-runs-write-probe-${process.pid}.tmp`);
+  try {
+    const stat = await fs.stat(runsDir);
+    if (!stat.isDirectory()) {
+      return { ok: false, probePath, detail: `${runsDir} is not a directory` };
+    }
+    await fs.writeFile(probePath, "ok\n", "utf8");
+    await fs.rm(probePath, { force: true });
+    return { ok: true, probePath, detail: "write probe succeeded" };
+  } catch (error) {
+    return {
+      ok: false,
+      probePath,
+      detail: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
 async function directoryExists(dirPath: string): Promise<boolean> {
   try {
     const stat = await fs.stat(dirPath);
@@ -418,6 +459,71 @@ async function directoryExists(dirPath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function runConfigExistsCheck(configFile: string): Promise<DoctorCheck> {
+  try {
+    await fs.access(configFile);
+    return {
+      name: "workspace-config",
+      ok: true,
+      detail: `Workspace config detected at ${configFile}`
+    };
+  } catch {
+    return {
+      name: "workspace-config",
+      ok: false,
+      detail: "workspace not initialized – run setup first"
+    };
+  }
+}
+
+async function runDiskFreeSpaceCheck(workspaceRoot: string): Promise<DoctorCheck> {
+  try {
+    const stats = await fs.statfs(workspaceRoot);
+    const availableBytes = Number(stats.bavail) * Number(stats.bsize);
+    const availableMb = Math.floor(availableBytes / (1024 * 1024));
+    if (availableBytes < MINIMUM_DOCTOR_FREE_SPACE_BYTES) {
+      return {
+        name: "disk-free-space",
+        ok: true,
+        status: "warn",
+        detail: `Low disk space: ${availableMb} MB available (minimum recommended: 500 MB).`
+      };
+    }
+    return {
+      name: "disk-free-space",
+      ok: true,
+      detail: `Disk space looks healthy: ${availableMb} MB available.`
+    };
+  } catch (error) {
+    return {
+      name: "disk-free-space",
+      ok: false,
+      detail: `Could not determine available disk space: ${error instanceof Error ? error.message : String(error)}`
+    };
+  }
+}
+
+export function readCurrentNodeVersion(): string {
+  return process.versions.node;
+}
+
+function runNodeVersionCheck(nodeVersion: string): DoctorCheck {
+  const majorVersion = Number.parseInt(nodeVersion.split(".")[0] || "0", 10);
+  if (!Number.isFinite(majorVersion) || majorVersion < 18) {
+    return {
+      name: "node-version",
+      ok: true,
+      status: "warn",
+      detail: `Node.js ${nodeVersion} detected. Upgrade to Node.js 18 or newer before running research workflows.`
+    };
+  }
+  return {
+    name: "node-version",
+    ok: true,
+    detail: `Node.js ${nodeVersion} detected.`
+  };
 }
 
 export function buildDoctorHighlightLines(report: DoctorReport): string[] {
@@ -495,6 +601,9 @@ function buildCodexModelCheck(name: string, label: string, model: string): Docto
 }
 
 export function getDoctorCheckStatus(check: { ok: boolean; status?: DoctorCheckStatus }): DoctorCheckStatus {
+  if (check.status === "warn") {
+    return "warning";
+  }
   return check.status || (check.ok ? "ok" : "fail");
 }
 
@@ -503,8 +612,35 @@ function normalizeDoctorCheck(check: DoctorCheck): DoctorCheck {
   return {
     ...check,
     status,
-    ok: status !== "fail"
+    ok: status !== "fail",
+    check: check.check || check.name,
+    message: check.message || check.detail
   };
+}
+
+export function mapDoctorCheckForApi(check: DoctorCheck): DoctorCheck {
+  const normalizedStatus = getDoctorCheckStatus(check);
+  return {
+    ...check,
+    status: normalizedStatus === "warning" ? "warn" : normalizedStatus,
+    ok: normalizedStatus !== "fail",
+    check: check.check || check.name,
+    message: check.message || check.detail
+  };
+}
+
+export function getDoctorAggregateStatus(input: {
+  checks: DoctorCheck[];
+  harness?: HarnessValidationReport;
+}): DoctorAggregateStatus {
+  const mappedChecks = input.checks.map((check) => mapDoctorCheckForApi(check));
+  if (mappedChecks.some((check) => check.status === "fail") || input.harness?.status === "fail") {
+    return "fail";
+  }
+  if (mappedChecks.some((check) => check.status === "warn")) {
+    return "warn";
+  }
+  return "ok";
 }
 
 function resolveExperimentWebRestrictionStatus(input: {

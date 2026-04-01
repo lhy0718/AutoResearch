@@ -8,7 +8,12 @@ import { InMemoryEventStream } from "../src/core/events.js";
 import { LLMClient, LLMCompleteOptions, MockLLMClient } from "../src/core/llm/client.js";
 import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 import { createWritePaperNode, validateCompiledPdfPageBudget } from "../src/core/nodes/writePaper.js";
-import { buildPublicAnalysisDir, buildPublicPaperDir, buildPublicRunManifestPath } from "../src/core/publicArtifacts.js";
+import {
+  buildPublicAnalysisDir,
+  buildPublicPaperDir,
+  buildPublicRunManifestPath,
+  buildPublicRunOutputDir
+} from "../src/core/publicArtifacts.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { RunRecord } from "../src/types.js";
 
@@ -2701,23 +2706,24 @@ describe("writePaper PDF build", () => {
         "paper/main.pdf"
       ])
     );
-    expect(await readFile(path.join(root, "outputs", "results", "operator_summary.md"), "utf8")).toContain(
+    const publicRunDir = buildPublicRunOutputDir(root, run);
+    expect(await readFile(path.join(publicRunDir, "results", "operator_summary.md"), "utf8")).toContain(
       "Paper readiness:"
     );
-    expect(await readFile(path.join(root, "outputs", "results", "operator_summary.md"), "utf8")).toContain(
+    expect(await readFile(path.join(publicRunDir, "results", "operator_summary.md"), "utf8")).toContain(
       "Venue:"
     );
     expect(await readFile(path.join(runDir, "run_status.json"), "utf8")).toContain('"current_node": "write_paper"');
     expect(await readFile(path.join(runDir, "run_completeness_checklist.json"), "utf8")).toContain(
       '"validation_scope": "full_run"'
     );
-    expect(await readFile(path.join(root, "outputs", "results", "run_status.json"), "utf8")).toContain(
+    expect(await readFile(path.join(publicRunDir, "results", "run_status.json"), "utf8")).toContain(
       '"operator_label": "Research memo"'
     );
-    expect(await readFile(path.join(root, "outputs", "results", "run_completeness_checklist.json"), "utf8")).toContain(
+    expect(await readFile(path.join(publicRunDir, "results", "run_completeness_checklist.json"), "utf8")).toContain(
       `"run_id": "${run.id}"`
     );
-    expect(await readFile(path.join(root, "outputs", "results", "operator_history", "0003-paper.md"), "utf8")).toContain(
+    expect(await readFile(path.join(publicRunDir, "results", "operator_history", "0003-paper.md"), "utf8")).toContain(
       "# Operator Stage Note"
     );
   });

@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { ensureScaffold, resolveAppPaths } from "../src/config.js";
 import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
+import { buildPublicExperimentDir } from "../src/core/publicArtifacts.js";
 import { RunStore } from "../src/core/runs/runStore.js";
 import { resolveRunCommand } from "../src/core/nodes/runCommandResolver.js";
 
@@ -91,7 +92,7 @@ describe("resolveRunCommand", () => {
       objectiveMetric: "loss"
     });
 
-    const publicDir = path.join(workspace, "outputs", "runner-public-script-run-" + run.id.slice(0, 8), "experiment");
+    const publicDir = buildPublicExperimentDir(workspace, run);
     mkdirSync(publicDir, { recursive: true });
     const publicScriptPath = path.join(publicDir, "experiment.py");
     writeFileSync(publicScriptPath, "print('hi')\n", "utf8");

@@ -95,7 +95,9 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         report,
         topic: run.topic,
         objectiveMetric: run.objectiveMetric,
-        briefEvidenceAssessment
+        briefEvidenceAssessment,
+        evidenceLinksArtifact: await safeReadJson(path.join(runDir, "paper", "evidence_links.json")),
+        claimEvidenceTableArtifact: await safeReadJson(path.join(runDir, "paper", "claim_evidence_table.json"))
       });
       await writeRunArtifact(
         run,
@@ -253,6 +255,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       const publicOutputs = await publishPublicRunOutputs({
         workspaceRoot: process.cwd(),
         run,
+        node: "review",
         runContext: runContextMemory,
         section: "review",
         files: [
@@ -293,6 +296,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       await publishPublicRunOutputs({
         workspaceRoot: process.cwd(),
         run,
+        node: "review",
         section: "results",
         files: [
           {
@@ -322,6 +326,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       await publishPublicRunOutputs({
         workspaceRoot: process.cwd(),
         run,
+        node: "review",
         section: "results",
         files: [
           {
@@ -741,6 +746,18 @@ async function loadAnalysisReport(
 
   try {
     return JSON.parse(raw) as AnalysisReport;
+  } catch {
+    return undefined;
+  }
+}
+
+async function safeReadJson(filePath: string): Promise<unknown | undefined> {
+  const raw = await safeRead(filePath);
+  if (!raw) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(raw);
   } catch {
     return undefined;
   }

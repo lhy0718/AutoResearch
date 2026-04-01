@@ -4,6 +4,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { AgentRoleId, GraphNodeId } from "../types.js";
 import { normalizeFsPath } from "../utils/fs.js";
 import { buildRunsDbFile, IndexedRunEvent, RunIndexDatabase } from "./runs/runIndexDatabase.js";
+import { buildRunEventsPath } from "./runs/runPaths.js";
 
 export type EventType =
   | "PLAN_CREATED"
@@ -169,7 +170,7 @@ function persistEventToRunLog(runsDir: string, event: AutoLabOSEvent): string {
 }
 
 function runEventLogPath(runsDir: string, runId: string): string {
-  return path.join(runsDir, runId, "events.jsonl");
+  return buildRunEventsPath(runsDir, runId);
 }
 
 function sliceEventHistory(

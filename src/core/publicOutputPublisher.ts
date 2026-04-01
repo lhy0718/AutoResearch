@@ -1,7 +1,7 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
 
-import { RunRecord } from "../types.js";
+import { GraphNodeId, RunRecord } from "../types.js";
 import { ensureDir, fileExists, writeJsonFile } from "../utils/fs.js";
 import { RunContextMemory } from "./memory/runContextMemory.js";
 import { updateRepositoryKnowledgeIndex } from "./repositoryKnowledge.js";
@@ -23,6 +23,11 @@ export interface PublicRunManifest {
   run_id: string;
   title: string;
   output_root: string;
+  provenance: {
+    run_id: string;
+    node: GraphNodeId;
+    timestamp: string;
+  };
   sections: Partial<Record<PublicRunOutputSection, PublicRunManifestSection>>;
   workspace_changed_files: string[];
   generated_files: string[];
@@ -38,6 +43,7 @@ export interface PublishPublicRunOutputFile {
 export interface PublishPublicRunOutputsInput {
   workspaceRoot: string;
   run: Pick<RunRecord, "id" | "title" | "topic" | "objectiveMetric" | "latestSummary">;
+  node: GraphNodeId;
   section: PublicRunOutputSection;
   files: PublishPublicRunOutputFile[];
   workspaceChangedFiles?: string[];
@@ -69,7 +75,11 @@ export async function publishPublicRunOutputs(
   await ensureDir(sectionDir);
 
   const now = new Date().toISOString();
-  const manifest = await loadPublicRunManifest(manifestPath, input.workspaceRoot, input.run);
+  const manifest = await loadPublicRunManifest(manifestPath, input.workspaceRoot, input.run, {
+    run_id: input.run.id,
+    node: input.node,
+    timestamp: now
+  });
   const previousSection = manifest.sections[input.section];
 
   for (const file of input.files) {
@@ -111,6 +121,11 @@ export async function publishPublicRunOutputs(
   manifest.workspace_changed_files = normalizedWorkspaceChangedFiles;
   manifest.generated_files = collectGeneratedFiles(manifest.sections);
   manifest.updated_at = now;
+  manifest.provenance = {
+    run_id: input.run.id,
+    node: input.node,
+    timestamp: now
+  };
   await writeJsonFile(manifestPath, manifest);
 
   if (input.runContext) {
@@ -153,7 +168,8 @@ export async function publishPublicRunOutputs(
 async function loadPublicRunManifest(
   manifestPath: string,
   workspaceRoot: string,
-  run: Pick<RunRecord, "id" | "title">
+  run: Pick<RunRecord, "id" | "title">,
+  provenance: PublicRunManifest["provenance"]
 ): Promise<PublicRunManifest> {
   try {
     const raw = await fs.readFile(manifestPath, "utf8");
@@ -162,7 +178,8 @@ async function loadPublicRunManifest(
       return {
         ...parsed,
         title: run.title,
-        output_root: normalizeRelativePath(path.relative(workspaceRoot, buildPublicRunOutputDir(workspaceRoot, run)))
+        output_root: normalizeRelativePath(path.relative(workspaceRoot, buildPublicRunOutputDir(workspaceRoot, run))),
+        provenance: parsed.provenance?.run_id === run.id ? parsed.provenance : provenance
       };
     }
   } catch {
@@ -174,6 +191,7 @@ async function loadPublicRunManifest(
     run_id: run.id,
     title: run.title,
     output_root: normalizeRelativePath(path.relative(workspaceRoot, buildPublicRunOutputDir(workspaceRoot, run))),
+    provenance,
     sections: {},
     workspace_changed_files: [],
     generated_files: [],
@@ -258,7 +276,11 @@ export async function generatePublicRunReadme(
 ): Promise<string> {
   const outputRoot = buildPublicRunOutputDir(workspaceRoot, run);
   const manifestPath = buildPublicRunManifestPath(workspaceRoot, run);
-  const manifest = await loadPublicRunManifest(manifestPath, workspaceRoot, run);
+  const manifest = await loadPublicRunManifest(manifestPath, workspaceRoot, run, {
+    run_id: run.id,
+    node: "write_paper",
+    timestamp: new Date().toISOString()
+  });
 
   const lines: string[] = [
     `# ${run.title || "Research Run"}`,

@@ -395,6 +395,7 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
       const publicOutputs = await publishPublicRunOutputs({
         workspaceRoot: process.cwd(),
         run,
+        node: "design_experiments",
         runContext: runContextMemory,
         section: "experiment",
         files: [

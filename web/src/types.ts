@@ -356,8 +356,10 @@ export interface CheckpointEntry {
 export interface DoctorCheck {
   name: string;
   ok: boolean;
-  status?: "ok" | "warning" | "fail";
+  status?: "ok" | "warn" | "warning" | "fail";
   detail: string;
+  check?: string;
+  message?: string;
 }
 
 export type HarnessIssueKind =
@@ -402,6 +404,7 @@ export interface HarnessValidationReport {
 
 export interface DoctorResponse {
   configured: boolean;
+  status: "ok" | "warn" | "fail";
   checks: DoctorCheck[];
   harness?: HarnessValidationReport;
   readiness?: {

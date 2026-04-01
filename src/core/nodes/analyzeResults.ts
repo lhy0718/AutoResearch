@@ -436,6 +436,7 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
       const publicOutputs = await publishPublicRunOutputs({
         workspaceRoot: process.cwd(),
         run,
+        node: "analyze_results",
         runContext: runContextMemory,
         section: "analysis",
         files: [
@@ -485,6 +486,7 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
       await publishPublicRunOutputs({
         workspaceRoot: process.cwd(),
         run,
+        node: "analyze_results",
         section: "results",
         files: [
           {
@@ -514,6 +516,7 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
       await publishPublicRunOutputs({
         workspaceRoot: process.cwd(),
         run,
+        node: "analyze_results",
         section: "results",
         files: [
           {

@@ -6,6 +6,7 @@ import { GraphNodeId, RunRecord } from "../../types.js";
 import { ensureDir, normalizeFsPath, readJsonFile, writeJsonFile } from "../../utils/fs.js";
 import { AppPaths } from "../../config.js";
 import { IndexedRunCheckpoint, RunIndexDatabase } from "../runs/runIndexDatabase.js";
+import { buildRunCheckpointsDirPath } from "../runs/runPaths.js";
 import { CheckpointPhase, CheckpointRecord } from "./types.js";
 
 export class CheckpointStore {
@@ -110,7 +111,7 @@ export class CheckpointStore {
   }
 
   runCheckpointDir(runId: string): string {
-    return path.join(this.paths.runsDir, runId, "checkpoints");
+    return buildRunCheckpointsDirPath(this.paths.runsDir, runId);
   }
 
   private async readLatestCheckpointFromPointer(runId: string): Promise<CheckpointRecord | undefined> {

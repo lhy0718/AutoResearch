@@ -60,7 +60,7 @@ export type ExperimentNetworkPurpose =
   | "dataset_fetch"
   | "remote_inference"
   | "other";
-export type DoctorCheckStatus = "ok" | "warning" | "fail";
+export type DoctorCheckStatus = "ok" | "warn" | "warning" | "fail";
 
 export type TransitionAction =
   | "advance"
@@ -292,6 +292,8 @@ export interface DoctorCheck {
   ok: boolean;
   status?: DoctorCheckStatus;
   detail: string;
+  check?: string;
+  message?: string;
 }
 
 export interface SuggestionItem {

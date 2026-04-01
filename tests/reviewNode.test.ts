@@ -8,7 +8,7 @@ import { InMemoryEventStream } from "../src/core/events.js";
 import { MockLLMClient } from "../src/core/llm/client.js";
 import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 import { createReviewNode } from "../src/core/nodes/review.js";
-import { buildPublicReviewDir, buildPublicRunManifestPath } from "../src/core/publicArtifacts.js";
+import { buildPublicReviewDir, buildPublicRunManifestPath, buildPublicRunOutputDir } from "../src/core/publicArtifacts.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { LocalAciAdapter } from "../src/tools/aciLocalAdapter.js";
 import { RunRecord } from "../src/types.js";
@@ -357,21 +357,22 @@ describe("review node", () => {
       '"review_network_dependency_declared_logging"'
     );
     expect(typeof (await readFile(path.join(publicReviewDir, "findings.jsonl"), "utf8"))).toBe("string");
-    expect(await readFile(path.join(root, "outputs", "results", "operator_summary.md"), "utf8")).toContain(
+    const publicRunDir = buildPublicRunOutputDir(root, run);
+    expect(await readFile(path.join(publicRunDir, "results", "operator_summary.md"), "utf8")).toContain(
       "Canonical JSON artifacts remain the source of truth"
     );
-    expect(await readFile(path.join(root, "outputs", "results", "operator_summary.md"), "utf8")).toContain(
+    expect(await readFile(path.join(publicRunDir, "results", "operator_summary.md"), "utf8")).toContain(
       "Panel scorecard:"
     );
     expect(await readFile(path.join(runDir, "run_status.json"), "utf8")).toContain('"current_node": "review"');
     expect(await readFile(path.join(runDir, "run_completeness_checklist.json"), "utf8")).toContain('"validation_scope": "full_run"');
-    expect(await readFile(path.join(root, "outputs", "results", "run_status.json"), "utf8")).toContain(
+    expect(await readFile(path.join(publicRunDir, "results", "run_status.json"), "utf8")).toContain(
       '"recommended_next_action": "resume_review"'
     );
-    expect(await readFile(path.join(root, "outputs", "results", "run_completeness_checklist.json"), "utf8")).toContain(
+    expect(await readFile(path.join(publicRunDir, "results", "run_completeness_checklist.json"), "utf8")).toContain(
       `"run_id": "${run.id}"`
     );
-    expect(await readFile(path.join(root, "outputs", "results", "operator_history", "0002-review.md"), "utf8")).toContain(
+    expect(await readFile(path.join(publicRunDir, "results", "operator_history", "0002-review.md"), "utf8")).toContain(
       "# Operator Stage Note"
     );
 

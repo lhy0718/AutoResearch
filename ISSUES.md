@@ -26,6 +26,17 @@ Usage rules:
 
 ---
 
+## Competitor-Derived Backlog
+
+- [ ] P1 · Environment Bootstrapping: 샌드박스 환경 스냅샷을 수집해 implement_experiments 노드 시작 전 system prompt에 주입
+- [ ] P1 · eval-harness 피드백 누적: eval-harness 실행 후 outputs/eval-harness/latest.json을 날짜 기반 history 파일에 append
+- [ ] P1 · 스킬 진화 게이트: .codex/skills/ 변경 시 validate:harness를 자동 실행해 회귀를 즉시 감지
+- [ ] P1 · 노드 프롬프트 자동 튜닝: 단일 노드에 프롬프트 변이 루프를 실행하는 /agent tune-node <node> 명령 추가
+- [ ] P2 · A-Evolve run 래퍼: 9-node run 전체를 Solve 1 cycle로 취급하고 paper_readiness.json 점수를 fitness signal로 사용
+- [ ] P2 · Meta-Harness 외부 루프: 여러 run의 events.jsonl + 아티팩트를 proposer 파일시스템 컨텍스트로 구성
+
+---
+
 ## Recent fixed live validation issues
 
 Most recent first. These remain in full detail because they are the closest regression context for current TUI/web and governed-run behavior.

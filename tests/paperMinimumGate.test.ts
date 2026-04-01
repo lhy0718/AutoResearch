@@ -99,9 +99,9 @@ describe("paperMinimumGate", () => {
     expect(result.summary).toContain("passed");
   });
 
-  it("has exactly 8 checks", () => {
+  it("has exactly 9 checks", () => {
     const result = evaluateMinimumGate(fullInput());
-    expect(result.checks).toHaveLength(8);
+    expect(result.checks).toHaveLength(9);
     const checkIds = result.checks.map(c => c.id);
     expect(checkIds).toContain("objective_metric");
     expect(checkIds).toContain("experiment_plan");
@@ -110,6 +110,7 @@ describe("paperMinimumGate", () => {
     expect(checkIds).toContain("evidence_depth");
     expect(checkIds).toContain("result_artifacts");
     expect(checkIds).toContain("claim_evidence_linkage");
+    expect(checkIds).toContain("claim_evidence_missing");
     expect(checkIds).toContain("not_smoke_only");
   });
 
@@ -169,6 +170,63 @@ describe("paperMinimumGate", () => {
 
     expect(result.passed).toBe(false);
     expect(result.blockers).toContain("Claim→evidence linkage present");
+  });
+
+  it("passes the new claim-evidence artifact check when paper artifacts are grounded", () => {
+    const input = fullInput();
+    input.evidenceLinksArtifact = {
+      claims: [
+        {
+          claim_id: "c1",
+          statement: "Our method improves accuracy",
+          evidence_ids: ["ev_1"],
+          citation_paper_ids: ["paper_1"]
+        }
+      ]
+    };
+    input.claimEvidenceTableArtifact = {
+      claims: [
+        {
+          claim_id: "c1",
+          artifact_refs: ["ev_1"],
+          citation_refs: ["paper_1"]
+        }
+      ]
+    };
+
+    const result = evaluateMinimumGate(input);
+
+    expect(result.passed).toBe(true);
+    expect(result.failed_checks).toEqual([]);
+    expect(result.checks.find((check) => check.id === "claim_evidence_missing")?.passed).toBe(true);
+  });
+
+  it("fails the new claim-evidence artifact check when claim evidence arrays are empty", () => {
+    const input = fullInput();
+    input.evidenceLinksArtifact = {
+      claims: [
+        {
+          claim_id: "c1",
+          statement: "Our method improves accuracy",
+          evidence_ids: ["ev_1"]
+        }
+      ]
+    };
+    input.claimEvidenceTableArtifact = {
+      claims: [
+        {
+          claim_id: "c1",
+          artifact_refs: [],
+          citation_refs: []
+        }
+      ]
+    };
+
+    const result = evaluateMinimumGate(input);
+
+    expect(result.passed).toBe(false);
+    expect(result.failed_checks).toContain("claim_evidence_missing");
+    expect(result.checks.find((check) => check.id === "claim_evidence_missing")?.passed).toBe(false);
   });
 
   it("assigns blocked_for_paper_scale when many checks fail", () => {

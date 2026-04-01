@@ -1274,6 +1274,7 @@ export class ImplementSessionManager {
     const publicOutputs = await publishPublicRunOutputs({
       workspaceRoot: this.deps.workspaceRoot,
       run,
+      node: "implement_experiments",
       runContext,
       section: "experiment",
       files: [...publicArtifacts].map((filePath) => ({

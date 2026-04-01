@@ -2229,6 +2229,9 @@ function getEffortOptions(optionsByModel: Record<string, string[]>, model: strin
 }
 
 function normalizeDoctorCheckStatus(check: DoctorCheck): "ok" | "warning" | "fail" {
+  if (check.status === "warn") {
+    return "warning";
+  }
   return check.status || (check.ok ? "ok" : "fail");
 }
 

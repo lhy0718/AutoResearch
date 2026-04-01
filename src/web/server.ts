@@ -36,7 +36,8 @@ import {
   resolveAppPaths,
   runNonInteractiveSetup
 } from "../config.js";
-import { runDoctorReport } from "../core/doctor.js";
+import { getDoctorAggregateStatus, mapDoctorCheckForApi, runDoctorReport } from "../core/doctor.js";
+import { CodexCliClient } from "../integrations/codex/codexCliClient.js";
 import { writeRunLiteratureIndex } from "../core/literatureIndex.js";
 import { readRepositoryKnowledgeIndex } from "../core/repositoryKnowledge.js";
 import { buildRunJobsSnapshot } from "../core/runs/jobsProjection.js";
@@ -252,7 +253,42 @@ class AutoLabOSWebController {
 
       if (pathname === "/api/doctor" && method === "GET") {
         if (!this.runtime) {
-          return jsonResponse(res, 200, { configured: false, checks: [], harness: undefined } satisfies DoctorResponse);
+          const codex = new CodexCliClient(this.cwd, {
+            model: DEFAULT_CODEX_MODEL,
+            reasoningEffort: "medium",
+            fastMode: false
+          });
+          const report = await runDoctorReport(codex, {
+            workspaceRoot: this.cwd,
+            openAiApiKeyConfigured: await hasOpenAiApiKey(this.cwd),
+            includeHarnessValidation: true,
+            includeHarnessTestRecords: false,
+            maxHarnessFindings: 40,
+            codeExecutionExpected: false
+          });
+          return jsonResponse(
+            res,
+            200,
+            {
+              configured: false,
+              status: getDoctorAggregateStatus({ checks: report.checks, harness: report.harness }),
+              checks: report.checks.map((check) => mapDoctorCheckForApi(check)),
+              harness: report.harness,
+              readiness: {
+                blocked: report.readiness.blocked,
+                approvalMode: report.readiness.approvalMode,
+                executionApprovalMode: report.readiness.executionApprovalMode,
+                dependencyMode: report.readiness.dependencyMode,
+                sessionMode: report.readiness.sessionMode,
+                networkPolicy: report.readiness.networkPolicy,
+                networkPurpose: report.readiness.networkPurpose,
+                networkDeclarationPresent: report.readiness.networkDeclarationPresent,
+                networkApprovalSatisfied: report.readiness.networkApprovalSatisfied,
+                warningChecks: report.readiness.warningChecks,
+                failedChecks: report.readiness.failedChecks
+              }
+            } satisfies DoctorResponse
+          );
         }
         const report = await runDoctorReport(this.runtime.codex, {
           llmMode: this.runtime.config.providers.llm_mode,
@@ -282,7 +318,8 @@ class AutoLabOSWebController {
           200,
           {
             configured: true,
-            checks: report.checks,
+            status: getDoctorAggregateStatus({ checks: report.checks, harness: report.harness }),
+            checks: report.checks.map((check) => mapDoctorCheckForApi(check)),
             harness: report.harness,
             readiness: {
               blocked: report.readiness.blocked,

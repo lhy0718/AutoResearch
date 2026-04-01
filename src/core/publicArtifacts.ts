@@ -4,12 +4,16 @@ import { RunRecord } from "../types.js";
 
 export type PublicRunOutputSection = "experiment" | "analysis" | "review" | "paper" | "results" | "reproduce";
 
+export function buildPublicRunOutputSlug(run: Pick<RunRecord, "id" | "title">): string {
+  const titleSlug = sanitizeSlug(run.title) || "run";
+  return `${titleSlug}-${run.id.slice(0, 8).toLowerCase()}`;
+}
+
 export function buildPublicRunOutputDir(
   workspaceRoot: string,
   run: Pick<RunRecord, "id" | "title">
 ): string {
-  void run;
-  return path.join(workspaceRoot, "outputs");
+  return path.join(workspaceRoot, "outputs", buildPublicRunOutputSlug(run));
 }
 
 export function buildPublicExperimentDir(

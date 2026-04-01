@@ -16,6 +16,7 @@
 import type { ReviewArtifactPresence } from "../reviewSystem.js";
 import type { AnalysisReport } from "../resultAnalysis.js";
 import type { BriefEvidenceAssessment, BriefEvidenceCeiling } from "./briefEvidenceValidator.js";
+import { GATE_THRESHOLDS } from "./paperGateThresholds.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -34,6 +35,8 @@ export interface MinimumGateResult {
   evaluated_at: string;
   checks: MinimumGateCheck[];
   blockers: string[];
+  /** Machine-readable failed check ids */
+  failed_checks: string[];
   /** Ceiling manuscript type implied by gate failures */
   ceiling_type: MinimumGateCeiling;
   /** Short human-readable summary */
@@ -53,6 +56,8 @@ export interface MinimumGateInput {
   topic: string;
   objectiveMetric: string;
   briefEvidenceAssessment?: BriefEvidenceAssessment;
+  evidenceLinksArtifact?: unknown;
+  claimEvidenceTableArtifact?: unknown;
 }
 
 // ---------------------------------------------------------------------------
@@ -66,10 +71,10 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
   const hasObjective = Boolean(input.objectiveMetric?.trim());
   checks.push({
     id: "objective_metric",
-    label: "Objective metric identified",
-    passed: hasObjective,
-    detail: hasObjective
-      ? `Objective: ${input.objectiveMetric.slice(0, 80)}`
+      label: "Objective metric identified",
+      passed: hasObjective,
+      detail: hasObjective
+      ? `Objective: ${input.objectiveMetric.slice(0, GATE_THRESHOLDS.objectiveMetricPreviewLength)}`
       : "No objective metric specified"
   });
 
@@ -129,10 +134,11 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
   });
 
   // 7. Claim→evidence linkage support
-  const hasClaimEvidence = input.presence.evidenceStorePresent &&
-    (input.report.paper_claims?.length > 0);
+  const hasClaimEvidence =
+    input.presence.evidenceStorePresent &&
+    (input.report.paper_claims?.length ?? 0) >= GATE_THRESHOLDS.minEvidenceLinksClaimCount;
   const claimsWithEvidence = input.report.paper_claims?.filter(
-    c => c.evidence?.length > 0
+    c => (c.evidence?.length ?? 0) >= GATE_THRESHOLDS.minClaimEvidenceRefsPerClaim
   ).length ?? 0;
   checks.push({
     id: "claim_evidence_linkage",
@@ -145,19 +151,28 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
         : "No paper claims generated"
   });
 
-  // 8. Not merely system/smoke validation
+  // 8. Paper claim-evidence artifacts are structurally grounded when emitted
+  const artifactClaimEvidence = evaluateClaimEvidenceArtifacts(input);
+  checks.push({
+    id: "claim_evidence_missing",
+    label: "Paper claim-evidence artifacts are grounded",
+    passed: artifactClaimEvidence.passed,
+    detail: artifactClaimEvidence.detail
+  });
+
+  // 9. Not merely system/smoke validation
   const hasHypotheses = input.presence.hypothesesPresent;
-  const hasMultipleFindings = (input.report.primary_findings?.length ?? 0) >= 1;
-  const isSubstantive = hasHypotheses && hasMultipleFindings && hasObjective;
+  const hasEnoughFindings = (input.report.primary_findings?.length ?? 0) >= GATE_THRESHOLDS.minPrimaryFindingCount;
+  const isSubstantive = hasHypotheses && hasEnoughFindings && hasObjective;
   checks.push({
     id: "not_smoke_only",
     label: "Not merely system/smoke validation",
-    passed: isSubstantive,
-    detail: isSubstantive
+      passed: hasHypotheses && hasEnoughFindings && hasObjective,
+      detail: isSubstantive
       ? "Hypotheses present, findings generated, objective metric specified"
       : !hasHypotheses
         ? "No hypotheses — may be system-only validation"
-        : !hasMultipleFindings
+        : !hasEnoughFindings
           ? "No primary findings — may be smoke test only"
           : "Missing objective metric"
   });
@@ -177,6 +192,7 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
 
   // Compute blockers and ceiling
   const blockers = checks.filter(c => !c.passed).map(c => c.label);
+  const failedChecks = checks.filter(c => !c.passed).map(c => c.id);
   const failCount = blockers.length;
 
   let ceiling: MinimumGateCeiling;
@@ -184,8 +200,8 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
     ceiling = "unrestricted";
   } else if (!hasObjective || !input.presence.experimentPlanPresent || !isSubstantive) {
     // Missing fundamentals → system validation
-    ceiling = failCount >= 4 ? "blocked_for_paper_scale" : "system_validation_note";
-  } else if (failCount >= 3) {
+    ceiling = failCount >= GATE_THRESHOLDS.minFundamentalFailuresForBlocked ? "blocked_for_paper_scale" : "system_validation_note";
+  } else if (failCount >= GATE_THRESHOLDS.minGeneralFailuresForBlocked) {
     ceiling = "blocked_for_paper_scale";
   } else {
     ceiling = "research_memo";
@@ -205,6 +221,7 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
     evaluated_at: new Date().toISOString(),
     checks,
     blockers,
+    failed_checks: failedChecks,
     ceiling_type: ceiling,
     summary
   };
@@ -235,13 +252,104 @@ function deriveEvidenceDepth(report: AnalysisReport): { passed: boolean; detail:
   const stabilityMetricCount = report.statistical_summary?.stability_metrics?.length ?? 0;
   const effectEstimateCount = report.statistical_summary?.effect_estimates?.length ?? 0;
   const hasRobustnessEvidence =
-    (typeof totalTrials === "number" && totalTrials > 1) ||
-    confidenceIntervalCount > 0 ||
-    stabilityMetricCount > 0 ||
-    effectEstimateCount > 0;
+    (typeof totalTrials === "number" && totalTrials >= GATE_THRESHOLDS.minRobustnessTotalTrials) ||
+    confidenceIntervalCount >= GATE_THRESHOLDS.minRobustnessConfidenceIntervalCount ||
+    stabilityMetricCount >= GATE_THRESHOLDS.minRobustnessStabilityMetricCount ||
+    effectEstimateCount >= GATE_THRESHOLDS.minRobustnessEffectEstimateCount;
 
   return {
     passed: hasRobustnessEvidence,
     detail: `Observed total_trials=${totalTrials ?? "unknown"}, executed_trials=${executedTrials ?? "unknown"}, confidence_intervals=${confidenceIntervalCount}, stability_metrics=${stabilityMetricCount}, effect_estimates=${effectEstimateCount}.`
   };
+}
+
+function evaluateClaimEvidenceArtifacts(input: MinimumGateInput): { passed: boolean; detail: string } {
+  const evidenceLinks = normalizeArtifactClaims(input.evidenceLinksArtifact);
+  const claimEvidenceTable = normalizeArtifactClaims(input.claimEvidenceTableArtifact);
+
+  if (!evidenceLinks.present && !claimEvidenceTable.present) {
+    return {
+      passed: true,
+      detail: "paper/evidence_links.json and paper/claim_evidence_table.json not emitted yet; relying on pre-draft claim linkage."
+    };
+  }
+
+  if (!evidenceLinks.present) {
+    return {
+      passed: false,
+      detail: "paper/evidence_links.json missing or malformed."
+    };
+  }
+
+  if (evidenceLinks.claims.length < GATE_THRESHOLDS.minEvidenceLinksClaimCount) {
+    return {
+      passed: false,
+      detail: "paper/evidence_links.json must include at least one claim entry."
+    };
+  }
+
+  if (!claimEvidenceTable.present) {
+    return {
+      passed: false,
+      detail: "paper/claim_evidence_table.json missing or malformed."
+    };
+  }
+
+  if (claimEvidenceTable.claims.length < GATE_THRESHOLDS.minClaimEvidenceRows) {
+    return {
+      passed: false,
+      detail: "paper/claim_evidence_table.json must include at least one claim entry."
+    };
+  }
+
+  const emptyEvidenceClaim = claimEvidenceTable.claims.find(
+    (claim) => extractClaimEvidenceRefs(claim).length < GATE_THRESHOLDS.minClaimEvidenceRefsPerClaim
+  );
+  if (emptyEvidenceClaim) {
+    return {
+      passed: false,
+      detail: `Claim ${String((emptyEvidenceClaim as Record<string, unknown>).claim_id || "unknown")} has no evidence/artifact/citation references in paper/claim_evidence_table.json.`
+    };
+  }
+
+  return {
+    passed: true,
+    detail: `${evidenceLinks.claims.length} evidence link claim(s) and ${claimEvidenceTable.claims.length} claim-evidence row(s) grounded.`
+  };
+}
+
+function normalizeArtifactClaims(raw: unknown): { present: boolean; claims: Record<string, unknown>[] } {
+  if (!raw || typeof raw !== "object") {
+    return { present: false, claims: [] };
+  }
+  const claims = (raw as { claims?: unknown }).claims;
+  if (!Array.isArray(claims)) {
+    return { present: false, claims: [] };
+  }
+  return {
+    present: true,
+    claims: claims.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+  };
+}
+
+function extractClaimEvidenceRefs(claim: Record<string, unknown>): string[] {
+  const explicitEvidence = normalizeStringArray(claim.evidence);
+  if (explicitEvidence.length > 0) {
+    return explicitEvidence;
+  }
+  return [
+    ...normalizeStringArray(claim.artifact_refs),
+    ...normalizeStringArray(claim.citation_refs),
+    ...normalizeStringArray(claim.evidence_ids)
+  ];
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }

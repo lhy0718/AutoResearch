@@ -18,6 +18,7 @@ function makeGate(overrides: Partial<MinimumGateResult> = {}): MinimumGateResult
     evaluated_at: new Date().toISOString(),
     checks: [],
     blockers: [],
+    failed_checks: [],
     ceiling_type: "unrestricted",
     summary: "All checks passed.",
     ...overrides
@@ -179,7 +180,7 @@ describe("buildFallbackEvaluation", () => {
     expect(result.minimum_gate_passed).toBe(true);
     expect(result.paper_worthiness).toBe("paper_scale_candidate");
     expect(result.overall_score_1_to_10).toBeGreaterThanOrEqual(3);
-    expect(result.dimensions).toHaveLength(6);
+    expect(result.dimensions).toHaveLength(7);
     expect(result.evidence_gaps).toHaveLength(0);
   });
 
@@ -213,7 +214,7 @@ describe("buildFallbackEvaluation", () => {
     expect(result.evaluated_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
-  it("includes 6 dimensions even without LLM", () => {
+  it("includes 7 dimensions even without LLM", () => {
     const result = buildFallbackEvaluation(makeFallbackInput());
     const dims = result.dimensions.map(d => d.dimension);
     expect(dims).toContain("result_significance");
@@ -221,6 +222,7 @@ describe("buildFallbackEvaluation", () => {
     expect(dims).toContain("evidence_strength");
     expect(dims).toContain("writing_structure");
     expect(dims).toContain("claim_support");
+    expect(dims).toContain("citation_coverage");
     expect(dims).toContain("limitations_honesty");
   });
 

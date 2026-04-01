@@ -1641,6 +1641,7 @@ async function persistRunVerifierReport(
   const publicOutputs = await publishPublicRunOutputs({
     workspaceRoot: process.cwd(),
     run,
+    node: "run_experiments",
     runContext,
     section: "experiment",
     files: [
@@ -1802,6 +1803,7 @@ async function publishRunExperimentOutputs(input: {
   return publishPublicRunOutputs({
     workspaceRoot: input.workspaceRoot,
     run: input.run,
+    node: "run_experiments",
     runContext: input.runContext,
     section: "experiment",
     files

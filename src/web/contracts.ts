@@ -77,6 +77,7 @@ export interface BootstrapResponse {
 
 export interface DoctorResponse {
   configured: boolean;
+  status: "ok" | "warn" | "fail";
   checks: DoctorCheck[];
   harness?: HarnessValidationReport;
   readiness?: {

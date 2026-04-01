@@ -51,6 +51,10 @@ async function waitForText(
   throw new Error(`Timed out waiting for ${filePath}`);
 }
 
+function toWorkspaceRelative(workspaceRoot: string, filePath: string): string {
+  return path.relative(workspaceRoot, filePath).replace(/\\/g, "/");
+}
+
 function createTestConfig(candidateIsolation: "attempt_snapshot_restore" | "attempt_worktree" = "attempt_snapshot_restore") {
   return {
     version: 1,
@@ -2764,6 +2768,9 @@ describe("ImplementSessionManager", () => {
     const readmePath = path.join(publicDir, "README.md");
     const baselinePath = path.join(publicDir, "baseline_summary.json");
     const metricsPath = path.join(runDir, "metrics.json");
+    const publicDirRelative = toWorkspaceRelative(workspace, publicDir);
+    const scriptRelativePath = toWorkspaceRelative(workspace, scriptPath);
+    const configRelativePath = toWorkspaceRelative(workspace, configPath);
 
     const codex = {
       runTurnStream: async () => {
@@ -2777,9 +2784,9 @@ describe("ImplementSessionManager", () => {
         "# Recovered Bundle",
         "",
         "```bash",
-        `python outputs/experiment/${path.basename(scriptPath)} \\`,
-        `  --config outputs/experiment/${path.basename(configPath)} \\`,
-        `  --public-dir outputs/experiment \\`,
+        `python ${scriptRelativePath} \\`,
+        `  --config ${configRelativePath} \\`,
+        `  --public-dir ${publicDirRelative} \\`,
         `  --run-dir .autolabos/runs/${run.id} \\`,
         `  --metrics-path .autolabos/runs/${run.id}/metrics.json`,
         "```"
@@ -2836,6 +2843,9 @@ describe("ImplementSessionManager", () => {
     const metricsPath = path.join(runDir, "metrics.json");
     const artifactPath = path.join(publicDir, "artifacts", "pilot", "metrics.public.json");
     const baselinePath = path.join(publicDir, "baseline_summary.json");
+    const publicDirRelative = toWorkspaceRelative(workspace, publicDir);
+    const scriptRelativePath = toWorkspaceRelative(workspace, scriptPath);
+    const configRelativePath = toWorkspaceRelative(workspace, configPath);
 
     mkdirSync(path.dirname(artifactPath), { recursive: true });
     mkdirSync(publicDir, { recursive: true });
@@ -2850,9 +2860,9 @@ describe("ImplementSessionManager", () => {
         "# Existing Bundle",
         "",
         "```bash",
-        `python outputs/experiment/${path.basename(scriptPath)} \\`,
-        `  --config outputs/experiment/${path.basename(configPath)} \\`,
-        `  --public-dir outputs/experiment \\`,
+        `python ${scriptRelativePath} \\`,
+        `  --config ${configRelativePath} \\`,
+        `  --public-dir ${publicDirRelative} \\`,
         `  --run-dir .autolabos/runs/${run.id} \\`,
         `  --metrics-path .autolabos/runs/${run.id}/metrics.json`,
         "```"
@@ -3182,6 +3192,9 @@ describe("ImplementSessionManager", () => {
     );
     writeFileSync(baselinePath, '{"baseline":"greedy"}\n', "utf8");
     writeFileSync(artifactPath, '{"accuracy":0.5}\n', "utf8");
+    const publicDirRelative = toWorkspaceRelative(workspace, publicDir);
+    const scriptRelativePath = toWorkspaceRelative(workspace, scriptPath);
+    const configRelativePath = toWorkspaceRelative(workspace, configPath);
     writeFileSync(
       readmePath,
       [
@@ -3190,9 +3203,9 @@ describe("ImplementSessionManager", () => {
         "Offline dry-run:",
         "",
         "```bash",
-        `python outputs/experiment/${path.basename(scriptPath)}`,
-        `--config outputs/experiment/${path.basename(configPath)}`,
-        "--public-dir outputs/experiment",
+        `python ${scriptRelativePath}`,
+        `--config ${configRelativePath}`,
+        `--public-dir ${publicDirRelative}`,
         `--run-dir .autolabos/runs/${run.id}`,
         "--pilot-size 4",
         "--dry-run",
@@ -3201,9 +3214,9 @@ describe("ImplementSessionManager", () => {
         "Live run:",
         "",
         "```bash",
-        `python outputs/experiment/${path.basename(scriptPath)}`,
-        `--config outputs/experiment/${path.basename(configPath)}`,
-        "--public-dir outputs/experiment",
+        `python ${scriptRelativePath}`,
+        `--config ${configRelativePath}`,
+        `--public-dir ${publicDirRelative}`,
         `--run-dir .autolabos/runs/${run.id}`,
         `--metrics-path .autolabos/runs/${run.id}/metrics.json`,
         "--pilot-size 10",

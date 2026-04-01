@@ -15,6 +15,7 @@ import {
 import { fileExists } from "../../utils/fs.js";
 import { parseAnalysisReport } from "../resultAnalysis.js";
 import { parseReadinessRiskArtifact, type ReadinessRiskArtifact } from "../readinessRisks.js";
+import { buildWorkspaceRunRoot } from "./runPaths.js";
 
 interface ReviewCritiqueProjection {
   blocking_issues_count?: number;
@@ -76,7 +77,7 @@ export async function buildRunOperatorStatus(input: {
   currentNode?: GraphNodeId;
   lifecycleStatus?: RunLifecycleStatus;
 }): Promise<RunOperatorStatusArtifact> {
-  const runDir = buildRunDir(input.workspaceRoot, input.run.id);
+  const runDir = buildWorkspaceRunRoot(input.workspaceRoot, input.run.id);
   const currentNode = input.currentNode || input.run.currentNode;
   const analysisReady = await hasArtifacts(runDir, ["result_analysis.json", "transition_recommendation.json"]);
   const reviewReady = await hasArtifacts(runDir, [
@@ -477,8 +478,4 @@ function compactOneLine(value: string | undefined, maxLength: number): string | 
     return normalized;
   }
   return `${normalized.slice(0, maxLength - 3)}...`;
-}
-
-function buildRunDir(workspaceRoot: string, runId: string): string {
-  return path.join(workspaceRoot, ".autolabos", "runs", runId);
 }

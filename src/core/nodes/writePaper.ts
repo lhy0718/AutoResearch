@@ -1076,6 +1076,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       const publicOutputs = await publishPublicRunOutputs({
         workspaceRoot: process.cwd(),
         run,
+        node: "write_paper",
         runContext: runContextMemory,
         section: "paper",
         files: [
@@ -1192,6 +1193,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await publishPublicRunOutputs({
         workspaceRoot: process.cwd(),
         run,
+        node: "write_paper",
         section: "results",
         files: [
           {
@@ -1221,6 +1223,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await publishPublicRunOutputs({
         workspaceRoot: process.cwd(),
         run,
+        node: "write_paper",
         section: "results",
         files: [
           {

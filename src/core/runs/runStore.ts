@@ -25,6 +25,7 @@ import { createDefaultGraphState } from "../stateGraph/defaults.js";
 import { RunContextItem } from "../memory/runContextMemory.js";
 import { normalizeRunUsageSummary } from "./runUsage.js";
 import { RunIndexDatabase, toRunArtifactType } from "./runIndexDatabase.js";
+import { buildRunCheckpointsDirPath, buildRunRecordPath, buildRunRootPath } from "./runPaths.js";
 
 export interface CreateRunInput {
   title: string;
@@ -32,8 +33,6 @@ export interface CreateRunInput {
   constraints: string[];
   objectiveMetric: string;
 }
-
-const RUN_RECORD_FILE = "run_record.json";
 
 export class RunStore {
   private runIndexReady?: Promise<RunIndexDatabase>;
@@ -306,10 +305,10 @@ export class RunStore {
   }
 
   private async ensureRunDirectory(runId: string): Promise<void> {
-    const runRoot = path.join(this.paths.runsDir, runId);
+    const runRoot = buildRunRootPath(this.paths.runsDir, runId);
     await Promise.all([
       ensureDir(runRoot),
-      ensureDir(path.join(runRoot, "checkpoints")),
+      ensureDir(buildRunCheckpointsDirPath(this.paths.runsDir, runId)),
       ensureDir(path.join(runRoot, "memory")),
       ensureDir(path.join(runRoot, "patches")),
       ensureDir(path.join(runRoot, "exec_logs")),
@@ -362,7 +361,7 @@ export class RunStore {
   }
 
   private runRecordPath(runId: string): string {
-    return path.join(this.paths.runsDir, runId, RUN_RECORD_FILE);
+    return buildRunRecordPath(this.paths.runsDir, runId);
   }
 
   private async reconcileRunRecord(run: RunRecord): Promise<RunRecord> {
@@ -400,7 +399,7 @@ export class RunStore {
   }
 
   private async readDerivedRunDetails(run: RunRecord): Promise<DerivedRunDetails> {
-    const runRoot = path.join(this.paths.runsDir, run.id);
+    const runRoot = buildRunRootPath(this.paths.runsDir, run.id);
     const runContextPath = this.resolveWorkspacePath(run.memoryRefs.runContextPath);
     const [
       contextItems,
