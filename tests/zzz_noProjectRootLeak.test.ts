@@ -6,21 +6,15 @@
  * This file must be listed LAST alphabetically (prefix "no") so vitest
  * runs it after all other tests (fileParallelism: false).
  */
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const PROJECT_ROOT = path.resolve(import.meta.dirname, "..");
 
 describe("project-root leak guard", () => {
-  it("no .autolabos/runs/ directories should exist at the project root", () => {
-    const runsDir = path.join(PROJECT_ROOT, ".autolabos", "runs");
-    if (!existsSync(runsDir)) {
-      // No runs dir at all — pass
-      expect(true).toBe(true);
-      return;
-    }
-    const entries = readdirSync(runsDir);
-    expect(entries).toEqual([]);
+  it("no .autolabos directory should exist at the project root", () => {
+    const rootAppDir = path.join(PROJECT_ROOT, ".autolabos");
+    expect(existsSync(rootAppDir)).toBe(false);
   });
 });

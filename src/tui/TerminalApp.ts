@@ -3535,6 +3535,7 @@ export class TerminalApp {
       const controller = new AutonomousRunController(this.runStore, this.orchestrator, this.eventStream);
       const outcome = await controller.runOvernight(run.id, buildDefaultOvernightPolicy(), { abortSignal });
       appendDelegationTrace({
+        workspaceRoot: process.cwd(),
         runId: run.id,
         node: run.currentNode,
         decision: "allow_with_trace",
@@ -3589,6 +3590,7 @@ export class TerminalApp {
       const policy = buildDefaultAutonomousPolicy();
       const outcome = await controller.runAutonomous(run.id, policy, { abortSignal });
       appendDelegationTrace({
+        workspaceRoot: process.cwd(),
         runId: run.id,
         node: run.currentNode,
         decision: "allow_with_trace",

@@ -1774,6 +1774,7 @@ export class InteractionSession {
       const controller = new AutonomousRunController(this.runStore, this.orchestrator, this.eventStream);
       const outcome = await controller.runOvernight(run.id, buildDefaultOvernightPolicy(), { abortSignal });
       appendDelegationTrace({
+        workspaceRoot: this.workspaceRoot,
         runId: run.id,
         node: run.currentNode,
         decision: "allow_with_trace",
@@ -1818,6 +1819,7 @@ export class InteractionSession {
       const policy = buildDefaultAutonomousPolicy();
       const outcome = await controller.runAutonomous(run.id, policy, { abortSignal });
       appendDelegationTrace({
+        workspaceRoot: this.workspaceRoot,
         runId: run.id,
         node: run.currentNode,
         decision: "allow_with_trace",

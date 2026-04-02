@@ -34,6 +34,7 @@ import { recoverCollectEnrichmentJobs } from "../core/nodes/collectPapers.js";
 import { detectExecutionProfile } from "./executionProfile.js";
 import { resolveNodeOptionsForPackage } from "../core/stateGraph/defaults.js";
 import { loadExplorationConfig } from "../core/exploration/explorationConfig.js";
+import { assertNotProjectRootWorkspace } from "../workspaceGuard.js";
 
 export interface AutoLabOSRuntime {
   paths: AppPaths;
@@ -65,7 +66,9 @@ export async function bootstrapAutoLabOSRuntime(opts?: {
   allowInteractiveSetup?: boolean;
   nodeOptionPackageName?: NodeOptionPackageName;
 }): Promise<RuntimeBootstrap> {
-  const paths = resolveAppPaths(opts?.cwd || process.cwd());
+  const cwd = opts?.cwd || process.cwd();
+  assertNotProjectRootWorkspace(cwd);
+  const paths = resolveAppPaths(cwd);
   const executionProfile = await detectExecutionProfile();
   const firstRunSetup = !(await configExists(paths));
 

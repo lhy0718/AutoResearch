@@ -2,6 +2,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import type { EvidenceScreeningResult, GovernanceDecision } from "./policyTypes.js";
+import { assertNotProjectRootWorkspace } from "../workspaceGuard.js";
 
 export interface GovernanceTraceEntry {
   timestamp: string;
@@ -16,7 +17,9 @@ export interface GovernanceTraceEntry {
 }
 
 function defaultTraceDir(): string {
-  return path.join(process.cwd(), ".autolabos", "governance", "traces");
+  const cwd = process.cwd();
+  assertNotProjectRootWorkspace(cwd, "Governance trace logging");
+  return path.join(cwd, ".autolabos", "governance", "traces");
 }
 
 export function appendGovernanceTrace(

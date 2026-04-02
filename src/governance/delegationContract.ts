@@ -77,11 +77,13 @@ export async function persistDelegationContract(
 }
 
 export function appendDelegationTrace(entry: {
+  workspaceRoot: string;
   runId: string;
   node: string | null;
   detail: string;
   decision: "allow_with_trace" | "require_review" | "hard_stop";
 }): void {
+  const traceDir = path.join(entry.workspaceRoot, ".autolabos", "governance", "traces");
   appendGovernanceTrace({
     timestamp: new Date().toISOString(),
     runId: entry.runId,
@@ -92,7 +94,7 @@ export function appendDelegationTrace(entry: {
     decision: entry.decision,
     matchedSlotId: null,
     detail: entry.detail
-  });
+  }, traceDir);
 }
 
 export async function prepareDelegationContractForRun(options: {
@@ -110,6 +112,7 @@ export async function prepareDelegationContractForRun(options: {
   const validation = validateDelegationContract(contract, policy);
   if (!validation.valid) {
     appendDelegationTrace({
+      workspaceRoot: options.workspaceRoot,
       runId: options.runId,
       node: options.node,
       decision: "require_review",
@@ -123,6 +126,7 @@ export async function prepareDelegationContractForRun(options: {
 
   const targetPath = await persistDelegationContract(options.workspaceRoot, options.runId, contract);
   appendDelegationTrace({
+    workspaceRoot: options.workspaceRoot,
     runId: options.runId,
     node: options.node,
     decision: "allow_with_trace",

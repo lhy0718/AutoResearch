@@ -261,7 +261,7 @@ describe("paperSelection", () => {
     const selection = await selectPapersForAnalysis({
       llm: new SequenceResponseLlm([
         new Error(
-          '2026-03-12T08:56:03.104783Z  WARN codex_core::shell_snapshot: Failed to delete shell snapshot at "/Users/hanyonglee/.codex/shell_snapshots/tmp": Os { code: 2, kind: NotFound, message: "No such file or directory" }'
+          '2026-03-12T08:56:03.104783Z  WARN codex_core::shell_snapshot: Failed to delete shell snapshot at "<home>/.codex/shell_snapshots/tmp": Os { code: 2, kind: NotFound, message: "No such file or directory" }'
         ),
         '{"ordered_paper_ids":["p2","p1"]}'
       ]),
@@ -356,7 +356,7 @@ describe("paperSelection", () => {
     const selection = await selectPapersForAnalysis({
       llm: new SequenceResponseLlm([
         new Error(
-          '2026-03-12T08:56:03.104783Z  WARN codex_core::shell_snapshot: Failed to delete shell snapshot at "/Users/hanyonglee/.codex/shell_snapshots/tmp": Os { code: 2, kind: NotFound, message: "No such file or directory" }\n' +
+          '2026-03-12T08:56:03.104783Z  WARN codex_core::shell_snapshot: Failed to delete shell snapshot at "<home>/.codex/shell_snapshots/tmp": Os { code: 2, kind: NotFound, message: "No such file or directory" }\n' +
             "2026-03-12T08:56:03.586264Z  WARN codex_core::codex: startup websocket prewarm setup failed: You've hit your usage limit for GPT-5.3-Codex-Spark. Switch to another model now, or try again at 8:24 PM."
         )
       ]),

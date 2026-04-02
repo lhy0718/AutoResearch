@@ -2,9 +2,16 @@ import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { appendGovernanceTrace, readGovernanceTrace } from "../src/governance/governanceTrace.js";
+import { getProjectRoot } from "../src/workspaceGuard.js";
+
+const ORIGINAL_CWD = process.cwd();
+
+afterEach(() => {
+  process.chdir(ORIGINAL_CWD);
+});
 
 describe("governance trace", () => {
   it("appends and reads a trace entry", () => {
@@ -65,5 +72,23 @@ describe("governance trace", () => {
     expect(entries).toHaveLength(2);
     expect(entries[0].inputSummary).toBe("one");
     expect(entries[1].inputSummary).toBe("two");
+  });
+
+  it("refuses to use the project root as the default trace directory", () => {
+    process.chdir(getProjectRoot());
+
+    expect(() =>
+      appendGovernanceTrace({
+        timestamp: "2026-04-03T00:00:00.000Z",
+        runId: "run-root",
+        node: "review",
+        inputSummary: "root",
+        screeningResult: null,
+        triggeredRules: [],
+        decision: "allow_with_trace",
+        matchedSlotId: null,
+        detail: "should not write at project root"
+      })
+    ).toThrow("must not run from the repository root");
   });
 });
