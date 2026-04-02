@@ -17,8 +17,14 @@ import { CheckpointStore } from "./checkpointStore.js";
 import { applyRunUsageDelta, RunUsageDelta } from "../runs/runUsage.js";
 import { CheckpointPhase, GraphNodeRegistry, GraphNodeResult, JumpMode } from "./types.js";
 import { defaultRunStatusForGraph } from "./defaults.js";
+import { loadGovernancePolicy } from "../../governance/policyLoader.js";
+import { GovernancePolicy } from "../../governance/policyTypes.js";
+import { ClassifiableAction } from "../../governance/actionRiskClassifier.js";
+import { evaluateActionDetailed, PolicyEvaluationResult } from "../../governance/policyEngine.js";
 
 export class StateGraphRuntime {
+  private governancePolicy?: GovernancePolicy;
+
   constructor(
     private readonly runStore: RunStore,
     private readonly nodeRegistry: GraphNodeRegistry,
@@ -27,6 +33,13 @@ export class StateGraphRuntime {
     private readonly options: {
       approvalMode?: WorkflowApprovalMode;
       budgetGuardUsd?: number;
+      governancePolicy?: GovernancePolicy;
+      evaluateGovernanceAction?: (
+        action: ClassifiableAction,
+        policy: GovernancePolicy,
+        runId: string | null,
+        node: string | null
+      ) => PolicyEvaluationResult;
     } = {}
   ) {}
 
@@ -93,6 +106,14 @@ export class StateGraphRuntime {
     }
 
     const node = run.currentNode;
+    const governanceDecision = await this.evaluateNodeGovernance(run, node);
+    if (governanceDecision?.decision === "require_review") {
+      return this.pauseForGovernanceReview(run, node, governanceDecision.detail);
+    }
+    if (governanceDecision?.decision === "hard_stop") {
+      return this.stopForGovernance(run, node, governanceDecision.detail);
+    }
+
     run.graph.nodeStates[node] = {
       ...run.graph.nodeStates[node],
       status: "running",
@@ -410,6 +431,26 @@ export class StateGraphRuntime {
 
     if (state.status !== "needs_approval") {
       return run;
+    }
+
+    if (this.isGovernancePreExecutionPause(run, node)) {
+      run.graph.pendingTransition = undefined;
+      run.graph.nodeStates[node] = {
+        ...state,
+        status: "pending",
+        updatedAt: new Date().toISOString(),
+        note: "Governance approval granted."
+      };
+      run.status = "running";
+      this.syncLatestSummary(run, node);
+      await this.saveCheckpointAndPersist(run, "after", "governance approved", node);
+      if (!opts?.continueAfterApprove) {
+        return this.getRunOrThrow(runId);
+      }
+      return this.runUntilPause(runId, {
+        abortSignal: opts?.abortSignal,
+        floorNode: node
+      });
     }
 
     if (run.graph.pendingTransition) {
@@ -1064,6 +1105,119 @@ export class StateGraphRuntime {
     const limit = typeof nextRequest.limit === "number" && Number.isFinite(nextRequest.limit) ? nextRequest.limit : null;
     await runContext.put("collect_papers.requested_limit", limit);
     return query;
+  }
+
+  private getGovernancePolicy(): GovernancePolicy {
+    if (!this.governancePolicy) {
+      this.governancePolicy = this.options.governancePolicy || loadGovernancePolicy();
+    }
+    return this.governancePolicy;
+  }
+
+  private buildNodeGovernanceAction(runId: string, node: GraphNodeId): ClassifiableAction {
+    const targetByNode: Record<GraphNodeId, string> = {
+      collect_papers: `.autolabos/runs/${runId}/corpus.jsonl`,
+      analyze_papers: `.autolabos/runs/${runId}/paper_summaries.jsonl`,
+      generate_hypotheses: `.autolabos/runs/${runId}/hypotheses.json`,
+      design_experiments: `.autolabos/runs/${runId}/experiment_contract.json`,
+      implement_experiments: `.autolabos/runs/${runId}/implement_experiments_session.json`,
+      run_experiments: `.autolabos/runs/${runId}/metrics.json`,
+      analyze_results: `.autolabos/runs/${runId}/result_analysis.json`,
+      review: `.autolabos/runs/${runId}/review/review_packet.json`,
+      write_paper: `.autolabos/runs/${runId}/paper/main.tex`
+    };
+
+    return {
+      type: "file_write",
+      target: targetByNode[node],
+      context: node
+    };
+  }
+
+  private async evaluateNodeGovernance(
+    run: RunRecord,
+    node: GraphNodeId
+  ): Promise<PolicyEvaluationResult | null> {
+    const action = this.buildNodeGovernanceAction(run.id, node);
+    const evaluator = this.options.evaluateGovernanceAction || evaluateActionDetailed;
+    return evaluator(action, this.getGovernancePolicy(), run.id, node);
+  }
+
+  private async pauseForGovernanceReview(
+    run: RunRecord,
+    node: GraphNodeId,
+    detail: string
+  ): Promise<RunRecord> {
+    run.graph.pendingTransition = {
+      action: "pause_for_human",
+      sourceNode: node,
+      targetNode: node,
+      reason: `governance: ${detail}`,
+      confidence: 1,
+      autoExecutable: false,
+      evidence: [detail],
+      suggestedCommands: [`/approve ${run.id}`],
+      generatedAt: new Date().toISOString()
+    };
+    run.graph.nodeStates[node] = {
+      ...run.graph.nodeStates[node],
+      status: "needs_approval",
+      updatedAt: new Date().toISOString(),
+      note: detail
+    };
+    run.status = "paused";
+    this.syncLatestSummary(run, node);
+    const checkpoint = await this.saveCheckpointAndPersist(run, "after", "governance review required", node);
+    this.eventStream.emit({
+      type: "CHECKPOINT_SAVED",
+      runId: run.id,
+      node,
+      payload: { checkpoint: checkpoint.seq, phase: checkpoint.phase }
+    });
+    this.eventStream.emit({
+      type: "OBS_RECEIVED",
+      runId: run.id,
+      node,
+      payload: { text: detail }
+    });
+    return this.getRunOrThrow(run.id);
+  }
+
+  private async stopForGovernance(run: RunRecord, node: GraphNodeId, detail: string): Promise<RunRecord> {
+    run.graph.pendingTransition = undefined;
+    run.graph.nodeStates[node] = {
+      ...run.graph.nodeStates[node],
+      status: "failed",
+      updatedAt: new Date().toISOString(),
+      lastError: detail,
+      note: detail
+    };
+    run.status = "failed";
+    this.syncLatestSummary(run, node);
+    const checkpoint = await this.saveCheckpointAndPersist(run, "fail", detail, node);
+    this.eventStream.emit({
+      type: "CHECKPOINT_SAVED",
+      runId: run.id,
+      node,
+      payload: { checkpoint: checkpoint.seq, phase: checkpoint.phase }
+    });
+    this.eventStream.emit({
+      type: "NODE_FAILED",
+      runId: run.id,
+      node,
+      payload: { error: detail, retryAttempt: 0 }
+    });
+    return this.getRunOrThrow(run.id);
+  }
+
+  private isGovernancePreExecutionPause(run: RunRecord, node: GraphNodeId): boolean {
+    const recommendation = run.graph.pendingTransition;
+    return Boolean(
+      recommendation &&
+        recommendation.action === "pause_for_human" &&
+        recommendation.targetNode === node &&
+        recommendation.reason?.startsWith("governance:")
+    );
   }
 }
 

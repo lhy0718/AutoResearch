@@ -1,0 +1,65 @@
+version: "1.0"
+
+trustedSources:
+  - "semanticscholar.org"
+  - "arxiv.org"
+  - "openalex.org"
+  - "crossref.org"
+
+allowedWritePaths:
+  - ".autolabos/runs/**"
+  - ".autolabos/knowledge/**"
+  - ".autolabos/logs/**"
+  - "outputs/**"
+
+reviewRequiredPaths:
+  - "docs/**"
+  - "src/**"
+  - ".codex/**"
+  - "paper/main.tex"
+  - "paper/references.bib"
+
+forbiddenExternalActions:
+  - "git push"
+  - "npm publish"
+  - "curl"
+  - "wget"
+
+claimCeilingRef: "src/core/analysis/paperMinimumGate.ts"
+
+slots:
+  - id: "run_artifact_write"
+    description: "run 디렉토리 하위 아티팩트 쓰기"
+    matchPattern: ".autolabos/runs/**"
+    tier: "local_mutation_low"
+    decision: "allow_with_trace"
+
+  - id: "source_code_edit"
+    description: "src/ 소스 코드 수정"
+    matchPattern: "src/**"
+    tier: "local_mutation_high"
+    decision: "require_review"
+
+  - id: "codex_skill_edit"
+    description: ".codex/skills/ 수정"
+    matchPattern: ".codex/**"
+    tier: "local_mutation_high"
+    decision: "require_review"
+
+  - id: "node_prompt_edit"
+    description: "node-prompts/ 수정"
+    matchPattern: "node-prompts/**"
+    tier: "local_mutation_high"
+    decision: "require_review"
+
+  - id: "paper_write"
+    description: "논문 원고 수정"
+    matchPattern: "paper/main.tex"
+    tier: "publication_risk"
+    decision: "require_review"
+
+  - id: "external_publish"
+    description: "외부 배포/전송 행동"
+    matchPattern: "git push|npm publish"
+    tier: "external_side_effect"
+    decision: "hard_stop"

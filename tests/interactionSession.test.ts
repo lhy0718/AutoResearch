@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { promises as fs } from "node:fs";
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resolveAppPaths, ensureScaffold } from "../src/config.js";
 import { InteractionSession } from "../src/interaction/InteractionSession.js";
@@ -11,6 +11,8 @@ import { RunStore } from "../src/core/runs/runStore.js";
 import { InMemoryEventStream, PersistedEventStream } from "../src/core/events.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { RunRecord } from "../src/types.js";
+import { AutonomousRunController } from "../src/core/agents/autonomousRunController.js";
+import * as delegationContract from "../src/governance/delegationContract.js";
 
 function makeRun(id: string): RunRecord {
   const now = new Date().toISOString();
@@ -47,6 +49,10 @@ describe("InteractionSession", () => {
     const paths = resolveAppPaths(cwd);
     await ensureScaffold(paths);
     runStore = new RunStore(paths);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("creates runs through the shared session and selects the new run", async () => {
@@ -296,6 +302,94 @@ describe("InteractionSession", () => {
     expect(result.logs.some((line) => line.includes("ORIGINAL score: 0.55"))).toBe(true);
     expect(result.logs.some((line) => line.includes("MUTANT score: 0.71"))).toBe(true);
     expect(result.logs.some((line) => line.includes("RECOMMENDATION: keep"))).toBe(true);
+  });
+
+  it("writes delegation_contract.json before /agent overnight starts", async () => {
+    const run = await runStore.createRun({
+      title: "Overnight run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    vi.spyOn(AutonomousRunController.prototype, "runOvernight").mockResolvedValue({
+      status: "completed",
+      reason: "ok",
+      iterations: 1,
+      approvalsApplied: 0,
+      transitionsApplied: 0
+    } as any);
+
+    const session = new InteractionSession({
+      workspaceRoot: cwd,
+      config: {
+        research: {
+          defaultTopic: "topic",
+          defaultConstraints: ["recent papers"],
+          default_objective_metric: "metric"
+        }
+      } as any,
+      runStore,
+      titleGenerator: {} as any,
+      codex: {} as any,
+      openAiTextClient: undefined,
+      eventStream: new InMemoryEventStream(),
+      orchestrator: {} as any,
+      semanticScholarApiKeyConfigured: true
+    });
+    await session.start();
+
+    const result = await session.submitInput(`/agent overnight ${run.id}`);
+
+    expect(result.logs.some((line) => line.includes("Overnight autonomy completed"))).toBe(true);
+    const contractPath = path.join(cwd, ".autolabos", "runs", run.id, "delegation_contract.json");
+    const written = JSON.parse(await fs.readFile(contractPath, "utf8"));
+    expect(written.subagentId).toBe("overnight");
+  });
+
+  it("blocks overnight delegation when the contract is invalid", async () => {
+    const run = await runStore.createRun({
+      title: "Invalid overnight run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    vi.spyOn(delegationContract, "prepareDelegationContractForRun").mockResolvedValue({
+      valid: false,
+      errors: ["Delegation contract invalid."]
+    });
+    const overnightSpy = vi.spyOn(AutonomousRunController.prototype, "runOvernight").mockResolvedValue({
+      status: "completed",
+      reason: "ok",
+      iterations: 1,
+      approvalsApplied: 0,
+      transitionsApplied: 0
+    } as any);
+
+    const session = new InteractionSession({
+      workspaceRoot: cwd,
+      config: {
+        research: {
+          defaultTopic: "topic",
+          defaultConstraints: ["recent papers"],
+          default_objective_metric: "metric"
+        }
+      } as any,
+      runStore,
+      titleGenerator: {} as any,
+      codex: {} as any,
+      openAiTextClient: undefined,
+      eventStream: new InMemoryEventStream(),
+      orchestrator: {} as any,
+      semanticScholarApiKeyConfigured: true
+    });
+    await session.start();
+
+    const result = await session.submitInput(`/agent overnight ${run.id}`);
+
+    expect(result.logs.some((line) => line.includes("Delegation blocked"))).toBe(true);
+    expect(overnightSpy).not.toHaveBeenCalled();
+    const contractPath = path.join(cwd, ".autolabos", "runs", run.id, "delegation_contract.json");
+    await expect(fs.readFile(contractPath, "utf8")).rejects.toThrow();
   });
 
   it("projects operator jobs via /jobs without mutating the run record", async () => {

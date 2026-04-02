@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ensureScaffold, resolveAppPaths } from "../src/config.js";
 import { InMemoryEventStream } from "../src/core/events.js";
@@ -13,6 +13,7 @@ import { GraphNodeHandler, GraphNodeRegistry } from "../src/core/stateGraph/type
 import { FailureMemory, buildErrorFingerprint } from "../src/core/experiments/failureMemory.js";
 import { GRAPH_NODE_ORDER, GraphNodeId, RunRecord } from "../src/types.js";
 import { readJsonFile } from "../src/utils/fs.js";
+import { GovernancePolicy } from "../src/governance/policyTypes.js";
 
 const ORIGINAL_CWD = process.cwd();
 const tempDirs: string[] = [];
@@ -71,6 +72,8 @@ async function setupWithOptions(
   options?: {
     approvalMode?: "manual" | "minimal" | "hybrid";
     budgetGuardUsd?: number;
+    governancePolicy?: GovernancePolicy;
+    evaluateGovernanceAction?: any;
   }
 ) {
   const cwd = mkdtempSync(path.join(os.tmpdir(), "autolabos-runtime-"));
@@ -129,6 +132,137 @@ describe("StateGraphRuntime", () => {
     expect(persisted?.currentNode).toBe("analyze_papers");
     expect(persisted?.graph.currentNode).toBe("analyze_papers");
     expect(persisted?.graph.checkpointSeq).toBe(2);
+  });
+
+  it("pauses for governance review before executing a node when policy requires it", async () => {
+    const execute = vi.fn().mockResolvedValue({
+      status: "success",
+      summary: "should not execute",
+      needsApproval: false,
+      toolCallsUsed: 1
+    });
+    const policy: GovernancePolicy = {
+      version: "1.0",
+      trustedSources: [],
+      allowedWritePaths: [".autolabos/runs/**"],
+      reviewRequiredPaths: ["src/**"],
+      forbiddenExternalActions: ["git push"],
+      claimCeilingRef: "src/core/analysis/paperMinimumGate.ts",
+      slots: [
+        {
+          id: "gate-collect",
+          description: "force review",
+          matchPattern: ".autolabos/runs/**/corpus.jsonl",
+          tier: "local_mutation_high",
+          decision: "require_review"
+        }
+      ]
+    };
+    const registry = new Registry({
+      collect_papers: {
+        id: "collect_papers",
+        execute
+      }
+    });
+    const { store, runtime } = await setupWithOptions(registry, { governancePolicy: policy });
+    const run = await store.createRun({
+      title: "Governance review",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    const updated = await runtime.step(run.id);
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(updated.status).toBe("paused");
+    expect(updated.graph.nodeStates.collect_papers.status).toBe("needs_approval");
+    expect(updated.graph.pendingTransition?.reason).toContain("governance:");
+  });
+
+  it("hard stops before node execution when governance blocks the action", async () => {
+    const execute = vi.fn().mockResolvedValue({
+      status: "success",
+      summary: "should not execute",
+      needsApproval: false,
+      toolCallsUsed: 1
+    });
+    const policy: GovernancePolicy = {
+      version: "1.0",
+      trustedSources: [],
+      allowedWritePaths: [".autolabos/runs/**"],
+      reviewRequiredPaths: ["src/**"],
+      forbiddenExternalActions: ["git push"],
+      claimCeilingRef: "src/core/analysis/paperMinimumGate.ts",
+      slots: [
+        {
+          id: "stop-collect",
+          description: "force stop",
+          matchPattern: ".autolabos/runs/**/corpus.jsonl",
+          tier: "external_side_effect",
+          decision: "hard_stop"
+        }
+      ]
+    };
+    const registry = new Registry({
+      collect_papers: {
+        id: "collect_papers",
+        execute
+      }
+    });
+    const { store, runtime } = await setupWithOptions(registry, { governancePolicy: policy });
+    const run = await store.createRun({
+      title: "Governance hard stop",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    const updated = await runtime.step(run.id);
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(updated.status).toBe("failed");
+    expect(updated.graph.nodeStates.collect_papers.status).toBe("failed");
+    expect(updated.graph.nodeStates.collect_papers.lastError).toContain("Governance hard_stop");
+  });
+
+  it("continues normally when governance allows execution and still writes checkpoints", async () => {
+    const execute = vi.fn().mockResolvedValue({
+      status: "success",
+      summary: "collect complete",
+      needsApproval: false,
+      toolCallsUsed: 1
+    });
+    const registry = new Registry({
+      collect_papers: {
+        id: "collect_papers",
+        execute
+      }
+    });
+    const { store, runtime, checkpointStore } = await setupWithOptions(registry, {
+      evaluateGovernanceAction: () => ({
+        tier: "read_only",
+        decision: "allow",
+        matchedSlotId: null,
+        detail: "Governance allow for benchmark."
+      })
+    });
+    const run = await store.createRun({
+      title: "Governance allow",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    const updated = await runtime.step(run.id);
+
+    expect(execute).toHaveBeenCalled();
+    expect(updated.currentNode).toBe("analyze_papers");
+    const checkpoints = await checkpointStore.list(run.id);
+    expect(checkpoints.map((item) => `${item.node}:${item.phase}`)).toEqual([
+      "collect_papers:before",
+      "collect_papers:after"
+    ]);
   });
 
   it("accumulates successful node usage into the run record and persists it", async () => {

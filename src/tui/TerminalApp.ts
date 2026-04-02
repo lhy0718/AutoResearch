@@ -108,6 +108,7 @@ import {
   formatReviewPacketLines,
   parseReviewPacket
 } from "../core/reviewPacket.js";
+import { appendDelegationTrace, prepareDelegationContractForRun } from "../governance/delegationContract.js";
 import { parseReadinessRiskArtifact } from "../core/readinessRisks.js";
 import {
   buildAnalyzeResultsInsightCard,
@@ -3493,9 +3494,32 @@ export class TerminalApp {
       if (!run) {
         return { ok: false, reason: "target run not found" };
       }
+      const contractResult = await prepareDelegationContractForRun({
+        workspaceRoot: process.cwd(),
+        runId: run.id,
+        node: run.currentNode,
+        contract: {
+          subagentId: "overnight",
+          objective: `Overnight governed execution for run ${run.id}`,
+          allowedTools: ["codex", "run_store", "event_stream"],
+          returnSchema: ".autolabos/runs/<run-id>/delegation_contract.json"
+        }
+      });
+      if (!contractResult.valid) {
+        for (const error of contractResult.errors) {
+          this.pushLog(`Delegation blocked: ${error}`);
+        }
+        return { ok: false, reason: contractResult.errors.join(" ") };
+      }
       this.pushLog("Starting autonomy preset: overnight (24-hour limit, conservative safe policy).");
       const controller = new AutonomousRunController(this.runStore, this.orchestrator, this.eventStream);
       const outcome = await controller.runOvernight(run.id, buildDefaultOvernightPolicy(), { abortSignal });
+      appendDelegationTrace({
+        runId: run.id,
+        node: run.currentNode,
+        decision: "allow_with_trace",
+        detail: `Delegation completed for overnight mode with status ${outcome.status}.`
+      });
       this.pushLog(`Overnight autonomy ${outcome.status}: ${outcome.reason}`);
       this.pushLog(
         `Iterations=${outcome.iterations}, approvals=${outcome.approvalsApplied}, transitions=${outcome.transitionsApplied}`
@@ -3509,6 +3533,23 @@ export class TerminalApp {
       const run = await this.resolveTargetRun(runQuery);
       if (!run) {
         return { ok: false, reason: "target run not found" };
+      }
+      const contractResult = await prepareDelegationContractForRun({
+        workspaceRoot: process.cwd(),
+        runId: run.id,
+        node: run.currentNode,
+        contract: {
+          subagentId: "autonomous",
+          objective: `Autonomous governed execution for run ${run.id}`,
+          allowedTools: ["codex", "run_store", "event_stream"],
+          returnSchema: ".autolabos/runs/<run-id>/delegation_contract.json"
+        }
+      });
+      if (!contractResult.valid) {
+        for (const error of contractResult.errors) {
+          this.pushLog(`Delegation blocked: ${error}`);
+        }
+        return { ok: false, reason: contractResult.errors.join(" ") };
       }
       this.pushLog("┌──────────────────────────────────────────────────────────────┐");
       this.pushLog("│  AUTONOMOUS MODE — Long-running open-ended research mode    │");
@@ -3527,6 +3568,12 @@ export class TerminalApp {
       const controller = new AutonomousRunController(this.runStore, this.orchestrator, this.eventStream);
       const policy = buildDefaultAutonomousPolicy();
       const outcome = await controller.runAutonomous(run.id, policy, { abortSignal });
+      appendDelegationTrace({
+        runId: run.id,
+        node: run.currentNode,
+        decision: "allow_with_trace",
+        detail: `Delegation completed for autonomous mode with status ${outcome.status}.`
+      });
       this.pushLog(`Autonomous mode ${outcome.status}: ${outcome.reason}`);
       this.pushLog(
         `Cycles=${outcome.researchCycles || 0}, iterations=${outcome.iterations}, ` +

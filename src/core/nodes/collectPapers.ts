@@ -37,6 +37,9 @@ import {
   runAggregatedPaperSearch,
   SearchProviderClient
 } from "../collection/searchAggregation.js";
+import { loadGovernancePolicy } from "../../governance/policyLoader.js";
+import { ScreeningReport, screenEvidence } from "../../governance/evidenceIntakeFilter.js";
+import { appendGovernanceTrace } from "../../governance/governanceTrace.js";
 
 const ENRICHMENT_CONCURRENCY = 6;
 const ENRICHMENT_PROGRESS_INTERVAL = 10;
@@ -168,7 +171,16 @@ interface CollectResultMeta {
   requestedQuery?: string;
   queryAttempts: CollectQueryAttemptMeta[];
   enrichment: CollectEnrichmentMeta;
+  governance_warnings?: CollectGovernanceWarning[];
   timestamp: string;
+}
+
+interface CollectGovernanceWarning {
+  paper_id: string;
+  source: string;
+  triggeredRules: string[];
+  excerpt: string | null;
+  recommendation: string;
 }
 
 interface CollectQueryAttemptMeta {
@@ -323,6 +335,8 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       const persistedEnrichmentLogs = new Map<string, CollectEnrichmentLogEntry>(
         existingEnrichmentLogs.map((entry) => [entry.paper_id, entry])
       );
+      const governancePolicy = loadGovernancePolicy();
+      const governanceWarnings: CollectGovernanceWarning[] = [];
       let diagnostics: SemanticScholarSearchDiagnostics = emptyCollectDiagnostics();
       let aggregationReport: PaperSearchAggregationReport | undefined;
       const queryAttempts: CollectQueryAttemptMeta[] = [];
@@ -356,7 +370,8 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             processedCount: 0,
             attemptedCount: 0,
             updatedCount: 0
-          }
+          },
+          governanceWarnings
         }),
         diagnostics
       });
@@ -406,6 +421,49 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
 
           let changed = false;
           for (const record of aggregated.records) {
+            const screening = screenCollectedPaper(record, governancePolicy);
+            if (screening.result === "blocked") {
+              appendGovernanceTrace({
+                timestamp: new Date().toISOString(),
+                runId: run.id,
+                node: "collect_papers",
+                inputSummary: screeningInputSummary(record),
+                screeningResult: screening.result,
+                triggeredRules: screening.triggeredRules,
+                decision: "hard_stop",
+                matchedSlotId: "evidence_intake",
+                detail: screening.recommendation
+              });
+              deps.eventStream.emit({
+                type: "OBS_RECEIVED",
+                runId: run.id,
+                node: "collect_papers",
+                payload: {
+                  text: `Governance blocked collected paper "${record.paper.title}" and excluded it from the corpus.`
+                }
+              });
+              continue;
+            }
+            if (screening.result === "suspicious_but_usable") {
+              governanceWarnings.push({
+                paper_id: record.paper.paperId,
+                source: resolveGovernanceSource(record),
+                triggeredRules: screening.triggeredRules,
+                excerpt: screening.excerpt,
+                recommendation: screening.recommendation
+              });
+              appendGovernanceTrace({
+                timestamp: new Date().toISOString(),
+                runId: run.id,
+                node: "collect_papers",
+                inputSummary: screeningInputSummary(record),
+                screeningResult: screening.result,
+                triggeredRules: screening.triggeredRules,
+                decision: "allow_with_trace",
+                matchedSlotId: "evidence_intake",
+                detail: screening.recommendation
+              });
+            }
             fetchedPapers.set(record.paper.paperId, record.paper);
             const currentRow = storedRows.get(record.paper.paperId);
             if (!currentRow && additionalLimit !== undefined && newPaperIds.size >= additionalLimit) {
@@ -461,6 +519,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                 fallbackSources: Array.from(fallbackSources),
                 requestedQuery: normalizedRequest.requestedQuery,
                 queryAttempts,
+                governanceWarnings,
                 enrichment: {
                   blocking: false,
                   status: "not_needed",
@@ -631,6 +690,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         fallbackSources: Array.from(fallbackSources),
         requestedQuery: normalizedRequest.requestedQuery,
         queryAttempts,
+        governanceWarnings,
         enrichment:
           papersToEnrich.length > 0
             ? {
@@ -1469,6 +1529,7 @@ function buildCollectResultMeta(input: {
   requestedQuery?: string;
   queryAttempts: CollectQueryAttemptMeta[];
   enrichment: CollectEnrichmentMeta;
+  governanceWarnings?: CollectGovernanceWarning[];
 }): CollectResultMeta {
   return {
     query: input.request.query,
@@ -1502,8 +1563,42 @@ function buildCollectResultMeta(input: {
     requestedQuery: input.requestedQuery,
     queryAttempts: input.queryAttempts,
     enrichment: input.enrichment,
+    governance_warnings: input.governanceWarnings ?? [],
     timestamp: new Date().toISOString()
   };
+}
+
+function screenCollectedPaper(
+  record: AggregatedSearchRecord,
+  policy: ReturnType<typeof loadGovernancePolicy>
+): ScreeningReport {
+  return screenEvidence(
+    {
+      text: `${record.paper.title}\n${record.paper.abstract ?? ""}`.trim(),
+      source: resolveGovernanceSource(record),
+      context: "collect_papers"
+    },
+    policy
+  );
+}
+
+function resolveGovernanceSource(record: AggregatedSearchRecord): string {
+  return (
+    record.row.landing_url ||
+    record.row.url ||
+    record.row.pdf_url ||
+    record.paper.landingUrl ||
+    record.paper.url ||
+    record.paper.openAccessPdfUrl ||
+    `provider:${record.paper.canonicalSource}`
+  );
+}
+
+function screeningInputSummary(record: AggregatedSearchRecord): string {
+  return `${record.paper.title} ${record.paper.abstract ?? ""}`
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 100);
 }
 
 async function persistCollectSnapshot(input: {
