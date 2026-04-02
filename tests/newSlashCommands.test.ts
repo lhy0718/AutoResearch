@@ -57,6 +57,11 @@ describe("new slash commands", () => {
     expect(suggestions.some((s) => s.applyValue === "/analyze-results ")).toBe(true);
   });
 
+  it("includes /agent tune-node node suggestions", () => {
+    const suggestions = buildSuggestions({ input: "/agent tune-node ge", runs, activeRunId: "run-1" });
+    expect(suggestions.some((s) => s.applyValue === "/agent tune-node generate_hypotheses ")).toBe(true);
+  });
+
   it("shows all new visible commands in root suggestions", () => {
     const suggestions = buildSuggestions({ input: "/", runs, activeRunId: "run-1" });
     expect(suggestions.some((s) => s.key === "cmd:clear")).toBe(true);
@@ -110,6 +115,36 @@ describe("new slash commands", () => {
     expect(app.logs).toContain("/watch");
   });
 
+  it("prints tune-node comparison reports through /agent", async () => {
+    const app = makeApp({
+      tuneNodeRunner: {
+        run: vi.fn().mockResolvedValue({
+          lines: [
+            "ORIGINAL score: 0.60",
+            "MUTANT score: 0.74",
+            "DELTA: +0.14",
+            "RECOMMENDATION: keep"
+          ]
+        })
+      }
+    });
+    app.resolveTargetRun = vi.fn().mockResolvedValue({
+      id: "run-1",
+      title: "Test Run",
+      topic: "topic",
+      objectiveMetric: "metric",
+      constraints: []
+    });
+    app.setActiveRunId = vi.fn().mockResolvedValue(undefined);
+
+    const result = await app.handleAgent(["tune-node", "generate_hypotheses"]);
+
+    expect(result.ok).toBe(true);
+    expect(app.logs).toContain("ORIGINAL score: 0.60");
+    expect(app.logs).toContain("MUTANT score: 0.74");
+    expect(app.logs).toContain("RECOMMENDATION: keep");
+  });
+
   it("backward-compatible: existing visible commands still appear", () => {
     const suggestions = buildSuggestions({ input: "/", runs, activeRunId: "run-1" });
     expect(suggestions.some((s) => s.key === "cmd:help")).toBe(true);
@@ -123,7 +158,7 @@ describe("new slash commands", () => {
   });
 });
 
-function makeApp(): any {
+function makeApp(overrides: Record<string, unknown> = {}): any {
   const eventStream = new InMemoryEventStream();
   const app = new TerminalApp({
     config: {
@@ -144,7 +179,8 @@ function makeApp(): any {
     orchestrator: {} as any,
     semanticScholarApiKeyConfigured: false,
     onQuit: () => {},
-    saveConfig: async () => {}
+    saveConfig: async () => {},
+    ...(overrides as any)
   });
 
   app.render = () => {};

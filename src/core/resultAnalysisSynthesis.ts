@@ -2,6 +2,7 @@ import { EventStream } from "./events.js";
 import { LLMClient } from "./llm/client.js";
 import { AnalysisReport, AnalysisSynthesis } from "./resultAnalysis.js";
 import { RunRecord } from "../types.js";
+import { loadAnalyzeResultsPromptSections } from "./nodePrompts.js";
 
 interface SynthesizeAnalysisArgs {
   run: Pick<RunRecord, "id" | "topic" | "objectiveMetric" | "constraints">;
@@ -9,6 +10,7 @@ interface SynthesizeAnalysisArgs {
   llm: LLMClient;
   eventStream?: EventStream;
   node: RunRecord["currentNode"];
+  systemPromptOverride?: string;
 }
 
 interface RawAnalysisSynthesis {
@@ -30,7 +32,7 @@ export async function synthesizeAnalysisReport(args: SynthesizeAnalysisArgs): Pr
       }
     });
     const completion = await args.llm.complete(buildAnalysisSynthesisPrompt(args.run, args.report), {
-      systemPrompt: buildAnalysisSynthesisSystemPrompt(),
+      systemPrompt: buildAnalysisSynthesisSystemPrompt(args.systemPromptOverride),
       onProgress: (event) => {
         const text = event.text.trim();
         if (!text) {
@@ -74,15 +76,11 @@ export async function synthesizeAnalysisReport(args: SynthesizeAnalysisArgs): Pr
   }
 }
 
-function buildAnalysisSynthesisSystemPrompt(): string {
-  return [
-    "You are the AutoLabOS result analysis discussion agent.",
-    "Write conservative, evidence-grounded synthesis from a structured experiment report.",
-    "Return JSON only.",
-    "Use only facts explicitly present in the payload.",
-    "Do not invent metrics, thresholds, failure causes, or comparisons.",
-    "If a failure cause is uncertain, label it as a risk or remaining uncertainty."
-  ].join("\n");
+function buildAnalysisSynthesisSystemPrompt(override?: string): string {
+  if (override?.trim()) {
+    return override.trim();
+  }
+  return loadAnalyzeResultsPromptSections().system;
 }
 
 function buildAnalysisSynthesisPrompt(

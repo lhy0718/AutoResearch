@@ -81,6 +81,7 @@ import { getDefaultPdfAnalysisModeForLlmMode, getPdfAnalysisModeForConfig, resol
 import { executionProfileToDependencyMode } from "../runtime/executionProfile.js";
 import { AgentOrchestrator } from "../core/agents/agentOrchestrator.js";
 import { AutonomousRunController, buildDefaultOvernightPolicy, buildDefaultAutonomousPolicy } from "../core/agents/autonomousRunController.js";
+import { DefaultTuneNodeRunner, TuneNodeRunner } from "../core/agents/tuneNode.js";
 import { RunContextMemory } from "../core/memory/runContextMemory.js";
 import { parseAnalysisReport } from "../core/resultAnalysis.js";
 import {
@@ -190,6 +191,7 @@ interface TerminalAppDeps {
   openAiTextClient?: OpenAiResponsesTextClient;
   eventStream: EventStream;
   orchestrator: AgentOrchestrator;
+  tuneNodeRunner?: TuneNodeRunner;
   initialRunId?: string;
   semanticScholarApiKeyConfigured: boolean;
   onQuit: () => void;
@@ -298,6 +300,7 @@ export class TerminalApp {
   private readonly openAiTextClient?: OpenAiResponsesTextClient;
   private readonly eventStream: EventStream;
   private readonly orchestrator: AgentOrchestrator;
+  private readonly tuneNodeRunner: TuneNodeRunner;
   private readonly onQuit: () => void;
   private readonly saveConfigFn: (nextConfig: AppConfig) => Promise<void>;
   private readonly semanticScholarApiKeyConfigured: boolean;
@@ -387,6 +390,7 @@ export class TerminalApp {
     this.openAiTextClient = deps.openAiTextClient;
     this.eventStream = deps.eventStream;
     this.orchestrator = deps.orchestrator;
+    this.tuneNodeRunner = deps.tuneNodeRunner || new DefaultTuneNodeRunner();
     this.activeRunId = deps.initialRunId;
     this.semanticScholarApiKeyConfigured = deps.semanticScholarApiKeyConfigured;
     this.interactiveSupervisor = new InteractiveRunSupervisor(process.cwd(), deps.runStore, deps.orchestrator);
@@ -2156,6 +2160,7 @@ export class TerminalApp {
     this.pushLog("Notes:");
     this.pushLog("Create a Markdown Research Brief first. The UI then keeps the main loop to run, approve, and steering.");
     this.pushLog("Advanced slash commands still exist, but they are intentionally out of the main path.");
+    this.pushLog("Advanced example: /agent tune-node <generate_hypotheses|design_experiments|analyze_results> [run]");
   }
 
   private handleClear(): void {
@@ -3225,6 +3230,34 @@ export class TerminalApp {
       return { ok: true };
     }
 
+    if (sub === "tune-node") {
+      const nodeRaw = (args[1] || "").trim();
+      if (!nodeRaw) {
+        this.pushLog("Usage: /agent tune-node <generate_hypotheses|design_experiments|analyze_results> [run]");
+        return { ok: false, reason: "missing node for /agent tune-node" };
+      }
+      if (!["generate_hypotheses", "design_experiments", "analyze_results"].includes(nodeRaw)) {
+        this.pushLog(
+          `Unsupported tune-node target: ${nodeRaw}. Allowed nodes: generate_hypotheses, design_experiments, analyze_results.`
+        );
+        return { ok: false, reason: `unsupported tune-node target ${nodeRaw}` };
+      }
+      const run = await this.resolveTargetRun(args.slice(2).join(" ").trim() || undefined);
+      if (!run) {
+        return { ok: false, reason: "target run not found" };
+      }
+      const report = await this.tuneNodeRunner.run({
+        workspaceRoot: process.cwd(),
+        run,
+        node: nodeRaw as "generate_hypotheses" | "design_experiments" | "analyze_results"
+      });
+      await this.setActiveRunId(run.id);
+      for (const line of report.lines) {
+        this.pushLog(line);
+      }
+      return { ok: true };
+    }
+
     if (sub === "review") {
       return this.handleAgentReview(args.slice(1).join(" ").trim() || undefined, abortSignal);
     }
@@ -3516,7 +3549,7 @@ export class TerminalApp {
     }
 
     this.pushLog(
-      "Usage: /agent list | run | status | review | collect | recollect | clear | count | clear_papers | focus | graph | resume | retry | jump | transition | apply | overnight | autonomous"
+      "Usage: /agent list | run | status | review | collect | recollect | clear | count | clear_papers | focus | graph | resume | retry | jump | tune-node | transition | apply | overnight | autonomous"
     );
     return { ok: false, reason: `unknown /agent subcommand ${sub}` };
   }

@@ -3,6 +3,7 @@ import { runTreeOfThoughts } from "../agents/runtime/tot.js";
 import { ConstraintProfile } from "../runConstraints.js";
 import { ObjectiveMetricProfile } from "../objectiveMetric.js";
 import { parseStructuredModelJsonObject } from "./modelJson.js";
+import { loadDesignExperimentsPromptSections, loadGenerateHypothesesPromptSections } from "../nodePrompts.js";
 
 export interface HypothesisEvidenceSeed {
   evidence_id?: string;
@@ -179,40 +180,15 @@ export interface DesignRetryContext {
   retry_directives: string[];
 }
 
-const HYPOTHESIS_SYSTEM_PROMPT = [
-  "You are the AutoLabOS hypothesis agent.",
-  "Generate multiple research hypotheses from structured evidence.",
-  "Return one JSON object only.",
-  "No markdown, no prose outside JSON.",
-  "Keep hypotheses specific, testable, and grounded in the supplied evidence."
-].join(" ");
+export interface HypothesisPromptOverrides {
+  systemPrompt?: string;
+  axesSystemPrompt?: string;
+  reviewSystemPrompt?: string;
+}
 
-const HYPOTHESIS_AXIS_SYSTEM_PROMPT = [
-  "You are the AutoLabOS evidence synthesizer.",
-  "Map evidence into a small set of mechanism-oriented axes for better hypothesis generation.",
-  "Return one JSON object only.",
-  "No markdown, no prose outside JSON.",
-  "Prefer axes that can be turned into interventions and evaluated for reproducibility."
-].join(" ");
-
-const HYPOTHESIS_REVIEW_SYSTEM_PROMPT = [
-  "You are the AutoLabOS skeptical reviewer.",
-  "Critique hypothesis drafts for groundedness, causal clarity, falsifiability, experimentability, and objective-metric alignment.",
-  "Apply hard gates: hypotheses with too few evidence links, ignored limitations/counterexamples, or no operational measurement plan should not survive review.",
-  "When the objective is reproducibility, penalize performance-only hypotheses that do not specify a repeated-run or stability-based outcome.",
-  "Penalize hypotheses that rely mostly on abstract-only or heavily caveated evidence when stronger full-text evidence is available.",
-  "Revise weak wording instead of praising it.",
-  "Return one JSON object only.",
-  "No markdown, no prose outside JSON."
-].join(" ");
-
-const DESIGN_SYSTEM_PROMPT = [
-  "You are the AutoLabOS experiment designer.",
-  "Convert shortlisted hypotheses into executable experiment plans.",
-  "Return one JSON object only.",
-  "No markdown, no prose outside JSON.",
-  "Plans must be concrete, measurable, and implementable."
-].join(" ");
+export interface DesignPromptOverrides {
+  systemPrompt?: string;
+}
 
 interface RawHypothesisJson {
   summary?: unknown;
@@ -305,6 +281,7 @@ export async function generateHypothesesFromEvidence(args: {
   topK?: number;
   timeoutMs?: number;
   onProgress?: (message: string) => void;
+  promptOverrides?: HypothesisPromptOverrides;
 }): Promise<HypothesisPlanningResult> {
   const branchCount = Math.max(2, args.branchCount ?? 6);
   const topK = Math.max(1, args.topK ?? 2);
@@ -335,7 +312,7 @@ export async function generateHypothesesFromEvidence(args: {
         args.llm.complete(
           singlePassPrompt,
           {
-            systemPrompt: HYPOTHESIS_SYSTEM_PROMPT,
+            systemPrompt: resolveHypothesisPrompts(args.promptOverrides).systemPrompt,
             onProgress: (event) => emitProgress(args.onProgress, "Hypothesis LLM", event)
           }
         ),
@@ -447,7 +424,9 @@ async function runStagedHypothesisPipeline(args: {
   topK: number;
   timeoutMs: number;
   onProgress?: (message: string) => void;
+  promptOverrides?: HypothesisPromptOverrides;
 }): Promise<HypothesisPlanningResult> {
+  const prompts = resolveHypothesisPrompts(args.promptOverrides);
   const evidencePanel = selectHypothesisEvidencePanel(args.evidenceSeeds, 24);
   let toolCallsUsed = 0;
   const llmTrace: HypothesisPlanningArtifacts["llm_trace"] = {
@@ -460,7 +439,7 @@ async function runStagedHypothesisPipeline(args: {
     args.llm.complete(
       axesPrompt,
       {
-        systemPrompt: HYPOTHESIS_AXIS_SYSTEM_PROMPT,
+        systemPrompt: prompts.axesSystemPrompt,
         onProgress: (event) => emitProgress(args.onProgress, "Hypothesis axes", event)
       }
     ),
@@ -505,7 +484,7 @@ async function runStagedHypothesisPipeline(args: {
       args.llm.complete(
         rolePrompt,
         {
-          systemPrompt: HYPOTHESIS_SYSTEM_PROMPT,
+          systemPrompt: prompts.systemPrompt,
           onProgress: (event) => emitProgress(args.onProgress, `${roleLabel(role.kind)} drafts`, event)
         }
       ),
@@ -543,7 +522,7 @@ async function runStagedHypothesisPipeline(args: {
     args.llm.complete(
       reviewPrompt,
       {
-        systemPrompt: HYPOTHESIS_REVIEW_SYSTEM_PROMPT,
+        systemPrompt: prompts.reviewSystemPrompt,
         onProgress: (event) => emitProgress(args.onProgress, "Hypothesis review", event)
       }
     ),
@@ -625,7 +604,9 @@ export async function designExperimentsFromHypotheses(args: {
   candidateCount?: number;
   timeoutMs?: number;
   onProgress?: (message: string) => void;
+  promptOverrides?: DesignPromptOverrides;
 }): Promise<ExperimentDesignResult> {
+  const prompts = resolveDesignPrompts(args.promptOverrides);
   const candidateCount = Math.max(2, args.candidateCount ?? 3);
   const timeoutMs = Math.max(1, args.timeoutMs ?? 45_000);
 
@@ -644,7 +625,7 @@ export async function designExperimentsFromHypotheses(args: {
           candidateCount
         ),
         {
-          systemPrompt: DESIGN_SYSTEM_PROMPT,
+          systemPrompt: prompts.systemPrompt,
           onProgress: (event) => emitProgress(args.onProgress, "Design LLM", event)
         }
       ),
@@ -686,6 +667,22 @@ export async function designExperimentsFromHypotheses(args: {
       fallbackReason: reason
     };
   }
+}
+
+function resolveHypothesisPrompts(overrides?: HypothesisPromptOverrides): Required<HypothesisPromptOverrides> {
+  const loaded = loadGenerateHypothesesPromptSections();
+  return {
+    systemPrompt: overrides?.systemPrompt || loaded.system,
+    axesSystemPrompt: overrides?.axesSystemPrompt || loaded.axesSystem,
+    reviewSystemPrompt: overrides?.reviewSystemPrompt || loaded.reviewSystem
+  };
+}
+
+function resolveDesignPrompts(overrides?: DesignPromptOverrides): Required<DesignPromptOverrides> {
+  const loaded = loadDesignExperimentsPromptSections();
+  return {
+    systemPrompt: overrides?.systemPrompt || loaded.system
+  };
 }
 
 function buildHypothesisPrompt(

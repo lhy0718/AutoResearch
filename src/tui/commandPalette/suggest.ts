@@ -31,6 +31,7 @@ const AGENT_SUBCOMMANDS = [
   "resume",
   "retry",
   "jump",
+  "tune-node",
   "transition",
   "apply",
   "overnight",
@@ -286,6 +287,35 @@ function agentCommandSuggestions(parsed: ParsedInput, runs: SlashContextRun[]): 
       if (parsed.argIndex === 2) {
         return runSuggestions(`agent ${sub} ${parsed.args[1]}`, parsed.argPartial, runs);
       }
+    }
+  }
+
+  if (sub === "tune-node") {
+    if (parsed.argIndex === 1) {
+      return [
+        "generate_hypotheses",
+        "design_experiments",
+        "analyze_results"
+      ]
+        .map((node) => {
+          const score = fuzzyScore(parsed.argPartial, node);
+          if (score === null) {
+            return null;
+          }
+          return {
+            key: `agent-tune:${node}`,
+            label: `/agent tune-node ${node}`,
+            description: "Compare original vs mutant node prompt without applying changes",
+            applyValue: `/agent tune-node ${node} `,
+            score
+          };
+        })
+        .filter((item): item is SuggestionItem & { score: number } => Boolean(item))
+        .sort((a, b) => b.score - a.score)
+        .map(({ score: _score, ...item }) => item);
+    }
+    if (parsed.argIndex === 2) {
+      return runSuggestions(`agent tune-node ${parsed.args[1]}`, parsed.argPartial, runs);
     }
   }
 

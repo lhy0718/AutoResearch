@@ -1,4 +1,5 @@
 import path from "node:path";
+import { Dirent, promises as fs } from "node:fs";
 
 import { AgentComputerInterface } from "../../tools/aci.js";
 
@@ -87,7 +88,8 @@ export class ImplementationLocalizer {
 
     const filesObs = await this.aci.listFiles(input.workspaceRoot, 200);
     const listedFiles = parseFileList(filesObs.stdout, input.workspaceRoot);
-    for (const filePath of listedFiles) {
+    const hintedFiles = await collectHintedFiles(input.workspaceRoot, focusHints);
+    for (const filePath of dedupeStrings([...listedFiles, ...hintedFiles])) {
       const score = scorePathFromQueries(filePath, queries, input.existingChangedFiles || [], focusHints);
       if (score > 0) {
         bumpCandidate(candidates, filePath, score, "path matched localization query");
@@ -131,6 +133,35 @@ export class ImplementationLocalizer {
       hits
     };
   }
+}
+
+async function collectHintedFiles(
+  workspaceRoot: string,
+  focusHints: LocalizationFocusHints
+): Promise<string[]> {
+  const out = new Set<string>();
+  const maxFiles = 80;
+
+  for (const outputRoot of focusHints.preferredOutputRoots) {
+    for (const filePath of await listFilesRecursively(outputRoot, maxFiles)) {
+      out.add(filePath);
+      if (out.size >= maxFiles) {
+        return [...out];
+      }
+    }
+  }
+
+  if (focusHints.preferredRunIds.length > 0) {
+    const outputsRoot = path.join(workspaceRoot, "outputs");
+    for (const filePath of await listRunHintedOutputFiles(outputsRoot, focusHints.preferredRunIds, maxFiles - out.size)) {
+      out.add(filePath);
+      if (out.size >= maxFiles) {
+        break;
+      }
+    }
+  }
+
+  return [...out];
 }
 
 function buildSearchQueries(input: ImplementationLocalizerInput): string[] {
@@ -390,35 +421,121 @@ function deriveLocalizationFocusHints(input: ImplementationLocalizerInput): Loca
 function extractPreferredOutputRoots(value: string, workspaceRoot: string): string[] {
   const matches = value.match(/(?:^|[\s"'`(])((?:\/[^"'`\s)]+|outputs\/[^"'`\s)]+))(?:$|[\s"'`),])/gu) || [];
   const roots = new Set<string>();
-  const canonicalOutputsRoot = path.join(workspaceRoot, "outputs");
   for (const match of matches) {
     const candidate = match.trim().replace(/^[\s"'`(]+|[\s"'`),]+$/gu, "");
     if (!candidate.includes("outputs/")) {
       continue;
     }
     const normalized = path.isAbsolute(candidate) ? candidate : path.join(workspaceRoot, candidate);
-    if (isInsideOutputsDirectory(normalized)) {
-      roots.add(canonicalOutputsRoot);
-      continue;
-    }
-    const experimentIndex = normalized.indexOf(`${path.sep}experiment${path.sep}`);
-    if (experimentIndex >= 0) {
-      roots.add(normalized.slice(0, experimentIndex));
-      continue;
-    }
-    const manifestSuffix = `${path.sep}manifest.json`;
-    if (normalized.endsWith(manifestSuffix)) {
-      roots.add(normalized.slice(0, -manifestSuffix.length));
-      continue;
+    const outputRoot = deriveSpecificOutputRoot(normalized, workspaceRoot);
+    if (outputRoot) {
+      roots.add(outputRoot);
     }
   }
   return [...roots];
+}
+
+function deriveSpecificOutputRoot(normalizedPath: string, workspaceRoot: string): string | undefined {
+  const relative = path.relative(workspaceRoot, normalizedPath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    const experimentIndex = normalizedPath.indexOf(`${path.sep}experiment${path.sep}`);
+    if (experimentIndex >= 0) {
+      return normalizedPath.slice(0, experimentIndex + `${path.sep}experiment`.length);
+    }
+    const manifestSuffix = `${path.sep}manifest.json`;
+    if (normalizedPath.endsWith(manifestSuffix)) {
+      return normalizedPath.slice(0, -manifestSuffix.length);
+    }
+    return undefined;
+  }
+
+  const segments = relative.split(path.sep).filter(Boolean);
+  if (segments[0] !== "outputs" || segments.length < 2) {
+    return undefined;
+  }
+
+  if (segments[1] === "experiment") {
+    return path.join(workspaceRoot, "outputs", "experiment");
+  }
+
+  if (path.basename(normalizedPath) === "manifest.json") {
+    return path.dirname(normalizedPath);
+  }
+
+  if (segments.length >= 3 && isOutputSectionName(segments[2])) {
+    return path.join(workspaceRoot, "outputs", segments[1]);
+  }
+
+  return path.join(workspaceRoot, "outputs", segments[1]);
+}
+
+function isOutputSectionName(segment: string): boolean {
+  return ["experiment", "analysis", "review", "paper", "results", "reproduce"].includes(segment);
 }
 
 function extractRunIds(value: string): string[] {
   const matches = value.match(/\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/giu) || [];
   const shortMatches = value.match(/\b[0-9a-f]{8}\b/giu) || [];
   return [...new Set([...matches, ...shortMatches])];
+}
+
+async function listRunHintedOutputFiles(outputsRoot: string, preferredRunIds: string[], maxFiles: number): Promise<string[]> {
+  if (maxFiles <= 0) {
+    return [];
+  }
+  try {
+    const entries = await fs.readdir(outputsRoot, { withFileTypes: true });
+    const shortIds = preferredRunIds.map((runId) => runId.slice(0, 8).toLowerCase()).filter((id) => id.length >= 4);
+    const matchingRoots = entries
+      .filter((entry) => entry.isDirectory() && shortIds.some((shortId) => entry.name.toLowerCase().includes(shortId)))
+      .map((entry) => path.join(outputsRoot, entry.name));
+
+    const out: string[] = [];
+    for (const root of matchingRoots) {
+      for (const filePath of await listFilesRecursively(root, maxFiles - out.length)) {
+        out.push(filePath);
+        if (out.length >= maxFiles) {
+          return out;
+        }
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+async function listFilesRecursively(root: string, maxFiles: number): Promise<string[]> {
+  if (maxFiles <= 0) {
+    return [];
+  }
+
+  const out: string[] = [];
+  async function walk(current: string): Promise<void> {
+    if (out.length >= maxFiles) {
+      return;
+    }
+    let entries: Dirent<string>[];
+    try {
+      entries = await fs.readdir(current, { withFileTypes: true, encoding: "utf8" });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (out.length >= maxFiles) {
+        break;
+      }
+      const entryPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        await walk(entryPath);
+      } else if (entry.isFile()) {
+        out.push(entryPath);
+      }
+    }
+  }
+
+  await walk(root);
+  return out;
 }
 
 function prioritizeCandidates(
@@ -491,4 +608,8 @@ function normalizeConfidence(score: number, bestScore: number): number {
     return 0;
   }
   return Math.max(0.15, Math.min(0.95, score / bestScore));
+}
+
+function dedupeStrings(values: string[]): string[] {
+  return [...new Set(values)];
 }

@@ -1029,6 +1029,87 @@ describe("ImplementSessionManager", () => {
     expect(capturedSystemPrompt).toContain("Configured real-execution LLM: provider=codex, model=gpt-5.4, reasoning=xhigh");
   });
 
+  it("collects an execution environment snapshot before implement_experiments and prepends it to the system prompt", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-env-snapshot-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Implementation Environment Snapshot",
+      topic: "agent reasoning",
+      constraints: [],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const snapshot = {
+      python_version: "Python 3.11.9",
+      node_version: process.version,
+      installed_packages: ["numpy==2.1.0", "torch==2.7.0"],
+      gpu_available: true,
+      available_disk_mb: 8192,
+      working_directory: workspace
+    };
+
+    let capturedSystemPrompt = "";
+    const scriptPath = path.join(runDir, "experiment.py");
+    const codex = {
+      runTurnStream: async ({ systemPrompt }: { systemPrompt?: string }) => {
+        capturedSystemPrompt = systemPrompt || "";
+        writeFileSync(scriptPath, "print('ok')\n", "utf8");
+        return {
+          threadId: "thread-impl-env",
+          finalText: JSON.stringify({
+            summary: "Implemented with environment guidance.",
+            run_command: `python3 ${JSON.stringify(scriptPath)}`,
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: path.join(runDir, "metrics.json")
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexCliClient;
+
+    const node = createImplementExperimentsNode(
+      {
+        config: createTestConfig(),
+        codex,
+        aci: new LocalAciAdapter(),
+        eventStream: new InMemoryEventStream(),
+        runStore,
+        workspaceRoot: workspace,
+        llm: {} as any,
+        experimentLlm: {} as any,
+        pdfTextLlm: {} as any,
+        semanticScholar: {} as any,
+        responsesPdfAnalysis: {} as any
+      } as any,
+      {
+        collectEnvironmentSnapshot: async () => snapshot
+      }
+    );
+
+    const result = await node.execute({ run });
+    const savedSnapshot = JSON.parse(readFileSync(path.join(runDir, "environment_snapshot.json"), "utf8")) as typeof snapshot;
+
+    expect(result.status).toBe("success");
+    expect(savedSnapshot).toEqual(snapshot);
+    expect(capturedSystemPrompt.startsWith("## Execution Environment\n")).toBe(true);
+    expect(capturedSystemPrompt).toContain("- Python: Python 3.11.9");
+    expect(capturedSystemPrompt).toContain("- GPU: available");
+    expect(capturedSystemPrompt).toContain("- Disk: 8192 MB free");
+    expect(capturedSystemPrompt).toContain(`- Working dir: ${workspace}`);
+    expect(capturedSystemPrompt).toContain("You are the AutoLabOS implementer role.");
+  });
+
   it("prefers an existing public runner script over placeholder experiment.py in the default branch focus", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-public-focus-"));
     tempDirs.push(workspace);

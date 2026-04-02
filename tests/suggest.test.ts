@@ -197,6 +197,7 @@ describe("buildSuggestions", () => {
       "resume",
       "retry",
       "jump",
+      "tune-node",
       "transition",
       "apply",
       "overnight"

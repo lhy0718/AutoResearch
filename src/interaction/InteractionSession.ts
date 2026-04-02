@@ -5,6 +5,7 @@ import { RunStore } from "../core/runs/runStore.js";
 import { TitleGenerator } from "../core/runs/titleGenerator.js";
 import { AgentOrchestrator } from "../core/agents/agentOrchestrator.js";
 import { AutonomousRunController, buildDefaultOvernightPolicy, buildDefaultAutonomousPolicy } from "../core/agents/autonomousRunController.js";
+import { DefaultTuneNodeRunner, TuneNodeRunner } from "../core/agents/tuneNode.js";
 import { EventStream, AutoLabOSEvent, readPersistedRunEvents } from "../core/events.js";
 import { buildNaturalAssistantResponse, matchesNaturalAssistantIntent } from "../core/commands/naturalAssistant.js";
 import { buildNaturalAssistantResponseWithLlm } from "../core/commands/naturalLlmAssistant.js";
@@ -136,6 +137,7 @@ export interface InteractionSessionDeps {
   openAiTextClient?: OpenAiResponsesTextClient;
   eventStream: EventStream;
   orchestrator: AgentOrchestrator;
+  tuneNodeRunner?: TuneNodeRunner;
   semanticScholarApiKeyConfigured: boolean;
 }
 
@@ -168,6 +170,7 @@ export class InteractionSession {
   private readonly openAiTextClient?: OpenAiResponsesTextClient;
   private readonly eventStream: EventStream;
   private readonly orchestrator: AgentOrchestrator;
+  private readonly tuneNodeRunner: TuneNodeRunner;
   private readonly semanticScholarApiKeyConfigured: boolean;
   private readonly listeners = new Set<SessionListener>();
   private readonly corpusInsightsCache = new Map<string, CorpusInsightsCacheEntry>();
@@ -198,6 +201,7 @@ export class InteractionSession {
     this.openAiTextClient = deps.openAiTextClient;
     this.eventStream = deps.eventStream;
     this.orchestrator = deps.orchestrator;
+    this.tuneNodeRunner = deps.tuneNodeRunner || new DefaultTuneNodeRunner();
     this.semanticScholarApiKeyConfigured = deps.semanticScholarApiKeyConfigured;
   }
 
@@ -1119,6 +1123,7 @@ export class InteractionSession {
     this.pushLog("/agent review [run] | /agent transition [run] | /agent apply [run] | /agent overnight [run] | /agent autonomous [run]");
     this.pushLog("/agent run <node> [run] [--top-n <n> | --top-k <n> --branch-count <n>]");
     this.pushLog("/agent collect [query] [options] | /agent jump <node> [run] [--force]");
+    this.pushLog("/agent tune-node <generate_hypotheses|design_experiments|analyze_results> [run]");
   }
 
   private async handleKnowledge(args: string[]): Promise<void> {
@@ -1477,6 +1482,34 @@ export class InteractionSession {
       return { ok: true };
     }
 
+    if (sub === "tune-node") {
+      const nodeRaw = (args[1] || "").trim();
+      if (!nodeRaw) {
+        this.pushLog("Usage: /agent tune-node <generate_hypotheses|design_experiments|analyze_results> [run]");
+        return { ok: false, reason: "missing node for /agent tune-node" };
+      }
+      if (!["generate_hypotheses", "design_experiments", "analyze_results"].includes(nodeRaw)) {
+        this.pushLog(
+          `Unsupported tune-node target: ${nodeRaw}. Allowed nodes: generate_hypotheses, design_experiments, analyze_results.`
+        );
+        return { ok: false, reason: `unsupported tune-node target ${nodeRaw}` };
+      }
+      const run = await this.resolveTargetRun(args.slice(2).join(" ").trim() || undefined);
+      if (!run) {
+        return { ok: false, reason: "target run not found" };
+      }
+      const report = await this.tuneNodeRunner.run({
+        workspaceRoot: this.workspaceRoot,
+        run,
+        node: nodeRaw as "generate_hypotheses" | "design_experiments" | "analyze_results"
+      });
+      await this.setActiveRunId(run.id);
+      for (const line of report.lines) {
+        this.pushLog(line);
+      }
+      return { ok: true };
+    }
+
     if (sub === "review") {
       return this.handleAgentReview(args.slice(1).join(" ").trim() || undefined, abortSignal);
     }
@@ -1727,7 +1760,7 @@ export class InteractionSession {
     }
 
     this.pushLog(
-      "Usage: /agent list | run | status | review | collect | recollect | clear | count | clear_papers | focus | graph | resume | retry | jump | transition | apply | overnight | autonomous"
+      "Usage: /agent list | run | status | review | collect | recollect | clear | count | clear_papers | focus | graph | resume | retry | jump | tune-node | transition | apply | overnight | autonomous"
     );
     return { ok: false, reason: `unknown /agent subcommand ${sub}` };
   }

@@ -42,6 +42,7 @@ import {
   LocalizationResult,
   LocalizationSearchHit
 } from "./implementationLocalizer.js";
+import { EnvironmentSnapshot } from "../environmentSnapshot.js";
 
 export interface ImplementSessionSummary {
   summary: string;
@@ -162,6 +163,7 @@ interface ImplementTaskSpec {
     previous_summary?: string;
     previous_run_command?: string;
     previous_script?: string;
+    environment_snapshot?: EnvironmentSnapshot;
     long_term_memory: LongTermMemorySnapshot;
     runner_feedback?: RunVerifierReport;
     paper_critique_feedback?: {
@@ -323,7 +325,11 @@ export class ImplementSessionManager {
     this.localizer = new ImplementationLocalizer(deps.aci);
   }
 
-  async run(run: RunRecord, abortSignal?: AbortSignal): Promise<ImplementSessionSummary> {
+  async run(
+    run: RunRecord,
+    abortSignal?: AbortSignal,
+    environmentSnapshot?: EnvironmentSnapshot
+  ): Promise<ImplementSessionSummary> {
     const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
     const episodeMemory = new EpisodeMemory(run.memoryRefs.episodePath);
     const longTermStore = new LongTermStore(run.memoryRefs.longTermPath);
@@ -349,6 +355,10 @@ export class ImplementSessionManager {
     let progressQueue: Promise<void> = Promise.resolve();
     await ensureDir(defaultPublicDir);
     await ensureDir(path.join(runDir, "implement_experiments"));
+    if (environmentSnapshot) {
+      await writeJsonFile(path.join(runDir, "environment_snapshot.json"), environmentSnapshot);
+      await runContext.put("implement_experiments.environment_snapshot", environmentSnapshot);
+    }
     const longTermMemory = await loadImplementationLongTermMemory(longTermStore, run);
     const taskSpec = await this.buildTaskSpec(
       run,
@@ -356,7 +366,8 @@ export class ImplementSessionManager {
       defaultPublicDir,
       metricsPath,
       runContext,
-      longTermMemory
+      longTermMemory,
+      environmentSnapshot
     );
     await writeJsonFile(path.join(runDir, "implement_task_spec.json"), taskSpec);
 
@@ -609,7 +620,8 @@ export class ImplementSessionManager {
         isolation.publicDir,
         isolation.metricsPath,
         experimentLlmProfile,
-        useCodexSession ? "codex_session" : "staged_llm"
+        useCodexSession ? "codex_session" : "staged_llm",
+        taskSpec.context.environment_snapshot
       );
 
       let result: RunTurnResult;
@@ -1339,12 +1351,15 @@ export class ImplementSessionManager {
     publicDir: string,
     metricsPath: string,
     experimentLlmProfile: ReturnType<typeof resolveExperimentLlmProfile>,
-    sessionMode: "codex_session" | "staged_llm"
+    sessionMode: "codex_session" | "staged_llm",
+    environmentSnapshot?: EnvironmentSnapshot
   ): string {
     const sandboxRunDir = rewriteWorkspacePathsForSandbox(runDir, this.deps.workspaceRoot);
     const sandboxPublicDir = rewriteWorkspacePathsForSandbox(publicDir, this.deps.workspaceRoot);
     const sandboxMetricsPath = rewriteWorkspacePathsForSandbox(metricsPath, this.deps.workspaceRoot);
+    const environmentBlock = formatEnvironmentSnapshotBlock(environmentSnapshot);
     return [
+      ...environmentBlock,
       "You are the AutoLabOS implementer role.",
       sessionMode === "codex_session"
         ? "Work directly in the workspace using Codex tools."
@@ -1382,7 +1397,8 @@ export class ImplementSessionManager {
     publicDir: string,
     metricsPath: string,
     runContext: RunContextMemory,
-    longTermMemory: LongTermMemorySnapshot
+    longTermMemory: LongTermMemorySnapshot,
+    environmentSnapshot?: EnvironmentSnapshot
   ): Promise<ImplementTaskSpec> {
     const plan = trimBlock(await safeRead(path.join(runDir, "experiment_plan.yaml")), 12_000);
     const planHash = plan ? createHash("sha256").update(plan).digest("hex").slice(0, 16) : "";
@@ -1457,6 +1473,7 @@ export class ImplementSessionManager {
         previous_summary: rewriteWorkspacePathsForSandbox(previousSummary, this.deps.workspaceRoot),
         previous_run_command: rewriteWorkspacePathsForSandbox(previousRunCommand, this.deps.workspaceRoot),
         previous_script: rewriteWorkspacePathsForSandbox(previousScript, this.deps.workspaceRoot),
+        environment_snapshot: rewriteWorkspacePathsForSandbox(environmentSnapshot, this.deps.workspaceRoot),
         long_term_memory: rewriteWorkspacePathsForSandbox(longTermMemory, this.deps.workspaceRoot),
         runner_feedback: rewriteWorkspacePathsForSandbox(runnerFeedback, this.deps.workspaceRoot),
         paper_critique_feedback: rewriteWorkspacePathsForSandbox(
@@ -5283,6 +5300,17 @@ function buildVerificationFailureSummary(
 
 function extractPolicyRuleId(text: string): string | undefined {
   return text.match(/rule=([a-z0-9_]+)/i)?.[1];
+}
+
+function formatEnvironmentSnapshotBlock(snapshot?: EnvironmentSnapshot): string[] {
+  return [
+    "## Execution Environment",
+    `- Python: ${snapshot?.python_version || "not found"}`,
+    `- GPU: ${snapshot?.gpu_available === true ? "available" : "not available"}`,
+    `- Disk: ${snapshot?.available_disk_mb != null ? `${snapshot.available_disk_mb} MB free` : "unknown"}`,
+    `- Working dir: ${snapshot?.working_directory || process.cwd()}`,
+    ""
+  ];
 }
 
 function dedupeStrings(values: Array<string | undefined | null>): string[] {

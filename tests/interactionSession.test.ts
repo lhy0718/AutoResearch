@@ -254,6 +254,50 @@ describe("InteractionSession", () => {
     expect(result.logs.some((line) => line.includes('"action": "pass"'))).toBe(true);
   });
 
+  it("reports tune-node comparisons through /agent tune-node", async () => {
+    const run = await runStore.createRun({
+      title: "Tune run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    const session = new InteractionSession({
+      workspaceRoot: cwd,
+      config: {
+        research: {
+          defaultTopic: "topic",
+          defaultConstraints: ["recent papers"],
+          default_objective_metric: "metric"
+        }
+      } as any,
+      runStore,
+      titleGenerator: {} as any,
+      codex: {} as any,
+      openAiTextClient: undefined,
+      eventStream: new InMemoryEventStream(),
+      orchestrator: {} as any,
+      tuneNodeRunner: {
+        run: vi.fn().mockResolvedValue({
+          lines: [
+            "ORIGINAL score: 0.55",
+            "MUTANT score: 0.71",
+            "DELTA: +0.16",
+            "RECOMMENDATION: keep"
+          ]
+        })
+      },
+      semanticScholarApiKeyConfigured: true
+    });
+    await session.start();
+
+    const result = await session.submitInput(`/agent tune-node generate_hypotheses ${run.id}`);
+
+    expect(result.logs.some((line) => line.includes("ORIGINAL score: 0.55"))).toBe(true);
+    expect(result.logs.some((line) => line.includes("MUTANT score: 0.71"))).toBe(true);
+    expect(result.logs.some((line) => line.includes("RECOMMENDATION: keep"))).toBe(true);
+  });
+
   it("projects operator jobs via /jobs without mutating the run record", async () => {
     const run = await runStore.createRun({
       title: "Jobs run",

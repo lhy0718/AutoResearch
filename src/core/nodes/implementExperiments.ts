@@ -3,8 +3,16 @@ import path from "node:path";
 import { GraphNodeHandler } from "../stateGraph/types.js";
 import { ImplementSessionManager, ImplementSessionStopError } from "../agents/implementSessionManager.js";
 import { NodeExecutionDeps } from "./types.js";
+import { collectEnvironmentSnapshot, EnvironmentSnapshot } from "../environmentSnapshot.js";
 
-export function createImplementExperimentsNode(deps: NodeExecutionDeps): GraphNodeHandler {
+export interface ImplementExperimentsNodeOptions {
+  collectEnvironmentSnapshot?: () => Promise<EnvironmentSnapshot>;
+}
+
+export function createImplementExperimentsNode(
+  deps: NodeExecutionDeps,
+  options: ImplementExperimentsNodeOptions = {}
+): GraphNodeHandler {
   const sessions = new ImplementSessionManager({
     config: deps.config,
     codex: deps.codex,
@@ -20,7 +28,8 @@ export function createImplementExperimentsNode(deps: NodeExecutionDeps): GraphNo
     async execute({ run, abortSignal }) {
       let result;
       try {
-        result = await sessions.run(run, abortSignal);
+        const environmentSnapshot = await (options.collectEnvironmentSnapshot || collectEnvironmentSnapshot)();
+        result = await sessions.run(run, abortSignal, environmentSnapshot);
       } catch (error) {
         if (error instanceof ImplementSessionStopError) {
           return {
