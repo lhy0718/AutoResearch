@@ -235,6 +235,33 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(saveConfig).toHaveBeenCalledTimes(1);
   });
 
+  it("supports /settings hybrid without opening the interactive settings flow", async () => {
+    const saveConfig = vi.fn().mockResolvedValue(undefined);
+    const updateApprovalMode = vi.fn();
+    const app = makeApp();
+    app.config.workflow = {
+      mode: "agent_approval",
+      wizard_enabled: true,
+      approval_mode: "minimal",
+      execution_approval_mode: "manual"
+    };
+    app.saveConfigFn = saveConfig;
+    app.orchestrator = { updateApprovalMode };
+    app.openSelectionMenu = vi.fn();
+    const logs: string[] = [];
+    app.pushLog = (line: string) => {
+      logs.push(line);
+    };
+
+    await app.handleSettings(["hybrid"]);
+
+    expect(app.config.workflow.approval_mode).toBe("hybrid");
+    expect(updateApprovalMode).toHaveBeenCalledWith("hybrid");
+    expect(saveConfig).toHaveBeenCalledWith(app.config);
+    expect(app.openSelectionMenu).not.toHaveBeenCalled();
+    expectLogContaining(logs, "Approval mode: Hybrid");
+  });
+
   it("asks codex settings prompts in provider then chat then research-backend order", async () => {
     const saveConfig = vi.fn().mockResolvedValue(undefined);
     const app = new TerminalApp({

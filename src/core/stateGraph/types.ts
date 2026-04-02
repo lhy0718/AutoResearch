@@ -1,4 +1,4 @@
-import { GraphNodeId, RunGraphState, RunRecord, TransitionRecommendation } from "../../types.js";
+import { ApprovalSignal, GraphNodeId, RunGraphState, RunRecord, TransitionRecommendation } from "../../types.js";
 
 export type CheckpointPhase = "before" | "after" | "fail" | "jump" | "retry";
 
@@ -25,6 +25,7 @@ export interface GraphNodeResult {
   summary?: string;
   reason?: string;
   needsApproval?: boolean;
+  approvalSignal?: ApprovalSignal;
   error?: string;
   costUsd?: number;
   toolCallsUsed?: number;

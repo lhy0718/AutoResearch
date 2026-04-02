@@ -884,7 +884,10 @@ function normalizePrimaryLlmMode(
 }
 
 function normalizeWorkflowApprovalMode(value: unknown): WorkflowApprovalMode {
-  return value === "manual" ? "manual" : "minimal";
+  if (value === "manual" || value === "hybrid") {
+    return value;
+  }
+  return "minimal";
 }
 
 function normalizeExecutionApprovalMode(value: unknown): ExecutionApprovalMode {

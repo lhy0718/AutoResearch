@@ -164,7 +164,7 @@ export interface RunOperatorStatusArtifact {
   title: string;
   current_node: NodeId;
   lifecycle_status: RunLifecycleStatus;
-  approval_mode: "manual" | "minimal";
+  approval_mode: "manual" | "minimal" | "hybrid";
   last_event_at: string;
   analysis_ready: boolean;
   review_ready: boolean;
@@ -210,7 +210,7 @@ export interface RunJobProjection {
   title: string;
   current_node: NodeId;
   lifecycle_status: RunLifecycleStatus;
-  approval_mode: "manual" | "minimal";
+  approval_mode: "manual" | "minimal" | "hybrid";
   last_event_at: string;
   recommended_next_action: RunRecommendedNextAction;
   analysis_ready: boolean;
@@ -304,7 +304,7 @@ export interface RunRecord {
 export interface ConfigSummary {
   projectName: string;
   workflowMode: "agent_approval";
-  approvalMode: "manual" | "minimal";
+  approvalMode: "manual" | "minimal" | "hybrid";
   executionApprovalMode?: "manual" | "risk_ack" | "full_auto";
   llmMode: "codex_chatgpt_only" | "openai_api" | "ollama";
   pdfMode: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
@@ -430,7 +430,7 @@ export interface DoctorResponse {
     blocked: boolean;
     llmMode?: "codex_chatgpt_only" | "openai_api" | "ollama";
     pdfAnalysisMode?: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
-    approvalMode: "manual" | "minimal";
+    approvalMode: "manual" | "minimal" | "hybrid";
     executionApprovalMode: "manual" | "risk_ack" | "full_auto";
     dependencyMode: "local" | "docker" | "remote_gpu" | "plan_only";
     sessionMode: "fresh" | "existing";

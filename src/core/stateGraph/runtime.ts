@@ -5,6 +5,7 @@ import { FailureMemory, buildErrorFingerprint } from "../experiments/failureMemo
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { RunStore } from "../runs/runStore.js";
 import {
+  ApprovalSignal,
   GRAPH_NODE_ORDER,
   GraphNodeId,
   RunGraphState,
@@ -28,6 +29,10 @@ export class StateGraphRuntime {
       budgetGuardUsd?: number;
     } = {}
   ) {}
+
+  setApprovalMode(mode: WorkflowApprovalMode): void {
+    this.options.approvalMode = mode;
+  }
 
   async start(runId: string): Promise<RunRecord> {
     const run = await this.getRunOrThrow(runId);
@@ -138,7 +143,8 @@ export class StateGraphRuntime {
         status: result.status === "skipped" ? "skipped" : result.needsApproval ? "needs_approval" : "completed",
         updatedAt: new Date().toISOString(),
         note: result.summary || result.reason,
-        lastError: undefined
+        lastError: undefined,
+        approvalSignal: result.approvalSignal
       };
       run.status = result.needsApproval ? "paused" : "running";
 
@@ -313,7 +319,7 @@ export class StateGraphRuntime {
           runId: run.id,
           node: run.currentNode,
           payload: {
-            text: `Minimal approval mode auto-applied ${recommendation?.action || "transition"}${recommendation?.targetNode ? ` -> ${recommendation.targetNode}` : ""}.`
+            text: `${labelApprovalMode(this.options.approvalMode)} approval mode auto-applied ${recommendation?.action || "transition"}${recommendation?.targetNode ? ` -> ${recommendation.targetNode}` : ""}.`
           }
         });
         run = await this.applyPendingTransition(run.id);
@@ -325,7 +331,7 @@ export class StateGraphRuntime {
         runId: run.id,
         node: run.currentNode,
         payload: {
-          text: `Minimal approval mode auto-approved ${run.currentNode}.`
+          text: `${labelApprovalMode(this.options.approvalMode)} approval mode auto-approved ${run.currentNode}.`
         }
       });
       run = await this.approveCurrent(run.id, { continueAfterApprove: false, abortSignal });
@@ -340,6 +346,10 @@ export class StateGraphRuntime {
     }
 
     const recommendation = run.graph.pendingTransition;
+    if (this.options.approvalMode === "hybrid") {
+      return this.selectHybridApprovalResolution(run, recommendation);
+    }
+
     if (!recommendation) {
       return "approve";
     }
@@ -365,6 +375,26 @@ export class StateGraphRuntime {
           return "pause";
         }
       }
+    }
+
+    return "apply_transition";
+  }
+
+  private selectHybridApprovalResolution(
+    run: RunRecord,
+    recommendation: TransitionRecommendation | undefined
+  ): "pause" | "approve" | "apply_transition" {
+    if (!recommendation) {
+      return "pause";
+    }
+
+    if (recommendation.action !== "advance" || !recommendation.autoExecutable) {
+      return "pause";
+    }
+
+    const signal = run.graph.nodeStates[run.currentNode]?.approvalSignal;
+    if (!isHybridAutoApproved(signal)) {
+      return "pause";
     }
 
     return "apply_transition";
@@ -1096,6 +1126,27 @@ function isAbortError(error: unknown): boolean {
   }
   const lower = error.message.toLowerCase();
   return lower.includes("aborted") || lower.includes("abort");
+}
+
+function isHybridAutoApproved(signal: ApprovalSignal | undefined): boolean {
+  if (!signal || typeof signal.overall_score !== "number" || !Array.isArray(signal.specialist_scores)) {
+    return false;
+  }
+  if (!Number.isFinite(signal.overall_score) || signal.overall_score < 7) {
+    return false;
+  }
+  return signal.specialist_scores.every((score) => Number.isFinite(score) && score >= 4);
+}
+
+function labelApprovalMode(mode: WorkflowApprovalMode | undefined): string {
+  switch (mode) {
+    case "manual":
+      return "Manual";
+    case "hybrid":
+      return "Hybrid";
+    default:
+      return "Minimal";
+  }
 }
 
 function appendPauseSuffix(note: string | undefined, suffix: string): string {

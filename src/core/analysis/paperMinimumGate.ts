@@ -17,6 +17,7 @@ import type { ReviewArtifactPresence } from "../reviewSystem.js";
 import type { AnalysisReport } from "../resultAnalysis.js";
 import type { BriefEvidenceAssessment, BriefEvidenceCeiling } from "./briefEvidenceValidator.js";
 import { GATE_THRESHOLDS } from "./paperGateThresholds.js";
+import { hasAtLeastOneCompleteResultsTableRow } from "./resultsTableSchema.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -160,7 +161,18 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
     detail: artifactClaimEvidence.detail
   });
 
-  // 9. Not merely system/smoke validation
+  // 9. Results table includes explicit baseline/comparator values
+  const hasStructuredResultsTable = hasAtLeastOneCompleteResultsTableRow(input.report.results_table);
+  checks.push({
+    id: "results_table_schema",
+    label: "Results table includes at least one baseline/comparator row",
+    passed: hasStructuredResultsTable,
+    detail: hasStructuredResultsTable
+      ? "result_analysis.results_table contains at least one complete baseline/comparator row."
+      : "No result_analysis.results_table row has both baseline and comparator populated."
+  });
+
+  // 10. Not merely system/smoke validation
   const hasHypotheses = input.presence.hypothesesPresent;
   const hasEnoughFindings = (input.report.primary_findings?.length ?? 0) >= GATE_THRESHOLDS.minPrimaryFindingCount;
   const isSubstantive = hasHypotheses && hasEnoughFindings && hasObjective;

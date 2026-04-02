@@ -75,7 +75,9 @@ describe("ExperimentContract", () => {
       singleChange: "Replace free-form chat with shared_state_schema",
       expectedMetricEffect: "Improve macro-F1 by at least +0.5 points",
       abortCondition: "Abort if F1 drops below baseline by more than 1 point",
-      keepOrDiscardRule: "Keep if macro-F1 improves; discard if no improvement"
+      keepOrDiscardRule: "Keep if macro-F1 improves; discard if no improvement",
+      metrics: ["macro-F1"],
+      resultsTableDirection: "higher_better"
     });
 
     expect(contract.version).toBe(1);
@@ -83,6 +85,15 @@ describe("ExperimentContract", () => {
     expect(contract.hypothesis).toContain("Shared state schema");
     expect(contract.confounded).toBe(false);
     expect(contract.additional_changes).toBeUndefined();
+    expect(contract.results_table_schema).toEqual([
+      {
+        metric: "macro-F1",
+        baseline: null,
+        comparator: null,
+        delta: null,
+        direction: "higher_better"
+      }
+    ]);
   });
 
   it("marks contract as confounded when multiple changes exist", () => {
@@ -95,7 +106,9 @@ describe("ExperimentContract", () => {
       additionalChanges: ["Change B", "Change C"],
       expectedMetricEffect: "Improve metric",
       abortCondition: "None",
-      keepOrDiscardRule: "Keep if improved"
+      keepOrDiscardRule: "Keep if improved",
+      metrics: ["accuracy"],
+      resultsTableDirection: "higher_better"
     });
 
     expect(contract.confounded).toBe(true);
@@ -114,7 +127,16 @@ describe("ExperimentContract", () => {
       expected_metric_effect: "Positive effect",
       abort_condition: "Abort if degraded",
       keep_or_discard_rule: "Keep if improved",
-      baselines: ["current-system"]
+      baselines: ["current-system"],
+      results_table_schema: [
+        {
+          metric: "accuracy",
+          baseline: null,
+          comparator: null,
+          delta: null,
+          direction: "higher_better"
+        }
+      ]
     };
 
     const result = validateExperimentContract(contract);
@@ -151,7 +173,9 @@ describe("ExperimentContract", () => {
       singleChange: "Change",
       expectedMetricEffect: "Effect",
       abortCondition: "Abort",
-      keepOrDiscardRule: "Keep"
+      keepOrDiscardRule: "Keep",
+      metrics: ["accuracy"],
+      resultsTableDirection: "higher_better"
     });
 
     await writeExperimentContract(run, contract);
@@ -164,6 +188,27 @@ describe("ExperimentContract", () => {
   it("returns undefined when contract file does not exist", async () => {
     const loaded = await loadExperimentContract("nonexistent-run");
     expect(loaded).toBeUndefined();
+  });
+
+  it("rejects a contract without results_table_schema", () => {
+    const contract: ExperimentContract = {
+      version: 1,
+      run_id: "test",
+      created_at: new Date().toISOString(),
+      hypothesis: "Real hypothesis",
+      causal_mechanism: "Real mechanism",
+      single_change: "Real change",
+      confounded: false,
+      expected_metric_effect: "Positive effect",
+      abort_condition: "Abort if degraded",
+      keep_or_discard_rule: "Keep if improved",
+      baselines: ["current-system"]
+    };
+
+    const result = validateExperimentContract(contract);
+
+    expect(result.valid).toBe(false);
+    expect(result.issues.some((issue) => issue.includes("results_table_schema"))).toBe(true);
   });
 });
 

@@ -8,6 +8,12 @@
 
 import { RunRecord } from "../../types.js";
 import { writeRunArtifact, safeRead } from "../nodes/helpers.js";
+import {
+  buildResultsTableSchema,
+  type ResultsTableDirection,
+  type ResultsTableSchema,
+  validateResultsTableSchema
+} from "../analysis/resultsTableSchema.js";
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -54,6 +60,9 @@ export interface ExperimentContract {
   /** Metrics the design intends to analyze. */
   metrics?: string[];
 
+  /** Minimum results-table structure that downstream analysis must materialize. */
+  results_table_schema?: ResultsTableSchema;
+
   /** Minimum baseline count implied by the brief contract. */
   brief_required_baseline_count?: number;
 }
@@ -73,6 +82,7 @@ export interface BuildExperimentContractInput {
   keepOrDiscardRule: string;
   baselines?: string[];
   metrics?: string[];
+  resultsTableDirection?: ResultsTableDirection;
   briefRequiredBaselineCount?: number;
 }
 
@@ -80,6 +90,10 @@ export function buildExperimentContract(input: BuildExperimentContractInput): Ex
   const additionalChanges = (input.additionalChanges ?? []).filter(Boolean);
   const baselines = (input.baselines ?? []).map((value) => value.trim()).filter(Boolean);
   const metrics = (input.metrics ?? []).map((value) => value.trim()).filter(Boolean);
+  const resultsTableSchema = buildResultsTableSchema(
+    metrics,
+    input.resultsTableDirection ?? "higher_better"
+  );
   const confounded = additionalChanges.length > 0;
   return {
     version: 1,
@@ -95,6 +109,7 @@ export function buildExperimentContract(input: BuildExperimentContractInput): Ex
     keep_or_discard_rule: input.keepOrDiscardRule || "Keep if objective metric improves; discard otherwise.",
     baselines: baselines.length > 0 ? baselines : undefined,
     metrics: metrics.length > 0 ? metrics : undefined,
+    results_table_schema: resultsTableSchema.length > 0 ? resultsTableSchema : undefined,
     brief_required_baseline_count:
       typeof input.briefRequiredBaselineCount === "number" && input.briefRequiredBaselineCount > 0
         ? input.briefRequiredBaselineCount
@@ -160,6 +175,14 @@ export function validateExperimentContract(contract: ExperimentContract): Experi
   }
   if (!contract.baselines || contract.baselines.length === 0) {
     issues.push("Missing explicit baseline/comparator declaration.");
+  }
+  const resultsTableValidation = validateResultsTableSchema(contract.results_table_schema);
+  if (!resultsTableValidation.valid || resultsTableValidation.rows.length === 0) {
+    issues.push(
+      resultsTableValidation.valid
+        ? "Missing results_table_schema with at least one metric/direction row."
+        : `Invalid results_table_schema: ${resultsTableValidation.issues.join(" ")}`
+    );
   }
   if (
     typeof contract.brief_required_baseline_count === "number" &&

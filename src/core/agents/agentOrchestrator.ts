@@ -1,4 +1,4 @@
-import { GraphNodeId, GRAPH_NODE_ORDER, RunGraphState, RunRecord } from "../../types.js";
+import { GraphNodeId, GRAPH_NODE_ORDER, RunGraphState, RunRecord, WorkflowApprovalMode } from "../../types.js";
 import { CheckpointStore } from "../stateGraph/checkpointStore.js";
 import { JumpMode } from "../stateGraph/types.js";
 import { RunStore } from "../runs/runStore.js";
@@ -22,6 +22,10 @@ export class AgentOrchestrator {
 
   listAgents(): GraphNodeId[] {
     return [...GRAPH_NODE_ORDER];
+  }
+
+  updateApprovalMode(mode: WorkflowApprovalMode): void {
+    this.runtime.setApprovalMode(mode);
   }
 
   async runAgent(runId: string, nodeId: GraphNodeId): Promise<AgentRunResponse> {

@@ -14,7 +14,8 @@ import {
   RunQueueRecommendedAction,
   RunQueueSnapshot,
   RunRecord,
-  SuggestionItem
+  SuggestionItem,
+  WorkflowApprovalMode
 } from "../types.js";
 import { RunStore } from "../core/runs/runStore.js";
 import { TitleGenerator } from "../core/runs/titleGenerator.js";
@@ -2099,7 +2100,7 @@ export class TerminalApp {
       case "retry":
         return this.handleRetry();
       case "settings":
-        await this.handleSettings();
+        await this.handleSettings(args);
         return { ok: true };
       case "model":
         await this.handleModel(args);
@@ -2795,7 +2796,9 @@ export class TerminalApp {
         }
       }
       if (pausedNodeState?.status === "needs_approval" || recommendation) {
-        this.pushLog("Use /approve to continue, or add steering to revise the next move.");
+        this.pushLog(
+          `Use /approve to continue, or add steering to revise the next move.${typeof pausedNodeState?.approvalSignal?.overall_score === "number" ? ` Review confidence: ${pausedNodeState.approvalSignal.overall_score}/10.` : ""}`
+        );
       } else {
         this.pushLog("No pending approval. Use /retry to rerun the current node, or add steering to revise the next move.");
       }
@@ -3798,7 +3801,26 @@ export class TerminalApp {
     return { ok: true };
   }
 
-  private async handleSettings(): Promise<void> {
+  private async handleSettings(args: string[] = []): Promise<void> {
+    if (args.length > 0) {
+      const requestedMode = args[0]?.trim().toLowerCase();
+      if (!requestedMode || (requestedMode !== "manual" && requestedMode !== "minimal" && requestedMode !== "hybrid")) {
+        this.pushLog("Usage: /settings [manual|minimal|hybrid]");
+        return;
+      }
+      this.config.workflow = this.config.workflow || {
+        mode: "agent_approval",
+        wizard_enabled: true,
+        approval_mode: "minimal",
+        execution_approval_mode: "manual"
+      };
+      this.config.workflow.approval_mode = requestedMode as WorkflowApprovalMode;
+      this.orchestrator.updateApprovalMode(this.config.workflow.approval_mode);
+      await this.saveConfigFn(this.config);
+      this.pushLog(`Settings saved. Approval mode: ${this.labelApprovalMode(this.config.workflow.approval_mode)}.`);
+      return;
+    }
+
     const llmMode = await this.openSelectionMenu(
       "Select primary LLM provider",
       this.buildPrimaryLlmProviderOptions(),
@@ -3887,7 +3909,7 @@ export class TerminalApp {
       pdfAnalysisMode === "ollama_vision"
           ? `${this.describePdfAnalysisMode(pdfAnalysisMode)} (${this.config.providers.ollama?.vision_model || DEFAULT_OLLAMA_VISION_MODEL})`
           : this.describePdfAnalysisMode(pdfAnalysisMode);
-    const approvalSummary = this.config.workflow?.approval_mode === "manual" ? "Manual" : "Minimal";
+    const approvalSummary = this.labelApprovalMode(this.config.workflow?.approval_mode || "minimal");
     this.pushLog(
       `Settings saved. Workflow mode: Agent approval. Approval mode: ${approvalSummary}. LLM provider: ${this.describePrimaryLlmProvider(this.config.providers.llm_mode)}. PDF analysis mode: ${analysisSummary}.`
     );
@@ -5501,6 +5523,10 @@ export class TerminalApp {
     } else if (run) {
       const nodeStatus = run.graph.nodeStates[run.currentNode]?.status || run.status;
       items.push(`${run.currentNode} ${nodeStatus}`);
+      const approvalSignal = run.graph.nodeStates[run.currentNode]?.approvalSignal;
+      if (nodeStatus === "needs_approval" && typeof approvalSignal?.overall_score === "number") {
+        items.push(`review ${approvalSignal.overall_score}/10`);
+      }
     } else {
       items.push("idle");
     }
@@ -5515,6 +5541,17 @@ export class TerminalApp {
       items.unshift("running");
     }
     return items;
+  }
+
+  private labelApprovalMode(mode: WorkflowApprovalMode): string {
+    switch (mode) {
+      case "manual":
+        return "Manual";
+      case "hybrid":
+        return "Hybrid";
+      default:
+        return "Minimal";
+    }
   }
 
   private isCreatingRunFromBrief(): boolean {

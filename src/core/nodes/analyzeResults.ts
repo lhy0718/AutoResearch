@@ -30,6 +30,7 @@ import { buildAnalyzeResultsCompletionSummary } from "../resultAnalysisPresentat
 import { synthesizeAnalysisReport } from "../resultAnalysisSynthesis.js";
 import { RunVerifierReport } from "../experiments/runVerifierFeedback.js";
 import { ExperimentPortfolio, ExperimentRunManifest } from "../experiments/experimentPortfolio.js";
+import type { ExperimentContract } from "../experiments/experimentContract.js";
 import { GraphNodeId, TransitionRecommendation } from "../../types.js";
 import { runAnalyzeResultsPanel } from "../analyzeResultsPanel.js";
 import {
@@ -39,6 +40,7 @@ import {
   readPendingHumanInterventionRequest,
   writeHumanInterventionRequest
 } from "../humanIntervention.js";
+import { loadExperimentContract } from "../experiments/experimentContract.js";
 import {
   deriveGovernedAnalysisDecision,
   ExperimentComparisonContract,
@@ -58,6 +60,18 @@ import { evaluateBriefEvidenceAgainstResults } from "../analysis/briefEvidenceVa
 import { parseMarkdownRunBriefSections } from "../runs/runBriefParser.js";
 import { buildRunOperatorStatus } from "../runs/runStatus.js";
 import { buildRunCompletenessChecklist } from "../runs/runCompletenessChecklist.js";
+import {
+  hasAnyIncompleteResultsTableRow,
+  type ResultsTableDirection,
+  type ResultsTableSchema,
+  validateResultsTableSchema
+} from "../analysis/resultsTableSchema.js";
+import {
+  detectNaNInf,
+  detectStatisticalAnomaly,
+  detectUnverifiedCitations,
+  type RiskSignal
+} from "../analysis/riskSignals.js";
 
 export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
@@ -66,6 +80,7 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
       const longTermStore = new LongTermStore(run.memoryRefs.longTermPath);
       const runContextMemory = new RunContextMemory(run.memoryRefs.runContextPath);
       const comparisonContract = await loadExperimentComparisonContract(run, runContextMemory);
+      const experimentContract = await loadExperimentContract(run.id);
       const implementationContext = await loadExperimentImplementationContext(run, runContextMemory);
       const managedBundleLock = await loadExperimentManagedBundleLock(run, runContextMemory);
       const publicDir =
@@ -234,6 +249,42 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         recentPaperComparison,
         recentPaperComparisonPath
       });
+      const resultsTableValidation = buildResultsTableValidation({
+        report: summary,
+        experimentContract
+      });
+      summary.results_table = resultsTableValidation.rows;
+      if (!resultsTableValidation.valid) {
+        inputWarnings.push(...resultsTableValidation.issues);
+        summary.warnings = [...summary.warnings, ...resultsTableValidation.issues];
+        deps.eventStream.emit({
+          type: "OBS_RECEIVED",
+          runId: run.id,
+          node: "analyze_results",
+          payload: {
+            text: `Results table validation: ${resultsTableValidation.issues.join(" ")}`
+          }
+        });
+      }
+      const evidenceStore = await readJsonlRecords(path.join(".autolabos", "runs", run.id, "evidence_store.jsonl"));
+      const riskSignals = [
+        detectNaNInf(metrics),
+        detectStatisticalAnomaly(metrics),
+        detectUnverifiedCitations(evidenceStore)
+      ].filter((signal): signal is RiskSignal => Boolean(signal));
+      if (riskSignals.length > 0) {
+        const riskWarnings = riskSignals.map((signal) => signal.detail);
+        inputWarnings.push(...riskWarnings);
+        summary.warnings = [...summary.warnings, ...riskWarnings];
+        deps.eventStream.emit({
+          type: "OBS_RECEIVED",
+          runId: run.id,
+          node: "analyze_results",
+          payload: {
+            text: `Risk signals detected: ${riskWarnings.join(" ")}`
+          }
+        });
+      }
       const noNumericMetrics = summary.metric_table.length === 0;
       if (!metricsLoadError && !noNumericMetrics) {
         summary.synthesis = await synthesizeAnalysisReport({
@@ -284,14 +335,15 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
             : [governanceDecision.candidateEntry]
         });
       }
-      const baselineTransitionRecommendation = applyGovernanceTransitionOverride(
-        buildTransitionRecommendation(summary),
+      const baselineTransitionRecommendation = buildTransitionRecommendation(summary);
+      const governedTransitionRecommendation = applyGovernanceTransitionOverride(
+        baselineTransitionRecommendation,
         governanceDecision,
         summary,
         comparisonContract
       );
       const gatedTransitionRecommendation = applyBriefEvidenceTransitionOverride(
-        baselineTransitionRecommendation,
+        governedTransitionRecommendation,
         briefEvidenceAssessment,
         summary
       );
@@ -299,7 +351,15 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         report: summary,
         baselineRecommendation: gatedTransitionRecommendation
       });
-      const transitionRecommendation = panelResult.recommendation;
+      const transitionRecommendation = applyRiskSignalTransitionOverride(
+        applyResultsTableTransitionOverride(
+          panelResult.recommendation,
+          resultsTableValidation,
+          summary
+        ),
+        riskSignals,
+        summary
+      );
       const humanInterventionRequest = buildAnalyzeResultsHumanInterventionRequest({
         run,
         report: summary,
@@ -326,6 +386,11 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         run,
         "analyze_results_panel/decision.json",
         JSON.stringify(panelResult.decision, null, 2)
+      );
+      const riskSignalsPath = await writeRunArtifact(
+        run,
+        "analysis/risk_signals.json",
+        `${JSON.stringify(riskSignals, null, 2)}\n`
       );
       const resultAnalysisPath = await writeRunArtifact(run, "result_analysis.json", JSON.stringify(summary, null, 2));
 
@@ -400,7 +465,8 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         references: [
           { label: "Analysis report", path: "result_analysis.json" },
           { label: "Transition recommendation", path: "transition_recommendation.json" },
-          { label: "Latest results", path: "latest_results.json" }
+          { label: "Latest results", path: "latest_results.json" },
+          { label: "Risk signals", path: "analysis/risk_signals.json" }
         ]
       };
       const operatorSummaryPath = await writeRunArtifact(
@@ -417,7 +483,7 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         workspaceRoot: process.cwd(),
         run,
         currentNode: "analyze_results",
-        approvalMode: deps.config?.workflow?.approval_mode === "manual" ? "manual" : "minimal",
+        approvalMode: deps.config?.workflow?.approval_mode || "minimal",
         networkPolicy:
           deps.config?.experiments?.network_policy
           || (deps.config?.experiments?.allow_network ? "declared" : "blocked"),
@@ -480,6 +546,11 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
             sourcePath: evidenceAssessmentPath,
             targetRelativePath: "evidence_scale_assessment.json",
             optional: true
+          },
+          {
+            sourcePath: riskSignalsPath,
+            targetRelativePath: "risk_signals.json",
+            optional: true
           }
         ]
       });
@@ -537,6 +608,7 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
       await runContextMemory.put("analyze_results.last_error", metricsLoadError || null);
       await runContextMemory.put("analyze_results.last_synthesis", summary.synthesis || null);
       await runContextMemory.put("analyze_results.last_transition", transitionRecommendation);
+      await runContextMemory.put("analyze_results.risk_signals", riskSignals);
       await runContextMemory.put("analyze_results.experiment_portfolio", summary.experiment_portfolio || null);
       await runContextMemory.put("analyze_results.panel_decision", panelResult.decision);
       if (humanInterventionRequest) {
@@ -1499,6 +1571,29 @@ function resolveMaybeRelative(value: string | undefined, workspaceRoot: string):
   return path.join(workspaceRoot, value);
 }
 
+async function readJsonlRecords(filePath: string): Promise<Record<string, unknown>[]> {
+  try {
+    const raw = await fs.readFile(filePath, "utf8");
+    return raw
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .flatMap((line) => {
+        try {
+          const parsed = JSON.parse(line) as unknown;
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+            return [];
+          }
+          return [parsed as Record<string, unknown>];
+        } catch {
+          return [];
+        }
+      });
+  } catch {
+    return [];
+  }
+}
+
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
@@ -1682,6 +1777,49 @@ function applyBriefEvidenceTransitionOverride(
       assessment.summary,
       `executed_trials=${assessment.actual.executed_trials ?? "unknown"}`,
       `confidence_intervals=${assessment.actual.confidence_interval_count}`
+    )
+  });
+}
+
+function applyResultsTableTransitionOverride(
+  recommendation: TransitionRecommendation,
+  validation: ResultsTableValidationResult,
+  summary: AnalysisReport
+): TransitionRecommendation {
+  if (validation.valid) {
+    return recommendation;
+  }
+  return createRecommendation({
+    action: "pause_for_human",
+    reason: "incomplete_results_table",
+    confidence: 0.94,
+    autoExecutable: false,
+    evidence: collectEvidence(
+      summary,
+      ...validation.issues,
+      ...validation.incompleteRows.slice(0, 3).map((row) => `${row.metric}: baseline=${row.baseline ?? "null"}, comparator=${row.comparator ?? "null"}`)
+    )
+  });
+}
+
+function applyRiskSignalTransitionOverride(
+  recommendation: TransitionRecommendation,
+  riskSignals: RiskSignal[],
+  summary: AnalysisReport
+): TransitionRecommendation {
+  const criticalSignal = riskSignals.find((signal) => signal.severity === "critical");
+  if (!criticalSignal) {
+    return recommendation;
+  }
+  return createRecommendation({
+    action: "pause_for_human",
+    reason: criticalSignal.detail,
+    confidence: 0.97,
+    autoExecutable: false,
+    evidence: collectEvidence(
+      summary,
+      criticalSignal.detail,
+      ...riskSignals.slice(0, 3).map((signal) => signal.detail)
     )
   });
 }
@@ -2046,6 +2184,13 @@ export interface ResultTable {
   summary: string;
 }
 
+interface ResultsTableValidationResult {
+  valid: boolean;
+  rows: ResultsTableSchema;
+  issues: string[];
+  incompleteRows: ResultsTableSchema;
+}
+
 export function buildResultTable(report: AnalysisReport): ResultTable {
   const conditionNames = new Set<string>();
   const conditionMetrics = new Map<string, Record<string, number | string | null>>();
@@ -2105,4 +2250,97 @@ export function buildResultTable(report: AnalysisReport): ResultTable {
     primary_metric: primaryMetric,
     summary: summaryText
   };
+}
+
+export function buildResultsTableValidation(input: {
+  report: AnalysisReport;
+  experimentContract?: ExperimentContract;
+}): ResultsTableValidationResult {
+  const rows = buildStructuredResultsTable(
+    input.report,
+    input.experimentContract?.results_table_schema
+  );
+  const schemaValidation = validateResultsTableSchema(rows);
+  const incompleteRows = schemaValidation.rows.filter(
+    (row) => row.baseline === null || row.comparator === null
+  );
+  const issues = [...schemaValidation.issues];
+  if (hasAnyIncompleteResultsTableRow(schemaValidation.rows)) {
+    issues.push("Results table is incomplete: baseline and comparator must both be populated for every reported row.");
+  }
+  return {
+    valid: schemaValidation.valid && incompleteRows.length === 0,
+    rows: schemaValidation.rows,
+    issues,
+    incompleteRows
+  };
+}
+
+function buildStructuredResultsTable(
+  report: AnalysisReport,
+  contractSchema: ResultsTableSchema | undefined
+): ResultsTableSchema {
+  const direction = resolveResultsTableDirection(report);
+  const metricRows = new Map<string, ResultsTableSchema[number]>();
+
+  for (const comparison of report.condition_comparisons ?? []) {
+    for (const metric of comparison.metrics ?? []) {
+      if (!metric.key) {
+        continue;
+      }
+      if (metric.primary_value == null || metric.baseline_value == null) {
+        continue;
+      }
+      if (!metricRows.has(metric.key)) {
+        metricRows.set(metric.key, {
+          metric: metric.key,
+          baseline: metric.baseline_value,
+          comparator: metric.primary_value,
+          delta: Number((metric.primary_value - metric.baseline_value).toFixed(4)),
+          direction
+        });
+      }
+    }
+  }
+
+  if (metricRows.size === 0) {
+    return (contractSchema ?? [])
+      .map((row) => ({
+        metric: row.metric,
+        baseline: row.baseline,
+        comparator: row.comparator,
+        delta: row.delta,
+        direction: row.direction
+      }))
+      .filter((row) => row.metric.trim().length > 0);
+  }
+
+  const contractMetrics = new Set((contractSchema ?? []).map((row) => row.metric));
+  const orderedMetrics = contractSchema && contractSchema.length > 0
+    ? [
+        ...contractSchema.map((row) => row.metric).filter((metricName) => metricRows.has(metricName)),
+        ...Array.from(metricRows.keys()).filter((metricName) => !contractMetrics.has(metricName))
+      ]
+    : Array.from(metricRows.keys());
+
+  const rows = orderedMetrics.map((metricName) => {
+    const existing = metricRows.get(metricName);
+    const contractRow = contractSchema?.find((row) => row.metric === metricName);
+    return existing ?? {
+      metric: metricName,
+      baseline: contractRow?.baseline ?? null,
+      comparator: contractRow?.comparator ?? null,
+      delta: contractRow?.delta ?? null,
+      direction: contractRow?.direction ?? direction
+    };
+  });
+
+  return rows.filter((row) => row.metric.trim().length > 0);
+}
+
+function resolveResultsTableDirection(report: AnalysisReport): ResultsTableDirection {
+  return report.objective_metric.profile.primary_metric
+    && /loss|latency|error|time|memory|ram/i.test(report.objective_metric.profile.primary_metric)
+    ? "lower_better"
+    : "higher_better";
 }

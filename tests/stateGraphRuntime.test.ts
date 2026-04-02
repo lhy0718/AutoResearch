@@ -69,7 +69,7 @@ async function setup(registry: GraphNodeRegistry) {
 async function setupWithOptions(
   registry: GraphNodeRegistry,
   options?: {
-    approvalMode?: "manual" | "minimal";
+    approvalMode?: "manual" | "minimal" | "hybrid";
     budgetGuardUsd?: number;
   }
 ) {
@@ -804,6 +804,173 @@ describe("StateGraphRuntime", () => {
     expect(persisted?.status).toBe("paused");
     expect(persisted?.graph.nodeStates.generate_hypotheses.status).toBe("needs_approval");
     expect(persisted?.graph.nodeStates.design_experiments.status).toBe("pending");
+  });
+
+  it("auto-advances a review approval boundary in hybrid mode when scores are strong", async () => {
+    const registry = new Registry({
+      review: {
+        id: "review",
+        execute: async () => ({
+          status: "success",
+          summary: "review accepted",
+          needsApproval: true,
+          toolCallsUsed: 1,
+          approvalSignal: {
+            source: "review",
+            overall_score: 8,
+            specialist_scores: [4, 4, 5],
+            summary: "Strong review confidence"
+          },
+          transitionRecommendation: {
+            action: "advance",
+            sourceNode: "review",
+            targetNode: "write_paper",
+            reason: "ready for drafting",
+            confidence: 0.9,
+            autoExecutable: true,
+            evidence: [],
+            suggestedCommands: [],
+            generatedAt: new Date().toISOString()
+          }
+        })
+      }
+    });
+    const { store, runtime } = await setupWithOptions(registry, { approvalMode: "hybrid" });
+
+    const run = await store.createRun({
+      title: "Hybrid auto advance",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.currentNode = "review";
+    run.graph.currentNode = "review";
+    run.status = "running";
+    for (const node of ["collect_papers", "analyze_papers", "generate_hypotheses", "design_experiments", "implement_experiments", "run_experiments", "analyze_results"] as const) {
+      run.graph.nodeStates[node].status = "completed";
+    }
+    await store.updateRun(run);
+
+    const updated = await runtime.runUntilPause(run.id, {
+      stopAfterApprovalBoundary: true,
+      floorNode: "review"
+    });
+
+    expect(updated.currentNode).toBe("write_paper");
+    expect(updated.status).toBe("running");
+    expect(updated.graph.nodeStates.review.status).toBe("completed");
+  });
+
+  it("pauses a hybrid review approval boundary when the overall score is below threshold", async () => {
+    const registry = new Registry({
+      review: {
+        id: "review",
+        execute: async () => ({
+          status: "success",
+          summary: "review needs work",
+          needsApproval: true,
+          toolCallsUsed: 1,
+          approvalSignal: {
+            source: "review",
+            overall_score: 6,
+            specialist_scores: [4, 4, 5],
+            summary: "Borderline review confidence"
+          },
+          transitionRecommendation: {
+            action: "advance",
+            sourceNode: "review",
+            targetNode: "write_paper",
+            reason: "ready for drafting",
+            confidence: 0.9,
+            autoExecutable: true,
+            evidence: [],
+            suggestedCommands: [],
+            generatedAt: new Date().toISOString()
+          }
+        })
+      }
+    });
+    const { store, runtime } = await setupWithOptions(registry, { approvalMode: "hybrid" });
+
+    const run = await store.createRun({
+      title: "Hybrid pause low score",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.currentNode = "review";
+    run.graph.currentNode = "review";
+    run.status = "running";
+    for (const node of ["collect_papers", "analyze_papers", "generate_hypotheses", "design_experiments", "implement_experiments", "run_experiments", "analyze_results"] as const) {
+      run.graph.nodeStates[node].status = "completed";
+    }
+    await store.updateRun(run);
+
+    const updated = await runtime.runUntilPause(run.id, {
+      stopAfterApprovalBoundary: true,
+      floorNode: "review"
+    });
+
+    expect(updated.currentNode).toBe("review");
+    expect(updated.status).toBe("paused");
+    expect(updated.graph.nodeStates.review.status).toBe("needs_approval");
+    expect(updated.graph.nodeStates.review.approvalSignal?.overall_score).toBe(6);
+  });
+
+  it("pauses a hybrid review approval boundary when any specialist score is below threshold", async () => {
+    const registry = new Registry({
+      review: {
+        id: "review",
+        execute: async () => ({
+          status: "success",
+          summary: "review needs specialist follow-up",
+          needsApproval: true,
+          toolCallsUsed: 1,
+          approvalSignal: {
+            source: "review",
+            overall_score: 8,
+            specialist_scores: [4, 3, 5],
+            summary: "One reviewer remains unconvinced"
+          },
+          transitionRecommendation: {
+            action: "advance",
+            sourceNode: "review",
+            targetNode: "write_paper",
+            reason: "ready for drafting",
+            confidence: 0.9,
+            autoExecutable: true,
+            evidence: [],
+            suggestedCommands: [],
+            generatedAt: new Date().toISOString()
+          }
+        })
+      }
+    });
+    const { store, runtime } = await setupWithOptions(registry, { approvalMode: "hybrid" });
+
+    const run = await store.createRun({
+      title: "Hybrid pause specialist score",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.currentNode = "review";
+    run.graph.currentNode = "review";
+    run.status = "running";
+    for (const node of ["collect_papers", "analyze_papers", "generate_hypotheses", "design_experiments", "implement_experiments", "run_experiments", "analyze_results"] as const) {
+      run.graph.nodeStates[node].status = "completed";
+    }
+    await store.updateRun(run);
+
+    const updated = await runtime.runUntilPause(run.id, {
+      stopAfterApprovalBoundary: true,
+      floorNode: "review"
+    });
+
+    expect(updated.currentNode).toBe("review");
+    expect(updated.status).toBe("paused");
+    expect(updated.graph.nodeStates.review.status).toBe("needs_approval");
+    expect(updated.graph.nodeStates.review.approvalSignal?.specialist_scores).toEqual([4, 3, 5]);
   });
 
   it("clears stale lastError when a node later succeeds", async () => {

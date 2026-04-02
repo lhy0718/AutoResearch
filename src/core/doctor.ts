@@ -8,7 +8,8 @@ import {
   DoctorCheckStatus,
   ExecutionApprovalMode,
   ExperimentNetworkPolicy,
-  ExperimentNetworkPurpose
+  ExperimentNetworkPurpose,
+  WorkflowApprovalMode
 } from "../types.js";
 import { CodexCliClient } from "../integrations/codex/codexCliClient.js";
 import { RECOMMENDED_CODEX_MODEL } from "../integrations/codex/modelCatalog.js";
@@ -31,7 +32,7 @@ export interface DoctorRunOptions {
   includeHarnessValidation?: boolean;
   includeHarnessTestRecords?: boolean;
   maxHarnessFindings?: number;
-  approvalMode?: "manual" | "minimal";
+  approvalMode?: WorkflowApprovalMode;
   executionApprovalMode?: "manual" | "risk_ack" | "full_auto";
   dependencyMode?: "local" | "docker" | "remote_gpu" | "plan_only";
   sessionMode?: "fresh" | "existing";
@@ -58,7 +59,7 @@ export interface DoctorReadinessSnapshot {
   blocked: boolean;
   llmMode?: "codex_chatgpt_only" | "openai_api" | "ollama";
   pdfAnalysisMode?: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
-  approvalMode: "manual" | "minimal";
+  approvalMode: WorkflowApprovalMode;
   executionApprovalMode: "manual" | "risk_ack" | "full_auto";
   dependencyMode: "local" | "docker" | "remote_gpu" | "plan_only";
   sessionMode: "fresh" | "existing";
@@ -96,7 +97,7 @@ export async function runDoctorReport(
   const checks: DoctorCheck[] = [];
   const workspaceRoot = opts?.workspaceRoot || process.cwd();
   const paths = resolveAppPaths(workspaceRoot);
-  const approvalMode = opts?.approvalMode === "manual" ? "manual" : "minimal";
+  const approvalMode = normalizeDoctorApprovalMode(opts?.approvalMode);
   const executionApprovalMode = normalizeExecutionApprovalMode(opts?.executionApprovalMode);
   const dependencyMode = normalizeDependencyMode(opts?.dependencyMode);
   const sessionMode = opts?.sessionMode === "existing" ? "existing" : "fresh";
@@ -371,6 +372,15 @@ function normalizeExecutionApprovalMode(
     return value;
   }
   return "manual";
+}
+
+function normalizeDoctorApprovalMode(
+  value: DoctorRunOptions["approvalMode"]
+): WorkflowApprovalMode {
+  if (value === "manual" || value === "hybrid") {
+    return value;
+  }
+  return "minimal";
 }
 
 function normalizeDoctorNetworkPolicy(

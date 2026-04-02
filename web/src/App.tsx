@@ -2551,7 +2551,13 @@ function labelWorkflowMode(value: ConfigSummary["workflowMode"] | undefined): st
 }
 
 function labelApprovalMode(value: ConfigSummary["approvalMode"] | undefined): string {
-  return value === "manual" ? "Approval: Manual" : "Approval: Minimal";
+  if (value === "manual") {
+    return "Approval: Manual";
+  }
+  if (value === "hybrid") {
+    return "Approval: Hybrid";
+  }
+  return "Approval: Minimal";
 }
 
 function formatRunRecommendedAction(

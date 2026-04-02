@@ -59,6 +59,15 @@ function minimalReport(): AnalysisReport {
         evidence: [{ type: "metric", reference: "accuracy", detail: "+5%" }]
       }
     ],
+    results_table: [
+      {
+        metric: "accuracy",
+        baseline: 0.82,
+        comparator: 0.87,
+        delta: 0.05,
+        direction: "higher_better"
+      }
+    ],
     limitations: [],
     warnings: [],
     statistical_summary: {
@@ -101,7 +110,7 @@ describe("paperMinimumGate", () => {
 
   it("has exactly 9 checks", () => {
     const result = evaluateMinimumGate(fullInput());
-    expect(result.checks).toHaveLength(9);
+    expect(result.checks).toHaveLength(10);
     const checkIds = result.checks.map(c => c.id);
     expect(checkIds).toContain("objective_metric");
     expect(checkIds).toContain("experiment_plan");
@@ -111,6 +120,7 @@ describe("paperMinimumGate", () => {
     expect(checkIds).toContain("result_artifacts");
     expect(checkIds).toContain("claim_evidence_linkage");
     expect(checkIds).toContain("claim_evidence_missing");
+    expect(checkIds).toContain("results_table_schema");
     expect(checkIds).toContain("not_smoke_only");
   });
 
@@ -227,6 +237,24 @@ describe("paperMinimumGate", () => {
     expect(result.passed).toBe(false);
     expect(result.failed_checks).toContain("claim_evidence_missing");
     expect(result.checks.find((check) => check.id === "claim_evidence_missing")?.passed).toBe(false);
+  });
+
+  it("fails when no results_table row includes both baseline and comparator values", () => {
+    const input = fullInput();
+    input.report.results_table = [
+      {
+        metric: "accuracy",
+        baseline: null,
+        comparator: 0.87,
+        delta: null,
+        direction: "higher_better"
+      }
+    ];
+
+    const result = evaluateMinimumGate(input);
+
+    expect(result.passed).toBe(false);
+    expect(result.failed_checks).toContain("results_table_schema");
   });
 
   it("assigns blocked_for_paper_scale when many checks fail", () => {

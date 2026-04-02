@@ -3397,9 +3397,10 @@ describe("writePaper PDF build", () => {
 
     const paperReadiness = JSON.parse(
       await readFile(path.join(runDir, "paper", "paper_readiness.json"), "utf8")
-    ) as { paper_ready: boolean; evidence_gate_status: string };
+    ) as { paper_ready: boolean; evidence_gate_status: string; citation_check: string };
     expect(typeof paperReadiness.paper_ready).toBe("boolean");
     expect(paperReadiness.evidence_gate_status).toBe("pass");
+    expect(paperReadiness.citation_check).toBe("pass");
     const readinessRisks = JSON.parse(
       await readFile(path.join(runDir, "paper", "readiness_risks.json"), "utf8")
     ) as { risk_count: number; summary_lines: string[] };

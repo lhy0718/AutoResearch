@@ -89,4 +89,60 @@ describe("buildResultTable", () => {
     expect(result.primary_metric).toBe("");
     expect(result.summary).toBe("");
   });
+
+  it("builds a structured results_table with baseline/comparator values from condition comparisons", async () => {
+    const mod = await import("../src/core/nodes/analyzeResults.js");
+
+    const report: Partial<AnalysisReport> = {
+      condition_comparisons: [
+        {
+          id: "adaptive",
+          label: "Adaptive TTC",
+          source: "metrics.comparison",
+          metrics: [
+            { key: "accuracy", value: 0.91, primary_value: 0.91, baseline_value: 0.86 }
+          ],
+          hypothesis_supported: true,
+          summary: "Adaptive beats baseline"
+        }
+      ],
+      metric_table: [{ key: "accuracy", value: 0.91 }],
+      objective_metric: {
+        raw: "accuracy",
+        evaluation: { status: "met" },
+        profile: { primary_metric: "accuracy" }
+      } as AnalysisReport["objective_metric"],
+      overview: {
+        objective_status: "met",
+        objective_summary: "Accuracy improved",
+        matched_metric_key: "accuracy",
+        execution_runs: 2
+      }
+    };
+
+    const validation = mod.buildResultsTableValidation({
+      report: report as AnalysisReport,
+      experimentContract: {
+        results_table_schema: [
+          {
+            metric: "accuracy",
+            baseline: null,
+            comparator: null,
+            delta: null,
+            direction: "higher_better"
+          }
+        ]
+      }
+    });
+
+    expect(validation.valid).toBe(true);
+    expect(validation.rows).toHaveLength(1);
+    expect(validation.rows[0]).toMatchObject({
+      metric: "accuracy",
+      baseline: 0.86,
+      comparator: 0.91,
+      direction: "higher_better"
+    });
+    expect(validation.rows[0]?.delta).toBeCloseTo(0.05, 6);
+  });
 });

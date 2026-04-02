@@ -50,7 +50,7 @@ export const AGENT_ROLE_ORDER: AgentRoleId[] = [
 
 export type NodeStatus = "pending" | "running" | "needs_approval" | "completed" | "failed" | "skipped";
 export type AgentStatus = NodeStatus;
-export type WorkflowApprovalMode = "manual" | "minimal";
+export type WorkflowApprovalMode = "manual" | "minimal" | "hybrid";
 export type ExecutionApprovalMode = "manual" | "risk_ack" | "full_auto";
 export type ExecutionProfile = "local" | "docker" | "remote" | "plan_only";
 export type EvidenceDepth = "shallow" | "deep";
@@ -96,11 +96,19 @@ export interface TransitionHistoryEntry {
   appliedAt: string;
 }
 
+export interface ApprovalSignal {
+  source?: "review";
+  overall_score?: number;
+  specialist_scores?: number[];
+  summary?: string;
+}
+
 export interface NodeState {
   status: NodeStatus;
   updatedAt: string;
   note?: string;
   lastError?: string;
+  approvalSignal?: ApprovalSignal;
 }
 
 export interface RetryPolicy {

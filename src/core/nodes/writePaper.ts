@@ -40,6 +40,10 @@ import {
   VerifiedRegistryArtifact
 } from "../analysis/verifiedRegistry.js";
 import {
+  checkCitationConsistency,
+  type CitationReport
+} from "../analysis/citationConsistencyChecker.js";
+import {
   buildNetworkDependencyReadinessRisks,
   buildReadinessRiskArtifact,
   type ReadinessRisk,
@@ -218,6 +222,7 @@ interface PaperReadinessArtifact {
   paper_ready: boolean;
   readiness_state: ManuscriptType;
   reason: string;
+  citation_check: CitationReport["status"];
   triggered_by: string[];
   evidence_gate_status: EvidenceGateDecisionArtifact["status"];
   scientific_validation_status: "pass" | "warn" | "fail";
@@ -747,6 +752,12 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         "paper/evidence_gate_decision.json",
         `${JSON.stringify(evidenceGateDecision, null, 2)}\n`
       );
+      const citationConsistency = checkCitationConsistency(path.join(process.cwd(), ".autolabos", "runs", run.id));
+      await writeRunArtifact(
+        run,
+        "paper/citation_consistency.json",
+        `${JSON.stringify(citationConsistency, null, 2)}\n`
+      );
       await writeRunArtifact(run, "paper/draft.json", `${JSON.stringify(paperDraft, null, 2)}\n`);
       await writeRunArtifact(run, "paper/manuscript.json", manuscriptJson);
       await writeRunArtifact(run, "paper/traceability.json", traceabilityJson);
@@ -808,6 +819,11 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         `${JSON.stringify(evidenceGateDecision, null, 2)}\n`,
         "utf8"
       );
+      await fs.writeFile(
+        path.join(publicPaperDir, "citation_consistency.json"),
+        `${JSON.stringify(citationConsistency, null, 2)}\n`,
+        "utf8"
+      );
       await fs.writeFile(path.join(publicPaperDir, "gate_decision.json"), `${JSON.stringify(gateDecision, null, 2)}\n`, "utf8");
       await fs.writeFile(
         path.join(publicPaperDir, "manuscript_review.json"),
@@ -840,6 +856,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         verifiedRegistry,
         claimStatusTable,
         evidenceGateDecision,
+        citationReport: citationConsistency,
         scientificGateStatus: gateDecision.status,
         submissionValidationOk: submissionValidation.ok,
         manuscriptQualityAction: manuscriptQuality.repairDecision.action,
@@ -872,6 +889,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await runContextMemory.put("write_paper.verified_registry", verifiedRegistry);
       await runContextMemory.put("write_paper.claim_status_table", claimStatusTable);
       await runContextMemory.put("write_paper.evidence_gate_decision", evidenceGateDecision);
+      await runContextMemory.put("write_paper.citation_consistency", citationConsistency);
       await runContextMemory.put("write_paper.validation", validation);
       await runContextMemory.put("write_paper.consistency_lint", {
         manuscript: manuscriptQuality.evaluation.consistencyLint,
@@ -977,6 +995,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         manuscriptType: postDraftCritique.manuscript_type,
         evidenceGateDecision,
         claimStatusTable,
+        citationReport: citationConsistency,
         scientificGateStatus: gateDecision.status,
         submissionValidationOk: submissionValidation.ok,
         manuscriptQualityAction: manuscriptQuality.repairDecision.action
@@ -1024,6 +1043,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
           { label: "Paper readiness", path: "paper/paper_readiness.json" },
           { label: "Paper critique", path: "paper/paper_critique.json" },
           { label: "Readiness risks", path: "paper/readiness_risks.json" },
+          { label: "Citation consistency", path: "paper/citation_consistency.json" },
           { label: "Claim evidence table", path: "paper/claim_evidence_table.json" },
           { label: "Evidence gate decision", path: "paper/evidence_gate_decision.json" },
           { label: "Main TeX", path: "paper/main.tex" }
@@ -1043,7 +1063,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         workspaceRoot: process.cwd(),
         run,
         currentNode: "write_paper",
-        approvalMode: deps.config?.workflow?.approval_mode === "manual" ? "manual" : "minimal",
+        approvalMode: deps.config?.workflow?.approval_mode || "minimal",
         networkPolicy:
           deps.config?.experiments?.network_policy
           || (deps.config?.experiments?.allow_network ? "declared" : "blocked"),
@@ -1131,6 +1151,11 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
           {
             sourcePath: path.join(runPaperDir, "paper_readiness.json"),
             targetRelativePath: "paper_readiness.json",
+            optional: true
+          },
+          {
+            sourcePath: path.join(runPaperDir, "citation_consistency.json"),
+            targetRelativePath: "citation_consistency.json",
             optional: true
           },
           {
@@ -3429,6 +3454,7 @@ function buildPaperReadinessArtifact(input: {
   manuscriptType: ManuscriptType;
   evidenceGateDecision: EvidenceGateDecisionArtifact;
   claimStatusTable: ClaimStatusTableArtifact;
+  citationReport: CitationReport;
   scientificGateStatus: "pass" | "warn" | "fail";
   submissionValidationOk: boolean;
   manuscriptQualityAction: ManuscriptRepairDecision["action"];
@@ -3436,11 +3462,13 @@ function buildPaperReadinessArtifact(input: {
   const paperReady =
     input.manuscriptType === "paper_ready"
     && input.evidenceGateDecision.status !== "fail"
+    && input.citationReport.status !== "fail"
     && input.scientificGateStatus !== "fail"
     && input.submissionValidationOk
     && input.manuscriptQualityAction !== "stop";
   const triggeredBy = [
     ...(input.evidenceGateDecision.status === "fail" ? ["evidence_gate"] : []),
+    ...(input.citationReport.status === "fail" ? ["citation_check"] : []),
     ...(input.scientificGateStatus === "fail" ? ["scientific_validation"] : []),
     ...(!input.submissionValidationOk ? ["submission_validation"] : []),
     ...(input.manuscriptQualityAction === "stop" ? ["manuscript_quality"] : [])
@@ -3449,8 +3477,11 @@ function buildPaperReadinessArtifact(input: {
     generated_at: new Date().toISOString(),
     paper_ready: paperReady,
     readiness_state: paperReady ? "paper_ready" : input.manuscriptType,
+    citation_check: input.citationReport.status,
     reason: paperReady
       ? "The manuscript passed manuscript-quality, evidence, scientific, and submission gates."
+      : input.citationReport.status === "fail"
+        ? "citation_gap"
       : input.evidenceGateDecision.status === "fail"
         ? "paper_ready is blocked because at least one major claim remained blocked at the evidence gate."
         : !input.submissionValidationOk
@@ -3617,6 +3648,7 @@ function buildFallbackPaperReadinessRiskArtifact(input: {
   verifiedRegistry: VerifiedRegistryArtifact;
   claimStatusTable: ClaimStatusTableArtifact;
   evidenceGateDecision: EvidenceGateDecisionArtifact;
+  citationReport?: CitationReport;
   scientificGateStatus: "pass" | "warn" | "fail";
   submissionValidationOk: boolean;
   manuscriptQualityAction: ManuscriptRepairDecision["action"];
@@ -3627,6 +3659,11 @@ function buildFallbackPaperReadinessRiskArtifact(input: {
     manuscriptType,
     evidenceGateDecision: input.evidenceGateDecision,
     claimStatusTable: input.claimStatusTable,
+    citationReport: input.citationReport ?? {
+      orphan_citations: [],
+      unchecked_sources: [],
+      status: "pass"
+    },
     scientificGateStatus: input.scientificGateStatus,
     submissionValidationOk: input.submissionValidationOk,
     manuscriptQualityAction: input.manuscriptQualityAction

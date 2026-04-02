@@ -256,11 +256,23 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         keepOrDiscardRule: "Keep if objective metric improves over baseline; discard if no improvement or result is inconclusive.",
         baselines: panelResult.selected.baselines,
         metrics: panelResult.selected.metrics,
+        resultsTableDirection: objectiveMetricProfile.direction === "minimize" ? "lower_better" : "higher_better",
         briefRequiredBaselineCount: deriveBriefRequiredBaselineCount(briefSections)
       });
       const contractValidation = validateExperimentContract(experimentContract);
       if (contractValidation.issues.length > 0) {
         emitLog(`Experiment contract notes: ${contractValidation.issues.join("; ")}`);
+      }
+      if (!experimentContract.results_table_schema || experimentContract.results_table_schema.length === 0) {
+        const message =
+          "Experiment contract is missing results_table_schema. Design must declare at least one metric and direction before execution.";
+        emitLog(message);
+        return {
+          status: "failure",
+          error: message,
+          summary: message,
+          toolCallsUsed: 0
+        };
       }
       await writeExperimentContract(run, experimentContract);
       const experimentPortfolio = buildExperimentPortfolioFromDesign({

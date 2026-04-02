@@ -27,6 +27,7 @@ import { FailureMemory } from "../experiments/failureMemory.js";
 import { evaluateMinimumGate } from "../analysis/paperMinimumGate.js";
 import { runLLMPaperQualityEvaluation } from "../analysis/llmPaperQualityEvaluator.js";
 import { checkReviewDecision } from "../analysis/reviewDecision.js";
+import type { RiskSignal } from "../analysis/riskSignals.js";
 import type { BriefEvidenceAssessment } from "../analysis/briefEvidenceValidator.js";
 import {
   buildNetworkDependencyReadinessRisks,
@@ -77,11 +78,33 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       );
 
       const presence = await resolveReviewArtifactPresence(runDir, report);
+      const citationConsistencyArtifact = await safeReadJson(path.join(runDir, "paper", "citation_consistency.json")) as
+        | { orphan_citations?: string[] }
+        | undefined;
+      const riskSignalsArtifact = await safeReadJson(path.join(runDir, "analysis", "risk_signals.json")) as
+        | RiskSignal[]
+        | undefined;
       const panel = await runReviewPanel({
         run,
         node: "review",
         report,
         presence,
+        orphanCitations: Array.isArray(citationConsistencyArtifact?.orphan_citations)
+          ? citationConsistencyArtifact.orphan_citations.filter((value): value is string => typeof value === "string")
+          : [],
+        riskSignals: Array.isArray(riskSignalsArtifact)
+          ? riskSignalsArtifact.filter((value): value is RiskSignal => {
+              if (!value || typeof value !== "object" || Array.isArray(value)) {
+                return false;
+              }
+              const candidate = value as Partial<RiskSignal>;
+              return (
+                typeof candidate.type === "string"
+                && (candidate.severity === "warn" || candidate.severity === "critical")
+                && typeof candidate.detail === "string"
+              );
+            })
+          : [],
         llm: deps.llm,
         eventStream: deps.eventStream,
         abortSignal
@@ -244,7 +267,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         run,
         currentNode: "review",
         lifecycleStatus: "needs_approval",
-        approvalMode: deps.config?.workflow?.approval_mode === "manual" ? "manual" : "minimal",
+        approvalMode: deps.config?.workflow?.approval_mode || "minimal",
         networkPolicy:
           deps.config?.experiments?.network_policy
           || (deps.config?.experiments?.allow_network ? "declared" : "blocked"),
@@ -388,6 +411,12 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
               ? `Review panel prepared ${panel.findings.length} finding(s) with ${warnings} warning(s) and ${manual} manual review item(s). Completion verdict: revise. The next stage will carry the attached revision checklist or follow the recommended backtrack automatically.${critiqueLabel} Public outputs: ${publicOutputs.outputRootRelative}.`
               : `Review panel completed with outcome ${panel.decision.outcome} and completion verdict accept.${critiqueLabel} The runtime can continue automatically from the review recommendation. Public outputs: ${publicOutputs.outputRootRelative}.`,
         needsApproval: true,
+        approvalSignal: {
+          source: "review",
+          overall_score: llmEvalResult.evaluation.overall_score_1_to_10,
+          specialist_scores: panel.reviewers.map((reviewer) => reviewer.score_1_to_5),
+          summary: `${llmEvalResult.evaluation.overall_score_1_to_10}/10 overall with ${panel.reviewers.length} specialist reviewer(s).`
+        },
         toolCallsUsed,
         costUsd,
         usage: {

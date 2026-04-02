@@ -1,4 +1,5 @@
 import { EventStream } from "./events.js";
+import type { RiskSignal } from "./analysis/riskSignals.js";
 import { parseStructuredModelJsonObject } from "./analysis/modelJson.js";
 import { LLMClient, LLMCompletionUsage } from "./llm/client.js";
 import { AnalysisFailureCategory, AnalysisPaperClaim, AnalysisReport } from "./resultAnalysis.js";
@@ -146,6 +147,8 @@ interface ReviewPanelArgs {
   node: GraphNodeId;
   report: AnalysisReport;
   presence: ReviewArtifactPresence;
+  orphanCitations?: string[];
+  riskSignals?: RiskSignal[];
   llm: LLMClient;
   eventStream?: EventStream;
   abortSignal?: AbortSignal;
@@ -275,7 +278,16 @@ async function refineReviewerWithLlm(
       timeoutMs,
       args.abortSignal,
       (abortSignal) =>
-        args.llm.complete(buildReviewerPrompt(args.run, args.report, args.presence, spec, fallback), {
+        args.llm.complete(buildReviewerPrompt(
+          args.run,
+          args.report,
+          args.presence,
+          spec,
+          fallback,
+          args.orphanCitations,
+          args.riskSignals
+        ), {
+          // The prompt builder reads orphan citations from args to keep specialist context auditably explicit.
           systemPrompt: buildReviewerSystemPrompt(spec),
           abortSignal
         }),
@@ -329,7 +341,9 @@ function buildReviewerPrompt(
   report: AnalysisReport,
   presence: ReviewArtifactPresence,
   spec: ReviewerSpec,
-  fallback: SpecialistReviewResult
+  fallback: SpecialistReviewResult,
+  orphanCitations: string[] = [],
+  riskSignals: RiskSignal[] = []
 ): string {
   const payload = {
     reviewer: {
@@ -360,6 +374,8 @@ function buildReviewerPrompt(
     primary_findings: report.primary_findings.slice(0, 4),
     limitations: report.limitations.slice(0, 4),
     warnings: report.warnings.slice(0, 4),
+    orphan_citations: orphanCitations.slice(0, 12),
+    risk_signals: riskSignals.slice(0, 12),
     paper_claims: report.paper_claims.slice(0, 4).map((claim) => ({
       claim: claim.claim,
       evidence_count: claim.evidence.length

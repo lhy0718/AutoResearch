@@ -15,7 +15,7 @@ import type { EvalHarnessHistoryEntry } from "../core/evaluation/evalHarness.js"
 export interface ConfigSummary {
   projectName: string;
   workflowMode: "agent_approval";
-  approvalMode: "manual" | "minimal";
+  approvalMode: "manual" | "minimal" | "hybrid";
   executionApprovalMode?: "manual" | "risk_ack" | "full_auto";
   llmMode: "codex_chatgpt_only" | "openai_api" | "ollama";
   pdfMode: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
@@ -97,7 +97,7 @@ export interface DoctorResponse {
     blocked: boolean;
     llmMode?: "codex_chatgpt_only" | "openai_api" | "ollama";
     pdfAnalysisMode?: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
-    approvalMode: "manual" | "minimal";
+    approvalMode: "manual" | "minimal" | "hybrid";
     executionApprovalMode: "manual" | "risk_ack" | "full_auto";
     dependencyMode: "local" | "docker" | "remote_gpu" | "plan_only";
     sessionMode: "fresh" | "existing";

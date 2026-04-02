@@ -4,6 +4,7 @@ import { evaluateObjectiveMetric, ObjectiveMetricEvaluation, ObjectiveMetricProf
 import { ExperimentPortfolio, ExperimentRunManifest } from "./experiments/experimentPortfolio.js";
 import { RunVerifierReport } from "./experiments/runVerifierFeedback.js";
 import { RunRecord, TransitionRecommendation } from "../types.js";
+import type { ResultsTableSchema } from "./analysis/resultsTableSchema.js";
 
 export interface AnalysisMetricEntry {
   key: string;
@@ -225,6 +226,7 @@ export interface AnalysisReport {
   plan_context: AnalysisPlanContext;
   experiment_portfolio?: AnalysisExperimentPortfolio;
   metric_table: AnalysisMetricEntry[];
+  results_table?: ResultsTableSchema;
   condition_comparisons: AnalysisConditionComparison[];
   execution_summary: AnalysisExecutionSummary;
   primary_findings: string[];
@@ -397,6 +399,7 @@ export function buildAnalysisReport(args: BuildAnalysisReportArgs): AnalysisRepo
     plan_context: planContext,
     experiment_portfolio: experimentPortfolio,
     metric_table: metricTable,
+    results_table: [],
     condition_comparisons: conditionComparisons,
     execution_summary: executionSummary,
     primary_findings: primaryFindings,

@@ -1858,6 +1858,171 @@ describe("objective metric propagation", () => {
     });
   });
 
+  it("pauses for human review when the structured results table is missing a baseline value", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-incomplete-table-"));
+    process.chdir(root);
+
+    const runId = "run-analyze-results-incomplete-table";
+    const run = {
+      ...makeRun(runId),
+      currentNode: "analyze_results" as const,
+      objectiveMetric: "accuracy"
+    };
+    run.graph.currentNode = "analyze_results";
+
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          accuracy: 0.91
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "experiment_contract.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          run_id: runId,
+          created_at: new Date().toISOString(),
+          hypothesis: "Accuracy should improve",
+          causal_mechanism: "A stronger prompt should improve accuracy",
+          single_change: "Prompt strategy",
+          confounded: false,
+          expected_metric_effect: "Higher accuracy than baseline",
+          abort_condition: "Abort if accuracy regresses",
+          keep_or_discard_rule: "Keep if improved",
+          baselines: ["baseline"],
+          metrics: ["accuracy"],
+          results_table_schema: [
+            {
+              metric: "accuracy",
+              baseline: null,
+              comparator: null,
+              delta: null,
+              direction: "higher_better"
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const analyzeNode = createAnalyzeResultsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await analyzeNode.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(result.transitionRecommendation).toMatchObject({
+      action: "pause_for_human",
+      reason: "incomplete_results_table"
+    });
+
+    const analysisRaw = JSON.parse(
+      await readFile(path.join(runDir, "result_analysis.json"), "utf8")
+    ) as { results_table: Array<{ metric: string; baseline: number | null }> };
+    expect(analysisRaw.results_table).toEqual([
+      expect.objectContaining({
+        metric: "accuracy",
+        baseline: null
+      })
+    ]);
+  });
+
+  it("records critical risk signals and pauses for human review when metrics are statistically inconsistent", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-risk-signals-"));
+    process.chdir(root);
+
+    const runId = "run-analyze-results-risk-signals";
+    const run = {
+      ...makeRun(runId),
+      currentNode: "analyze_results" as const,
+      objectiveMetric: "accuracy"
+    };
+    run.graph.currentNode = "analyze_results";
+
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          accuracy: 0.91,
+          significance: {
+            p_value: 1.4
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "evidence_store.jsonl"),
+      `${JSON.stringify({
+        evidence_id: "ev_1",
+        paper_id: "paper_1",
+        source_type: "full_text"
+      })}\n`,
+      "utf8"
+    );
+
+    const analyzeNode = createAnalyzeResultsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await analyzeNode.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(result.transitionRecommendation).toMatchObject({
+      action: "pause_for_human"
+    });
+    expect(result.transitionRecommendation?.reason).toContain("statistically inconsistent");
+
+    const riskSignals = JSON.parse(
+      await readFile(path.join(runDir, "analysis", "risk_signals.json"), "utf8")
+    ) as Array<{ type: string; severity: string; detail: string }>;
+    expect(riskSignals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "statistical_anomaly",
+          severity: "critical"
+        })
+      ])
+    );
+
+    const transitionRaw = JSON.parse(
+      await readFile(path.join(runDir, "transition_recommendation.json"), "utf8")
+    ) as { action: string; reason: string };
+    expect(transitionRaw).toMatchObject({
+      action: "pause_for_human"
+    });
+    expect(transitionRaw.reason).toContain("statistically inconsistent");
+  });
+
   it("downgrades unsupported-hypothesis backtracks when only risk-level evidence is available", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-risk-evidence-gap-"));
     process.chdir(root);

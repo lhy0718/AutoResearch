@@ -52,6 +52,15 @@ class TruncatedReviewJsonLlm extends MockLLMClient {
   }
 }
 
+class PromptCaptureReviewLlm extends MockLLMClient {
+  prompts: string[] = [];
+
+  override async complete(prompt: string): Promise<{ text: string }> {
+    this.prompts.push(prompt);
+    return { text: "not-json" };
+  }
+}
+
 function makeRun(runId: string): RunRecord {
   return {
     version: 3,
@@ -191,6 +200,15 @@ describe("review node", () => {
             assumptions: []
           },
           metric_table: [],
+          results_table: [
+            {
+              metric: "accuracy",
+              baseline: 0.87,
+              comparator: 0.91,
+              delta: 0.04,
+              direction: "higher_better"
+            }
+          ],
           condition_comparisons: [
             {
               id: "treatment_vs_baseline",
@@ -424,6 +442,86 @@ describe("review node", () => {
     expect(await memory.get("review.last_summary")).toContain("accuracy=0.91");
     expect(await memory.get("review.last_decision")).toMatchObject({ outcome: "advance" });
     expect(await memory.get("review.readiness_risks")).toMatchObject({ readiness_state: "paper_ready" });
+  });
+
+  it("includes analysis risk signals in the review panel prompt context", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-review-risk-signals-"));
+    process.chdir(root);
+
+    const run = makeRun("run-review-risk-signals");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await mkdir(path.join(runDir, "analysis"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ accuracy: 0.91 }, null, 2), "utf8");
+    await writeFile(
+      path.join(runDir, "result_analysis.json"),
+      JSON.stringify(
+        {
+          analysis_version: 1,
+          generated_at: new Date().toISOString(),
+          mean_score: 0.91,
+          metrics: { accuracy: 0.91 },
+          objective_metric: {
+            raw: "accuracy at least 0.9",
+            evaluation: { status: "met", summary: "Objective metric met." },
+            profile: { source: "default", preferred_metric_keys: ["accuracy"], analysis_focus: [], paper_emphasis: [], assumptions: [] }
+          },
+          overview: { objective_status: "met", objective_summary: "Objective metric met.", execution_runs: 1 },
+          plan_context: { shortlisted_designs: [], design_notes: [], implementation_notes: [], evaluation_notes: [], assumptions: [] },
+          metric_table: [{ key: "accuracy", value: 0.91 }],
+          results_table: [{ metric: "accuracy", baseline: 0.87, comparator: 0.91, delta: 0.04, direction: "higher_better" }],
+          condition_comparisons: [],
+          execution_summary: { observation_count: 1, commands: [], sources: [], stderr_excerpts: [] },
+          primary_findings: ["Accuracy improved."],
+          limitations: [],
+          warnings: [],
+          paper_claims: [{ claim: "Accuracy improved.", evidence: ["accuracy=0.91"] }],
+          figure_specs: [],
+          supplemental_runs: [],
+          external_comparisons: [],
+          statistical_summary: { confidence_intervals: [], effect_estimates: [], stability_metrics: [], notes: [], total_trials: 1, executed_trials: 1, cached_trials: 0 },
+          failure_taxonomy: []
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "analysis", "risk_signals.json"),
+      JSON.stringify(
+        [
+          {
+            type: "statistical_anomaly",
+            severity: "critical",
+            detail: "Detected statistically inconsistent metrics: significance.p_value=1.4 is outside [0,1]."
+          }
+        ],
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const llm = new PromptCaptureReviewLlm();
+    const node = createReviewNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(llm.prompts.some((prompt) => prompt.includes("\"risk_signals\""))).toBe(true);
+    expect(
+      llm.prompts.some((prompt) => prompt.includes("statistically inconsistent metrics"))
+    ).toBe(true);
   });
 
   it("marks missing evidence inputs as blocking", async () => {

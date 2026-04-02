@@ -31,7 +31,7 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
   { name: "model", usage: "/model", description: "Open model and reasoning selector", category: "session", visible: true },
   { name: "approve", usage: "/approve", description: "Approve the current step", category: "workflow", visible: true },
   { name: "retry", usage: "/retry", description: "Retry current node", category: "workflow" },
-  { name: "settings", usage: "/settings", description: "Edit configuration", category: "system" },
+  { name: "settings", usage: "/settings [manual|minimal|hybrid]", description: "Edit configuration or set approval mode", category: "system" },
   { name: "clear", usage: "/clear", description: "Clear the transcript", category: "session", visible: true, preserveDraftOnRun: true },
   { name: "queue", usage: "/queue", description: "Show queued inputs and background jobs", category: "session", visible: true, preserveDraftOnRun: true },
   { name: "inspect", usage: "/inspect", description: "Show session diagnostics", category: "session", visible: true, preserveDraftOnRun: true },
