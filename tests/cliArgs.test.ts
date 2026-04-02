@@ -52,6 +52,25 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports evolve mode", () => {
+    expect(resolveCliAction(["evolve", "--max-cycles", "2", "--target", "prompts", "--dry-run"])).toEqual({
+      kind: "evolve",
+      maxCycles: 2,
+      target: "prompts",
+      dryRun: true
+    });
+  });
+
+  it("supports meta-harness mode", () => {
+    expect(resolveCliAction(["meta-harness", "--runs", "2", "--node", "review", "--no-apply"])).toEqual({
+      kind: "meta-harness",
+      runs: 2,
+      nodes: ["review"],
+      noApply: true,
+      dryRun: false
+    });
+  });
+
   it("requires a run id for compare-analysis", () => {
     const action = resolveCliAction(["compare-analysis"]);
     expect(action.kind).toBe("error");

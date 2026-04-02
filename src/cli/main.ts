@@ -4,6 +4,8 @@ import { resolveCliAction } from "./args.js";
 import { runAutoLabOSWebServer } from "../web/server.js";
 import { runCompareAnalysisCli } from "./compareAnalysis.js";
 import { runEvalHarnessCli } from "./evalHarness.js";
+import { runEvolveCli } from "./evolveRun.js";
+import { runMetaHarnessCli } from "./metaHarness.js";
 
 function printHelp(): void {
   process.stdout.write([
@@ -18,6 +20,8 @@ function printHelp(): void {
     "  autolabos web [--host 127.0.0.1] [--port 4317]",
     "  autolabos compare-analysis --run <run-id> [--limit 3] [--no-judge]",
     "  autolabos eval-harness [--run <run-id>] [--limit 10] [--output outputs/eval-harness/latest.json] [--no-history]",
+    "  autolabos evolve [--max-cycles 3] [--target skills|prompts|all] [--dry-run]",
+    "  autolabos meta-harness [--runs 5] [--node analyze_results|review] [--no-apply] [--dry-run]",
     "  autolabos --help",
     "  autolabos --version"
   ].join("\n") + "\n");
@@ -68,6 +72,27 @@ async function main(): Promise<void> {
       limit: action.limit,
       outputPath: action.outputPath,
       noHistory: action.noHistory
+    });
+    return;
+  }
+
+  if (action.kind === "evolve") {
+    await runEvolveCli({
+      cwd: process.cwd(),
+      maxCycles: action.maxCycles,
+      target: action.target,
+      dryRun: action.dryRun
+    });
+    return;
+  }
+
+  if (action.kind === "meta-harness") {
+    await runMetaHarnessCli({
+      cwd: process.cwd(),
+      runs: action.runs,
+      nodes: action.nodes,
+      noApply: action.noApply,
+      dryRun: action.dryRun
     });
     return;
   }

@@ -5,6 +5,8 @@ export type CliAction =
   | { kind: "web"; host?: string; port?: number }
   | { kind: "compare-analysis"; runId: string; limit: number; judge: boolean }
   | { kind: "eval-harness"; runIds: string[]; limit: number; outputPath?: string; noHistory?: boolean }
+  | { kind: "evolve"; maxCycles: number; target: "skills" | "prompts" | "all"; dryRun: boolean }
+  | { kind: "meta-harness"; runs: number; nodes: ("analyze_results" | "review")[]; noApply: boolean; dryRun: boolean }
   | { kind: "help" }
   | { kind: "version" }
   | { kind: "error"; message: string };
@@ -156,10 +158,113 @@ export function resolveCliAction(args: string[]): CliAction {
     return { kind: "eval-harness", runIds, limit, outputPath, noHistory };
   }
 
+  if (first === "evolve") {
+    let maxCycles = 3;
+    let target: "skills" | "prompts" | "all" = "all";
+    let dryRun = false;
+    for (let index = 1; index < args.length; index += 1) {
+      const token = args[index];
+      if (token === "--max-cycles") {
+        const value = args[index + 1];
+        if (!value) {
+          return { kind: "error", message: "Missing value for --max-cycles." };
+        }
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+          return { kind: "error", message: `Invalid max cycle count: ${value}` };
+        }
+        maxCycles = Math.floor(parsed);
+        index += 1;
+        continue;
+      }
+      if (token === "--target") {
+        const value = args[index + 1];
+        if (!value) {
+          return { kind: "error", message: "Missing value for --target." };
+        }
+        if (value !== "skills" && value !== "prompts" && value !== "all") {
+          return {
+            kind: "error",
+            message: `Unsupported evolve target: ${value}. Expected one of skills, prompts, all.`
+          };
+        }
+        target = value;
+        index += 1;
+        continue;
+      }
+      if (token === "--dry-run") {
+        dryRun = true;
+        continue;
+      }
+      return {
+        kind: "error",
+        message: `Unsupported evolve argument: ${token}`
+      };
+    }
+    return { kind: "evolve", maxCycles, target, dryRun };
+  }
+
+  if (first === "meta-harness") {
+    let runs = 5;
+    const nodes: ("analyze_results" | "review")[] = [];
+    let noApply = false;
+    let dryRun = false;
+    for (let index = 1; index < args.length; index += 1) {
+      const token = args[index];
+      if (token === "--runs") {
+        const value = args[index + 1];
+        if (!value) {
+          return { kind: "error", message: "Missing value for --runs." };
+        }
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+          return { kind: "error", message: `Invalid run count: ${value}` };
+        }
+        runs = Math.floor(parsed);
+        index += 1;
+        continue;
+      }
+      if (token === "--node") {
+        const value = args[index + 1];
+        if (!value) {
+          return { kind: "error", message: "Missing value for --node." };
+        }
+        if (value !== "analyze_results" && value !== "review") {
+          return {
+            kind: "error",
+            message: `Unsupported meta-harness node: ${value}. Expected analyze_results or review.`
+          };
+        }
+        nodes.push(value);
+        index += 1;
+        continue;
+      }
+      if (token === "--no-apply") {
+        noApply = true;
+        continue;
+      }
+      if (token === "--dry-run") {
+        dryRun = true;
+        continue;
+      }
+      return {
+        kind: "error",
+        message: `Unsupported meta-harness argument: ${token}`
+      };
+    }
+    return {
+      kind: "meta-harness",
+      runs,
+      nodes: nodes.length > 0 ? nodes : ["analyze_results", "review"],
+      noApply,
+      dryRun
+    };
+  }
+
   return {
     kind: "error",
     message:
-      "Unsupported CLI arguments. Run `autolabos`, `autolabos web`, `autolabos compare-analysis`, `autolabos eval-harness`, or use slash commands inside the TUI."
+      "Unsupported CLI arguments. Run `autolabos`, `autolabos web`, `autolabos compare-analysis`, `autolabos eval-harness`, `autolabos evolve`, `autolabos meta-harness`, or use slash commands inside the TUI."
   };
 }
 

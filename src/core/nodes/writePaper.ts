@@ -221,6 +221,7 @@ interface PaperReadinessArtifact {
   generated_at: string;
   paper_ready: boolean;
   readiness_state: ManuscriptType;
+  overall_score?: number;
   reason: string;
   citation_check: CitationReport["status"];
   triggered_by: string[];
@@ -993,6 +994,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       );
       const paperReadiness = buildPaperReadinessArtifact({
         manuscriptType: postDraftCritique.manuscript_type,
+        overallScore: postDraftCritique.overall_score,
         evidenceGateDecision,
         claimStatusTable,
         citationReport: citationConsistency,
@@ -3452,6 +3454,7 @@ function buildEvidenceGateDecisionArtifact(
 
 function buildPaperReadinessArtifact(input: {
   manuscriptType: ManuscriptType;
+  overallScore?: number;
   evidenceGateDecision: EvidenceGateDecisionArtifact;
   claimStatusTable: ClaimStatusTableArtifact;
   citationReport: CitationReport;
@@ -3477,6 +3480,7 @@ function buildPaperReadinessArtifact(input: {
     generated_at: new Date().toISOString(),
     paper_ready: paperReady,
     readiness_state: paperReady ? "paper_ready" : input.manuscriptType,
+    overall_score: typeof input.overallScore === "number" ? input.overallScore : undefined,
     citation_check: input.citationReport.status,
     reason: paperReady
       ? "The manuscript passed manuscript-quality, evidence, scientific, and submission gates."
@@ -3657,6 +3661,7 @@ function buildFallbackPaperReadinessRiskArtifact(input: {
   const manuscriptType = resolveFallbackReadinessState(input);
   const paperReadiness = buildPaperReadinessArtifact({
     manuscriptType,
+    overallScore: input.preDraftCritique?.overall_score,
     evidenceGateDecision: input.evidenceGateDecision,
     claimStatusTable: input.claimStatusTable,
     citationReport: input.citationReport ?? {

@@ -40,7 +40,11 @@ import {
   looksLikeRunBriefRequest,
   summarizeRunBrief
 } from "../core/runs/runBriefParser.js";
-import { buildBriefCompletenessArtifact } from "../core/runs/researchBriefFiles.js";
+import {
+  buildBriefCompletenessArtifact,
+  parseManuscriptFormatFromBrief,
+  snapshotResearchBriefToRun
+} from "../core/runs/researchBriefFiles.js";
 import {
   buildReviewInsightCard,
   formatReviewPacketLines,
@@ -156,6 +160,7 @@ export interface CreateRunFromBriefRequest {
   topic?: string;
   constraints?: string[];
   objectiveMetric?: string;
+  sourcePath?: string;
   autoStart?: boolean;
   abortSignal?: AbortSignal;
 }
@@ -311,6 +316,21 @@ export class InteractionSession {
     await runContextMemory.put("run_brief.raw", input.brief);
     await runContextMemory.put("run_brief.extracted", extracted);
     await runContextMemory.put("run_brief.plan_summary", extracted.planSummary || null);
+    const manuscriptFormat = parseManuscriptFormatFromBrief(input.brief);
+    if (manuscriptFormat) {
+      await runContextMemory.put("run_brief.manuscript_format", manuscriptFormat);
+    }
+    if (input.sourcePath) {
+      const resolvedSourcePath = path.isAbsolute(input.sourcePath)
+        ? input.sourcePath
+        : path.join(this.workspaceRoot, input.sourcePath);
+      const snapshotPath = await snapshotResearchBriefToRun(this.workspaceRoot, run.id, resolvedSourcePath);
+      await runContextMemory.put("run_brief.source_path", resolvedSourcePath);
+      await runContextMemory.put(
+        "run_brief.snapshot_path",
+        path.relative(this.workspaceRoot, snapshotPath).replace(/\\/g, "/")
+      );
+    }
     const briefCompleteness = buildBriefCompletenessArtifact(input.brief);
     await runContextMemory.put("run_brief.completeness", briefCompleteness);
     if (briefCompleteness.grade === "minimal") {
