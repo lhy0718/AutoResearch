@@ -15,6 +15,7 @@
 
 import type { ReviewArtifactPresence } from "../reviewSystem.js";
 import type { AnalysisReport } from "../resultAnalysis.js";
+import type { FigureAuditSummary } from "../exploration/types.js";
 import type { BriefEvidenceAssessment, BriefEvidenceCeiling } from "./briefEvidenceValidator.js";
 import { GATE_THRESHOLDS } from "./paperGateThresholds.js";
 import { hasAtLeastOneCompleteResultsTableRow } from "./resultsTableSchema.js";
@@ -40,6 +41,8 @@ export interface MinimumGateResult {
   failed_checks: string[];
   /** Ceiling manuscript type implied by gate failures */
   ceiling_type: MinimumGateCeiling;
+  /** Warning-only signal from figure_audit; review decides whether to block. */
+  figure_audit_severe_mismatch?: boolean;
   /** Short human-readable summary */
   summary: string;
 }
@@ -59,6 +62,7 @@ export interface MinimumGateInput {
   briefEvidenceAssessment?: BriefEvidenceAssessment;
   evidenceLinksArtifact?: unknown;
   claimEvidenceTableArtifact?: unknown;
+  figureAuditSummaryArtifact?: FigureAuditSummary | unknown;
 }
 
 // ---------------------------------------------------------------------------
@@ -224,6 +228,9 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
   }
 
   const passed = failCount === 0;
+  const figureAuditSevereMismatch =
+    isFigureAuditSummary(input.figureAuditSummaryArtifact)
+    && input.figureAuditSummaryArtifact.severe_mismatch_count > 0;
   const summary = passed
     ? "Minimum evidence gate passed — all structural prerequisites met."
     : `Minimum gate: ${failCount} check(s) failed — ceiling: ${ceiling}. ${blockers.join("; ")}.`;
@@ -235,6 +242,7 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
     blockers,
     failed_checks: failedChecks,
     ceiling_type: ceiling,
+    ...(figureAuditSevereMismatch ? { figure_audit_severe_mismatch: true } : {}),
     summary
   };
 }
@@ -364,4 +372,17 @@ function normalizeStringArray(value: unknown): string[] {
     .filter((item): item is string => typeof item === "string")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function isFigureAuditSummary(value: unknown): value is FigureAuditSummary {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as Partial<FigureAuditSummary>;
+  return (
+    typeof candidate.audited_at === "string"
+    && Array.isArray(candidate.issues)
+    && typeof candidate.severe_mismatch_count === "number"
+    && typeof candidate.review_block_required === "boolean"
+  );
 }

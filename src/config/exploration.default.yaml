@@ -1,0 +1,42 @@
+enabled: false
+num_parallel_workers: 1
+max_nodes_per_stage: 6
+max_nodes_per_hypothesis: 3
+max_children_per_node: 2
+max_tree_depth: 4
+max_debug_depth: 2
+debug_probability: 0.2
+per_node_time_budget: 1800
+per_node_token_budget: 50000
+per_node_compute_budget: null
+stage_budgets:
+  feasibility:
+    max_nodes: 3
+    max_time: 3600
+  baseline_hardening:
+    max_nodes: 4
+    max_time: 7200
+  main_agenda:
+    max_nodes: 6
+    max_time: 14400
+  ablation:
+    max_nodes: 4
+    max_time: 7200
+promotion_thresholds:
+  min_objective_gain: 0.01
+  max_instability_penalty: 0.2
+  max_confound_penalty: 0.15
+  min_evidence_completeness: 0.8
+  min_reproduction_runs: 2
+reproducibility_minimums:
+  before_ablation: 2
+  for_promotion: 2
+baseline_lock:
+  required: true
+  strict_hash_match: true
+strongest_defensible_only: true
+figure_auditor:
+  enabled: true
+  block_on_severe_mismatch: true
+  require_caption_alignment: true
+  require_reference_alignment: true

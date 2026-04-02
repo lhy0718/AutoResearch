@@ -1123,6 +1123,7 @@ export class StateGraphRuntime {
       implement_experiments: `.autolabos/runs/${runId}/implement_experiments_session.json`,
       run_experiments: `.autolabos/runs/${runId}/metrics.json`,
       analyze_results: `.autolabos/runs/${runId}/result_analysis.json`,
+      figure_audit: `.autolabos/runs/${runId}/figure_audit/figure_audit_summary.json`,
       review: `.autolabos/runs/${runId}/review/review_packet.json`,
       write_paper: `.autolabos/runs/${runId}/paper/main.tex`
     };

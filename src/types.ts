@@ -6,6 +6,7 @@ export type GraphNodeId =
   | "implement_experiments"
   | "run_experiments"
   | "analyze_results"
+  | "figure_audit"
   | "review"
   | "write_paper";
 
@@ -17,6 +18,7 @@ export const GRAPH_NODE_ORDER: GraphNodeId[] = [
   "implement_experiments",
   "run_experiments",
   "analyze_results",
+  "figure_audit",
   "review",
   "write_paper"
 ];

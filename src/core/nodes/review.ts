@@ -29,6 +29,7 @@ import { runLLMPaperQualityEvaluation } from "../analysis/llmPaperQualityEvaluat
 import { checkReviewDecision } from "../analysis/reviewDecision.js";
 import type { RiskSignal } from "../analysis/riskSignals.js";
 import type { BriefEvidenceAssessment } from "../analysis/briefEvidenceValidator.js";
+import type { FigureAuditSummary } from "../exploration/types.js";
 import {
   buildNetworkDependencyReadinessRisks,
   buildReadinessRiskArtifact,
@@ -84,6 +85,9 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       const riskSignalsArtifact = await safeReadJson(path.join(runDir, "analysis", "risk_signals.json")) as
         | RiskSignal[]
         | undefined;
+      const figureAuditSummary = await safeReadJson(path.join(runDir, "figure_audit", "figure_audit_summary.json")) as
+        | FigureAuditSummary
+        | undefined;
       const panel = await runReviewPanel({
         run,
         node: "review",
@@ -105,11 +109,13 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
               );
             })
           : [],
+        figureAuditSummary,
         llm: deps.llm,
         eventStream: deps.eventStream,
         abortSignal
       });
-      const packet = buildReviewPacket(report, presence, panel);
+      const effectivePanel = applyFigureAuditDecisionGate(panel, figureAuditSummary);
+      const packet = buildReviewPacket(report, presence, effectivePanel);
       const completionDecision = checkReviewDecision(packet);
       const briefEvidenceAssessment =
         (await runContextMemory.get<BriefEvidenceAssessment>("analyze_results.brief_evidence_assessment")) ?? undefined;
@@ -122,7 +128,8 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         objectiveMetric: run.objectiveMetric,
         briefEvidenceAssessment,
         evidenceLinksArtifact: await safeReadJson(path.join(runDir, "paper", "evidence_links.json")),
-        claimEvidenceTableArtifact: await safeReadJson(path.join(runDir, "paper", "claim_evidence_table.json"))
+        claimEvidenceTableArtifact: await safeReadJson(path.join(runDir, "paper", "claim_evidence_table.json")),
+        figureAuditSummaryArtifact: figureAuditSummary
       });
       await writeRunArtifact(
         run,
@@ -134,9 +141,9 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       const venueStyle = resolveVenueStyle(deps.config.paper_profile?.target_venue_style);
       const preDraftCritique = buildPreDraftCritique({
         venueStyle,
-        scorecard: panel.scorecard,
-        decision: panel.decision,
-        findings: panel.findings,
+        scorecard: effectivePanel.scorecard,
+        decision: effectivePanel.decision,
+        findings: effectivePanel.findings,
         presence,
         minimumGateCeiling: minimumGate.ceiling_type
       });
@@ -180,7 +187,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
 
       // Use critique + minimum gate + LLM evaluation to build transition recommendation
       const transitionRecommendation = buildReviewTransitionRecommendation(
-        panel,
+        effectivePanel,
         packet,
         preDraftCritique,
         minimumGate,
@@ -188,7 +195,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         run.graph.researchCycle,
         briefEvidenceAssessment
       );
-      const markdown = renderReviewChecklist(run, packet, panel);
+      const markdown = renderReviewChecklist(run, packet, effectivePanel);
       const readinessRisks = buildReviewReadinessRiskArtifact({
         critique: preDraftCritique,
         minimumGate,
@@ -207,9 +214,14 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       await writeRunArtifact(
         run,
         "review/revision_plan.json",
-        `${JSON.stringify(panel.revision_plan, null, 2)}\n`
+        `${JSON.stringify(effectivePanel.revision_plan, null, 2)}\n`
       );
-      const decisionPath = await writeRunArtifact(run, "review/decision.json", `${JSON.stringify(panel.decision, null, 2)}\n`);
+      const decisionArtifact = {
+        ...effectivePanel.decision,
+        figure_audit_block_required: figureAuditSummary?.review_block_required === true,
+        figure_audit_severe_count: figureAuditSummary?.severe_mismatch_count ?? 0
+      };
+      const decisionPath = await writeRunArtifact(run, "review/decision.json", `${JSON.stringify(decisionArtifact, null, 2)}\n`);
       const critiquePath = await writeRunArtifact(
         run,
         "review/paper_critique.json",
@@ -227,17 +239,17 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         summary: [
           packet.objective_summary,
           `Review readiness: ${packet.readiness.status}.`,
-          `Panel scorecard: ${panel.scorecard.overall_score_1_to_5}/5 overall across ${panel.reviewers.length} reviewer(s).`,
+          `Panel scorecard: ${effectivePanel.scorecard.overall_score_1_to_5}/5 overall across ${effectivePanel.reviewers.length} reviewer(s).`,
           `Paper quality: ${llmEvalResult.evaluation.overall_score_1_to_10}/10 (${llmEvalResult.evaluation.paper_worthiness}).`
         ],
-        decision: `${panel.decision.outcome}${panel.decision.recommended_transition ? ` -> ${panel.decision.recommended_transition}` : ""}. ${panel.decision.summary}`,
+        decision: `${effectivePanel.decision.outcome}${effectivePanel.decision.recommended_transition ? ` -> ${effectivePanel.decision.recommended_transition}` : ""}. ${effectivePanel.decision.summary}`,
         blockers: [
           ...preDraftCritique.blocking_issues.slice(0, 3).map((issue) => issue.summary),
           ...readinessRisks.risks.filter((risk) => risk.severity === "blocked").slice(0, 2).map((risk) => risk.message)
         ],
         openQuestions: [
           `Review completion verdict: ${completionDecision.verdict}.`,
-          ...panel.decision.required_actions.slice(0, 2),
+          ...effectivePanel.decision.required_actions.slice(0, 2),
           ...llmEvalResult.evaluation.weaknesses.slice(0, 2)
         ].slice(0, 3),
         nextActions: packet.suggested_actions.slice(0, 3),
@@ -247,7 +259,8 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
           { label: "Paper critique", path: "review/paper_critique.json" },
           { label: "Review decision", path: "review/decision.json" },
           { label: "Minimum gate", path: "review/minimum_gate.json" },
-          { label: "Readiness risks", path: "review/readiness_risks.json" }
+          { label: "Readiness risks", path: "review/readiness_risks.json" },
+          { label: "Figure audit summary", path: "figure_audit/figure_audit_summary.json" }
         ]
       };
       const operatorSummaryPath = await writeRunArtifact(
@@ -364,7 +377,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       await runContextMemory.put("review.packet", packet);
       await runContextMemory.put("review.last_summary", packet.objective_summary);
       await runContextMemory.put("review.last_recommendation", packet.recommendation || null);
-      await runContextMemory.put("review.last_decision", panel.decision);
+      await runContextMemory.put("review.last_decision", decisionArtifact);
       await runContextMemory.put("review.completion_decision", completionDecision);
       await runContextMemory.put("review.last_findings_count", panel.findings.length);
       await runContextMemory.put("review.last_panel_agreement", panel.consistency.panel_agreement);
@@ -380,7 +393,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         runId: run.id,
         node: "review",
         payload: {
-          text: `Review panel completed with ${panel.reviewers.length} specialist reviewer(s), ${panel.findings.length} finding(s), outcome ${panel.decision.outcome}, and completion verdict ${completionDecision.verdict}. Manuscript type: ${preDraftCritique.manuscript_type}. Target venue: ${preDraftCritique.target_venue_style}.`
+          text: `Review panel completed with ${effectivePanel.reviewers.length} specialist reviewer(s), ${effectivePanel.findings.length} finding(s), outcome ${effectivePanel.decision.outcome}, and completion verdict ${completionDecision.verdict}. Manuscript type: ${preDraftCritique.manuscript_type}. Target venue: ${preDraftCritique.target_venue_style}.`
         }
       });
       deps.eventStream.emit({
@@ -395,10 +408,10 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       const blockers = packet.readiness.blocking_checks;
       const warnings = packet.readiness.warning_checks;
       const manual = packet.readiness.manual_checks;
-      const toolCallsUsed = Math.max(1, panel.llm_calls_used + (llmEvalResult.llmUsed ? 1 : 0));
-      const costUsd = (panel.llm_cost_usd ?? 0) + llmEvalCost;
-      const inputTokens = (panel.llm_input_tokens ?? 0) + (llmEvalResult.usage?.inputTokens ?? 0);
-      const outputTokens = (panel.llm_output_tokens ?? 0) + (llmEvalResult.usage?.outputTokens ?? 0);
+      const toolCallsUsed = Math.max(1, effectivePanel.llm_calls_used + (llmEvalResult.llmUsed ? 1 : 0));
+      const costUsd = (effectivePanel.llm_cost_usd ?? 0) + llmEvalCost;
+      const inputTokens = (effectivePanel.llm_input_tokens ?? 0) + (llmEvalResult.usage?.inputTokens ?? 0);
+      const outputTokens = (effectivePanel.llm_output_tokens ?? 0) + (llmEvalResult.usage?.outputTokens ?? 0);
       const critiqueLabel = preDraftCritique.manuscript_type !== "paper_ready"
         ? ` Manuscript classified as ${preDraftCritique.manuscript_type} (venue: ${preDraftCritique.target_venue_style}).`
         : ` Manuscript classified as paper_ready (venue: ${preDraftCritique.target_venue_style}).`;
@@ -409,13 +422,13 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
             ? `Review panel prepared ${panel.findings.length} finding(s) with ${blockers} blocking issue(s), ${warnings} warning(s), and ${manual} manual review item(s). Completion verdict: reject. The runtime will take the conservative backtrack recommended by review before paper drafting.${critiqueLabel} Public outputs: ${publicOutputs.outputRootRelative}.`
             : completionDecision.verdict === "revise" || warnings > 0 || manual > 0
               ? `Review panel prepared ${panel.findings.length} finding(s) with ${warnings} warning(s) and ${manual} manual review item(s). Completion verdict: revise. The next stage will carry the attached revision checklist or follow the recommended backtrack automatically.${critiqueLabel} Public outputs: ${publicOutputs.outputRootRelative}.`
-              : `Review panel completed with outcome ${panel.decision.outcome} and completion verdict accept.${critiqueLabel} The runtime can continue automatically from the review recommendation. Public outputs: ${publicOutputs.outputRootRelative}.`,
+              : `Review panel completed with outcome ${effectivePanel.decision.outcome} and completion verdict accept.${critiqueLabel} The runtime can continue automatically from the review recommendation. Public outputs: ${publicOutputs.outputRootRelative}.`,
         needsApproval: true,
         approvalSignal: {
           source: "review",
           overall_score: llmEvalResult.evaluation.overall_score_1_to_10,
-          specialist_scores: panel.reviewers.map((reviewer) => reviewer.score_1_to_5),
-          summary: `${llmEvalResult.evaluation.overall_score_1_to_10}/10 overall with ${panel.reviewers.length} specialist reviewer(s).`
+          specialist_scores: effectivePanel.reviewers.map((reviewer) => reviewer.score_1_to_5),
+          summary: `${llmEvalResult.evaluation.overall_score_1_to_10}/10 overall with ${effectivePanel.reviewers.length} specialist reviewer(s).`
         },
         toolCallsUsed,
         costUsd,
@@ -794,6 +807,29 @@ async function safeReadJson(filePath: string): Promise<unknown | undefined> {
   } catch {
     return undefined;
   }
+}
+
+function applyFigureAuditDecisionGate(
+  panel: Awaited<ReturnType<typeof runReviewPanel>>,
+  figureAuditSummary?: FigureAuditSummary
+): Awaited<ReturnType<typeof runReviewPanel>> {
+  if (!figureAuditSummary?.review_block_required || panel.decision.outcome !== "advance") {
+    return panel;
+  }
+
+  return {
+    ...panel,
+    decision: {
+      ...panel.decision,
+      outcome: "revise_in_place",
+      summary: `${panel.decision.summary} Figure audit reported ${figureAuditSummary.severe_mismatch_count} severe mismatch(es), so review acceptance is downgraded to revise.`,
+      rationale: `${panel.decision.rationale} Figure audit requires revision before the manuscript can be treated as publication-ready.`,
+      required_actions: [
+        ...panel.decision.required_actions,
+        "Repair severe figure/caption/reference mismatches flagged by figure_audit before final paper promotion."
+      ].filter((value, index, items) => Boolean(value) && items.indexOf(value) === index)
+    }
+  };
 }
 
 function renderReviewChecklist(

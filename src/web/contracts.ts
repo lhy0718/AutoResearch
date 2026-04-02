@@ -11,6 +11,7 @@ import type { RunLiteratureIndex } from "../core/literatureIndex.js";
 import type { HarnessValidationReport } from "../core/validation/harnessValidationService.js";
 import type { RepositoryKnowledgeEntry, RepositoryKnowledgeIndex } from "../core/repositoryKnowledge.js";
 import type { EvalHarnessHistoryEntry } from "../core/evaluation/evalHarness.js";
+import type { ExplorationStatusSnapshot } from "../core/exploration/status.js";
 
 export interface ConfigSummary {
   projectName: string;
@@ -131,3 +132,5 @@ export interface SessionInputResponse {
 }
 
 export type EvalHarnessHistoryResponse = EvalHarnessHistoryEntry[];
+
+export type ExplorationStatusResponse = ExplorationStatusSnapshot;

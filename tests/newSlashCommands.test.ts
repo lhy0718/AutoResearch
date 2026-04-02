@@ -1,10 +1,23 @@
-import { describe, expect, it, vi } from "vitest";
+import path from "node:path";
+import { tmpdir } from "node:os";
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildSuggestions } from "../src/tui/commandPalette/suggest.js";
 import { SLASH_COMMANDS, needsArg } from "../src/tui/commandPalette/commands.js";
 import { TerminalApp } from "../src/tui/TerminalApp.js";
 import { InMemoryEventStream } from "../src/core/events.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
+import { loadExplorationConfig } from "../src/core/exploration/explorationConfig.js";
+import * as explorationConfigModule from "../src/core/exploration/explorationConfig.js";
+
+const ORIGINAL_CWD = process.cwd();
+
+afterEach(() => {
+  process.chdir(ORIGINAL_CWD);
+  vi.restoreAllMocks();
+});
 
 const runs = [
   {
@@ -52,6 +65,11 @@ describe("new slash commands", () => {
     expect(suggestions.some((s) => s.applyValue === "/watch ")).toBe(true);
   });
 
+  it("includes /explore in suggestions when typing /ex", () => {
+    const suggestions = buildSuggestions({ input: "/ex", runs, activeRunId: "run-1" });
+    expect(suggestions.some((s) => s.applyValue === "/explore ")).toBe(true);
+  });
+
   it("includes /analyze-results in suggestions when typing /an", () => {
     const suggestions = buildSuggestions({ input: "/an", runs, activeRunId: "run-1" });
     expect(suggestions.some((s) => s.applyValue === "/analyze-results ")).toBe(true);
@@ -72,9 +90,9 @@ describe("new slash commands", () => {
     expect(suggestions.some((s) => s.key === "cmd:artifact")).toBe(true);
     expect(suggestions.some((s) => s.key === "cmd:jobs")).toBe(true);
     expect(suggestions.some((s) => s.key === "cmd:watch")).toBe(true);
+    expect(suggestions.some((s) => s.key === "cmd:explore")).toBe(true);
     expect(suggestions.some((s) => s.key === "cmd:analyze-results")).toBe(true);
     expect(suggestions.some((s) => s.key === "cmd:stats")).toBe(true);
-    expect(suggestions.some((s) => s.key === "cmd:terminal-setup")).toBe(true);
   });
 
   it("resolves /terminal-setup alias ts", () => {
@@ -113,6 +131,144 @@ describe("new slash commands", () => {
     const app = makeApp();
     app.printHelp();
     expect(app.logs).toContain("/watch");
+  });
+
+  it("includes /explore in help output", () => {
+    const app = makeApp();
+    app.printHelp();
+    expect(app.logs).toContain("/explore");
+  });
+
+  it("renders exploration status through /explore", async () => {
+    const baseConfig = loadExplorationConfig();
+    vi.spyOn(explorationConfigModule, "loadExplorationConfig").mockReturnValue({
+      ...baseConfig,
+      enabled: true
+    });
+
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-explore-command-"));
+    process.chdir(root);
+
+    const runId = "run-explore";
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "experiment_tree"), { recursive: true });
+    await mkdir(path.join(runDir, "figure_audit"), { recursive: true });
+    await writeFile(
+      path.join(runDir, "experiment_tree", "tree.json"),
+      JSON.stringify(
+        {
+          run_id: runId,
+          root_id: "branch-1",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          nodes: {
+            "branch-1": {
+              node_id: "branch-1",
+              parent_id: null,
+              root_id: "branch-1",
+              stage: "main_agenda",
+              depth: 0,
+              debug_depth: 0,
+              branch_kind: "main",
+              change_set: { model: "candidate-a" },
+              hypothesis_link: "hypothesis-1",
+              expected_effect: "Improve accuracy.",
+              actual_result_summary: "Improved.",
+              objective_metrics: { accuracy: 0.92 },
+              budget_cost: 1200,
+              reproducibility_status: "reproduced",
+              failure_fingerprint: null,
+              evidence_manifest: {
+                branch_id: "branch-1",
+                executed_at: new Date().toISOString(),
+                artifact_paths: ["analysis/report.json"],
+                metrics_source: "metrics.json",
+                is_executed: true,
+                is_reproducible: true,
+                reproduction_runs: 2
+              },
+              promotion_decision: {
+                branch_id: "branch-1",
+                promoted: true,
+                is_strongest_defensible: true,
+                promotion_score: 7.4,
+                objective_gain: 0.2,
+                budget_penalty: 0.02,
+                instability_penalty: 0,
+                confound_penalty: 0,
+                evidence_completeness: 1,
+                blocking_reasons: [],
+                decided_at: new Date().toISOString()
+              },
+              blocked_reasons: [],
+              status: "promoted",
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "experiment_tree", "manager_state.json"),
+      JSON.stringify(
+        {
+          run_id: runId,
+          current_stage: "main_agenda",
+          stage_decision_history: [],
+          best_defensible_branch_id: "branch-1",
+          pending_rollback_reason: null,
+          promotion_history: [],
+          blocked_claim_fingerprints: [],
+          figure_audit_summary: null,
+          updated_at: new Date().toISOString()
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "figure_audit", "figure_audit_summary.json"),
+      JSON.stringify(
+        {
+          audited_at: new Date().toISOString(),
+          figure_count: 1,
+          issues: [],
+          severe_mismatch_count: 0,
+          review_block_required: false
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const app = makeApp({
+      runStore: {
+        listRuns: vi.fn().mockResolvedValue([
+          {
+            id: runId,
+            title: "Exploration Run",
+            currentNode: "design_experiments",
+            status: "running",
+            updatedAt: new Date().toISOString(),
+            graph: createDefaultGraphState()
+          }
+        ]),
+        getRun: vi.fn().mockResolvedValue(undefined)
+      }
+    });
+    app.activeRunId = runId;
+
+    await app.handleExplore();
+
+    expect(app.transientLogs.some((line: string) => line.includes("=== Exploration Engine Status ==="))).toBe(true);
+    expect(app.transientLogs.some((line: string) => line.includes("Current Stage:    main_agenda"))).toBe(true);
+    expect(app.transientLogs.some((line: string) => line.includes("Best Defensible:  branch-1"))).toBe(true);
   });
 
   it("prints tune-node comparison reports through /agent", async () => {

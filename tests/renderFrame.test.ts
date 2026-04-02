@@ -938,7 +938,7 @@ describe("buildFrame", () => {
         title: "Multi-agent collaboration in recent papers: five-year state-of-the-art reproducibility benchmark"
       }),
       logs: [
-        "Graph nodes: collect_papers, analyze_papers, generate_hypotheses, design_experiments, implement_experiments, run_experiments, analyze_results, review, write_paper"
+        "Graph nodes: collect_papers, analyze_papers, generate_hypotheses, design_experiments, implement_experiments, run_experiments, analyze_results, figure_audit, review, write_paper"
       ],
       input: "",
       inputCursor: 0,

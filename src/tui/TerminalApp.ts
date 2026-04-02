@@ -76,6 +76,7 @@ import {
   formatRunJobProjectionLines,
   parseJobsCommandArgs
 } from "../core/runs/jobsProjection.js";
+import { buildExplorationStatusSnapshot, formatExplorationStatusLines } from "../core/exploration/status.js";
 import { askLine } from "../utils/prompt.js";
 import { ensureDir, fileExists } from "../utils/fs.js";
 import { getDefaultPdfAnalysisModeForLlmMode, getPdfAnalysisModeForConfig, resolveOpenAiApiKey, upsertEnvVar } from "../config.js";
@@ -2086,6 +2087,9 @@ export class TerminalApp {
       case "watch":
         await this.handleWatch();
         return { ok: true };
+      case "explore":
+        await this.handleExplore();
+        return { ok: true };
       case "run":
         return this.handleRunSelect(args, false);
       case "resume":
@@ -2149,6 +2153,7 @@ export class TerminalApp {
     this.pushLog("/brief start <path|--latest>");
     this.pushLog("/jobs [query|--template 3d|7d]");
     this.pushLog("/watch");
+    this.pushLog("/explore");
     this.pushLog("/analyze-results [run]");
     this.pushLog("/approve");
     this.pushLog("/knowledge [run]");
@@ -2258,6 +2263,20 @@ export class TerminalApp {
       this.renderRunQueueBucket("running", snapshot.running);
       this.renderRunQueueBucket("waiting", snapshot.waiting);
       this.renderRunQueueBucket("stalled", snapshot.stalled);
+    }
+    this.render();
+  }
+
+  private async handleExplore(): Promise<void> {
+    const runs = await this.runStore.listRuns();
+    const targetRunId = this.activeRunId || runs[0]?.id || null;
+    const snapshot = await buildExplorationStatusSnapshot({
+      workspaceRoot: process.cwd(),
+      runId: targetRunId
+    });
+    this.clearTransientLogs();
+    for (const line of formatExplorationStatusLines(snapshot)) {
+      this.pushTransientLog(line);
     }
     this.render();
   }
@@ -3786,7 +3805,7 @@ export class TerminalApp {
           this.pushLog(`Approved analyze_results. Next node is ${workingRun.currentNode}.`);
           return { ok: false, reason: `review not available after approval: ${workingRun.currentNode}` };
         }
-        this.pushLog("Approved analyze_results and moved into review.");
+        this.pushLog("Approved analyze_results and moved into figure_audit.");
       }
     }
 
@@ -5945,6 +5964,13 @@ export class TerminalApp {
           report
         });
       }
+      case "figure_audit": {
+        const summaryExists = await pathExists(path.join(runDir, "figure_audit", "figure_audit_summary.json"));
+        const perFigureCount = await countDirFiles(path.join(runDir, "figure_audit", "per_figure"));
+        return [
+          `Count(${node}): summary ${summaryExists ? "present" : "missing"}, ${perFigureCount} per-figure artifact(s)`
+        ];
+      }
       case "review": {
         const reviewFiles = [
           "review/review_packet.json",
@@ -6844,6 +6870,8 @@ function describeNodeActivity(node: GraphNodeId): string {
       return "Running experiments...";
     case "analyze_results":
       return "Analyzing results...";
+    case "figure_audit":
+      return "Auditing figures...";
     case "review":
       return "Reviewing...";
     case "write_paper":
@@ -7216,6 +7244,8 @@ function nodeArtifactTargets(node: GraphNodeId): string[] {
       return ["exec_logs", "metrics.json", "objective_evaluation.json", "run_experiments_verify_report.json"];
     case "analyze_results":
       return ["figures", "analysis", "result_analysis.json", "result_analysis_synthesis.json", "transition_recommendation.json"];
+    case "figure_audit":
+      return ["figure_audit"];
     case "review":
       return ["review"];
     case "write_paper":
@@ -7256,6 +7286,8 @@ function nodeContextPrefixes(node: GraphNodeId): string[] {
       return ["run_experiments.", "objective_metric."];
     case "analyze_results":
       return ["analyze_results."];
+    case "figure_audit":
+      return ["figure_audit."];
     case "review":
       return ["review."];
     case "write_paper":

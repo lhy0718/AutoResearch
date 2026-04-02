@@ -43,6 +43,7 @@ import { readRepositoryKnowledgeIndex } from "../core/repositoryKnowledge.js";
 import { readEvalHarnessHistoryEntries } from "../core/evaluation/evalHarness.js";
 import { buildRunQueueSnapshot } from "../core/runs/jobQueue.js";
 import { buildRunJobsSnapshot } from "../core/runs/jobsProjection.js";
+import { buildExplorationStatusSnapshot } from "../core/exploration/status.js";
 import { bootstrapAutoLabOSRuntime, AutoLabOSRuntime } from "../runtime/createRuntime.js";
 import { detectExecutionProfile, executionProfileToDependencyMode } from "../runtime/executionProfile.js";
 import { GraphNodeId, PendingPlan, RunJobsSnapshot, RunQueueSnapshot, RunRecord, WebSessionState } from "../types.js";
@@ -53,6 +54,7 @@ import {
   ConfigSummary,
   DoctorResponse,
   EvalHarnessHistoryResponse,
+  ExplorationStatusResponse,
   JobsResponse,
   KnowledgeFileResponse,
   KnowledgeResponse,
@@ -210,6 +212,18 @@ class AutoLabOSWebController {
       if (pathname === "/api/eval-harness/history" && method === "GET") {
         const entries = await readEvalHarnessHistoryEntries(this.cwd, 20);
         return jsonResponse(res, 200, entries satisfies EvalHarnessHistoryResponse);
+      }
+
+      if (pathname === "/api/exploration/status" && method === "GET") {
+        const requestedRunId = url.searchParams.get("run_id")?.trim() || undefined;
+        const fallbackRunId = requestedRunId
+          || this.session?.getActiveRunId()
+          || (this.runtime ? (await this.runtime.runStore.listRuns())[0]?.id : undefined);
+        const payload: ExplorationStatusResponse = await buildExplorationStatusSnapshot({
+          workspaceRoot: this.cwd,
+          runId: fallbackRunId
+        });
+        return jsonResponse(res, 200, payload);
       }
 
       if (pathname === "/api/setup" && method === "POST") {

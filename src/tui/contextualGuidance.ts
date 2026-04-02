@@ -228,6 +228,8 @@ function steeringDescriptionForNode(node: RunRecord["currentNode"]): string {
       return "Add steering to prioritize the most informative executions first.";
     case "analyze_results":
       return "Add steering to focus the analysis on the decision you care about most.";
+    case "figure_audit":
+      return "Add steering to focus the figure audit on evidence alignment and publication readiness.";
     case "review":
       return "Add steering to tighten the review criteria before continuing.";
     case "write_paper":

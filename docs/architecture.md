@@ -4,11 +4,11 @@ This document captures the runtime contracts that must remain stable while impro
 
 ## 1) Governed workflow contract
 
-AutoLabOS operates around a governed 9-node research workflow:
+AutoLabOS operates around a governed fixed research workflow:
 
-`collect_papers -> analyze_papers -> generate_hypotheses -> design_experiments -> implement_experiments -> run_experiments -> analyze_results -> review -> write_paper`
+`collect_papers -> analyze_papers -> generate_hypotheses -> design_experiments -> implement_experiments -> run_experiments -> analyze_results -> figure_audit -> review -> write_paper`
 
-This 9-node structure is the default top-level workflow contract and must remain stable unless an explicit contract change is made.
+The historical 9-node contract remains the architectural baseline for the research loop. `figure_audit` is the one approved post-analysis checkpoint added for independent figure-quality and vision-critique resume behavior. Beyond that deliberate checkpoint, the top-level governed workflow must remain stable unless an explicit contract change is made.
 
 Do not casually add, remove, reorder, or redefine top-level nodes.
 
@@ -22,7 +22,7 @@ A top-level workflow change is allowed only when all of the following are true:
 - safe backtracking behavior is preserved
 - the change is reflected consistently in docs, runtime behavior, and validation expectations
 
-Until those conditions are met, treat the 9-node workflow as fixed.
+Until those conditions are met, treat the governed workflow shape as fixed.
 
 ## 2) Shared runtime surfaces
 
@@ -158,3 +158,67 @@ When applicable, validation should confirm:
 - No broad refactor of orchestration/runtime without contract justification.
 - No speculative replacement of existing node logic.
 - No weakening of review gating, evidence discipline, or reproducibility expectations for convenience.
+
+## 11) Exploration Engine (P2-9)
+
+### 왜 fixed 9-node graph를 유지하는가
+
+AutoLabOS의 핵심 가치는 governed, checkpointed, inspectable workflow다.
+Exploration Engine은 이 graph를 대체하지 않는다.
+`figure_audit`를 제외한 exploration 관련 신규 상위 노드는 추가하지 않는다.
+
+### Exploration Manager가 내부 coordinator인 이유
+
+새로운 상위 노드를 추가하면 기존 checkpoint/resume 계약이 깨진다.
+ExplorationManager는 기존 노드 핸들러 내부에서 초기화되고, 자체 파일시스템(`experiment_tree/`)에 상태를 저장한다.
+즉, `design_experiments ~ analyze_results` 구간의 bounded coordinator이지, `StateGraphRuntime`를 우회하는 별도 오케스트레이터가 아니다.
+
+### Bounded Exploration Engine 삽입 위치
+
+- `design_experiments` → ExplorationManager 초기화, baseline proposal
+- `implement_experiments` → tree node 코드 구현
+- `run_experiments` → tree node 실행
+- `analyze_results` → evidence 수집, Gate 1+2(결정론적), promotion gate, writeup manifest 생성
+- `figure_audit` → Gate 3(vision LLM critique) + 전체 audit 집계 → `figure_audit_summary.json`
+- `review` → figure audit 결과 반영, strongest defensible branch 판정
+
+### figure_audit 노드를 별도 추가한 이유
+
+Gate 1+2는 결정론적이고 실행 시간이 1초 미만이므로 `analyze_results` 후처리로 충분하다.
+Gate 3(vision LLM)는 실행 시간이 분 단위이고 비동기 LLM 호출이며 타임아웃/실패가 가능하다.
+Gate 3 실패 시 `analyze_results` 전체를 재실행해야 하는 책임 혼재를 피하고, `analyze_results 완료 / figure_audit 미완` 상태를 독립 체크포인트로 resume할 수 있어야 한다.
+`figure_auditor.enabled=false`이면 `figure_audit` 노드는 pass-through로 동작해 기존 경로와 동일한 결과를 낸다.
+
+### Baseline Lock과 Single-Change Enforcement
+
+`baseline_hardening` stage 완료 시 baseline lock이 생성된다.
+이후 모든 branch는 lock의 `allowed_intervention_dimensions` 안에서 단 하나의 dimension만 바꿀 수 있다.
+동시에 두 dimension이 바뀌면 `singleChangeEnforcer`가 차단한다.
+
+### Executed-Evidence-Only와 Claim Ceiling의 연결
+
+claim ceiling (`paperMinimumGate.ts`)은 claim-evidence 정합성을 검사한다.
+`evidenceSerializer`는 그 이전 단계에서 미실행 항목이 claim source로 진입하지 못하도록 차단한다.
+두 메커니즘은 독립적이지만 상호 보완적이다.
+
+### Figure Auditor 역할
+
+`figure_audit`는 `analyze_results` 완료 후, review 입력 전에 동작하는 품질 gate다.
+역할은 미적 개선이 아니라 증거 정합성(`evidence_alignment`), 가독성, 게재 가능성(`publication_readiness`) 판정이다.
+`empirical_validity_impact`와 `publication_readiness`는 별도 필드로 분리 저장된다.
+severe mismatch는 review decision을 `revise` 이상으로 격상시킨다.
+
+### AI-Scientist-v2와의 차이
+
+유사점:
+- experiment manager
+- tree-based exploration
+- stage-based policy
+- search budget
+
+차이점:
+- AutoLabOS는 governed fixed graph를 유지하며 exploration tree가 그 안에 내장된다. `figure_audit`는 Gate 3의 독립 체크포인트 필요성 때문에 추가된 노드이며, exploration engine 자체가 상위 workflow를 늘리는 방식은 아니다.
+- single-change enforcement와 baseline lock이 필수 gate다.
+- review gate가 단순 LLM 점수가 아닌 5-specialist panel + 2-layer 구조다.
+- checkpointed resume와 audit trail이 핵심 요구사항이다.
+- Figure Auditor가 별도 노드로 분리되어 비동기 vision critique를 독립 resume 가능하게 한다.

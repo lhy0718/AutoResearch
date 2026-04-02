@@ -32,6 +32,7 @@ const FIXED_NODE_ORDER: GraphNodeId[] = [
   "implement_experiments",
   "run_experiments",
   "analyze_results",
+  "figure_audit",
   "review",
   "write_paper"
 ];
@@ -330,8 +331,8 @@ function buildMinimalAnalyzeResultsPrerequisiteArtifacts(runId: string, now: str
       path: "transition_recommendation.json",
       content: {
         action: "advance",
-        targetNode: "review",
-        reason: "Fixture run is ready for review."
+        targetNode: "figure_audit",
+        reason: "Fixture run is ready for figure audit."
       }
     }
   ];

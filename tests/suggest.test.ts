@@ -29,7 +29,7 @@ describe("buildSuggestions", () => {
     const suggestions = buildSuggestions({ input: "/", runs, activeRunId: "run-alpha-123" });
     expect(suggestions.length).toBeGreaterThan(0);
     expect(suggestions[0].applyValue.startsWith("/")).toBe(true);
-    const expectedVisible = ["new", "brief", "jobs", "watch", "analyze-results", "model"];
+    const expectedVisible = ["new", "brief", "jobs", "watch", "explore", "analyze-results", "model"];
     expect(
       expectedVisible.every((commandName) =>
         suggestions.some((suggestion) => suggestion.applyValue === expectedApplyValue(commandName))

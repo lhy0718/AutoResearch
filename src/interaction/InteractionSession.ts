@@ -30,6 +30,7 @@ import {
   formatRunJobProjectionLines,
   parseJobsCommandArgs
 } from "../core/runs/jobsProjection.js";
+import { buildExplorationStatusSnapshot, formatExplorationStatusLines } from "../core/exploration/status.js";
 import { RunContextMemory } from "../core/memory/runContextMemory.js";
 import { parseSlashCommand } from "../core/commands/parseSlash.js";
 import { getPdfAnalysisModeForConfig } from "../config.js";
@@ -1104,6 +1105,9 @@ export class InteractionSession {
       case "jobs":
         await this.handleJobs(args);
         return { ok: true };
+      case "explore":
+        await this.handleExplore();
+        return { ok: true };
       case "run":
         return this.handleRunSelect(args, false);
       case "resume":
@@ -1137,6 +1141,7 @@ export class InteractionSession {
   private printHelp(): void {
     this.pushLog("Web composer commands:");
     this.pushLog("/help | /runs | /jobs [query|--template 3d|7d] | /run <run> | /resume <run> | /title <new title>");
+    this.pushLog("/explore");
     this.pushLog("/analyze-results [run]");
     this.pushLog("/knowledge [run] | /artifact <path> [--run <run>]");
     this.pushLog("/doctor | /approve | /retry");
@@ -1325,6 +1330,18 @@ export class InteractionSession {
       }
     }
     for (const line of formatFailureAggregateLines(snapshot.top_failures)) {
+      this.pushLog(line);
+    }
+  }
+
+  private async handleExplore(): Promise<void> {
+    const runs = await this.runStore.listRuns();
+    const targetRunId = this.activeRunId || runs[0]?.id || null;
+    const snapshot = await buildExplorationStatusSnapshot({
+      workspaceRoot: this.workspaceRoot,
+      runId: targetRunId
+    });
+    for (const line of formatExplorationStatusLines(snapshot)) {
       this.pushLog(line);
     }
   }
@@ -2000,7 +2017,7 @@ export class InteractionSession {
           this.pushLog(`Approved analyze_results. Next node is ${workingRun.currentNode}.`);
           return { ok: false, reason: `review not available after approval: ${workingRun.currentNode}` };
         }
-        this.pushLog("Approved analyze_results and moved into review.");
+        this.pushLog("Approved analyze_results and moved into figure_audit.");
       }
     }
 
@@ -2542,6 +2559,13 @@ export class InteractionSession {
           report
         });
       }
+      case "figure_audit": {
+        const summaryExists = await pathExists(path.join(runDir, "figure_audit", "figure_audit_summary.json"));
+        const perFigureCount = await countDirFiles(path.join(runDir, "figure_audit", "per_figure"));
+        return [
+          `Count(${node}): summary ${summaryExists ? "present" : "missing"}, ${perFigureCount} per-figure artifact(s)`
+        ];
+      }
       case "review": {
         const reviewFiles = [
           "review/review_packet.json",
@@ -2636,6 +2660,8 @@ function describeNodeActivity(node: GraphNodeId): string {
       return "Running experiments...";
     case "analyze_results":
       return "Analyzing results...";
+    case "figure_audit":
+      return "Auditing figures...";
     case "review":
       return "Reviewing...";
     case "write_paper":
@@ -2874,6 +2900,8 @@ function nodeArtifactTargets(node: GraphNodeId): string[] {
       return ["exec_logs", "metrics.json", "objective_evaluation.json", "run_experiments_verify_report.json"];
     case "analyze_results":
       return ["figures", "analysis", "result_analysis.json", "result_analysis_synthesis.json", "transition_recommendation.json"];
+    case "figure_audit":
+      return ["figure_audit"];
     case "review":
       return ["review"];
     case "write_paper":
@@ -2912,6 +2940,8 @@ function nodeContextPrefixes(node: GraphNodeId): string[] {
       return ["run_experiments.", "objective_metric."];
     case "analyze_results":
       return ["analyze_results."];
+    case "figure_audit":
+      return ["figure_audit."];
     case "review":
       return ["review."];
     case "write_paper":

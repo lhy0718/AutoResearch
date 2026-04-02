@@ -1172,7 +1172,7 @@ describe("InteractionSession", () => {
     const result = await session.submitInput("/agent review");
     const snapshot = session.snapshot();
 
-    expect(result.logs.some((line) => line.includes("Approved analyze_results and moved into review."))).toBe(true);
+    expect(result.logs.some((line) => line.includes("Approved analyze_results and moved into figure_audit."))).toBe(true);
     expect(result.logs.some((line) => line.includes("review finished: Review packet prepared."))).toBe(true);
     expect(result.logs.some((line) => line.includes("Review readiness: blocking"))).toBe(true);
     expect(result.logs.some((line) => line.includes("Blocking: Evidence bundle"))).toBe(true);

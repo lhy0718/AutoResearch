@@ -101,7 +101,7 @@ export function buildNaturalAssistantResponse(ctx: NaturalAssistantContext): Nat
   const lines: string[] = [];
   if (wantsStructure) {
     lines.push(
-      "Workflow: collect_papers -> analyze_papers -> generate_hypotheses -> design_experiments -> implement_experiments -> run_experiments -> analyze_results -> review -> write_paper"
+      "Workflow: collect_papers -> analyze_papers -> generate_hypotheses -> design_experiments -> implement_experiments -> run_experiments -> analyze_results -> figure_audit -> review -> write_paper"
     );
   }
 

@@ -1374,11 +1374,11 @@ describe("experiment governance", () => {
     expect(result.status).toBe("success");
     expect(result.transitionRecommendation).toMatchObject({
       action: "advance",
-      targetNode: "review"
+      targetNode: "figure_audit"
     });
     const transitionRaw = await readFile(path.join(runDir, "transition_recommendation.json"), "utf8");
     expect(transitionRaw).toContain('"action": "advance"');
-    expect(transitionRaw).toContain('"targetNode": "review"');
+    expect(transitionRaw).toContain('"targetNode": "figure_audit"');
   });
 
   it("skips governance backtrack for factorial designs with empty condition_comparisons", () => {

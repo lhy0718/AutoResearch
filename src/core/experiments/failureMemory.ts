@@ -10,6 +10,7 @@ import { promises as fs } from "node:fs";
 
 import { GraphNodeId } from "../../types.js";
 import { ensureDir } from "../../utils/fs.js";
+import type { FailureClass, RetryPolicy, ExplorationStage } from "../exploration/types.js";
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -36,6 +37,12 @@ export interface FailureRecord {
 
   /** Human-readable reason for do_not_retry when set. */
   do_not_retry_reason?: string;
+
+  /** Optional exploration-layer classification metadata. */
+  exploration_failure_class?: FailureClass | null;
+  exploration_retry_policy?: RetryPolicy | null;
+  exploration_equivalent_to?: string | null;
+  exploration_affects_stage?: ExplorationStage[];
 }
 
 // ---------------------------------------------------------------------------

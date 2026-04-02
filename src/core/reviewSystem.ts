@@ -2,6 +2,7 @@ import { EventStream } from "./events.js";
 import type { RiskSignal } from "./analysis/riskSignals.js";
 import { parseStructuredModelJsonObject } from "./analysis/modelJson.js";
 import { LLMClient, LLMCompletionUsage } from "./llm/client.js";
+import type { FigureAuditSummary } from "./exploration/types.js";
 import { AnalysisFailureCategory, AnalysisPaperClaim, AnalysisReport } from "./resultAnalysis.js";
 import { RunRecord, GraphNodeId } from "../types.js";
 import { loadReviewPromptSections } from "./nodePrompts.js";
@@ -149,6 +150,7 @@ interface ReviewPanelArgs {
   presence: ReviewArtifactPresence;
   orphanCitations?: string[];
   riskSignals?: RiskSignal[];
+  figureAuditSummary?: FigureAuditSummary;
   llm: LLMClient;
   eventStream?: EventStream;
   abortSignal?: AbortSignal;
@@ -285,7 +287,8 @@ async function refineReviewerWithLlm(
           spec,
           fallback,
           args.orphanCitations,
-          args.riskSignals
+          args.riskSignals,
+          args.figureAuditSummary
         ), {
           // The prompt builder reads orphan citations from args to keep specialist context auditably explicit.
           systemPrompt: buildReviewerSystemPrompt(spec),
@@ -343,7 +346,8 @@ function buildReviewerPrompt(
   spec: ReviewerSpec,
   fallback: SpecialistReviewResult,
   orphanCitations: string[] = [],
-  riskSignals: RiskSignal[] = []
+  riskSignals: RiskSignal[] = [],
+  figureAuditSummary?: FigureAuditSummary
 ): string {
   const payload = {
     reviewer: {
@@ -376,6 +380,13 @@ function buildReviewerPrompt(
     warnings: report.warnings.slice(0, 4),
     orphan_citations: orphanCitations.slice(0, 12),
     risk_signals: riskSignals.slice(0, 12),
+    figure_audit_summary: figureAuditSummary
+      ? {
+          severe_mismatch_count: figureAuditSummary.severe_mismatch_count,
+          review_block_required: figureAuditSummary.review_block_required,
+          issues: figureAuditSummary.issues.slice(0, 6)
+        }
+      : undefined,
     paper_claims: report.paper_claims.slice(0, 4).map((claim) => ({
       claim: claim.claim,
       evidence_count: claim.evidence.length

@@ -6,6 +6,7 @@ export type NodeId =
   | "implement_experiments"
   | "run_experiments"
   | "analyze_results"
+  | "figure_audit"
   | "review"
   | "write_paper";
 
@@ -262,6 +263,23 @@ export interface WebSessionState {
   logs: string[];
   canCancel: boolean;
   activeRunInsight?: RunInsightCard;
+}
+
+export interface ExplorationStatusResponse {
+  enabled: boolean;
+  current_stage: "feasibility" | "baseline_hardening" | "main_agenda" | "ablation" | null;
+  node_counts: {
+    explored: number;
+    promoted: number;
+    blocked: number;
+  } | null;
+  hypothesis_usage: Record<string, { total: number; promoted: number }> | null;
+  best_defensible_branch_id: string | null;
+  rollback_reason: string | null;
+  baseline_lock_status: "locked" | "not_locked" | "not_applicable";
+  evidence_completeness: number | null;
+  figure_audit_warnings: number | null;
+  severe_figure_mismatch: boolean | null;
 }
 
 export interface RunRecord {

@@ -7,6 +7,7 @@ import {
   ConfigSummary,
   DoctorCheck,
   DoctorResponse,
+  ExplorationStatusResponse,
   HarnessValidationReport,
   KnowledgeFileResponse,
   KnowledgeResponse,
@@ -43,6 +44,7 @@ const NODE_ORDER = [
   "implement_experiments",
   "run_experiments",
   "analyze_results",
+  "figure_audit",
   "review",
   "write_paper"
 ] as const;
@@ -115,6 +117,7 @@ export function App() {
   const [doctorChecks, setDoctorChecks] = useState<DoctorCheck[]>([]);
   const [doctorReadiness, setDoctorReadiness] = useState<DoctorResponse["readiness"] | null>(null);
   const [doctorHarness, setDoctorHarness] = useState<HarnessValidationReport | null>(null);
+  const [explorationStatus, setExplorationStatus] = useState<ExplorationStatusResponse | null>(null);
   const [liveJobQueue, setLiveJobQueue] = useState<BootstrapResponse["jobQueue"] | null>(null);
   const [commandInput, setCommandInput] = useState("");
   const [runSearch, setRunSearch] = useState("");
@@ -136,6 +139,7 @@ export function App() {
     void refreshDoctor();
     void refreshKnowledge();
     void refreshJobs();
+    void refreshExplorationStatus();
   }, []);
 
   useEffect(() => {
@@ -148,6 +152,7 @@ export function App() {
     setLiterature(null);
     void refreshRunDetails(selectedRunId);
     void refreshLiterature(selectedRunId);
+    void refreshExplorationStatus(selectedRunId);
   }, [selectedRunId]);
 
   useEffect(() => {
@@ -198,6 +203,7 @@ export function App() {
       startTransition(() => {
         void refreshJobs();
         void refreshKnowledge();
+        void refreshExplorationStatus(selectedRunId);
       });
     });
     source.addEventListener("bootstrap", () => {
@@ -205,6 +211,7 @@ export function App() {
         void refreshBootstrap();
         void refreshJobs();
         void refreshKnowledge();
+        void refreshExplorationStatus(selectedRunId);
       });
     });
     return () => {
@@ -215,6 +222,7 @@ export function App() {
   useEffect(() => {
     const timer = window.setInterval(() => {
       void refreshJobs();
+      void refreshExplorationStatus(selectedRunId);
     }, 5000);
     return () => {
       window.clearInterval(timer);
@@ -239,7 +247,7 @@ export function App() {
     stalled: rawJobQueue?.stalled || []
   };
   const completedNodeCount = selectedRun
-    ? NODE_ORDER.filter((node) => selectedRun.graph.nodeStates[node].status === "completed").length
+    ? NODE_ORDER.filter((node) => selectedRun.graph.nodeStates[node]?.status === "completed").length
     : 0;
   const selectedJob = selectedRun
     ? jobRows.find((job) => job.run_id === selectedRun.id) || null
@@ -281,6 +289,20 @@ export function App() {
       setLiveJobQueue(data);
     } catch {
       // Older tests and reduced backends may not expose /api/jobs yet.
+    }
+  }
+
+  async function refreshExplorationStatus(runId?: string) {
+    try {
+      const query = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
+      const data = await api<ExplorationStatusResponse>(`/api/exploration/status${query}`);
+      if (typeof data.enabled === "boolean") {
+        setExplorationStatus(data);
+      } else {
+        setExplorationStatus(null);
+      }
+    } catch {
+      setExplorationStatus(null);
     }
   }
 
@@ -691,6 +713,10 @@ export function App() {
         <section className="subtle-card">
           <p className="section-kicker">Live watch</p>
           {renderLiveWatchTable(jobQueue)}
+        </section>
+        <section className="subtle-card">
+          <p className="section-kicker">Exploration engine</p>
+          {renderExplorationStatusCard(explorationStatus)}
         </section>
         <section className="subtle-card">
           <p className="section-kicker">Background jobs</p>
@@ -1165,7 +1191,12 @@ export function App() {
 
               <div className="workflow-grid">
                 {NODE_ORDER.map((node) => {
-                  const state = selectedRun.graph.nodeStates[node];
+                  const state = selectedRun.graph.nodeStates[node] ?? {
+                    status: "pending",
+                    note: null,
+                    lastError: null,
+                    updatedAt: selectedRun.updatedAt
+                  };
                   const isCurrent = selectedRun.currentNode === node;
                   return (
                     <article key={node} className={`node-card status-${state.status} ${isCurrent ? "current" : ""}`}>
@@ -2673,6 +2704,61 @@ function renderLiveWatchTable(
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function renderExplorationStatusCard(
+  status: ExplorationStatusResponse | null
+): ReactNode {
+  if (!status) {
+    return (
+      <div className="manuscript-quality-group-list">
+        <div className="manuscript-quality-group-line">
+          <p>Exploration status unavailable</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="manuscript-quality-group-list">
+      <div className="manuscript-quality-group-line">
+        <p><strong>Enabled:</strong> {status.enabled ? "true" : "false"}</p>
+      </div>
+      <div className="manuscript-quality-group-line">
+        <p><strong>Current stage:</strong> {status.current_stage || "n/a"}</p>
+      </div>
+      <div className="manuscript-quality-group-line">
+        <p>
+          <strong>Nodes:</strong>{" "}
+          {status.node_counts
+            ? `${status.node_counts.explored} explored / ${status.node_counts.promoted} promoted / ${status.node_counts.blocked} blocked`
+            : "n/a"}
+        </p>
+      </div>
+      <div className="manuscript-quality-group-line">
+        <p><strong>Best defensible:</strong> {status.best_defensible_branch_id || "n/a"}</p>
+      </div>
+      <div className="manuscript-quality-group-line">
+        <p><strong>Baseline lock:</strong> {status.baseline_lock_status}</p>
+      </div>
+      <div className="manuscript-quality-group-line">
+        <p><strong>Evidence completeness:</strong> {status.evidence_completeness ?? "n/a"}</p>
+      </div>
+      <div className="manuscript-quality-group-line">
+        <p>
+          <strong>Fig audit warns:</strong>{" "}
+          {status.figure_audit_warnings == null
+            ? "n/a"
+            : `${status.figure_audit_warnings} (${status.severe_figure_mismatch ? "severe mismatch" : "no severe mismatch"})`}
+        </p>
+      </div>
+      {status.rollback_reason ? (
+        <div className="manuscript-quality-group-line">
+          <p><strong>Rollback reason:</strong> {status.rollback_reason}</p>
+        </div>
+      ) : null}
     </div>
   );
 }

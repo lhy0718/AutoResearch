@@ -22,6 +22,8 @@ import {
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { LocalAciAdapter } from "../src/tools/aciLocalAdapter.js";
 import { RunRecord } from "../src/types.js";
+import { addNode, initResearchTree, saveResearchTree } from "../src/core/exploration/researchTree.js";
+import type { ResearchTreeNode } from "../src/core/exploration/types.js";
 
 const ORIGINAL_CWD = process.cwd();
 
@@ -76,6 +78,41 @@ function makeRun(runId: string): RunRecord {
       longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
       episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
     }
+  };
+}
+
+function makeExplorationNode(patch: Partial<ResearchTreeNode> = {}): ResearchTreeNode {
+  const now = new Date().toISOString();
+  return {
+    node_id: patch.node_id ?? "branch-1",
+    parent_id: patch.parent_id ?? null,
+    root_id: patch.root_id ?? (patch.node_id ?? "branch-1"),
+    stage: patch.stage ?? "main_agenda",
+    depth: patch.depth ?? 0,
+    debug_depth: patch.debug_depth ?? 0,
+    branch_kind: patch.branch_kind ?? "main",
+    change_set: patch.change_set ?? { model: "schema-v1" },
+    hypothesis_link: patch.hypothesis_link ?? null,
+    expected_effect: patch.expected_effect ?? "Improve objective.",
+    actual_result_summary: patch.actual_result_summary ?? null,
+    objective_metrics: patch.objective_metrics ?? { baseline: 0.9, treatment: 0.91 },
+    budget_cost: patch.budget_cost ?? 100,
+    reproducibility_status: patch.reproducibility_status ?? "reproduced",
+    failure_fingerprint: patch.failure_fingerprint ?? null,
+    evidence_manifest: patch.evidence_manifest ?? {
+      branch_id: patch.node_id ?? "branch-1",
+      executed_at: now,
+      artifact_paths: ["analysis/promoted-branch.json"],
+      metrics_source: "metrics.json",
+      is_executed: true,
+      is_reproducible: true,
+      reproduction_runs: 2
+    },
+    promotion_decision: patch.promotion_decision ?? null,
+    blocked_reasons: patch.blocked_reasons ?? [],
+    status: patch.status ?? "completed",
+    created_at: patch.created_at ?? now,
+    updated_at: patch.updated_at ?? now
   };
 }
 
@@ -363,8 +400,57 @@ describe("objective metric propagation", () => {
       })
     };
 
+    const promotedNode = makeExplorationNode({
+      node_id: "promoted-branch",
+      status: "promoted",
+      promotion_decision: {
+        branch_id: "promoted-branch",
+        promoted: true,
+        is_strongest_defensible: true,
+        promotion_score: 8.2,
+        objective_gain: 0.12,
+        budget_penalty: 0.01,
+        instability_penalty: 0,
+        confound_penalty: 0,
+        evidence_completeness: 1,
+        blocking_reasons: [],
+        decided_at: new Date().toISOString()
+      },
+      evidence_manifest: {
+        branch_id: "promoted-branch",
+        executed_at: new Date().toISOString(),
+        artifact_paths: ["analysis/promoted-branch.json"],
+        metrics_source: "metrics.json",
+        is_executed: true,
+        is_reproducible: true,
+        reproduction_runs: 2
+      }
+    });
+    const failedNode = makeExplorationNode({
+      node_id: "failed-branch",
+      status: "failed",
+      evidence_manifest: {
+        branch_id: "failed-branch",
+        executed_at: new Date().toISOString(),
+        artifact_paths: ["analysis/failed-branch.json"],
+        metrics_source: "metrics.json",
+        is_executed: false,
+        is_reproducible: false,
+        reproduction_runs: 0
+      }
+    });
+    const explorationTree = addNode(
+      addNode(initResearchTree(runId, runDir), promotedNode),
+      failedNode
+    );
+    saveResearchTree(runDir, explorationTree);
+
     const deps = {
-      config: {} as any,
+      config: {
+        runtime: {
+          exploration_enabled: true
+        }
+      } as any,
       runStore: {} as any,
       eventStream,
       llm: new StructuredResultAnalysisLLM(),
@@ -403,6 +489,16 @@ describe("objective metric propagation", () => {
     const analyzeResult = await analyzeNode.execute({ run, graph: run.graph });
     expect(analyzeResult.status).toBe("success");
     expect(analyzeResult.summary).toContain("Objective metric met");
+    const writeupManifest = JSON.parse(
+      await readFile(path.join(runDir, "experiment_tree", "writeup_input_manifest.json"), "utf8")
+    ) as {
+      promoted_branch_id: string;
+      allowed_artifacts: string[];
+      forbidden_artifacts: string[];
+    };
+    expect(writeupManifest.promoted_branch_id).toBe("promoted-branch");
+    expect(writeupManifest.allowed_artifacts).toContain("analysis/promoted-branch.json");
+    expect(writeupManifest.forbidden_artifacts).toContain("analysis/failed-branch.json");
 
     const analysisRaw = await readFile(path.join(runDir, "result_analysis.json"), "utf8");
     const analysis = JSON.parse(analysisRaw) as {
@@ -489,7 +585,7 @@ describe("objective metric propagation", () => {
     ).toBe(true);
     expect(analysis.transition_recommendation).toMatchObject({
       action: "advance",
-      targetNode: "review"
+      targetNode: "figure_audit"
     });
     expect(analysis.synthesis?.source).toBe("llm");
     expect(analysis.synthesis?.discussion_points[0]).toContain("shared-state schema");
@@ -511,7 +607,7 @@ describe("objective metric propagation", () => {
     );
     const publicRunDir = buildPublicRunOutputDir(root, run);
     expect(await readFile(path.join(publicRunDir, "results", "operator_summary.md"), "utf8")).toContain(
-      "Transition recommendation: advance -> review."
+      "Transition recommendation: advance -> figure_audit."
     );
     expect(await readFile(path.join(runDir, "run_status.json"), "utf8")).toContain('"current_node": "analyze_results"');
     expect(await readFile(path.join(runDir, "run_completeness_checklist.json"), "utf8")).toContain(
@@ -1253,7 +1349,7 @@ describe("objective metric propagation", () => {
     expect(analyzeResult.status).toBe("success");
     expect(analyzeResult.transitionRecommendation).toMatchObject({
       action: "advance",
-      targetNode: "review"
+      targetNode: "figure_audit"
     });
 
     const analysis = JSON.parse(await readFile(path.join(runDir, "result_analysis.json"), "utf8")) as {
@@ -1793,7 +1889,7 @@ describe("objective metric propagation", () => {
     expect(result.status).toBe("success");
     expect(result.transitionRecommendation).toMatchObject({
       action: "advance",
-      targetNode: "review"
+      targetNode: "figure_audit"
     });
 
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);

@@ -117,6 +117,29 @@ describe("App", () => {
             { status: 200 }
           );
         }
+        if (url.includes("/api/exploration/status")) {
+          return new Response(
+            JSON.stringify({
+              enabled: true,
+              current_stage: "main_agenda",
+              node_counts: {
+                explored: 6,
+                promoted: 2,
+                blocked: 1
+              },
+              hypothesis_usage: {
+                "hypothesis-1": { total: 2, promoted: 1 }
+              },
+              best_defensible_branch_id: "branch-abc123",
+              rollback_reason: null,
+              baseline_lock_status: "locked",
+              evidence_completeness: 1,
+              figure_audit_warnings: 2,
+              severe_figure_mismatch: false
+            }),
+            { status: 200 }
+          );
+        }
         if (url.includes("/api/doctor")) {
           return new Response(JSON.stringify({ configured: true, checks: [] }), { status: 200 });
         }
@@ -142,12 +165,15 @@ describe("App", () => {
     await waitFor(() => {
       expect(screen.getByText("Background jobs")).toBeInTheDocument();
       expect(screen.getByText("Live watch")).toBeInTheDocument();
+      expect(screen.getByText("Exploration engine")).toBeInTheDocument();
       expect(screen.getByText("run_status")).toBeInTheDocument();
       expect(screen.getByText("waiting")).toBeInTheDocument();
       expect(screen.getByText("Running (1)")).toBeInTheDocument();
       expect(screen.getByText("Waiting (1)")).toBeInTheDocument();
       expect(screen.getByText("Stalled (1)")).toBeInTheDocument();
       expect(screen.getByText(/Recommended action: manual review\./i)).toBeInTheDocument();
+      expect(screen.getByText(/Current stage:/i)).toBeInTheDocument();
+      expect(screen.getByText(/Best defensible:/i)).toBeInTheDocument();
     });
 
     const liveWatchCard = screen.getByText("Live watch").closest("section");

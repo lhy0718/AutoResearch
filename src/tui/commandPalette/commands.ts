@@ -23,6 +23,7 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
   { name: "runs", usage: "/runs", description: "List and search runs", category: "run" },
   { name: "jobs", usage: "/jobs [query|--template 3d|7d]", description: "Show operator-focused run projections", category: "run", argHint: "[query|--template 3d|7d]", visible: true, preserveDraftOnRun: true },
   { name: "watch", usage: "/watch", description: "Open a live watch view for active runs and background jobs", category: "run", visible: true, preserveDraftOnRun: true },
+  { name: "explore", usage: "/explore", description: "Show bounded exploration engine status for the active run", category: "run", visible: true, preserveDraftOnRun: true },
   { name: "run", usage: "/run <run>", description: "Select a run", category: "run", argHint: "<run>" },
   { name: "resume", usage: "/resume <run>", description: "Resume a run", category: "run", argHint: "<run>" },
   { name: "title", usage: "/title <new title>", description: "Rename the active run", category: "run", argHint: "<title>" },

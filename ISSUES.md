@@ -13,7 +13,8 @@ Usage rules:
 
 ## Current active status
 
-- Active live-validation defects: none currently open in this file.
+- Active live-validation defects:
+  - `LV-084` Exploration status surfaces stay globally disabled in live TUI/web even when persisted `experiment_tree/` artifacts exist.
 - Active research/paper-readiness watchlist: see `Research and paper-readiness watchlist` below.
 - Current watchlist snapshot:
   - `R-001` Result-table discipline and claim→evidence linkage — `MITIGATED`
@@ -23,6 +24,40 @@ Usage rules:
   - `P-002` Compact quantitative result packaging — `MITIGATED`
   - `P-003` Related-work depth signaling — `MITIGATED`
 - If a new runtime/UI defect is reproduced, add it above the fixed log with a fresh `LV-*` identifier and one dominant root-cause class.
+
+---
+
+## Active live validation issues
+
+### LV-084 — `/explore` and `/api/exploration/status` ignore persisted exploration artifacts and always report the global disabled contract
+- Status: OPEN
+- Validation target: real `test/.live` TUI `/explore` output and real web `/api/exploration/status` / bootstrap state for a run that already has `experiment_tree/tree.json`, `manager_state.json`, `baseline_lock.json`, and `figure_audit/figure_audit_summary.json`
+- Environment/session context: repo head on 2026-04-02, live fixture workspace `/home/hanyong/AutoLabOS/test/.live/autolabos-live-explore-uhei2J`, run `run-explore-live`, launched with real `node /home/hanyong/AutoLabOS/dist/cli/main.js` and `node /home/hanyong/AutoLabOS/dist/cli/main.js web --host 127.0.0.1 --port 4318`
+- Reproduction steps:
+  1. Create a real `test/.live` workspace containing a paused review run plus persisted exploration artifacts under `.autolabos/runs/run-explore-live/experiment_tree/` and `figure_audit/`.
+  2. Launch a fresh TUI rooted at that workspace and run `/explore`.
+  3. Launch a fresh web server rooted at the same workspace.
+  4. Fetch `/api/exploration/status?run_id=run-explore-live` and `/api/bootstrap`.
+- Expected behavior: because the run already has persisted exploration tree state, baseline lock, and figure audit summary, the live TUI/web operator surfaces should report an enabled exploration status snapshot with the current stage (`main_agenda`), node counts, best defensible branch, lock state, and figure-audit warnings.
+- Actual behavior: both the real TUI and real web API returned the disabled contract instead:
+  - TUI `/explore` showed `Enabled: false`, `Current Stage: n/a`, `Nodes: n/a`, `Baseline Lock: not_applicable`.
+  - `GET /api/exploration/status?run_id=run-explore-live` returned `{\"enabled\":false,...,\"baseline_lock_status\":\"not_applicable\"}`.
+  - `GET /api/bootstrap` still anchored to the correct active run and showed the run graph paused at `review`, so the disabled exploration result was not caused by selecting the wrong run.
+- Fresh vs existing session comparison:
+  - Fresh session: the first real TUI process showed the disabled exploration contract.
+  - Existing/reopened session: reopening the same persisted workspace in a second TUI process produced the same disabled exploration contract.
+  - Divergence: none observed; the behavior appears stable across fresh and reopened sessions.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `src/core/exploration/status.ts` short-circuits on `loadExplorationConfig().enabled === false`, and `loadExplorationConfig()` currently reads only the repo-default YAML (`src/config/exploration.default.yaml`) instead of any run/workspace/runtime seam. That prevents the live status surfaces from reading persisted exploration artifacts even when they exist.
+- Code/test changes: none yet; this entry records the first real live-validation reproduction after the exploration status surfaces landed.
+- Regression status:
+  - Automated regression coverage exists for the enabled path via mocked config in `tests/explorationStatus.test.ts`, `tests/newSlashCommands.test.ts`, and `web/src/App.test.tsx`.
+  - Real live revalidation result: still reproduces.
+- Follow-up risks:
+  - Operators can be misled into thinking exploration never ran, even when `experiment_tree/` and `figure_audit/` artifacts are present.
+  - The current tests only verify the enabled path through explicit config mocking, so this runtime configuration seam can drift unnoticed.
+  - Direct browser rendering of the web card was not rechecked because the Playwright navigation approval was rejected during this validation loop; the live API behavior was verified instead.
 
 ---
 

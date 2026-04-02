@@ -72,6 +72,14 @@ import {
   detectUnverifiedCitations,
   type RiskSignal
 } from "../analysis/riskSignals.js";
+import {
+  checkCaptionConsistency,
+  lintFigures,
+  type FigureAuditInput
+} from "../analysis/figureAuditor.js";
+import { loadExplorationConfig } from "../exploration/explorationConfig.js";
+import { loadResearchTree } from "../exploration/researchTree.js";
+import { buildWriteupInputManifest } from "../exploration/evidenceSerializer.js";
 
 export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
@@ -393,6 +401,22 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         `${JSON.stringify(riskSignals, null, 2)}\n`
       );
       const resultAnalysisPath = await writeRunArtifact(run, "result_analysis.json", JSON.stringify(summary, null, 2));
+      const explorationFigureConfig = loadExplorationConfig().figure_auditor;
+      if (explorationFigureConfig.enabled) {
+        const figureAuditInput = await buildFigureAuditInput({
+          runDir: path.join(process.cwd(), ".autolabos", "runs", run.id),
+          resultAnalysisPath: path.join(process.cwd(), resultAnalysisPath)
+        });
+        const gateOneTwoIssues = [
+          ...(await lintFigures(figureAuditInput)),
+          ...(await checkCaptionConsistency(figureAuditInput))
+        ];
+        await writeRunArtifact(
+          run,
+          "figure_audit/gate1_gate2_issues.json",
+          `${JSON.stringify(gateOneTwoIssues, null, 2)}\n`
+        );
+      }
 
       // --- Standalone result table artifact (for review gate) ---
       const resultTable = buildResultTable(summary);
@@ -453,7 +477,7 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         stage: "analysis" as const,
         summary: [
           buildAnalyzeResultsCompletionSummary(summary),
-          `Next governed gate: ${transitionRecommendation.targetNode || "review"} via ${transitionRecommendation.action}.`
+          `Next governed gate: ${transitionRecommendation.targetNode || "figure_audit"} via ${transitionRecommendation.action}.`
         ],
         decision: `Transition recommendation: ${transitionRecommendation.action}${transitionRecommendation.targetNode ? ` -> ${transitionRecommendation.targetNode}` : ""}. ${transitionRecommendation.reason}`,
         blockers: (summary.failure_taxonomy || []).slice(0, 3).map((item) => item.summary),
@@ -461,7 +485,7 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         nextActions:
           (summary.synthesis?.follow_up_actions || []).slice(0, 3).length > 0
             ? (summary.synthesis?.follow_up_actions || []).slice(0, 3)
-            : [transitionRecommendation.reason, "Enter review and inspect the review packet before treating the run as paper-ready."],
+            : [transitionRecommendation.reason, "Run figure_audit and inspect the figure audit summary before treating the run as paper-ready."],
         references: [
           { label: "Analysis report", path: "result_analysis.json" },
           { label: "Transition recommendation", path: "transition_recommendation.json" },
@@ -584,6 +608,32 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         "run_completeness_checklist.json",
         `${JSON.stringify(completenessChecklist, null, 2)}\n`
       );
+      const runtimeExplorationEnabled = (deps.config as any)?.runtime?.exploration_enabled;
+      const explorationConfig =
+        typeof runtimeExplorationEnabled === "boolean"
+          ? {
+              ...loadExplorationConfig(),
+              enabled: runtimeExplorationEnabled
+            }
+          : loadExplorationConfig();
+      if (explorationConfig.enabled) {
+        const runDir = path.join(process.cwd(), ".autolabos", "runs", run.id);
+        const tree = loadResearchTree(runDir);
+        if (tree) {
+          const promotedNode = Object.values(tree.nodes).find(
+            (node) =>
+              (node.status === "promoted" || node.promotion_decision?.promoted === true) &&
+              node.evidence_manifest?.is_executed === true
+          );
+          if (promotedNode) {
+            buildWriteupInputManifest({
+              promotedBranchId: promotedNode.node_id,
+              runDir,
+              tree
+            });
+          }
+        }
+      }
       await publishPublicRunOutputs({
         workspaceRoot: process.cwd(),
         run,
@@ -660,6 +710,20 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         transitionRecommendation
       };
     }
+  };
+}
+
+async function buildFigureAuditInput(input: {
+  runDir: string;
+  resultAnalysisPath: string;
+}): Promise<FigureAuditInput> {
+  const paperTexPath = path.join(input.runDir, "paper", "main.tex");
+  const paperTexContent = await safeRead(paperTexPath);
+  return {
+    run_dir: input.runDir,
+    figure_dir: null,
+    paper_tex_content: paperTexContent || null,
+    result_analysis_path: input.resultAnalysisPath
   };
 }
 
@@ -1680,7 +1744,7 @@ function buildTransitionRecommendation(summary: AnalysisReport): TransitionRecom
       const objectiveNotes = asRecord(objectiveMetrics.notes);
       return createRecommendation({
         action: "advance",
-        targetNode: "review",
+        targetNode: "figure_audit",
         reason:
           "The objective metric is lifecycle-terminal and still provisional at analyze_results, so the run should continue into review/write_paper before deciding another implementation loop.",
         confidence: 0.74,
@@ -1736,7 +1800,7 @@ function buildTransitionRecommendation(summary: AnalysisReport): TransitionRecom
 
   return createRecommendation({
     action: "advance",
-    targetNode: "review",
+        targetNode: "figure_audit",
     reason:
       summary.overview.objective_status === "observed"
         ? "The primary metric was observed and no blocking runtime issue remains, so the run can proceed to review before paper writing with explicit caveats."
@@ -1912,11 +1976,11 @@ function isDeferredFullCycleObjective(summary: AnalysisReport): boolean {
   const objectiveNotes = asRecord(objectiveMetrics.notes);
   const fullCycleNote = asString(objectiveNotes.full_cycle_completed) || "";
   const pendingLifecycleNodes = pendingNodes.some((node) =>
-    node === "run_experiments" || node === "analyze_results" || node === "review" || node === "write_paper"
+    node === "run_experiments" || node === "analyze_results" || node === "figure_audit" || node === "review" || node === "write_paper"
   );
   const selfReferentialNote =
     /run remains at implement_experiments/i.test(fullCycleNote) ||
-    /never entered run_experiments\/analyze_results\/review\/write_paper/i.test(fullCycleNote);
+    /never entered run_experiments\/analyze_results\/(?:figure_audit\/)?review\/write_paper/i.test(fullCycleNote);
   return pendingLifecycleNodes || selfReferentialNote;
 }
 

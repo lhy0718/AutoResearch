@@ -22,6 +22,7 @@ const NODE_ARTIFACT_SETS: Record<GraphNodeId, string[]> = {
   implement_experiments: ["experiment_portfolio.json", "execution_plan.json"],
   run_experiments: ["run_manifest.json", "metrics.json"],
   analyze_results: ["result_analysis.json", "transition_recommendation.json"],
+  figure_audit: ["figure_audit/figure_audit_summary.json"],
   review: ["review/review_packet.json", "review/paper_critique.json", "review/minimum_gate.json"],
   write_paper: ["paper/main.tex", "paper/paper_readiness.json", "paper/readiness_risks.json"]
 };
@@ -167,6 +168,8 @@ function getNodeSpecificRequiredArtifacts(
             "review/paper_critique.json",
             "review/readiness_risks.json"
           ];
+    case "figure_audit":
+      return ["figure_audit/figure_audit_summary.json"];
     case "write_paper":
       return validationScope === "live_fixture"
         ? ["paper/paper_readiness.json", "paper/readiness_risks.json"]

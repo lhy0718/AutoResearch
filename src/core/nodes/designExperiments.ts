@@ -31,6 +31,9 @@ import { checkBriefDesignConsistency } from "../experiments/briefDesignConsisten
 import { parseMarkdownRunBriefSections } from "../runs/runBriefParser.js";
 import type { MarkdownRunBriefSections } from "../runs/runBriefParser.js";
 import { BriefCompletenessArtifact, buildBriefCompletenessArtifact } from "../runs/researchBriefFiles.js";
+import { buildWorkspaceRunRoot } from "../runs/runPaths.js";
+import { loadExplorationConfig } from "../exploration/explorationConfig.js";
+import { ExplorationManager } from "../exploration/explorationManager.js";
 
 interface FilteredHypothesis {
   hypothesis_id: string;
@@ -117,6 +120,16 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
           payload: { text }
         });
       };
+
+      const explorationConfig = loadExplorationConfig();
+      if (explorationConfig.enabled) {
+        const explorationManager = new ExplorationManager(
+          run.id,
+          buildWorkspaceRunRoot(process.cwd(), run.id),
+          explorationConfig
+        );
+        await explorationManager.initialize();
+      }
 
       const constraintProfile = await resolveConstraintProfile({
         run,
