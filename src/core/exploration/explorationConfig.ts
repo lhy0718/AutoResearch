@@ -1,8 +1,10 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import YAML from "yaml";
+import type { AppConfig } from "../../types.js";
+import { resolveAppPaths } from "../../config.js";
 
 export interface ExplorationStageBudgetConfig {
   max_nodes: number;
@@ -72,4 +74,46 @@ export function loadExplorationConfig(configPath?: string): ExplorationConfig {
   const resolvedPath = configPath ? path.resolve(configPath) : DEFAULT_EXPLORATION_CONFIG_PATH;
   const raw = readFileSync(resolvedPath, "utf8");
   return YAML.parse(raw) as ExplorationConfig;
+}
+
+function loadWorkspaceConfigOverride(workspaceRoot: string): Partial<AppConfig> | null {
+  const configPath = resolveAppPaths(workspaceRoot).configFile;
+  if (!existsSync(configPath)) {
+    return null;
+  }
+  try {
+    return YAML.parse(readFileSync(configPath, "utf8")) as Partial<AppConfig>;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to parse workspace config at ${configPath}: ${message}`);
+  }
+}
+
+export function resolveExplorationConfig(options?: {
+  workspaceRoot?: string;
+  appConfig?: Partial<AppConfig> | null;
+}): ExplorationConfig {
+  const base = loadExplorationConfig();
+  const workspaceOverride =
+    options?.appConfig || !options?.workspaceRoot
+      ? null
+      : loadWorkspaceConfigOverride(options.workspaceRoot);
+  const source = options?.appConfig || workspaceOverride;
+  const enabled =
+    source?.runtime?.exploration_enabled
+    ?? source?.exploration?.enabled
+    ?? base.enabled;
+  const figureAuditorEnabled =
+    source?.exploration?.figure_auditor?.enabled
+    ?? base.figure_auditor.enabled;
+
+  return {
+    ...base,
+    enabled,
+    figure_auditor: {
+      ...base.figure_auditor,
+      ...(source?.exploration?.figure_auditor || {}),
+      enabled: figureAuditorEnabled
+    }
+  };
 }

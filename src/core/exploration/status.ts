@@ -2,9 +2,10 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 
 import { loadBaselineLock } from "./baselineLock.js";
-import { loadExplorationConfig } from "./explorationConfig.js";
+import { resolveExplorationConfig } from "./explorationConfig.js";
 import { loadResearchTree, type ResearchTree } from "./researchTree.js";
 import type { ExplorationStage, FigureAuditSummary, ResearchTreeNode } from "./types.js";
+import type { AppConfig } from "../../types.js";
 
 export interface ExplorationStatusSnapshot {
   enabled: boolean;
@@ -139,8 +140,12 @@ function evidenceCompletenessForNode(node: ResearchTreeNode): number {
 export async function buildExplorationStatusSnapshot(options: {
   workspaceRoot: string;
   runId?: string | null;
+  appConfig?: Partial<AppConfig> | null;
 }): Promise<ExplorationStatusSnapshot> {
-  const config = loadExplorationConfig();
+  const config = resolveExplorationConfig({
+    workspaceRoot: options.workspaceRoot,
+    appConfig: options.appConfig
+  });
   if (!config.enabled) {
     return disabledExplorationStatusSnapshot();
   }

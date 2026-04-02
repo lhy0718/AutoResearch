@@ -1339,7 +1339,8 @@ export class InteractionSession {
     const targetRunId = this.activeRunId || runs[0]?.id || null;
     const snapshot = await buildExplorationStatusSnapshot({
       workspaceRoot: this.workspaceRoot,
-      runId: targetRunId
+      runId: targetRunId,
+      appConfig: this.config
     });
     for (const line of formatExplorationStatusLines(snapshot)) {
       this.pushLog(line);

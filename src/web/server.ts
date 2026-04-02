@@ -221,7 +221,8 @@ class AutoLabOSWebController {
           || (this.runtime ? (await this.runtime.runStore.listRuns())[0]?.id : undefined);
         const payload: ExplorationStatusResponse = await buildExplorationStatusSnapshot({
           workspaceRoot: this.cwd,
-          runId: fallbackRunId
+          runId: fallbackRunId,
+          appConfig: this.runtime?.config
         });
         return jsonResponse(res, 200, payload);
       }

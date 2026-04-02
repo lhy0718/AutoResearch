@@ -312,11 +312,21 @@ export interface AppConfig {
     runs_dir: string;
     logs_dir: string;
   };
+  exploration?: {
+    enabled?: boolean;
+    figure_auditor?: {
+      enabled?: boolean;
+      block_on_severe_mismatch?: boolean;
+      require_caption_alignment?: boolean;
+      require_reference_alignment?: boolean;
+    };
+  };
   /** Runtime-only environment detection. This is attached in memory and stripped before persisting config.yaml. */
   runtime?: {
     execution_profile?: ExecutionProfile;
     node_option_package?: NodeOptionPackageName;
     resolved_node_options?: NodeOptions;
+    exploration_enabled?: boolean;
   };
 }
 

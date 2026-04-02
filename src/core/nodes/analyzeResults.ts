@@ -77,7 +77,7 @@ import {
   lintFigures,
   type FigureAuditInput
 } from "../analysis/figureAuditor.js";
-import { loadExplorationConfig } from "../exploration/explorationConfig.js";
+import { resolveExplorationConfig } from "../exploration/explorationConfig.js";
 import { loadResearchTree } from "../exploration/researchTree.js";
 import { buildWriteupInputManifest } from "../exploration/evidenceSerializer.js";
 
@@ -401,7 +401,10 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         `${JSON.stringify(riskSignals, null, 2)}\n`
       );
       const resultAnalysisPath = await writeRunArtifact(run, "result_analysis.json", JSON.stringify(summary, null, 2));
-      const explorationFigureConfig = loadExplorationConfig().figure_auditor;
+      const explorationFigureConfig = resolveExplorationConfig({
+        workspaceRoot: process.cwd(),
+        appConfig: deps.config
+      }).figure_auditor;
       if (explorationFigureConfig.enabled) {
         const figureAuditInput = await buildFigureAuditInput({
           runDir: path.join(process.cwd(), ".autolabos", "runs", run.id),
@@ -608,14 +611,10 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         "run_completeness_checklist.json",
         `${JSON.stringify(completenessChecklist, null, 2)}\n`
       );
-      const runtimeExplorationEnabled = (deps.config as any)?.runtime?.exploration_enabled;
-      const explorationConfig =
-        typeof runtimeExplorationEnabled === "boolean"
-          ? {
-              ...loadExplorationConfig(),
-              enabled: runtimeExplorationEnabled
-            }
-          : loadExplorationConfig();
+      const explorationConfig = resolveExplorationConfig({
+        workspaceRoot: process.cwd(),
+        appConfig: deps.config
+      });
       if (explorationConfig.enabled) {
         const runDir = path.join(process.cwd(), ".autolabos", "runs", run.id);
         const tree = loadResearchTree(runDir);

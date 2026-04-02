@@ -30,9 +30,9 @@ Usage rules:
 ## Active live validation issues
 
 ### LV-084 — `/explore` and `/api/exploration/status` ignore persisted exploration artifacts and always report the global disabled contract
-- Status: OPEN
+- Status: FIXED
 - Validation target: real `test/.live` TUI `/explore` output and real web `/api/exploration/status` / bootstrap state for a run that already has `experiment_tree/tree.json`, `manager_state.json`, `baseline_lock.json`, and `figure_audit/figure_audit_summary.json`
-- Environment/session context: repo head on 2026-04-02, live fixture workspace `/home/hanyong/AutoLabOS/test/.live/autolabos-live-explore-uhei2J`, run `run-explore-live`, launched with real `node /home/hanyong/AutoLabOS/dist/cli/main.js` and `node /home/hanyong/AutoLabOS/dist/cli/main.js web --host 127.0.0.1 --port 4318`
+- Environment/session context: repo head on 2026-04-02. Original failing repro used `/home/hanyong/AutoLabOS/test/.live/autolabos-live-explore-uhei2J`. Post-fix revalidation used `/home/hanyong/AutoLabOS/test/.live/autolabos-live-explore-enabled-dNua2B`, run `run-explore-live`, launched with real `node /home/hanyong/AutoLabOS/dist/cli/main.js` and `node /home/hanyong/AutoLabOS/dist/cli/main.js web --host 127.0.0.1 --port 4318`.
 - Reproduction steps:
   1. Create a real `test/.live` workspace containing a paused review run plus persisted exploration artifacts under `.autolabos/runs/run-explore-live/experiment_tree/` and `figure_audit/`.
   2. Launch a fresh TUI rooted at that workspace and run `/explore`.
@@ -44,20 +44,33 @@ Usage rules:
   - `GET /api/exploration/status?run_id=run-explore-live` returned `{\"enabled\":false,...,\"baseline_lock_status\":\"not_applicable\"}`.
   - `GET /api/bootstrap` still anchored to the correct active run and showed the run graph paused at `review`, so the disabled exploration result was not caused by selecting the wrong run.
 - Fresh vs existing session comparison:
-  - Fresh session: the first real TUI process showed the disabled exploration contract.
-  - Existing/reopened session: reopening the same persisted workspace in a second TUI process produced the same disabled exploration contract.
-  - Divergence: none observed; the behavior appears stable across fresh and reopened sessions.
+  - Fresh session before fix: the first real TUI process showed the disabled exploration contract.
+  - Existing session before fix: reopening the same persisted workspace in a second TUI process produced the same disabled exploration contract.
+  - Fresh session after fix: `/explore` showed `Enabled: true`, `Current Stage: main_agenda`, `Nodes: 2 explored / 1 promoted / 1 blocked`, `Baseline Lock: locked`, and `Fig Audit Warns: 1 (1 severe flag)`.
+  - Existing session after fix: reopening the same persisted workspace in a second TUI process produced the same enabled exploration snapshot.
+  - Divergence: none observed after the fix; fresh and reopened sessions now agree.
 - Root cause hypothesis:
   - Type: `in_memory_projection_bug`
-  - Hypothesis: `src/core/exploration/status.ts` short-circuits on `loadExplorationConfig().enabled === false`, and `loadExplorationConfig()` currently reads only the repo-default YAML (`src/config/exploration.default.yaml`) instead of any run/workspace/runtime seam. That prevents the live status surfaces from reading persisted exploration artifacts even when they exist.
-- Code/test changes: none yet; this entry records the first real live-validation reproduction after the exploration status surfaces landed.
+  - Hypothesis: `src/core/exploration/status.ts` short-circuited on the repo-default `loadExplorationConfig().enabled === false` path, so the live TUI/web surfaces ignored workspace config and runtime config even when persisted `experiment_tree/` artifacts existed.
+- Code/test changes:
+  - Added `resolveExplorationConfig(...)` in `src/core/exploration/explorationConfig.ts` so exploration enablement resolves from workspace `.autolabos/config.yaml` and in-memory runtime config instead of the repo default only.
+  - Updated `src/core/exploration/status.ts`, `src/core/nodes/designExperiments.ts`, `src/core/nodes/analyzeResults.ts`, `src/core/nodes/figureAudit.ts`, `src/tui/TerminalApp.ts`, `src/interaction/InteractionSession.ts`, `src/web/server.ts`, `src/runtime/createRuntime.ts`, and `src/types.ts` to use the same seam.
+  - Updated regressions in `tests/explorationConfig.test.ts`, `tests/explorationStatus.test.ts`, `tests/figureAuditNode.test.ts`, and `tests/newSlashCommands.test.ts`.
 - Regression status:
-  - Automated regression coverage exists for the enabled path via mocked config in `tests/explorationStatus.test.ts`, `tests/newSlashCommands.test.ts`, and `web/src/App.test.tsx`.
-  - Real live revalidation result: still reproduces.
+  - Automated regression coverage:
+    - `npm run build`
+    - `npm test`
+    - `npm run validate:harness`
+    - `npm run test:web`
+  - Real live revalidation result:
+    - Fresh TUI `/doctor` still surfaces the expected fixture-scope missing artifacts.
+    - Fresh TUI `/explore` now reports the enabled exploration snapshot from persisted artifacts.
+    - Reopened TUI `/explore` reports the same enabled snapshot.
+    - `GET /api/exploration/status?run_id=run-explore-live` now returns `{\"enabled\":true,\"current_stage\":\"main_agenda\",...}`.
+    - `GET /api/bootstrap` remains anchored to the same active run.
 - Follow-up risks:
-  - Operators can be misled into thinking exploration never ran, even when `experiment_tree/` and `figure_audit/` artifacts are present.
-  - The current tests only verify the enabled path through explicit config mocking, so this runtime configuration seam can drift unnoticed.
-  - Direct browser rendering of the web card was not rechecked because the Playwright navigation approval was rejected during this validation loop; the live API behavior was verified instead.
+  - Direct browser rendering of the web card was not rechecked in this loop; the real web API contract was verified instead.
+  - The live fixture still lacks several full-run artifacts, so `/doctor` continues to show expected fixture-scope missing-artifact findings unrelated to the exploration projection fix.
 
 ---
 

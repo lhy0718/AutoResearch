@@ -9,7 +9,7 @@ import {
   lintFigures,
   type FigureAuditInput
 } from "../analysis/figureAuditor.js";
-import { loadExplorationConfig } from "../exploration/explorationConfig.js";
+import { resolveExplorationConfig } from "../exploration/explorationConfig.js";
 import type { FigureAuditIssue, FigureAuditSummary } from "../exploration/types.js";
 import { buildRunCompletenessChecklist } from "../runs/runCompletenessChecklist.js";
 import { buildRunOperatorStatus } from "../runs/runStatus.js";
@@ -23,7 +23,10 @@ export function createFigureAuditNode(deps: NodeExecutionDeps): GraphNodeHandler
     id: "figure_audit",
     async execute({ run }) {
       const runDir = path.join(process.cwd(), ".autolabos", "runs", run.id);
-      const config = loadExplorationConfig();
+      const config = resolveExplorationConfig({
+        workspaceRoot: process.cwd(),
+        appConfig: deps.config
+      });
       const input = await buildFigureAuditInput(runDir);
 
       let gate1Gate2Issues: FigureAuditIssue[] = [];

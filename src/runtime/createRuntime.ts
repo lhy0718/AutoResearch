@@ -33,6 +33,7 @@ import { DEFAULT_OLLAMA_BASE_URL } from "../integrations/ollama/modelCatalog.js"
 import { recoverCollectEnrichmentJobs } from "../core/nodes/collectPapers.js";
 import { detectExecutionProfile } from "./executionProfile.js";
 import { resolveNodeOptionsForPackage } from "../core/stateGraph/defaults.js";
+import { loadExplorationConfig } from "../core/exploration/explorationConfig.js";
 
 export interface AutoLabOSRuntime {
   paths: AppPaths;
@@ -84,6 +85,7 @@ export async function bootstrapAutoLabOSRuntime(opts?: {
     runtime: {
       ...(config.runtime || {}),
       execution_profile: executionProfile,
+      exploration_enabled: config.exploration?.enabled ?? loadExplorationConfig().enabled,
       node_option_package: opts?.nodeOptionPackageName,
       resolved_node_options: resolveNodeOptionsForPackage(opts?.nodeOptionPackageName)
     }

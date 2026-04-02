@@ -1,7 +1,11 @@
+import path from "node:path";
+import { tmpdir } from "node:os";
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+
 import { describe, expect, it } from "vitest";
 
 import type { ExplorationStage } from "../src/core/exploration/types.js";
-import { loadExplorationConfig } from "../src/core/exploration/explorationConfig.js";
+import { loadExplorationConfig, resolveExplorationConfig } from "../src/core/exploration/explorationConfig.js";
 
 describe("explorationConfig", () => {
   it("loads the default exploration config", () => {
@@ -32,5 +36,26 @@ describe("explorationConfig", () => {
       "main_agenda",
       "ablation"
     ]);
+  });
+
+  it("reads workspace exploration overrides from .autolabos/config.yaml", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-exploration-config-"));
+    await mkdir(path.join(root, ".autolabos"), { recursive: true });
+    await writeFile(
+      path.join(root, ".autolabos", "config.yaml"),
+      [
+        "exploration:",
+        "  enabled: true",
+        "  figure_auditor:",
+        "    enabled: false",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const config = resolveExplorationConfig({ workspaceRoot: root });
+
+    expect(config.enabled).toBe(true);
+    expect(config.figure_auditor.enabled).toBe(false);
   });
 });

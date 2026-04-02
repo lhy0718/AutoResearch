@@ -32,7 +32,7 @@ import { parseMarkdownRunBriefSections } from "../runs/runBriefParser.js";
 import type { MarkdownRunBriefSections } from "../runs/runBriefParser.js";
 import { BriefCompletenessArtifact, buildBriefCompletenessArtifact } from "../runs/researchBriefFiles.js";
 import { buildWorkspaceRunRoot } from "../runs/runPaths.js";
-import { loadExplorationConfig } from "../exploration/explorationConfig.js";
+import { resolveExplorationConfig } from "../exploration/explorationConfig.js";
 import { ExplorationManager } from "../exploration/explorationManager.js";
 
 interface FilteredHypothesis {
@@ -121,7 +121,10 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         });
       };
 
-      const explorationConfig = loadExplorationConfig();
+      const explorationConfig = resolveExplorationConfig({
+        workspaceRoot: process.cwd(),
+        appConfig: deps.config
+      });
       if (explorationConfig.enabled) {
         const explorationManager = new ExplorationManager(
           run.id,

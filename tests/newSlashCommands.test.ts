@@ -9,8 +9,6 @@ import { SLASH_COMMANDS, needsArg } from "../src/tui/commandPalette/commands.js"
 import { TerminalApp } from "../src/tui/TerminalApp.js";
 import { InMemoryEventStream } from "../src/core/events.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
-import { loadExplorationConfig } from "../src/core/exploration/explorationConfig.js";
-import * as explorationConfigModule from "../src/core/exploration/explorationConfig.js";
 
 const ORIGINAL_CWD = process.cwd();
 
@@ -140,12 +138,6 @@ describe("new slash commands", () => {
   });
 
   it("renders exploration status through /explore", async () => {
-    const baseConfig = loadExplorationConfig();
-    vi.spyOn(explorationConfigModule, "loadExplorationConfig").mockReturnValue({
-      ...baseConfig,
-      enabled: true
-    });
-
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-explore-command-"));
     process.chdir(root);
 
@@ -248,6 +240,17 @@ describe("new slash commands", () => {
     );
 
     const app = makeApp({
+      config: {
+        papers: { max_results: 100 },
+        providers: {
+          llm_mode: "codex_chatgpt_only",
+          codex: { model: "gpt-5.3-codex", reasoning_effort: "xhigh", fast_mode: false },
+          openai: { model: "gpt-5.4", reasoning_effort: "medium" }
+        },
+        runtime: {
+          exploration_enabled: true
+        }
+      } as any,
       runStore: {
         listRuns: vi.fn().mockResolvedValue([
           {

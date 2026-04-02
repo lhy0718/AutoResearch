@@ -284,7 +284,13 @@ describe("figure_audit node integration", () => {
     await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
 
     const node = createFigureAuditNode({
-      config: {} as any,
+      config: {
+        exploration: {
+          figure_auditor: {
+            enabled: false
+          }
+        }
+      } as any,
       runStore: {} as any,
       eventStream: new InMemoryEventStream(),
       llm: new MockLLMClient(),

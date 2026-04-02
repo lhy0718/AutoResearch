@@ -89,17 +89,17 @@ describe("exploration status snapshot", () => {
   });
 
   it("builds counts, baseline lock, evidence completeness, and figure audit status from persisted artifacts", async () => {
-    const baseConfig = loadExplorationConfig();
-    vi.spyOn(explorationConfigModule, "loadExplorationConfig").mockReturnValue({
-      ...baseConfig,
-      enabled: true
-    });
-
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-exploration-status-"));
     const runId = "run-exploration-status";
     const runDir = path.join(root, ".autolabos", "runs", runId);
     await mkdir(path.join(runDir, "experiment_tree"), { recursive: true });
     await mkdir(path.join(runDir, "figure_audit"), { recursive: true });
+    await mkdir(path.join(root, ".autolabos"), { recursive: true });
+    await writeFile(
+      path.join(root, ".autolabos", "config.yaml"),
+      "exploration:\n  enabled: true\n",
+      "utf8"
+    );
 
     const tree = addNode(
       addNode(initResearchTree(runId, runDir), makeTreeNode()),

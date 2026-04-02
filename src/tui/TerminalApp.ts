@@ -2272,7 +2272,8 @@ export class TerminalApp {
     const targetRunId = this.activeRunId || runs[0]?.id || null;
     const snapshot = await buildExplorationStatusSnapshot({
       workspaceRoot: process.cwd(),
-      runId: targetRunId
+      runId: targetRunId,
+      appConfig: this.config
     });
     this.clearTransientLogs();
     for (const line of formatExplorationStatusLines(snapshot)) {
