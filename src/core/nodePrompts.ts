@@ -9,13 +9,14 @@ export const TUNABLE_NODE_NAMES = [
 ] as const;
 
 export type TunableNodeName = (typeof TUNABLE_NODE_NAMES)[number];
+type PromptNodeName = TunableNodeName | "review";
 
 interface PromptSectionDefaults {
   path: string;
   sections: Record<string, string>;
 }
 
-const DEFAULT_PROMPT_SECTIONS: Record<TunableNodeName, PromptSectionDefaults> = {
+const DEFAULT_PROMPT_SECTIONS: Record<PromptNodeName, PromptSectionDefaults> = {
   generate_hypotheses: {
     path: "node-prompts/generate_hypotheses.md",
     sections: {
@@ -69,10 +70,23 @@ const DEFAULT_PROMPT_SECTIONS: Record<TunableNodeName, PromptSectionDefaults> = 
         "If a failure cause is uncertain, label it as a risk or remaining uncertainty."
       ].join("\n")
     }
+  },
+  review: {
+    path: "node-prompts/review.md",
+    sections: {
+      reviewer_system_template: [
+        "You are the AutoLabOS {{reviewer_label}}.",
+        "Return JSON only.",
+        "Use only facts explicitly present in the payload.",
+        "Be conservative: if evidence is incomplete, say so instead of guessing.",
+        "Keep the review concise and actionable.",
+        "Allowed recommendations: advance, revise_in_place, backtrack_to_hypotheses, backtrack_to_design, backtrack_to_implement, manual_block."
+      ].join("\n")
+    }
   }
 };
 
-const promptCache = new Map<TunableNodeName, Record<string, string>>();
+const promptCache = new Map<PromptNodeName, Record<string, string>>();
 
 function repoRootPromptPath(relativePath: string): string {
   const moduleDir = path.dirname(fileURLToPath(import.meta.url));
@@ -80,7 +94,7 @@ function repoRootPromptPath(relativePath: string): string {
   return path.join(distRelativeRoot, relativePath);
 }
 
-function candidatePromptPaths(nodeName: TunableNodeName): string[] {
+function candidatePromptPaths(nodeName: PromptNodeName): string[] {
   const relativePath = DEFAULT_PROMPT_SECTIONS[nodeName].path;
   return [
     path.join(process.cwd(), relativePath),
@@ -114,7 +128,7 @@ function parsePromptSections(raw: string): Record<string, string> {
   return sections;
 }
 
-function loadPromptSections(nodeName: TunableNodeName): Record<string, string> {
+function loadPromptSections(nodeName: PromptNodeName): Record<string, string> {
   const cached = promptCache.get(nodeName);
   if (cached) {
     return cached;
@@ -145,6 +159,10 @@ function loadPromptSections(nodeName: TunableNodeName): Record<string, string> {
 
 export function getNodePromptPath(nodeName: TunableNodeName): string {
   return path.join(process.cwd(), DEFAULT_PROMPT_SECTIONS[nodeName].path);
+}
+
+export function getReviewPromptPath(): string {
+  return path.join(process.cwd(), DEFAULT_PROMPT_SECTIONS.review.path);
 }
 
 export function loadGenerateHypothesesPromptSections(): {
@@ -178,6 +196,15 @@ export function loadAnalyzeResultsPromptSections(): {
   };
 }
 
+export function loadReviewPromptSections(): {
+  reviewerSystemTemplate: string;
+} {
+  const sections = loadPromptSections("review");
+  return {
+    reviewerSystemTemplate: sections.reviewer_system_template
+  };
+}
+
 export function buildSelfCritiqueRetryPromptVariant(originalPrompt: string): string {
   return [
     originalPrompt.trim(),
@@ -188,4 +215,3 @@ export function buildSelfCritiqueRetryPromptVariant(originalPrompt: string): str
     "- Prefer a narrower, evidence-grounded answer over a broader but weakly supported one."
   ].join("\n");
 }
-

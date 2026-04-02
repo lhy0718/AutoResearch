@@ -84,6 +84,12 @@ export interface EvalHarnessRunReport {
   findings: string[];
 }
 
+export interface EvalHarnessHistoryEntry {
+  timestamp: string;
+  run_id?: string;
+  results: EvalHarnessReport;
+}
+
 interface ImplementResultArtifact {
   verify_report?: {
     status?: string;
@@ -156,6 +162,44 @@ export async function writeEvalHarnessReport(
     jsonPath: outputPath,
     markdownPath
   };
+}
+
+export function resolveEvalHarnessHistoryPath(cwd: string): string {
+  const paths = resolveAppPaths(cwd);
+  return path.join(paths.outputsDir, "eval-harness", "history.jsonl");
+}
+
+export async function appendEvalHarnessHistoryEntry(
+  cwd: string,
+  report: EvalHarnessReport,
+  runId?: string
+): Promise<string> {
+  const historyPath = resolveEvalHarnessHistoryPath(cwd);
+  await fs.mkdir(path.dirname(historyPath), { recursive: true });
+  const entry: EvalHarnessHistoryEntry = {
+    timestamp: new Date().toISOString(),
+    ...(runId ? { run_id: runId } : {}),
+    results: report
+  };
+  await fs.appendFile(historyPath, `${JSON.stringify(entry)}\n`, "utf8");
+  return historyPath;
+}
+
+export async function readEvalHarnessHistoryEntries(
+  cwd: string,
+  limit = 20
+): Promise<EvalHarnessHistoryEntry[]> {
+  const historyPath = resolveEvalHarnessHistoryPath(cwd);
+  if (!(await fileExists(historyPath))) {
+    return [];
+  }
+  const raw = await fs.readFile(historyPath, "utf8");
+  const entries = raw
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line) as EvalHarnessHistoryEntry);
+  return entries.slice(Math.max(0, entries.length - Math.max(1, limit)));
 }
 
 export function renderEvalHarnessSummary(report: EvalHarnessReport): string {

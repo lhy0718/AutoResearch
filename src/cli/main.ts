@@ -17,7 +17,7 @@ function printHelp(): void {
     "  autolabos --package <fast|thorough|paper_scale>",
     "  autolabos web [--host 127.0.0.1] [--port 4317]",
     "  autolabos compare-analysis --run <run-id> [--limit 3] [--no-judge]",
-    "  autolabos eval-harness [--run <run-id>] [--limit 10] [--output outputs/eval-harness/latest.json]",
+    "  autolabos eval-harness [--run <run-id>] [--limit 10] [--output outputs/eval-harness/latest.json] [--no-history]",
     "  autolabos --help",
     "  autolabos --version"
   ].join("\n") + "\n");
@@ -66,7 +66,8 @@ async function main(): Promise<void> {
       cwd: process.cwd(),
       runIds: action.runIds,
       limit: action.limit,
-      outputPath: action.outputPath
+      outputPath: action.outputPath,
+      noHistory: action.noHistory
     });
     return;
   }

@@ -40,6 +40,7 @@ import { getDoctorAggregateStatus, mapDoctorCheckForApi, runDoctorReport } from 
 import { CodexCliClient } from "../integrations/codex/codexCliClient.js";
 import { writeRunLiteratureIndex } from "../core/literatureIndex.js";
 import { readRepositoryKnowledgeIndex } from "../core/repositoryKnowledge.js";
+import { readEvalHarnessHistoryEntries } from "../core/evaluation/evalHarness.js";
 import { buildRunQueueSnapshot } from "../core/runs/jobQueue.js";
 import { buildRunJobsSnapshot } from "../core/runs/jobsProjection.js";
 import { bootstrapAutoLabOSRuntime, AutoLabOSRuntime } from "../runtime/createRuntime.js";
@@ -51,6 +52,7 @@ import {
   BootstrapResponse,
   ConfigSummary,
   DoctorResponse,
+  EvalHarnessHistoryResponse,
   JobsResponse,
   KnowledgeFileResponse,
   KnowledgeResponse,
@@ -203,6 +205,11 @@ class AutoLabOSWebController {
           200,
           payload
         );
+      }
+
+      if (pathname === "/api/eval-harness/history" && method === "GET") {
+        const entries = await readEvalHarnessHistoryEntries(this.cwd, 20);
+        return jsonResponse(res, 200, entries satisfies EvalHarnessHistoryResponse);
       }
 
       if (pathname === "/api/setup" && method === "POST") {

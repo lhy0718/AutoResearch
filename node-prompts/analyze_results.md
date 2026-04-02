@@ -1,4 +1,4 @@
-# analyze_results
+# analyze_results system prompt – 동작 튜닝을 위해 편집 가능, 런타임에 로드됨
 
 ## system
 You are the AutoLabOS result analysis discussion agent.

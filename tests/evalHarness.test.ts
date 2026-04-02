@@ -1,15 +1,19 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import { ensureScaffold, resolveAppPaths } from "../src/config.js";
 import {
+  appendEvalHarnessHistoryEntry,
   generateEvalHarnessReport,
+  readEvalHarnessHistoryEntries,
   renderEvalHarnessSummary,
+  resolveEvalHarnessHistoryPath,
   writeEvalHarnessReport
 } from "../src/core/evaluation/evalHarness.js";
+import { runEvalHarnessCli } from "../src/cli/evalHarness.js";
 import { RunStore } from "../src/core/runs/runStore.js";
 
 const tempDirs: string[] = [];
@@ -178,6 +182,97 @@ describe("eval harness", () => {
     const written = await writeEvalHarnessReport(report, path.join(workspace, "outputs", "eval-harness", "latest.json"));
     expect(path.basename(written.jsonPath)).toBe("latest.json");
     expect(path.basename(written.markdownPath)).toBe("latest.md");
+  });
+
+  it("appends eval-harness history entries across multiple executions", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-eval-harness-history-"));
+    tempDirs.push(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "History Run",
+      topic: "history checks",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy >= 0.9"
+    });
+
+    await writeRunArtifacts(paths.runsDir, run.id, {
+      implement_result: {
+        verify_report: { status: "pass", summary: "Local verification passed." },
+        attempt_count: 1,
+        changed_files: ["src/runner.py"],
+        auto_handoff_to_run_experiments: true
+      },
+      implement_attempts: { attempts: [{}] },
+      verify_report: { status: "pass" },
+      branch_search_result: { branches: [{}] },
+      run_verifier: {
+        source: "run_experiments",
+        status: "pass",
+        trigger: "auto_handoff",
+        stage: "success",
+        summary: "Objective metric met.",
+        recorded_at: "2026-03-10T00:00:00.000Z"
+      },
+      objective_evaluation: {
+        status: "met",
+        summary: "Objective metric met."
+      },
+      result_analysis: {
+        overview: {
+          objective_status: "met",
+          selected_design_title: "History benchmark"
+        }
+      },
+      paper_main: "\\section{Results}\n"
+    });
+
+    await runEvalHarnessCli({
+      cwd: workspace,
+      runIds: [run.id],
+      limit: 20
+    });
+    await runEvalHarnessCli({
+      cwd: workspace,
+      runIds: [run.id],
+      limit: 20
+    });
+
+    const historyPath = resolveEvalHarnessHistoryPath(workspace);
+    const historyRaw = await readFile(historyPath, "utf8");
+    const lines = historyRaw.trim().split(/\r?\n/u);
+    expect(lines).toHaveLength(2);
+    const entries = lines.map((line) => JSON.parse(line));
+    expect(entries.every((entry) => entry.run_id === run.id)).toBe(true);
+    expect(entries.every((entry) => typeof entry.timestamp === "string")).toBe(true);
+    expect(entries[0].results.selection.evaluated_run_ids).toEqual([run.id]);
+  });
+
+  it("skips history append when requested and returns latest 20 history entries", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-eval-harness-read-history-"));
+    tempDirs.push(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const report = await generateEvalHarnessReport({
+      cwd: workspace,
+      limit: 1
+    });
+    await appendEvalHarnessHistoryEntry(workspace, report, "run-a");
+    await appendEvalHarnessHistoryEntry(workspace, report, "run-b");
+
+    await runEvalHarnessCli({
+      cwd: workspace,
+      runIds: [],
+      limit: 1,
+      noHistory: true
+    });
+
+    const entries = await readEvalHarnessHistoryEntries(workspace, 20);
+    expect(entries).toHaveLength(2);
+    expect(entries.map((entry) => entry.run_id)).toEqual(["run-a", "run-b"]);
   });
 });
 

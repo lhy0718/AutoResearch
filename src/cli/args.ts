@@ -4,7 +4,7 @@ export type CliAction =
   | { kind: "run"; packageName?: NodeOptionPackageName }
   | { kind: "web"; host?: string; port?: number }
   | { kind: "compare-analysis"; runId: string; limit: number; judge: boolean }
-  | { kind: "eval-harness"; runIds: string[]; limit: number; outputPath?: string }
+  | { kind: "eval-harness"; runIds: string[]; limit: number; outputPath?: string; noHistory?: boolean }
   | { kind: "help" }
   | { kind: "version" }
   | { kind: "error"; message: string };
@@ -110,6 +110,7 @@ export function resolveCliAction(args: string[]): CliAction {
     const runIds: string[] = [];
     let limit = 10;
     let outputPath: string | undefined;
+    let noHistory = false;
     for (let index = 1; index < args.length; index += 1) {
       const token = args[index];
       if (token === "--run") {
@@ -143,12 +144,16 @@ export function resolveCliAction(args: string[]): CliAction {
         index += 1;
         continue;
       }
+      if (token === "--no-history") {
+        noHistory = true;
+        continue;
+      }
       return {
         kind: "error",
         message: `Unsupported eval-harness argument: ${token}`
       };
     }
-    return { kind: "eval-harness", runIds, limit, outputPath };
+    return { kind: "eval-harness", runIds, limit, outputPath, noHistory };
   }
 
   return {

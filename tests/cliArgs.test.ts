@@ -37,7 +37,18 @@ describe("resolveCliAction", () => {
       kind: "eval-harness",
       runIds: ["run-123", "run-456"],
       limit: 5,
-      outputPath: "outputs/eval.json"
+      outputPath: "outputs/eval.json",
+      noHistory: false
+    });
+  });
+
+  it("supports eval-harness --no-history", () => {
+    expect(resolveCliAction(["eval-harness", "--limit", "5", "--no-history"])).toEqual({
+      kind: "eval-harness",
+      runIds: [],
+      limit: 5,
+      outputPath: undefined,
+      noHistory: true
     });
   });
 

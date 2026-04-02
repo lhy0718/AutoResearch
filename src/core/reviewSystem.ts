@@ -3,6 +3,7 @@ import { parseStructuredModelJsonObject } from "./analysis/modelJson.js";
 import { LLMClient, LLMCompletionUsage } from "./llm/client.js";
 import { AnalysisFailureCategory, AnalysisPaperClaim, AnalysisReport } from "./resultAnalysis.js";
 import { RunRecord, GraphNodeId } from "../types.js";
+import { loadReviewPromptSections } from "./nodePrompts.js";
 
 export type ReviewDimension =
   | "claim_verification"
@@ -317,14 +318,10 @@ async function refineReviewerWithLlm(
 }
 
 function buildReviewerSystemPrompt(spec: ReviewerSpec): string {
-  return [
-    `You are the AutoLabOS ${spec.reviewer_label.toLowerCase()}.`,
-    "Return JSON only.",
-    "Use only facts explicitly present in the payload.",
-    "Be conservative: if evidence is incomplete, say so instead of guessing.",
-    "Keep the review concise and actionable.",
-    "Allowed recommendations: advance, revise_in_place, backtrack_to_hypotheses, backtrack_to_design, backtrack_to_implement, manual_block."
-  ].join("\n");
+  return loadReviewPromptSections()
+    .reviewerSystemTemplate
+    .replace(/\{\{\s*reviewer_label\s*\}\}/gu, spec.reviewer_label.toLowerCase())
+    .trim();
 }
 
 function buildReviewerPrompt(

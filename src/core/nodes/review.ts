@@ -26,6 +26,7 @@ import { loadExperimentContract } from "../experiments/experimentContract.js";
 import { FailureMemory } from "../experiments/failureMemory.js";
 import { evaluateMinimumGate } from "../analysis/paperMinimumGate.js";
 import { runLLMPaperQualityEvaluation } from "../analysis/llmPaperQualityEvaluator.js";
+import { checkReviewDecision } from "../analysis/reviewDecision.js";
 import type { BriefEvidenceAssessment } from "../analysis/briefEvidenceValidator.js";
 import {
   buildNetworkDependencyReadinessRisks,
@@ -86,6 +87,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         abortSignal
       });
       const packet = buildReviewPacket(report, presence, panel);
+      const completionDecision = checkReviewDecision(packet);
       const briefEvidenceAssessment =
         (await runContextMemory.get<BriefEvidenceAssessment>("analyze_results.brief_evidence_assessment")) ?? undefined;
 
@@ -211,6 +213,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
           ...readinessRisks.risks.filter((risk) => risk.severity === "blocked").slice(0, 2).map((risk) => risk.message)
         ],
         openQuestions: [
+          `Review completion verdict: ${completionDecision.verdict}.`,
           ...panel.decision.required_actions.slice(0, 2),
           ...llmEvalResult.evaluation.weaknesses.slice(0, 2)
         ].slice(0, 3),
@@ -339,6 +342,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       await runContextMemory.put("review.last_summary", packet.objective_summary);
       await runContextMemory.put("review.last_recommendation", packet.recommendation || null);
       await runContextMemory.put("review.last_decision", panel.decision);
+      await runContextMemory.put("review.completion_decision", completionDecision);
       await runContextMemory.put("review.last_findings_count", panel.findings.length);
       await runContextMemory.put("review.last_panel_agreement", panel.consistency.panel_agreement);
       await runContextMemory.put("review.paper_critique", preDraftCritique);
@@ -353,7 +357,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         runId: run.id,
         node: "review",
         payload: {
-          text: `Review panel completed with ${panel.reviewers.length} specialist reviewer(s), ${panel.findings.length} finding(s), and outcome ${panel.decision.outcome}. Manuscript type: ${preDraftCritique.manuscript_type}. Target venue: ${preDraftCritique.target_venue_style}.`
+          text: `Review panel completed with ${panel.reviewers.length} specialist reviewer(s), ${panel.findings.length} finding(s), outcome ${panel.decision.outcome}, and completion verdict ${completionDecision.verdict}. Manuscript type: ${preDraftCritique.manuscript_type}. Target venue: ${preDraftCritique.target_venue_style}.`
         }
       });
       deps.eventStream.emit({
@@ -378,11 +382,11 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       return {
         status: "success",
         summary:
-          blockers > 0
-            ? `Review panel prepared ${panel.findings.length} finding(s) with ${blockers} blocking issue(s), ${warnings} warning(s), and ${manual} manual review item(s). The runtime will take the conservative backtrack recommended by review before paper drafting.${critiqueLabel} Public outputs: ${publicOutputs.outputRootRelative}.`
-            : warnings > 0 || manual > 0
-              ? `Review panel prepared ${panel.findings.length} finding(s) with ${warnings} warning(s) and ${manual} manual review item(s). The next stage will carry the attached revision checklist or follow the recommended backtrack automatically.${critiqueLabel} Public outputs: ${publicOutputs.outputRootRelative}.`
-              : `Review panel completed with outcome ${panel.decision.outcome}.${critiqueLabel} The runtime can continue automatically from the review recommendation. Public outputs: ${publicOutputs.outputRootRelative}.`,
+          completionDecision.verdict === "reject" || blockers > 0
+            ? `Review panel prepared ${panel.findings.length} finding(s) with ${blockers} blocking issue(s), ${warnings} warning(s), and ${manual} manual review item(s). Completion verdict: reject. The runtime will take the conservative backtrack recommended by review before paper drafting.${critiqueLabel} Public outputs: ${publicOutputs.outputRootRelative}.`
+            : completionDecision.verdict === "revise" || warnings > 0 || manual > 0
+              ? `Review panel prepared ${panel.findings.length} finding(s) with ${warnings} warning(s) and ${manual} manual review item(s). Completion verdict: revise. The next stage will carry the attached revision checklist or follow the recommended backtrack automatically.${critiqueLabel} Public outputs: ${publicOutputs.outputRootRelative}.`
+              : `Review panel completed with outcome ${panel.decision.outcome} and completion verdict accept.${critiqueLabel} The runtime can continue automatically from the review recommendation. Public outputs: ${publicOutputs.outputRootRelative}.`,
         needsApproval: true,
         toolCallsUsed,
         costUsd,

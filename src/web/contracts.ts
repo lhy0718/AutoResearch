@@ -10,6 +10,7 @@ import {
 import type { RunLiteratureIndex } from "../core/literatureIndex.js";
 import type { HarnessValidationReport } from "../core/validation/harnessValidationService.js";
 import type { RepositoryKnowledgeEntry, RepositoryKnowledgeIndex } from "../core/repositoryKnowledge.js";
+import type { EvalHarnessHistoryEntry } from "../core/evaluation/evalHarness.js";
 
 export interface ConfigSummary {
   projectName: string;
@@ -128,3 +129,5 @@ export interface SessionInputResponse {
   activeRunId?: string;
   pendingPlan?: PendingPlan;
 }
+
+export type EvalHarnessHistoryResponse = EvalHarnessHistoryEntry[];
