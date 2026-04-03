@@ -51,6 +51,7 @@ export interface MarkdownRunBriefSections {
   paperWorthinessGate?: string;
   failureConditions?: string;
   manuscriptFormat?: string;
+  manuscriptTemplate?: string;
 }
 
 const RUN_BRIEF_TIMEOUT_REASONING = "medium";
@@ -190,7 +191,8 @@ export function parseMarkdownRunBriefSections(markdown: string): MarkdownRunBrie
     minimumExperimentPlan: collapseMarkdownSection(sections.minimumExperimentPlan),
     paperWorthinessGate: collapseMarkdownSection(sections.paperWorthinessGate),
     failureConditions: collapseMarkdownSection(sections.failureConditions),
-    manuscriptFormat: collapseMarkdownSection(sections.manuscriptFormat)
+    manuscriptFormat: collapseMarkdownSection(sections.manuscriptFormat),
+    manuscriptTemplate: collapseMarkdownSection(sections.manuscriptTemplate)
   };
 }
 
@@ -591,6 +593,10 @@ function mapMarkdownHeadingToSection(value: string): keyof MarkdownRunBriefSecti
     case "paper format":
     case "format":
       return "manuscriptFormat";
+    case "manuscript template":
+    case "paper template":
+    case "template":
+      return "manuscriptTemplate";
     default:
       return undefined;
   }

@@ -1,6 +1,7 @@
 import { ObjectiveMetricEvaluation, ObjectiveMetricProfile } from "../objectiveMetric.js";
 import { ConstraintProfile } from "../runConstraints.js";
 import type { PaperProfileConfig } from "../../types.js";
+import type { ParsedLatexTemplate } from "../latex/latexTemplateLoader.js";
 import {
   buildSuggestedPaperTitle,
   choosePaperTitle,
@@ -557,6 +558,7 @@ export function renderSubmissionPaperTex(input: {
   citationKeysByPaperId: Map<string, string>;
   template?: string;
   paperProfile?: PaperProfileConfig;
+  parsedTemplate?: ParsedLatexTemplate | null;
 }): string {
   const sectionCitationMap = new Map<string, string[]>();
   for (const item of input.traceability.paragraphs) {
@@ -566,24 +568,36 @@ export function renderSubmissionPaperTex(input: {
     );
   }
 
-  const columnCount = input.paperProfile?.column_count ?? 2;
+  const columnCount = input.parsedTemplate?.columnLayout ?? (input.paperProfile?.column_count ?? 2);
   const docClassOptions = columnCount === 2 ? "[twocolumn]" : "";
 
-  const lines = [
-    resolveDocumentClass(input.template).replace("{article}", `${docClassOptions}{article}`),
-    "\\usepackage[T1]{fontenc}",
-    columnCount === 2
-      ? "\\usepackage[margin=0.75in]{geometry}"
-      : "\\usepackage[margin=1in]{geometry}",
-    "\\usepackage{graphicx}",
-    "\\title{" + latexEscape(input.manuscript.title) + "}",
-    "\\date{}",
-    "\\begin{document}",
-    "\\maketitle",
-    "\\begin{abstract}",
-    latexEscape(input.manuscript.abstract),
-    "\\end{abstract}"
-  ];
+  const lines = input.parsedTemplate
+    ? [
+        input.parsedTemplate.documentClass || resolveDocumentClass(input.template).replace("{article}", `${docClassOptions}{article}`),
+        input.parsedTemplate.preamble,
+        "\\title{" + latexEscape(input.manuscript.title) + "}",
+        "\\date{}",
+        "\\begin{document}",
+        "\\maketitle",
+        "\\begin{abstract}",
+        latexEscape(input.manuscript.abstract),
+        "\\end{abstract}"
+      ]
+    : [
+        resolveDocumentClass(input.template).replace("{article}", `${docClassOptions}{article}`),
+        "\\usepackage[T1]{fontenc}",
+        columnCount === 2
+          ? "\\usepackage[margin=0.75in]{geometry}"
+          : "\\usepackage[margin=1in]{geometry}",
+        "\\usepackage{graphicx}",
+        "\\title{" + latexEscape(input.manuscript.title) + "}",
+        "\\date{}",
+        "\\begin{document}",
+        "\\maketitle",
+        "\\begin{abstract}",
+        latexEscape(input.manuscript.abstract),
+        "\\end{abstract}"
+      ];
 
   if (input.manuscript.keywords.length > 0) {
     lines.push(`\\noindent\\textbf{Keywords:} ${latexEscape(input.manuscript.keywords.join(", "))}`);

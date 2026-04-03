@@ -31,12 +31,13 @@ type ResearchBriefSectionKey =
   | "paperWorthinessGate"
   | "failureConditions"
   | "manuscriptFormat"
+  | "manuscriptTemplate"
   | "notes"
   | "questionsRisks";
 
 type RequiredResearchBriefSectionKey = Exclude<
   ResearchBriefSectionKey,
-  "manuscriptFormat" | "notes" | "questionsRisks"
+  "manuscriptFormat" | "manuscriptTemplate" | "notes" | "questionsRisks"
 >;
 
 const RESEARCH_BRIEF_SECTION_SPECS: Array<{
@@ -223,6 +224,18 @@ const RESEARCH_BRIEF_SECTION_SPECS: Array<{
       "- Main body pages: 8",
       "- References excluded from page limit: yes",
       "- Appendices excluded from page limit: yes"
+    ]
+  },
+  {
+    key: "manuscriptTemplate",
+    heading: "Manuscript Template",
+    required: false,
+    lines: [
+      "Optional. Relative path to a .tex template file from the workspace root.",
+      "If provided, write_paper uses the file's preamble",
+      "(\\documentclass through \\begin{document}) and any detected section order.",
+      "Leave blank to use the built-in preamble generator.",
+      "Example: template.tex"
     ]
   },
   {
@@ -572,4 +585,15 @@ export function parseManuscriptFormatFromBrief(markdown: string): ManuscriptForm
     references_excluded_from_page_limit: refsExcluded,
     appendices_excluded_from_page_limit: appendixExcluded
   };
+}
+
+export function parseManuscriptTemplateFromBrief(markdown: string): string | undefined {
+  const sections = parseMarkdownRunBriefSections(markdown);
+  if (!sections?.manuscriptTemplate) return undefined;
+  const text = sections.manuscriptTemplate.trim();
+  const pathMatch = text.match(/(?:^|[\s\-*])([^\s#*`\[\]\n][^\s\n]*\.tex)/m);
+  const candidate = pathMatch?.[1]?.trim();
+  if (!candidate) return undefined;
+  if (!/^[a-zA-Z0-9._/\\-]+$/.test(candidate)) return undefined;
+  return candidate;
 }

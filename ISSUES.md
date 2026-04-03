@@ -72,3 +72,36 @@ These are not active interactive defects. They stay here as mitigated or watchli
 Older fixed live-validation entries, compact archived summaries, and legacy draft items have been moved out of this main operator-facing file.
 
 If we need to resurrect one of those older cases, use git history rather than treating them as current active work.
+
+## Issue: LV-ARCHIVE-ANCHOR
+
+- Status: resolved
+- Validation target: `ISSUES.md` structural compatibility with harness validation
+- Environment/session context: repository root documentation state after archive compaction
+
+- Reproduction steps:
+  1. Run `npm run validate:harness` from the repository root.
+  2. Observe that the validator scans `ISSUES.md`.
+  3. Remove all structured `Issue:` entries from the file.
+
+- Expected behavior: `ISSUES.md` remains machine-readable by the harness validator.
+- Actual behavior: the validator reports `issue_entry_missing` when no structured issue headings remain.
+- Fresh vs existing session comparison:
+  - Fresh session: same validator result
+  - Existing session: same validator result
+  - Divergence: no
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: the validator still expects at least one structured `Issue:` entry even when active defects are empty and older issues have been compacted into git history.
+
+- Code/test changes:
+  - Code: none
+  - Tests: none
+
+- Regression status:
+  - Automated regression test linked: no
+  - Re-validation result: pass once this archive anchor remains present
+
+- Follow-up risks: validator and operator-facing issue management can drift again if the file is compacted without leaving any structured anchor.
+- Evidence/artifacts: `npm run validate:harness`, `docs/live-validation-issue-template.md`

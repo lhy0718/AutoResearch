@@ -101,6 +101,12 @@ import type { BriefEvidenceAssessment } from "../analysis/briefEvidenceValidator
 import type { ManuscriptType } from "../paperCritique.js";
 import { buildRunOperatorStatus } from "../runs/runStatus.js";
 import { buildRunCompletenessChecklist } from "../runs/runCompletenessChecklist.js";
+import {
+  loadLatexTemplate,
+  resolveLatexTemplatePath,
+  type ParsedLatexTemplate
+} from "../latex/latexTemplateLoader.js";
+import { parseManuscriptTemplateFromBrief } from "../runs/researchBriefFiles.js";
 
 interface PaperCompileCommandResult {
   step: string;
@@ -392,6 +398,34 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       const basePaperProfile = deps.config.paper_profile;
       const manuscriptFormatTarget = await runContextMemory.get("run_brief.manuscript_format") as
         { columns?: number; main_body_pages?: number; references_excluded_from_page_limit?: boolean; appendices_excluded_from_page_limit?: boolean } | undefined;
+      const rawBrief = (await runContextMemory.get<string>("run_brief.raw")) ?? null;
+      const briefTemplatePath = rawBrief
+        ? (parseManuscriptTemplateFromBrief(rawBrief) ?? null)
+        : null;
+      const resolvedTemplatePath = await resolveLatexTemplatePath(
+        process.cwd(),
+        briefTemplatePath
+      );
+      let parsedTemplate: ParsedLatexTemplate | null = null;
+      if (briefTemplatePath && !resolvedTemplatePath) {
+        emitLog(
+          `[write_paper] LaTeX template not found (${briefTemplatePath}). Using built-in preamble.`
+        );
+      } else if (resolvedTemplatePath) {
+        try {
+          parsedTemplate = await loadLatexTemplate(resolvedTemplatePath);
+          emitLog(
+            `[write_paper] LaTeX template loaded: ${parsedTemplate.sourcePath}` +
+              (parsedTemplate.sectionOrder.length > 0
+                ? ` (sections: ${parsedTemplate.sectionOrder.join(", ")})`
+                : "")
+          );
+        } catch (err) {
+          emitLog(
+            `[write_paper] LaTeX template load failed (${resolvedTemplatePath}): ${err}. Using built-in preamble.`
+          );
+        }
+      }
       const briefMainBodyPages =
         typeof manuscriptFormatTarget?.main_body_pages === "number" ? manuscriptFormatTarget.main_body_pages : undefined;
       const paperProfile: typeof basePaperProfile = manuscriptFormatTarget
@@ -510,6 +544,8 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         paperProfile,
         objectiveMetricProfile,
         objectiveEvaluation,
+        latexTemplateSectionOrder:
+          parsedTemplate?.sectionOrder?.length ? parsedTemplate.sectionOrder : null,
         abortSignal
       });
       let paperDraft = sessionResult.draft;
@@ -697,6 +733,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         citationKeysByPaperId: bibtex.citationKeysByPaperId,
         unresolvedCitationPaperIds,
         template: deps.config?.paper?.template,
+        parsedTemplate,
         emitLog,
         abortSignal,
         runContextMemory
@@ -1980,6 +2017,7 @@ async function runManuscriptQualityLoop(input: {
   citationKeysByPaperId: Map<string, string>;
   unresolvedCitationPaperIds: string[];
   template?: string;
+  parsedTemplate?: ParsedLatexTemplate | null;
   emitLog: (text: string) => void;
   abortSignal?: AbortSignal;
   runContextMemory: RunContextMemory;
@@ -2027,7 +2065,8 @@ let currentManuscript = input.initialManuscript;
       traceability,
       citationKeysByPaperId: input.citationKeysByPaperId,
       template: input.template,
-      paperProfile: input.paperProfile
+      paperProfile: input.paperProfile,
+      parsedTemplate: input.parsedTemplate
     });
     const submissionValidation = buildPaperSubmissionValidation({
       manuscript,

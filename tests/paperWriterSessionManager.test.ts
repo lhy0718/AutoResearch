@@ -22,6 +22,22 @@ afterEach(() => {
   delete process.env.AUTOLABOS_PAPER_WRITER_STAGE_TIMEOUT_MS;
 });
 
+class RecordingLLMClient extends MockLLMClient {
+  public readonly systemPrompts: string[] = [];
+  private index = 0;
+
+  constructor(private readonly responses: string[]) {
+    super();
+  }
+
+  override async complete(_prompt: string, opts?: { systemPrompt?: string }): Promise<{ text: string }> {
+    this.systemPrompts.push(opts?.systemPrompt || "");
+    const text = this.responses[Math.min(this.index, this.responses.length - 1)] ?? "";
+    this.index += 1;
+    return { text };
+  }
+}
+
 function makeRun(runId: string): RunRecord {
   return {
     version: 3,
@@ -47,6 +63,225 @@ function makeRun(runId: string): RunRecord {
 }
 
 describe("PaperWriterSessionManager", () => {
+  it("appends the LaTeX template section order hint to the paper-writer system prompt", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-session-template-"));
+    process.chdir(root);
+
+    const runId = "run-paper-session-template";
+    const run = makeRun(runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+
+    const llm = new RecordingLLMClient([
+      JSON.stringify({
+        title: "Template-guided Paper Writer",
+        abstract_focus: ["agent collaboration", "reproducibility"],
+        section_headings: ["Introduction", "Method", "Results"],
+        key_claim_themes: ["Structured coordination improves reproducibility."],
+        citation_plan: ["paper_1"]
+      }),
+      JSON.stringify({
+        title: "Template-guided Paper Writer",
+        abstract: "A staged paper-writing session grounded in evidence.",
+        keywords: ["agent collaboration", "reproducibility"],
+        sections: [
+          {
+            heading: "Introduction",
+            paragraphs: ["This draft studies session-backed paper writing."],
+            evidence_ids: ["ev_1"],
+            citation_paper_ids: ["paper_1"]
+          },
+          {
+            heading: "Method",
+            paragraphs: ["The writer uses staged drafting with a persistent thread."],
+            evidence_ids: ["ev_1"],
+            citation_paper_ids: ["paper_1"]
+          },
+          {
+            heading: "Results",
+            paragraphs: ["The thread is preserved across drafting turns."],
+            evidence_ids: ["ev_1"],
+            citation_paper_ids: ["paper_1"]
+          }
+        ],
+        claims: [
+          {
+            claim_id: "c1",
+            statement: "Persistent paper-writing sessions improve revisability.",
+            section_heading: "Results",
+            evidence_ids: ["ev_1"],
+            citation_paper_ids: ["paper_1"]
+          }
+        ]
+      }),
+      JSON.stringify({
+        summary: "The draft is coherent.",
+        revision_notes: [],
+        unsupported_claims: [],
+        missing_sections: [],
+        missing_citations: []
+      }),
+      JSON.stringify({
+        title: "Template-guided Paper Writer",
+        abstract: "A staged paper-writing session grounded in evidence.",
+        keywords: ["agent collaboration", "reproducibility"],
+        sections: [
+          {
+            heading: "Introduction",
+            paragraphs: ["This draft studies session-backed paper writing."],
+            evidence_ids: ["ev_1"],
+            citation_paper_ids: ["paper_1"]
+          },
+          {
+            heading: "Method",
+            paragraphs: ["The writer uses staged drafting with a persistent thread."],
+            evidence_ids: ["ev_1"],
+            citation_paper_ids: ["paper_1"]
+          },
+          {
+            heading: "Results",
+            paragraphs: ["The thread is preserved across drafting turns."],
+            evidence_ids: ["ev_1"],
+            citation_paper_ids: ["paper_1"]
+          }
+        ],
+        claims: [
+          {
+            claim_id: "c1",
+            statement: "Persistent paper-writing sessions improve revisability.",
+            section_heading: "Results",
+            evidence_ids: ["ev_1"],
+            citation_paper_ids: ["paper_1"]
+          }
+        ]
+      }),
+      JSON.stringify({
+        title: "Template-guided Paper Writer",
+        abstract: "A polished manuscript with template order guidance.",
+        keywords: ["agent collaboration", "reproducibility"],
+        sections: [
+          {
+            heading: "Introduction",
+            paragraphs: ["This draft studies session-backed paper writing."]
+          },
+          {
+            heading: "Method",
+            paragraphs: ["The writer uses staged drafting with a persistent thread."]
+          },
+          {
+            heading: "Results",
+            paragraphs: ["The thread is preserved across drafting turns."]
+          }
+        ]
+      })
+    ]);
+
+    const manager = new PaperWriterSessionManager({
+      config: {
+        providers: {
+          llm_mode: "openai_api"
+        }
+      } as any,
+      codex: {} as any,
+      llm,
+      eventStream: new InMemoryEventStream(),
+      runStore: {
+        async getRun() {
+          return run;
+        },
+        async updateRun() {}
+      } as any,
+      workspaceRoot: root
+    });
+
+    await manager.run({
+      run,
+      bundle: {
+        runTitle: run.title,
+        topic: run.topic,
+        objectiveMetric: run.objectiveMetric,
+        constraints: run.constraints,
+        paperSummaries: [
+          {
+            paper_id: "paper_1",
+            title: "Schema Bench",
+            source_type: "full_text",
+            summary: "Schema-backed coordination improves reproducibility.",
+            key_findings: ["Structured coordination improves reproducibility."],
+            limitations: [],
+            datasets: ["AgentBench-mini"],
+            metrics: ["reproducibility_score"],
+            novelty: "Persistent coordination state",
+            reproducibility_notes: ["Repeated trials are reported."]
+          }
+        ],
+        evidenceRows: [
+          {
+            evidence_id: "ev_1",
+            paper_id: "paper_1",
+            claim: "Structured coordination improves reproducibility.",
+            method_slot: "shared state schema",
+            result_slot: "higher reproducibility_score",
+            limitation_slot: "small benchmark",
+            dataset_slot: "AgentBench-mini",
+            metric_slot: "reproducibility_score",
+            evidence_span: "Repeated trials improved reproducibility_score.",
+            source_type: "full_text",
+            confidence: 0.9
+          }
+        ],
+        hypotheses: [
+          {
+            hypothesis_id: "h_1",
+            text: "Persistent coordination improves reproducibility.",
+            evidence_links: ["ev_1"]
+          }
+        ],
+        corpus: [
+          {
+            paper_id: "paper_1",
+            title: "Schema Bench",
+            abstract: "Schema-backed coordination improves reproducibility.",
+            authors: ["Alice Doe"],
+            year: 2025,
+            venue: "ACL"
+          }
+        ],
+        experimentPlan: {
+          selectedTitle: "Schema benchmark",
+          selectedSummary: "Compare persistent schemas with a baseline.",
+          rawText: ""
+        },
+        resultAnalysis: {
+          objective_metric: {
+            evaluation: {
+              summary: "Objective metric met: reproducibility_score=0.88 >= 0.8."
+            }
+          }
+        }
+      },
+      constraintProfile: {
+        source: "heuristic_fallback",
+        collect: { dateRange: null, year: null, lastYears: null, fieldsOfStudy: [], openAccessOnly: false, minCitationCount: null, limit: 20 },
+        experiment: { maxRuns: 1, maxRuntimeMinutes: 30, requireBaseline: true },
+        writing: { targetVenue: "generic_ml_conference", toneHint: "formal", lengthHint: "paper" }
+      } as any,
+      objectiveMetricProfile: {
+        primaryMetric: "reproducibility_score",
+        targetDescription: "Higher is better",
+        paperEmphasis: "prioritize reproducibility gains"
+      } as any,
+      latexTemplateSectionOrder: ["Introduction", "Method", "Results"]
+    });
+
+    expect(
+      llm.systemPrompts.some((prompt) =>
+        prompt.includes("This paper uses a custom LaTeX template. Prefer this section order: Introduction, Method, Results.")
+      )
+    ).toBe(true);
+  });
+
   it("stores and reuses a codex thread for staged paper writing", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-session-"));
     process.chdir(root);

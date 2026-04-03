@@ -4285,4 +4285,168 @@ describe("writePaper PDF build", () => {
       ])
     );
   });
+
+  it("auto-detects workspace template.tex and applies its preamble to paper/main.tex", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-write-paper-template-auto-"));
+    process.chdir(root);
+
+    const run = makeRun("run-write-paper-template-auto");
+    const runDir = await seedRun(root, run);
+    await writeFile(
+      path.join(root, "template.tex"),
+      [
+        "\\documentclass[twocolumn]{article}",
+        "\\usepackage{amsmath}",
+        "\\newcommand{\\eg}{\\textit{e.g.,}}",
+        "\\begin{document}",
+        "\\section{Introduction}",
+        "\\section{Method}",
+        "\\section{Results}",
+        "\\end{document}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient([
+        ...buildSessionResponses(),
+        buildPolishedManuscriptResponse(),
+        buildManuscriptReviewResponse({ decision: "pass" }),
+        buildManuscriptReviewAuditResponse()
+      ]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const tex = await readFile(path.join(runDir, "paper", "main.tex"), "utf8");
+    expect(tex).toContain("\\documentclass[twocolumn]{article}");
+    expect(tex).toContain("\\usepackage{amsmath}");
+    expect(tex).toContain("\\newcommand{\\eg}{\\textit{e.g.,}}");
+    expect(tex).not.toContain("\\usepackage[margin=0.75in]{geometry}");
+  });
+
+  it("uses the brief Manuscript Template path when provided", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-write-paper-template-brief-"));
+    process.chdir(root);
+
+    const run = makeRun("run-write-paper-template-brief");
+    const runDir = await seedRun(root, run);
+    await mkdir(path.join(root, "templates"), { recursive: true });
+    await writeFile(
+      path.join(root, "templates", "neurips.tex"),
+      [
+        "\\documentclass[twocolumn]{article}",
+        "\\usepackage{amssymb}",
+        "\\begin{document}",
+        "\\section{Introduction}",
+        "\\section{Method}",
+        "\\section{Results}",
+        "\\end{document}"
+      ].join("\n"),
+      "utf8"
+    );
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put(
+      "run_brief.raw",
+      [
+        "# Research Brief",
+        "",
+        "## Topic",
+        "Template-guided paper writing",
+        "",
+        "## Manuscript Template",
+        "templates/neurips.tex"
+      ].join("\n")
+    );
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient([
+        ...buildSessionResponses(),
+        buildPolishedManuscriptResponse(),
+        buildManuscriptReviewResponse({ decision: "pass" }),
+        buildManuscriptReviewAuditResponse()
+      ]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const tex = await readFile(path.join(runDir, "paper", "main.tex"), "utf8");
+    expect(tex).toContain("\\usepackage{amssymb}");
+    expect(tex).not.toContain("\\usepackage[margin=0.75in]{geometry}");
+  });
+
+  it("falls back to the built-in preamble and logs when the brief template path is missing", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-write-paper-template-missing-"));
+    process.chdir(root);
+
+    const run = makeRun("run-write-paper-template-missing");
+    const runDir = await seedRun(root, run);
+    const eventStream = new InMemoryEventStream();
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put(
+      "run_brief.raw",
+      [
+        "# Research Brief",
+        "",
+        "## Topic",
+        "Missing template path",
+        "",
+        "## Manuscript Template",
+        "templates/missing.tex"
+      ].join("\n")
+    );
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream,
+      llm: new SequencedLLMClient([
+        ...buildSessionResponses(),
+        buildPolishedManuscriptResponse(),
+        buildManuscriptReviewResponse({ decision: "pass" }),
+        buildManuscriptReviewAuditResponse()
+      ]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const tex = await readFile(path.join(runDir, "paper", "main.tex"), "utf8");
+    expect(tex).toContain("\\documentclass[twocolumn]{article}");
+    expect(tex).toContain("\\usepackage[margin=0.75in]{geometry}");
+    expect(
+      eventStream
+        .history(200, run.id)
+        .some((event) => event.payload?.text === "[write_paper] LaTeX template not found (templates/missing.tex). Using built-in preamble.")
+    ).toBe(true);
+  });
 });

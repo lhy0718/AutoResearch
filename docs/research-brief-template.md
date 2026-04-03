@@ -61,6 +61,16 @@ Important:
 - AutoLabOS uses it to size writing budgets and, unless overridden, as the minimum compiled main-body page floor.
 - If the compiled PDF lands below that floor, the page-budget check warns or fails depending on validation mode.
 
+## Manuscript Template
+Optional. Relative path to a `.tex` template file from the workspace root.
+If provided, the `write_paper` node uses the file's preamble
+(`\documentclass` through `\begin{document}`) and any detected section
+structure as a structural guide.
+Leave blank to use the built-in preamble generator.
+
+Example:
+template.tex
+
 ## Research Question
 Write one clear research question that could be answered by a small real experiment.
 

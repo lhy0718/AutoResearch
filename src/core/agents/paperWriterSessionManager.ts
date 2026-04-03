@@ -149,6 +149,7 @@ interface PaperWriterSessionInput {
   paperProfile?: PaperProfileConfig;
   objectiveMetricProfile: ObjectiveMetricProfile;
   objectiveEvaluation?: ObjectiveMetricEvaluation;
+  latexTemplateSectionOrder?: string[] | null;
   abortSignal?: AbortSignal;
 }
 
@@ -181,6 +182,16 @@ export class PaperWriterSessionManager {
     const trace: SessionTraceEntry[] = [];
     const errors: string[] = [];
     let stageFallbacks = 0;
+    const writerSystemPrompt = buildRoleSystemPrompt(
+      "paper_writer",
+      this.writerRole.sop,
+      input.latexTemplateSectionOrder
+    );
+    const reviewerSystemPrompt = buildRoleSystemPrompt(
+      "reviewer",
+      this.reviewerRole.sop,
+      input.latexTemplateSectionOrder
+    );
 
     this.emit(input.run, `Paper writer session starting in ${mode} mode.`);
 
@@ -191,7 +202,7 @@ export class PaperWriterSessionManager {
       stage: "outline",
       mode,
       threadId: activeThreadId,
-      systemPrompt: buildRoleSystemPrompt("paper_writer", this.writerRole.sop),
+      systemPrompt: writerSystemPrompt,
       prompt: buildOutlinePrompt(input.bundle, input.paperProfile),
       agentRole: "paper_writer",
       abortSignal: input.abortSignal,
@@ -219,7 +230,7 @@ export class PaperWriterSessionManager {
       stage: "draft",
       mode,
       threadId: activeThreadId,
-      systemPrompt: buildRoleSystemPrompt("paper_writer", this.writerRole.sop),
+      systemPrompt: writerSystemPrompt,
       prompt: buildDraftPrompt({
         bundle: input.bundle,
         constraintProfile: input.constraintProfile,
@@ -257,7 +268,7 @@ export class PaperWriterSessionManager {
       stage: "review",
       mode,
       threadId: activeThreadId,
-      systemPrompt: buildRoleSystemPrompt("reviewer", this.reviewerRole.sop),
+      systemPrompt: reviewerSystemPrompt,
       prompt: buildReviewPrompt({
         bundle: input.bundle,
         draft,
@@ -289,7 +300,7 @@ export class PaperWriterSessionManager {
       stage: "finalize",
       mode,
       threadId: activeThreadId,
-      systemPrompt: buildRoleSystemPrompt("paper_writer", this.writerRole.sop),
+      systemPrompt: writerSystemPrompt,
       prompt: buildRevisionPrompt({
         bundle: input.bundle,
         constraintProfile: input.constraintProfile,
@@ -335,7 +346,7 @@ export class PaperWriterSessionManager {
       stage: "polish",
       mode,
       threadId: activeThreadId,
-      systemPrompt: buildRoleSystemPrompt("paper_writer", this.writerRole.sop),
+      systemPrompt: writerSystemPrompt,
       prompt: buildPaperPolishPrompt({
         bundle: input.bundle,
         draft: finalDraft,
@@ -1095,14 +1106,24 @@ function forwardAbort(
 
 function buildRoleSystemPrompt(
   roleId: "paper_writer" | "reviewer",
-  sop: string[]
+  sop: string[],
+  latexTemplateSectionOrder?: string[] | null
 ): string {
-  return [
+  const prompt = [
     `Role: ${roleId}`,
     "Follow SOP:",
     ...sop.map((step, index) => `${index + 1}. ${step}`),
     "Return JSON only."
   ].join("\n");
+  if (!latexTemplateSectionOrder?.length) {
+    return prompt;
+  }
+  return (
+    prompt +
+    "\n\nThis paper uses a custom LaTeX template. Prefer this section order: " +
+    latexTemplateSectionOrder.join(", ") +
+    "."
+  );
 }
 
 function buildLatexRepairSystemPrompt(sop: string[]): string {

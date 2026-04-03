@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { parseManuscriptFormatFromBrief } from "../src/core/runs/researchBriefFiles.js";
+import {
+  parseManuscriptFormatFromBrief,
+  parseManuscriptTemplateFromBrief
+} from "../src/core/runs/researchBriefFiles.js";
 import { parseMarkdownRunBriefSections } from "../src/core/runs/runBriefParser.js";
 import { buildGateWarningLimitationSentences } from "../src/core/analysis/scientificWriting.js";
 import type { GateWarningItem } from "../src/core/analysis/paperWriting.js";
@@ -111,6 +114,58 @@ describe("runBriefParser manuscriptFormat field", () => {
   });
 });
 
+describe("parseManuscriptTemplateFromBrief", () => {
+  it("extracts a template.tex path", () => {
+    const brief = [
+      "# Research Brief",
+      "",
+      "## Manuscript Template",
+      "template.tex"
+    ].join("\n");
+
+    expect(parseManuscriptTemplateFromBrief(brief)).toBe("template.tex");
+  });
+
+  it("returns undefined when the section is absent", () => {
+    const brief = [
+      "# Research Brief",
+      "",
+      "## Topic",
+      "Test topic"
+    ].join("\n");
+
+    expect(parseManuscriptTemplateFromBrief(brief)).toBeUndefined();
+  });
+
+  it("returns undefined for paths with disallowed characters", () => {
+    const brief = [
+      "# Research Brief",
+      "",
+      "## Manuscript Template",
+      "templates/$bad.tex"
+    ].join("\n");
+
+    expect(parseManuscriptTemplateFromBrief(brief)).toBeUndefined();
+  });
+});
+
+describe("runBriefParser manuscriptTemplate field", () => {
+  it("parses manuscript template heading into manuscriptTemplate field", () => {
+    const brief = [
+      "# Research Brief",
+      "",
+      "## Topic",
+      "Some topic",
+      "",
+      "## Manuscript Template",
+      "templates/submission.tex"
+    ].join("\n");
+
+    const sections = parseMarkdownRunBriefSections(brief);
+    expect(sections.manuscriptTemplate).toBe("templates/submission.tex");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Gate warning categorization
 // ---------------------------------------------------------------------------
@@ -174,6 +229,7 @@ describe("PublicRunOutputSection", () => {
 // ---------------------------------------------------------------------------
 import { renderSubmissionPaperTex } from "../src/core/analysis/paperManuscript.js";
 import type { PaperManuscript, PaperTraceabilityReport } from "../src/core/analysis/paperWriting.js";
+import type { ParsedLatexTemplate } from "../src/core/latex/latexTemplateLoader.js";
 
 function makeMinimalManuscript(): PaperManuscript {
   return {
@@ -253,6 +309,36 @@ describe("renderSubmissionPaperTex column_count", () => {
     expect(tex).toContain("\\maketitle");
     expect(tex).toContain("\\section{Introduction}");
     expect(tex).toContain("\\section{Conclusion}");
+  });
+
+  it("uses a parsed LaTeX template preamble when provided", () => {
+    const parsedTemplate: ParsedLatexTemplate = {
+      sourcePath: "/tmp/template.tex",
+      documentClass: "\\documentclass[twocolumn]{article}",
+      preamble: [
+        "\\usepackage{amsmath}",
+        "\\newcommand{\\eg}{\\textit{e.g.,}}"
+      ].join("\n"),
+      columnLayout: 2,
+      packages: ["\\usepackage{amsmath}"],
+      sectionOrder: ["Introduction", "Method", "Results"],
+      customCommands: ["\\newcommand{\\eg}{\\textit{e.g.,}}"],
+      bibliographyStyle: null
+    };
+
+    const tex = renderSubmissionPaperTex({
+      manuscript: makeMinimalManuscript(),
+      traceability: makeMinimalTraceability(),
+      citationKeysByPaperId: new Map(),
+      paperProfile: { column_count: 1 } as any,
+      parsedTemplate
+    });
+
+    expect(tex).toContain("\\documentclass[twocolumn]{article}");
+    expect(tex).toContain("\\usepackage{amsmath}");
+    expect(tex).toContain("\\newcommand{\\eg}{\\textit{e.g.,}}");
+    expect(tex).not.toContain("\\usepackage[margin=0.75in]{geometry}");
+    expect(tex).not.toContain("\\usepackage[margin=1in]{geometry}");
   });
 });
 
