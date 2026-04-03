@@ -2,12 +2,12 @@
 
   <br/>
 
-  <img alt="AutoLabOS" src="https://img.shields.io/badge/AutoLabOS-0F766E?style=for-the-badge&logoColor=white&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiPjxwYXRoIGQ9Ik0xMiAyTDIgN2wxMCA1IDEwLTV6Ii8%2BPHBhdGggZD0iTTIgMTdsMTAgNSAxMC01Ii8%2BPHBhdGggZD0iTTIgMTJsMTAgNSAxMC01Ii8%2BPC9zdmc%2B" />
+  <img alt="AutoLabOS" src="https://img.shields.io/badge/AutoLabOS-0F766E?style=for-the-badge&logoColor=white&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2d0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiPjxwYXRoIGQ9Ik0xMiAyTDIgN2wxMCA1IDEwLTV6Ii8%2BPHBhdGggZD0iTTIgMTdsMTAgNSAxMC01Ii8%2BPHBhdGggZD0iTTIgMTJsMTAgNSAxMC01Ii8%2BPC9zdmc%2B" />
 
-  <h1>Операционная система для автономных исследований</h1>
+  <h1>Операционная система для автономного исследования</h1>
 
-  <p><strong>Автономное выполнение исследований, а не просто генерация текста.</strong><br/>
-  От литературы до рукописи — внутри управляемого цикла с контрольными точками и возможностью проверки.</p>
+  <p><strong>Не генерация исследования, а автономное выполнение исследования.</strong><br/>
+  От brief до manuscript внутри governed, checkpointed и inspectable процесса.</p>
 
   <p>
     <a href="../README.md"><strong>English</strong></a>
@@ -31,9 +31,8 @@
     <a href="./README.ru.md"><strong>Русский</strong></a>
   </p>
 
-  <p><sub>Локализованные README являются поддерживаемыми переводами этого документа. Для нормативных формулировок и последних изменений используйте английский README как каноническую ссылку.</sub></p>
+  <p><sub>Локализованные README — это поддерживаемые переводы этого документа. Для нормативных формулировок и самых новых правок используйте английский README как canonical reference.</sub></p>
 
-  <!-- CI & Quality -->
   <p>
     <a href="https://github.com/lhy0718/AutoLabOS/actions/workflows/ci.yml">
       <img alt="CI" src="https://img.shields.io/github/actions/workflow/status/lhy0718/AutoLabOS/ci.yml?branch=main&style=flat-square&label=ci&logo=githubactions&logoColor=white" />
@@ -41,128 +40,66 @@
     <a href="https://github.com/lhy0718/AutoLabOS/actions/workflows/smoke.yml">
       <img alt="Smoke" src="https://img.shields.io/github/actions/workflow/status/lhy0718/AutoLabOS/smoke.yml?branch=main&style=flat-square&label=smoke&logo=githubactions&logoColor=white" />
     </a>
-    <img alt="Tests" src="https://img.shields.io/badge/tests-931%20passed-22C55E?style=flat-square&logo=vitest&logoColor=white" />
+    <img alt="Tests" src="https://img.shields.io/badge/tests-validated-22C55E?style=flat-square&logo=vitest&logoColor=white" />
   </p>
 
-  <!-- Tech stack -->
   <p>
     <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.x-3178C6?style=flat-square&logo=typescript&logoColor=white" />
     <img alt="Node" src="https://img.shields.io/badge/Node-%E2%89%A518-339933?style=flat-square&logo=node.js&logoColor=white" />
     <img alt="React" src="https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=black" />
   </p>
 
-  <!-- Core features -->
   <p>
-    <img alt="9-node graph" src="https://img.shields.io/badge/state%20graph-9%20nodes-0F766E?style=flat-square" />
+    <img alt="Governed workflow" src="https://img.shields.io/badge/workflow-governed%20with%20figure_audit-0F766E?style=flat-square" />
     <img alt="Checkpointed" src="https://img.shields.io/badge/checkpoints-built%20in-0F766E?style=flat-square" />
-    <img alt="Experiment Governance" src="https://img.shields.io/badge/experiments-governed-0F766E?style=flat-square" />
-    <img alt="потолок утверждений" src="https://img.shields.io/badge/утверждений-ceiling%20enforced-0F766E?style=flat-square" />
-  </p>
-
-  <!-- Integrations -->
-  <p>
-    <img alt="OpenAI" src="https://img.shields.io/badge/OpenAI-supported-412991?style=flat-square&logo=openai&logoColor=white" />
-    <img alt="Codex CLI" src="https://img.shields.io/badge/Codex%20CLI-supported-412991?style=flat-square&logo=openai&logoColor=white" />
-    <img alt="Ollama" src="https://img.shields.io/badge/Ollama-supported-1A1A2E?style=flat-square" />
-    <img alt="Semantic Scholar" src="https://img.shields.io/badge/Semantic%20Scholar-integrated-1857B6?style=flat-square" />
-  </p>
-
-  <!-- Community -->
-  <p>
-    <a href="https://github.com/lhy0718/AutoLabOS/stargazers">
-      <img alt="Stars" src="https://img.shields.io/github/stars/lhy0718/AutoLabOS?style=flat-square&color=f5a623" />
-    </a>
-    <a href="https://github.com/lhy0718/AutoLabOS/commits/main">
-      <img alt="Last commit" src="https://img.shields.io/github/last-commit/lhy0718/AutoLabOS?style=flat-square&color=6c757d" />
-    </a>
+    <img alt="Claim Ceiling" src="https://img.shields.io/badge/claims-ceiling%20enforced-0F766E?style=flat-square" />
+    <img alt="Validation surfaces" src="https://img.shields.io/badge/validation-first--class-0F766E?style=flat-square" />
   </p>
 
 </div>
 
 ---
 
-Большинство инструментов, претендующих на автоматизацию исследований, на деле автоматизируют **генерацию текста**. Они выдают гладкие на вид результаты на основе поверхностных рассуждений, без управления экспериментами, без отслеживания доказательств и без честного учёта того, что доказательства действительно подтверждают.
+AutoLabOS — это операционная система для governed research execution. Она рассматривает run как checkpointed состояние исследования, а не как одноразовый акт генерации.
 
-AutoLabOS занимает другую позицию: **трудная часть исследования — не написание текста, а дисциплина между вопросом и черновиком.** Опора на литературу, проверка гипотез, управление экспериментами, отслеживание неудач, ограничение утверждений и контрольные шлюзы рецензирования — всё это происходит внутри фиксированного графа состояний из 9 узлов. Каждый узел создаёт проверяемые артефакты. Каждый переход сохраняется в контрольной точке. У каждого утверждения есть потолок доказательств.
+Весь основной цикл inspectable. Сбор литературы, формирование гипотез, дизайн экспериментов, реализация, запуск, анализ, figure audit, review и написание manuscript оставляют auditируемые артефакты. Утверждения остаются evidence-bounded в рамках claim ceiling. Review — это не этап косметической правки, а structural gate.
 
-Результат — это не просто статья. Это управляемое состояние исследования, которое можно проверять, возобновлять и защищать.
-
-> **Сначала доказательства. Потом утверждения.**
->
-> **Запуски, которые можно проверять, возобновлять и защищать.**
->
-> **Исследовательская операционная система, а не набор промптов.**
->
-> **Ваша лаборатория не должна повторять один и тот же провалившийся эксперимент дважды.**
->
-> **Рецензирование — это структурный шлюз, а не полировка текста.**
+Предположения о качестве превращаются в явные checks. Реальное поведение важнее, чем внешний вид на уровне prompt. Воспроизводимость обеспечивается за счёт артефактов, checkpoints и inspectable transitions.
 
 ---
 
-## Что вы получаете после запуска
+## Зачем существует AutoLabOS
 
-AutoLabOS создаёт не просто PDF. Он создаёт полное, прослеживаемое состояние исследования:
+Многие системы research agents оптимизированы под производство текста. AutoLabOS оптимизирован под выполнение governed исследовательского процесса.
 
-| Результат | Содержание |
-|---|---|
-| **Корпус литературы** | Собранные статьи, BibTeX, извлечённое хранилище доказательств |
-| **Гипотезы** | Гипотезы, основанные на литературе, со скептической рецензией |
-| **План эксперимента** | Управляемый дизайн с контрактом, фиксацией базовой линии и проверками согласованности |
-| **Результаты выполнения** | Метрики, объективная оценка, журнал памяти неудач |
-| **Анализ результатов** | Статистический анализ, решения по попыткам, обоснование переходов |
-| **Пакет рецензирования** | Табель оценок панели из 5 специалистов, потолок утверждений, критика перед черновиком |
-| **Рукопись** | Черновик LaTeX со ссылками на доказательства, научной валидацией, опциональным PDF |
-| **Контрольные точки** | Полные снимки состояния на каждой границе узла — возобновление в любой момент |
+Эта разница важна, когда проекту нужно больше, чем просто правдоподобный черновик.
 
-Всё хранится в `.autolabos/runs/<run_id>/`, а публичные результаты зеркалируются в `outputs/`.
+- research brief как контракт исполнения
+- явные workflow gates вместо свободного дрейфа агентов
+- checkpoints и артефакты, которые можно проверить постфактум
+- review, способный остановить слабую работу до генерации manuscript
+- failure memory, чтобы не повторять вслепую один и тот же неудачный эксперимент
+- evidence-bounded claims вместо текста, который выходит за пределы данных
+
+AutoLabOS рассчитан на команды, которым нужна автономность без отказа от auditability, backtracking и validation.
 
 ---
 
-## Почему AutoLabOS?
+## Что происходит в одном run
 
-Большинство AI-инструментов для исследований оптимизируют **внешний вид результата**. AutoLabOS оптимизирует **управляемое выполнение**.
+Один governed run всегда проходит один и тот же исследовательский путь.
 
-| | Типичные инструменты исследований | AutoLabOS |
-|---|---|---|
-| Рабочий процесс | Неограниченный дрейф агента | Фиксированный граф из 9 узлов с ограниченными переходами |
-| Дизайн эксперимента | Неструктурированный | Контракты с правилом единственного изменения, детекция конфаундеров |
-| Неудачные эксперименты | Забываются и повторяются | Отпечатаны в памяти неудач, никогда не повторяются |
-| Утверждения | Настолько сильные, насколько сгенерирует LLM | Ограничены потолком утверждений, привязанным к реальным доказательствам |
-| Рецензирование | Необязательный этап доработки | Структурный шлюз — блокирует написание при недостаточности доказательств |
-| Оценка статьи | Единичная проверка LLM «выглядит хорошо» | Двухслойный шлюз: детерминированный минимум + LLM-оценщик качества |
-| Состояние | Эфемерное | С контрольными точками, возобновляемое, инспектируемое |
+`Brief.md` → literature → hypothesis → experiment design → implementation → execution → analysis → figure audit → review → manuscript
 
----
+На практике это выглядит так:
 
-## Быстрый старт
+1. `/new` создаёт или открывает research brief
+2. `/brief start --latest` валидирует brief, сохраняет его snapshot внутри run и запускает governed run
+3. система проходит фиксированный workflow и checkpoint’ит state и artifacts на каждой границе
+4. если evidence слабая, система выбирает backtracking или downgrade, а не автоматическую косметическую правку текста
+5. только после прохождения review gate узел `write_paper` пишет manuscript на основе ограниченной evidence
 
-```bash
-# 1. Установка и сборка
-npm install && npm run build && npm link
-
-# 2. Перейдите в рабочее пространство исследования
-cd /path/to/your-research-project
-
-# 3. Запуск (выберите один)
-autolabos web    # Браузерный UI — онбординг, дашборд, браузер артефактов
-autolabos        # Терминальный рабочий процесс с slash-командами
-```
-
-> **Первый запуск?** Оба интерфейса проведут вас через онбординг, если `.autolabos/config.yaml` ещё не существует.
-
-### Предварительные требования
-
-| Элемент | Когда необходим | Примечания |
-|---|---|---|
-| `SEMANTIC_SCHOLAR_API_KEY` | Всегда | Поиск и метаданные статей |
-| `OPENAI_API_KEY` | Когда провайдер — `api` | Выполнение моделей через OpenAI API |
-| Вход в Codex CLI | Когда провайдер — `codex` | Используется ваша локальная сессия Codex |
-
----
-
-## 9-узловой рабочий процесс
-
-Фиксированный граф. Не рекомендация — контракт.
+Исторический контракт на 9 nodes остаётся архитектурной базой. В текущем runtime между `analyze_results` и `review` добавлен `figure_audit`, чтобы критику фигур можно было checkpointить и возобновлять независимо.
 
 ```mermaid
 stateDiagram-v2
@@ -173,10 +110,11 @@ stateDiagram-v2
     design_experiments --> implement_experiments: complete
     implement_experiments --> run_experiments: auto_handoff or complete
     run_experiments --> analyze_results: complete
-    analyze_results --> review: auto_advance
+    analyze_results --> figure_audit: auto_advance
     analyze_results --> implement_experiments: auto_backtrack_to_implement
     analyze_results --> design_experiments: auto_backtrack_to_design
     analyze_results --> generate_hypotheses: auto_backtrack_to_hypotheses
+    figure_audit --> review: auto_advance
     review --> write_paper: auto_advance
     review --> implement_experiments: auto_backtrack_to_implement
     review --> design_experiments: auto_backtrack_to_design
@@ -184,135 +122,351 @@ stateDiagram-v2
     write_paper --> [*]: auto_complete
 ```
 
-`collect_papers` → `analyze_papers` → `generate_hypotheses` → `design_experiments` → `implement_experiments` → `run_experiments` → `analyze_results` → `review` → `write_paper`
-
-Откат встроен. Если результаты слабые, граф направляет обратно к гипотезам или дизайну — а не вперёд к необоснованному написанию. Вся автоматизация работает внутри ограниченных внутриузловых циклов.
+Вся автоматизация внутри этого потока ограничена bounded node-internal loops. Даже в unattended-режимах сам workflow остаётся governed.
 
 ---
 
-## Ключевые свойства
+## Что вы получаете после run
 
-### Управление экспериментами
+AutoLabOS создаёт не только PDF. Он создаёт трассируемое состояние исследования.
 
-Каждый запуск эксперимента проходит через структурированный контракт:
+| Выход | Что содержит |
+|---|---|
+| **Литературный corpus** | собранные papers, BibTeX, извлечённый evidence store |
+| **Гипотезы** | hypotheses, основанные на литературе, и skeptical review |
+| **Экспериментальный план** | governed design с contract, baseline lock и checks согласованности |
+| **Исполненные результаты** | metrics, objective evaluation, failure memory log |
+| **Анализ результатов** | статистический анализ, attempt decisions, transition reasoning |
+| **Figure audit** | figure lint, caption/reference consistency, опциональная vision critique |
+| **Review packet** | scorecard панели из 5 специалистов, claim ceiling, critique до черновика |
+| **Рукопись** | LaTeX draft с evidence links, scientific validation и опциональным PDF |
+| **Checkpoints** | полные snapshots состояния на каждой границе node, resumable в любой момент |
 
-- **Экспериментальный контракт** — фиксирует гипотезу, каузальный механизм, правило единственного изменения, условие прерывания и критерии сохранения/отбрасывания
-- **Детекция конфаундеров** — обнаруживает конъюнктивные изменения, списочные интервенции и несоответствия механизм-изменение
-- **Согласованность брифа и дизайна** — предупреждает, когда дизайн отклоняется от исходного исследовательского брифа
-- **Фиксация базовой линии** — контракт сравнения замораживает объективную метрику и базовую линию перед выполнением
+Всё хранится под `.autolabos/runs/<run_id>/`, а публичные результаты зеркалируются в `outputs/`.
 
-### Принудительный потолок утверждений
-
-Система не позволяет утверждениям опережать доказательства.
-
-Узел `review` создаёт `pre_review_summary`, содержащий **наиболее сильное защитимое утверждение**, список **заблокированных более сильных утверждений** с причинами и **пробелы в доказательствах**, которые необходимо заполнить для их разблокировки. Этот потолок напрямую передаётся в генерацию рукописи.
-
-### Память неудач
-
-JSONL в рамках запуска, который записывает и дедуплицирует паттерны неудач:
-
-- **Отпечатки ошибок** — удаляет временные метки, пути и числа для стабильной кластеризации
-- **Остановка эквивалентных неудач** — 3+ идентичных отпечатка немедленно исчерпывают повторные попытки
-- **Маркеры запрета повтора** — структурные сбои блокируют повторное выполнение до изменения дизайна
-
-Ваша лаборатория учится на собственных неудачах в рамках одного запуска.
-
-### Двухслойная оценка статьи
-
-Готовность статьи — это не единичное суждение LLM.
-
-- **Слой 1 — Детерминированный минимальный шлюз**: 7 проверок наличия артефактов, которые категорически блокируют недостаточно обоснованную работу от входа в `write_paper`. Без участия LLM. Прошёл или не прошёл.
-- **Слой 2 — LLM-оценщик качества статьи**: Структурированная критика по 6 измерениям — значимость результатов, строгость методологии, сила доказательств, структура изложения, обоснованность утверждений и честность в описании ограничений. Выдаёт блокирующие проблемы, неблокирующие проблемы и классификацию типа рукописи.
-
-Если доказательств недостаточно, система рекомендует откат — а не полировку.
-
-### Панель из 5 специалистов-рецензентов
-
-Узел `review` запускает пять независимых специализированных проходов:
-
-1. **Верификатор утверждений** — проверяет утверждения по доказательствам
-2. **Рецензент методологии** — валидирует экспериментальный дизайн
-3. **Рецензент статистики** — оценивает количественную строгость
-4. **Рецензент готовности текста** — проверяет ясность и полноту
-5. **Рецензент целостности** — выявляет предвзятость и конфликты
-
-Панель создаёт табель оценок, оценку согласованности и решение шлюза.
+Так устроена модель воспроизводимости: не скрытое состояние, а артефакты, checkpoints и inspectable transitions.
 
 ---
 
-## Двойной интерфейс
-
-Два UI-поверхности, один рантайм. Одинаковые артефакты, рабочий процесс и контрольные точки.
-
-| | TUI | Web Ops UI |
-|---|---|---|
-| Запуск | `autolabos` | `autolabos web` |
-| Взаимодействие | Slash-команды, естественный язык | Браузерный дашборд, композер |
-| Отображение процесса | Прогресс узлов в реальном времени в терминале | Визуальный граф из 9 узлов с действиями |
-| Артефакты | Просмотр через CLI | Встроенный предпросмотр (текст, изображения, PDF) |
-| Оптимально для | Быстрая итерация, скриптинг | Визуальный мониторинг, просмотр артефактов |
-
----
-
-## Режимы выполнения
-
-AutoLabOS сохраняет 9-узловой рабочий процесс и все защитные шлюзы во всех режимах.
-
-| Режим | Команда | Поведение |
-|---|---|---|
-| **Интерактивный** | `autolabos` | TUI со slash-командами и явными шлюзами утверждения |
-| **Минимальное утверждение** | Конфигурация: `approval_mode: minimal` | Автоматически утверждает безопасные переходы |
-| **Ночной** | `/agent overnight [run]` | Автономный однопроходный запуск, лимит 24 часа, консервативный откат |
-| **Автономный** | `/agent autonomous [run]` | Открытое исследовательское исследование, без ограничения по времени |
-
-### Автономный режим
-
-Спроектирован для продолжительных циклов гипотеза → эксперимент → анализ с минимальным вмешательством. Запускает два параллельных внутренних цикла:
-
-1. **Исследовательский поиск** — генерация гипотез, проектирование/выполнение экспериментов, анализ, вывод следующей гипотезы
-2. **Улучшение качества статьи** — определение наиболее сильной ветки, ужесточение базовых линий, укрепление связи с доказательствами
-
-Останавливается при: явной команде пользователя, достижении лимита ресурсов, обнаружении стагнации или катастрофическом сбое. **Не** останавливается только потому, что один эксперимент дал отрицательный результат или качество статьи временно застыло.
-
----
-
-## Система исследовательских брифов
-
-Каждый запуск начинается со структурированного Markdown-брифа, определяющего объём, ограничения и правила управления.
+## Quick Start
 
 ```bash
-/new                        # Создать бриф
-/brief start --latest       # Валидировать, сделать снимок, извлечь, запустить
+# 1. Установить и собрать
+npm install
+npm run build
+npm link
+
+# 2. Перейти в исследовательский workspace
+cd /path/to/your-research-workspace
+
+# 3. Запустить один интерфейс
+autolabos        # TUI
+autolabos web    # Web UI
 ```
 
-Брифы содержат **основные** разделы (тема, объективная метрика) и **управленческие** разделы (целевое сравнение, минимальные доказательства, запрещённые упрощения, потолок статьи). AutoLabOS оценивает полноту брифа и предупреждает, когда покрытие управления недостаточно для работы масштаба статьи.
+Типичный первый сценарий:
+
+```bash
+/new
+/brief start --latest
+/doctor
+```
+
+Примечания:
+
+- если `.autolabos/config.yaml` отсутствует, оба интерфейса проведут через onboarding
+- не запускайте AutoLabOS из корня репозитория; используйте `test/` или собственный workspace
+- TUI и Web UI используют один и тот же runtime, одни и те же artifacts и те же checkpoints
+
+### Предварительные требования
+
+| Пункт | Когда нужен | Примечания |
+|---|---|---|
+| `SEMANTIC_SCHOLAR_API_KEY` | Всегда | Поиск papers и metadata |
+| `OPENAI_API_KEY` | Когда provider = `api` | Выполнение через модели OpenAI API |
+| Вход в Codex CLI | Когда provider = `codex` | Используется локальная сессия Codex |
+
+---
+
+## Система Research Brief
+
+Brief — это не просто стартовый документ. Это governed contract для run.
+
+`/new` создаёт или открывает `Brief.md`. `/brief start --latest` валидирует его, сохраняет snapshot внутри run и запускает выполнение на основе этого snapshot. Run записывает source path brief, snapshot path и любой распознанный manuscript format. Благодаря этому provenance run остаётся inspectable даже если brief в workspace позже изменится.
+
+Иными словами, brief — это не просто часть prompt. Это часть audit trail.
+
+```bash
+/new
+/brief start --latest
+```
+
+Brief должен покрывать и исследовательское намерение, и governance-ограничения: topic, objective metric, baseline или comparator, minimum acceptable evidence, disallowed shortcuts и paper ceiling на случай, если evidence останется слабой.
 
 <details>
-<summary><strong>Разделы и оценки брифа</strong></summary>
+<summary><strong>Разделы brief и grading</strong></summary>
 
 | Раздел | Статус | Назначение |
 |---|---|---|
-| `## Topic` | Обязательный | Исследовательский вопрос в 1–3 предложениях |
-| `## Objective Metric` | Обязательный | Основная метрика успеха |
-| `## Constraints` | Рекомендуемый | Вычислительный бюджет, ограничения данных, правила воспроизводимости |
-| `## Plan` | Рекомендуемый | Пошаговый план эксперимента |
-| `## Target Comparison` | Управление | Предлагаемый метод vs. явная базовая линия |
-| `## Minimum Acceptable Evidence` | Управление | Минимальный размер эффекта, количество фолдов, граница решения |
-| `## Disallowed Shortcuts` | Управление | Упрощения, которые делают результаты невалидными |
-| `## Paper Ceiling If Evidence Remains Weak` | Управление | Максимальная классификация статьи при слабых доказательствах |
-| `## Manuscript Format` | Необязательный | Количество колонок, бюджет страниц, правила ссылок/приложений |
+| `## Topic` | Обязателен | Определить исследовательский вопрос в 1-3 предложениях |
+| `## Objective Metric` | Обязателен | Главная метрика успеха |
+| `## Constraints` | Рекомендуется | compute budget, ограничения dataset, правила воспроизводимости |
+| `## Plan` | Рекомендуется | Пошаговый экспериментальный план |
+| `## Target Comparison` | Governance | Сравнение с явным baseline |
+| `## Minimum Acceptable Evidence` | Governance | минимальный effect size, fold count, decision boundary |
+| `## Disallowed Shortcuts` | Governance | shortcuts, делающие результат недействительным |
+| `## Paper Ceiling If Evidence Remains Weak` | Governance | максимальная paper-классификация при слабой evidence |
+| `## Manuscript Format` | Необязателен | число колонок, бюджет страниц, правила references / appendix |
 
-| Оценка | Значение | Готовность к масштабу статьи? |
+| Оценка | Значение | Готово для paper-scale? |
 |---|---|---|
-| `complete` | Основные + 4+ управленческих раздела с содержанием | Да |
-| `partial` | Основные завершены + 2+ управленческих | Продолжение с предупреждениями |
-| `minimal` | Только основные разделы | Нет |
+| `complete` | core + 4 и более содержательных governance-раздела | Да |
+| `partial` | core полон + 2 и более governance-раздела | Продолжать с предупреждениями |
+| `minimal` | Только core-разделы | Нет |
 
 </details>
 
 ---
 
-## Поток управленческих артефактов
+## Два интерфейса, один runtime
+
+AutoLabOS предлагает два фронтенда поверх одного и того же governed runtime.
+
+| | TUI | Web UI |
+|---|---|---|
+| Запуск | `autolabos` | `autolabos web` |
+| Взаимодействие | slash-команды, естественный язык | браузерные dashboard и composer |
+| Вид workflow | прогресс node в реальном времени в терминале | governed workflow graph с действиями |
+| Artifacts | CLI inspection | inline preview текста, изображений и PDF |
+| Операционные поверхности | `/watch`, `/queue`, `/explore`, `/doctor` | jobs queue, live watch cards, exploration status, diagnostics |
+| Лучше всего подходит для | быстрой итерации и прямого контроля | визуального мониторинга и просмотра artifacts |
+
+Важно то, что обе поверхности видят одни и те же checkpoints, одни и те же runs и одни и те же underlying artifacts.
+
+---
+
+## Что отличает AutoLabOS
+
+AutoLabOS спроектирован вокруг governed execution, а не prompt-only orchestration.
+
+| | Типичные исследовательские инструменты | AutoLabOS |
+|---|---|---|
+| Workflow | открытый дрейф агентов | governed fixed graph с явными review boundaries |
+| State | эфемерен | checkpointed, resumable, inspectable |
+| Claims | настолько сильные, насколько их напишет модель | ограничены evidence и claim ceiling |
+| Review | необязательный cleanup pass | structural gate, способный остановить письмо |
+| Failures | забываются и пробуются снова | сохраняются как fingerprint в failure memory |
+| Validation | вторична | `/doctor`, harnesses, smoke и live validation — first-class |
+| Interfaces | отдельные кодовые пути | TUI и Web разделяют один runtime |
+
+Поэтому систему лучше понимать как research infrastructure, а не как paper generator.
+
+---
+
+## Ключевые гарантии
+
+### Governed Workflow
+
+Workflow bounded и auditable. Backtracking — часть contract. Результаты, которые не оправдывают движение вперёд, возвращаются к hypotheses, design или implementation, а не превращаются в более сильную prose.
+
+### Checkpointed Research State
+
+Каждая граница node записывает inspectable и resumable state. Единица прогресса — не только текстовый вывод, а run с artifacts, transitions и recoverable state.
+
+### Claim Ceiling
+
+Claims удерживаются ниже strongest defensible evidence ceiling. Система записывает более сильные claims, которые были заблокированы, и evidence gaps, необходимые для их разблокировки.
+
+### Review As A Structural Gate
+
+`review` — это не косметическая очистка. Это structural gate, где перед генерацией manuscript проверяются readiness, методологическая вменяемость, evidence linkage, writing discipline и reproducibility handoff.
+
+### Failure Memory
+
+Failure fingerprints сохраняются, чтобы структурные ошибки и повторяющиеся equivalent failures не запускались вслепую снова.
+
+### Reproducibility Through Artifacts
+
+Воспроизводимость обеспечивается через artifacts, checkpoints и inspectable transitions. Даже публичные сводки строятся по persisted run outputs, а не по второй «истине».
+
+---
+
+## Validation и модель качества, ориентированная на harness
+
+AutoLabOS рассматривает validation surfaces как first-class.
+
+- `/doctor` проверяет environment и workspace readiness перед запуском run
+- harness validation защищает workflow, artifact и governance contracts
+- targeted smoke checks дают диагностическое регрессионное покрытие
+- когда важно интерактивное поведение, используется live validation
+
+Paper readiness — это не просто впечатление от одного prompt.
+
+- **Layer 1 - deterministic minimum gate** останавливает under-evidenced work через явные artifact / evidence-integrity checks
+- **Layer 2 - LLM paper-quality evaluator** добавляет структурированную критику methodology, evidence strength, writing structure, claim support и limitations honesty
+- **Review packet + specialist panel** решают, должен ли путь manuscript advance, revise или backtrack
+
+`paper_readiness.json` может включать `overall_score`. Его следует читать как внутренний signal качества run, а не как универсальный научный benchmark. Некоторые продвинутые evaluation / self-improvement paths используют его для сравнения runs или кандидатов на prompt mutation.
+
+<details>
+<summary><strong>Почему эта модель validation важна</strong></summary>
+
+Предположения о качестве переводятся в явные checks. Реальное поведение важнее, чем внешний вид на уровне prompt. Цель состоит не в том, чтобы «модель написала что-то убедительное», а в том, чтобы «этот run можно было inspect и defend».
+
+</details>
+
+---
+
+## Продвинутые возможности Self-Improvement
+
+AutoLabOS включает bounded пути self-improvement, но это не blind autonomous rewriting. Эти пути ограничены validation и rollback.
+
+### `autolabos meta-harness`
+
+`autolabos meta-harness` строит context directory в `outputs/meta-harness/<timestamp>/` на основе recent completed runs и истории evaluation.
+
+Он может включать:
+
+- отфильтрованные run events
+- node artifacts вроде `result_analysis.json` или `review/decision.json`
+- `paper_readiness.json`
+- `outputs/eval-harness/history.jsonl`
+- текущие файлы `node-prompts/` для целевого node
+
+LLM через `TASK.md` ограничивается форматом ответа `TARGET_FILE + unified diff`, а целевая область ограничена `node-prompts/`. В apply-режиме кандидат должен пройти `validate:harness`; иначе выполняется rollback и пишется audit log. `--no-apply` только создаёт context. `--dry-run` показывает diff без изменения файлов.
+
+### `autolabos evolve`
+
+`autolabos evolve` запускает bounded mutation-and-evaluation loop поверх `.codex` и `node-prompts`.
+
+- поддерживает `--max-cycles`, `--target skills|prompts|all` и `--dry-run`
+- читает fitness run из `paper_readiness.overall_score`
+- мутирует prompts и skills, запускает validation и сравнивает fitness между циклами
+- при регрессии восстанавливает `.codex` и `node-prompts` из последнего good git tag
+
+Это путь self-improvement, но не неограниченная repo-wide rewrite-механика.
+
+### Harness Preset Layer
+
+AutoLabOS также предоставляет built-in harness presets, такие как `base`, `compact`, `failure-aware` и `review-heavy`. Они настраивают artifact/context policy, акцент на failure memory, prompt policy и compression strategy для сравнительных evaluation paths, не меняя governed production workflow.
+
+---
+
+## Часто используемые команды
+
+| Команда | Описание |
+|---|---|
+| `/new` | Создать или открыть `Brief.md` |
+| `/brief start <path\|--latest>` | Начать исследование из brief |
+| `/runs [query]` | Показать или искать runs |
+| `/resume <run>` | Продолжить run |
+| `/agent run <node> [run]` | Запустить с graph node |
+| `/agent status [run]` | Показать статусы nodes |
+| `/agent overnight [run]` | Выполнить unattended run в консервативных рамках |
+| `/agent autonomous [run]` | Выполнить bounded research exploration |
+| `/watch` | Live watch представление активных runs и background jobs |
+| `/explore` | Показать состояние exploration engine текущего run |
+| `/queue` | Показать jobs running / waiting / stalled |
+| `/doctor` | Diagnostics для environment и workspace |
+| `/model` | Переключить model и reasoning effort |
+
+<details>
+<summary><strong>Полный список команд</strong></summary>
+
+| Команда | Описание |
+|---|---|
+| `/help` | Показать список команд |
+| `/new` | Создать или открыть `Brief.md` в workspace |
+| `/brief start <path\|--latest>` | Начать исследование из `Brief.md` workspace или указанного brief |
+| `/doctor` | Diagnostics для environment + workspace |
+| `/runs [query]` | Показать или искать runs |
+| `/run <run>` | Выбрать run |
+| `/resume <run>` | Продолжить run |
+| `/agent list` | Показать graph nodes |
+| `/agent run <node> [run]` | Запустить с node |
+| `/agent status [run]` | Показать статусы nodes |
+| `/agent collect [query] [options]` | Собирать papers |
+| `/agent recollect <n> [run]` | Собрать дополнительные papers |
+| `/agent focus <node>` | Переместить focus через safe jump |
+| `/agent graph [run]` | Показать graph state |
+| `/agent resume [run] [checkpoint]` | Возобновить с checkpoint |
+| `/agent retry [node] [run]` | Повторить node |
+| `/agent jump <node> [run] [--force]` | Перейти к node |
+| `/agent overnight [run]` | Overnight autonomy (24h) |
+| `/agent autonomous [run]` | Open-ended autonomous research |
+| `/model` | Selector model и reasoning |
+| `/approve` | Подтвердить paused node |
+| `/queue` | Показать jobs running / waiting / stalled |
+| `/watch` | Live watch для активных runs |
+| `/explore` | Показать состояние exploration engine |
+| `/retry` | Повторить текущий node |
+| `/settings` | Настройки provider и model |
+| `/quit` | Выйти |
+
+</details>
+
+---
+
+## Для кого подходит / не подходит
+
+### Хорошо подходит
+
+- командам, которым нужна автономность без отказа от governed workflow
+- research engineering работе, где checkpoints и artifacts действительно важны
+- paper-scale или paper-adjacent проектам, требующим дисциплины evidence
+- средам, где review, traceability и resumability важны так же, как generation
+
+### Плохо подходит
+
+- пользователям, которым нужен только быстрый one-shot draft
+- workflow, которым не нужен artifact trail или review gate
+- проектам, предпочитающим free-form agent behavior вместо governed execution
+- случаям, где достаточно простого инструмента для literature summary
+
+---
+
+## Разработка
+
+```bash
+npm install
+npm run build
+npm test
+npm run test:web
+npm run validate:harness
+```
+
+Выбирайте минимальный validation set, который честно покрывает изменение. Для interactive defects, если среда позволяет, не ограничивайтесь только tests — заново запускайте тот же TUI / Web flow.
+
+Полезные команды:
+
+```bash
+npm run test:watch
+npm run test:smoke:natural-collect
+npm run test:smoke:natural-collect-execute
+npm run test:smoke:all
+```
+
+---
+
+## Advanced Details
+
+<details>
+<summary><strong>Режимы выполнения</strong></summary>
+
+AutoLabOS сохраняет governed workflow и safety gates во всех режимах.
+
+| Режим | Команда | Поведение |
+|---|---|---|
+| **Interactive** | `autolabos` | TUI со slash-командами и явными approval gates |
+| **Minimal approval** | Config: `approval_mode: minimal` | Автоматически одобряет безопасные переходы |
+| **Hybrid approval** | Config: `approval_mode: hybrid` | Автоматически продвигает сильные и малорисковые переходы; ставит на паузу рискованные или низкоуверенные |
+| **Overnight** | `/agent overnight [run]` | Unattended single-pass run, лимит 24 часа, консервативный backtracking |
+| **Autonomous** | `/agent autonomous [run]` | Open-ended bounded research exploration |
+
+</details>
+
+<details>
+<summary><strong>Governance Artifact Flow</strong></summary>
 
 ```mermaid
 flowchart LR
@@ -323,18 +477,18 @@ flowchart LR
     Run --> Failures["Failure Memory<br/>fingerprinted JSONL"]
     Run --> Analyze["analyze_results"]
     Analyze --> Decision["Attempt Decision<br/>keep/discard/replicate"]
-    Decision --> Review["review"]
+    Decision --> FigureAudit["figure_audit"]
+    FigureAudit --> Review["review"]
     Failures --> Review
     Contract --> Review
     Review --> Ceiling["Pre-Review Summary<br/>claim ceiling detail"]
     Ceiling --> Paper["write_paper"]
 ```
 
----
+</details>
 
-## Поток артефактов
-
-Каждый узел создаёт структурированные, инспектируемые артефакты.
+<details>
+<summary><strong>Artifact Flow</strong></summary>
 
 ```mermaid
 flowchart TB
@@ -350,367 +504,77 @@ flowchart TB
     F --> F1["metrics.json, failure_memory.jsonl,<br/>objective_evaluation.json"]
     F1 --> G["analyze_results"]
     G --> G1["result_analysis.json, attempt_decisions.jsonl,<br/>transition_recommendation.json"]
-    G1 --> H["review"]
-    H --> H1["pre_review_summary.json, review_packet.json,<br/>minimum_gate.json, paper_critique.json"]
-    H1 --> I["write_paper"]
-    I --> I1["main.tex, references.bib,<br/>scientific_validation.json, main.pdf"]
-```
-
-<details>
-<summary><strong>Публичный пакет результатов</strong></summary>
-
-```
-outputs/
-  ├── paper/           # Исходники TeX, PDF, ссылки, лог сборки
-  ├── experiment/      # Сводка базовой линии, код эксперимента
-  ├── analysis/        # Таблица результатов, анализ доказательств
-  ├── review/          # Критика статьи, решение шлюза
-  ├── results/         # Компактные количественные сводки
-  ├── reproduce/       # Скрипты воспроизведения, README
-  ├── manifest.json    # Реестр разделов
-  └── README.md        # Человекочитаемая сводка запуска
+    G1 --> H["figure_audit"]
+    H --> H1["gate1_gate2_issues.json,<br/>figure_audit_summary.json"]
+    H1 --> I["review"]
+    I --> I1["pre_review_summary.json, review_packet.json,<br/>minimum_gate.json, paper_critique.json"]
+    I1 --> J["write_paper"]
+    J --> J1["main.tex, references.bib,<br/>scientific_validation.json, main.pdf"]
 ```
 
 </details>
 
----
+<details>
+<summary><strong>Архитектура nodes</strong></summary>
 
-## Архитектура узлов
-
-| Узел | Роли | Что делает |
+| Node | Роль | Что делает |
 |---|---|---|
-| `collect_papers` | сборщик, куратор | Находит и курирует набор статей-кандидатов через Semantic Scholar |
-| `analyze_papers` | читатель, экстрактор доказательств | Извлекает резюме и доказательства из отобранных статей |
-| `generate_hypotheses` | агент гипотез + скептический рецензент | Синтезирует идеи из литературы, затем подвергает их критическому давлению |
-| `design_experiments` | дизайнер + панель осуществимости/статистики/операций | Фильтрует планы по реализуемости, составляет экспериментальный контракт |
-| `implement_experiments` | реализатор | Создаёт код и изменения рабочего пространства через ACI-действия |
-| `run_experiments` | исполнитель + триажёр неудач + планировщик перезапусков | Управляет выполнением, записывает неудачи, решает о перезапуске |
-| `analyze_results` | аналитик + аудитор метрик + детектор конфаундеров | Проверяет надёжность результатов, записывает решения по попыткам |
-| `review` | панель из 5 специалистов + потолок утверждений + двухслойный шлюз | Структурное рецензирование — блокирует написание при недостаточности доказательств |
-| `write_paper` | автор статьи + критика рецензента | Составляет рукопись, проводит критику после черновика, собирает PDF |
-
-<details>
-<summary><strong>Графы связей по фазам</strong></summary>
-
-**Поиск и чтение**
-
-```mermaid
-flowchart LR
-    Topic["run topic + collect constraints"] --> CP["collect_papers"]
-    CP --> CC["collector_curator"]
-    CC --> SS["Semantic Scholar search"]
-    SS --> Enrich["enrichment + BibTeX recovery"]
-    Enrich --> Corpus["corpus.jsonl + bibtex.bib"]
-    Corpus --> AP["analyze_papers"]
-    AP --> Select["selection request + hybrid rerank"]
-    Select --> Manifest["analysis_manifest resume / prune"]
-    Manifest --> RE["reader_evidence_extractor"]
-    RE --> Pdf["local text/image analysis or Responses API PDF"]
-    Pdf --> ReviewLoop["extractor -> reviewer normalization"]
-    ReviewLoop --> Evidence["paper_summaries.jsonl + evidence_store.jsonl"]
-```
-
-**Гипотезы и дизайн эксперимента**
-
-```mermaid
-flowchart LR
-    Evidence["paper_summaries.jsonl + evidence_store.jsonl"] --> GH["generate_hypotheses"]
-    GH --> HA["hypothesis_agent"]
-    HA --> Axes["evidence synthesizer -> evidence axes"]
-    Axes --> ToT["ToT branch expansion"]
-    ToT --> Drafts["mechanism / contradiction / intervention drafts"]
-    Drafts --> Reviews["skeptical reviewer"]
-    Reviews --> Select["diversity + evidence-quality top-k selection"]
-    Select --> Hyp["hypotheses.jsonl + axes/reviews/llm_trace"]
-    Hyp --> DE["design_experiments"]
-    DE --> ED["experiment_designer"]
-    ED --> Profiles["constraint profile + objective metric profile"]
-    Profiles --> Plans["design candidates"]
-    Plans --> Panel["designer + feasibility + statistical + ops-capacity panel"]
-    Panel --> Choice["panel selection"]
-    Choice --> Contract["experiment_contract.json + brief_design_consistency.json"]
-```
-
-**Реализация, выполнение и цикл результатов**
-
-```mermaid
-flowchart LR
-    PlanYaml["experiment_plan.yaml"] --> IE["implement_experiments"]
-    IE --> IM["ImplementSessionManager"]
-    IM --> Impl["implementer"]
-    IM --> Codex["Codex CLI session"]
-    Codex --> VerifyPatch["local verification"]
-    VerifyPatch --> Handoff{"auto handoff?"}
-    Handoff -->|yes| RX["run_experiments"]
-    Handoff -->|no| Gate["approval boundary"]
-    Gate --> RX
-    RX --> Runner["runner"]
-    Runner --> FailCheck["failure memory: check do-not-retry"]
-    FailCheck --> ACI["ACI preflight/tests/command"]
-    ACI --> Triage["failure triager + rerun planner"]
-    Triage -->|retry once if transient| ACI
-    ACI --> FailRecord["record to failure_memory.jsonl"]
-    ACI --> Metrics["metrics.json + supplemental runs"]
-    Metrics --> AR["analyze_results"]
-    AR --> ResultPanel["metric auditor + robustness + confounder + calibrator"]
-    ResultPanel --> AttemptDec["attempt_decisions.jsonl"]
-    ResultPanel --> Synth["transition recommendation"]
-    Synth -->|advance| RV["review"]
-    Synth -->|backtrack| IE
-```
-
-**Рецензирование, написание и представление**
-
-```mermaid
-flowchart LR
-    Inputs["result_analysis + contract + failures + decisions"] --> RV["review"]
-    RV --> PreReview["pre_review_summary.json<br/>+ claim_ceiling_detail"]
-    RV --> Panel["5-specialist review panel"]
-    Panel --> Score["scorecard + consistency + bias"]
-    Panel --> Decision["decision + revision_plan"]
-    Score --> Packet["review_packet.json + checklist.md"]
-    Decision --> Packet
-    Decision --> Critique["paper_critique.json"]
-    Critique --> Gate{"resolve review outcome"}
-    Gate -->|advance| WP["write_paper"]
-    Gate -->|backtrack| Back["hypotheses / design / implement"]
-    WP --> Writer["paper_writer"]
-    Writer --> Draft["outline -> draft -> review -> finalize"]
-    Draft --> Validate["draft validation"]
-    Validate --> Repair{"repairable?"}
-    Repair -->|yes| Fix["validation-aware repair (1 pass)"]
-    Fix --> Tex["paper/main.tex + references.bib"]
-    Repair -->|no| Tex
-```
+| `collect_papers` | collector, curator | Ищет и отбирает candidate paper sets через Semantic Scholar |
+| `analyze_papers` | reader, evidence extractor | Извлекает summaries и evidence из выбранных papers |
+| `generate_hypotheses` | hypothesis agent + skeptical reviewer | Синтезирует идеи из literature и pressure-test их |
+| `design_experiments` | designer + feasibility/statistical/ops panel | Фильтрует планы по выполнимости и пишет experiment contract |
+| `implement_experiments` | implementer | Создаёт изменения кода и workspace через ACI actions |
+| `run_experiments` | runner + failure triager + rerun planner | Запускает experiments, фиксирует failures и решает reruns |
+| `analyze_results` | analyst + metric auditor + confounder detector | Проверяет надёжность results и пишет attempt decisions |
+| `figure_audit` | figure auditor + optional vision critique | Проверяет evidence alignment, captions / references и publication readiness |
+| `review` | 5-specialist panel + claim ceiling + two-layer gate | Проводит structural review и блокирует письмо при нехватке evidence |
+| `write_paper` | paper writer + reviewer critique | Пишет manuscript, делает post-draft critique и собирает PDF |
 
 </details>
 
----
+<details>
+<summary><strong>Bounded automation</strong></summary>
 
-## Ограниченная автоматизация
-
-Каждая внутренняя автоматизация имеет явное ограничение.
-
-| Узел | Внутренняя автоматизация | Ограничение |
+| Node | Внутренняя автоматизация | Предел |
 |---|---|---|
-| `analyze_papers` | Автоматическое расширение окна доказательств при нехватке | Не более 2 расширений |
-| `design_experiments` | Детерминированная оценка панелью + экспериментальный контракт | Один раз на дизайн |
-| `run_experiments` | Триаж неудач + однократный перезапуск при транзиентной ошибке | Структурные сбои никогда не перезапускаются |
-| `run_experiments` | Отпечатки неудач в памяти | 3+ идентичных отпечатка → исчерпание повторов |
-| `analyze_results` | Повторное сопоставление метрик + калибровка панелью результатов | Одно повторное сопоставление до паузы |
-| `write_paper` | Поиск связанных работ + восстановление с учётом валидации | Максимум 1 проход восстановления |
-
----
-
-## Основные команды
-
-| Команда | Описание |
-|---|---|
-| `/new` | Создать исследовательский бриф |
-| `/brief start <path\|--latest>` | Начать исследование из брифа |
-| `/runs [query]` | Список или поиск запусков |
-| `/resume <run>` | Возобновить запуск |
-| `/agent run <node> [run]` | Выполнить с определённого узла графа |
-| `/agent status [run]` | Показать статусы узлов |
-| `/agent overnight [run]` | Автономный запуск (лимит 24 часа) |
-| `/agent autonomous [run]` | Открытое автономное исследование |
-| `/model` | Переключить модель и уровень рассуждения |
-| `/doctor` | Диагностика окружения + рабочего пространства |
-
-<details>
-<summary><strong>Полный список команд</strong></summary>
-
-| Команда | Описание |
-|---|---|
-| `/help` | Показать список команд |
-| `/new` | Создать файл исследовательского брифа |
-| `/brief start <path\|--latest>` | Начать исследование из файла брифа |
-| `/doctor` | Диагностика окружения + рабочего пространства |
-| `/runs [query]` | Список или поиск запусков |
-| `/run <run>` | Выбрать запуск |
-| `/resume <run>` | Возобновить запуск |
-| `/agent list` | Список узлов графа |
-| `/agent run <node> [run]` | Выполнить с узла |
-| `/agent status [run]` | Показать статусы узлов |
-| `/agent collect [query] [options]` | Собрать статьи |
-| `/agent recollect <n> [run]` | Собрать дополнительные статьи |
-| `/agent focus <node>` | Переместить фокус с безопасным прыжком |
-| `/agent graph [run]` | Показать состояние графа |
-| `/agent resume [run] [checkpoint]` | Возобновить из контрольной точки |
-| `/agent retry [node] [run]` | Повторить узел |
-| `/agent jump <node> [run] [--force]` | Прыжок к узлу |
-| `/agent overnight [run]` | Ночная автономия (24ч) |
-| `/agent autonomous [run]` | Открытое автономное исследование |
-| `/model` | Выбор модели и рассуждения |
-| `/approve` | Утвердить приостановленный узел |
-| `/retry` | Повторить текущий узел |
-| `/settings` | Настройки провайдера и модели |
-| `/quit` | Выход |
+| `analyze_papers` | Авторасширение evidence window при нехватке evidence | <= 2 расширений |
+| `design_experiments` | Deterministic panel scoring + experiment contract | Один раз на design |
+| `run_experiments` | Failure triage + один transient rerun | Structural failures не повторяются |
+| `run_experiments` | Failure memory fingerprinting | >= 3 одинаковых failures исчерпывают retries |
+| `analyze_results` | Objective rematching + result panel calibration | Один rematch до human pause |
+| `figure_audit` | Gate 3 figure critique + summary aggregation | Vision critique остаётся независимо resumable |
+| `write_paper` | Related-work scout + validation-aware repair | Максимум 1 repair |
 
 </details>
 
 <details>
-<summary><strong>Опции и примеры сбора</strong></summary>
+<summary><strong>Public output bundle</strong></summary>
 
 ```
---limit <n>          --last-years <n>      --year <spec>
---date-range <s:e>   --sort <relevance|citationCount|publicationDate>
---order <asc|desc>   --min-citations <n>   --open-access
---field <csv>        --venue <csv>         --type <csv>
---bibtex <generated|s2|hybrid>             --dry-run
---additional <n>     --run <run_id>
-```
-
-```bash
-/agent collect --last-years 5 --sort relevance --limit 100
-/agent collect "agent planning" --sort citationCount --min-citations 100
-/agent collect --additional 200 --run <run_id>
+outputs/<title-slug>-<run_id_prefix>/
+  ├── paper/
+  ├── experiment/
+  ├── analysis/
+  ├── review/
+  ├── results/
+  ├── reproduce/
+  ├── manifest.json
+  └── README.md
 ```
 
 </details>
 
 ---
 
-## Web Ops UI
+## Status
 
-`autolabos web` запускает локальный браузерный UI по адресу `http://127.0.0.1:4317`.
+AutoLabOS — активный OSS-проект в области research engineering. Канонические ссылки на поведение и contracts находятся в `docs/`, особенно:
 
-- **Онбординг** — та же настройка, что и в TUI, записывает `.autolabos/config.yaml`
-- **Дашборд** — поиск запусков, 9-узловое отображение процесса, действия над узлами, живые логи
-- **Артефакты** — просмотр запусков, встроенный предпросмотр текста/изображений/PDF
-- **Композер** — slash-команды и естественный язык с пошаговым управлением планом
+- `docs/architecture.md`
+- `docs/tui-live-validation.md`
+- `docs/experiment-quality-bar.md`
+- `docs/paper-quality-bar.md`
+- `docs/reproducibility.md`
+- `docs/research-brief-template.md`
 
-```bash
-autolabos web                              # Порт по умолчанию 4317
-autolabos web --host 0.0.0.0 --port 8080  # Пользовательская привязка
-```
-
----
-
-## Философия
-
-AutoLabOS построен вокруг нескольких жёстких ограничений:
-
-- **Завершение рабочего процесса ≠ готовность статьи.** Запуск может пройти весь граф, но результат при этом может не быть пригодным для публикации. Система отслеживает это различие.
-- **Утверждения не должны превышать доказательства.** Потолок утверждений обеспечивается структурно, а не усилением промптинга.
-- **Рецензирование — это шлюз, а не рекомендация.** Если доказательств недостаточно, узел `review` блокирует `write_paper` и рекомендует откат.
-- **Отрицательные результаты допустимы.** Опровергнутая гипотеза — это валидный результат исследования, но он должен быть описан честно.
-- **Воспроизводимость — это свойство артефактов.** Контрольные точки, экспериментальные контракты, журналы неудач и хранилища доказательств существуют для того, чтобы ход рассуждений запуска можно было проследить и оспорить.
-
----
-
-## Разработка
-
-```bash
-npm install              # Установка зависимостей (включая web-подпакет)
-npm run build            # Сборка TypeScript + web UI
-npm test                 # Запуск всех юнит-тестов (931+)
-npm run test:watch       # Режим наблюдения
-
-# Отдельный тестовый файл
-npx vitest run tests/<name>.test.ts
-
-# Smoke-тесты
-npm run test:smoke:all                      # Полный локальный smoke-пакет
-npm run test:smoke:natural-collect          # NL сбор -> ожидающая команда
-npm run test:smoke:natural-collect-execute  # NL сбор -> выполнение -> проверка
-npm run test:smoke:ci                       # CI smoke-набор
-```
-
-<details>
-<summary><strong>Переменные окружения smoke-тестов</strong></summary>
-
-```bash
-AUTOLABOS_FAKE_CODEX_RESPONSE=1              # Избежать реальных вызовов Codex
-AUTOLABOS_FAKE_SEMANTIC_SCHOLAR_RESPONSE=1   # Избежать реальных вызовов S2
-AUTOLABOS_SMOKE_VERBOSE=1                    # Полный вывод PTY-логов
-AUTOLABOS_SMOKE_MODE=<mode>                  # Выбор CI-режима
-```
-
-</details>
-
-<details>
-<summary><strong>Внутренние компоненты рантайма</strong></summary>
-
-### Политики графа состояний
-
-- Контрольные точки: `.autolabos/runs/<run_id>/checkpoints/` — фазы: `before | after | fail | jump | retry`
-- Политика повторов: `maxAttemptsPerNode = 3`
-- Автоматический откат: `maxAutoRollbacksPerNode = 2`
-- Режимы прыжков: `safe` (текущий или предыдущий) / `force` (вперёд, пропущенные узлы записываются)
-
-### Паттерны рантайма агентов
-
-- **ReAct** цикл: `PLAN_CREATED → TOOL_CALLED → OBS_RECEIVED`
-- **ReWOO** разделение (planner/worker): используется для дорогостоящих узлов
-- **ToT** (Tree-of-Thoughts): используется в узлах гипотез и дизайна
-- **Reflexion**: эпизоды неудач сохраняются и повторно используются при повторных попытках
-
-### Слои памяти
-
-| Слой | Область | Формат |
-|---|---|---|
-| Контекстная память запуска | Ключ/значение на запуск | `run_context.jsonl` |
-| Долгосрочное хранилище | Между попытками | JSONL-резюме и индекс |
-| Эпизодическая память | Reflexion | Уроки неудач для повторных попыток |
-
-### ACI-действия
-
-`implement_experiments` и `run_experiments` выполняются через:
-`read_file` · `write_file` · `apply_patch` · `run_command` · `run_tests` · `tail_logs`
-
-</details>
-
-<details>
-<summary><strong>Диаграмма рантайма агентов</strong></summary>
-
-```mermaid
-flowchart LR
-    UI["CLI / TUI / Web UI"] --> Session["InteractionSession"]
-    Session --> Bootstrap["createAutoLabOSRuntime"]
-    Bootstrap --> Orchestrator["AgentOrchestrator"]
-    Bootstrap --> Runtime["StateGraphRuntime"]
-    Bootstrap --> Providers["RoutedLLMClient + CodexCliClient<br/>+ SemanticScholarClient + LocalAciAdapter"]
-    Orchestrator --> Runtime
-    Runtime --> Registry["DefaultNodeRegistry"]
-    Runtime --> Stores["RunStore + CheckpointStore + EventStream"]
-    Providers --> Registry
-    Registry --> Collect["collect_papers"]
-    Registry --> Analyze["analyze_papers"]
-    Registry --> Hyp["generate_hypotheses"]
-    Registry --> Design["design_experiments"]
-    Registry --> Impl["implement_experiments"]
-    Registry --> Run["run_experiments"]
-    Registry --> Results["analyze_results"]
-    Registry --> Review["review"]
-    Registry --> Paper["write_paper"]
-```
-
-</details>
-
----
-
-## Документация
-
-| Документ | Покрытие |
-|---|---|
-| `docs/architecture.md` | Архитектура системы и проектные решения |
-| `docs/tui-live-validation.md` | Валидация TUI и подход к тестированию |
-| `docs/experiment-quality-bar.md` | Стандарты выполнения экспериментов |
-| `docs/paper-quality-bar.md` | Требования к качеству рукописи |
-| `docs/reproducibility.md` | Гарантии воспроизводимости |
-| `docs/research-brief-template.md` | Полный шаблон брифа со всеми управленческими разделами |
-
----
-
-## Статус
-
-AutoLabOS находится в активной разработке (v0.1.0). Рабочий процесс, система управления и ядро рантайма функциональны и покрыты тестами. Интерфейсы, покрытие артефактов и режимы выполнения непрерывно валидируются.
-
-Вклад и обратная связь приветствуются — см. [Issues](https://github.com/lhy0718/AutoLabOS/issues).
-
----
-
-<div align="center">
-  <sub>Создано для исследователей, которые хотят, чтобы их эксперименты были управляемыми, а утверждения — защитимыми.</sub>
-</div>
+Если вы меняете поведение runtime, относитесь к этим документам, опубликованным tests и observable artifacts как к source of truth.

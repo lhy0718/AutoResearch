@@ -6,8 +6,8 @@
 
   <h1>面向自主研究的作業系統</h1>
 
-  <p><strong>不是研究內容生成，而是自主研究執行。</strong><br/>
-  從文獻到論文草稿，全部都在受治理、具備檢查點、且可檢視的閉環中完成。</p>
+  <p><strong>不是研究生成，而是自主研究執行。</strong><br/>
+  從 brief 到 manuscript，以 governed、checkpointed、inspectable 的方式運行研究。</p>
 
   <p>
     <a href="../README.md"><strong>English</strong></a>
@@ -31,9 +31,8 @@
     <a href="./README.ru.md"><strong>Русский</strong></a>
   </p>
 
-  <p><sub>各語言 README 為本文件的翻譯版本。規範性用語與最新修改請以英文 README 為準。</sub></p>
+  <p><sub>各語言 README 都是根據此文件維護的翻譯版本。規範表述與最新更新以 English README 為 canonical reference。</sub></p>
 
-  <!-- CI & Quality -->
   <p>
     <a href="https://github.com/lhy0718/AutoLabOS/actions/workflows/ci.yml">
       <img alt="CI" src="https://img.shields.io/github/actions/workflow/status/lhy0718/AutoLabOS/ci.yml?branch=main&style=flat-square&label=ci&logo=githubactions&logoColor=white" />
@@ -41,128 +40,66 @@
     <a href="https://github.com/lhy0718/AutoLabOS/actions/workflows/smoke.yml">
       <img alt="Smoke" src="https://img.shields.io/github/actions/workflow/status/lhy0718/AutoLabOS/smoke.yml?branch=main&style=flat-square&label=smoke&logo=githubactions&logoColor=white" />
     </a>
-    <img alt="Tests" src="https://img.shields.io/badge/tests-931%20passed-22C55E?style=flat-square&logo=vitest&logoColor=white" />
+    <img alt="Tests" src="https://img.shields.io/badge/tests-validated-22C55E?style=flat-square&logo=vitest&logoColor=white" />
   </p>
 
-  <!-- Tech stack -->
   <p>
     <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.x-3178C6?style=flat-square&logo=typescript&logoColor=white" />
     <img alt="Node" src="https://img.shields.io/badge/Node-%E2%89%A518-339933?style=flat-square&logo=node.js&logoColor=white" />
     <img alt="React" src="https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=black" />
   </p>
 
-  <!-- Core features -->
   <p>
-    <img alt="9-node graph" src="https://img.shields.io/badge/state%20graph-9%20nodes-0F766E?style=flat-square" />
+    <img alt="Governed workflow" src="https://img.shields.io/badge/workflow-governed%20with%20figure_audit-0F766E?style=flat-square" />
     <img alt="Checkpointed" src="https://img.shields.io/badge/checkpoints-built%20in-0F766E?style=flat-square" />
-    <img alt="Experiment Governance" src="https://img.shields.io/badge/experiments-governed-0F766E?style=flat-square" />
     <img alt="Claim Ceiling" src="https://img.shields.io/badge/claims-ceiling%20enforced-0F766E?style=flat-square" />
-  </p>
-
-  <!-- Integrations -->
-  <p>
-    <img alt="OpenAI" src="https://img.shields.io/badge/OpenAI-supported-412991?style=flat-square&logo=openai&logoColor=white" />
-    <img alt="Codex CLI" src="https://img.shields.io/badge/Codex%20CLI-supported-412991?style=flat-square&logo=openai&logoColor=white" />
-    <img alt="Ollama" src="https://img.shields.io/badge/Ollama-supported-1A1A2E?style=flat-square" />
-    <img alt="Semantic Scholar" src="https://img.shields.io/badge/Semantic%20Scholar-integrated-1857B6?style=flat-square" />
-  </p>
-
-  <!-- Community -->
-  <p>
-    <a href="https://github.com/lhy0718/AutoLabOS/stargazers">
-      <img alt="Stars" src="https://img.shields.io/github/stars/lhy0718/AutoLabOS?style=flat-square&color=f5a623" />
-    </a>
-    <a href="https://github.com/lhy0718/AutoLabOS/commits/main">
-      <img alt="Last commit" src="https://img.shields.io/github/last-commit/lhy0718/AutoLabOS?style=flat-square&color=6c757d" />
-    </a>
+    <img alt="Validation surfaces" src="https://img.shields.io/badge/validation-first--class-0F766E?style=flat-square" />
   </p>
 
 </div>
 
 ---
 
-多數宣稱能自動化研究的工具，實際上自動化的是**文字生成**。它們會產出看起來很精緻的內容，但缺少實驗治理、缺少證據追蹤，也缺少對「證據實際上能支撐到哪裡」的誠實約束。
+AutoLabOS 是一個面向 governed research execution 的作業系統。它把一次 run 視為可 checkpoint 的研究狀態，而不是一次性的生成步驟。
 
-AutoLabOS 採取不同的立場：**研究最困難的部分不是寫作，而是問題與草稿之間的紀律。** 文獻基礎、假設驗證、實驗治理、失敗追蹤、主張上限與審查關卡，都在固定的 9 節點狀態圖中完成。每個節點都會產出可審計的成果物。每一次狀態轉移都會留下檢查點。每一個主張都有證據上限。
+整個核心循環都是可檢視的。文獻收集、假設形成、實驗設計、實作、執行、分析、figure audit、review、原稿撰寫都會留下可審計的 artifacts。主張會被限制在 claim ceiling 之下，保持 evidence-bounded。review 不是潤飾步驟，而是 structural gate。
 
-輸出不只是論文，而是一個可檢視、可恢復、可辯護的受治理研究狀態。
-
-> **先有證據，再談主張。**
->
-> **可檢視、可恢復、可辯護的執行。**
->
-> **這是研究作業系統，不是提示詞工具包。**
->
-> **實驗室不應該把同一個失敗實驗做兩次。**
->
-> **審查是結構性關卡，不是潤飾程序。**
+品質假設會被轉成明確的 checks。系統更重視真實行為，而不是 prompt 層面的表面效果。可重現性透過 artifacts、checkpoints 與 inspectable transitions 來保障。
 
 ---
 
-## 執行一次之後你會得到什麼
+## 為什麼需要 AutoLabOS
 
-AutoLabOS 不只是輸出 PDF。它會產出完整、可追蹤的研究狀態。
+許多 research-agent 系統主要優化的是文字生成。AutoLabOS 主要優化的是一個受治理的研究執行流程。
 
-| 輸出 | 內容 |
-|---|---|
-| **文獻語料庫** | 收集到的論文、BibTeX、抽取出的證據儲存 |
-| **假設** | 以文獻為基礎的假設與懷疑式審查 |
-| **實驗計畫** | 具有契約、基準線鎖定與一致性檢查的受治理設計 |
-| **執行結果** | 指標、客觀評估、失敗記憶日誌 |
-| **結果分析** | 統計分析、嘗試決策、轉移推理 |
-| **審查封包** | 5 位專家 panel 評分卡、主張上限、寫稿前批評 |
-| **稿件** | 含證據連結、科學驗證與可選 PDF 的 LaTeX 草稿 |
-| **Checkpoints** | 每個節點邊界的完整狀態快照，可隨時恢復 |
+當一個專案需要的不只是看起來合理的草稿時，這種差異很重要。
 
-所有內容都保存在 `.autolabos/runs/<run_id>/`，對外輸出會鏡像到 `outputs/`。
+- 可作為執行契約的 research brief
+- 明確的 workflow gate，而不是 agent 自由漂移
+- 可事後檢查的 checkpoints 與 artifacts
+- 能在 manuscript generation 前阻止薄弱工作的 review
+- 避免盲目重複失敗實驗的 failure memory
+- 不是 prose 超過資料，而是 evidence-bounded claims
+
+AutoLabOS 適合那些想要自主性，但不願放棄 auditability、backtracking 與 validation 的團隊。
 
 ---
 
-## 為什麼是 AutoLabOS
+## 一次 run 會發生什麼
 
-大多數 AI 研究工具優化的是**輸出的外觀**。AutoLabOS 優化的是**受治理的執行**。
+一次 governed run 會始終遵循同樣的研究流程。
 
-| | 一般研究工具 | AutoLabOS |
-|---|---|---|
-| 工作流程 | 開放式 agent 漂移 | 有界轉移的固定 9 節點圖 |
-| 實驗設計 | 非結構化 | 帶有單一變更規則與混雜檢測的契約 |
-| 失敗實驗 | 被遺忘後再次重試 | 以指紋方式寫入失敗記憶，不再重複 |
-| 主張 | LLM 想寫多強就寫多強 | 以真實證據綁定的主張上限 |
-| 審查 | 可選的整理步驟 | 結構性關卡——證據不足就阻止寫作 |
-| 論文評估 | 單一 LLM 的「看起來不錯」判斷 | 兩層關卡：決定性最低門檻 + LLM 品質評估器 |
-| 狀態 | 暫時性 | 具備檢查點、可恢復、可檢查 |
+`Brief.md` → literature → hypothesis → experiment design → implementation → execution → analysis → figure audit → review → manuscript
 
----
+實際流程如下：
 
-## 快速開始
+1. `/new` 建立或開啟 research brief
+2. `/brief start --latest` 驗證 brief，將其 snapshot 到 run 中，然後啟動 governed run
+3. 系統沿著固定 workflow 前進，並在每個邊界寫入 state 與 artifacts checkpoint
+4. 如果 evidence 不足，系統會選擇 backtracking 或 downgrade，而不是直接潤飾文字
+5. 只有通過 review gate 後，`write_paper` 才會基於 bounded evidence 生成原稿
 
-```bash
-# 1. 安裝並建置
-npm install && npm run build && npm link
-
-# 2. 進入你的研究 workspace
-cd /path/to/your-research-project
-
-# 3. 啟動（擇一）
-autolabos web    # 瀏覽器 UI：引導設定、儀表板、成果物瀏覽器
-autolabos        # 以終端為主的斜線指令工作流程
-```
-
-> **第一次執行？** 若還沒有 `.autolabos/config.yaml`，兩個 UI 都會引導你完成 onboarding。
-
-### 前置需求
-
-| 項目 | 何時需要 | 說明 |
-|---|---|---|
-| `SEMANTIC_SCHOLAR_API_KEY` | 一律需要 | 論文探索與中繼資料 |
-| `OPENAI_API_KEY` | 當 provider 為 `api` | OpenAI API 模型執行 |
-| Codex CLI 登入 | 當 provider 為 `codex` | 使用本機 Codex session |
-
----
-
-## 9 節點工作流程
-
-這是一個固定圖。不是建議，而是契約。
+歷史上的 9-node contract 仍然是架構基線。目前 runtime 在 `analyze_results` 與 `review` 之間加入了 `figure_audit`，讓 figure quality critique 可以獨立 checkpoint 與 resume。
 
 ```mermaid
 stateDiagram-v2
@@ -173,10 +110,11 @@ stateDiagram-v2
     design_experiments --> implement_experiments: complete
     implement_experiments --> run_experiments: auto_handoff or complete
     run_experiments --> analyze_results: complete
-    analyze_results --> review: auto_advance
+    analyze_results --> figure_audit: auto_advance
     analyze_results --> implement_experiments: auto_backtrack_to_implement
     analyze_results --> design_experiments: auto_backtrack_to_design
     analyze_results --> generate_hypotheses: auto_backtrack_to_hypotheses
+    figure_audit --> review: auto_advance
     review --> write_paper: auto_advance
     review --> implement_experiments: auto_backtrack_to_implement
     review --> design_experiments: auto_backtrack_to_design
@@ -184,135 +122,351 @@ stateDiagram-v2
     write_paper --> [*]: auto_complete
 ```
 
-`collect_papers` → `analyze_papers` → `generate_hypotheses` → `design_experiments` → `implement_experiments` → `run_experiments` → `analyze_results` → `review` → `write_paper`
-
-系統內建回溯機制。若結果偏弱，圖會回到假設或設計，而不是朝著過度樂觀的寫作繼續前進。所有自動化都侷限在邊界清楚的節點內部循環裡。
+這條流程中的所有自動化都被限制在 bounded node-internal loops 裡。即使在無人值守模式下，workflow 本身仍然保持 governed。
 
 ---
 
-## 核心特性
+## 一次 run 之後會得到什麼
 
-### 實驗治理
+AutoLabOS 不只會輸出 PDF。它會留下可追蹤的研究狀態。
 
-每一次實驗執行都會經過結構化契約：
+| 輸出 | 包含內容 |
+|---|---|
+| **文獻 corpus** | 收集到的 papers、BibTeX、提取出的 evidence store |
+| **假設** | 基於文獻的 hypotheses 與 skeptical review |
+| **實驗計畫** | 含有 contract、baseline lock、一致性檢查的 governed design |
+| **執行結果** | metrics、objective evaluation、failure memory log |
+| **結果分析** | 統計分析、attempt decision、transition reasoning |
+| **Figure audit** | figure lint、caption/reference consistency、可選 vision critique summary |
+| **Review packet** | 5 人 specialist panel scorecard、claim ceiling、draft 前 critique |
+| **原稿** | 含有 evidence links、scientific validation、可選 PDF 的 LaTeX draft |
+| **Checkpoints** | 每個 node 邊界的完整 state snapshot，可隨時 resume |
 
-- **實驗契約** ── 鎖定假設、因果機制、單一變更規則、中止條件以及保留/捨棄標準
-- **混雜檢測** ── 偵測組合式變更、列表式介入與機制-變更不一致
-- **研究簡述與設計一致性** ── 當設計偏離原始研究簡述時提出警告
-- **基準線鎖定** ── 比較契約在執行前凍結客觀指標與基準線
+所有內容都存放在 `.autolabos/runs/<run_id>/` 下，public-facing output 會 mirror 到 `outputs/`。
 
-### 主張上限強制
-
-系統不允許主張跑在證據前面。
-
-`review` 節點會產生 `pre_review_summary`，其中包含**目前最可辯護的最強主張**、附帶原因的**被阻止的更強主張列表**，以及解鎖這些主張所需補足的**證據缺口**。這個上限會直接進入稿件生成。
-
-### 失敗記憶
-
-系統會以單次執行範圍的 JSONL 記錄並去重失敗模式：
-
-- **錯誤指紋化** ── 移除時間戳、路徑與數字，以便做穩定分群
-- **等價失敗停止** ── 同一個指紋出現 3 次以上時立即耗盡重試
-- **不可重試標記** ── 結構性失敗在設計改變前禁止再執行
-
-你的實驗室會在單次 run 內從自己的失敗中學習。
-
-### 兩層論文評估
-
-論文準備度不是單一 LLM 的感覺判斷。
-
-- **第一層 ── 決定性最低關卡**：7 項成果物存在性檢查，直接阻止證據不足的工作進入 `write_paper`。不需要 LLM。結果只有通過或失敗。
-- **第二層 ── LLM 論文品質評估器**：從結果重要性、方法嚴謹性、證據強度、寫作結構、主張支持度、限制描述誠實度等 6 個面向進行結構化批評。產出阻塞性問題、非阻塞性問題與稿件類型分類。
-
-證據不足時，系統建議的是回溯，而不是潤飾。
-
-### 5 位專家審查 Panel
-
-`review` 節點會執行五個獨立的專家評審：
-
-1. **主張驗證者** ── 比對主張與證據
-2. **方法論審查者** ── 驗證實驗設計
-3. **統計審查者** ── 評估定量嚴謹性
-4. **寫作準備度審查者** ── 檢查清晰度與完整性
-5. **完整性審查者** ── 識別偏差與利益衝突
-
-此 panel 會輸出評分卡、一致性評估與關卡決定。
+這就是它的可重現性模型：不是依賴隱藏狀態，而是依賴 artifacts、checkpoints 與 inspectable transitions。
 
 ---
 
-## 雙介面
+## Quick Start
 
-兩個 UI 表面，一個 runtime。相同的 artifacts、相同的 workflow、相同的 checkpoints。
+```bash
+# 1. 安裝並建置
+npm install
+npm run build
+npm link
 
-| | TUI | Web Ops UI |
+# 2. 進入研究工作區
+cd /path/to/your-research-workspace
+
+# 3. 啟動一個介面
+autolabos        # TUI
+autolabos web    # Web UI
+```
+
+第一次使用時常見流程：
+
+```bash
+/new
+/brief start --latest
+/doctor
+```
+
+注意：
+
+- 如果 `.autolabos/config.yaml` 不存在，兩種 UI 都會引導 onboarding
+- 不要直接在儲存庫根目錄執行，請使用 `test/` 或你自己的研究 workspace
+- TUI 與 Web UI 共享同一個 runtime、同一組 artifacts 和 checkpoints
+
+### 前置條件
+
+| 項目 | 何時需要 | 說明 |
 |---|---|---|
-| 啟動 | `autolabos` | `autolabos web` |
-| 互動 | Slash commands、自然語言 | 瀏覽器 dashboard、composer |
-| Workflow 視圖 | 終端中的即時節點進度 | 可操作的 9 節點視覺圖 |
-| Artifacts | CLI 檢查 | 文字、圖片、PDF inline preview |
-| 適用情境 | 快速迭代、腳本化 | 視覺監控、artifact 瀏覽 |
-
----
-
-## 執行模式
-
-AutoLabOS 在所有模式下都保留 9 節點 workflow 與所有安全關卡。
-
-| 模式 | 指令 | 行為 |
-|---|---|---|
-| **Interactive** | `autolabos` | 帶明確批准關卡的 slash-command TUI |
-| **Minimal approval** | 設定：`approval_mode: minimal` | 自動批准安全轉移 |
-| **Overnight** | `/agent overnight [run]` | 無人單次執行、24 小時限制、保守 backtracking |
-| **Autonomous** | `/agent autonomous [run]` | 開放式研究探索，無時間限制 |
-
-### Autonomous 模式
-
-此模式設計為在極少人工干預下持續執行「假設 → 實驗 → 分析」循環。內部有兩條並行循環：
-
-1. **研究探索** ── 產生假設、設計/執行實驗、分析結果、導出下一個假設
-2. **論文品質提升** ── 找出最強分支、加強 baseline、強化證據連結
-
-停止條件包括：使用者明確停止、資源限制、停滯檢測或災難性失敗。單一實驗為負結果，或論文品質暫時停滯，**都不會讓系統停止**。
+| `SEMANTIC_SCHOLAR_API_KEY` | 一律需要 | 用於 paper discovery 與 metadata |
+| `OPENAI_API_KEY` | provider 為 `api` 時 | 用於 OpenAI API model 執行 |
+| Codex CLI login | provider 為 `codex` 時 | 使用本地 Codex session |
 
 ---
 
 ## Research Brief 系統
 
-每次 run 都從一份結構化 Markdown brief 開始，用來定義範圍、限制與治理規則。
+Brief 不只是啟動文件。它是 run 的 governed contract。
+
+`/new` 會建立或開啟 `Brief.md`。`/brief start --latest` 會驗證它、將其 snapshot 到 run 中，再基於這個 snapshot 啟動執行。run 會記錄 brief source path、snapshot path，以及解析出的 manuscript format（如果有）。即使 workspace 的 brief 後續變動，該 run 的 provenance 仍然可檢視。
+
+也就是說，brief 不是 prompt 的一部分，而是 audit trail 的一部分。
 
 ```bash
-/new                        # 建立 brief
-/brief start --latest       # 驗證、快照、抽取、啟動
+/new
+/brief start --latest
 ```
 
-Brief 會同時包含**核心**章節（主題、客觀指標）與**治理**章節（目標比較、最低證據、禁止捷徑、論文上限）。AutoLabOS 會對 brief 完整度評分，若治理覆蓋不足以支撐論文級工作，便提出警告。
+Brief 需要同時包含研究意圖與治理限制，例如：topic、objective metric、baseline 或 comparator、minimum acceptable evidence、disallowed shortcuts，以及 evidence 不足時允許的 paper ceiling。
 
 <details>
-<summary><strong>Brief 章節與分級</strong></summary>
+<summary><strong>Brief 章節與 grading</strong></summary>
 
 | 章節 | 狀態 | 目的 |
 |---|---|---|
-| `## Topic` | 必填 | 用 1–3 句定義研究問題 |
-| `## Objective Metric` | 必填 | 主要成功指標 |
-| `## Constraints` | 建議 | 計算預算、資料集限制、可重現性規則 |
-| `## Plan` | 建議 | 步驟式實驗計畫 |
-| `## Target Comparison` | 治理 | 提案方法與明確 baseline 的比較 |
-| `## Minimum Acceptable Evidence` | 治理 | 最小效果量、fold 數、決策邊界 |
-| `## Disallowed Shortcuts` | 治理 | 會使結果無效的捷徑 |
-| `## Paper Ceiling If Evidence Remains Weak` | 治理 | 證據偏弱時允許的最高論文分類 |
-| `## Manuscript Format` | 可選 | 欄數、頁數預算、參考文獻/附錄規則 |
+| `## Topic` | 必要 | 用 1-3 句定義研究問題 |
+| `## Objective Metric` | 必要 | 主要成功指標 |
+| `## Constraints` | 建議 | compute budget、dataset 限制、reproducibility 規則 |
+| `## Plan` | 建議 | 分步實驗計畫 |
+| `## Target Comparison` | Governance | 提案方法與明確 baseline 的比較 |
+| `## Minimum Acceptable Evidence` | Governance | 最小 effect size、fold count、decision boundary |
+| `## Disallowed Shortcuts` | Governance | 會使結果失效的 shortcuts |
+| `## Paper Ceiling If Evidence Remains Weak` | Governance | evidence 較弱時允許的最高 paper classification |
+| `## Manuscript Format` | 選填 | 欄數、頁數 budget、references / appendix 規則 |
 
-| 等級 | 意義 | 是否達到論文級準備 |
+| 等級 | 含義 | 是否 paper-scale ready |
 |---|---|---|
-| `complete` | 核心 + 4 個以上實質治理章節 | 是 |
-| `partial` | 核心完整 + 2 個以上治理章節 | 帶警告繼續 |
-| `minimal` | 只有核心章節 | 否 |
+| `complete` | core + 4 個以上實質性 governance 章節 | 是 |
+| `partial` | core 完整 + 2 個以上 governance 章節 | 帶警告繼續 |
+| `minimal` | 只有 core 章節 | 否 |
 
 </details>
 
 ---
 
-## 治理 Artifact 流
+## 兩個介面，一個 runtime
+
+AutoLabOS 在同一個 governed runtime 之上提供兩個前端。
+
+| | TUI | Web UI |
+|---|---|---|
+| 啟動 | `autolabos` | `autolabos web` |
+| 互動 | slash commands、自然語言 | 瀏覽器 dashboard 與 composer |
+| Workflow 視圖 | 終端中的即時 node progress | 帶 actions 的 governed workflow graph |
+| Artifacts | CLI inspection | 文字、圖片、PDF 的 inline preview |
+| 運營 surface | `/watch`, `/queue`, `/explore`, `/doctor` | jobs queue、live watch card、exploration status、diagnostics |
+| 適合場景 | 快速迭代與直接控制 | 視覺化監控與 artifact 瀏覽 |
+
+關鍵點在於，兩個介面看到的是同一組 checkpoints、同一組 runs 與同一份底層 artifacts。
+
+---
+
+## AutoLabOS 的不同之處
+
+AutoLabOS 的核心不是 prompt-only orchestration，而是 governed execution。
+
+| | 常見研究工具 | AutoLabOS |
+|---|---|---|
+| Workflow | 開放式 agent 漂移 | 帶有明確 review boundary 的 governed fixed graph |
+| State | 短暫的 | checkpointed、resumable、inspectable |
+| Claims | 模型能生成多強就寫多強 | 受 evidence 與 claim ceiling 限制 |
+| Review | 可選 cleanup pass | 能阻止繼續寫作的 structural gate |
+| Failures | 被遺忘後再試一次 | 以 fingerprint 形式寫入 failure memory |
+| Validation | 次要 | `/doctor`、harness、smoke、live validation 都是 first-class |
+| Interfaces | 不同程式路徑 | TUI 與 Web 共享同一個 runtime |
+
+因此，這個系統更適合被理解為 research infrastructure，而不是 paper generator。
+
+---
+
+## 核心保證
+
+### Governed Workflow
+
+workflow 是 bounded 且 auditable 的。backtracking 是 contract 的一部分。無法支撐繼續前進的結果，會被送回 hypotheses、design 或 implementation，而不是直接包裝成更強的 prose。
+
+### Checkpointed Research State
+
+每個 node 邊界都會寫入可 inspection、可 resume 的 state。進展單位不只是文字輸出，而是帶有 artifacts、transitions 與可恢復 state 的 run。
+
+### Claim Ceiling
+
+claims 會被限制在 strongest defensible evidence ceiling 之下。系統會記錄被阻止的更強 claims，以及解鎖它們所需的 evidence gap。
+
+### Review As A Structural Gate
+
+`review` 不是 cosmetic cleanup。它是在 manuscript generation 之前檢查 readiness、方法論 sanity、evidence linkage、writing discipline 與 reproducibility handoff 的 structural gate。
+
+### Failure Memory
+
+failure fingerprint 會被持久化，因此結構性錯誤與重複出現的 equivalent failure 不會被盲目重試。
+
+### Reproducibility Through Artifacts
+
+可重現性透過 artifacts、checkpoints 與 inspectable transitions 來保障。public-facing summary 也以 persisted run output 為準，而不是再創造第二套 truth source。
+
+---
+
+## Validation 與 Harness 導向的品質模型
+
+AutoLabOS 把 validation surface 當成 first-class。
+
+- `/doctor` 會在 run 開始前檢查 environment 與 workspace readiness
+- harness validation 會保護 workflow、artifact 與 governance contract
+- targeted smoke checks 提供診斷性的回歸覆蓋
+- 當 interactive behavior 很重要時，使用 live validation
+
+paper readiness 不是單一 prompt 的感性判斷。
+
+- **Layer 1 - deterministic minimum gate** 透過明確的 artifact / evidence-integrity checks 阻止 under-evidenced work 繼續前進
+- **Layer 2 - LLM paper-quality evaluator** 對 methodology、evidence strength、writing structure、claim support、limitations honesty 做結構化批評
+- **Review packet + specialist panel** 決定 manuscript path 應該 advance、revise 還是 backtrack
+
+`paper_readiness.json` 中可能包含 `overall_score`。它應被理解為系統內部的 run-quality signal，而不是通用的 scientific benchmark。一些更高階的 evaluation / self-improvement path 會用它來比較不同 run 或 prompt mutation 候選。
+
+<details>
+<summary><strong>為什麼這個 validation 模型重要</strong></summary>
+
+品質假設會被轉成明確的 checks。系統看重的不是 prompt 層面的表面效果，而是真實行為。目標不是「模型寫得看起來可信」，而是「這個 run 可以被 inspection 並被 defend」。
+
+</details>
+
+---
+
+## 高階 Self-Improvement 能力
+
+AutoLabOS 具備 bounded self-improvement path，但這不是 blind autonomous rewriting，而是由 validation 與 rollback 約束的改進路徑。
+
+### `autolabos meta-harness`
+
+`autolabos meta-harness` 會根據 recent completed runs 與 evaluation history，在 `outputs/meta-harness/<timestamp>/` 下建立 context directory。
+
+其中可以包括：
+
+- 過濾後的 run events
+- `result_analysis.json`、`review/decision.json` 等 node artifacts
+- `paper_readiness.json`
+- `outputs/eval-harness/history.jsonl`
+- 目標 node 的目前 `node-prompts/` 檔案
+
+LLM 透過 `TASK.md` 被限制為只回傳 `TARGET_FILE + unified diff`，而且 target 被限定在 `node-prompts/` 內。apply mode 下候選變更必須通過 `validate:harness`；否則會 rollback 並寫入 audit log。`--no-apply` 只建立 context，`--dry-run` 只顯示 diff 而不改檔。
+
+### `autolabos evolve`
+
+`autolabos evolve` 會圍繞 `.codex` 與 `node-prompts` 執行一個 bounded mutation-and-evaluation loop。
+
+- 支援 `--max-cycles`、`--target skills|prompts|all`、`--dry-run`
+- 從 `paper_readiness.overall_score` 讀取 run fitness
+- 對 prompts 與 skills 做 mutation，執行 validation，並比較不同 cycle 的 fitness
+- 當出現 regression 時，以最後一個 good git tag 還原 `.codex` 與 `node-prompts`
+
+這是一條 self-improvement path，但不是無限制的 repo-wide rewrite path。
+
+### Harness Preset Layer
+
+AutoLabOS 還提供 `base`、`compact`、`failure-aware`、`review-heavy` 等 built-in harness preset。它們會調整 artifact/context policy、failure-memory emphasis、prompt policy 與 compression strategy，用於 comparative evaluation，但不會改變 governed production workflow 本身。
+
+---
+
+## 常用命令
+
+| 命令 | 說明 |
+|---|---|
+| `/new` | 建立或開啟 `Brief.md` |
+| `/brief start <path\|--latest>` | 從 brief 啟動研究 |
+| `/runs [query]` | 列出或搜尋 runs |
+| `/resume <run>` | 恢復 run |
+| `/agent run <node> [run]` | 從 graph node 開始執行 |
+| `/agent status [run]` | 顯示 node 狀態 |
+| `/agent overnight [run]` | 在保守邊界內執行無人值守 run |
+| `/agent autonomous [run]` | 執行 bounded research exploration |
+| `/watch` | 查看 active runs 與 background jobs 的 live watch 視圖 |
+| `/explore` | 顯示目前 run 的 exploration-engine 狀態 |
+| `/queue` | 顯示 running / waiting / stalled jobs |
+| `/doctor` | environment 與 workspace diagnostics |
+| `/model` | 切換 model 與 reasoning effort |
+
+<details>
+<summary><strong>完整命令列表</strong></summary>
+
+| 命令 | 說明 |
+|---|---|
+| `/help` | 顯示命令列表 |
+| `/new` | 建立或開啟 workspace `Brief.md` |
+| `/brief start <path\|--latest>` | 從 workspace `Brief.md` 或指定 brief 啟動研究 |
+| `/doctor` | environment + workspace diagnostics |
+| `/runs [query]` | 列出或搜尋 runs |
+| `/run <run>` | 選擇 run |
+| `/resume <run>` | 恢復 run |
+| `/agent list` | 列出 graph nodes |
+| `/agent run <node> [run]` | 從 node 執行 |
+| `/agent status [run]` | 顯示 node 狀態 |
+| `/agent collect [query] [options]` | 收集 papers |
+| `/agent recollect <n> [run]` | 追加收集 papers |
+| `/agent focus <node>` | 使用 safe jump 切換 focus |
+| `/agent graph [run]` | 顯示 graph state |
+| `/agent resume [run] [checkpoint]` | 從 checkpoint 恢復 |
+| `/agent retry [node] [run]` | 重試 node |
+| `/agent jump <node> [run] [--force]` | 跳轉 node |
+| `/agent overnight [run]` | overnight autonomy (24h) |
+| `/agent autonomous [run]` | open-ended autonomous research |
+| `/model` | model 與 reasoning selector |
+| `/approve` | 批准暫停的 node |
+| `/queue` | 顯示 running / waiting / stalled jobs |
+| `/watch` | 查看 active run 的 live watch |
+| `/explore` | 顯示 exploration-engine 狀態 |
+| `/retry` | 重試目前 node |
+| `/settings` | provider 與 model 設定 |
+| `/quit` | 結束 |
+
+</details>
+
+---
+
+## 適合誰 / 不適合誰
+
+### 適合
+
+- 想要自主性，同時也需要 governed workflow 的團隊
+- checkpoint 與 artifact 很重要的 research engineering 工作
+- 需要 evidence discipline 的 paper-scale 或 paper-adjacent 專案
+- generation 之外，同樣重視 review、traceability、resumability 的環境
+
+### 不適合
+
+- 只想快速得到 one-shot draft 的使用者
+- 不需要 artifact trail 或 review gate 的 workflow
+- 比起 governed execution 更想要 free-form agent behavior 的專案
+- 只需要簡單 literature summary tool 的場景
+
+---
+
+## 開發
+
+```bash
+npm install
+npm run build
+npm test
+npm run test:web
+npm run validate:harness
+```
+
+請為修改選擇能誠實覆蓋範圍的最小 validation set。對於 interactive defect，如果環境允許，不應只依賴 tests，也應重新跑一遍相同的 TUI / Web flow。
+
+常用命令：
+
+```bash
+npm run test:watch
+npm run test:smoke:natural-collect
+npm run test:smoke:natural-collect-execute
+npm run test:smoke:all
+```
+
+---
+
+## Advanced Details
+
+<details>
+<summary><strong>執行模式</strong></summary>
+
+AutoLabOS 在所有模式下都維持 governed workflow 與 safety gates。
+
+| 模式 | 命令 | 行為 |
+|---|---|---|
+| **Interactive** | `autolabos` | 帶有明確 approval gate 的 slash-command TUI |
+| **Minimal approval** | 設定: `approval_mode: minimal` | 自動批准安全轉移 |
+| **Hybrid approval** | 設定: `approval_mode: hybrid` | 強且低風險的轉移自動前進，高風險或低信賴轉移則暫停 |
+| **Overnight** | `/agent overnight [run]` | 無人值守單次執行，24 小時限制，保守 backtracking |
+| **Autonomous** | `/agent autonomous [run]` | open-ended bounded research exploration |
+
+</details>
+
+<details>
+<summary><strong>Governance artifact flow</strong></summary>
 
 ```mermaid
 flowchart LR
@@ -323,18 +477,18 @@ flowchart LR
     Run --> Failures["Failure Memory<br/>fingerprinted JSONL"]
     Run --> Analyze["analyze_results"]
     Analyze --> Decision["Attempt Decision<br/>keep/discard/replicate"]
-    Decision --> Review["review"]
+    Decision --> FigureAudit["figure_audit"]
+    FigureAudit --> Review["review"]
     Failures --> Review
     Contract --> Review
     Review --> Ceiling["Pre-Review Summary<br/>claim ceiling detail"]
     Ceiling --> Paper["write_paper"]
 ```
 
----
+</details>
 
-## Artifact 流
-
-每個節點都會產出結構化、可檢查的 artifacts。
+<details>
+<summary><strong>Artifact flow</strong></summary>
 
 ```mermaid
 flowchart TB
@@ -350,367 +504,77 @@ flowchart TB
     F --> F1["metrics.json, failure_memory.jsonl,<br/>objective_evaluation.json"]
     F1 --> G["analyze_results"]
     G --> G1["result_analysis.json, attempt_decisions.jsonl,<br/>transition_recommendation.json"]
-    G1 --> H["review"]
-    H --> H1["pre_review_summary.json, review_packet.json,<br/>minimum_gate.json, paper_critique.json"]
-    H1 --> I["write_paper"]
-    I --> I1["main.tex, references.bib,<br/>scientific_validation.json, main.pdf"]
-```
-
-<details>
-<summary><strong>公開輸出 bundle</strong></summary>
-
-```
-outputs/
-  ├── paper/           # TeX 原始碼、PDF、參考文獻、建置日誌
-  ├── experiment/      # Baseline 摘要、實驗程式碼
-  ├── analysis/        # 結果表格、證據分析
-  ├── review/          # 論文批評、關卡決定
-  ├── results/         # 精簡的定量摘要
-  ├── reproduce/       # 重現腳本、README
-  ├── manifest.json    # 區段登錄表
-  └── README.md        # 人類可讀的執行摘要
+    G1 --> H["figure_audit"]
+    H --> H1["gate1_gate2_issues.json,<br/>figure_audit_summary.json"]
+    H1 --> I["review"]
+    I --> I1["pre_review_summary.json, review_packet.json,<br/>minimum_gate.json, paper_critique.json"]
+    I1 --> J["write_paper"]
+    J --> J1["main.tex, references.bib,<br/>scientific_validation.json, main.pdf"]
 ```
 
 </details>
 
----
-
-## Node 架構
+<details>
+<summary><strong>Node architecture</strong></summary>
 
 | Node | 角色 | 作用 |
 |---|---|---|
-| `collect_papers` | collector, curator | 透過 Semantic Scholar 發現並整理候選論文集合 |
-| `analyze_papers` | reader, evidence extractor | 從選定論文抽取摘要與證據 |
-| `generate_hypotheses` | hypothesis agent + skeptical reviewer | 從文獻綜合想法，再進行壓力測試 |
-| `design_experiments` | designer + feasibility/statistical/ops panel | 依可行性過濾方案並撰寫實驗契約 |
-| `implement_experiments` | implementer | 透過 ACI actions 產生程式碼與 workspace 變更 |
-| `run_experiments` | runner + failure triager + rerun planner | 驅動執行、記錄失敗、決定是否重跑 |
-| `analyze_results` | analyst + metric auditor + confounder detector | 檢查結果可靠性並撰寫嘗試決策 |
-| `review` | 5-specialist panel + claim ceiling + two-layer gate | 結構性審查——證據不足就阻止寫作 |
-| `write_paper` | paper writer + reviewer critique | 起草稿件、執行草稿後批評、建置 PDF |
-
-<details>
-<summary><strong>階段式連結圖</strong></summary>
-
-**探索與閱讀**
-
-```mermaid
-flowchart LR
-    Topic["run topic + collect constraints"] --> CP["collect_papers"]
-    CP --> CC["collector_curator"]
-    CC --> SS["Semantic Scholar search"]
-    SS --> Enrich["enrichment + BibTeX recovery"]
-    Enrich --> Corpus["corpus.jsonl + bibtex.bib"]
-    Corpus --> AP["analyze_papers"]
-    AP --> Select["selection request + hybrid rerank"]
-    Select --> Manifest["analysis_manifest resume / prune"]
-    Manifest --> RE["reader_evidence_extractor"]
-    RE --> Pdf["local text/image analysis or Responses API PDF"]
-    Pdf --> ReviewLoop["extractor -> reviewer normalization"]
-    ReviewLoop --> Evidence["paper_summaries.jsonl + evidence_store.jsonl"]
-```
-
-**假設與實驗設計**
-
-```mermaid
-flowchart LR
-    Evidence["paper_summaries.jsonl + evidence_store.jsonl"] --> GH["generate_hypotheses"]
-    GH --> HA["hypothesis_agent"]
-    HA --> Axes["evidence synthesizer -> evidence axes"]
-    Axes --> ToT["ToT branch expansion"]
-    ToT --> Drafts["mechanism / contradiction / intervention drafts"]
-    Drafts --> Reviews["skeptical reviewer"]
-    Reviews --> Select["diversity + evidence-quality top-k selection"]
-    Select --> Hyp["hypotheses.jsonl + axes/reviews/llm_trace"]
-    Hyp --> DE["design_experiments"]
-    DE --> ED["experiment_designer"]
-    ED --> Profiles["constraint profile + objective metric profile"]
-    Profiles --> Plans["design candidates"]
-    Plans --> Panel["designer + feasibility + statistical + ops-capacity panel"]
-    Panel --> Choice["panel selection"]
-    Choice --> Contract["experiment_contract.json + brief_design_consistency.json"]
-```
-
-**實作、執行與結果循環**
-
-```mermaid
-flowchart LR
-    PlanYaml["experiment_plan.yaml"] --> IE["implement_experiments"]
-    IE --> IM["ImplementSessionManager"]
-    IM --> Impl["implementer"]
-    IM --> Codex["Codex CLI session"]
-    Codex --> VerifyPatch["local verification"]
-    VerifyPatch --> Handoff{"auto handoff?"}
-    Handoff -->|yes| RX["run_experiments"]
-    Handoff -->|no| Gate["approval boundary"]
-    Gate --> RX
-    RX --> Runner["runner"]
-    Runner --> FailCheck["failure memory: check do-not-retry"]
-    FailCheck --> ACI["ACI preflight/tests/command"]
-    ACI --> Triage["failure triager + rerun planner"]
-    Triage -->|retry once if transient| ACI
-    ACI --> FailRecord["record to failure_memory.jsonl"]
-    ACI --> Metrics["metrics.json + supplemental runs"]
-    Metrics --> AR["analyze_results"]
-    AR --> ResultPanel["metric auditor + robustness + confounder + calibrator"]
-    ResultPanel --> AttemptDec["attempt_decisions.jsonl"]
-    ResultPanel --> Synth["transition recommendation"]
-    Synth -->|advance| RV["review"]
-    Synth -->|backtrack| IE
-```
-
-**審查、寫作與成果呈現**
-
-```mermaid
-flowchart LR
-    Inputs["result_analysis + contract + failures + decisions"] --> RV["review"]
-    RV --> PreReview["pre_review_summary.json<br/>+ claim_ceiling_detail"]
-    RV --> Panel["5-specialist review panel"]
-    Panel --> Score["scorecard + consistency + bias"]
-    Panel --> Decision["decision + revision_plan"]
-    Score --> Packet["review_packet.json + checklist.md"]
-    Decision --> Packet
-    Decision --> Critique["paper_critique.json"]
-    Critique --> Gate{"resolve review outcome"}
-    Gate -->|advance| WP["write_paper"]
-    Gate -->|backtrack| Back["hypotheses / design / implement"]
-    WP --> Writer["paper_writer"]
-    Writer --> Draft["outline -> draft -> review -> finalize"]
-    Draft --> Validate["draft validation"]
-    Validate --> Repair{"repairable?"}
-    Repair -->|yes| Fix["validation-aware repair (1 pass)"]
-    Fix --> Tex["paper/main.tex + references.bib"]
-    Repair -->|no| Tex
-```
+| `collect_papers` | collector, curator | 透過 Semantic Scholar 發現並篩選 candidate paper set |
+| `analyze_papers` | reader, evidence extractor | 從選中的 papers 中提取 summaries 與 evidence |
+| `generate_hypotheses` | hypothesis agent + skeptical reviewer | 從 literature 合成 ideas 並做 pressure-test |
+| `design_experiments` | designer + feasibility/statistical/ops panel | 過濾計畫的可執行性並寫出 experiment contract |
+| `implement_experiments` | implementer | 透過 ACI actions 產生程式碼與 workspace changes |
+| `run_experiments` | runner + failure triager + rerun planner | 驅動 execution，記錄 failures，決定 rerun |
+| `analyze_results` | analyst + metric auditor + confounder detector | 檢查 results 的可靠性並寫入 attempt decisions |
+| `figure_audit` | figure auditor + optional vision critique | 檢查 evidence alignment、captions / references、publication readiness |
+| `review` | 5-specialist panel + claim ceiling + two-layer gate | 執行 structural review，在 evidence 不足時阻止寫作 |
+| `write_paper` | paper writer + reviewer critique | 生成 manuscript，執行 post-draft critique，並建置 PDF |
 
 </details>
 
----
-
-## 有界自動化
-
-所有內部自動化都有明確上限。
+<details>
+<summary><strong>Bounded automation</strong></summary>
 
 | Node | 內部自動化 | 上限 |
 |---|---|---|
-| `analyze_papers` | 證據過少時自動擴展證據視窗 | 最多 2 次擴展 |
-| `design_experiments` | 決定性 panel scoring + 實驗契約 | 每個設計執行 1 次 |
-| `run_experiments` | 失敗分流 + 一次性暫時性重跑 | 結構性失敗不重試 |
-| `run_experiments` | 失敗記憶指紋化 | 同一指紋 ≥3 次即耗盡重試 |
-| `analyze_results` | 客觀重匹配 + 結果 panel 校準 | 人工暫停前 1 次重匹配 |
-| `write_paper` | 相關研究 scout + 驗證感知修復 | 最多 1 次修復 |
-
----
-
-## 常用指令
-
-| 指令 | 說明 |
-|---|---|
-| `/new` | 建立 research brief |
-| `/brief start <path\|--latest>` | 從 brief 啟動研究 |
-| `/runs [query]` | 列出或搜尋 runs |
-| `/resume <run>` | 恢復 run |
-| `/agent run <node> [run]` | 從圖節點開始執行 |
-| `/agent status [run]` | 顯示節點狀態 |
-| `/agent overnight [run]` | 無人執行（24 小時限制） |
-| `/agent autonomous [run]` | 開放式自主研究 |
-| `/model` | 切換模型與推理強度 |
-| `/doctor` | 環境 + workspace 診斷 |
-
-<details>
-<summary><strong>完整指令列表</strong></summary>
-
-| 指令 | 說明 |
-|---|---|
-| `/help` | 顯示指令列表 |
-| `/new` | 建立 research brief 檔案 |
-| `/brief start <path\|--latest>` | 從 brief 檔案啟動研究 |
-| `/doctor` | 環境 + workspace 診斷 |
-| `/runs [query]` | 列出或搜尋 runs |
-| `/run <run>` | 選擇 run |
-| `/resume <run>` | 恢復 run |
-| `/agent list` | 列出圖節點 |
-| `/agent run <node> [run]` | 從節點開始執行 |
-| `/agent status [run]` | 顯示節點狀態 |
-| `/agent collect [query] [options]` | 收集論文 |
-| `/agent recollect <n> [run]` | 追加收集論文 |
-| `/agent focus <node>` | 以安全跳轉移動焦點 |
-| `/agent graph [run]` | 顯示圖狀態 |
-| `/agent resume [run] [checkpoint]` | 從 checkpoint 恢復 |
-| `/agent retry [node] [run]` | 重試節點 |
-| `/agent jump <node> [run] [--force]` | 跳轉節點 |
-| `/agent overnight [run]` | Overnight 自主執行（24 小時） |
-| `/agent autonomous [run]` | 開放式自主研究 |
-| `/model` | 模型與推理強度選擇器 |
-| `/approve` | 批准暫停中的節點 |
-| `/retry` | 重試目前節點 |
-| `/settings` | Provider 與模型設定 |
-| `/quit` | 離開 |
+| `analyze_papers` | 當 evidence 太稀疏時自動擴展 evidence window | <= 2 次 |
+| `design_experiments` | deterministic panel scoring + experiment contract | 每個 design 執行 1 次 |
+| `run_experiments` | failure triage + 一次 transient failure 重試 | structural failure 不重試 |
+| `run_experiments` | failure memory fingerprinting | >= 3 次相同失敗則耗盡 retries |
+| `analyze_results` | objective rematching + result panel calibration | human pause 前 1 次 rematch |
+| `figure_audit` | Gate 3 figure critique + summary aggregation | vision critique 可獨立 resume |
+| `write_paper` | related-work scout + validation-aware repair | 最多 1 次 repair |
 
 </details>
 
 <details>
-<summary><strong>收集選項與範例</strong></summary>
+<summary><strong>Public output bundle</strong></summary>
 
 ```
---limit <n>          --last-years <n>      --year <spec>
---date-range <s:e>   --sort <relevance|citationCount|publicationDate>
---order <asc|desc>   --min-citations <n>   --open-access
---field <csv>        --venue <csv>         --type <csv>
---bibtex <generated|s2|hybrid>             --dry-run
---additional <n>     --run <run_id>
-```
-
-```bash
-/agent collect --last-years 5 --sort relevance --limit 100
-/agent collect "agent planning" --sort citationCount --min-citations 100
-/agent collect --additional 200 --run <run_id>
+outputs/<title-slug>-<run_id_prefix>/
+  ├── paper/
+  ├── experiment/
+  ├── analysis/
+  ├── review/
+  ├── results/
+  ├── reproduce/
+  ├── manifest.json
+  └── README.md
 ```
 
 </details>
-
----
-
-## Web Ops UI
-
-`autolabos web` 會在 `http://127.0.0.1:4317` 啟動本機瀏覽器 UI。
-
-- **Onboarding** ── 與 TUI 相同的設定流程，寫入 `.autolabos/config.yaml`
-- **Dashboard** ── run 搜尋、9 節點 workflow 視圖、節點操作、即時日誌
-- **Artifacts** ── 瀏覽 runs，inline preview 文字、圖片與 PDF
-- **Composer** ── 支援 slash commands 與自然語言，具有逐步計畫控制功能
-
-```bash
-autolabos web                              # 預設 port 4317
-autolabos web --host 0.0.0.0 --port 8080  # 自訂綁定
-```
-
----
-
-## 哲學
-
-AutoLabOS 圍繞幾條硬性約束來設計：
-
-- **Workflow 完成 ≠ 論文就緒。** 一次 run 可以跑完整個圖，但產出不一定達到論文水準。系統會追蹤這個差異。
-- **主張不能超過證據。** 主張上限是以結構方式強制的，而不是靠更強的 prompting。
-- **審查是關卡，不是建議。** 若證據不足，`review` 節點會阻止 `write_paper` 並建議 backtracking。
-- **負結果是允許的。** 失敗的假設也是有效的研究成果——但必須誠實地陳述。
-- **可重現性是 artifact 的屬性。** Checkpoints、實驗契約、失敗日誌與證據儲存的存在，就是為了讓一次 run 的推理過程可以被追蹤與挑戰。
-
----
-
-## 開發
-
-```bash
-npm install              # 安裝依賴（同時安裝 web 子套件）
-npm run build            # 建置 TypeScript + web UI
-npm test                 # 執行所有單元測試（931+）
-npm run test:watch       # Watch 模式
-
-# 單一測試檔案
-npx vitest run tests/<name>.test.ts
-
-# Smoke 測試
-npm run test:smoke:all                      # 完整本機 smoke bundle
-npm run test:smoke:natural-collect          # 自然語言收集 -> pending 指令
-npm run test:smoke:natural-collect-execute  # 自然語言收集 -> 執行 -> 驗證
-npm run test:smoke:ci                       # CI smoke 選擇
-```
-
-<details>
-<summary><strong>Smoke 測試環境變數</strong></summary>
-
-```bash
-AUTOLABOS_FAKE_CODEX_RESPONSE=1              # 避免實際 Codex 呼叫
-AUTOLABOS_FAKE_SEMANTIC_SCHOLAR_RESPONSE=1   # 避免實際 S2 呼叫
-AUTOLABOS_SMOKE_VERBOSE=1                    # 印出完整 PTY 日誌
-AUTOLABOS_SMOKE_MODE=<mode>                  # CI 模式選擇
-```
-
-</details>
-
-<details>
-<summary><strong>Runtime 內部結構</strong></summary>
-
-### 狀態圖策略
-
-- Checkpoints：`.autolabos/runs/<run_id>/checkpoints/`——階段：`before | after | fail | jump | retry`
-- 重試策略：`maxAttemptsPerNode = 3`
-- 自動回滾：`maxAutoRollbacksPerNode = 2`
-- 跳轉模式：`safe`（當前或前一個）/ `force`（向前跳轉，跳過的節點會被記錄）
-
-### Agent Runtime 模式
-
-- **ReAct** 循環：`PLAN_CREATED → TOOL_CALLED → OBS_RECEIVED`
-- **ReWOO** 拆分（planner/worker）：用於高成本節點
-- **ToT**（Tree-of-Thoughts）：用於假設與設計節點
-- **Reflexion**：儲存失敗 episode 並在重試時重新利用
-
-### 記憶層
-
-| 層 | 範圍 | 格式 |
-|---|---|---|
-| Run context memory | 每次 run 的 key/value | `run_context.jsonl` |
-| Long-term store | 跨 attempt | JSONL 摘要與索引 |
-| Episode memory | Reflexion | 供重試使用的失敗教訓 |
-
-### ACI Actions
-
-`implement_experiments` 與 `run_experiments` 透過以下 actions 執行：
-`read_file` · `write_file` · `apply_patch` · `run_command` · `run_tests` · `tail_logs`
-
-</details>
-
-<details>
-<summary><strong>Agent runtime 圖</strong></summary>
-
-```mermaid
-flowchart LR
-    UI["CLI / TUI / Web UI"] --> Session["InteractionSession"]
-    Session --> Bootstrap["createAutoLabOSRuntime"]
-    Bootstrap --> Orchestrator["AgentOrchestrator"]
-    Bootstrap --> Runtime["StateGraphRuntime"]
-    Bootstrap --> Providers["RoutedLLMClient + CodexCliClient<br/>+ SemanticScholarClient + LocalAciAdapter"]
-    Orchestrator --> Runtime
-    Runtime --> Registry["DefaultNodeRegistry"]
-    Runtime --> Stores["RunStore + CheckpointStore + EventStream"]
-    Providers --> Registry
-    Registry --> Collect["collect_papers"]
-    Registry --> Analyze["analyze_papers"]
-    Registry --> Hyp["generate_hypotheses"]
-    Registry --> Design["design_experiments"]
-    Registry --> Impl["implement_experiments"]
-    Registry --> Run["run_experiments"]
-    Registry --> Results["analyze_results"]
-    Registry --> Review["review"]
-    Registry --> Paper["write_paper"]
-```
-
-</details>
-
----
-
-## 文件
-
-| 文件 | 涵蓋範圍 |
-|---|---|
-| `docs/architecture.md` | 系統架構與設計決策 |
-| `docs/tui-live-validation.md` | TUI 驗證與測試方法 |
-| `docs/experiment-quality-bar.md` | 實驗執行標準 |
-| `docs/paper-quality-bar.md` | 稿件品質要求 |
-| `docs/reproducibility.md` | 可重現性保證 |
-| `docs/research-brief-template.md` | 含所有治理章節的完整 brief 範本 |
 
 ---
 
 ## 狀態
 
-AutoLabOS 正處於活躍開發階段（v0.1.0）。工作流程、治理系統與核心 runtime 已可運作並經過測試。介面、artifact 覆蓋範圍與執行模式正在持續驗證中。
+AutoLabOS 是一個持續開發中的 OSS research-engineering 專案。行為與 contract 的 canonical reference 在儲存庫 `docs/` 目錄下，尤其是：
 
-歡迎貢獻與回饋——請參閱 [Issues](https://github.com/lhy0718/AutoLabOS/issues)。
+- `docs/architecture.md`
+- `docs/tui-live-validation.md`
+- `docs/experiment-quality-bar.md`
+- `docs/paper-quality-bar.md`
+- `docs/reproducibility.md`
+- `docs/research-brief-template.md`
 
----
-
-<div align="center">
-  <sub>為希望實驗受治理、主張可辯護的研究者而打造。</sub>
-</div>
+如果你要修改 runtime behavior，請把這些文件、已發布 tests 與 observable artifacts 視為 source of truth。

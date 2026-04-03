@@ -4,10 +4,10 @@
 
   <img alt="AutoLabOS" src="https://img.shields.io/badge/AutoLabOS-0F766E?style=for-the-badge&logoColor=white&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiPjxwYXRoIGQ9Ik0xMiAyTDIgN2wxMCA1IDEwLTV6Ii8%2BPHBhdGggZD0iTTIgMTdsMTAgNSAxMC01Ii8%2BPHBhdGggZD0iTTIgMTJsMTAgNSAxMC01Ii8%2BPC9zdmc%2B" />
 
-  <h1>Un système d'exploitation pour la recherche autonome</h1>
+  <h1>Un système d’exploitation pour la recherche autonome</h1>
 
-  <p><strong>Exécution autonome de la recherche, pas seulement génération de texte pour la recherche.</strong><br/>
-  De la littérature au manuscrit — dans une boucle gouvernée, jalonnée par des checkpoints et inspectable.</p>
+  <p><strong>Pas la génération de recherche, mais l’exécution autonome de la recherche.</strong><br/>
+  Du brief au manuscrit, dans une exécution governed, checkpointed et inspectable.</p>
 
   <p>
     <a href="../README.md"><strong>English</strong></a>
@@ -31,9 +31,8 @@
     <a href="./README.ru.md"><strong>Русский</strong></a>
   </p>
 
-  <p><sub>Les fichiers README localisés sont des traductions maintenues de ce document. Pour le texte normatif et les dernières modifications, utilisez le README anglais comme référence canonique.</sub></p>
+  <p><sub>Les README localisés sont des traductions maintenues de ce document. Pour le libellé normatif et les mises à jour les plus récentes, utilisez le README anglais comme canonical reference.</sub></p>
 
-  <!-- CI & Quality -->
   <p>
     <a href="https://github.com/lhy0718/AutoLabOS/actions/workflows/ci.yml">
       <img alt="CI" src="https://img.shields.io/github/actions/workflow/status/lhy0718/AutoLabOS/ci.yml?branch=main&style=flat-square&label=ci&logo=githubactions&logoColor=white" />
@@ -41,128 +40,66 @@
     <a href="https://github.com/lhy0718/AutoLabOS/actions/workflows/smoke.yml">
       <img alt="Smoke" src="https://img.shields.io/github/actions/workflow/status/lhy0718/AutoLabOS/smoke.yml?branch=main&style=flat-square&label=smoke&logo=githubactions&logoColor=white" />
     </a>
-    <img alt="Tests" src="https://img.shields.io/badge/tests-931%20passed-22C55E?style=flat-square&logo=vitest&logoColor=white" />
+    <img alt="Tests" src="https://img.shields.io/badge/tests-validated-22C55E?style=flat-square&logo=vitest&logoColor=white" />
   </p>
 
-  <!-- Tech stack -->
   <p>
     <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.x-3178C6?style=flat-square&logo=typescript&logoColor=white" />
     <img alt="Node" src="https://img.shields.io/badge/Node-%E2%89%A518-339933?style=flat-square&logo=node.js&logoColor=white" />
     <img alt="React" src="https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=black" />
   </p>
 
-  <!-- Core features -->
   <p>
-    <img alt="9-node graph" src="https://img.shields.io/badge/state%20graph-9%20nodes-0F766E?style=flat-square" />
+    <img alt="Governed workflow" src="https://img.shields.io/badge/workflow-governed%20with%20figure_audit-0F766E?style=flat-square" />
     <img alt="Checkpointed" src="https://img.shields.io/badge/checkpoints-built%20in-0F766E?style=flat-square" />
-    <img alt="Experiment Governance" src="https://img.shields.io/badge/experiments-governed-0F766E?style=flat-square" />
     <img alt="Claim Ceiling" src="https://img.shields.io/badge/claims-ceiling%20enforced-0F766E?style=flat-square" />
-  </p>
-
-  <!-- Integrations -->
-  <p>
-    <img alt="OpenAI" src="https://img.shields.io/badge/OpenAI-supported-412991?style=flat-square&logo=openai&logoColor=white" />
-    <img alt="Codex CLI" src="https://img.shields.io/badge/Codex%20CLI-supported-412991?style=flat-square&logo=openai&logoColor=white" />
-    <img alt="Ollama" src="https://img.shields.io/badge/Ollama-supported-1A1A2E?style=flat-square" />
-    <img alt="Semantic Scholar" src="https://img.shields.io/badge/Semantic%20Scholar-integrated-1857B6?style=flat-square" />
-  </p>
-
-  <!-- Community -->
-  <p>
-    <a href="https://github.com/lhy0718/AutoLabOS/stargazers">
-      <img alt="Stars" src="https://img.shields.io/github/stars/lhy0718/AutoLabOS?style=flat-square&color=f5a623" />
-    </a>
-    <a href="https://github.com/lhy0718/AutoLabOS/commits/main">
-      <img alt="Last commit" src="https://img.shields.io/github/last-commit/lhy0718/AutoLabOS?style=flat-square&color=6c757d" />
-    </a>
+    <img alt="Validation surfaces" src="https://img.shields.io/badge/validation-first--class-0F766E?style=flat-square" />
   </p>
 
 </div>
 
 ---
 
-La plupart des outils qui prétendent automatiser la recherche automatisent en réalité la **génération de texte**. Ils produisent des résultats d'apparence soignée à partir d'un raisonnement superficiel, sans gouvernance expérimentale, sans suivi des preuves et sans évaluation honnête de ce que les preuves soutiennent réellement.
+AutoLabOS est un système d’exploitation pour l’exécution de recherche gouvernée. Il traite un run comme un état de recherche checkpointé, pas comme une simple étape de génération.
 
-AutoLabOS adopte une position différente : **la partie difficile de la recherche n'est pas l'écriture — c'est la discipline entre la question et le brouillon.** L'ancrage bibliographique, le test d'hypothèses, la gouvernance expérimentale, le suivi des échecs, le plafonnement des affirmations et les portes de revue se déroulent tous à l'intérieur d'un graphe d'état fixe à 9 nœuds. Chaque nœud produit des artefacts auditables. Chaque transition est enregistrée comme checkpoint. Chaque affirmation a un plafond d'évidence.
+Toute la boucle centrale est inspectable. La collecte de littérature, la formulation d’hypothèses, la conception expérimentale, l’implémentation, l’exécution, l’analyse, le figure audit, la review et la rédaction du manuscrit produisent tous des artefacts auditables. Les affirmations restent evidence-bounded sous un claim ceiling. La review n’est pas une étape de polissage, mais un structural gate.
 
-Le résultat n'est pas simplement un article. C'est un état de recherche gouverné que l'on peut inspecter, reprendre et défendre.
-
-> **Les preuves d'abord. Les affirmations ensuite.**
->
-> **Des exécutions que l'on peut inspecter, reprendre et défendre.**
->
-> **Un système d'exploitation pour la recherche, pas un pack de prompts.**
->
-> **Votre laboratoire ne devrait pas répéter deux fois la même expérience échouée.**
->
-> **La revue est une porte structurelle, pas une simple passe de polissage.**
+Les hypothèses de qualité sont transformées en checks explicites. Le comportement réel compte davantage que l’apparence au niveau du prompt. La reproductibilité est assurée par les artefacts, les checkpoints et des transitions inspectables.
 
 ---
 
-## Ce que vous obtenez après une exécution
+## Pourquoi AutoLabOS existe
 
-AutoLabOS ne produit pas seulement un PDF. Il produit un état de recherche complet et traçable :
+Beaucoup de systèmes de research agents sont optimisés pour produire du texte. AutoLabOS est optimisé pour exécuter un processus de recherche gouverné.
 
-| Sortie | Contenu |
-|---|---|
-| **Corpus de littérature** | Articles collectés, BibTeX, magasin d'évidence extrait |
-| **Hypothèses** | Hypothèses ancrées dans la littérature avec revue sceptique |
-| **Plan expérimental** | Conception gouvernée avec contrat, verrouillage de baseline et contrôles de cohérence |
-| **Résultats exécutés** | Métriques, évaluation objective, journal de mémoire des échecs |
-| **Analyse des résultats** | Analyse statistique, décisions par tentative, raisonnement de transition |
-| **Paquet de revue** | Tableau de scores du panel de 5 spécialistes, plafond des affirmations, critique pré-brouillon |
-| **Manuscrit** | Brouillon LaTeX avec liens d'évidence, validation scientifique, PDF optionnel |
-| **Checkpoints** | Instantanés complets de l'état à chaque frontière de nœud — reprise à tout moment |
+Cette différence compte lorsqu’un projet a besoin de plus qu’un brouillon convaincant.
 
-Tout est stocké dans `.autolabos/runs/<run_id>/`, avec les sorties publiques miroitées vers `outputs/`.
+- un research brief qui agit comme contrat d’exécution
+- des workflow gates explicites au lieu d’une dérive libre des agents
+- des checkpoints et des artefacts inspectables après coup
+- une review capable d’arrêter un travail faible avant la génération du manuscrit
+- une failure memory pour éviter de répéter aveuglément la même expérience ratée
+- des evidence-bounded claims au lieu d’une prose qui dépasse les données
+
+AutoLabOS s’adresse aux équipes qui veulent de l’autonomie sans abandonner l’auditabilité, le backtracking et la validation.
 
 ---
 
-## Pourquoi AutoLabOS ?
+## Ce qui se passe pendant un run
 
-La plupart des outils IA pour la recherche optimisent l'**apparence des sorties**. AutoLabOS optimise l'**exécution gouvernée**.
+Un run governed suit toujours le même arc de recherche.
 
-| | Outils de recherche typiques | AutoLabOS |
-|---|---|---|
-| Workflow | Dérive ouverte d'agents | Graphe fixe à 9 nœuds avec transitions bornées |
-| Conception expérimentale | Non structurée | Contrats avec règle de changement unique, détection de confusion |
-| Expériences échouées | Oubliées puis relancées | Enregistrées par empreinte en mémoire d'échec, jamais répétées |
-| Affirmations | Aussi fortes que le LLM veut bien générer | Bornées par un plafond lié à l'évidence réelle |
-| Revue | Passe de nettoyage optionnelle | Porte structurelle — bloque l'écriture si l'évidence est insuffisante |
-| Évaluation de l'article | Un seul LLM qui dit « ça a l'air bien » | Porte à deux couches : minimum déterministe + évaluateur LLM de qualité |
-| État | Éphémère | Avec checkpoints, reprenable et inspectable |
+`Brief.md` → literature → hypothesis → experiment design → implementation → execution → analysis → figure audit → review → manuscript
 
----
+En pratique :
 
-## Démarrage rapide
+1. `/new` crée ou ouvre le research brief
+2. `/brief start --latest` valide le brief, le snapshot dans le run et lance un run governed
+3. le système avance dans le workflow fixe et checkpoint l’état et les artefacts à chaque frontière
+4. si l’evidence est faible, le système choisit le backtracking ou le downgrade plutôt qu’un polissage automatique
+5. seulement après le passage du review gate, `write_paper` rédige un manuscrit à partir d’une evidence bornée
 
-```bash
-# 1. Installation et build
-npm install && npm run build && npm link
-
-# 2. Se déplacer vers votre espace de travail de recherche
-cd /path/to/your-research-project
-
-# 3. Lancer (choisir l'un des deux)
-autolabos web    # Interface navigateur — onboarding, tableau de bord, explorateur d'artefacts
-autolabos        # Workflow terminal avec commandes slash
-```
-
-> **Première exécution ?** Les deux interfaces vous guident à travers l'onboarding si `.autolabos/config.yaml` n'existe pas encore.
-
-### Prérequis
-
-| Élément | Quand nécessaire | Notes |
-|---|---|---|
-| `SEMANTIC_SCHOLAR_API_KEY` | Toujours | Découverte d'articles et métadonnées |
-| `OPENAI_API_KEY` | Quand le provider est `api` | Exécution de modèle via l'API OpenAI |
-| Connexion Codex CLI | Quand le provider est `codex` | Utilise votre session Codex locale |
-
----
-
-## Le workflow à 9 nœuds
-
-Un graphe fixe. Pas une suggestion — un contrat.
+Le contrat historique à 9 nœuds reste la base architecturale. Dans le runtime actuel, `figure_audit` est le checkpoint supplémentaire approuvé entre `analyze_results` et `review`, afin que la critique des figures puisse être checkpointée et reprise indépendamment.
 
 ```mermaid
 stateDiagram-v2
@@ -173,10 +110,11 @@ stateDiagram-v2
     design_experiments --> implement_experiments: complete
     implement_experiments --> run_experiments: auto_handoff or complete
     run_experiments --> analyze_results: complete
-    analyze_results --> review: auto_advance
+    analyze_results --> figure_audit: auto_advance
     analyze_results --> implement_experiments: auto_backtrack_to_implement
     analyze_results --> design_experiments: auto_backtrack_to_design
     analyze_results --> generate_hypotheses: auto_backtrack_to_hypotheses
+    figure_audit --> review: auto_advance
     review --> write_paper: auto_advance
     review --> implement_experiments: auto_backtrack_to_implement
     review --> design_experiments: auto_backtrack_to_design
@@ -184,135 +122,351 @@ stateDiagram-v2
     write_paper --> [*]: auto_complete
 ```
 
-`collect_papers` → `analyze_papers` → `generate_hypotheses` → `design_experiments` → `implement_experiments` → `run_experiments` → `analyze_results` → `review` → `write_paper`
-
-Le backtracking est intégré. Si les résultats sont faibles, le graphe revient vers les hypothèses ou la conception — au lieu d'avancer vers une rédaction optimiste. Toute l'automatisation se déroule dans des boucles internes aux nœuds, avec des limites explicites.
+Toute l’automatisation dans ce flux reste bornée à des bounded node-internal loops. Même en mode non supervisé, le workflow reste governed.
 
 ---
 
-## Propriétés fondamentales
+## Ce que vous obtenez après un run
 
-### Gouvernance expérimentale
+AutoLabOS ne produit pas seulement un PDF. Il produit un état de recherche traçable.
 
-Chaque exécution d'expérience passe par un contrat structuré :
+| Sortie | Contenu |
+|---|---|
+| **Corpus de littérature** | papers collectés, BibTeX, evidence store extrait |
+| **Hypothèses** | hypotheses fondées sur la littérature et skeptical review |
+| **Plan expérimental** | governed design avec contract, baseline lock et checks de cohérence |
+| **Résultats exécutés** | metrics, objective evaluation, failure memory log |
+| **Analyse des résultats** | analyse statistique, attempt decisions, transition reasoning |
+| **Figure audit** | figure lint, caption/reference consistency, vision critique optionnelle |
+| **Review packet** | scorecard du panel de 5 spécialistes, claim ceiling, critique pré-brouillon |
+| **Manuscrit** | brouillon LaTeX avec evidence links, scientific validation et PDF optionnel |
+| **Checkpoints** | snapshots complets de l’état à chaque frontière de nœud, reprise possible à tout moment |
 
-- **Contrat d'expérience** — verrouille l'hypothèse, le mécanisme causal, la règle de changement unique, la condition d'abandon et les critères de conservation/rejet
-- **Détection de confusion** — détecte les changements conjoints, les interventions sous forme de liste et les incohérences mécanisme-changement
-- **Cohérence brief-conception** — signale quand la conception s'éloigne du brief de recherche original
-- **Verrouillage de baseline** — le contrat de comparaison fige la métrique objective et la baseline avant l'exécution
+Tout est stocké sous `.autolabos/runs/<run_id>/`, avec une copie des sorties publiques sous `outputs/`.
 
-### Plafonnement des affirmations
-
-Le système ne laisse pas les affirmations dépasser les preuves.
-
-Le nœud `review` produit un `pre_review_summary` contenant l'**affirmation défendable la plus forte**, une liste d'**affirmations plus fortes bloquées** avec leurs raisons, et les **lacunes d'évidence** qu'il faudrait combler pour les débloquer. Ce plafond alimente directement la génération du manuscrit.
-
-### Mémoire des échecs
-
-Un fichier JSONL à portée d'exécution qui enregistre et déduplique les motifs d'échec :
-
-- **Empreintes d'erreurs** — supprime les horodatages, chemins et nombres pour un regroupement stable
-- **Arrêt des échecs équivalents** — 3 empreintes identiques ou plus épuisent immédiatement les tentatives
-- **Marqueurs de non-réessai** — les échecs structurels bloquent la ré-exécution jusqu'au changement de conception
-
-Votre laboratoire apprend de ses propres échecs au sein d'une même exécution.
-
-### Évaluation de l'article en deux couches
-
-La préparation de l'article ne repose pas sur un seul jugement de LLM.
-
-- **Couche 1 — Porte déterministe minimale** : 7 vérifications de présence d'artefacts qui bloquent catégoriquement les travaux sous-étayés avant l'entrée dans `write_paper`. Aucun LLM impliqué. Réussite ou échec.
-- **Couche 2 — Évaluateur LLM de qualité d'article** : critique structurée sur 6 dimensions — importance des résultats, rigueur méthodologique, solidité des preuves, structure rédactionnelle, soutien des affirmations et honnêteté des limitations. Produit des problèmes bloquants, des problèmes non bloquants et une classification du type de manuscrit.
-
-Si les preuves sont insuffisantes, le système recommande le backtracking — pas le polissage.
-
-### Panel de revue à 5 spécialistes
-
-Le nœud `review` exécute cinq passes de spécialistes indépendants :
-
-1. **Vérificateur d'affirmations** — vérifie les affirmations par rapport aux preuves
-2. **Réviseur de méthodologie** — valide la conception expérimentale
-3. **Réviseur de statistiques** — évalue la rigueur quantitative
-4. **Réviseur de préparation rédactionnelle** — vérifie la clarté et la complétude
-5. **Réviseur d'intégrité** — identifie les biais et les conflits
-
-Le panel produit un tableau de scores, une évaluation de cohérence et une décision de porte.
+C’est le modèle de reproductibilité du système : non pas un état caché, mais des artefacts, des checkpoints et des transitions inspectables.
 
 ---
 
-## Double interface
-
-Deux surfaces d'interface, un seul runtime. Mêmes artefacts, même workflow, mêmes checkpoints.
-
-| | TUI | Web Ops UI |
-|---|---|---|
-| Lancement | `autolabos` | `autolabos web` |
-| Interaction | Commandes slash, langage naturel | Tableau de bord navigateur, compositeur |
-| Vue du workflow | Progression des nœuds en temps réel dans le terminal | Graphe visuel à 9 nœuds avec actions |
-| Artefacts | Inspection CLI | Prévisualisation inline (texte, images, PDF) |
-| Idéal pour | Itération rapide, scripting | Surveillance visuelle, exploration d'artefacts |
-
----
-
-## Modes d'exécution
-
-AutoLabOS préserve le workflow à 9 nœuds et toutes les portes de sécurité dans chaque mode.
-
-| Mode | Commande | Comportement |
-|---|---|---|
-| **Interactif** | `autolabos` | TUI avec commandes slash et portes d'approbation explicites |
-| **Approbation minimale** | Config : `approval_mode: minimal` | Approuve automatiquement les transitions sûres |
-| **Overnight** | `/agent overnight [run]` | Passe unique sans surveillance, limite de 24 heures, backtracking conservateur |
-| **Autonome** | `/agent autonomous [run]` | Exploration de recherche ouverte, sans limite de temps |
-
-### Mode autonome
-
-Conçu pour des boucles soutenues hypothèse → expérience → analyse avec un minimum d'intervention. Exécute deux boucles internes en parallèle :
-
-1. **Exploration de recherche** — génération d'hypothèses, conception/exécution d'expériences, analyse, dérivation de l'hypothèse suivante
-2. **Amélioration de la qualité de l'article** — identification de la branche la plus forte, resserrement des baselines, renforcement des liens d'évidence
-
-S'arrête sur : arrêt explicite de l'utilisateur, limites de ressources, détection de stagnation ou défaillance catastrophique. Ne s'arrête **pas** simplement parce qu'une expérience a donné un résultat négatif ou que la qualité de l'article est temporairement en plateau.
-
----
-
-## Système de brief de recherche
-
-Chaque exécution commence par un brief Markdown structuré qui définit la portée, les contraintes et les règles de gouvernance.
+## Démarrage rapide
 
 ```bash
-/new                        # Créer un brief
-/brief start --latest       # Valider, capturer, extraire, lancer
+# 1. Installer et construire
+npm install
+npm run build
+npm link
+
+# 2. Aller dans votre workspace de recherche
+cd /path/to/your-research-workspace
+
+# 3. Lancer une interface
+autolabos        # TUI
+autolabos web    # Web UI
 ```
 
-Les briefs comprennent des sections **principales** (sujet, métrique objective) et des sections de **gouvernance** (comparaison cible, évidence minimale, raccourcis interdits, plafond d'article). AutoLabOS évalue la complétude du brief et avertit quand la couverture de gouvernance est insuffisante pour un travail à l'échelle d'un article.
+Flux typique au premier usage :
+
+```bash
+/new
+/brief start --latest
+/doctor
+```
+
+Notes :
+
+- si `.autolabos/config.yaml` n’existe pas, les deux interfaces guident l’onboarding
+- n’exécutez pas AutoLabOS depuis la racine du dépôt ; utilisez `test/` ou votre propre workspace
+- le TUI et le Web UI partagent le même runtime, les mêmes artefacts et les mêmes checkpoints
+
+### Prérequis
+
+| Élément | Quand c’est nécessaire | Notes |
+|---|---|---|
+| `SEMANTIC_SCHOLAR_API_KEY` | Toujours | Découverte de papers et metadata |
+| `OPENAI_API_KEY` | Quand le provider est `api` | Exécution via modèles OpenAI API |
+| Connexion Codex CLI | Quand le provider est `codex` | Utilise votre session Codex locale |
+
+---
+
+## Système de Research Brief
+
+Le brief n’est pas seulement un document de départ. C’est le governed contract du run.
+
+`/new` crée ou ouvre `Brief.md`. `/brief start --latest` le valide, le snapshot dans le run, puis lance l’exécution à partir de ce snapshot. Le run enregistre le source path du brief, le snapshot path, ainsi que tout manuscript format analysé. Ainsi, la provenance du run reste inspectable même si le brief du workspace change ensuite.
+
+En d’autres termes, le brief n’est pas seulement une partie du prompt. Il fait partie de l’audit trail.
+
+```bash
+/new
+/brief start --latest
+```
+
+Le brief doit couvrir à la fois l’intention de recherche et les contraintes de gouvernance : topic, objective metric, baseline ou comparator, minimum acceptable evidence, disallowed shortcuts et le paper ceiling si l’evidence reste faible.
 
 <details>
-<summary><strong>Sections du brief et notation</strong></summary>
+<summary><strong>Sections du brief et grading</strong></summary>
 
-| Section | Statut | Objectif |
+| Section | Statut | Rôle |
 |---|---|---|
-| `## Topic` | Requis | Question de recherche en 1 à 3 phrases |
-| `## Objective Metric` | Requis | Métrique de succès principale |
-| `## Constraints` | Recommandé | Budget de calcul, limites de jeu de données, règles de reproductibilité |
-| `## Plan` | Recommandé | Plan d'expérience étape par étape |
-| `## Target Comparison` | Gouvernance | Méthode proposée vs. baseline explicite |
-| `## Minimum Acceptable Evidence` | Gouvernance | Taille d'effet minimale, nombre de plis, seuil de décision |
-| `## Disallowed Shortcuts` | Gouvernance | Raccourcis qui invalident les résultats |
-| `## Paper Ceiling If Evidence Remains Weak` | Gouvernance | Classification maximale de l'article si les preuves sont insuffisantes |
-| `## Manuscript Format` | Optionnel | Nombre de colonnes, budget de pages, règles de références/annexes |
+| `## Topic` | Requise | Définir la question de recherche en 1-3 phrases |
+| `## Objective Metric` | Requise | Indicateur principal de réussite |
+| `## Constraints` | Recommandée | compute budget, limites de dataset, règles de reproductibilité |
+| `## Plan` | Recommandée | Plan expérimental étape par étape |
+| `## Target Comparison` | Governance | Comparaison avec un baseline explicite |
+| `## Minimum Acceptable Evidence` | Governance | Effect size minimal, fold count, decision boundary |
+| `## Disallowed Shortcuts` | Governance | Raccourcis qui invalident le résultat |
+| `## Paper Ceiling If Evidence Remains Weak` | Governance | Classification maximale du paper si l’evidence reste faible |
+| `## Manuscript Format` | Optionnelle | Nombre de colonnes, budget de pages, règles de references / appendix |
 
-| Note | Signification | Prêt pour un article ? |
+| Grade | Signification | Prêt pour paper-scale ? |
 |---|---|---|
-| `complete` | Sections principales + 4 sections de gouvernance ou plus substantielles | Oui |
-| `partial` | Sections principales complètes + 2 sections de gouvernance ou plus | Procéder avec avertissements |
-| `minimal` | Sections principales uniquement | Non |
+| `complete` | core + 4 sections de governance substantielles ou plus | Oui |
+| `partial` | core complet + 2 sections de governance ou plus | Avance avec avertissements |
+| `minimal` | seulement les sections core | Non |
 
 </details>
 
 ---
 
-## Flux d'artefacts de gouvernance
+## Deux interfaces, un runtime
+
+AutoLabOS propose deux front ends sur le même runtime governed.
+
+| | TUI | Web UI |
+|---|---|---|
+| Lancement | `autolabos` | `autolabos web` |
+| Interaction | slash commands, langage naturel | dashboard et composer dans le navigateur |
+| Vue du workflow | progression des nœuds en temps réel dans le terminal | governed workflow graph avec actions |
+| Artefacts | inspection via CLI | preview inline du texte, des images et des PDFs |
+| Surfaces opératoires | `/watch`, `/queue`, `/explore`, `/doctor` | jobs queue, live watch cards, exploration status, diagnostics |
+| Idéal pour | itération rapide et contrôle direct | monitoring visuel et navigation des artefacts |
+
+Le point important est que les deux surfaces voient les mêmes checkpoints, les mêmes runs et les mêmes artefacts sous-jacents.
+
+---
+
+## Ce qui distingue AutoLabOS
+
+AutoLabOS est conçu autour de la governed execution, pas d’une prompt-only orchestration.
+
+| | Outils de recherche typiques | AutoLabOS |
+|---|---|---|
+| Workflow | dérive ouverte d’agents | governed fixed graph avec review boundaries explicites |
+| State | éphémère | checkpointed, resumable, inspectable |
+| Claims | aussi fortes que le modèle les écrit | limitées par l’evidence et le claim ceiling |
+| Review | cleanup pass optionnel | structural gate capable de bloquer l’écriture |
+| Failures | oubliés puis réessayés | enregistrés avec fingerprint dans la failure memory |
+| Validation | secondaire | `/doctor`, harnesses, smoke et live validation sont first-class |
+| Interfaces | chemins de code séparés | TUI et Web partagent un seul runtime |
+
+Le système se lit donc davantage comme une research infrastructure que comme un paper generator.
+
+---
+
+## Garanties de base
+
+### Governed Workflow
+
+Le workflow est borné et auditable. Le backtracking fait partie du contract. Les résultats qui ne justifient pas la progression repartent vers hypotheses, design ou implementation au lieu d’être transformés en prose plus forte.
+
+### Checkpointed Research State
+
+Chaque frontière de nœud écrit un state inspectable et resumable. L’unité de progression n’est pas seulement un texte produit, mais un run avec artifacts, transitions et recoverable state.
+
+### Claim Ceiling
+
+Les claims restent sous le strongest defensible evidence ceiling. Le système enregistre les claims plus fortes qui ont été bloquées et les evidence gaps nécessaires pour les débloquer.
+
+### Review As A Structural Gate
+
+`review` n’est pas une étape de nettoyage cosmétique. C’est le structural gate où readiness, méthodologie, evidence linkage, writing discipline et reproducibility handoff sont vérifiés avant la génération du manuscrit.
+
+### Failure Memory
+
+Les failure fingerprints sont persistés afin que les erreurs structurelles et les equivalent failures répétées ne soient pas relancées aveuglément.
+
+### Reproducibility Through Artifacts
+
+La reproductibilité est imposée par les artefacts, les checkpoints et les transitions inspectables. Même les résumés publics se basent sur les persisted run outputs plutôt que sur une seconde source de vérité.
+
+---
+
+## Validation et modèle de qualité orienté harness
+
+AutoLabOS traite les validation surfaces comme first-class.
+
+- `/doctor` vérifie l’environnement et la readiness du workspace avant le démarrage d’un run
+- la harness validation protège les workflow, artifact et governance contracts
+- les targeted smoke checks fournissent une couverture diagnostique de régression
+- quand le comportement interactif compte, on utilise la live validation
+
+Le paper readiness n’est pas une simple impression produite par un prompt.
+
+- **Layer 1 - deterministic minimum gate** arrête le under-evidenced work via des artifact / evidence-integrity checks explicites
+- **Layer 2 - LLM paper-quality evaluator** ajoute une critique structurée sur la methodology, l’evidence strength, la writing structure, le claim support et la limitations honesty
+- **Review packet + specialist panel** décident si le chemin du manuscrit doit advance, revise ou backtrack
+
+`paper_readiness.json` peut inclure un `overall_score`. Cette valeur doit être comprise comme un signal interne de qualité du run, pas comme un benchmark scientifique universel. Certains chemins avancés d’evaluation / self-improvement utilisent ce signal pour comparer des runs ou des candidats de prompt mutation.
+
+<details>
+<summary><strong>Pourquoi ce modèle de validation est important</strong></summary>
+
+Les hypothèses de qualité sont transformées en checks explicites. Le comportement réel compte davantage que l’apparence au niveau du prompt. Le but n’est pas « le modèle a écrit quelque chose de convaincant », mais « ce run peut être inspecté et défendu ».
+
+</details>
+
+---
+
+## Capacités avancées de Self-Improvement
+
+AutoLabOS inclut des chemins de self-improvement bornés, mais il ne s’agit pas de blind autonomous rewriting. Ils restent contraints par la validation et le rollback.
+
+### `autolabos meta-harness`
+
+`autolabos meta-harness` construit un context directory dans `outputs/meta-harness/<timestamp>/` à partir de recent completed runs et de l’historique d’évaluation.
+
+Il peut inclure :
+
+- des run events filtrés
+- des node artifacts comme `result_analysis.json` ou `review/decision.json`
+- `paper_readiness.json`
+- `outputs/eval-harness/history.jsonl`
+- les fichiers `node-prompts/` actuels pour le nœud ciblé
+
+Le LLM est contraint par `TASK.md` à répondre uniquement avec `TARGET_FILE + unified diff`, et la cible est restreinte à `node-prompts/`. En mode apply, la proposition doit passer `validate:harness`; sinon elle est rollbackée et un audit log est écrit. `--no-apply` ne construit que le context. `--dry-run` affiche le diff sans modifier les fichiers.
+
+### `autolabos evolve`
+
+`autolabos evolve` exécute une boucle bornée de mutation et d’évaluation sur `.codex` et `node-prompts`.
+
+- supporte `--max-cycles`, `--target skills|prompts|all` et `--dry-run`
+- lit la fitness du run depuis `paper_readiness.overall_score`
+- mute prompts et skills, exécute la validation et compare la fitness entre cycles
+- en cas de régression, restaure `.codex` et `node-prompts` depuis le dernier good git tag
+
+C’est un chemin de self-improvement, mais pas une réécriture repo-wide sans limites.
+
+### Harness Preset Layer
+
+AutoLabOS fournit aussi des built-in harness presets comme `base`, `compact`, `failure-aware` et `review-heavy`. Ils ajustent l’artifact/context policy, l’emphase sur la failure memory, la prompt policy et la compression strategy pour l’évaluation comparative, sans modifier le governed production workflow.
+
+---
+
+## Commandes courantes
+
+| Commande | Description |
+|---|---|
+| `/new` | Créer ou ouvrir `Brief.md` |
+| `/brief start <path\|--latest>` | Démarrer la recherche à partir d’un brief |
+| `/runs [query]` | Lister ou rechercher des runs |
+| `/resume <run>` | Reprendre un run |
+| `/agent run <node> [run]` | Exécuter depuis un nœud du graph |
+| `/agent status [run]` | Afficher les états des nœuds |
+| `/agent overnight [run]` | Exécuter un run unattended sous contraintes conservatrices |
+| `/agent autonomous [run]` | Exécuter une bounded research exploration |
+| `/watch` | Vue live watch des runs actifs et background jobs |
+| `/explore` | Afficher l’état de l’exploration engine du run actif |
+| `/queue` | Afficher les jobs running / waiting / stalled |
+| `/doctor` | Diagnostics de l’environnement et du workspace |
+| `/model` | Changer le modèle et le reasoning effort |
+
+<details>
+<summary><strong>Liste complète des commandes</strong></summary>
+
+| Commande | Description |
+|---|---|
+| `/help` | Afficher la liste des commandes |
+| `/new` | Créer ou ouvrir le `Brief.md` du workspace |
+| `/brief start <path\|--latest>` | Démarrer la recherche depuis le `Brief.md` du workspace ou un brief donné |
+| `/doctor` | Diagnostics environment + workspace |
+| `/runs [query]` | Lister ou rechercher des runs |
+| `/run <run>` | Sélectionner un run |
+| `/resume <run>` | Reprendre un run |
+| `/agent list` | Lister les nœuds du graph |
+| `/agent run <node> [run]` | Exécuter depuis un nœud |
+| `/agent status [run]` | Afficher les états des nœuds |
+| `/agent collect [query] [options]` | Collecter des papers |
+| `/agent recollect <n> [run]` | Collecter des papers supplémentaires |
+| `/agent focus <node>` | Déplacer le focus via safe jump |
+| `/agent graph [run]` | Afficher l’état du graph |
+| `/agent resume [run] [checkpoint]` | Reprendre depuis un checkpoint |
+| `/agent retry [node] [run]` | Réessayer un nœud |
+| `/agent jump <node> [run] [--force]` | Sauter vers un nœud |
+| `/agent overnight [run]` | Overnight autonomy (24h) |
+| `/agent autonomous [run]` | Open-ended autonomous research |
+| `/model` | Sélecteur de modèle et de reasoning |
+| `/approve` | Approuver un nœud en pause |
+| `/queue` | Afficher les jobs running / waiting / stalled |
+| `/watch` | Live watch des runs actifs |
+| `/explore` | Afficher l’état de l’exploration engine |
+| `/retry` | Réessayer le nœud courant |
+| `/settings` | Paramètres provider et modèle |
+| `/quit` | Quitter |
+
+</details>
+
+---
+
+## Pour qui / pour qui ce n’est pas
+
+### Bon choix si
+
+- vous voulez de l’autonomie sans renoncer à un governed workflow
+- vous faites du research engineering où checkpoints et artifacts comptent
+- vous travaillez sur des projets paper-scale ou paper-adjacent nécessitant une discipline d’evidence
+- votre environnement valorise autant review, traceability et resumability que generation
+
+### Moins adapté si
+
+- vous voulez seulement un one-shot draft rapide
+- votre workflow n’a pas besoin d’artifact trail ni de review gate
+- vous préférez un free-form agent behavior à la governed execution
+- un simple outil de synthèse de littérature vous suffit
+
+---
+
+## Développement
+
+```bash
+npm install
+npm run build
+npm test
+npm run test:web
+npm run validate:harness
+```
+
+Choisissez le plus petit ensemble de validation qui couvre honnêtement le changement. Pour un defect interactif, si l’environnement le permet, ne vous contentez pas des tests : relancez le même flux TUI / Web.
+
+Commandes utiles :
+
+```bash
+npm run test:watch
+npm run test:smoke:natural-collect
+npm run test:smoke:natural-collect-execute
+npm run test:smoke:all
+```
+
+---
+
+## Advanced Details
+
+<details>
+<summary><strong>Modes d’exécution</strong></summary>
+
+AutoLabOS conserve le governed workflow et les safety gates dans tous les modes.
+
+| Mode | Commande | Comportement |
+|---|---|---|
+| **Interactive** | `autolabos` | TUI à slash commands avec approval gates explicites |
+| **Minimal approval** | Config : `approval_mode: minimal` | Auto-approuve les transitions sûres |
+| **Hybrid approval** | Config : `approval_mode: hybrid` | Fait avancer automatiquement les transitions fortes et peu risquées ; met en pause les transitions risquées ou peu confiantes |
+| **Overnight** | `/agent overnight [run]` | Exécution unattended en une passe, limite de 24 h, backtracking conservateur |
+| **Autonomous** | `/agent autonomous [run]` | Open-ended bounded research exploration |
+
+</details>
+
+<details>
+<summary><strong>Governance artifact flow</strong></summary>
 
 ```mermaid
 flowchart LR
@@ -323,18 +477,18 @@ flowchart LR
     Run --> Failures["Failure Memory<br/>fingerprinted JSONL"]
     Run --> Analyze["analyze_results"]
     Analyze --> Decision["Attempt Decision<br/>keep/discard/replicate"]
-    Decision --> Review["review"]
+    Decision --> FigureAudit["figure_audit"]
+    FigureAudit --> Review["review"]
     Failures --> Review
     Contract --> Review
     Review --> Ceiling["Pre-Review Summary<br/>claim ceiling detail"]
     Ceiling --> Paper["write_paper"]
 ```
 
----
+</details>
 
-## Flux d'artefacts
-
-Chaque nœud produit des artefacts structurés et inspectables.
+<details>
+<summary><strong>Artifact flow</strong></summary>
 
 ```mermaid
 flowchart TB
@@ -350,367 +504,77 @@ flowchart TB
     F --> F1["metrics.json, failure_memory.jsonl,<br/>objective_evaluation.json"]
     F1 --> G["analyze_results"]
     G --> G1["result_analysis.json, attempt_decisions.jsonl,<br/>transition_recommendation.json"]
-    G1 --> H["review"]
-    H --> H1["pre_review_summary.json, review_packet.json,<br/>minimum_gate.json, paper_critique.json"]
-    H1 --> I["write_paper"]
-    I --> I1["main.tex, references.bib,<br/>scientific_validation.json, main.pdf"]
-```
-
-<details>
-<summary><strong>Bundle de sortie publique</strong></summary>
-
-```
-outputs/
-  ├── paper/           # Source TeX, PDF, références, journal de build
-  ├── experiment/      # Résumé de baseline, code d'expérience
-  ├── analysis/        # Tableau de résultats, analyse d'évidence
-  ├── review/          # Critique de l'article, décision de porte
-  ├── results/         # Résumés quantitatifs compacts
-  ├── reproduce/       # Scripts de reproduction, README
-  ├── manifest.json    # Registre de sections
-  └── README.md        # Résumé lisible de l'exécution
+    G1 --> H["figure_audit"]
+    H --> H1["gate1_gate2_issues.json,<br/>figure_audit_summary.json"]
+    H1 --> I["review"]
+    I --> I1["pre_review_summary.json, review_packet.json,<br/>minimum_gate.json, paper_critique.json"]
+    I1 --> J["write_paper"]
+    J --> J1["main.tex, references.bib,<br/>scientific_validation.json, main.pdf"]
 ```
 
 </details>
 
----
+<details>
+<summary><strong>Architecture des nœuds</strong></summary>
 
-## Architecture des nœuds
-
-| Nœud | Rôle(s) | Ce qu'il fait |
+| Nœud | Rôle | Fonction |
 |---|---|---|
-| `collect_papers` | collecteur, curateur | Découvre et organise l'ensemble de candidats d'articles via Semantic Scholar |
-| `analyze_papers` | lecteur, extracteur d'évidence | Extrait des résumés et de l'évidence à partir des articles sélectionnés |
-| `generate_hypotheses` | agent d'hypothèses + réviseur sceptique | Synthétise des idées depuis la littérature, puis les soumet à un examen critique |
-| `design_experiments` | concepteur + panel de faisabilité/statistique/opérations | Filtre les plans pour la praticabilité, rédige le contrat d'expérience |
-| `implement_experiments` | implémenteur | Produit du code et des modifications de workspace via des actions ACI |
-| `run_experiments` | exécuteur + trieur d'échecs + planificateur de ré-exécution | Pilote l'exécution, enregistre les échecs, décide des ré-exécutions |
-| `analyze_results` | analyste + auditeur de métriques + détecteur de confusion | Vérifie la fiabilité des résultats, rédige les décisions par tentative |
-| `review` | panel de 5 spécialistes + plafond d'affirmations + porte à deux couches | Revue structurelle — bloque l'écriture si l'évidence est insuffisante |
-| `write_paper` | rédacteur d'article + critique du réviseur | Rédige le manuscrit, exécute la critique post-brouillon, construit le PDF |
-
-<details>
-<summary><strong>Graphes de connexion phase par phase</strong></summary>
-
-**Découverte et lecture**
-
-```mermaid
-flowchart LR
-    Topic["run topic + collect constraints"] --> CP["collect_papers"]
-    CP --> CC["collector_curator"]
-    CC --> SS["Semantic Scholar search"]
-    SS --> Enrich["enrichment + BibTeX recovery"]
-    Enrich --> Corpus["corpus.jsonl + bibtex.bib"]
-    Corpus --> AP["analyze_papers"]
-    AP --> Select["selection request + hybrid rerank"]
-    Select --> Manifest["analysis_manifest resume / prune"]
-    Manifest --> RE["reader_evidence_extractor"]
-    RE --> Pdf["local text/image analysis or Responses API PDF"]
-    Pdf --> ReviewLoop["extractor -> reviewer normalization"]
-    ReviewLoop --> Evidence["paper_summaries.jsonl + evidence_store.jsonl"]
-```
-
-**Hypothèses et conception expérimentale**
-
-```mermaid
-flowchart LR
-    Evidence["paper_summaries.jsonl + evidence_store.jsonl"] --> GH["generate_hypotheses"]
-    GH --> HA["hypothesis_agent"]
-    HA --> Axes["evidence synthesizer -> evidence axes"]
-    Axes --> ToT["ToT branch expansion"]
-    ToT --> Drafts["mechanism / contradiction / intervention drafts"]
-    Drafts --> Reviews["skeptical reviewer"]
-    Reviews --> Select["diversity + evidence-quality top-k selection"]
-    Select --> Hyp["hypotheses.jsonl + axes/reviews/llm_trace"]
-    Hyp --> DE["design_experiments"]
-    DE --> ED["experiment_designer"]
-    ED --> Profiles["constraint profile + objective metric profile"]
-    Profiles --> Plans["design candidates"]
-    Plans --> Panel["designer + feasibility + statistical + ops-capacity panel"]
-    Panel --> Choice["panel selection"]
-    Choice --> Contract["experiment_contract.json + brief_design_consistency.json"]
-```
-
-**Implémentation, exécution et boucle de résultats**
-
-```mermaid
-flowchart LR
-    PlanYaml["experiment_plan.yaml"] --> IE["implement_experiments"]
-    IE --> IM["ImplementSessionManager"]
-    IM --> Impl["implementer"]
-    IM --> Codex["Codex CLI session"]
-    Codex --> VerifyPatch["local verification"]
-    VerifyPatch --> Handoff{"auto handoff?"}
-    Handoff -->|yes| RX["run_experiments"]
-    Handoff -->|no| Gate["approval boundary"]
-    Gate --> RX
-    RX --> Runner["runner"]
-    Runner --> FailCheck["failure memory: check do-not-retry"]
-    FailCheck --> ACI["ACI preflight/tests/command"]
-    ACI --> Triage["failure triager + rerun planner"]
-    Triage -->|retry once if transient| ACI
-    ACI --> FailRecord["record to failure_memory.jsonl"]
-    ACI --> Metrics["metrics.json + supplemental runs"]
-    Metrics --> AR["analyze_results"]
-    AR --> ResultPanel["metric auditor + robustness + confounder + calibrator"]
-    ResultPanel --> AttemptDec["attempt_decisions.jsonl"]
-    ResultPanel --> Synth["transition recommendation"]
-    Synth -->|advance| RV["review"]
-    Synth -->|backtrack| IE
-```
-
-**Revue, rédaction et exposition des résultats**
-
-```mermaid
-flowchart LR
-    Inputs["result_analysis + contract + failures + decisions"] --> RV["review"]
-    RV --> PreReview["pre_review_summary.json<br/>+ claim_ceiling_detail"]
-    RV --> Panel["5-specialist review panel"]
-    Panel --> Score["scorecard + consistency + bias"]
-    Panel --> Decision["decision + revision_plan"]
-    Score --> Packet["review_packet.json + checklist.md"]
-    Decision --> Packet
-    Decision --> Critique["paper_critique.json"]
-    Critique --> Gate{"resolve review outcome"}
-    Gate -->|advance| WP["write_paper"]
-    Gate -->|backtrack| Back["hypotheses / design / implement"]
-    WP --> Writer["paper_writer"]
-    Writer --> Draft["outline -> draft -> review -> finalize"]
-    Draft --> Validate["draft validation"]
-    Validate --> Repair{"repairable?"}
-    Repair -->|yes| Fix["validation-aware repair (1 pass)"]
-    Fix --> Tex["paper/main.tex + references.bib"]
-    Repair -->|no| Tex
-```
+| `collect_papers` | collector, curator | Découvre et trie les candidate paper sets via Semantic Scholar |
+| `analyze_papers` | reader, evidence extractor | Extrait summaries et evidence des papers sélectionnés |
+| `generate_hypotheses` | hypothesis agent + skeptical reviewer | Synthétise des idées à partir de la littérature puis les pressure-test |
+| `design_experiments` | designer + feasibility/statistical/ops panel | Filtre les plans selon leur faisabilité et rédige l’experiment contract |
+| `implement_experiments` | implementer | Produit des changements de code et de workspace via ACI actions |
+| `run_experiments` | runner + failure triager + rerun planner | Pilote l’exécution, enregistre les failures et décide des reruns |
+| `analyze_results` | analyst + metric auditor + confounder detector | Vérifie la fiabilité des résultats et écrit les attempt decisions |
+| `figure_audit` | figure auditor + optional vision critique | Vérifie l’evidence alignment, les captions / references et la publication readiness |
+| `review` | 5-specialist panel + claim ceiling + two-layer gate | Réalise une structural review et bloque l’écriture si l’evidence est insuffisante |
+| `write_paper` | paper writer + reviewer critique | Rédige le manuscrit, exécute la post-draft critique et construit le PDF |
 
 </details>
 
----
-
-## Automatisation bornée
-
-Chaque automatisation interne a une limite explicite.
+<details>
+<summary><strong>Bounded automation</strong></summary>
 
 | Nœud | Automatisation interne | Limite |
 |---|---|---|
-| `analyze_papers` | Extension automatique de la fenêtre d'évidence quand trop clairsemée | 2 extensions max |
-| `design_experiments` | Scoring déterministe par panel + contrat d'expérience | S'exécute une fois par conception |
-| `run_experiments` | Triage d'échecs + ré-exécution unique pour erreurs transitoires | Ne réessaie jamais les échecs structurels |
-| `run_experiments` | Fingerprinting de la mémoire des échecs | 3 identiques ou plus → tentatives épuisées |
-| `analyze_results` | Re-matching objectif + calibration du panel de résultats | Un re-matching avant pause humaine |
-| `write_paper` | Éclaireur d'état de l'art + réparation guidée par la validation | 1 passe de réparation max |
-
----
-
-## Commandes courantes
-
-| Commande | Description |
-|---|---|
-| `/new` | Créer un brief de recherche |
-| `/brief start <path\|--latest>` | Démarrer une recherche depuis un brief |
-| `/runs [query]` | Lister ou rechercher des exécutions |
-| `/resume <run>` | Reprendre une exécution |
-| `/agent run <node> [run]` | Exécuter depuis un nœud du graphe |
-| `/agent status [run]` | Afficher les statuts des nœuds |
-| `/agent overnight [run]` | Exécuter sans surveillance (limite 24 h) |
-| `/agent autonomous [run]` | Recherche autonome ouverte |
-| `/model` | Changer de modèle et d'effort de raisonnement |
-| `/doctor` | Diagnostics d'environnement + espace de travail |
-
-<details>
-<summary><strong>Liste complète des commandes</strong></summary>
-
-| Commande | Description |
-|---|---|
-| `/help` | Afficher la liste des commandes |
-| `/new` | Créer un fichier de brief de recherche |
-| `/brief start <path\|--latest>` | Démarrer une recherche depuis un fichier brief |
-| `/doctor` | Diagnostics d'environnement + espace de travail |
-| `/runs [query]` | Lister ou rechercher des exécutions |
-| `/run <run>` | Sélectionner une exécution |
-| `/resume <run>` | Reprendre une exécution |
-| `/agent list` | Lister les nœuds du graphe |
-| `/agent run <node> [run]` | Exécuter depuis un nœud |
-| `/agent status [run]` | Afficher les statuts des nœuds |
-| `/agent collect [query] [options]` | Collecter des articles |
-| `/agent recollect <n> [run]` | Collecter des articles supplémentaires |
-| `/agent focus <node>` | Déplacer le focus avec un saut sûr |
-| `/agent graph [run]` | Afficher l'état du graphe |
-| `/agent resume [run] [checkpoint]` | Reprendre depuis un checkpoint |
-| `/agent retry [node] [run]` | Réessayer un nœud |
-| `/agent jump <node> [run] [--force]` | Sauter vers un nœud |
-| `/agent overnight [run]` | Autonomie overnight (24 h) |
-| `/agent autonomous [run]` | Recherche autonome ouverte |
-| `/model` | Sélecteur de modèle et de raisonnement |
-| `/approve` | Approuver un nœud en pause |
-| `/retry` | Réessayer le nœud courant |
-| `/settings` | Réglages de provider et de modèle |
-| `/quit` | Quitter |
+| `analyze_papers` | Auto-extension de l’evidence window quand l’evidence est trop faible | <= 2 extensions |
+| `design_experiments` | Deterministic panel scoring + experiment contract | Une fois par design |
+| `run_experiments` | Failure triage + une relance transitoire | Ne réessaie jamais les structural failures |
+| `run_experiments` | Failure memory fingerprinting | >= 3 failures identiques épuisent les retries |
+| `analyze_results` | Objective rematching + result panel calibration | Un rematch avant pause humaine |
+| `figure_audit` | Gate 3 figure critique + summary aggregation | La vision critique reste résumable indépendamment |
+| `write_paper` | Related-work scout + validation-aware repair | 1 repair maximum |
 
 </details>
 
 <details>
-<summary><strong>Options de collecte et exemples</strong></summary>
+<summary><strong>Public output bundle</strong></summary>
 
 ```
---limit <n>          --last-years <n>      --year <spec>
---date-range <s:e>   --sort <relevance|citationCount|publicationDate>
---order <asc|desc>   --min-citations <n>   --open-access
---field <csv>        --venue <csv>         --type <csv>
---bibtex <generated|s2|hybrid>             --dry-run
---additional <n>     --run <run_id>
-```
-
-```bash
-/agent collect --last-years 5 --sort relevance --limit 100
-/agent collect "agent planning" --sort citationCount --min-citations 100
-/agent collect --additional 200 --run <run_id>
+outputs/<title-slug>-<run_id_prefix>/
+  ├── paper/
+  ├── experiment/
+  ├── analysis/
+  ├── review/
+  ├── results/
+  ├── reproduce/
+  ├── manifest.json
+  └── README.md
 ```
 
 </details>
 
 ---
 
-## Web Ops UI
+## Status
 
-`autolabos web` démarre une interface navigateur locale à `http://127.0.0.1:4317`.
+AutoLabOS est un projet OSS actif de research engineering. Les références canoniques pour le comportement et les contracts se trouvent dans `docs/`, en particulier :
 
-- **Onboarding** — même configuration que le TUI, écrit `.autolabos/config.yaml`
-- **Tableau de bord** — recherche d'exécutions, vue du workflow à 9 nœuds, actions par nœud, journaux en direct
-- **Artefacts** — parcourir les exécutions, prévisualiser texte/images/PDF en ligne
-- **Compositeur** — commandes slash et langage naturel, avec contrôle du plan étape par étape
+- `docs/architecture.md`
+- `docs/tui-live-validation.md`
+- `docs/experiment-quality-bar.md`
+- `docs/paper-quality-bar.md`
+- `docs/reproducibility.md`
+- `docs/research-brief-template.md`
 
-```bash
-autolabos web                              # Port par défaut 4317
-autolabos web --host 0.0.0.0 --port 8080  # Liaison personnalisée
-```
-
----
-
-## Philosophie
-
-AutoLabOS est construit autour de quelques contraintes fortes :
-
-- **L'achèvement du workflow n'est pas la préparation de l'article.** Une exécution peut compléter le graphe sans que le résultat soit digne d'un article. Le système suit la différence.
-- **Les affirmations ne doivent pas dépasser les preuves.** Le plafond des affirmations est appliqué structurellement, pas en forçant le prompting.
-- **La revue est une porte, pas une suggestion.** Si l'évidence est insuffisante, le nœud `review` bloque `write_paper` et recommande le backtracking.
-- **Les résultats négatifs sont autorisés.** Une hypothèse infirmée est un résultat de recherche valide — mais elle doit être présentée honnêtement.
-- **La reproductibilité est une propriété des artefacts.** Les checkpoints, les contrats d'expérience, les journaux d'échecs et les magasins d'évidence existent pour que le raisonnement d'une exécution puisse être tracé et contesté.
-
----
-
-## Développement
-
-```bash
-npm install              # Installer les dépendances (installe aussi le sous-paquet web)
-npm run build            # Build TypeScript + web UI
-npm test                 # Exécuter tous les tests unitaires (931+)
-npm run test:watch       # Mode watch
-
-# Fichier de test unique
-npx vitest run tests/<name>.test.ts
-
-# Smoke tests
-npm run test:smoke:all                      # Bundle smoke local complet
-npm run test:smoke:natural-collect          # Collecte NL -> commande pending
-npm run test:smoke:natural-collect-execute  # Collecte NL -> exécution -> vérification
-npm run test:smoke:ci                       # Sélection smoke CI
-```
-
-<details>
-<summary><strong>Variables d'environnement pour les smoke tests</strong></summary>
-
-```bash
-AUTOLABOS_FAKE_CODEX_RESPONSE=1              # Éviter les appels Codex en live
-AUTOLABOS_FAKE_SEMANTIC_SCHOLAR_RESPONSE=1   # Éviter les appels S2 en live
-AUTOLABOS_SMOKE_VERBOSE=1                    # Afficher les journaux PTY complets
-AUTOLABOS_SMOKE_MODE=<mode>                  # Sélection du mode CI
-```
-
-</details>
-
-<details>
-<summary><strong>Internes du runtime</strong></summary>
-
-### Politiques du graphe d'état
-
-- Checkpoints : `.autolabos/runs/<run_id>/checkpoints/` — phases : `before | after | fail | jump | retry`
-- Politique de réessai : `maxAttemptsPerNode = 3`
-- Rollback automatique : `maxAutoRollbacksPerNode = 2`
-- Modes de saut : `safe` (courant ou précédent) / `force` (en avant, nœuds sautés enregistrés)
-
-### Patterns du runtime d'agents
-
-- **ReAct** : boucle `PLAN_CREATED → TOOL_CALLED → OBS_RECEIVED`
-- **ReWOO** : séparation planner/worker, utilisé pour les nœuds coûteux
-- **ToT** (Tree-of-Thoughts) : utilisé dans les nœuds d'hypothèses et de conception
-- **Reflexion** : épisodes d'échec stockés et réutilisés lors des réessais
-
-### Couches de mémoire
-
-| Couche | Portée | Format |
-|---|---|---|
-| Mémoire de contexte d'exécution | Clé/valeur par exécution | `run_context.jsonl` |
-| Magasin à long terme | Inter-tentatives | Résumé et index JSONL |
-| Mémoire d'épisode | Reflexion | Leçons d'échec pour les réessais |
-
-### Actions ACI
-
-`implement_experiments` et `run_experiments` s'exécutent via :
-`read_file` · `write_file` · `apply_patch` · `run_command` · `run_tests` · `tail_logs`
-
-</details>
-
-<details>
-<summary><strong>Diagramme du runtime d'agents</strong></summary>
-
-```mermaid
-flowchart LR
-    UI["CLI / TUI / Web UI"] --> Session["InteractionSession"]
-    Session --> Bootstrap["createAutoLabOSRuntime"]
-    Bootstrap --> Orchestrator["AgentOrchestrator"]
-    Bootstrap --> Runtime["StateGraphRuntime"]
-    Bootstrap --> Providers["RoutedLLMClient + CodexCliClient<br/>+ SemanticScholarClient + LocalAciAdapter"]
-    Orchestrator --> Runtime
-    Runtime --> Registry["DefaultNodeRegistry"]
-    Runtime --> Stores["RunStore + CheckpointStore + EventStream"]
-    Providers --> Registry
-    Registry --> Collect["collect_papers"]
-    Registry --> Analyze["analyze_papers"]
-    Registry --> Hyp["generate_hypotheses"]
-    Registry --> Design["design_experiments"]
-    Registry --> Impl["implement_experiments"]
-    Registry --> Run["run_experiments"]
-    Registry --> Results["analyze_results"]
-    Registry --> Review["review"]
-    Registry --> Paper["write_paper"]
-```
-
-</details>
-
----
-
-## Documentation
-
-| Document | Couverture |
-|---|---|
-| `docs/architecture.md` | Architecture du système et décisions de conception |
-| `docs/tui-live-validation.md` | Validation TUI et approche de test |
-| `docs/experiment-quality-bar.md` | Standards d'exécution des expériences |
-| `docs/paper-quality-bar.md` | Exigences de qualité du manuscrit |
-| `docs/reproducibility.md` | Garanties de reproductibilité |
-| `docs/research-brief-template.md` | Modèle complet de brief avec toutes les sections de gouvernance |
-
----
-
-## Statut
-
-AutoLabOS est en développement actif (v0.1.0). Le workflow, le système de gouvernance et le runtime principal sont fonctionnels et testés. Les interfaces, la couverture d'artefacts et les modes d'exécution font l'objet d'une validation continue.
-
-Les contributions et les retours sont les bienvenus — voir [Issues](https://github.com/lhy0718/AutoLabOS/issues).
-
----
-
-<div align="center">
-  <sub>Construit pour les chercheurs qui veulent des expériences gouvernées et des affirmations défendables.</sub>
-</div>
+Si vous modifiez le comportement du runtime, traitez ces documents, les tests publiés et les observable artifacts comme source of truth.

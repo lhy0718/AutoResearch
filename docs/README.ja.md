@@ -6,8 +6,8 @@
 
   <h1>自律研究のためのオペレーティングシステム</h1>
 
-  <p><strong>研究生成ではなく、自律研究の実行。</strong><br/>
-  文献調査から原稿作成までを、統制され、チェックポイントされ、検査可能なループの中で進めます。</p>
+  <p><strong>研究生成ではなく、自律的な研究実行。</strong><br/>
+  ブリーフから原稿まで、governed・checkpointed・inspectable な研究実行。</p>
 
   <p>
     <a href="../README.md"><strong>English</strong></a>
@@ -31,7 +31,7 @@
     <a href="./README.ru.md"><strong>Русский</strong></a>
   </p>
 
-  <p><sub>この README は英語版 README 全体を元にした翻訳版です。技術的な基準文書は英語 README です。</sub></p>
+  <p><sub>各言語版 README はこの文書を基準に保守される翻訳です。規範表現と最新の更新については English README を canonical reference としてください。</sub></p>
 
   <p>
     <a href="https://github.com/lhy0718/AutoLabOS/actions/workflows/ci.yml">
@@ -40,7 +40,7 @@
     <a href="https://github.com/lhy0718/AutoLabOS/actions/workflows/smoke.yml">
       <img alt="Smoke" src="https://img.shields.io/github/actions/workflow/status/lhy0718/AutoLabOS/smoke.yml?branch=main&style=flat-square&label=smoke&logo=githubactions&logoColor=white" />
     </a>
-    <img alt="Tests" src="https://img.shields.io/badge/tests-931%20passed-22C55E?style=flat-square&logo=vitest&logoColor=white" />
+    <img alt="Tests" src="https://img.shields.io/badge/tests-validated-22C55E?style=flat-square&logo=vitest&logoColor=white" />
   </p>
 
   <p>
@@ -50,114 +50,56 @@
   </p>
 
   <p>
-    <img alt="9-node graph" src="https://img.shields.io/badge/state%20graph-9%20nodes-0F766E?style=flat-square" />
+    <img alt="Governed workflow" src="https://img.shields.io/badge/workflow-governed%20with%20figure_audit-0F766E?style=flat-square" />
     <img alt="Checkpointed" src="https://img.shields.io/badge/checkpoints-built%20in-0F766E?style=flat-square" />
-    <img alt="Experiment Governance" src="https://img.shields.io/badge/experiments-governed-0F766E?style=flat-square" />
     <img alt="Claim Ceiling" src="https://img.shields.io/badge/claims-ceiling%20enforced-0F766E?style=flat-square" />
-  </p>
-
-  <p>
-    <img alt="OpenAI" src="https://img.shields.io/badge/OpenAI-supported-412991?style=flat-square&logo=openai&logoColor=white" />
-    <img alt="Codex CLI" src="https://img.shields.io/badge/Codex%20CLI-supported-412991?style=flat-square&logo=openai&logoColor=white" />
-    <img alt="Ollama" src="https://img.shields.io/badge/Ollama-supported-1A1A2E?style=flat-square" />
-    <img alt="Semantic Scholar" src="https://img.shields.io/badge/Semantic%20Scholar-integrated-1857B6?style=flat-square" />
-  </p>
-
-  <p>
-    <a href="https://github.com/lhy0718/AutoLabOS/stargazers">
-      <img alt="Stars" src="https://img.shields.io/github/stars/lhy0718/AutoLabOS?style=flat-square&color=f5a623" />
-    </a>
-    <a href="https://github.com/lhy0718/AutoLabOS/commits/main">
-      <img alt="Last commit" src="https://img.shields.io/github/last-commit/lhy0718/AutoLabOS?style=flat-square&color=6c757d" />
-    </a>
+    <img alt="Validation surfaces" src="https://img.shields.io/badge/validation-first--class-0F766E?style=flat-square" />
   </p>
 
 </div>
 
 ---
 
-研究の自動化をうたうほとんどのツールは、実際には **テキスト生成** を自動化しているだけです。見た目の整った成果物は出せても、実験ガバナンスも、証拠追跡も、証拠が実際にどこまで主張を支えているのかに関する誠実な説明もありません。
+AutoLabOS は、governed な研究実行のためのオペレーティングシステムです。1 回の run を単発の生成処理ではなく、checkpoint 可能な研究状態として扱います。
 
-AutoLabOS は別の立場を取ります。**研究で本当に難しいのは書くことではなく、問いとドラフトの間に必要な規律です。** 文献による基礎付け、仮説検証、実験ガバナンス、失敗追跡、主張の上限設定、レビューゲーティングはすべて固定の 9 ノード状態グラフの中で行われます。すべてのノードは監査可能なアーティファクトを生成します。すべての遷移はチェックポイントされます。すべての主張には証拠の上限があります。
+コアループ全体が inspectable です。文献収集、仮説形成、実験設計、実装、実行、分析、figure audit、review、原稿作成の各段階が監査可能な artifacts を残します。主張は claim ceiling の下で evidence-bounded に保たれます。review は polish のための段階ではなく structural gate です。
 
-出力は単なる論文ではありません。確認でき、再開でき、擁護できる、統制された研究状態です。
-
-> **証拠が先。主張はその後。**
->
-> **確認し、再開し、擁護できる実行。**
->
-> **プロンプト集ではなく、研究オペレーティングシステム。**
->
-> **研究室は同じ失敗した実験を二度繰り返すべきではない。**
->
-> **レビューは磨き上げの工程ではなく、構造的ゲートである。**
+品質に関する前提は明示的な checks に変換されます。prompt レベルの見栄えよりも実際の挙動が重視されます。再現性は artifacts、checkpoints、inspectable transitions によって担保されます。
 
 ---
 
-## 実行後に得られるもの
+## なぜ AutoLabOS が必要か
 
-AutoLabOS は PDF だけを生成するわけではありません。完全に追跡可能な研究状態全体を生成します。
+多くの research-agent システムは、テキスト生成に最適化されています。AutoLabOS は、governed な研究プロセスの実行に最適化されています。
 
-| 出力 | 含まれるもの |
-|---|---|
-| **文献コーパス** | 収集された論文、BibTeX、抽出された証拠ストア |
-| **仮説** | 文献に基づく仮説と懐疑的レビュー |
-| **実験計画** | 契約、ベースライン固定、一貫性チェックを備えた統制された設計 |
-| **実行結果** | 指標、客観評価、失敗メモリログ |
-| **結果分析** | 統計分析、試行ごとの判断、遷移の推論 |
-| **レビューパケット** | 5 人の専門家パネルのスコアカード、主張上限、ドラフト前批評 |
-| **原稿** | 証拠リンク、科学的検証、任意の PDF を含む LaTeX 草稿 |
-| **チェックポイント** | 各ノード境界での完全な状態スナップショット。いつでも再開可能 |
+この違いは、もっともらしい草稿以上のものが必要なプロジェクトで重要です。
 
-すべては `.autolabos/runs/<run_id>/` に保存され、公開向け出力は `outputs/` にミラーされます。
+- 実行契約として機能する research brief
+- 自由に漂流する agent ではなく、明示的な workflow gate
+- 事後に inspection できる checkpoints と artifacts
+- manuscript generation の前に弱い仕事を止められる review
+- 同じ失敗した実験を盲目的に繰り返さないための failure memory
+- データを超える prose ではなく、evidence-bounded claims
+
+AutoLabOS は、自律性を求めつつ auditability、backtracking、validation を手放したくないチーム向けのシステムです。
 
 ---
 
-## なぜ AutoLabOS なのか
+## 1 回の run で何が起こるか
 
-多くの AI 研究ツールは **出力の見栄え** を最適化します。AutoLabOS は **統制された実行** を最適化します。
+1 回の governed run は、常に同じ研究フローに従います。
 
-| | 一般的な研究ツール | AutoLabOS |
-|---|---|---|
-| ワークフロー | 境界のないエージェントの漂流 | 遷移が制限された固定 9 ノードグラフ |
-| 実験設計 | 非構造的 | 単一変更ルールと交絡検知を備えた契約 |
-| 失敗した実験 | 忘れられて再試行される | 失敗メモリに指紋化され、繰り返されない |
-| 主張 | LLM が生成するだけ強くなる | 実際の証拠に結び付いた主張上限で制限 |
-| レビュー | 任意の後処理 | 構造的ゲート。証拠不足なら執筆を止める |
-| 論文評価 | 単一 LLM の「よさそう」判定 | 2 層ゲート: 決定的最小基準 + LLM 品質評価 |
-| 状態 | 一時的 | チェックポイント可能、再開可能、検査可能 |
+`Brief.md` → literature → hypothesis → experiment design → implementation → execution → analysis → figure audit → review → manuscript
 
----
+実際には次のように進みます。
 
-## クイックスタート
+1. `/new` で research brief を作成または開く
+2. `/brief start --latest` で brief を検証し、run に snapshot して governed run を開始する
+3. 固定された research workflow に沿って、各境界で state と artifacts を checkpoint する
+4. evidence が弱い場合は polishing ではなく backtracking または downgrade を選ぶ
+5. review gate を通過した場合のみ `write_paper` が bounded evidence に基づいて原稿を書く
 
-```bash
-# 1. インストールとビルド
-npm install && npm run build && npm link
-
-# 2. 研究ワークスペースへ移動
-cd /path/to/your-research-project
-
-# 3. 起動（どちらか一方）
-autolabos web    # ブラウザ UI: オンボーディング、ダッシュボード、アーティファクトブラウザ
-autolabos        # ターミナル中心のスラッシュコマンドワークフロー
-```
-
-> **初回実行ですか。** `.autolabos/config.yaml` がまだなければ、両 UI がオンボーディングを案内します。
-
-### 前提条件
-
-| 項目 | 必要な場合 | 備考 |
-|---|---|---|
-| `SEMANTIC_SCHOLAR_API_KEY` | 常に | 論文探索とメタデータ取得 |
-| `OPENAI_API_KEY` | provider が `api` のとき | OpenAI API モデル実行 |
-| Codex CLI ログイン | provider が `codex` のとき | ローカル Codex セッションを使用 |
-
----
-
-## 9 ノードワークフロー
-
-固定グラフです。提案ではなく契約です。
+歴史的な 9-node contract は、今もアーキテクチャ上の基準線です。現在の runtime では `analyze_results` と `review` の間に `figure_audit` が追加されており、figure-quality critique を独立に checkpoint / resume できるようになっています。
 
 ```mermaid
 stateDiagram-v2
@@ -168,10 +110,11 @@ stateDiagram-v2
     design_experiments --> implement_experiments: complete
     implement_experiments --> run_experiments: auto_handoff or complete
     run_experiments --> analyze_results: complete
-    analyze_results --> review: auto_advance
+    analyze_results --> figure_audit: auto_advance
     analyze_results --> implement_experiments: auto_backtrack_to_implement
     analyze_results --> design_experiments: auto_backtrack_to_design
     analyze_results --> generate_hypotheses: auto_backtrack_to_hypotheses
+    figure_audit --> review: auto_advance
     review --> write_paper: auto_advance
     review --> implement_experiments: auto_backtrack_to_implement
     review --> design_experiments: auto_backtrack_to_design
@@ -179,135 +122,351 @@ stateDiagram-v2
     write_paper --> [*]: auto_complete
 ```
 
-`collect_papers` → `analyze_papers` → `generate_hypotheses` → `design_experiments` → `implement_experiments` → `run_experiments` → `analyze_results` → `review` → `write_paper`
-
-バックトラックは組み込み済みです。結果が弱ければ、グラフは希望的観測のまま前進せず、仮説や設計へ戻ります。すべての自動化は境界づけられたノード内部ループの中にあります。
+この流れの内部自動化はすべて bounded node-internal loop に限定されます。無人モードでも workflow 自体は governed なまま維持されます。
 
 ---
 
-## コア特性
+## run の後に得られるもの
 
-### 実験ガバナンス
+AutoLabOS は PDF だけを出力しません。追跡可能な研究状態を残します。
 
-すべての実験実行は構造化された契約を通過します。
+| 出力 | 含まれる内容 |
+|---|---|
+| **文献 corpus** | 収集された papers、BibTeX、抽出された evidence store |
+| **仮説** | 文献に基づく hypotheses と skeptical review |
+| **実験計画** | contract、baseline lock、一貫性チェックを含む governed design |
+| **実行結果** | metrics、objective evaluation、failure memory log |
+| **結果分析** | 統計分析、attempt decision、transition reasoning |
+| **Figure audit** | figure lint、caption/reference consistency、任意の vision critique summary |
+| **Review packet** | 5 人の specialist panel scorecard、claim ceiling、ドラフト前 critique |
+| **原稿** | evidence links、scientific validation、任意の PDF を含む LaTeX draft |
+| **Checkpoints** | 各 node 境界での state snapshot。いつでも resume 可能 |
 
-- **実験契約**: 仮説、因果メカニズム、単一変更ルール、中止条件、保持/破棄基準を固定
-- **交絡検知**: 複合変更、列挙型介入、メカニズムと変更内容の不一致を検出
-- **ブリーフ設計整合性**: 設計が元の研究ブリーフから逸脱したときに警告
-- **ベースライン固定**: 比較契約が実行前に客観指標とベースラインを固定
+すべては `.autolabos/runs/<run_id>/` の下に保存され、public-facing output は `outputs/` に mirror されます。
 
-### 主張上限の強制
-
-システムは主張が証拠を追い越すことを許しません。
-
-`review` ノードは `pre_review_summary` を生成します。そこには **擁護可能な最も強い主張**、理由付きで **阻止されたより強い主張** の一覧、そしてそれらを解除するために必要な **証拠ギャップ** が含まれます。この上限はそのまま原稿生成に流れ込みます。
-
-### 失敗メモリ
-
-実行スコープの JSONL で失敗パターンを記録し、重複排除します。
-
-- **エラー指紋化**: タイムスタンプ、パス、数値を取り除き安定したクラスタリングを実現
-- **同等失敗の停止**: 同一指紋が 3 回以上出た時点で再試行を即時打ち切り
-- **再試行禁止マーカー**: 構造的失敗は設計が変わるまで再実行を禁止
-
-研究室は 1 回の実行の中でも、自分自身の失敗から学びます。
-
-### 2 層の論文評価
-
-論文準備度は単一の LLM 判断には委ねません。
-
-- **第 1 層, 決定的最小ゲート**: 証拠不足の作業が `write_paper` に入らないようにする 7 つのアーティファクト存在チェック。LLM は関与しません。結果は合格か不合格です。
-- **第 2 層, LLM 論文品質評価**: 結果の重要性、方法論の厳密さ、証拠の強さ、文章構造、主張支持、限界の誠実さという 6 軸で構造化された批評を生成。ブロッキング課題、非ブロッキング課題、原稿タイプ分類を出力します。
-
-証拠が不足していれば、システムは磨き上げではなくバックトラックを勧めます。
-
-### 5 人の専門家レビューパネル
-
-`review` ノードは 5 つの独立した専門家パスを実行します。
-
-1. **主張検証者**: 主張を証拠と照合
-2. **方法論レビュアー**: 実験設計を検証
-3. **統計レビュアー**: 定量的厳密さを評価
-4. **執筆準備度レビュアー**: 明瞭さと完全性を点検
-5. **インテグリティレビュアー**: バイアスと衝突を特定
-
-このパネルはスコアカード、一貫性評価、ゲート判断を生成します。
+これが再現性モデルです。隠れた state ではなく、artifacts、checkpoints、inspectable transitions によって追跡します。
 
 ---
 
-## デュアルインターフェース
-
-2 つの UI、1 つのランタイム。同じアーティファクト、同じワークフロー、同じチェックポイントです。
-
-| | TUI | Web Ops UI |
-|---|---|---|
-| 起動 | `autolabos` | `autolabos web` |
-| 操作 | スラッシュコマンド、自然言語 | ブラウザダッシュボード、コンポーザー |
-| ワークフロー表示 | ターミナル上のリアルタイム進行 | アクション可能な 9 ノード視覚グラフ |
-| アーティファクト | CLI 検査 | テキスト、画像、PDF のインライン表示 |
-| 向いている用途 | 高速反復、スクリプト化 | 視覚監視、アーティファクト閲覧 |
-
----
-
-## 実行モード
-
-AutoLabOS はどのモードでも 9 ノードワークフローと安全ゲートを維持します。
-
-| モード | コマンド | 挙動 |
-|---|---|---|
-| **Interactive** | `autolabos` | 明示的承認ゲート付きのスラッシュコマンド TUI |
-| **Minimal approval** | 設定: `approval_mode: minimal` | 安全な遷移を自動承認 |
-| **Overnight** | `/agent overnight [run]` | 無人の単一パス、24 時間制限、保守的バックトラック |
-| **Autonomous** | `/agent autonomous [run]` | 時間制限なしのオープンエンド研究探索 |
-
-### Autonomous モード
-
-最小限の介入で、仮説 → 実験 → 分析ループを継続するよう設計されています。内部では 2 つの並列ループが動作します。
-
-1. **研究探索**: 仮説生成、実験設計/実行、分析、次の仮説導出
-2. **論文品質改善**: 最も強い分岐を選び、ベースラインを強化し、証拠リンクを改善
-
-停止条件は、明示的なユーザー停止、資源制限、停滞検知、致命的失敗です。単一の実験が否定的だった、あるいは論文品質が一時的に横ばいだったという理由だけでは **停止しません**。
-
----
-
-## 研究ブリーフシステム
-
-すべての実行は、範囲、制約、ガバナンス規則を定義する構造化 Markdown ブリーフから始まります。
+## クイックスタート
 
 ```bash
-/new                        # ブリーフ作成
-/brief start --latest       # 検証、スナップショット、抽出、実行開始
+# 1. インストールとビルド
+npm install
+npm run build
+npm link
+
+# 2. 研究ワークスペースへ移動
+cd /path/to/your-research-workspace
+
+# 3. いずれかのインターフェースを起動
+autolabos        # TUI
+autolabos web    # Web UI
 ```
 
-ブリーフには **コア** セクション（トピック、客観指標）と **ガバナンス** セクション（比較対象、最小証拠、禁止ショートカット、論文上限）が含まれます。AutoLabOS はブリーフの完成度を採点し、論文規模の作業に対してガバナンスが不足している場合は警告します。
+最初に使うときの基本フロー:
+
+```bash
+/new
+/brief start --latest
+/doctor
+```
+
+注意:
+
+- `.autolabos/config.yaml` がない場合、両 UI が onboarding を案内します
+- repository root から直接実行しないでください。`test/` や独自の workspace を使ってください
+- TUI と Web UI は同じ runtime、同じ artifacts、同じ checkpoints を共有します
+
+### 前提条件
+
+| 項目 | 必要な場合 | 備考 |
+|---|---|---|
+| `SEMANTIC_SCHOLAR_API_KEY` | 常時 | paper discovery と metadata |
+| `OPENAI_API_KEY` | provider が `api` の場合 | OpenAI API model 実行 |
+| Codex CLI login | provider が `codex` の場合 | ローカル Codex session を使用 |
+
+---
+
+## Research Brief システム
+
+Brief は単なる開始文書ではありません。run の governed contract です。
+
+`/new` は `Brief.md` を作成または開きます。`/brief start --latest` はそれを検証し、run に snapshot したうえで、その snapshot を基準に execution を開始します。run には brief source path、snapshot path、そして解析された manuscript format があればそれも記録されます。workspace の brief が後から変わっても、その run の provenance は inspectable のまま残ります。
+
+つまり brief は prompt の一部ではなく、audit trail の一部です。
+
+```bash
+/new
+/brief start --latest
+```
+
+Brief には research intent と governance constraints の両方が必要です。topic、objective metric、baseline または comparator、minimum acceptable evidence、disallowed shortcuts、evidence が弱い場合の paper ceiling を含める想定です。
 
 <details>
-<summary><strong>ブリーフのセクションと評価</strong></summary>
+<summary><strong>Brief のセクションと grading</strong></summary>
 
 | セクション | 状態 | 目的 |
 |---|---|---|
-| `## Topic` | 必須 | 研究質問を 1〜3 文で定義 |
-| `## Objective Metric` | 必須 | 主要成功指標 |
-| `## Constraints` | 推奨 | 計算予算、データセット制約、再現規則 |
+| `## Topic` | 必須 | 研究質問を 1-3 文で定義 |
+| `## Objective Metric` | 必須 | 主要な成功指標 |
+| `## Constraints` | 推奨 | compute budget、dataset 制限、reproducibility 規則 |
 | `## Plan` | 推奨 | ステップごとの実験計画 |
-| `## Target Comparison` | ガバナンス | 提案手法と明示的ベースラインの比較 |
-| `## Minimum Acceptable Evidence` | ガバナンス | 最小効果量、fold 数、判断境界 |
-| `## Disallowed Shortcuts` | ガバナンス | 結果を無効化する近道 |
-| `## Paper Ceiling If Evidence Remains Weak` | ガバナンス | 証拠が弱い場合の最大論文分類 |
-| `## Manuscript Format` | 任意 | カラム数、ページ予算、参考文献/付録規則 |
+| `## Target Comparison` | Governance | 提案手法と明示的 baseline の比較 |
+| `## Minimum Acceptable Evidence` | Governance | 最小 effect size、fold count、decision boundary |
+| `## Disallowed Shortcuts` | Governance | 結果を無効化する shortcuts |
+| `## Paper Ceiling If Evidence Remains Weak` | Governance | evidence が弱いときの最大 paper classification |
+| `## Manuscript Format` | 任意 | カラム数、ページ budget、references / appendix 規則 |
 
-| グレード | 意味 | 論文規模に十分か |
+| 等級 | 意味 | paper-scale ready か |
 |---|---|---|
-| `complete` | コア + 実質的なガバナンス 4 項目以上 | はい |
-| `partial` | コア完成 + ガバナンス 2 項目以上 | 警告付きで進行 |
-| `minimal` | コアのみ | いいえ |
+| `complete` | core + 実質的な governance セクション 4 つ以上 | はい |
+| `partial` | core 完成 + governance 2 つ以上 | 警告付きで進行 |
+| `minimal` | core セクションのみ | いいえ |
 
 </details>
 
 ---
 
-## ガバナンスアーティファクトの流れ
+## 2 つのインターフェース、1 つの runtime
+
+AutoLabOS は同じ governed runtime 上に 2 つの front end を提供します。
+
+| | TUI | Web UI |
+|---|---|---|
+| 起動 | `autolabos` | `autolabos web` |
+| 操作 | slash commands、自然言語 | ブラウザ dashboard と composer |
+| Workflow view | ターミナルでのリアルタイム node progress | action 可能な governed workflow graph |
+| Artifacts | CLI inspection | テキスト、画像、PDF の inline preview |
+| 運用 surface | `/watch`, `/queue`, `/explore`, `/doctor` | jobs queue、live watch card、exploration status、diagnostics |
+| 向いている用途 | 高速な反復と直接制御 | 視覚的監視と artifact 閲覧 |
+
+重要なのは、両方の surface が同じ checkpoints、同じ runs、同じ underlying artifacts を見ていることです。
+
+---
+
+## AutoLabOS が異なる点
+
+AutoLabOS は prompt-only orchestration ではなく governed execution を中心に設計されています。
+
+| | 一般的な研究ツール | AutoLabOS |
+|---|---|---|
+| Workflow | 開いた agent drift | 明示的な review boundary を持つ governed fixed graph |
+| State | 一時的 | checkpointed、resumable、inspectable |
+| Claims | model が生成するだけ強くなる | evidence と claim ceiling によって制限 |
+| Review | 任意の cleanup pass | 執筆を止められる structural gate |
+| Failures | 忘れられて再試行される | failure memory に fingerprint として記録 |
+| Validation | 二次的 | `/doctor`、harness、smoke、live validation が first-class |
+| Interfaces | 別々のコードパス | TUI と Web が 1 つの runtime を共有 |
+
+そのため、このシステムは paper generator よりも research infrastructure として理解されるべきです。
+
+---
+
+## コア保証
+
+### Governed Workflow
+
+workflow は bounded で auditable です。backtracking は contract の一部です。前進を正当化できない結果は polishing ではなく hypotheses、design、implementation に戻されます。
+
+### Checkpointed Research State
+
+各 node boundary は inspectable かつ resumable な state を記録します。進捗の単位はテキスト出力だけではなく、artifacts、transitions、recoverable state を持つ run です。
+
+### Claim Ceiling
+
+claims は strongest defensible evidence ceiling の下に保たれます。システムは blocked されたより強い claims と、それを解放するために必要な evidence gap を記録します。
+
+### Review As A Structural Gate
+
+`review` は cosmetic cleanup の段階ではありません。readiness、方法論の sanity、evidence linkage、writing discipline、reproducibility handoff を manuscript generation 前に確認する structural gate です。
+
+### Failure Memory
+
+failure fingerprint は persistence され、構造的なエラーや繰り返される equivalent failure が盲目的に再試行されないようにします。
+
+### Reproducibility Through Artifacts
+
+再現性は artifacts、checkpoints、inspectable transitions によって担保されます。public-facing summary も persisted run output を基準にし、別の truth source を作りません。
+
+---
+
+## Validation と Harness 중심の品質モデル
+
+AutoLabOS は validation surface を first-class として扱います。
+
+- `/doctor` は run 開始前に environment と workspace readiness を検査します
+- harness validation は workflow、artifact、governance contract を守ります
+- targeted smoke checks は診断用の回帰カバレッジを提供します
+- interactive behavior が重要な場合は live validation を使います
+
+paper readiness は単一の prompt による感想ではありません。
+
+- **Layer 1 - deterministic minimum gate** は明示的な artifact / evidence-integrity check により under-evidenced work を止めます
+- **Layer 2 - LLM paper-quality evaluator** は methodology、evidence strength、writing structure、claim support、limitations honesty を構造化して批評します
+- **Review packet + specialist panel** は manuscript path が advance、revise、backtrack のどれになるべきかを決めます
+
+`paper_readiness.json` には `overall_score` が入ることがあります。この値は system 内部での run-quality signal として読むべきであり、普遍的な scientific benchmark とみなすべきではありません。一部の高度な evaluation / self-improvement path では、この score を runs や prompt mutation 候補の比較に使います。
+
+<details>
+<summary><strong>なぜこの validation モデルが重要か</strong></summary>
+
+品質に関する仮定は明示的な checks に変換されます。prompt レベルの見栄えよりも実際の挙動が重要です。目指すのは「model が説得力ある文章を書いた」ことではなく、「この run を inspection して defend できる」状態です。
+
+</details>
+
+---
+
+## 高度な Self-Improvement 機能
+
+AutoLabOS には bounded self-improvement path がありますが、blind autonomous rewriting ではなく validation と rollback によって制御されます。
+
+### `autolabos meta-harness`
+
+`autolabos meta-harness` は recent completed runs と evaluation history をもとに、`outputs/meta-harness/<timestamp>/` の下に context directory を作ります。
+
+含まれるもの:
+
+- フィルタ済みの run events
+- `result_analysis.json` や `review/decision.json` などの node artifacts
+- `paper_readiness.json`
+- `outputs/eval-harness/history.jsonl`
+- 対象 node 用の現在の `node-prompts/` ファイル
+
+LLM は `TASK.md` により `TARGET_FILE + unified diff` だけを返すように制限され、target は `node-prompts/` 内に限定されます。apply mode では候補が `validate:harness` を通過しなければならず、失敗した場合は rollback され audit log が残ります。`--no-apply` は context だけを作成し、`--dry-run` はファイルを変えず diff だけを表示します。
+
+### `autolabos evolve`
+
+`autolabos evolve` は `.codex` と `node-prompts` を対象に bounded な mutation-and-evaluation loop を実行します。
+
+- `--max-cycles`, `--target skills|prompts|all`, `--dry-run` をサポート
+- run fitness は `paper_readiness.overall_score` から読み取る
+- prompts と skills を mutation し、validation を実行し、cycle 間で fitness を比較する
+- regression が出た場合は最後の good git tag を基準に `.codex` と `node-prompts` を復元する
+
+これは self-improvement path ですが、制約のない repo-wide rewrite path ではありません。
+
+### Harness Preset Layer
+
+AutoLabOS には `base`, `compact`, `failure-aware`, `review-heavy` などの built-in harness preset もあります。これらは artifact/context policy、failure-memory emphasis、prompt policy、compression strategy を調整して comparative evaluation を行うためのものであり、governed production workflow 自体は変更しません。
+
+---
+
+## よく使うコマンド
+
+| コマンド | 説明 |
+|---|---|
+| `/new` | `Brief.md` を作成または開く |
+| `/brief start <path\|--latest>` | brief から研究を開始 |
+| `/runs [query]` | run 一覧の表示または検索 |
+| `/resume <run>` | run を再開 |
+| `/agent run <node> [run]` | グラフ node から実行 |
+| `/agent status [run]` | node status を表示 |
+| `/agent overnight [run]` | 保守的に bounded された unattended run |
+| `/agent autonomous [run]` | bounded research exploration を実行 |
+| `/watch` | active run と background jobs の live watch view |
+| `/explore` | 現在 run の exploration-engine status を表示 |
+| `/queue` | running / waiting / stalled jobs を表示 |
+| `/doctor` | environment と workspace diagnostics |
+| `/model` | model と reasoning effort を切り替え |
+
+<details>
+<summary><strong>フルコマンド一覧</strong></summary>
+
+| コマンド | 説明 |
+|---|---|
+| `/help` | コマンド一覧を表示 |
+| `/new` | workspace `Brief.md` を作成または開く |
+| `/brief start <path\|--latest>` | workspace `Brief.md` または指定 brief から研究開始 |
+| `/doctor` | environment + workspace diagnostics |
+| `/runs [query]` | run 一覧の表示または検索 |
+| `/run <run>` | run を選択 |
+| `/resume <run>` | run を再開 |
+| `/agent list` | graph node 一覧 |
+| `/agent run <node> [run]` | node から実行 |
+| `/agent status [run]` | node status を表示 |
+| `/agent collect [query] [options]` | papers を収集 |
+| `/agent recollect <n> [run]` | papers を追加収集 |
+| `/agent focus <node>` | safe jump で focus を移動 |
+| `/agent graph [run]` | graph state を表示 |
+| `/agent resume [run] [checkpoint]` | checkpoint から再開 |
+| `/agent retry [node] [run]` | node を再試行 |
+| `/agent jump <node> [run] [--force]` | node へ jump |
+| `/agent overnight [run]` | overnight autonomy (24h) |
+| `/agent autonomous [run]` | open-ended autonomous research |
+| `/model` | model と reasoning selector |
+| `/approve` | 一時停止した node を承認 |
+| `/queue` | running / waiting / stalled jobs を表示 |
+| `/watch` | active run の live watch view |
+| `/explore` | exploration-engine status を表示 |
+| `/retry` | 現在 node を再試行 |
+| `/settings` | provider と model 設定 |
+| `/quit` | 終了 |
+
+</details>
+
+---
+
+## 向いている人 / 向いていない人
+
+### 向いているケース
+
+- 自律性を求めつつ governed workflow も必要なチーム
+- checkpoints と artifacts が重要な research engineering の仕事
+- evidence discipline が必要な paper-scale または paper-adjacent project
+- generation と同じくらい review、traceability、resumability が重要な環境
+
+### 向いていないケース
+
+- 速い one-shot draft だけが欲しい場合
+- artifact trail や review gate を必要としない workflow
+- governed execution より free-form agent behavior を重視する project
+- 単純な literature summary tool で十分な場合
+
+---
+
+## 開発
+
+```bash
+npm install
+npm run build
+npm test
+npm run test:web
+npm run validate:harness
+```
+
+変更を正直にカバーできる最小の validation set を選んでください。interactive defect では、環境が許すなら tests だけで済ませず、同じ TUI / Web flow を再実行するべきです。
+
+便利なコマンド:
+
+```bash
+npm run test:watch
+npm run test:smoke:natural-collect
+npm run test:smoke:natural-collect-execute
+npm run test:smoke:all
+```
+
+---
+
+## Advanced Details
+
+<details>
+<summary><strong>実行モード</strong></summary>
+
+AutoLabOS はすべてのモードで governed workflow と safety gates を維持します。
+
+| モード | コマンド | 挙動 |
+|---|---|---|
+| **Interactive** | `autolabos` | 明示的な approval gate を持つ slash-command TUI |
+| **Minimal approval** | 設定: `approval_mode: minimal` | 安全な遷移を自動承認 |
+| **Hybrid approval** | 設定: `approval_mode: hybrid` | 強く低リスクな遷移は自動進行、危険または低信頼な遷移は pause |
+| **Overnight** | `/agent overnight [run]` | unattended single pass、24 時間制限、保守的 backtracking |
+| **Autonomous** | `/agent autonomous [run]` | open-ended bounded research exploration |
+
+</details>
+
+<details>
+<summary><strong>Governance artifact flow</strong></summary>
 
 ```mermaid
 flowchart LR
@@ -318,18 +477,18 @@ flowchart LR
     Run --> Failures["Failure Memory<br/>fingerprinted JSONL"]
     Run --> Analyze["analyze_results"]
     Analyze --> Decision["Attempt Decision<br/>keep/discard/replicate"]
-    Decision --> Review["review"]
+    Decision --> FigureAudit["figure_audit"]
+    FigureAudit --> Review["review"]
     Failures --> Review
     Contract --> Review
     Review --> Ceiling["Pre-Review Summary<br/>claim ceiling detail"]
     Ceiling --> Paper["write_paper"]
 ```
 
----
+</details>
 
-## アーティファクトの流れ
-
-すべてのノードは構造化され、検査可能なアーティファクトを生成します。
+<details>
+<summary><strong>Artifact flow</strong></summary>
 
 ```mermaid
 flowchart TB
@@ -345,367 +504,77 @@ flowchart TB
     F --> F1["metrics.json, failure_memory.jsonl,<br/>objective_evaluation.json"]
     F1 --> G["analyze_results"]
     G --> G1["result_analysis.json, attempt_decisions.jsonl,<br/>transition_recommendation.json"]
-    G1 --> H["review"]
-    H --> H1["pre_review_summary.json, review_packet.json,<br/>minimum_gate.json, paper_critique.json"]
-    H1 --> I["write_paper"]
-    I --> I1["main.tex, references.bib,<br/>scientific_validation.json, main.pdf"]
-```
-
-<details>
-<summary><strong>公開出力バンドル</strong></summary>
-
-```
-outputs/
-  ├── paper/           # TeX ソース、PDF、参考文献、ビルドログ
-  ├── experiment/      # ベースライン要約、実験コード
-  ├── analysis/        # 結果表、証拠分析
-  ├── review/          # 論文批評、ゲート判断
-  ├── results/         # コンパクトな定量要約
-  ├── reproduce/       # 再現スクリプト、README
-  ├── manifest.json    # セクションレジストリ
-  └── README.md        # 人が読める実行要約
+    G1 --> H["figure_audit"]
+    H --> H1["gate1_gate2_issues.json,<br/>figure_audit_summary.json"]
+    H1 --> I["review"]
+    I --> I1["pre_review_summary.json, review_packet.json,<br/>minimum_gate.json, paper_critique.json"]
+    I1 --> J["write_paper"]
+    J --> J1["main.tex, references.bib,<br/>scientific_validation.json, main.pdf"]
 ```
 
 </details>
 
----
+<details>
+<summary><strong>Node architecture</strong></summary>
 
-## ノードアーキテクチャ
-
-| ノード | 役割 | 実施内容 |
+| Node | 役割 | 内容 |
 |---|---|---|
-| `collect_papers` | collector, curator | Semantic Scholar を通じて候補論文集合を発見し整理 |
-| `analyze_papers` | reader, evidence extractor | 選択論文から要約と証拠を抽出 |
-| `generate_hypotheses` | hypothesis agent + skeptical reviewer | 文献からアイデアを合成し、圧力試験を行う |
-| `design_experiments` | designer + feasibility/statistical/ops panel | 実行可能性で計画を絞り込み、実験契約を書く |
-| `implement_experiments` | implementer | ACI アクションを通じてコードとワークスペース変更を生成 |
-| `run_experiments` | runner + failure triager + rerun planner | 実行を駆動し、失敗を記録し、再実行を決める |
-| `analyze_results` | analyst + metric auditor + confounder detector | 結果信頼性を確認し、試行判断を書く |
-| `review` | 5-specialist panel + claim ceiling + two-layer gate | 構造レビュー。証拠不足なら執筆を止める |
-| `write_paper` | paper writer + reviewer critique | 原稿を作成し、ドラフト後批評を実行し、PDF をビルド |
-
-<details>
-<summary><strong>段階別接続グラフ</strong></summary>
-
-**探索と読解**
-
-```mermaid
-flowchart LR
-    Topic["run topic + collect constraints"] --> CP["collect_papers"]
-    CP --> CC["collector_curator"]
-    CC --> SS["Semantic Scholar search"]
-    SS --> Enrich["enrichment + BibTeX recovery"]
-    Enrich --> Corpus["corpus.jsonl + bibtex.bib"]
-    Corpus --> AP["analyze_papers"]
-    AP --> Select["selection request + hybrid rerank"]
-    Select --> Manifest["analysis_manifest resume / prune"]
-    Manifest --> RE["reader_evidence_extractor"]
-    RE --> Pdf["local text/image analysis or Responses API PDF"]
-    Pdf --> ReviewLoop["extractor -> reviewer normalization"]
-    ReviewLoop --> Evidence["paper_summaries.jsonl + evidence_store.jsonl"]
-```
-
-**仮説と実験設計**
-
-```mermaid
-flowchart LR
-    Evidence["paper_summaries.jsonl + evidence_store.jsonl"] --> GH["generate_hypotheses"]
-    GH --> HA["hypothesis_agent"]
-    HA --> Axes["evidence synthesizer -> evidence axes"]
-    Axes --> ToT["ToT branch expansion"]
-    ToT --> Drafts["mechanism / contradiction / intervention drafts"]
-    Drafts --> Reviews["skeptical reviewer"]
-    Reviews --> Select["diversity + evidence-quality top-k selection"]
-    Select --> Hyp["hypotheses.jsonl + axes/reviews/llm_trace"]
-    Hyp --> DE["design_experiments"]
-    DE --> ED["experiment_designer"]
-    ED --> Profiles["constraint profile + objective metric profile"]
-    Profiles --> Plans["design candidates"]
-    Plans --> Panel["designer + feasibility + statistical + ops-capacity panel"]
-    Panel --> Choice["panel selection"]
-    Choice --> Contract["experiment_contract.json + brief_design_consistency.json"]
-```
-
-**実装、実行、結果ループ**
-
-```mermaid
-flowchart LR
-    PlanYaml["experiment_plan.yaml"] --> IE["implement_experiments"]
-    IE --> IM["ImplementSessionManager"]
-    IM --> Impl["implementer"]
-    IM --> Codex["Codex CLI session"]
-    Codex --> VerifyPatch["local verification"]
-    VerifyPatch --> Handoff{"auto handoff?"}
-    Handoff -->|yes| RX["run_experiments"]
-    Handoff -->|no| Gate["approval boundary"]
-    Gate --> RX
-    RX --> Runner["runner"]
-    Runner --> FailCheck["failure memory: check do-not-retry"]
-    FailCheck --> ACI["ACI preflight/tests/command"]
-    ACI --> Triage["failure triager + rerun planner"]
-    Triage -->|retry once if transient| ACI
-    ACI --> FailRecord["record to failure_memory.jsonl"]
-    ACI --> Metrics["metrics.json + supplemental runs"]
-    Metrics --> AR["analyze_results"]
-    AR --> ResultPanel["metric auditor + robustness + confounder + calibrator"]
-    ResultPanel --> AttemptDec["attempt_decisions.jsonl"]
-    ResultPanel --> Synth["transition recommendation"]
-    Synth -->|advance| RV["review"]
-    Synth -->|backtrack| IE
-```
-
-**レビュー、執筆、公開面**
-
-```mermaid
-flowchart LR
-    Inputs["result_analysis + contract + failures + decisions"] --> RV["review"]
-    RV --> PreReview["pre_review_summary.json<br/>+ claim_ceiling_detail"]
-    RV --> Panel["5-specialist review panel"]
-    Panel --> Score["scorecard + consistency + bias"]
-    Panel --> Decision["decision + revision_plan"]
-    Score --> Packet["review_packet.json + checklist.md"]
-    Decision --> Packet
-    Decision --> Critique["paper_critique.json"]
-    Critique --> Gate{"resolve review outcome"}
-    Gate -->|advance| WP["write_paper"]
-    Gate -->|backtrack| Back["hypotheses / design / implement"]
-    WP --> Writer["paper_writer"]
-    Writer --> Draft["outline -> draft -> review -> finalize"]
-    Draft --> Validate["draft validation"]
-    Validate --> Repair{"repairable?"}
-    Repair -->|yes| Fix["validation-aware repair (1 pass)"]
-    Fix --> Tex["paper/main.tex + references.bib"]
-    Repair -->|no| Tex
-```
+| `collect_papers` | collector, curator | Semantic Scholar を使って candidate paper set を発見・選別 |
+| `analyze_papers` | reader, evidence extractor | 選択された papers から summaries と evidence を抽出 |
+| `generate_hypotheses` | hypothesis agent + skeptical reviewer | literature から ideas を合成し pressure-test する |
+| `design_experiments` | designer + feasibility/statistical/ops panel | plans の実現可能性を選別し experiment contract を作成 |
+| `implement_experiments` | implementer | ACI actions により code と workspace changes を作る |
+| `run_experiments` | runner + failure triager + rerun planner | execution を駆動し、failures を記録し、rerun を判断 |
+| `analyze_results` | analyst + metric auditor + confounder detector | results の信頼性を確認し attempt decisions を記録 |
+| `figure_audit` | figure auditor + optional vision critique | evidence alignment、captions / references、publication readiness を確認 |
+| `review` | 5-specialist panel + claim ceiling + two-layer gate | structural review を行い、evidence が不足なら執筆を止める |
+| `write_paper` | paper writer + reviewer critique | manuscript を作成し post-draft critique を行い PDF をビルド |
 
 </details>
 
----
+<details>
+<summary><strong>Bounded automation</strong></summary>
 
-## 境界づけられた自動化
-
-すべての内部自動化には明示的な上限があります。
-
-| ノード | 内部自動化 | 上限 |
+| Node | 内部自動化 | 上限 |
 |---|---|---|
-| `analyze_papers` | 証拠が疎な場合に証拠ウィンドウを自動拡張 | 最大 2 回 |
-| `design_experiments` | 決定的パネル採点 + 実験契約 | 設計ごとに 1 回 |
-| `run_experiments` | 失敗トリアージ + 一度だけの一時的再実行 | 構造的失敗は再試行しない |
-| `run_experiments` | 失敗メモリ指紋化 | 同一 3 回以上で再試行打ち切り |
-| `analyze_results` | 客観再マッチ + 結果パネル補正 | 人間停止前に 1 回 |
-| `write_paper` | 関連研究スカウト + 検証 aware 修復 | 修復は 1 回のみ |
-
----
-
-## よく使うコマンド
-
-| コマンド | 説明 |
-|---|---|
-| `/new` | 研究ブリーフ作成 |
-| `/brief start <path\|--latest>` | ブリーフから研究開始 |
-| `/runs [query]` | 実行一覧表示または検索 |
-| `/resume <run>` | 実行再開 |
-| `/agent run <node> [run]` | グラフノードから実行 |
-| `/agent status [run]` | ノード状態表示 |
-| `/agent overnight [run]` | 無人実行（24 時間制限） |
-| `/agent autonomous [run]` | オープンエンド自律研究 |
-| `/model` | モデルと推論強度の切り替え |
-| `/doctor` | 環境 + ワークスペース診断 |
-
-<details>
-<summary><strong>全コマンド一覧</strong></summary>
-
-| コマンド | 説明 |
-|---|---|
-| `/help` | コマンド一覧表示 |
-| `/new` | 研究ブリーフファイル作成 |
-| `/brief start <path\|--latest>` | ブリーフファイルから研究開始 |
-| `/doctor` | 環境 + ワークスペース診断 |
-| `/runs [query]` | 実行一覧または検索 |
-| `/run <run>` | 実行選択 |
-| `/resume <run>` | 実行再開 |
-| `/agent list` | グラフノード一覧 |
-| `/agent run <node> [run]` | ノードから実行 |
-| `/agent status [run]` | ノード状態表示 |
-| `/agent collect [query] [options]` | 論文収集 |
-| `/agent recollect <n> [run]` | 追加論文収集 |
-| `/agent focus <node>` | 安全ジャンプでフォーカス移動 |
-| `/agent graph [run]` | グラフ状態表示 |
-| `/agent resume [run] [checkpoint]` | チェックポイントから再開 |
-| `/agent retry [node] [run]` | ノード再試行 |
-| `/agent jump <node> [run] [--force]` | ノードジャンプ |
-| `/agent overnight [run]` | オーバーナイト自律実行（24 時間） |
-| `/agent autonomous [run]` | オープンエンド自律研究 |
-| `/model` | モデルと推論セレクタ |
-| `/approve` | 一時停止ノード承認 |
-| `/retry` | 現在ノード再試行 |
-| `/settings` | provider と model 設定 |
-| `/quit` | 終了 |
+| `analyze_papers` | evidence が疎なときの自動 window 拡張 | <= 2 回 |
+| `design_experiments` | deterministic panel scoring + experiment contract | design ごとに 1 回 |
+| `run_experiments` | failure triage + 一時的 failure の 1 回再実行 | structural failure は再試行しない |
+| `run_experiments` | failure memory fingerprinting | >= 3 回同一なら retries を使い切る |
+| `analyze_results` | objective rematching + result panel calibration | human pause 前に 1 回 rematch |
+| `figure_audit` | Gate 3 figure critique + summary aggregation | vision critique を独立に resume 可能 |
+| `write_paper` | related-work scout + validation-aware repair | repair は最大 1 回 |
 
 </details>
 
 <details>
-<summary><strong>収集オプションと例</strong></summary>
+<summary><strong>Public output bundle</strong></summary>
 
 ```
---limit <n>          --last-years <n>      --year <spec>
---date-range <s:e>   --sort <relevance|citationCount|publicationDate>
---order <asc|desc>   --min-citations <n>   --open-access
---field <csv>        --venue <csv>         --type <csv>
---bibtex <generated|s2|hybrid>             --dry-run
---additional <n>     --run <run_id>
-```
-
-```bash
-/agent collect --last-years 5 --sort relevance --limit 100
-/agent collect "agent planning" --sort citationCount --min-citations 100
-/agent collect --additional 200 --run <run_id>
+outputs/<title-slug>-<run_id_prefix>/
+  ├── paper/
+  ├── experiment/
+  ├── analysis/
+  ├── review/
+  ├── results/
+  ├── reproduce/
+  ├── manifest.json
+  └── README.md
 ```
 
 </details>
 
 ---
 
-## Web Ops UI
+## Status
 
-`autolabos web` は `http://127.0.0.1:4317` でローカルブラウザ UI を起動します。
+AutoLabOS はアクティブに開発されている OSS の research-engineering project です。挙動と contract の canonical reference は repository の `docs/` 以下、特に次の文書です。
 
-- **オンボーディング**: TUI と同じ設定を行い `.autolabos/config.yaml` を作成
-- **ダッシュボード**: 実行検索、9 ノードビュー、ノード操作、ライブログ
-- **アーティファクト**: 実行閲覧、テキスト/画像/PDF のインライン表示
-- **コンポーザー**: スラッシュコマンドと自然言語、段階的な計画制御
+- `docs/architecture.md`
+- `docs/tui-live-validation.md`
+- `docs/experiment-quality-bar.md`
+- `docs/paper-quality-bar.md`
+- `docs/reproducibility.md`
+- `docs/research-brief-template.md`
 
-```bash
-autolabos web                              # デフォルトポート 4317
-autolabos web --host 0.0.0.0 --port 8080  # カスタムバインド
-```
-
----
-
-## 哲学
-
-AutoLabOS はいくつかの厳しい制約を中心に設計されています。
-
-- **ワークフロー完了 ≠ 論文準備完了。** グラフを完走しても成果が論文級とは限りません。システムはその差を追跡します。
-- **主張は証拠を超えてはならない。** 主張上限は強いプロンプトではなく構造で強制されます。
-- **レビューは提案ではなくゲートである。** 証拠が足りなければ `review` が `write_paper` を止め、バックトラックを勧告します。
-- **否定的結果も許容される。** 仮説失敗も有効な研究成果ですが、誠実に位置づけなければなりません。
-- **再現性はアーティファクトの属性である。** チェックポイント、実験契約、失敗ログ、証拠ストアは、実行の推論をたどり、異議を唱えられるようにするために存在します。
-
----
-
-## 開発
-
-```bash
-npm install              # 依存関係をインストール（web サブパッケージ含む）
-npm run build            # TypeScript + web UI をビルド
-npm test                 # 全ユニットテスト実行（931+）
-npm run test:watch       # watch モード
-
-# 単一テストファイル
-npx vitest run tests/<name>.test.ts
-
-# スモークテスト
-npm run test:smoke:all
-npm run test:smoke:natural-collect
-npm run test:smoke:natural-collect-execute
-npm run test:smoke:ci
-```
-
-<details>
-<summary><strong>スモークテスト環境変数</strong></summary>
-
-```bash
-AUTOLABOS_FAKE_CODEX_RESPONSE=1
-AUTOLABOS_FAKE_SEMANTIC_SCHOLAR_RESPONSE=1
-AUTOLABOS_SMOKE_VERBOSE=1
-AUTOLABOS_SMOKE_MODE=<mode>
-```
-
-</details>
-
-<details>
-<summary><strong>ランタイム内部</strong></summary>
-
-### 状態グラフポリシー
-
-- チェックポイント: `.autolabos/runs/<run_id>/checkpoints/`、phase は `before | after | fail | jump | retry`
-- 再試行ポリシー: `maxAttemptsPerNode = 3`
-- 自動ロールバック: `maxAutoRollbacksPerNode = 2`
-- ジャンプモード: `safe`（現在または以前） / `force`（前方、スキップ記録）
-
-### エージェントランタイムパターン
-
-- **ReAct** ループ: `PLAN_CREATED → TOOL_CALLED → OBS_RECEIVED`
-- **ReWOO** 分離（planner/worker）: 高コストノードで使用
-- **ToT**: 仮説/設計ノードで使用
-- **Reflexion**: 失敗エピソードを保存し再試行時に再利用
-
-### メモリ層
-
-| 層 | 範囲 | 形式 |
-|---|---|---|
-| Run context memory | 実行ごとの key/value | `run_context.jsonl` |
-| Long-term store | 試行横断 | JSONL 要約とインデックス |
-| Episode memory | Reflexion | 再試行のための失敗教訓 |
-
-### ACI アクション
-
-`implement_experiments` と `run_experiments` は次のアクションを通じて実行されます。
-`read_file` · `write_file` · `apply_patch` · `run_command` · `run_tests` · `tail_logs`
-
-</details>
-
-<details>
-<summary><strong>エージェントランタイム図</strong></summary>
-
-```mermaid
-flowchart LR
-    UI["CLI / TUI / Web UI"] --> Session["InteractionSession"]
-    Session --> Bootstrap["createAutoLabOSRuntime"]
-    Bootstrap --> Orchestrator["AgentOrchestrator"]
-    Bootstrap --> Runtime["StateGraphRuntime"]
-    Bootstrap --> Providers["RoutedLLMClient + CodexCliClient<br/>+ SemanticScholarClient + LocalAciAdapter"]
-    Orchestrator --> Runtime
-    Runtime --> Registry["DefaultNodeRegistry"]
-    Runtime --> Stores["RunStore + CheckpointStore + EventStream"]
-    Providers --> Registry
-    Registry --> Collect["collect_papers"]
-    Registry --> Analyze["analyze_papers"]
-    Registry --> Hyp["generate_hypotheses"]
-    Registry --> Design["design_experiments"]
-    Registry --> Impl["implement_experiments"]
-    Registry --> Run["run_experiments"]
-    Registry --> Results["analyze_results"]
-    Registry --> Review["review"]
-    Registry --> Paper["write_paper"]
-```
-
-</details>
-
----
-
-## ドキュメント
-
-| ドキュメント | 対象範囲 |
-|---|---|
-| `docs/architecture.md` | システムアーキテクチャと設計判断 |
-| `docs/tui-live-validation.md` | TUI 検証とテスト方針 |
-| `docs/experiment-quality-bar.md` | 実験実行基準 |
-| `docs/paper-quality-bar.md` | 原稿品質要件 |
-| `docs/reproducibility.md` | 再現性保証 |
-| `docs/research-brief-template.md` | すべてのガバナンスセクションを含むブリーフテンプレート |
-
----
-
-## 状態
-
-AutoLabOS は活発に開発中です（v0.1.0）。ワークフロー、ガバナンスシステム、コアランタイムは機能しており、テストされています。インターフェース、アーティファクト範囲、実行モードは継続的に検証中です。
-
-貢献とフィードバックを歓迎します。 [Issues](https://github.com/lhy0718/AutoLabOS/issues) を参照してください。
-
----
-
-<div align="center">
-  <sub>実験は統制され、主張は擁護可能であるべきだと考える研究者のために。</sub>
-</div>
+runtime behavior を変更する場合は、これらの docs、shipped tests、observable artifacts を source of truth として扱ってください。
