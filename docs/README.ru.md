@@ -193,6 +193,7 @@ autolabos web    # Web UI
 Brief — это не просто стартовый документ. Это governed contract для run.
 
 `/new` создаёт или открывает `Brief.md`. `/brief start --latest` валидирует его, сохраняет snapshot внутри run и запускает выполнение на основе этого snapshot. Run записывает source path brief, snapshot path и любой распознанный manuscript format. Благодаря этому provenance run остаётся inspectable даже если brief в workspace позже изменится.
+`Appendix Preferences` теперь можно задавать в структуре `Prefer appendix for:` и `Keep in main body:`, чтобы намерение appendix routing было явно зафиксировано в brief contract.
 
 Иными словами, brief — это не просто часть prompt. Это часть audit trail.
 

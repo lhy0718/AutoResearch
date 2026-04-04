@@ -193,6 +193,7 @@ Notes:
 The brief is not just a startup note. It is the governed contract for a run.
 
 `/new` creates or opens `Brief.md`. `/brief start --latest` validates it, snapshots it into the run, and starts execution from that snapshot. The run records the brief source path, the snapshot path, and any parsed manuscript format so the provenance of the run remains inspectable even if the workspace brief changes later.
+`Appendix Preferences` can now be structured with `Prefer appendix for:` and `Keep in main body:` so appendix-routing intent is explicit in the brief contract.
 
 That makes the brief part of the audit trail, not just part of the prompt.
 

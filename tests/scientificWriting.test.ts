@@ -11,7 +11,8 @@ import {
   buildScientificValidationArtifact,
   buildWritePaperGateDecision,
   materializeScientificManuscript,
-  pageBudgetManager
+  pageBudgetManager,
+  resolvePaperProfile
 } from "../src/core/analysis/scientificWriting.js";
 
 const PAPER_PROFILE = {
@@ -470,6 +471,22 @@ function makeTerseDraft(): PaperDraft {
 }
 
 describe("scientificWriting", () => {
+  it("keeps internal manuscript defaults minimal when brief and template policy are absent", () => {
+    const profile = resolvePaperProfile(undefined);
+    expect(profile.column_count).toBe(2);
+    expect(profile.appendix_format).toBe("double_column");
+    expect(profile.prefer_appendix_for).toEqual([]);
+    expect(profile.estimated_words_per_page).toBe(420);
+  });
+
+  it("derives single-column layout defaults without inventing appendix routing preferences", () => {
+    const profile = resolvePaperProfile({ column_count: 1 });
+    expect(profile.column_count).toBe(1);
+    expect(profile.appendix_format).toBe("single_column");
+    expect(profile.prefer_appendix_for).toEqual([]);
+    expect(profile.estimated_words_per_page).toBe(700);
+  });
+
   it("uses target_main_pages for word budgets while preserving a separate minimum_main_pages floor", () => {
     const report = pageBudgetManager({
       draft: makeTerseDraft(),

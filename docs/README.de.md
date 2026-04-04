@@ -193,6 +193,7 @@ Hinweise:
 Der Brief ist nicht nur ein Startdokument. Er ist der governed contract für einen Run.
 
 `/new` erstellt oder öffnet `Brief.md`. `/brief start --latest` validiert den Brief, snapshotet ihn in den Run und startet die Ausführung auf Basis dieses Snapshots. Der Run speichert den source path des Briefs, den snapshot path und ein eventuell geparstes manuscript format. So bleibt die Provenance des Runs inspectable, auch wenn sich der Workspace-Brief später ändert.
+`Appendix Preferences` kann jetzt mit `Prefer appendix for:` und `Keep in main body:` strukturiert werden, damit die Appendix-Routing-Absicht im brief contract explizit bleibt.
 
 Mit anderen Worten: Der Brief ist nicht nur Teil des Prompts. Er ist Teil des Audit Trails.
 

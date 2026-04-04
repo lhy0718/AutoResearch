@@ -193,6 +193,7 @@ autolabos web    # Web UI
 Brief は単なる開始文書ではありません。run の governed contract です。
 
 `/new` は `Brief.md` を作成または開きます。`/brief start --latest` はそれを検証し、run に snapshot したうえで、その snapshot を基準に execution を開始します。run には brief source path、snapshot path、そして解析された manuscript format があればそれも記録されます。workspace の brief が後から変わっても、その run の provenance は inspectable のまま残ります。
+`Appendix Preferences` は `Prefer appendix for:` と `Keep in main body:` の構造で書けるため、appendix routing の意図を brief 契約の中でより明示的にできます。
 
 つまり brief は prompt の一部ではなく、audit trail の一部です。
 

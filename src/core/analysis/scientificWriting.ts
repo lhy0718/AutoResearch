@@ -406,13 +406,7 @@ const DEFAULT_PAPER_PROFILE: PaperProfileConfig = {
   references_counted: false,
   appendix_allowed: true,
   appendix_format: "double_column",
-  prefer_appendix_for: [
-    "hyperparameter_grids",
-    "per_fold_results",
-    "prompt_templates",
-    "environment_dump",
-    "extended_error_analysis"
-  ],
+  prefer_appendix_for: [],
   estimated_words_per_page: 420
 };
 
@@ -425,6 +419,7 @@ export function resolvePaperProfile(
         .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
         .map((item) => item.trim())
     : DEFAULT_PAPER_PROFILE.prefer_appendix_for;
+  const inferredColumnCount = profile?.column_count === 1 ? 1 : DEFAULT_PAPER_PROFILE.column_count;
   const lengthHint = cleanString(constraintProfile?.writing?.lengthHint);
   const legacyMainPageLimit =
     typeof profile?.main_page_limit === "number" && Number.isFinite(profile.main_page_limit)
@@ -442,16 +437,16 @@ export function resolvePaperProfile(
         ?? inferredTargetMainPages;
   const inferredAppendixFormat =
     profile?.appendix_format
-    || (profile?.column_count === 1 ? "single_column" : DEFAULT_PAPER_PROFILE.appendix_format);
+    || (inferredColumnCount === 1 ? "single_column" : "double_column");
   const inferredEstimatedWordsPerPage =
     typeof profile?.estimated_words_per_page === "number" && Number.isFinite(profile.estimated_words_per_page)
       ? Math.max(250, Math.round(profile.estimated_words_per_page))
-      : profile?.column_count === 1
+      : inferredColumnCount === 1
         ? 700
-        : DEFAULT_PAPER_PROFILE.estimated_words_per_page;
+        : 420;
 
   return {
-    column_count: profile?.column_count === 1 ? 1 : DEFAULT_PAPER_PROFILE.column_count,
+    column_count: inferredColumnCount,
     target_main_pages: inferredTargetMainPages,
     minimum_main_pages: inferredMinimumMainPages,
     main_page_limit: legacyMainPageLimit ?? inferredMinimumMainPages,
@@ -464,7 +459,7 @@ export function resolvePaperProfile(
         ? profile.appendix_allowed
         : DEFAULT_PAPER_PROFILE.appendix_allowed,
     appendix_format: inferredAppendixFormat === "single_column" ? "single_column" : "double_column",
-    prefer_appendix_for: preferAppendixFor.length > 0 ? preferAppendixFor : DEFAULT_PAPER_PROFILE.prefer_appendix_for,
+    prefer_appendix_for: preferAppendixFor,
     estimated_words_per_page: inferredEstimatedWordsPerPage
   };
 }

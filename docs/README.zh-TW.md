@@ -193,6 +193,7 @@ autolabos web    # Web UI
 Brief 不只是啟動文件。它是 run 的 governed contract。
 
 `/new` 會建立或開啟 `Brief.md`。`/brief start --latest` 會驗證它、將其 snapshot 到 run 中，再基於這個 snapshot 啟動執行。run 會記錄 brief source path、snapshot path，以及解析出的 manuscript format（如果有）。即使 workspace 的 brief 後續變動，該 run 的 provenance 仍然可檢視。
+`Appendix Preferences` 現在可以寫成 `Prefer appendix for:` 與 `Keep in main body:` 這種結構，讓 appendix routing 的意圖在 brief contract 中更明確。
 
 也就是說，brief 不是 prompt 的一部分，而是 audit trail 的一部分。
 

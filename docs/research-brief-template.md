@@ -92,6 +92,28 @@ Keep in main body:
 - main_result_tables
 - primary_ablation
 
+Example:
+```md
+## Manuscript Format
+- columns: 2
+- main_body_pages: 8
+- references_excluded_from_page_limit: true
+- appendices_excluded_from_page_limit: true
+
+## Manuscript Template
+templates/neurips.tex
+
+## Appendix Preferences
+Prefer appendix for:
+- hyperparameter_grids
+- per_fold_results
+- environment_dump
+
+Keep in main body:
+- main_result_tables
+- primary_ablation
+```
+
 ## Research Question
 Write one clear research question that could be answered by a small real experiment.
 
