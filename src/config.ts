@@ -8,6 +8,7 @@ import {
   ExecutionApprovalMode,
   ExperimentNetworkPolicy,
   ExperimentNetworkPurpose,
+  PersistedAppConfig,
   RunsFile,
   WorkflowApprovalMode
 } from "./types.js";
@@ -67,8 +68,12 @@ export const DEFAULT_RESEARCH_TOPIC = "Multi-agent collaboration" as const;
 export const DEFAULT_RESEARCH_CONSTRAINTS = ["recent papers", "last 5 years"] as const;
 export const DEFAULT_RESEARCH_OBJECTIVE_METRIC = "state-of-the-art reproducibility" as const;
 
+export function isCodexLlmMode(value: unknown): value is "codex" | "codex_chatgpt_only" {
+  return value === "codex" || value === "codex_chatgpt_only";
+}
+
 export function getDefaultPdfAnalysisModeForLlmMode(
-  llmMode: "codex_chatgpt_only" | "openai_api" | "ollama"
+  llmMode: "codex" | "codex_chatgpt_only" | "openai_api" | "ollama"
 ): "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision" {
   if (llmMode === "openai_api") return "responses_api_pdf";
   if (llmMode === "ollama") return "ollama_vision";
@@ -97,7 +102,7 @@ export interface NonInteractiveSetupInput {
   defaultTopic?: string;
   defaultConstraints?: string[];
   defaultObjectiveMetric?: string;
-  llmMode?: "codex_chatgpt_only" | "openai_api" | "ollama";
+  llmMode?: "codex" | "codex_chatgpt_only" | "openai_api" | "ollama";
   semanticScholarApiKey: string;
   openAiApiKey?: string;
   codexChatModelChoice?: string;
@@ -149,17 +154,17 @@ export async function configExists(paths: AppPaths): Promise<boolean> {
 
 export async function loadConfig(paths: AppPaths): Promise<AppConfig> {
   const raw = await fs.readFile(paths.configFile, "utf8");
-  return normalizeLoadedConfig(YAML.parse(raw) as AppConfig);
+  return normalizeLoadedConfig(YAML.parse(raw) as PersistedAppConfig);
 }
 
 export async function saveConfig(paths: AppPaths, config: AppConfig): Promise<void> {
   await ensureDir(paths.rootDir);
   const normalized = normalizeLoadedConfig(config);
-  const serialized = stripLegacyPdfConfig(normalized);
+  const serialized = stripPersistedConfig(normalized);
   await fs.writeFile(paths.configFile, YAML.stringify(serialized), "utf8");
 }
 
-function stripLegacyPdfConfig(config: AppConfig): AppConfig {
+function stripPersistedConfig(config: AppConfig): PersistedAppConfig {
   const sanitized = {
     ...config,
     providers: {
@@ -167,9 +172,10 @@ function stripLegacyPdfConfig(config: AppConfig): AppConfig {
       codex: { ...config.providers.codex },
       openai: { ...config.providers.openai }
     }
-  } as AppConfig & {
+  } as PersistedAppConfig & {
     analysis?: unknown;
     runtime?: unknown;
+    research?: unknown;
     providers: {
       codex: AppConfig["providers"]["codex"] & { pdf_model?: unknown; pdf_fast_mode?: unknown };
       openai: AppConfig["providers"]["openai"] & { pdf_model?: unknown };
@@ -178,6 +184,11 @@ function stripLegacyPdfConfig(config: AppConfig): AppConfig {
 
   delete sanitized.analysis;
   delete sanitized.runtime;
+  delete sanitized.research;
+  if (sanitized.paper) {
+    const { template: _template, ...remainingPaper } = sanitized.paper;
+    sanitized.paper = remainingPaper;
+  }
   delete sanitized.providers.codex.pdf_model;
   delete sanitized.providers.codex.pdf_fast_mode;
   delete sanitized.providers.openai.pdf_model;
@@ -189,7 +200,7 @@ function buildConfigFromWizardAnswers(answers: {
   defaultTopic: string;
   defaultConstraints: string[];
   defaultObjectiveMetric: string;
-  llmMode: "codex_chatgpt_only" | "openai_api" | "ollama";
+  llmMode: "codex" | "codex_chatgpt_only" | "openai_api" | "ollama";
   codexChatModelChoice: string;
   codexChatReasoningEffort: AppConfig["providers"]["codex"]["reasoning_effort"];
   codexResearchBackendModelChoice: string;
@@ -285,25 +296,6 @@ function buildConfigFromWizardAnswers(answers: {
       latex_engine: "auto_install",
       validation_mode: "default"
     },
-    paper_profile: {
-      venue_style: "acl_long",
-      target_venue_style: "generic_cs_paper",
-      column_count: 2,
-      target_main_pages: 8,
-      minimum_main_pages: 8,
-      main_page_limit: 8,
-      references_counted: false,
-      appendix_allowed: true,
-      appendix_format: "double_column",
-      prefer_appendix_for: [
-        "hyperparameter_grids",
-        "per_fold_results",
-        "prompt_templates",
-        "environment_dump",
-        "extended_error_analysis"
-      ],
-      estimated_words_per_page: 420
-    },
     paths: {
       runs_dir: ".autolabos/runs",
       logs_dir: ".autolabos/logs"
@@ -349,7 +341,7 @@ export async function runSetupWizard(
         )
       : DEFAULT_OPENAI_RESPONSES_MODEL;
   const codexChatModelChoice =
-    llmMode === "codex_chatgpt_only"
+    isCodexLlmMode(llmMode)
       ? await askCodexModel(
           GENERAL_CHAT_MODEL_PROMPT,
           defaultCodexChatSetupModel,
@@ -358,7 +350,7 @@ export async function runSetupWizard(
         )
       : DEFAULT_CODEX_MODEL;
   const codexChatReasoningEffort =
-    llmMode === "codex_chatgpt_only"
+    isCodexLlmMode(llmMode)
       ? await askCodexReasoningEffort(
           GENERAL_CHAT_REASONING_PROMPT,
           resolveCodexModelSelection(codexChatModelChoice).model,
@@ -378,7 +370,7 @@ export async function runSetupWizard(
         )
       : ("low" as AppConfig["providers"]["openai"]["reasoning_effort"]);
   const researchBackendModelChoice =
-    llmMode === "codex_chatgpt_only"
+    isCodexLlmMode(llmMode)
       ? await askCodexModel(
           RESEARCH_BACKEND_MODEL_PROMPT,
           defaultCodexBackendSetupModel,
@@ -389,11 +381,11 @@ export async function runSetupWizard(
         ? await askOpenAiResponsesModel(RESEARCH_BACKEND_MODEL_PROMPT, DEFAULT_OPENAI_RESPONSES_MODEL, promptReader)
         : DEFAULT_CODEX_MODEL;
   const codexResearchBackendModelChoice =
-    llmMode === "codex_chatgpt_only"
+    isCodexLlmMode(llmMode)
       ? researchBackendModelChoice
       : DEFAULT_CODEX_MODEL;
   const codexResearchBackendReasoningEffort =
-    llmMode === "codex_chatgpt_only"
+    isCodexLlmMode(llmMode)
       ? await askCodexReasoningEffort(
         RESEARCH_BACKEND_REASONING_PROMPT,
         resolveCodexModelSelection(codexResearchBackendModelChoice).model,
@@ -538,8 +530,8 @@ export async function ensureScaffold(paths: AppPaths): Promise<void> {
   }
 }
 
-function normalizeLoadedConfig(config: AppConfig): AppConfig {
-  const legacyConfig = config as AppConfig & {
+function normalizeLoadedConfig(config: PersistedAppConfig): AppConfig {
+  const legacyConfig = config as PersistedAppConfig & {
     analysis?: unknown;
     providers: {
       codex?: AppConfig["providers"]["codex"] & { pdf_model?: unknown; pdf_fast_mode?: unknown };
@@ -598,9 +590,6 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
     ollama.experiment_model = ollama.experiment_model?.trim() || ollama.research_model;
     ollama.vision_model = ollama.vision_model?.trim() || DEFAULT_OLLAMA_VISION_MODEL;
   }
-  if (!config.papers) {
-    throw new Error("Invalid config: papers is missing");
-  }
   if (!config.workflow) {
     config.workflow = {
       mode: "agent_approval",
@@ -610,9 +599,27 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
     };
   }
 
+  const papers = config.papers ?? {
+    max_results: 200,
+    per_second_limit: 1
+  };
+  const research = config.research ?? {
+    default_topic: DEFAULT_RESEARCH_TOPIC,
+    default_constraints: [...DEFAULT_RESEARCH_CONSTRAINTS],
+    default_objective_metric: DEFAULT_RESEARCH_OBJECTIVE_METRIC
+  };
+  const paper = config.paper ?? {
+    template: "acl",
+    build_pdf: true,
+    latex_engine: "auto_install",
+    validation_mode: "default"
+  };
+  const paths = config.paths ?? {
+    runs_dir: ".autolabos/runs",
+    logs_dir: ".autolabos/logs"
+  };
   const codex = config.providers.codex;
   const openai = config.providers.openai;
-  const papers = config.papers;
   config.providers.llm_mode = normalizePrimaryLlmMode(config.providers.llm_mode);
   if (!codex.model) {
     codex.model = DEFAULT_CODEX_MODEL;
@@ -709,6 +716,17 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
     max_results: Math.max(1, papers.max_results || 200),
     per_second_limit: Math.max(1, papers.per_second_limit || 1)
   };
+  config.research = {
+    default_topic: research.default_topic?.trim() || DEFAULT_RESEARCH_TOPIC,
+    default_constraints:
+      Array.isArray(research.default_constraints) && research.default_constraints.length > 0
+        ? research.default_constraints
+            .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+            .map((item) => item.trim())
+        : [...DEFAULT_RESEARCH_CONSTRAINTS],
+    default_objective_metric:
+      research.default_objective_metric?.trim() || DEFAULT_RESEARCH_OBJECTIVE_METRIC
+  };
   config.workflow = {
     mode: "agent_approval",
     wizard_enabled: true,
@@ -736,12 +754,21 @@ function normalizeLoadedConfig(config: AppConfig): AppConfig {
         ? "attempt_worktree"
         : "attempt_snapshot_restore"
   };
-  config.paper_profile = normalizePaperProfileConfig(config.paper_profile);
-  return config;
+  config.paper = {
+    template: "acl",
+    build_pdf: paper.build_pdf !== false,
+    latex_engine: "auto_install",
+    validation_mode: paper.validation_mode === "strict_paper" ? "strict_paper" : "default"
+  };
+  config.paths = {
+    runs_dir: paths.runs_dir?.trim() || ".autolabos/runs",
+    logs_dir: paths.logs_dir?.trim() || ".autolabos/logs"
+  };
+  return config as AppConfig;
 }
 
 export async function resolveSemanticScholarApiKey(cwd: string): Promise<string | undefined> {
-  const fileEnv = await readDotEnvFile(path.join(cwd, ".env"));
+  const fileEnv = await loadWorkspaceDotEnv(cwd);
   const semanticScholarApiKey =
     fileEnv.SEMANTIC_SCHOLAR_API_KEY ||
     process.env.SEMANTIC_SCHOLAR_API_KEY;
@@ -754,7 +781,7 @@ export async function hasSemanticScholarApiKey(cwd: string): Promise<boolean> {
 }
 
 export async function resolveOpenAiApiKey(cwd: string): Promise<string | undefined> {
-  const fileEnv = await readDotEnvFile(path.join(cwd, ".env"));
+  const fileEnv = await loadWorkspaceDotEnv(cwd);
   const openAiApiKey =
     fileEnv.OPENAI_API_KEY ||
     process.env.OPENAI_API_KEY;
@@ -764,6 +791,24 @@ export async function resolveOpenAiApiKey(cwd: string): Promise<string | undefin
 
 export async function hasOpenAiApiKey(cwd: string): Promise<boolean> {
   return Boolean(await resolveOpenAiApiKey(cwd));
+}
+
+export async function loadWorkspaceDotEnv(cwd: string): Promise<Record<string, string>> {
+  return readDotEnvFile(path.join(cwd, ".env"));
+}
+
+export async function hydrateProcessEnvFromWorkspace(
+  cwd: string,
+  options: { overrideExisting?: boolean } = {}
+): Promise<Record<string, string>> {
+  const fileEnv = await loadWorkspaceDotEnv(cwd);
+  for (const [key, value] of Object.entries(fileEnv)) {
+    if (!options.overrideExisting && typeof process.env[key] === "string" && process.env[key]!.trim()) {
+      continue;
+    }
+    process.env[key] = value;
+  }
+  return fileEnv;
 }
 
 async function readDotEnvFile(filePath: string): Promise<Record<string, string>> {
@@ -878,7 +923,8 @@ function normalizePdfAnalysisMode(
 
 function normalizePrimaryLlmMode(
   value: unknown
-): "codex_chatgpt_only" | "openai_api" | "ollama" {
+): "codex" | "openai_api" | "ollama" {
+  if (isCodexLlmMode(value)) return "codex";
   if (value === "openai_api" || value === "ollama") return value;
   return DEFAULT_PRIMARY_LLM_MODE;
 }
@@ -901,58 +947,16 @@ function normalizeBudgetGuardUsd(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
-function normalizePaperProfilePageCount(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? Math.max(1, Math.round(value)) : undefined;
-}
-
-function normalizePaperProfileConfig(value: AppConfig["paper_profile"] | undefined): AppConfig["paper_profile"] {
-  const preferAppendixFor = Array.isArray(value?.prefer_appendix_for)
-    ? value?.prefer_appendix_for
-        .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-        .map((item) => item.trim())
-    : [];
-  const legacyMainPageLimit = normalizePaperProfilePageCount(value?.main_page_limit);
-  const targetMainPages = normalizePaperProfilePageCount(value?.target_main_pages) ?? legacyMainPageLimit ?? 8;
-  const minimumMainPages = normalizePaperProfilePageCount(value?.minimum_main_pages) ?? legacyMainPageLimit ?? targetMainPages;
-  const estimatedWordsPerPage =
-    typeof value?.estimated_words_per_page === "number" && Number.isFinite(value.estimated_words_per_page)
-      ? Math.max(250, Math.round(value.estimated_words_per_page))
-      : 420;
-
-  return {
-    venue_style: value?.venue_style?.trim() || "acl_long",
-    target_venue_style: value?.target_venue_style?.trim() || undefined,
-    column_count: value?.column_count === 1 ? 1 : 2,
-    target_main_pages: targetMainPages,
-    minimum_main_pages: minimumMainPages,
-    main_page_limit: minimumMainPages,
-    references_counted: Boolean(value?.references_counted),
-    appendix_allowed: value?.appendix_allowed !== false,
-    appendix_format: value?.appendix_format === "single_column" ? "single_column" : "double_column",
-    prefer_appendix_for:
-      preferAppendixFor.length > 0
-        ? preferAppendixFor
-        : [
-            "hyperparameter_grids",
-            "per_fold_results",
-            "prompt_templates",
-            "environment_dump",
-            "extended_error_analysis"
-          ],
-    estimated_words_per_page: estimatedWordsPerPage
-  };
-}
-
 async function askPrimaryLlmMode(
   promptReader: PromptReader = askLine
-): Promise<"codex_chatgpt_only" | "openai_api" | "ollama"> {
+): Promise<"codex" | "openai_api" | "ollama"> {
   if (promptReader === askLine) {
     const answer = await askChoice(
       "Primary LLM provider",
       [
         {
           label: "codex",
-          value: "codex_chatgpt_only",
+          value: "codex",
           description: "(Codex CLI backend, ChatGPT sign-in)"
         },
         {
@@ -970,13 +974,16 @@ async function askPrimaryLlmMode(
     );
     if (answer === "openai_api") return "openai_api";
     if (answer === "ollama") return "ollama";
-    return "codex_chatgpt_only";
+    return "codex";
   }
 
   while (true) {
     const answer = (await promptReader("Primary LLM provider (codex/api/ollama)", "api")).trim().toLowerCase();
-    if (!answer || answer === "codex" || answer === "chatgpt" || answer === "codex_chatgpt_only") {
-      return "codex_chatgpt_only";
+    if (!answer) {
+      return DEFAULT_PRIMARY_LLM_MODE;
+    }
+    if (answer === "codex" || answer === "chatgpt" || answer === "codex_chatgpt_only") {
+      return "codex";
     }
     if (answer === "api" || answer === "openai" || answer === "openai_api") {
       return "openai_api";
@@ -1206,11 +1213,11 @@ function buildRecommendedPromptDescription(base: string | undefined, recommended
 
 async function maybeNotifyCodexLoginStatus(
   paths: AppPaths,
-  llmMode: "codex_chatgpt_only" | "openai_api" | "ollama",
+  llmMode: "codex" | "codex_chatgpt_only" | "openai_api" | "ollama",
   promptReader: PromptReader,
   opts: SetupWizardOptions
 ): Promise<void> {
-  if (llmMode !== "codex_chatgpt_only") {
+  if (!isCodexLlmMode(llmMode)) {
     return;
   }
 

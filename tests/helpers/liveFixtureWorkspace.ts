@@ -526,16 +526,6 @@ function buildMinimalFixtureConfig(input: {
       build_pdf: true,
       latex_engine: "auto_install"
     },
-    paper_profile: {
-      venue_style: "acl",
-      column_count: 2,
-      target_main_pages: 8,
-      minimum_main_pages: 8,
-      references_counted: false,
-      appendix_allowed: true,
-      appendix_format: "double_column",
-      prefer_appendix_for: []
-    },
     paths: {
       runs_dir: ".autolabos/runs",
       logs_dir: ".autolabos/logs"

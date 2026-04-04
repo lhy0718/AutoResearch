@@ -32,12 +32,18 @@ type ResearchBriefSectionKey =
   | "failureConditions"
   | "manuscriptFormat"
   | "manuscriptTemplate"
+  | "appendixPreferences"
   | "notes"
   | "questionsRisks";
 
+export interface ParsedAppendixPreferences {
+  preferAppendixFor: string[];
+  keepInMainBody: string[];
+}
+
 type RequiredResearchBriefSectionKey = Exclude<
   ResearchBriefSectionKey,
-  "manuscriptFormat" | "manuscriptTemplate" | "notes" | "questionsRisks"
+  "manuscriptFormat" | "manuscriptTemplate" | "appendixPreferences" | "notes" | "questionsRisks"
 >;
 
 const RESEARCH_BRIEF_SECTION_SPECS: Array<{
@@ -236,6 +242,23 @@ const RESEARCH_BRIEF_SECTION_SPECS: Array<{
       "(\\documentclass through \\begin{document}) and any detected section order.",
       "Leave blank to use the built-in preamble generator.",
       "Example: template.tex"
+    ]
+  },
+  {
+    key: "appendixPreferences",
+    heading: "Appendix Preferences",
+    required: false,
+    lines: [
+      "Optional. Use these subsections when the manuscript should route detail deliberately.",
+      "Prefer appendix for:",
+      "- hyperparameter_grids",
+      "- per_fold_results",
+      "- prompt_templates",
+      "- environment_dump",
+      "- extended_error_analysis",
+      "Keep in main body:",
+      "- main_result_tables",
+      "- primary_ablation"
     ]
   },
   {
@@ -596,4 +619,77 @@ export function parseManuscriptTemplateFromBrief(markdown: string): string | und
   if (!candidate) return undefined;
   if (!/^[a-zA-Z0-9._/\\-]+$/.test(candidate)) return undefined;
   return candidate;
+}
+
+function normalizeAppendixPreferenceToken(token: string): string | undefined {
+  const normalized = token
+    .replace(/^[\s\-*]+/, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^\w-]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  return /^[a-z][a-z0-9_-]*$/.test(normalized) ? normalized : undefined;
+}
+
+export function parseAppendixPreferencesFromBrief(
+  markdown: string
+): ParsedAppendixPreferences | undefined {
+  const sections = parseMarkdownRunBriefSections(markdown);
+  if (!sections?.appendixPreferences) {
+    return undefined;
+  }
+
+  const preferAppendixFor: string[] = [];
+  const keepInMainBody: string[] = [];
+  let mode: "prefer" | "keep" | null = null;
+
+  for (const rawLine of sections.appendixPreferences.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) {
+      continue;
+    }
+
+    if (/^prefer appendix for\b[:\s-]*/iu.test(line)) {
+      mode = "prefer";
+      const trailing = line.replace(/^prefer appendix for\b[:\s-]*/iu, "");
+      for (const token of trailing.split(",")) {
+        const normalized = normalizeAppendixPreferenceToken(token);
+        if (normalized) preferAppendixFor.push(normalized);
+      }
+      continue;
+    }
+
+    if (/^keep in main body\b[:\s-]*/iu.test(line)) {
+      mode = "keep";
+      const trailing = line.replace(/^keep in main body\b[:\s-]*/iu, "");
+      for (const token of trailing.split(",")) {
+        const normalized = normalizeAppendixPreferenceToken(token);
+        if (normalized) keepInMainBody.push(normalized);
+      }
+      continue;
+    }
+
+    for (const token of line.split(",")) {
+      const normalized = normalizeAppendixPreferenceToken(token);
+      if (!normalized) continue;
+      if (mode === "keep") {
+        keepInMainBody.push(normalized);
+      } else {
+        preferAppendixFor.push(normalized);
+      }
+    }
+  }
+
+  const uniquePrefer = Array.from(new Set(preferAppendixFor));
+  const uniqueKeep = Array.from(new Set(keepInMainBody));
+  if (uniquePrefer.length === 0 && uniqueKeep.length === 0) {
+    return undefined;
+  }
+
+  return {
+    preferAppendixFor: uniquePrefer,
+    keepInMainBody: uniqueKeep
+  };
 }

@@ -196,6 +196,8 @@ Brief は単なる開始文書ではありません。run の governed contract 
 
 つまり brief は prompt の一部ではなく、audit trail の一部です。
 
+現在の契約では、`.autolabos/config.yaml` は主に provider/runtime の既定値と workspace policy を保持します。run ごとの research intent、evidence bar、baseline expectation、manuscript format target、manuscript template path は Brief 側で定義するのが原則です。そのため、persisted config では `research` の既定値や一部の manuscript-profile / paper-template フィールドが省略されることがあります。
+
 ```bash
 /new
 /brief start --latest

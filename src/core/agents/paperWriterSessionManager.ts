@@ -150,6 +150,7 @@ interface PaperWriterSessionInput {
   objectiveMetricProfile: ObjectiveMetricProfile;
   objectiveEvaluation?: ObjectiveMetricEvaluation;
   latexTemplateSectionOrder?: string[] | null;
+  appendixKeepInMainBody?: string[] | null;
   abortSignal?: AbortSignal;
 }
 
@@ -203,7 +204,7 @@ export class PaperWriterSessionManager {
       mode,
       threadId: activeThreadId,
       systemPrompt: writerSystemPrompt,
-      prompt: buildOutlinePrompt(input.bundle, input.paperProfile),
+      prompt: buildOutlinePrompt(input.bundle, input.paperProfile, input.appendixKeepInMainBody),
       agentRole: "paper_writer",
       abortSignal: input.abortSignal,
       trace
@@ -1138,7 +1139,11 @@ function buildLatexRepairSystemPrompt(sop: string[]): string {
   ].join("\n");
 }
 
-function buildOutlinePrompt(bundle: PaperWritingBundle, paperProfile?: PaperProfileConfig): string {
+function buildOutlinePrompt(
+  bundle: PaperWritingBundle,
+  paperProfile?: PaperProfileConfig,
+  appendixKeepInMainBody?: string[] | null
+): string {
   const fallbackDraft = buildFallbackPaperDraft(bundle);
   return [
     "Return one JSON object with this shape:",
@@ -1160,13 +1165,17 @@ function buildOutlinePrompt(bundle: PaperWritingBundle, paperProfile?: PaperProf
     `Fallback section order: ${fallbackDraft.sections.map((item) => item.heading).join(", ")}`,
     ...(paperProfile
       ? [
-          `Venue style: ${paperProfile.venue_style}`,
           `Column count: ${paperProfile.column_count ?? 2}`,
           `Target main pages: ${paperProfile.target_main_pages ?? paperProfile.main_page_limit ?? "unknown"}`,
           `Minimum main pages: ${paperProfile.minimum_main_pages ?? paperProfile.main_page_limit ?? "unknown"}`,
           `References counted toward limit: ${paperProfile.references_counted}`,
           `Appendix allowed: ${paperProfile.appendix_allowed}`,
           `Appendix preferences: ${(paperProfile.prefer_appendix_for || []).join(", ") || "none"}`
+        ]
+      : []),
+    ...(appendixKeepInMainBody && appendixKeepInMainBody.length > 0
+      ? [
+          `Keep these items in the main body when possible: ${appendixKeepInMainBody.join(", ")}`
         ]
       : []),
     "Prefer an outline that preserves the main paper's core logic while reserving only supporting detail for the appendix.",

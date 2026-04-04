@@ -82,9 +82,9 @@ A paper-scale outcome requires evidence beyond successful orchestration, includi
 
 Page-budget semantics should also remain explicit:
 
-- `paper_profile.target_main_pages` drives main-body writing budgets
-- `paper_profile.minimum_main_pages` gates the compiled-PDF floor check
-- legacy `paper_profile.main_page_limit` is only a compatibility alias during migration and should not be treated as a hard maximum
+- brief-derived manuscript format targets drive main-body writing budgets
+- brief-derived minimum main-body pages gate the compiled-PDF floor check
+- template-derived layout hints influence appendix format and word-budget estimation
 
 ## 6) Research brief contract
 
@@ -117,6 +117,11 @@ For brief-governed runs, the brief is not only advisory prose. The runtime shoul
 - `analyze_results` should compare executed evidence against the brief's minimum acceptable evidence and emit a deterministic evidence-scale assessment.
 - `review` should treat weak brief-governed evidence as a backtrack condition, not merely a drafting warning.
 - `write_paper` should fail fast when pre-draft critique or brief-evidence assessment still classifies the run below paper scale.
+
+Config should not compete with the brief for research-shaping intent.
+In the current contract, `.autolabos/config.yaml` is primarily for provider/runtime policy, workspace defaults, and execution settings that are not specific to one governed research question.
+Research- and manuscript-shaping fields that can be carried by the brief should be treated as brief-owned whenever possible.
+That is why persisted config may omit `research` defaults entirely and may slim down brief-covered manuscript-profile fields such as column count and main-body page targets; the loader restores runtime defaults, but the brief remains the canonical execution contract for a run.
 
 ## 7) Validation surfaces are first-class
 

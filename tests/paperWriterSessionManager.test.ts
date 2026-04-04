@@ -24,6 +24,7 @@ afterEach(() => {
 
 class RecordingLLMClient extends MockLLMClient {
   public readonly systemPrompts: string[] = [];
+  public readonly prompts: string[] = [];
   private index = 0;
 
   constructor(private readonly responses: string[]) {
@@ -31,6 +32,7 @@ class RecordingLLMClient extends MockLLMClient {
   }
 
   override async complete(_prompt: string, opts?: { systemPrompt?: string }): Promise<{ text: string }> {
+    this.prompts.push(_prompt);
     this.systemPrompts.push(opts?.systemPrompt || "");
     const text = this.responses[Math.min(this.index, this.responses.length - 1)] ?? "";
     this.index += 1;
@@ -272,12 +274,18 @@ describe("PaperWriterSessionManager", () => {
         targetDescription: "Higher is better",
         paperEmphasis: "prioritize reproducibility gains"
       } as any,
-      latexTemplateSectionOrder: ["Introduction", "Method", "Results"]
+      latexTemplateSectionOrder: ["Introduction", "Method", "Results"],
+      appendixKeepInMainBody: ["main_result_tables", "primary_ablation"]
     });
 
     expect(
       llm.systemPrompts.some((prompt) =>
         prompt.includes("This paper uses a custom LaTeX template. Prefer this section order: Introduction, Method, Results.")
+      )
+    ).toBe(true);
+    expect(
+      llm.prompts.some((prompt) =>
+        prompt.includes("Keep these items in the main body when possible: main_result_tables, primary_ablation")
       )
     ).toBe(true);
   });

@@ -62,7 +62,7 @@ The pre-draft critique (`review/paper_critique.json`) evaluates whether experime
 - Whether experiment results are more than smoke/workflow validation
 - Whether at least one baseline or comparator exists
 - Whether claims are supportable by the available evidence
-- Whether the selected venue style is realistic for the current evidence package
+- Whether the selected manuscript structure and appendix plan are realistic for the current evidence package
 
 If evidence is insufficient, `review` recommends backtrack to an upstream node rather than allowing progression to `write_paper`.
 For brief-governed runs, this includes honoring the brief's paper ceiling and minimum evidence floor instead of treating them as advisory notes.

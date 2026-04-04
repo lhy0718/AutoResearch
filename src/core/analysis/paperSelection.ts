@@ -183,6 +183,7 @@ const BENIGN_RERANK_WARNING_PATTERNS = [
   /codex_core::shell_snapshot/i,
   /failed to delete shell snapshot/i
 ];
+const DEFAULT_SELECTION_RERANK_TIMEOUT_MS = 20_000;
 
 const RERANK_SYSTEM_PROMPT = [
   "You rerank scientific papers for AutoLabOS.",
@@ -550,20 +551,24 @@ async function rerankCandidates(
   try {
     onProgress?.(`Submitting rerank request for ${candidates.length} candidate(s).`);
     onProgress?.("Rerank progress: 2/4 (50%) waiting for model response.");
-    const response = await llm.complete(buildRerankPrompt(referenceTitle, runTopic, topN, candidates), {
-      systemPrompt: RERANK_SYSTEM_PROMPT,
-      abortSignal,
-      onProgress: (event) => {
-        if (event.type === "delta") {
-          return;
+    const timeoutMs = resolveSelectionRerankTimeoutMs();
+    const response = await withSelectionRerankTimeout(
+      llm.complete(buildRerankPrompt(referenceTitle, runTopic, topN, candidates), {
+        systemPrompt: RERANK_SYSTEM_PROMPT,
+        abortSignal,
+        onProgress: (event) => {
+          if (event.type === "delta") {
+            return;
+          }
+          const text = event.text.trim();
+          if (!text) {
+            return;
+          }
+          onProgress?.(text);
         }
-        const text = event.text.trim();
-        if (!text) {
-          return;
-        }
-        onProgress?.(text);
-      }
-    });
+      }),
+      timeoutMs
+    );
     onProgress?.("Rerank progress: 3/4 (75%) parsing model ordering.");
     onProgress?.("Received rerank response. Parsing JSON ordering.");
     const { value: parsed, repaired } = parseRerankJson(response.text);
@@ -1103,4 +1108,33 @@ function classifyRerankFailure(message: string): { cleanedMessage: string; benig
     cleanedMessage: substantiveLines.join("\n"),
     benignOnly: false
   };
+}
+
+function resolveSelectionRerankTimeoutMs(): number {
+  const configured = Number.parseInt(process.env.AUTOLABOS_ANALYSIS_RERANK_TIMEOUT_MS || "", 10);
+  if (Number.isFinite(configured) && configured > 0) {
+    return configured;
+  }
+  return DEFAULT_SELECTION_RERANK_TIMEOUT_MS;
+}
+
+async function withSelectionRerankTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return promise;
+  }
+
+  let timeoutHandle: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeoutHandle = setTimeout(() => {
+      reject(new Error(`paper_selection_rerank_timeout_after_${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  }
 }

@@ -99,6 +99,18 @@ interface ManagedMatrixSliceArtifact {
   summary: string;
 }
 
+function detectPreflightOnlyMetrics(metrics: Record<string, unknown>): string | null {
+  const mode = typeof metrics.mode === "string" ? metrics.mode.trim().toLowerCase() : "";
+  const notes = typeof metrics.notes === "string" ? metrics.notes.trim() : "";
+  if (mode === "preflight") {
+    return "Experiment only emitted preflight metrics; no training or evaluation was executed.";
+  }
+  if (/no training\/evaluation executed/i.test(notes)) {
+    return "Experiment reported that no training or evaluation was executed.";
+  }
+  return null;
+}
+
 export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
     id: "run_experiments",
@@ -758,6 +770,42 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             return {
               status: "failure",
               error: sentinelMessage,
+              toolCallsUsed: preflightToolCallsUsed + primaryAttemptsUsed
+            };
+          }
+          const preflightOnlyMessage = detectPreflightOnlyMetrics(parsedMetrics);
+          if (preflightOnlyMessage) {
+            await persistPanelState();
+            await persistRunVerifierReport(
+              run,
+              runContext,
+              buildRunVerifierReport({
+                status: "fail",
+                trigger,
+                stage: "metrics",
+                summary: preflightOnlyMessage,
+                command: primaryCommand,
+                cwd: resolved.cwd,
+                metricsPath: resolved.metricsPath,
+                exitCode: obs.exit_code ?? 0,
+                stdout: obs.stdout,
+                stderr: preflightOnlyMessage,
+                logFile,
+                suggestedNextAction:
+                  "Run the actual bounded experiment command so metrics.json contains executed task metrics, not only environment readiness data."
+              })
+            );
+            await persistRunFailureState(runContext, {
+              command: primaryCommand,
+              cwd: resolved.cwd,
+              logFile,
+              exitCode: obs.exit_code ?? 0,
+              error: preflightOnlyMessage
+            });
+            await recordRunFailure(preflightOnlyMessage, "structural");
+            return {
+              status: "failure",
+              error: preflightOnlyMessage,
               toolCallsUsed: preflightToolCallsUsed + primaryAttemptsUsed
             };
           }

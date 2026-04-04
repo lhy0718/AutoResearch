@@ -2711,7 +2711,7 @@ describe("writePaper PDF build", () => {
       "Paper readiness:"
     );
     expect(await readFile(path.join(publicRunDir, "results", "operator_summary.md"), "utf8")).toContain(
-      "Venue:"
+      "Manuscript decision:"
     );
     expect(await readFile(path.join(runDir, "run_status.json"), "utf8")).toContain('"current_node": "write_paper"');
     expect(await readFile(path.join(runDir, "run_completeness_checklist.json"), "utf8")).toContain(
@@ -2742,10 +2742,6 @@ describe("writePaper PDF build", () => {
           template: "acl",
           build_pdf: true,
           validation_mode: "default"
-        },
-        paper_profile: {
-          venue_style: "acl_long",
-          main_page_limit: 8
         }
       } as any,
       runStore: {} as any,
@@ -2978,15 +2974,6 @@ describe("writePaper PDF build", () => {
         paper: {
           build_pdf: false,
           validation_mode: "default"
-        },
-        paper_profile: {
-          venue_style: "acl_long",
-          main_page_limit: 8,
-          references_counted: false,
-          appendix_allowed: true,
-          appendix_format: "double_column",
-          prefer_appendix_for: ["per_fold_results", "environment_dump"],
-          estimated_words_per_page: 420
         }
       } as any,
       runStore: {} as any,
@@ -3054,15 +3041,6 @@ describe("writePaper PDF build", () => {
         paper: {
           build_pdf: false,
           validation_mode: "strict_paper"
-        },
-        paper_profile: {
-          venue_style: "acl_long",
-          main_page_limit: 8,
-          references_counted: false,
-          appendix_allowed: true,
-          appendix_format: "double_column",
-          prefer_appendix_for: ["per_fold_results", "environment_dump"],
-          estimated_words_per_page: 420
         }
       } as any,
       runStore: {} as any,
@@ -3120,15 +3098,6 @@ describe("writePaper PDF build", () => {
         paper: {
           build_pdf: false,
           validation_mode: "default"
-        },
-        paper_profile: {
-          venue_style: "acl_long",
-          main_page_limit: 8,
-          references_counted: false,
-          appendix_allowed: true,
-          appendix_format: "double_column",
-          prefer_appendix_for: ["hyperparameter_grids", "per_fold_results", "environment_dump", "extended_error_analysis"],
-          estimated_words_per_page: 420
         }
       } as any,
       runStore: {} as any,
@@ -3180,15 +3149,6 @@ describe("writePaper PDF build", () => {
         paper: {
           build_pdf: false,
           validation_mode: "default"
-        },
-        paper_profile: {
-          venue_style: "acl_long",
-          main_page_limit: 8,
-          references_counted: false,
-          appendix_allowed: true,
-          appendix_format: "double_column",
-          prefer_appendix_for: ["hyperparameter_grids", "per_fold_results", "environment_dump", "extended_error_analysis"],
-          estimated_words_per_page: 420
         }
       } as any,
       runStore: {} as any,
@@ -3257,7 +3217,6 @@ describe("writePaper PDF build", () => {
       stage: "pre_draft_review",
       manuscript_type: "research_memo",
       overall_decision: "backtrack_to_design",
-      target_venue_style: "generic_cs_paper",
       confidence: 0.9
     });
     await mkdir(path.join(runDir, "review"), { recursive: true });
@@ -3267,7 +3226,6 @@ describe("writePaper PDF build", () => {
         {
           stage: "pre_draft_review",
           generated_at: new Date().toISOString(),
-          target_venue_style: "generic_cs_paper",
           manuscript_type: "research_memo",
           overall_decision: "backtrack_to_design",
           overall_score: 2.4,
@@ -3284,10 +3242,7 @@ describe("writePaper PDF build", () => {
           needs_additional_experiments: true,
           needs_additional_statistics: true,
           needs_additional_related_work: false,
-          needs_design_revision: true,
-          venue_style_notes: "",
-          style_mismatches: [],
-          style_repairable_locally: true
+          needs_design_revision: true
         },
         null,
         2

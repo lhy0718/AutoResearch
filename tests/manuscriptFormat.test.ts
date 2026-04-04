@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  parseAppendixPreferencesFromBrief,
   parseManuscriptFormatFromBrief,
   parseManuscriptTemplateFromBrief
 } from "../src/core/runs/researchBriefFiles.js";
@@ -149,6 +150,52 @@ describe("parseManuscriptTemplateFromBrief", () => {
   });
 });
 
+describe("parseAppendixPreferencesFromBrief", () => {
+  it("extracts structured appendix routing preferences", () => {
+    const brief = [
+      "# Research Brief",
+      "",
+      "## Appendix Preferences",
+      "Prefer appendix for:",
+      "- hyperparameter_grids",
+      "- per_fold_results",
+      "Keep in main body:",
+      "- main_result_tables"
+    ].join("\n");
+
+    expect(parseAppendixPreferencesFromBrief(brief)).toEqual({
+      preferAppendixFor: ["hyperparameter_grids", "per_fold_results"],
+      keepInMainBody: ["main_result_tables"]
+    });
+  });
+
+  it("returns undefined when the section is absent", () => {
+    const brief = [
+      "# Research Brief",
+      "",
+      "## Topic",
+      "Test topic"
+    ].join("\n");
+
+    expect(parseAppendixPreferencesFromBrief(brief)).toBeUndefined();
+  });
+
+  it("treats unlabeled legacy bullets as appendix-preferred items", () => {
+    const brief = [
+      "# Research Brief",
+      "",
+      "## Appendix Preferences",
+      "- hyperparameter_grids",
+      "- extended_error_analysis"
+    ].join("\n");
+
+    expect(parseAppendixPreferencesFromBrief(brief)).toEqual({
+      preferAppendixFor: ["hyperparameter_grids", "extended_error_analysis"],
+      keepInMainBody: []
+    });
+  });
+});
+
 describe("runBriefParser manuscriptTemplate field", () => {
   it("parses manuscript template heading into manuscriptTemplate field", () => {
     const brief = [
@@ -163,6 +210,23 @@ describe("runBriefParser manuscriptTemplate field", () => {
 
     const sections = parseMarkdownRunBriefSections(brief);
     expect(sections.manuscriptTemplate).toBe("templates/submission.tex");
+  });
+
+  it("parses appendix preferences heading into appendixPreferences field", () => {
+    const brief = [
+      "# Research Brief",
+      "",
+      "## Topic",
+      "Some topic",
+      "",
+      "## Appendix Preferences",
+      "- hyperparameter_grids",
+      "- prompt_templates"
+    ].join("\n");
+
+    const sections = parseMarkdownRunBriefSections(brief);
+    expect(sections.appendixPreferences).toContain("hyperparameter_grids");
+    expect(sections.appendixPreferences).toContain("prompt_templates");
   });
 });
 

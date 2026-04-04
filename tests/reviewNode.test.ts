@@ -308,8 +308,7 @@ describe("review node", () => {
           allow_network: true,
           network_policy: "declared",
           network_purpose: "logging"
-        },
-        paper_profile: { target_venue_style: "generic_cs_paper" }
+        }
       } as any,
       runStore: {} as any,
       eventStream: new InMemoryEventStream(),

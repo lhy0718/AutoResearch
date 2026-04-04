@@ -196,6 +196,8 @@ Brief — это не просто стартовый документ. Это g
 
 Иными словами, brief — это не просто часть prompt. Это часть audit trail.
 
+В текущем контракте `.autolabos/config.yaml` в основном хранит provider/runtime defaults и workspace policy. Исследовательское намерение для конкретного run, evidence bar, ожидания по baseline, цели manuscript format и путь к manuscript template должны задаваться в Brief. Поэтому сохранённый config может не содержать `research` defaults и часть полей manuscript-profile / paper-template.
+
 ```bash
 /new
 /brief start --latest

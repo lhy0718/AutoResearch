@@ -147,4 +147,41 @@ describe("validateDesignImplementationAlignment", () => {
       ])
     );
   });
+
+  it("ignores shell assignment prefixes when a heredoc verification command references the script path", () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-heredoc-"));
+    tempDirs.push(workspace);
+    const publicDir = path.join(workspace, "outputs", "experiment");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    writeFileSync(scriptPath, "print('ok')\n", "utf8");
+
+    const contract = buildExperimentComparisonContract({
+      run: { id: "run-4", objectiveMetric: "accuracy_delta_vs_baseline" },
+      selectedDesign: {
+        id: "design-4",
+        hypothesis_ids: ["h1"],
+        baselines: ["greedy_direct"]
+      },
+      objectiveProfile: buildHeuristicObjectiveMetricProfile("accuracy_delta_vs_baseline"),
+      managedBundleSupported: false
+    });
+
+    const report = validateVerificationCommandSurface({
+      comparisonContract: contract,
+      verificationCommand: [
+        "python - << 'PY'",
+        `p='${scriptPath}'`,
+        "print(p)",
+        "PY"
+      ].join("\n"),
+      workingDir: publicDir,
+      scriptPath,
+      metricsPath: path.join(workspace, ".autolabos", "runs", "run-4", "metrics.json"),
+      runCommand: `python3 ${JSON.stringify(scriptPath)}`
+    });
+
+    expect(report.verdict).toBe("allow");
+    expect(report.findings.filter((finding) => finding.severity === "block")).toEqual([]);
+  });
 });

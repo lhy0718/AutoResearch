@@ -27,11 +27,9 @@ The structured critique artifact (`paper_critique.json`) is emitted at two stage
 Each critique artifact must include:
 - `manuscript_type`: one of `system_validation_note`, `research_memo`, `paper_scale_candidate`, `paper_ready`, `blocked_for_paper_scale`
 - `overall_decision`: one of `advance`, `repair_then_retry`, `backtrack_to_implement`, `backtrack_to_design`, `backtrack_to_hypotheses`, `pause_for_human`
-- `target_venue_style`: the selected venue style target
 - `blocking_issues` and `non_blocking_issues` arrays with actionable issue objects
-- Category scores for 11 quality dimensions
+- Category scores for 10 quality dimensions
 - Upstream deficit flags: `needs_additional_experiments`, `needs_additional_statistics`, `needs_additional_related_work`, `needs_design_revision`
-- Venue-style fit assessment: `venue_style_notes`, `style_mismatches`, `style_repairable_locally`
 
 ## 3) Two-stage gating discipline
 `write_paper completed` is NOT equivalent to `paper_ready`.
@@ -57,24 +55,20 @@ In that case the correct action is upstream repair/backtrack, not spending draft
 ### Page-budget semantics
 `write_paper` should treat page budgets as explicit targets/floors, not as an implicit upper cap:
 
-- `paper_profile.target_main_pages` is the nominal main-body target used for writing budgets
-- `paper_profile.minimum_main_pages` is the compiled-PDF floor checked after LaTeX build
-- legacy `paper_profile.main_page_limit` remains a compatibility alias and should not be interpreted as a maximum-page constraint
+- brief-derived main-body page targets are used for writing budgets
+- brief-derived minimum main-body pages are checked after LaTeX build
+- template-derived layout hints can adjust appendix format and word-budget estimation, but they do not replace the evidence bar
 
-## 4) Venue-style targeting
-Users can select a target venue style via `paper_profile.target_venue_style` in config.
-Supported venues: `acl`, `aaai`, `icml`, `neurips`, `iclr`, `generic_nlp_conference`, `generic_ml_conference`, `generic_cs_paper`.
+## 4) Template structure and manuscript critique
+When a manuscript template is present, AutoLabOS uses it for structure and layout hints:
+- preamble
+- document class
+- section order
+- column layout
+- appendix-format defaults
 
-This affects:
-- Rhetorical structure and section emphasis
-- Abstract and title style
-- Result presentation and discussion emphasis
-- Critique venue-style fit assessment
-
-Venue-style targeting is about rhetorical organization, not exact publisher template compliance.
-
-**Critical rule**: Venue-style mismatch alone should almost never cause upstream backtrack.
-Style mismatch is treated as local repair. Upstream backtrack is reserved for evidence/design/experiment deficits.
+The critique system no longer introduces a separate style-target layer on top of the template.
+Template handling is structural. Manuscript gating remains evidence- and quality-driven.
 
 ## 2) Evidence linkage sanity
 `paper/evidence_links.json` must be structurally useful:

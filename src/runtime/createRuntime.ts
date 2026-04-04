@@ -2,6 +2,7 @@ import {
   AppPaths,
   configExists,
   ensureScaffold,
+  hydrateProcessEnvFromWorkspace,
   hasSemanticScholarApiKey,
   loadConfig,
   resolveOpenAiApiKey,
@@ -68,6 +69,7 @@ export async function bootstrapAutoLabOSRuntime(opts?: {
 }): Promise<RuntimeBootstrap> {
   const cwd = opts?.cwd || process.cwd();
   assertNotProjectRootWorkspace(cwd);
+  await hydrateProcessEnvFromWorkspace(cwd);
   const paths = resolveAppPaths(cwd);
   const executionProfile = await detectExecutionProfile();
   const firstRunSetup = !(await configExists(paths));
@@ -116,10 +118,11 @@ export async function createAutoLabOSRuntime(
   executionProfile?: ExecutionProfile,
   nodeOptionPackageName?: NodeOptionPackageName
 ): Promise<AutoLabOSRuntime> {
+  await hydrateProcessEnvFromWorkspace(paths.cwd);
   const resolvedExecutionProfile = executionProfile || (await detectExecutionProfile());
   const runStore = new RunStore(paths, { nodeOptionPackageName });
   const codex = new CodexCliClient(paths.cwd, {
-    model: config.providers.codex.model || "gpt-5.3-codex",
+    model: config.providers.codex.model || "gpt-5.4",
     reasoningEffort: config.providers.codex.reasoning_effort || "xhigh",
     fastMode: config.providers.codex.fast_mode === true
   });

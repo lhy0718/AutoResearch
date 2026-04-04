@@ -196,6 +196,8 @@ O brief não é apenas um documento inicial. Ele é o governed contract do run.
 
 Em outras palavras, o brief não é apenas parte do prompt. Ele é parte do audit trail.
 
+No contrato atual, `.autolabos/config.yaml` guarda principalmente defaults de provider/runtime e workspace policy. A intenção de pesquisa específica de cada run, os evidence bars, as expectativas de baseline, os objetivos de manuscript format e o caminho do manuscript template devem ficar no Brief. Por isso, o config persistido pode omitir defaults de `research` e alguns campos de manuscript-profile / paper-template.
+
 ```bash
 /new
 /brief start --latest

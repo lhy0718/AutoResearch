@@ -196,6 +196,8 @@ Brief 不只是启动文档。它是 run 的 governed contract。
 
 也就是说，brief 不是 prompt 的一部分，而是 audit trail 的一部分。
 
+在当前契约里，`.autolabos/config.yaml` 主要保存 provider/runtime 默认值和 workspace policy。每个 run 的研究意图、evidence 门槛、baseline 预期、manuscript format 目标以及 manuscript template 路径，原则上应放在 Brief 中。因此，持久化后的 config 可能会省略 `research` 默认值以及部分 manuscript-profile / paper-template 字段。
+
 ```bash
 /new
 /brief start --latest

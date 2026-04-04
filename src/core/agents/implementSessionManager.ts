@@ -3549,7 +3549,7 @@ async function materializeDeclaredArtifacts(params: {
       ...params.artifacts,
       ...params.explicitPublicArtifacts,
       ...(params.scriptPath ? [params.scriptPath] : [])
-    ])
+    ]).filter((filePath) => !isDeferredExecutionArtifact(filePath, params.runDir))
   );
 
   return {
@@ -3559,6 +3559,27 @@ async function materializeDeclaredArtifacts(params: {
     missingArtifacts,
     scriptPath: scriptPath && (await fileExists(scriptPath)) ? scriptPath : undefined
   };
+}
+
+function isDeferredExecutionArtifact(filePath: string, runDir: string): boolean {
+  if (!isPathInsideOrEqual(filePath, runDir)) {
+    return false;
+  }
+  return isDeferredExecutionArtifactPath(filePath);
+}
+
+function isDeferredExecutionArtifactPath(filePath: string): boolean {
+  const normalizedPath = path.normalize(filePath);
+  if (!normalizedPath.includes(`${path.sep}.autolabos${path.sep}runs${path.sep}`)) {
+    return false;
+  }
+  const base = path.basename(filePath).toLowerCase();
+  return (
+    /^metrics(?:\.|$)/u.test(base) ||
+    /^results(?:\.|$)/u.test(base) ||
+    base === "objective_evaluation.json" ||
+    base === "recent_paper_reproducibility.json"
+  );
 }
 
 async function publishReusableArtifacts(params: {
@@ -4928,6 +4949,9 @@ async function collectMissingVerificationArtifacts(params: {
   ]);
   const missing: string[] = [];
   for (const candidate of candidates) {
+    if (isDeferredExecutionArtifactPath(candidate)) {
+      continue;
+    }
     if (!(await fileExists(candidate))) {
       missing.push(candidate);
     }
@@ -4935,11 +4959,14 @@ async function collectMissingVerificationArtifacts(params: {
   return missing.sort();
 }
 
-function extractWorkspacePathsFromCommand(command: string, cwd: string, workspaceRoot: string): string[] {
+export function extractWorkspacePathsFromCommand(command: string, cwd: string, workspaceRoot: string): string[] {
   const tokens = command.match(/"[^"]*"|'[^']*'|\S+/g) || [];
   const paths = new Set<string>();
   for (const token of tokens) {
-    const normalized = token.replace(/^['"]|['"]$/g, "");
+    const normalized = normalizeWorkspacePathToken(token);
+    if (!normalized) {
+      continue;
+    }
     if (!looksLikeWorkspacePath(normalized)) {
       continue;
     }
@@ -4952,6 +4979,28 @@ function extractWorkspacePathsFromCommand(command: string, cwd: string, workspac
     }
   }
   return [...paths];
+}
+
+function normalizeWorkspacePathToken(token: string): string | null {
+  const value = token.replace(/^['"]|['"]$/g, "");
+  const assignmentMatch = value.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.+)$/u);
+  if (!assignmentMatch) {
+    return value;
+  }
+  const rhs = assignmentMatch[2]?.replace(/^['"]|['"]$/g, "") || "";
+  if (!rhs) {
+    return null;
+  }
+  if (
+    rhs.startsWith("./") ||
+    rhs.startsWith("../") ||
+    rhs.startsWith("/") ||
+    rhs.includes("/") ||
+    /\.(py|js|mjs|cjs|sh|json|yaml|yml|md|txt|toml|cfg|ini)$/iu.test(rhs)
+  ) {
+    return rhs;
+  }
+  return null;
 }
 
 function looksLikeWorkspacePath(value: string): boolean {

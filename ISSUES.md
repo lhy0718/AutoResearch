@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-04-03
+Last updated: 2026-04-04
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
@@ -14,7 +14,8 @@ Usage rules:
 ## Current active status
 
 - Active live-validation defects:
-  - None currently open.
+  - `LV-085` implement-stage materialization boundary
+  - `LV-086` preflight metrics over-promoted as executed evidence
 - Active research/paper-readiness watchlist: see `Research and paper-readiness watchlist` below.
 - Current watchlist snapshot:
   - `R-001` Result-table discipline and claim→evidence linkage — `MITIGATED`
@@ -29,49 +30,99 @@ Usage rules:
 
 ## Active live validation issues
 
-- None currently open.
+## Issue: LV-085
 
----
+- Status: active
+- Validation target: real `test/`-workspace governed run for the LoRA rank × dropout factorial brief
+- Environment/session context: fresh live TUI run in `test/`, run id `1f46de0f-5beb-4de6-a219-abf483b74101`, current node `implement_experiments`
 
-## Research and paper-readiness watchlist
+- Reproduction steps:
+  1. Start the real run from `test/` with the governed brief for the Mistral-7B LoRA rank/dropout sweep.
+  2. Let the run progress through `collect_papers`, `analyze_papers`, `generate_hypotheses`, and `design_experiments`.
+  3. Allow `implement_experiments` to repair after the earlier stale `peft` runner feedback.
+  4. Observe the third implementation attempt fail before `run_experiments` is allowed to rerun.
 
-These are not active interactive defects. They stay here as mitigated or watchlist-style research/paper-readiness risks so they do not get lost in the fixed live-validation timeline.
+- Expected behavior:
+  - `implement_experiments` should validate runnable public artifacts such as the experiment script, config, and docs.
+  - Run-owned execution outputs like `.autolabos/runs/<run-id>/metrics.json` should not be required to already exist before `run_experiments` executes.
 
-### R-001 — Result-table discipline and claim→evidence linkage
-- Status: MITIGATED
-- What was done: `design_experiments` writes `baseline_summary.json`; `analyze_results` writes `result_table.json`; `review` gate checks both and blocks when missing.
-- Remaining risk: quality of content inside these artifacts still depends on the generated analysis.
+- Actual behavior:
+  - `implement_experiments` fails with:
+    - `Implementer referenced artifact(s) that were not materialized: .autolabos/runs/1f46de0f-5beb-4de6-a219-abf483b74101/metrics.json`
+  - The node then retries instead of handing the current experiment harness back to `run_experiments`.
 
-### R-002 — Scientific gate warnings surfacing
-- Status: MITIGATED
-- What was done: gate warnings are grouped by category with severity labels and surfaced as limitation sentences in the manuscript.
-- Remaining risk: categories are still coarse and can require operator review.
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in the active live run
+  - Existing session: not yet compared after this exact failure mode
+  - Divergence: unknown
 
-### R-003 — System-validation paper shape over-promotion
-- Status: MITIGATED
-- What was done: manuscript classification now downgrades missing-baseline / missing-results / missing-richness cases.
-- Remaining risk: a structurally complete fake-mode run can still look stronger than the underlying evidence.
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: the implement-stage artifact materialization check treats run-owned execution outputs such as `metrics.json` as if they must already be present during `implement_experiments`, even though those files are supposed to be produced by `run_experiments`.
 
-### P-001 — Baseline/comparator packaging
-- Status: MITIGATED
-- What was done: `baseline_summary.json` is written by `design_experiments`; review downgrades when missing.
+- Code/test changes:
+  - Code: pending
+  - Tests: pending
 
-### P-002 — Compact quantitative result packaging
-- Status: MITIGATED
-- What was done: `result_table.json` is written by `analyze_results`; review downgrades when missing.
+- Regression status:
+  - Automated regression test linked: no
+  - Re-validation result: pending
 
-### P-003 — Related-work depth signaling
-- Status: MITIGATED
-- What was done: `analyze_papers_richness_summary.json` tracks full-text coverage and feeds readiness classification.
-- Remaining risk: full-text grounding still depends on PDF availability.
+- Follow-up risks:
+  - The same validator boundary may also incorrectly require other run-owned execution artifacts before second-stage verification.
+- Evidence/artifacts:
+  - `test/.autolabos/runs/1f46de0f-5beb-4de6-a219-abf483b74101/events.jsonl`
+  - `test/.autolabos/runs/1f46de0f-5beb-4de6-a219-abf483b74101/run_record.json`
+  - `test/outputs/lora-rank-dropout-interaction-for-mistral-7b-ins-1f46de0f/experiment/experiment.py`
 
----
+## Issue: LV-086
 
-## Historical archive
+- Status: active
+- Validation target: real `test/`-workspace governed run for the LoRA rank × dropout factorial brief after `run_experiments`
+- Environment/session context: same fresh live run `1f46de0f-5beb-4de6-a219-abf483b74101`, artifacts inspected after `run_experiments` completed and `analyze_results` paused
 
-Older fixed live-validation entries, compact archived summaries, and legacy draft items have been moved out of this main operator-facing file.
+- Reproduction steps:
+  1. Start the real run from `test/` with the governed LoRA rank/dropout brief.
+  2. Let `implement_experiments` and `run_experiments` complete.
+  3. Inspect `.autolabos/runs/<run-id>/metrics.json` and `analysis/result_table.json`.
+  4. Observe that the recorded metrics come from `mode: "preflight"` with no training or evaluation executed.
 
-If we need to resurrect one of those older cases, use git history rather than treating them as current active work.
+- Expected behavior:
+  - `run_experiments` should not treat preflight-only environment checks as successful executed experiment evidence for this paper-scale brief.
+  - Objective evaluation should not infer research success from hardware/resource fields such as `device.gpu_count` when the stated objective is benchmark accuracy on ARC-Challenge and HellaSwag.
+
+- Actual behavior:
+  - `metrics.json` contains:
+    - `mode: "preflight"`
+    - `notes: "No training/evaluation executed..."`
+    - `primary_metric: null`
+  - `run_experiments` still completes and summarizes:
+    - `Objective metric met: device.gpu_count=2 >= 0.015`
+  - `analyze_results` then builds a results table from hardware/resource fields and pauses only later with `incomplete_results_table`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in the active live run
+  - Existing session: not yet compared after this exact failure mode
+  - Divergence: unknown
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: `run_experiments` currently accepts preflight-only metrics as a successful execution artifact, and the best-effort objective matcher is willing to promote resource metrics (for example `device.gpu_count`) into the objective summary even when no task metric exists.
+
+- Code/test changes:
+  - Code: pending
+  - Tests: pending
+
+- Regression status:
+  - Automated regression test linked: no
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - Even when later gates pause the workflow, the misleading “objective met” summary can contaminate operator interpretation, review context, and any quality-improvement loop that reads `paper_readiness`-adjacent artifacts.
+- Evidence/artifacts:
+  - `test/.autolabos/runs/1f46de0f-5beb-4de6-a219-abf483b74101/metrics.json`
+  - `test/outputs/lora-rank-dropout-interaction-for-mistral-7b-ins-1f46de0f/analysis/result_table.json`
+  - `test/.autolabos/runs/1f46de0f-5beb-4de6-a219-abf483b74101/run_record.json`
 
 ## Issue: LV-ARCHIVE-ANCHOR
 

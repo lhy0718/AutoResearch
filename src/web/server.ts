@@ -78,7 +78,7 @@ interface SetupRequestBody {
   defaultTopic?: string;
   defaultConstraints?: string[];
   defaultObjectiveMetric?: string;
-  llmMode?: "codex_chatgpt_only" | "openai_api" | "ollama";
+  llmMode?: "codex" | "codex_chatgpt_only" | "openai_api" | "ollama";
   codexChatModelChoice?: string;
   codexChatReasoningEffort?: string;
   codexResearchBackendModelChoice?: string;

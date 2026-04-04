@@ -3,19 +3,12 @@ import { describe, expect, it } from "vitest";
 import {
   buildPreDraftCritique,
   buildPostDraftCritique,
-  resolveVenueStyle,
-  getVenueProfile,
   isUpstreamEvidenceDeficit,
   isLocalStyleIssue,
   classifyIssueBacktrackTarget,
   critiqueDecisionToTransitionAction,
   critiqueDecisionToTargetNode,
-  VENUE_PROFILES,
-  VENUE_STYLE_IDS,
-  DEFAULT_VENUE_STYLE,
-  type VenueStyleId,
   type CritiqueIssue,
-  type PaperCritique,
   type PreDraftCritiqueInput,
   type PostDraftCritiqueInput
 } from "../src/core/paperCritique.js";
@@ -122,7 +115,6 @@ function makeFinding(overrides?: Partial<ReviewFinding>): ReviewFinding {
 
 function makePreDraftInput(overrides?: Partial<PreDraftCritiqueInput>): PreDraftCritiqueInput {
   return {
-    venueStyle: "generic_cs_paper",
     scorecard: makeScorecard(4),
     decision: makeDecision("advance"),
     findings: [],
@@ -133,7 +125,6 @@ function makePreDraftInput(overrides?: Partial<PreDraftCritiqueInput>): PreDraft
 
 function makePostDraftInput(overrides?: Partial<PostDraftCritiqueInput>): PostDraftCritiqueInput {
   return {
-    venueStyle: "generic_cs_paper",
     preDraftCritique: null,
     gateDecision: {
       status: "pass",
@@ -160,54 +151,6 @@ function makePostDraftInput(overrides?: Partial<PostDraftCritiqueInput>): PostDr
     ...overrides
   };
 }
-
-// ===========================================================================
-// Venue style support
-// ===========================================================================
-
-describe("venue style support", () => {
-  it("resolveVenueStyle returns known IDs unchanged", () => {
-    for (const id of VENUE_STYLE_IDS) {
-      expect(resolveVenueStyle(id)).toBe(id);
-    }
-  });
-
-  it("resolveVenueStyle normalizes dashes and spaces", () => {
-    expect(resolveVenueStyle("generic-cs-paper")).toBe("generic_cs_paper");
-    expect(resolveVenueStyle("generic cs paper")).toBe("generic_cs_paper");
-    expect(resolveVenueStyle("GENERIC_ML_CONFERENCE")).toBe("generic_ml_conference");
-  });
-
-  it("resolveVenueStyle returns default for unknown values", () => {
-    expect(resolveVenueStyle(undefined)).toBe(DEFAULT_VENUE_STYLE);
-    expect(resolveVenueStyle(null)).toBe(DEFAULT_VENUE_STYLE);
-    expect(resolveVenueStyle("")).toBe(DEFAULT_VENUE_STYLE);
-    expect(resolveVenueStyle("unknown_venue")).toBe(DEFAULT_VENUE_STYLE);
-  });
-
-  it("every venue profile has required fields", () => {
-    for (const id of VENUE_STYLE_IDS) {
-      const profile = getVenueProfile(id);
-      expect(profile.id).toBe(id);
-      expect(profile.label).toBeTruthy();
-      expect(profile.title_style).toBeTruthy();
-      expect(profile.abstract_style).toBeTruthy();
-      expect(profile.section_emphasis.length).toBeGreaterThan(0);
-      expect(profile.tone_claim_discipline).toBeTruthy();
-      expect(profile.expected_strengths.length).toBeGreaterThan(0);
-    }
-  });
-
-  it("venue style persists in critique artifact", () => {
-    const critique = buildPreDraftCritique(makePreDraftInput({ venueStyle: "acl" }));
-    expect(critique.target_venue_style).toBe("acl");
-  });
-
-  it("post-draft critique records venue style", () => {
-    const critique = buildPostDraftCritique(makePostDraftInput({ venueStyle: "neurips" }));
-    expect(critique.target_venue_style).toBe("neurips");
-  });
-});
 
 // ===========================================================================
 // Issue classification
@@ -242,20 +185,6 @@ describe("issue classification", () => {
     expect(isLocalStyleIssue(issue)).toBe(true);
     expect(isUpstreamEvidenceDeficit(issue)).toBe(false);
     expect(classifyIssueBacktrackTarget(issue)).toBeNull();
-  });
-
-  it("venue style fit is a local issue", () => {
-    const issue: CritiqueIssue = {
-      issue_id: "test_3",
-      severity: "medium",
-      category: "venue_style_fit",
-      summary: "Section ordering mismatch",
-      evidence: "Expected different order",
-      recommended_fix: "Reorder sections",
-      suggested_backtrack_target: null
-    };
-    expect(isLocalStyleIssue(issue)).toBe(true);
-    expect(isUpstreamEvidenceDeficit(issue)).toBe(false);
   });
 
   it("statistical adequacy maps to implement_experiments backtrack", () => {
@@ -382,14 +311,6 @@ describe("pre-draft critique", () => {
     expect(critique.overall_decision).toBe("pause_for_human");
   });
 
-  it("records venue style notes", () => {
-    const critique = buildPreDraftCritique(makePreDraftInput({
-      venueStyle: "icml"
-    }));
-    expect(critique.target_venue_style).toBe("icml");
-    expect(critique.venue_style_notes).toBeTruthy();
-  });
-
   it("write_paper completed is not paper_ready when evidence is weak", () => {
     const critique = buildPreDraftCritique(makePreDraftInput({
       scorecard: makeScorecard(2),
@@ -505,17 +426,6 @@ describe("post-draft critique", () => {
     )).toBe(true);
   });
 
-  it("venue style mismatch is treated as local repair", () => {
-    const critique = buildPostDraftCritique(makePostDraftInput({
-      venueStyle: "icml",
-      manuscriptSections: ["Introduction", "Conclusion"]
-    }));
-    expect(critique.style_mismatches.length).toBeGreaterThan(0);
-    expect(critique.style_repairable_locally).toBe(true);
-    // Style mismatch alone should not cause upstream backtrack
-    expect(critique.overall_decision).toBe("advance");
-  });
-
   it("records whether draft improved over pre-draft", () => {
     const preDraft = buildPreDraftCritique(makePreDraftInput());
     const postDraft = buildPostDraftCritique(makePostDraftInput({
@@ -548,7 +458,6 @@ describe("critique TUI surfacing contract", () => {
 
     // Fields that TUI should surface
     expect(critique.manuscript_type).toBeTruthy();
-    expect(critique.target_venue_style).toBeTruthy();
     expect(critique.overall_decision).toBeTruthy();
     expect(typeof critique.blocking_issues_count).toBe("number");
     expect(critique.stage).toBeTruthy();
@@ -564,12 +473,6 @@ describe("critique TUI surfacing contract", () => {
     expect(critique.paper_readiness_state).toBe("system_validation_note");
   });
 
-  it("venue style is visible in critique", () => {
-    for (const venue of ["acl", "neurips", "icml"] as VenueStyleId[]) {
-      const critique = buildPreDraftCritique(makePreDraftInput({ venueStyle: venue }));
-      expect(critique.target_venue_style).toBe(venue);
-    }
-  });
 });
 
 // ===========================================================================
@@ -577,9 +480,9 @@ describe("critique TUI surfacing contract", () => {
 // ===========================================================================
 
 describe("category scores", () => {
-  it("pre-draft critique has all 11 categories", () => {
+  it("pre-draft critique has all 10 categories", () => {
     const critique = buildPreDraftCritique(makePreDraftInput());
-    expect(critique.category_scores.length).toBe(11);
+    expect(critique.category_scores.length).toBe(10);
     const categories = critique.category_scores.map((c) => c.category);
     expect(categories).toContain("research_question_clarity");
     expect(categories).toContain("related_work_depth");
@@ -591,12 +494,11 @@ describe("category scores", () => {
     expect(categories).toContain("limitations_honesty");
     expect(categories).toContain("writing_clarity");
     expect(categories).toContain("artifact_consistency");
-    expect(categories).toContain("venue_style_fit");
   });
 
-  it("post-draft critique has all 11 categories", () => {
+  it("post-draft critique has all 10 categories", () => {
     const critique = buildPostDraftCritique(makePostDraftInput());
-    expect(critique.category_scores.length).toBe(11);
+    expect(critique.category_scores.length).toBe(10);
   });
 
   it("scores are clamped between 1 and 5", () => {

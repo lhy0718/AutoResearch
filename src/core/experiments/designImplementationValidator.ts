@@ -218,13 +218,38 @@ function extractCommandPaths(command: string, cwd: string): string[] {
   const tokens = command.match(/"[^"]*"|'[^']*'|\S+/g) || [];
   const paths = new Set<string>();
   for (const token of tokens) {
-    const value = token.replace(/^['"]|['"]$/g, "");
+    const value = normalizeShellPathToken(token);
+    if (!value) {
+      continue;
+    }
     if (!looksLikePath(value)) {
       continue;
     }
     paths.add(path.normalize(path.isAbsolute(value) ? value : path.resolve(cwd, value)));
   }
   return [...paths];
+}
+
+function normalizeShellPathToken(token: string): string | null {
+  const value = token.replace(/^['"]|['"]$/g, "");
+  const assignmentMatch = value.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.+)$/u);
+  if (!assignmentMatch) {
+    return value;
+  }
+  const rhs = assignmentMatch[2]?.replace(/^['"]|['"]$/g, "") || "";
+  if (!rhs) {
+    return null;
+  }
+  if (
+    rhs.startsWith("./") ||
+    rhs.startsWith("../") ||
+    rhs.startsWith(path.sep) ||
+    rhs.includes(path.sep) ||
+    /\.(py|js|mjs|cjs|sh|json|yaml|yml|toml)$/iu.test(rhs)
+  ) {
+    return rhs;
+  }
+  return null;
 }
 
 function looksLikePath(value: string): boolean {

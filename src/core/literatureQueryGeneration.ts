@@ -12,6 +12,7 @@ import { parseMarkdownRunBriefSections } from "./runs/runBriefParser.js";
 import { RunRecord } from "../types.js";
 
 const QUERY_PLAN_CACHE_KEY = "collect_papers.llm_query_plan";
+const DEFAULT_LITERATURE_QUERY_TIMEOUT_MS = 20_000;
 const PLACEHOLDER_QUERY_TOKENS = new Set([
   "array",
   "assumption",
@@ -106,12 +107,17 @@ export async function resolveGeneratedLiteratureQueries(
   }
 
   try {
-    const completion = await input.llm.complete(
-      buildLiteratureQueryPrompt(input.run, input.rawBrief, input.extractedBriefTopic),
-      {
-        systemPrompt: buildLiteratureQuerySystemPrompt(),
-        abortSignal: input.abortSignal
-      }
+    const completion = await withLiteratureQueryTimeout(
+      (signal) =>
+        input.llm.complete(
+          buildLiteratureQueryPrompt(input.run, input.rawBrief, input.extractedBriefTopic),
+          {
+            systemPrompt: buildLiteratureQuerySystemPrompt(),
+            abortSignal: signal
+          }
+        ),
+      resolveLiteratureQueryTimeoutMs(),
+      input.abortSignal
     );
     const plan = parseGeneratedLiteratureQueries(completion.text);
     await input.runContextMemory.put(QUERY_PLAN_CACHE_KEY, {
@@ -367,4 +373,52 @@ function isUsableSemanticScholarQuery(query: string): boolean {
     return false;
   }
   return !tokens.every((token) => PLACEHOLDER_QUERY_TOKENS.has(token));
+}
+
+function resolveLiteratureQueryTimeoutMs(): number {
+  const configured = Number.parseInt(process.env.AUTOLABOS_LITERATURE_QUERY_TIMEOUT_MS || "", 10);
+  return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_LITERATURE_QUERY_TIMEOUT_MS;
+}
+
+async function withLiteratureQueryTimeout<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+  outerAbortSignal?: AbortSignal
+): Promise<T> {
+  const controller = new AbortController();
+  let timeoutHandle: NodeJS.Timeout | undefined;
+  let timedOut = false;
+  const abortFromOuterSignal = () => controller.abort();
+
+  if (outerAbortSignal) {
+    if (outerAbortSignal.aborted) {
+      controller.abort();
+    } else {
+      outerAbortSignal.addEventListener("abort", abortFromOuterSignal, { once: true });
+    }
+  }
+
+  const operationPromise = operation(controller.signal);
+  void operationPromise.catch(() => undefined);
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeoutHandle = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+      reject(new Error(`literature_query_timeout_after_${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([operationPromise, timeoutPromise]);
+  } catch (error) {
+    if (timedOut) {
+      throw new Error(`literature_query_timeout_after_${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+    outerAbortSignal?.removeEventListener("abort", abortFromOuterSignal);
+  }
 }

@@ -52,6 +52,7 @@ export interface MarkdownRunBriefSections {
   failureConditions?: string;
   manuscriptFormat?: string;
   manuscriptTemplate?: string;
+  appendixPreferences?: string;
 }
 
 const RUN_BRIEF_TIMEOUT_REASONING = "medium";
@@ -192,7 +193,8 @@ export function parseMarkdownRunBriefSections(markdown: string): MarkdownRunBrie
     paperWorthinessGate: collapseMarkdownSection(sections.paperWorthinessGate),
     failureConditions: collapseMarkdownSection(sections.failureConditions),
     manuscriptFormat: collapseMarkdownSection(sections.manuscriptFormat),
-    manuscriptTemplate: collapseMarkdownSection(sections.manuscriptTemplate)
+    manuscriptTemplate: collapseMarkdownSection(sections.manuscriptTemplate),
+    appendixPreferences: collapseMarkdownSection(sections.appendixPreferences)
   };
 }
 
@@ -262,7 +264,7 @@ function buildRunBriefPrompt(
     "- If the brief already has an explicit Topic/주제 field, preserve its wording closely and do not fold constraints into the topic.",
     "- For generalized briefs, keep topic close to the core literature question; do not inject operational qualifiers like resource-aware, CPU-only, runtime, memory, or small public datasets unless they already appear in the explicit topic.",
     "- objective_metric should be the main success criterion or metric.",
-    "- constraints should capture explicit limits, required datasets/tools, time windows, venue style, or resource constraints.",
+    "- constraints should capture explicit limits, required datasets/tools, time windows, manuscript-template constraints, or resource constraints.",
     "- Preserve one constraint per bullet/item when the brief uses a list.",
     "- plan_summary should preserve experimental intent that does not fit neatly into topic/objective/constraints.",
     "- If a field is missing, fall back to the provided defaults only when necessary.",
@@ -597,6 +599,11 @@ function mapMarkdownHeadingToSection(value: string): keyof MarkdownRunBriefSecti
     case "paper template":
     case "template":
       return "manuscriptTemplate";
+    case "appendix preferences":
+    case "appendix preference":
+    case "appendix policy":
+    case "appendix routing":
+      return "appendixPreferences";
     default:
       return undefined;
   }

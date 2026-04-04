@@ -20,7 +20,7 @@ import {
 } from "./validation/harnessValidationService.js";
 
 export interface DoctorRunOptions {
-  llmMode?: "codex_chatgpt_only" | "openai_api" | "ollama";
+  llmMode?: "codex" | "codex_chatgpt_only" | "openai_api" | "ollama";
   pdfAnalysisMode?: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
   openAiApiKeyConfigured?: boolean;
   codexResearchModel?: string;
@@ -57,7 +57,7 @@ export interface DoctorReadinessSnapshot {
   workspaceRoot: string;
   workspaceProbePath: string;
   blocked: boolean;
-  llmMode?: "codex_chatgpt_only" | "openai_api" | "ollama";
+  llmMode?: "codex" | "codex_chatgpt_only" | "openai_api" | "ollama";
   pdfAnalysisMode?: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
   approvalMode: WorkflowApprovalMode;
   executionApprovalMode: "manual" | "risk_ack" | "full_auto";
@@ -115,6 +115,7 @@ export async function runDoctorReport(
   const manualOverride = opts?.manualOverride === true;
   const requiresCodexChecks =
     !opts ||
+    opts.llmMode === "codex" ||
     opts.llmMode === "codex_chatgpt_only" ||
     opts.pdfAnalysisMode === "codex_text_image_hybrid";
 
@@ -137,7 +138,7 @@ export async function runDoctorReport(
     }
   }
 
-  if (opts?.llmMode === "codex_chatgpt_only" && opts.codexResearchModel) {
+  if ((opts?.llmMode === "codex" || opts?.llmMode === "codex_chatgpt_only") && opts.codexResearchModel) {
     checks.push(buildCodexModelCheck("codex-research-backend-model", "research backend", opts.codexResearchModel));
   }
 

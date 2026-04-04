@@ -97,14 +97,6 @@ function makeBaseConfig(): AppConfig {
     workflow: { mode: "agent_approval", wizard_enabled: true, approval_mode: "minimal" },
     experiments: { runner: "local_python", timeout_sec: 3600, allow_network: false },
     paper: { template: "acl", build_pdf: true, latex_engine: "auto_install" },
-    paper_profile: {
-      venue_style: "acl_long",
-      main_page_limit: 8,
-      references_counted: false,
-      appendix_allowed: true,
-      appendix_format: "double_column",
-      prefer_appendix_for: ["hyperparameter_grids"]
-    },
     paths: { runs_dir: ".autolabos/runs", logs_dir: ".autolabos/logs" }
   };
 }

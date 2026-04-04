@@ -1,168 +1,11 @@
 /**
- * Structured paper critique artifact, venue-style profiles,
- * and builder logic for pre-draft and post-draft manuscript gating.
+ * Structured paper critique artifact and builder logic for
+ * pre-draft and post-draft manuscript gating.
  */
 
 import type { ReviewFinding, ReviewScorecard, ReviewDecision, ReviewArtifactPresence } from "./reviewSystem.js";
 import type { MinimumGateCeiling } from "./analysis/paperMinimumGate.js";
 import type { TransitionAction, GraphNodeId } from "../types.js";
-
-// ---------------------------------------------------------------------------
-// Venue style types
-// ---------------------------------------------------------------------------
-
-export type VenueStyleId =
-  | "acl"
-  | "aaai"
-  | "icml"
-  | "neurips"
-  | "iclr"
-  | "generic_nlp_conference"
-  | "generic_ml_conference"
-  | "generic_cs_paper";
-
-export const VENUE_STYLE_IDS: readonly VenueStyleId[] = [
-  "acl",
-  "aaai",
-  "icml",
-  "neurips",
-  "iclr",
-  "generic_nlp_conference",
-  "generic_ml_conference",
-  "generic_cs_paper"
-] as const;
-
-export const DEFAULT_VENUE_STYLE: VenueStyleId = "generic_cs_paper";
-
-export interface VenueStyleProfile {
-  id: VenueStyleId;
-  label: string;
-  title_style: string;
-  abstract_style: string;
-  intro_framing: string;
-  section_emphasis: string[];
-  related_work_placement: string;
-  experiment_presentation: string;
-  discussion_limitations_emphasis: string;
-  appendix_policy: string;
-  tone_claim_discipline: string;
-  expected_strengths: string[];
-}
-
-export const VENUE_PROFILES: Readonly<Record<VenueStyleId, VenueStyleProfile>> = {
-  acl: {
-    id: "acl",
-    label: "ACL / *ACL Venue",
-    title_style: "Concise, task-focused title. Name the task and approach clearly.",
-    abstract_style: "Structured: problem → approach → key result → takeaway. 150-250 words.",
-    intro_framing: "Motivate from a concrete NLP/CL task. Position contribution clearly within 1-2 paragraphs.",
-    section_emphasis: ["introduction", "related_work", "method", "experiments", "analysis", "limitations"],
-    related_work_placement: "Dedicated Related Work section, typically after Introduction. Deep positioning against task-specific prior work.",
-    experiment_presentation: "Task-oriented evaluation with dataset/metric tables. Error analysis and ablation expected.",
-    discussion_limitations_emphasis: "Explicit Limitations section required. Discuss scope, data bias, generalization limits.",
-    appendix_policy: "Appendix allowed and encouraged for supplementary experiments, prompts, dataset details.",
-    tone_claim_discipline: "Moderate claim strength. Prefer 'our approach achieves/shows' over 'we prove/demonstrate superiority'.",
-    expected_strengths: ["task motivation", "error analysis", "linguistic insight", "reproducibility details", "limitation honesty"]
-  },
-  aaai: {
-    id: "aaai",
-    label: "AAAI Conference",
-    title_style: "Clear, broad-audience title. Accessible to general AI researchers.",
-    abstract_style: "Concise problem statement, method summary, key quantitative result. 150-200 words.",
-    intro_framing: "Broad AI motivation narrowing to specific contribution. Crisp contribution list.",
-    section_emphasis: ["introduction", "related_work", "method", "experiments", "conclusion"],
-    related_work_placement: "Typically after Introduction or before Conclusion. Balanced breadth.",
-    experiment_presentation: "Balanced method description and empirical evaluation. Clear baselines.",
-    discussion_limitations_emphasis: "Brief discussion expected. Limitations can be in Conclusion or separate section.",
-    appendix_policy: "Appendix allowed but space-constrained. Prioritize main-body clarity.",
-    tone_claim_discipline: "Clear, measured claims. Avoid superlatives without strong evidence.",
-    expected_strengths: ["broad accessibility", "crisp contributions", "balanced method+empirics", "clear baselines"]
-  },
-  icml: {
-    id: "icml",
-    label: "ICML Conference",
-    title_style: "Method-focused title. Can be technical. Name the algorithm/framework.",
-    abstract_style: "Problem → method → theoretical/empirical contribution. Concise, ~200 words.",
-    intro_framing: "Methodological motivation. What gap does this method fill? Formal problem statement welcome.",
-    section_emphasis: ["introduction", "method", "theoretical_analysis", "experiments", "related_work", "conclusion"],
-    related_work_placement: "Often after experiments or before conclusion. Concise but thorough on methodological lineage.",
-    experiment_presentation: "Rigorous experimental protocol. Multiple datasets, ablations, statistical significance, hyperparameter sensitivity.",
-    discussion_limitations_emphasis: "Discussion of method limitations expected. Broader impact statement may be required.",
-    appendix_policy: "Extended appendix common for proofs, additional experiments, implementation details.",
-    tone_claim_discipline: "Precise technical claims. Support with theory or comprehensive experiments.",
-    expected_strengths: ["methodological rigor", "ablations", "statistical clarity", "theoretical grounding"]
-  },
-  neurips: {
-    id: "neurips",
-    label: "NeurIPS Conference",
-    title_style: "Can be creative or technical. Should convey the core idea succinctly.",
-    abstract_style: "Clear problem setup, approach, and key finding. 200-250 words.",
-    intro_framing: "Motivate from ML perspective. Can start with broader scientific question. Position clearly.",
-    section_emphasis: ["introduction", "method", "experiments", "analysis", "broader_impact", "conclusion"],
-    related_work_placement: "Flexible placement. Can be integrated into introduction or standalone. Thorough positioning expected.",
-    experiment_presentation: "Comprehensive evaluation. Multiple baselines, ablation studies, computational cost analysis. Reproducibility checklist.",
-    discussion_limitations_emphasis: "Broader Impact section expected. Limitations discussion valued highly.",
-    appendix_policy: "Supplementary material expected for additional experiments, proofs, reproducibility details.",
-    tone_claim_discipline: "Precise and measured. Clearly distinguish main claims from observations.",
-    expected_strengths: ["experimental thoroughness", "reproducibility", "broader impact awareness", "ablation depth"]
-  },
-  iclr: {
-    id: "iclr",
-    label: "ICLR Conference",
-    title_style: "Clear and informative. Should convey the learning-related contribution.",
-    abstract_style: "Problem framing, approach, key empirical/theoretical results. ~200 words.",
-    intro_framing: "Representation-learning or generalization perspective. Clear research question.",
-    section_emphasis: ["introduction", "method", "experiments", "analysis", "related_work", "conclusion"],
-    related_work_placement: "Typically after introduction or before conclusion. Positioning against representation-learning literature.",
-    experiment_presentation: "Strong empirical evaluation. Multiple tasks/domains, ablation, analysis of learned representations.",
-    discussion_limitations_emphasis: "Limitations expected. Societal impact discussion may be required.",
-    appendix_policy: "Supplementary material common. Additional experiments and implementation details.",
-    tone_claim_discipline: "Evidence-based claims. Avoid unfounded generalization beyond evaluated settings.",
-    expected_strengths: ["empirical rigor", "representation analysis", "cross-domain evaluation", "clear research question"]
-  },
-  generic_nlp_conference: {
-    id: "generic_nlp_conference",
-    label: "Generic NLP Conference",
-    title_style: "Task-focused. Name the NLP task and approach.",
-    abstract_style: "Problem → approach → key metric improvement → brief takeaway. 150-250 words.",
-    intro_framing: "NLP task motivation. Concrete examples when possible.",
-    section_emphasis: ["introduction", "related_work", "method", "experiments", "analysis", "limitations"],
-    related_work_placement: "Dedicated section after introduction. Task-specific positioning.",
-    experiment_presentation: "Standard NLP evaluation: dataset, metric, baseline comparison, error analysis.",
-    discussion_limitations_emphasis: "Limitations section expected. Discuss data/task scope limits.",
-    appendix_policy: "Appendix for additional results, examples, dataset details.",
-    tone_claim_discipline: "Moderate claims grounded in experimental results.",
-    expected_strengths: ["task relevance", "error analysis", "baseline comparison", "data transparency"]
-  },
-  generic_ml_conference: {
-    id: "generic_ml_conference",
-    label: "Generic ML Conference",
-    title_style: "Method or contribution-focused. Technical audience.",
-    abstract_style: "Problem statement, method, key result. ~200 words.",
-    intro_framing: "ML problem framing. Clear gap identification.",
-    section_emphasis: ["introduction", "method", "experiments", "analysis", "related_work", "conclusion"],
-    related_work_placement: "Flexible. Can be early or late. Cover methodological ancestors.",
-    experiment_presentation: "Multiple baselines, ablation studies, statistical reporting.",
-    discussion_limitations_emphasis: "Limitations and future work expected.",
-    appendix_policy: "Supplementary material for additional experiments and proofs.",
-    tone_claim_discipline: "Precise claims backed by experiments. Distinguish contributions from observations.",
-    expected_strengths: ["methodological clarity", "ablations", "statistical rigor", "reproducibility"]
-  },
-  generic_cs_paper: {
-    id: "generic_cs_paper",
-    label: "Generic CS Paper",
-    title_style: "Clear and descriptive. Accessible to broad CS audience.",
-    abstract_style: "Problem, approach, result. 150-250 words.",
-    intro_framing: "Motivate from a practical or theoretical CS problem.",
-    section_emphasis: ["introduction", "related_work", "method", "evaluation", "conclusion"],
-    related_work_placement: "Dedicated section, typically after introduction.",
-    experiment_presentation: "Clear evaluation with appropriate baselines and metrics.",
-    discussion_limitations_emphasis: "Discuss limitations and future directions.",
-    appendix_policy: "Optional appendix for supplementary material.",
-    tone_claim_discipline: "Balanced claims. Do not overstate beyond demonstrated results.",
-    expected_strengths: ["clarity", "sound evaluation", "practical relevance", "honest limitations"]
-  }
-};
 
 // ---------------------------------------------------------------------------
 // Manuscript type classification
@@ -203,8 +46,7 @@ export type CritiqueCategory =
   | "reproducibility"
   | "limitations_honesty"
   | "writing_clarity"
-  | "artifact_consistency"
-  | "venue_style_fit";
+  | "artifact_consistency";
 
 export type CritiqueSeverity = "low" | "medium" | "high" | "blocking";
 
@@ -231,7 +73,6 @@ export interface CritiqueCategoryScore {
 export interface PaperCritique {
   stage: CritiqueStage;
   generated_at: string;
-  target_venue_style: VenueStyleId;
 
   manuscript_type: ManuscriptType;
   overall_decision: CritiqueDecision;
@@ -255,27 +96,6 @@ export interface PaperCritique {
   needs_additional_statistics: boolean;
   needs_additional_related_work: boolean;
   needs_design_revision: boolean;
-
-  venue_style_notes: string;
-  style_mismatches: string[];
-  style_repairable_locally: boolean;
-}
-
-// ---------------------------------------------------------------------------
-// Venue style resolution
-// ---------------------------------------------------------------------------
-
-export function resolveVenueStyle(value: string | undefined | null): VenueStyleId {
-  if (!value) return DEFAULT_VENUE_STYLE;
-  const normalized = value.toLowerCase().trim().replace(/[\s-]+/g, "_");
-  if (VENUE_STYLE_IDS.includes(normalized as VenueStyleId)) {
-    return normalized as VenueStyleId;
-  }
-  return DEFAULT_VENUE_STYLE;
-}
-
-export function getVenueProfile(style: VenueStyleId): VenueStyleProfile {
-  return VENUE_PROFILES[style] ?? VENUE_PROFILES[DEFAULT_VENUE_STYLE];
 }
 
 // ---------------------------------------------------------------------------
@@ -291,8 +111,7 @@ const UPSTREAM_EVIDENCE_CATEGORIES = new Set<CritiqueCategory>([
 ]);
 
 const LOCAL_STYLE_CATEGORIES = new Set<CritiqueCategory>([
-  "writing_clarity",
-  "venue_style_fit"
+  "writing_clarity"
 ]);
 
 export function isUpstreamEvidenceDeficit(issue: CritiqueIssue): boolean {
@@ -331,7 +150,6 @@ export function classifyIssueBacktrackTarget(issue: CritiqueIssue): GraphNodeId 
 // ---------------------------------------------------------------------------
 
 export interface PreDraftCritiqueInput {
-  venueStyle: VenueStyleId;
   scorecard: ReviewScorecard;
   decision: ReviewDecision;
   findings: ReviewFinding[];
@@ -340,17 +158,10 @@ export interface PreDraftCritiqueInput {
 }
 
 export function buildPreDraftCritique(input: PreDraftCritiqueInput): PaperCritique {
-  const venueProfile = getVenueProfile(input.venueStyle);
   const categoryScores = buildCategoryScoresFromReview(input.scorecard, input.findings, input.presence);
   const issues = buildIssuesFromFindings(input.findings, "pre_draft_review");
   const blockingIssues = issues.filter((i) => i.severity === "blocking" || i.severity === "high");
   const nonBlockingIssues = issues.filter((i) => i.severity !== "blocking" && i.severity !== "high");
-
-  // Style fit assessment
-  const styleMismatches = assessPreDraftStyleFit(input, venueProfile);
-  const styleNotes = styleMismatches.length > 0
-    ? `${styleMismatches.length} venue-style concern(s) identified for ${venueProfile.label}.`
-    : `Evidence package appears compatible with ${venueProfile.label} style.`;
 
   // Manuscript type classification
   const classifiedManuscriptType = classifyManuscriptType(categoryScores, blockingIssues, input.presence);
@@ -378,7 +189,6 @@ export function buildPreDraftCritique(input: PreDraftCritiqueInput): PaperCritiq
   return {
     stage: "pre_draft_review",
     generated_at: new Date().toISOString(),
-    target_venue_style: input.venueStyle,
     manuscript_type: manuscriptType,
     overall_decision: overallDecision,
     overall_score: overallScore,
@@ -399,10 +209,7 @@ export function buildPreDraftCritique(input: PreDraftCritiqueInput): PaperCritiq
     needs_additional_experiments: needsExperiments,
     needs_additional_statistics: needsStatistics,
     needs_additional_related_work: needsRelatedWork < 2,
-    needs_design_revision: needsDesign,
-    venue_style_notes: styleNotes,
-    style_mismatches: styleMismatches,
-    style_repairable_locally: true
+    needs_design_revision: needsDesign
   };
 }
 
@@ -411,7 +218,6 @@ export function buildPreDraftCritique(input: PreDraftCritiqueInput): PaperCritiq
 // ---------------------------------------------------------------------------
 
 export interface PostDraftCritiqueInput {
-  venueStyle: VenueStyleId;
   preDraftCritique: PaperCritique | null;
   gateDecision: {
     status: "pass" | "warn" | "fail";
@@ -443,18 +249,10 @@ export interface PostDraftCritiqueInput {
 }
 
 export function buildPostDraftCritique(input: PostDraftCritiqueInput): PaperCritique {
-  const venueProfile = getVenueProfile(input.venueStyle);
   const categoryScores = buildCategoryScoresFromPostDraft(input);
   const issues = buildIssuesFromPostDraft(input);
   const blockingIssues = issues.filter((i) => i.severity === "blocking" || i.severity === "high");
   const nonBlockingIssues = issues.filter((i) => i.severity !== "blocking" && i.severity !== "high");
-
-  // Style fit assessment
-  const styleMismatches = assessPostDraftStyleFit(input, venueProfile);
-  const styleNotes = styleMismatches.length > 0
-    ? `${styleMismatches.length} style mismatch(es) for ${venueProfile.label}. ${styleMismatches.length <= 3 ? "Repairable locally." : "Consider restructuring."}`
-    : `Manuscript structure appears compatible with ${venueProfile.label} style.`;
-  const styleRepairable = styleMismatches.length <= 3;
 
   // Manuscript type
   const manuscriptType = classifyPostDraftManuscriptType(input, blockingIssues);
@@ -467,12 +265,8 @@ export function buildPostDraftCritique(input: PostDraftCritiqueInput): PaperCrit
   const needsDesign = blockingIssues.some((i) => i.category === "methodological_completeness");
 
   // Compare with pre-draft
-  const improved = input.preDraftCritique
-    ? computeOverallScore(categoryScores) >= input.preDraftCritique.overall_score
-    : true;
-
   // Overall decision
-  const overallDecision = computePostDraftDecision(input, blockingIssues, manuscriptType, improved, styleRepairable);
+  const overallDecision = computePostDraftDecision(input, blockingIssues);
   const overallScore = computeOverallScore(categoryScores);
   const confidence = computePostDraftConfidence(input, blockingIssues);
 
@@ -482,7 +276,6 @@ export function buildPostDraftCritique(input: PostDraftCritiqueInput): PaperCrit
   return {
     stage: "post_draft_review",
     generated_at: new Date().toISOString(),
-    target_venue_style: input.venueStyle,
     manuscript_type: manuscriptType,
     overall_decision: overallDecision,
     overall_score: overallScore,
@@ -501,10 +294,7 @@ export function buildPostDraftCritique(input: PostDraftCritiqueInput): PaperCrit
     needs_additional_experiments: needsExperiments,
     needs_additional_statistics: needsStatistics,
     needs_additional_related_work: needsRelatedWork,
-    needs_design_revision: needsDesign,
-    venue_style_notes: styleNotes,
-    style_mismatches: styleMismatches,
-    style_repairable_locally: styleRepairable
+    needs_design_revision: needsDesign
   };
 }
 
@@ -617,11 +407,6 @@ function buildCategoryScoresFromReview(
         presence.evidenceStorePresent && presence.hypothesesPresent ? 3 : 2
       ),
       rationale: "Based on artifact presence check."
-    },
-    {
-      category: "venue_style_fit",
-      score_1_to_5: 3,
-      rationale: "Venue style fit is assessed during post-draft review."
     }
   ];
 }
@@ -664,46 +449,6 @@ function mapReviewSeverity(sev: string): CritiqueSeverity {
     case "low": return "medium";
     default: return "low";
   }
-}
-
-function assessPreDraftStyleFit(input: PreDraftCritiqueInput, profile: VenueStyleProfile): string[] {
-  const mismatches: string[] = [];
-
-  // Check if critical venue-expected sections have adequate evidence
-  if (profile.section_emphasis.includes("analysis") && !input.presence.metricsPresent) {
-    mismatches.push(`${profile.label} expects analysis/ablation but metrics artifacts are missing.`);
-  }
-  if (profile.section_emphasis.includes("limitations") &&
-      (input.scorecard.dimensions.find((d) => d.dimension === "integrity")?.score_1_to_5 ?? 3) < 2) {
-    mismatches.push(`${profile.label} expects explicit limitations but integrity score is low.`);
-  }
-  return mismatches;
-}
-
-function assessPostDraftStyleFit(input: PostDraftCritiqueInput, profile: VenueStyleProfile): string[] {
-  const mismatches: string[] = [];
-  const sections = new Set(input.manuscriptSections.map((s) => s.toLowerCase()));
-
-  // Check section emphasis
-  for (const expected of profile.section_emphasis) {
-    const normalized = expected.toLowerCase().replace(/_/g, " ");
-    const found = [...sections].some(
-      (s) => s.includes(normalized) || normalized.includes(s)
-    );
-    if (!found && expected !== "broader_impact" && expected !== "theoretical_analysis") {
-      mismatches.push(`${profile.label} expects a '${expected}' section but none was found.`);
-    }
-  }
-
-  // Check evidence richness for venues that emphasize rigor
-  if (
-    (profile.id === "icml" || profile.id === "neurips" || profile.id === "iclr") &&
-    input.evidenceDiagnostics.thin_sections.length > 0
-  ) {
-    mismatches.push(`${profile.label} expects strong empirical depth but ${input.evidenceDiagnostics.thin_sections.length} section(s) are thin on evidence.`);
-  }
-
-  return mismatches;
 }
 
 function classifyManuscriptType(
@@ -887,10 +632,7 @@ function computePreDraftDecision(
 
 function computePostDraftDecision(
   input: PostDraftCritiqueInput,
-  blockingIssues: CritiqueIssue[],
-  manuscriptType: ManuscriptType,
-  improved: boolean,
-  styleRepairable: boolean
+  blockingIssues: CritiqueIssue[]
 ): CritiqueDecision {
   // Gate failure means serious problems
   if (input.gateDecision.status === "fail") {
@@ -910,13 +652,6 @@ function computePostDraftDecision(
   // Single upstream issue that's severe enough
   if (upstreamIssues.length === 1 && upstreamIssues[0].severity === "blocking") {
     return findDominantBacktrack(upstreamIssues);
-  }
-
-  // Style-only problems → local repair
-  const allBlockersAreStyle = blockingIssues.length > 0 &&
-    blockingIssues.every(isLocalStyleIssue);
-  if (allBlockersAreStyle && styleRepairable) {
-    return "repair_then_retry";
   }
 
   // Moderate issues that don't need upstream work
@@ -1077,11 +812,6 @@ function buildCategoryScoresFromPostDraft(input: PostDraftCritiqueInput): Critiq
       rationale: input.submissionValidation.ok
         ? "Submission validation passed."
         : `Submission validation failed with ${input.submissionValidation.issues.length} issue(s).`
-    },
-    {
-      category: "venue_style_fit",
-      score_1_to_5: 3,
-      rationale: "Assessed via style mismatch analysis."
     }
   ];
 }

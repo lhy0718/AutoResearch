@@ -196,6 +196,8 @@ Der Brief ist nicht nur ein Startdokument. Er ist der governed contract für ein
 
 Mit anderen Worten: Der Brief ist nicht nur Teil des Prompts. Er ist Teil des Audit Trails.
 
+Im aktuellen Vertrag speichert `.autolabos/config.yaml` vor allem Provider-/Runtime-Defaults und Workspace-Policy. Die run-spezifische Forschungsabsicht, Evidence-Schwellen, Baseline-Erwartungen, Manuscript-Format-Ziele und der Pfad zum Manuscript-Template gehören dagegen in den Brief. Deshalb kann der persistierte Config `research`-Defaults sowie einige manuscript-profile- bzw. paper-template-Felder auslassen.
+
 ```bash
 /new
 /brief start --latest

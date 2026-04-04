@@ -17,7 +17,7 @@ const RELATED_WORK_ENRICHMENT_MAX_PAPERS = 2;
 
 interface RelatedWorkEnrichmentAnalysisSignature {
   pdf_mode: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
-  llm_mode?: "codex_chatgpt_only" | "openai_api" | "ollama";
+  llm_mode?: "codex" | "codex_chatgpt_only" | "openai_api" | "ollama";
   backend: "openai_research_backend" | "codex_research_backend" | "ollama_research_backend";
   model?: string;
   reasoning_effort?: string;
@@ -386,7 +386,7 @@ function parseJsonl<T>(raw: string): T[] {
 
 function buildEnrichmentAnalysisSignature(config: AppConfig): RelatedWorkEnrichmentAnalysisSignature {
   const pdfMode = getPdfAnalysisModeForConfig(config);
-  const llmMode = config.providers?.llm_mode || "codex_chatgpt_only";
+  const llmMode = config.providers?.llm_mode || "codex";
   if (llmMode === "openai_api") {
     return {
       pdf_mode: pdfMode,

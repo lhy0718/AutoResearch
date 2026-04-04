@@ -117,6 +117,17 @@ class HangingResponsesPdfClient {
   }
 }
 
+class ForbiddenDownloadResponsesPdfClient {
+  callCount = 0;
+
+  async analyzePdf(): Promise<{ text: string }> {
+    this.callCount += 1;
+    throw new Error(
+      'Responses API request failed: 400 {"error":{"message":"Error while downloading http://www.thelancet.com/article/S2589750023002029/pdf. Upstream status code: 403.","type":"invalid_request_error","param":"url","code":"invalid_value"}}'
+    );
+  }
+}
+
 class PlannerImageSensitiveLLM extends MockLLMClient {
   plannerCallsWithImages = 0;
   extractorCallsWithImages = 0;
@@ -623,6 +634,30 @@ describe("paperAnalyzer", () => {
       progress.some((message) =>
         message.includes("PDF analysis attempt 1/2 failed: extractor exceeded the 10ms timeout")
       )
+    ).toBe(true);
+  });
+
+  it("does not retry the remote Responses PDF path when download failures should fall back locally", async () => {
+    const client = new ForbiddenDownloadResponsesPdfClient();
+    const progress: string[] = [];
+
+    await expect(
+      analyzePaperWithResponsesPdf({
+        client: client as unknown as ResponsesPdfAnalysisClient,
+        paper,
+        pdfUrl: "http://www.thelancet.com/article/S2589750023002029/pdf",
+        model: "gpt-5.4",
+        maxAttempts: 2,
+        onProgress: (message) => progress.push(message)
+      })
+    ).rejects.toThrow("Upstream status code: 403");
+
+    expect(client.callCount).toBe(2);
+    expect(
+      progress.some((message) => message.includes("PDF analysis attempt 1/2 failed"))
+    ).toBe(true);
+    expect(
+      progress.every((message) => !message.includes("PDF analysis attempt 2/2"))
     ).toBe(true);
   });
 

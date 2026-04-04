@@ -268,7 +268,8 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         runContextMemory,
         llm: deps.llm,
         eventStream: deps.eventStream,
-        node: "collect_papers"
+        node: "collect_papers",
+        abortSignal
       });
       const requestFromContext = await runContextMemory.get<CollectPapersNodeRequest>("collect_papers.request");
       const rawBrief = await runContextMemory.get<string>("run_brief.raw");

@@ -502,12 +502,38 @@ function buildDeterministicPhraseBundleQueries(value: string | undefined): strin
     queries.push(normalized);
   };
   const quoted = (phrase: string): string => `"${phrase}"`;
+  const lora = phrases.find((phrase) => /^(low-rank adaptation|lora)$/iu.test(phrase)) || undefined;
+  const instructionTuning =
+    phrases.find((phrase) => /^instruction (?:fine-)?tuning$/iu.test(phrase)) || undefined;
+  const modelFamily = phrases.find((phrase) => /\bmistral(?:\s+7b)?\b/iu.test(phrase)) || undefined;
+  const adapterAxes = Array.from(
+    new Set(
+      phrases.filter((phrase) => /^(lora rank|lora dropout)$/iu.test(phrase))
+    )
+  );
   const anchor = phrases.find((phrase) => /language models?$/iu.test(phrase)) || phrases[0];
   const reasoning =
     phrases.find((phrase) => /test-time|reasoning|reasoners?|math reasoning/iu.test(phrase)) || undefined;
   const adaptive = phrases.find((phrase) => /^adaptive\b/iu.test(phrase)) || undefined;
   const structured = phrases.find((phrase) => /^structured\b/iu.test(phrase)) || undefined;
   const budget = phrases.find((phrase) => /budget|inference/iu.test(phrase)) || undefined;
+
+  if (lora && instructionTuning) {
+    pushQuery(`+${quoted(lora)} +${quoted(instructionTuning)}`);
+  }
+  if (lora && instructionTuning && modelFamily) {
+    pushQuery(`+${quoted(lora)} +${quoted(instructionTuning)} +${quoted(modelFamily)}`);
+  }
+  if (lora && adapterAxes.length > 0) {
+    pushQuery(
+      adapterAxes.length === 1
+        ? `+${quoted(lora)} +${quoted(adapterAxes[0])}`
+        : `+${quoted(lora)} +(${adapterAxes.map((phrase) => quoted(phrase)).join(" | ")})`
+    );
+  }
+  if (instructionTuning && modelFamily) {
+    pushQuery(`+${quoted(instructionTuning)} +${quoted(modelFamily)}`);
+  }
 
   if (anchor && reasoning && anchor !== reasoning) {
     pushQuery(`+${quoted(anchor)} +${quoted(reasoning)}`);
@@ -559,6 +585,22 @@ function collectDeterministicResearchPhrases(value: string | undefined): string[
     pushPhrase("small language models");
   } else if (/\blanguage\s+models?\b/u.test(text)) {
     pushPhrase("language models");
+  }
+
+  if (/\blora\b/u.test(text) || /\blow[-\s]?rank adaptation\b/u.test(text)) {
+    pushPhrase("low-rank adaptation");
+  }
+  if (/\binstruction\b/u.test(text) && /\b(?:fine[-\s]?tuning|tuning)\b/u.test(text)) {
+    pushPhrase("instruction tuning");
+  }
+  if (/\bmistral(?:[-\s]?7b)?(?:[-\s]?v?\d+(?:\.\d+)*)?\b/u.test(text)) {
+    pushPhrase("mistral 7b");
+  }
+  if (/\blora\b/u.test(text) && /\brank\b/u.test(text)) {
+    pushPhrase("lora rank");
+  }
+  if (/\blora\b/u.test(text) && /\bdropout\b/u.test(text)) {
+    pushPhrase("lora dropout");
   }
 
   if (/\btest[-\s]?time\b/u.test(text) && /\breason/u.test(text)) {

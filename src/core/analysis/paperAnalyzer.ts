@@ -248,6 +248,9 @@ export async function analyzePaperWithResponsesPdf(args: {
       args.onProgress?.(
         `PDF analysis attempt ${attempt}/${maxAttempts} failed: ${describeAnalysisAttemptFailureReason(lastError)}`
       );
+      if (shouldFallbackResponsesPdfToLocalText(lastError)) {
+        throw lastError;
+      }
       if (isPaperAnalysisTimeoutError(lastError)) {
         throw lastError;
       }

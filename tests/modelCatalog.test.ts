@@ -56,7 +56,8 @@ describe("modelCatalog", () => {
   it("marks only the standard gpt-5.4 option as recommended", () => {
     expect(isRecommendedCodexModelSelection(RECOMMENDED_CODEX_MODEL)).toBe(true);
     expect(isRecommendedCodexModelSelection(GPT_5_4_FAST_MODEL_LABEL)).toBe(false);
-    expect(isRecommendedCodexModelSelection(DEFAULT_CODEX_MODEL)).toBe(false);
+    expect(DEFAULT_CODEX_MODEL).toBe("gpt-5.4");
+    expect(isRecommendedCodexModelSelection(DEFAULT_CODEX_MODEL)).toBe(true);
   });
 
   it("exposes xhigh for Codex models that document it", () => {

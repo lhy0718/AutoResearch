@@ -3661,11 +3661,12 @@ export class TerminalApp {
     const configuredLimit = Math.max(1, this.config.papers.max_results);
     const fetchCount = request.additional ? corpusCount + request.additional : request.limit ?? configuredLimit;
     const targetTotal = request.additional ? corpusCount + request.additional : fetchCount;
-    const query = request.query?.trim() || run.topic;
+    const explicitQuery = request.query?.trim() || undefined;
+    const query = explicitQuery || run.topic;
     const filters = normalizeCollectFiltersForNode(request);
     const endpoint = request.sort.field === "relevance" ? "/paper/search" : "/paper/search/bulk";
     const nodeRequest = {
-      query,
+      query: explicitQuery,
       limit: fetchCount,
       additional: request.additional,
       sort: request.sort,
@@ -3926,7 +3927,7 @@ export class TerminalApp {
         return;
       }
       this.config.providers.ollama!.chat_model = chatModel;
-    } else if (llmMode === "codex_chatgpt_only") {
+    } else if (llmMode === "codex" || llmMode === "codex_chatgpt_only") {
       const chatSlot = await this.selectCodexSlot(
         "general chat",
         this.getCurrentCodexSlotSelection("chat"),
@@ -4257,7 +4258,7 @@ export class TerminalApp {
   private buildPrimaryLlmProviderOptions(): SelectionMenuOption[] {
     return [
       {
-        value: "codex_chatgpt_only",
+        value: "codex",
         label: "codex_cli",
         description: "Use the Codex CLI backend (ChatGPT sign-in)."
       },

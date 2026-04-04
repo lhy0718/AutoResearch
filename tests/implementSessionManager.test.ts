@@ -7,7 +7,11 @@ import path from "node:path";
 
 import { ensureScaffold, resolveAppPaths } from "../src/config.js";
 import { InMemoryEventStream } from "../src/core/events.js";
-import { getImplementLlmTimeoutMs, ImplementSessionManager } from "../src/core/agents/implementSessionManager.js";
+import {
+  extractWorkspacePathsFromCommand,
+  getImplementLlmTimeoutMs,
+  ImplementSessionManager
+} from "../src/core/agents/implementSessionManager.js";
 import { createImplementExperimentsNode } from "../src/core/nodes/implementExperiments.js";
 import {
   buildExperimentComparisonContract,
@@ -122,6 +126,28 @@ function initGitWorkspace(workspace: string, trackedFiles: string[]): void {
 }
 
 describe("ImplementSessionManager", () => {
+  it("extracts workspace paths from heredoc assignment tokens without including the shell variable prefix", () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-paths-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "outputs", "experiment", "experiment.py");
+    mkdirSync(path.dirname(scriptPath), { recursive: true });
+    writeFileSync(scriptPath, "print('ok')\n", "utf8");
+
+    const paths = extractWorkspacePathsFromCommand(
+      [
+        "python - << 'PY'",
+        `p='${scriptPath}'`,
+        "print(p)",
+        "PY"
+      ].join("\n"),
+      workspace,
+      workspace
+    );
+
+    expect(paths).toContain(scriptPath);
+    expect(paths.some((candidate) => candidate.includes("p='"))).toBe(false);
+  });
+
   it("persists thread id and run command from Codex session", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-session-"));
     tempDirs.push(workspace);
@@ -705,6 +731,145 @@ describe("ImplementSessionManager", () => {
           (event.payload as { source?: string } | undefined)?.source === "local_verification"
       )
     ).toBe(false);
+  });
+
+  it("does not fail implement-stage validation when the only missing declared artifact is deferred metrics output", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-deferred-metrics-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Deferred Metrics Artifact Run",
+      topic: "agent reasoning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const privateScriptPath = path.join(runDir, "run_tabular_baselines.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "run_tabular_baselines.py");
+    const codex = {
+      runTurnStream: async ({ onEvent }: { onEvent?: (event: Record<string, unknown>) => void }) => {
+        writeFileSync(privateScriptPath, "print('ok')\n", "utf8");
+        onEvent?.({ type: "file.changed", path: privateScriptPath });
+        return {
+          threadId: "thread-impl-deferred-metrics",
+          finalText: JSON.stringify({
+            summary: "Implemented the runnable script; metrics will be written by run_experiments.",
+            run_command: `python3 ${JSON.stringify(publicScriptPath)} --metrics-out ${JSON.stringify(metricsPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+            changed_files: [privateScriptPath],
+            artifacts: [privateScriptPath, metricsPath],
+            public_artifacts: [publicScriptPath],
+            script_path: publicScriptPath,
+            metrics_path: metricsPath,
+            experiment_mode: "real_execution"
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexCliClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    const result = await manager.run(run);
+    const verifyReport = await memory.get<{ status: string; summary: string }>(
+      "implement_experiments.verify_report"
+    );
+
+    expect(result.scriptPath).toBe(publicScriptPath);
+    expect(result.metricsPath).toBe(metricsPath);
+    expect(existsSync(metricsPath)).toBe(false);
+    expect(verifyReport).toMatchObject({
+      status: "pass"
+    });
+    expect(verifyReport?.summary).not.toContain("not materialized");
+  });
+
+  it("does not fail local verification when the verification command references only deferred metrics output", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-verify-deferred-metrics-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Deferred Verification Metrics Run",
+      topic: "agent reasoning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const privateScriptPath = path.join(runDir, "run_tabular_baselines.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "run_tabular_baselines.py");
+
+    const codex = {
+      runTurnStream: async ({ onEvent }: { onEvent?: (event: Record<string, unknown>) => void }) => {
+        writeFileSync(privateScriptPath, "print('ok')\n", "utf8");
+        onEvent?.({ type: "file.changed", path: privateScriptPath });
+        return {
+          threadId: "thread-impl-verify-deferred-metrics",
+          finalText: JSON.stringify({
+            summary: "Implemented the runnable script; local verification still references the deferred metrics path.",
+            run_command: `python3 ${JSON.stringify(publicScriptPath)} --metrics-out ${JSON.stringify(metricsPath)}`,
+            test_command: `python3 ${JSON.stringify(publicScriptPath)} --metrics-out ${JSON.stringify(metricsPath)} --dry-run`,
+            changed_files: [privateScriptPath],
+            artifacts: [privateScriptPath, metricsPath],
+            public_artifacts: [publicScriptPath],
+            script_path: publicScriptPath,
+            metrics_path: metricsPath,
+            experiment_mode: "real_execution"
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexCliClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    const result = await manager.run(run);
+    const verifyReport = await memory.get<{ status: string; summary: string }>(
+      "implement_experiments.verify_report"
+    );
+
+    expect(result.scriptPath).toBe(publicScriptPath);
+    expect(result.metricsPath).toBe(metricsPath);
+    expect(existsSync(metricsPath)).toBe(false);
+    expect(verifyReport).toMatchObject({
+      status: "pass"
+    });
+    expect(verifyReport?.summary).not.toContain("not materialized");
   });
 
   it("blocks auto-handoff when the implemented run_command drifts from the published script path", async () => {

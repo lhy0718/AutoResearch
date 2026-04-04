@@ -215,7 +215,6 @@ export interface SectionBudgetEntry {
 }
 
 export interface PageBudgetManagerReport {
-  venue_style: string;
   column_count: 1 | 2;
   target_main_pages: number;
   minimum_main_pages: number;
@@ -400,7 +399,6 @@ export interface WritePaperGateDecision {
 }
 
 const DEFAULT_PAPER_PROFILE: PaperProfileConfig = {
-  venue_style: "acl_long",
   column_count: 2,
   target_main_pages: 8,
   minimum_main_pages: 8,
@@ -427,15 +425,7 @@ export function resolvePaperProfile(
         .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
         .map((item) => item.trim())
     : DEFAULT_PAPER_PROFILE.prefer_appendix_for;
-  const targetVenue = cleanString(constraintProfile?.writing?.targetVenue);
   const lengthHint = cleanString(constraintProfile?.writing?.lengthHint);
-  const inferredVenueStyle =
-    profile?.venue_style?.trim()
-    || (/\bacl\b|\bemnlp\b|\bnaacl\b|\beacl\b/iu.test(targetVenue)
-      ? /\bshort\b/iu.test(lengthHint)
-        ? "acl_short"
-        : "acl_long"
-      : DEFAULT_PAPER_PROFILE.venue_style);
   const legacyMainPageLimit =
     typeof profile?.main_page_limit === "number" && Number.isFinite(profile.main_page_limit)
       ? Math.max(1, Math.round(profile.main_page_limit))
@@ -450,10 +440,17 @@ export function resolvePaperProfile(
       ? Math.max(1, Math.round(profile.minimum_main_pages))
       : legacyMainPageLimit
         ?? inferredTargetMainPages;
+  const inferredAppendixFormat =
+    profile?.appendix_format
+    || (profile?.column_count === 1 ? "single_column" : DEFAULT_PAPER_PROFILE.appendix_format);
+  const inferredEstimatedWordsPerPage =
+    typeof profile?.estimated_words_per_page === "number" && Number.isFinite(profile.estimated_words_per_page)
+      ? Math.max(250, Math.round(profile.estimated_words_per_page))
+      : profile?.column_count === 1
+        ? 700
+        : DEFAULT_PAPER_PROFILE.estimated_words_per_page;
 
   return {
-    venue_style: inferredVenueStyle,
-    target_venue_style: cleanString(profile?.target_venue_style) || DEFAULT_PAPER_PROFILE.target_venue_style,
     column_count: profile?.column_count === 1 ? 1 : DEFAULT_PAPER_PROFILE.column_count,
     target_main_pages: inferredTargetMainPages,
     minimum_main_pages: inferredMinimumMainPages,
@@ -466,13 +463,9 @@ export function resolvePaperProfile(
       typeof profile?.appendix_allowed === "boolean"
         ? profile.appendix_allowed
         : DEFAULT_PAPER_PROFILE.appendix_allowed,
-    appendix_format:
-      profile?.appendix_format === "single_column" ? "single_column" : DEFAULT_PAPER_PROFILE.appendix_format,
+    appendix_format: inferredAppendixFormat === "single_column" ? "single_column" : "double_column",
     prefer_appendix_for: preferAppendixFor.length > 0 ? preferAppendixFor : DEFAULT_PAPER_PROFILE.prefer_appendix_for,
-    estimated_words_per_page:
-      typeof profile?.estimated_words_per_page === "number" && Number.isFinite(profile.estimated_words_per_page)
-        ? Math.max(250, Math.round(profile.estimated_words_per_page))
-        : DEFAULT_PAPER_PROFILE.estimated_words_per_page
+    estimated_words_per_page: inferredEstimatedWordsPerPage
   };
 }
 
@@ -1007,7 +1000,6 @@ export function pageBudgetManager(input: {
   }
 
   return {
-    venue_style: profile.venue_style,
     column_count: profile.column_count,
     target_main_pages: profile.target_main_pages,
     minimum_main_pages: profile.minimum_main_pages,

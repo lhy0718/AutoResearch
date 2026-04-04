@@ -18,7 +18,6 @@ import {
   buildPreDraftCritique,
   critiqueDecisionToTransitionAction,
   critiqueDecisionToTargetNode,
-  resolveVenueStyle,
   type PaperCritique
 } from "../paperCritique.js";
 import { loadAttemptDecisions } from "../experiments/attemptDecision.js";
@@ -138,9 +137,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       );
 
       // Build structured pre-draft critique artifact
-      const venueStyle = resolveVenueStyle(deps.config.paper_profile?.target_venue_style);
       const preDraftCritique = buildPreDraftCritique({
-        venueStyle,
         scorecard: effectivePanel.scorecard,
         decision: effectivePanel.decision,
         findings: effectivePanel.findings,
@@ -383,7 +380,6 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       await runContextMemory.put("review.last_panel_agreement", panel.consistency.panel_agreement);
       await runContextMemory.put("review.paper_critique", preDraftCritique);
       await runContextMemory.put("review.manuscript_type", preDraftCritique.manuscript_type);
-      await runContextMemory.put("review.target_venue_style", preDraftCritique.target_venue_style);
       await runContextMemory.put("review.minimum_gate", minimumGate);
       await runContextMemory.put("review.paper_quality_evaluation", llmEvalResult.evaluation);
       await runContextMemory.put("review.readiness_risks", readinessRisks);
@@ -393,7 +389,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         runId: run.id,
         node: "review",
         payload: {
-          text: `Review panel completed with ${effectivePanel.reviewers.length} specialist reviewer(s), ${effectivePanel.findings.length} finding(s), outcome ${effectivePanel.decision.outcome}, and completion verdict ${completionDecision.verdict}. Manuscript type: ${preDraftCritique.manuscript_type}. Target venue: ${preDraftCritique.target_venue_style}.`
+          text: `Review panel completed with ${effectivePanel.reviewers.length} specialist reviewer(s), ${effectivePanel.findings.length} finding(s), outcome ${effectivePanel.decision.outcome}, and completion verdict ${completionDecision.verdict}. Manuscript type: ${preDraftCritique.manuscript_type}.`
         }
       });
       deps.eventStream.emit({
@@ -413,8 +409,8 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       const inputTokens = (effectivePanel.llm_input_tokens ?? 0) + (llmEvalResult.usage?.inputTokens ?? 0);
       const outputTokens = (effectivePanel.llm_output_tokens ?? 0) + (llmEvalResult.usage?.outputTokens ?? 0);
       const critiqueLabel = preDraftCritique.manuscript_type !== "paper_ready"
-        ? ` Manuscript classified as ${preDraftCritique.manuscript_type} (venue: ${preDraftCritique.target_venue_style}).`
-        : ` Manuscript classified as paper_ready (venue: ${preDraftCritique.target_venue_style}).`;
+        ? ` Manuscript classified as ${preDraftCritique.manuscript_type}.`
+        : " Manuscript classified as paper_ready.";
       return {
         status: "success",
         summary:

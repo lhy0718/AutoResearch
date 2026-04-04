@@ -1,5 +1,9 @@
 # Research Brief
 
+This document is the governed execution contract for one run.
+Keep workspace-level provider/runtime defaults in `.autolabos/config.yaml`.
+Put run-specific research intent, evidence thresholds, baseline expectations, manuscript-format targets, and any manuscript template path here.
+
 ## Topic
 State the research area and the concrete problem in 1–3 sentences.
 
@@ -60,16 +64,33 @@ Important:
 - `main_body_pages` is a page-budget target, not a hard upper cap.
 - AutoLabOS uses it to size writing budgets and, unless overridden, as the minimum compiled main-body page floor.
 - If the compiled PDF lands below that floor, the page-budget check warns or fails depending on validation mode.
+- These manuscript-format targets are brief-owned. Persisted workspace config may omit them and let the brief define them per run.
 
 ## Manuscript Template
 Optional. Relative path to a `.tex` template file from the workspace root.
 If provided, the `write_paper` node uses the file's preamble
 (`\documentclass` through `\begin{document}`) and any detected section
 structure as a structural guide.
+The template can also supply layout-sensitive manuscript defaults such as appendix format.
 Leave blank to use the built-in preamble generator.
 
 Example:
 template.tex
+
+## Appendix Preferences
+Optional. Use this section to route detail deliberately.
+Use stable identifiers so the appendix planner can keep the main paper focused.
+
+Prefer appendix for:
+- hyperparameter_grids
+- per_fold_results
+- prompt_templates
+- environment_dump
+- extended_error_analysis
+
+Keep in main body:
+- main_result_tables
+- primary_ablation
 
 ## Research Question
 Write one clear research question that could be answered by a small real experiment.

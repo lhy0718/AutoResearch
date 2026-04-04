@@ -67,6 +67,22 @@ describe("normalizeConstraintProfile", () => {
     });
   });
 
+  it("builds tighter deterministic candidates for LoRA instruction-tuning topics when llm queries are absent", () => {
+    const candidates = buildLiteratureQueryCandidates({
+      runTopic:
+        "Measure how LoRA rank and LoRA dropout interact for instruction tuning on Mistral-7B-v0.3"
+    });
+
+    expect(candidates).toContainEqual({
+      query: '+"low-rank adaptation" +"instruction tuning"',
+      reason: "run_topic"
+    });
+    expect(candidates).toContainEqual({
+      query: '+"low-rank adaptation" +"instruction tuning" +"mistral 7b"',
+      reason: "run_topic"
+    });
+  });
+
   it("drops invalid llm-derived collect date filters instead of treating freeform prose as a date range", () => {
     const profile = normalizeConstraintProfile(
       {

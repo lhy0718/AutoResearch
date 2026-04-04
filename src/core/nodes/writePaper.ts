@@ -67,7 +67,8 @@ import {
   ConsistencyLintReport,
   experimentArtifactLoader,
   manuscriptConsistencyLinter,
-  materializeScientificManuscript
+  materializeScientificManuscript,
+  resolvePaperProfile
 } from "../analysis/scientificWriting.js";
 import { PaperWriterSessionManager } from "../agents/paperWriterSessionManager.js";
 import {
@@ -93,8 +94,6 @@ import {
   buildPostDraftCritique,
   critiqueDecisionToTransitionAction,
   critiqueDecisionToTargetNode,
-  resolveVenueStyle,
-  getVenueProfile,
   type PaperCritique
 } from "../paperCritique.js";
 import type { BriefEvidenceAssessment } from "../analysis/briefEvidenceValidator.js";
@@ -102,11 +101,15 @@ import type { ManuscriptType } from "../paperCritique.js";
 import { buildRunOperatorStatus } from "../runs/runStatus.js";
 import { buildRunCompletenessChecklist } from "../runs/runCompletenessChecklist.js";
 import {
+  deriveLatexTemplatePolicy,
   loadLatexTemplate,
   resolveLatexTemplatePath,
   type ParsedLatexTemplate
 } from "../latex/latexTemplateLoader.js";
-import { parseManuscriptTemplateFromBrief } from "../runs/researchBriefFiles.js";
+import {
+  parseAppendixPreferencesFromBrief,
+  parseManuscriptTemplateFromBrief
+} from "../runs/researchBriefFiles.js";
 
 interface PaperCompileCommandResult {
   step: string;
@@ -384,7 +387,8 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         runContextMemory,
         llm: deps.llm,
         eventStream: deps.eventStream,
-        node: "write_paper"
+        node: "write_paper",
+        abortSignal
       });
       const objectiveMetricProfile = await resolveObjectiveMetricProfile({
         run,
@@ -395,13 +399,15 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       });
       const objectiveEvaluation = await loadObjectiveEvaluation(runContextMemory, run.id);
       const bundle = bundleResult.bundle;
-      const basePaperProfile = deps.config.paper_profile;
       const manuscriptFormatTarget = await runContextMemory.get("run_brief.manuscript_format") as
         { columns?: number; main_body_pages?: number; references_excluded_from_page_limit?: boolean; appendices_excluded_from_page_limit?: boolean } | undefined;
       const rawBrief = (await runContextMemory.get<string>("run_brief.raw")) ?? null;
       const briefTemplatePath = rawBrief
         ? (parseManuscriptTemplateFromBrief(rawBrief) ?? null)
         : null;
+      const briefAppendixPreferences = rawBrief
+        ? (parseAppendixPreferencesFromBrief(rawBrief) ?? undefined)
+        : undefined;
       const resolvedTemplatePath = await resolveLatexTemplatePath(
         process.cwd(),
         briefTemplatePath
@@ -426,30 +432,31 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
           );
         }
       }
+      const templatePolicy = deriveLatexTemplatePolicy(parsedTemplate);
       const briefMainBodyPages =
         typeof manuscriptFormatTarget?.main_body_pages === "number" ? manuscriptFormatTarget.main_body_pages : undefined;
-      const paperProfile: typeof basePaperProfile = manuscriptFormatTarget
-        ? {
-            ...basePaperProfile,
-            column_count: manuscriptFormatTarget.columns === 1 ? 1 : (basePaperProfile.column_count ?? 2),
-            target_main_pages:
-              briefMainBodyPages
-              ?? basePaperProfile.target_main_pages
-              ?? basePaperProfile.main_page_limit,
-            minimum_main_pages:
-              briefMainBodyPages
-              ?? basePaperProfile.minimum_main_pages
-              ?? basePaperProfile.main_page_limit
-              ?? basePaperProfile.target_main_pages,
-            main_page_limit:
-              briefMainBodyPages
-              ?? basePaperProfile.minimum_main_pages
-              ?? basePaperProfile.main_page_limit
-              ?? basePaperProfile.target_main_pages,
-            references_counted: manuscriptFormatTarget.references_excluded_from_page_limit === false,
-            appendix_allowed: manuscriptFormatTarget.appendices_excluded_from_page_limit !== false
-          }
-        : basePaperProfile;
+      const paperProfile = resolvePaperProfile(
+        {
+          column_count:
+            parsedTemplate?.columnLayout
+            ?? (manuscriptFormatTarget?.columns === 1 ? 1 : undefined),
+          target_main_pages: briefMainBodyPages,
+          minimum_main_pages: briefMainBodyPages,
+          main_page_limit: briefMainBodyPages,
+          references_counted:
+            manuscriptFormatTarget
+              ? manuscriptFormatTarget.references_excluded_from_page_limit === false
+              : undefined,
+          appendix_allowed:
+            manuscriptFormatTarget
+              ? manuscriptFormatTarget.appendices_excluded_from_page_limit !== false
+              : undefined,
+          appendix_format: templatePolicy.appendixFormat ?? undefined,
+          prefer_appendix_for: briefAppendixPreferences?.preferAppendixFor,
+          estimated_words_per_page: templatePolicy.estimatedWordsPerPage ?? undefined
+        },
+        constraintProfile
+      );
       const validationMode = resolvePaperValidationMode(deps.config.paper?.validation_mode);
       bundle.latestResults = await loadLatestResultsArtifact(run);
       const relatedWorkScout = await maybeRunRelatedWorkScout({
@@ -546,6 +553,8 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         objectiveEvaluation,
         latexTemplateSectionOrder:
           parsedTemplate?.sectionOrder?.length ? parsedTemplate.sectionOrder : null,
+        appendixKeepInMainBody:
+          briefAppendixPreferences?.keepInMainBody?.length ? briefAppendixPreferences.keepInMainBody : null,
         abortSignal
       });
       let paperDraft = sessionResult.draft;
@@ -1007,9 +1016,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       }
 
       // Build post-draft critique artifact
-      const venueStyle = resolveVenueStyle(deps.config.paper_profile?.target_venue_style);
       const postDraftCritique = buildPostDraftCritique({
-        venueStyle,
         preDraftCritique,
         gateDecision,
         scientificValidation: scientificValidationArtifact,
@@ -1064,7 +1071,6 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await runContextMemory.put("write_paper.paper_readiness", paperReadiness);
       await runContextMemory.put("write_paper.readiness_risks", readinessRisks);
       await runContextMemory.put("write_paper.manuscript_type", postDraftCritique.manuscript_type);
-      await runContextMemory.put("write_paper.target_venue_style", postDraftCritique.target_venue_style);
       const operatorSummaryInput = {
         runId: run.id,
         title: run.title,
@@ -1072,7 +1078,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         summary: [
           `Paper readiness: ${paperReadiness.readiness_state}.`,
           paperReadiness.reason,
-          `Venue: ${postDraftCritique.target_venue_style}. Manuscript decision: ${postDraftCritique.overall_decision}.`
+          `Manuscript decision: ${postDraftCritique.overall_decision}.`
         ],
         decision: `paper_ready=${paperReadiness.paper_ready}; evidence_gate=${paperReadiness.evidence_gate_status}; scientific_validation=${paperReadiness.scientific_validation_status}.`,
         blockers: readinessRisks.risks.filter((risk) => risk.severity === "blocked").slice(0, 4).map((risk) => risk.message),
@@ -1116,8 +1122,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       emitLog(
         `Post-draft critique: manuscript_type=${postDraftCritique.manuscript_type}, ` +
         `decision=${postDraftCritique.overall_decision}, ` +
-        `blocking=${postDraftCritique.blocking_issues_count}, ` +
-        `venue=${postDraftCritique.target_venue_style}.`
+        `blocking=${postDraftCritique.blocking_issues_count}.`
       );
 
       // If post-draft critique recommends upstream backtrack, emit transition
@@ -1383,8 +1388,8 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         status: "success",
         summary:
           sessionResult.source === "fallback"
-            ? `Paper draft generated in LaTeX using staged fallbacks. Validation warnings: ${validation.issues.length}${describeValidationRepair(validationRepair)}. Scientific gate: ${describeScientificGateStatus(gateDecision)}. Manuscript: ${postDraftCritique.manuscript_type} (venue: ${postDraftCritique.target_venue_style}). PDF: ${describeCompileStatus(compileResult)}. Public outputs: ${publicOutputs.outputRootRelative}.`
-            : `Paper draft generated in LaTeX from ${paperDraft.sections.length} structured section(s) via ${sessionResult.source} with ${validation.issues.length} validation warning(s)${describeValidationRepair(validationRepair)}. Scientific gate: ${describeScientificGateStatus(gateDecision)}. Manuscript: ${postDraftCritique.manuscript_type} (venue: ${postDraftCritique.target_venue_style}). PDF: ${describeCompileStatus(compileResult)}. Public outputs: ${publicOutputs.outputRootRelative}.`,
+            ? `Paper draft generated in LaTeX using staged fallbacks. Validation warnings: ${validation.issues.length}${describeValidationRepair(validationRepair)}. Scientific gate: ${describeScientificGateStatus(gateDecision)}. Manuscript: ${postDraftCritique.manuscript_type}. PDF: ${describeCompileStatus(compileResult)}. Public outputs: ${publicOutputs.outputRootRelative}.`
+            : `Paper draft generated in LaTeX from ${paperDraft.sections.length} structured section(s) via ${sessionResult.source} with ${validation.issues.length} validation warning(s)${describeValidationRepair(validationRepair)}. Scientific gate: ${describeScientificGateStatus(gateDecision)}. Manuscript: ${postDraftCritique.manuscript_type}. PDF: ${describeCompileStatus(compileResult)}. Public outputs: ${publicOutputs.outputRootRelative}.`,
         needsApproval: true,
         toolCallsUsed,
         transitionRecommendation: postDraftTransition

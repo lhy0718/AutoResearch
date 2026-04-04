@@ -196,6 +196,8 @@ Le brief n’est pas seulement un document de départ. C’est le governed contr
 
 En d’autres termes, le brief n’est pas seulement une partie du prompt. Il fait partie de l’audit trail.
 
+Dans le contrat actuel, `.autolabos/config.yaml` sert surtout à stocker les valeurs par défaut du provider/runtime et la workspace policy. L’intention de recherche propre à chaque run, les evidence bars, les attentes de baseline, les objectifs de manuscript format et le chemin du manuscript template doivent vivre dans le Brief. Le config persisté peut donc omettre les valeurs par défaut de `research` ainsi que certains champs de manuscript-profile / paper-template.
+
 ```bash
 /new
 /brief start --latest

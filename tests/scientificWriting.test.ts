@@ -15,7 +15,6 @@ import {
 } from "../src/core/analysis/scientificWriting.js";
 
 const PAPER_PROFILE = {
-  venue_style: "acl_long",
   target_main_pages: 8,
   minimum_main_pages: 8,
   main_page_limit: 8,

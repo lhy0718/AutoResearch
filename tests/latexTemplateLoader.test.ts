@@ -5,6 +5,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  deriveLatexTemplatePolicy,
   loadLatexTemplate,
   resolveLatexTemplatePath
 } from "../src/core/latex/latexTemplateLoader.js";
@@ -93,6 +94,32 @@ describe("latexTemplateLoader", () => {
     expect(parsed.customCommands).toEqual(["\\newcommand{\\vect}[1]{\\mathbf{#1}}"]);
     expect(parsed.sectionOrder).toEqual(["Introduction", "Method"]);
     expect(parsed.bibliographyStyle).toBe("plainnat");
+
+    const policy = deriveLatexTemplatePolicy(parsed);
+    expect(policy.appendixFormat).toBe("double_column");
+    expect(policy.estimatedWordsPerPage).toBe(420);
+  });
+
+  it("derives layout policy from a recognizable two-column template class", async () => {
+    const workspace = await createWorkspace();
+    const templatePath = path.join(workspace, "templates", "neurips_2025.tex");
+    await mkdir(path.dirname(templatePath), { recursive: true });
+    await writeFile(
+      templatePath,
+      [
+        "\\documentclass[final]{neurips_2025}",
+        "\\begin{document}",
+        "\\section{Introduction}",
+        "\\end{document}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const parsed = await loadLatexTemplate(templatePath);
+    const policy = deriveLatexTemplatePolicy(parsed);
+
+    expect(policy.appendixFormat).toBe("double_column");
+    expect(policy.estimatedWordsPerPage).toBe(420);
   });
 
   it("throws when the template file does not exist", async () => {

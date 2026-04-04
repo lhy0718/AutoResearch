@@ -18,7 +18,7 @@ export interface ConfigSummary {
   workflowMode: "agent_approval";
   approvalMode: "manual" | "minimal" | "hybrid";
   executionApprovalMode?: "manual" | "risk_ack" | "full_auto";
-  llmMode: "codex_chatgpt_only" | "openai_api" | "ollama";
+  llmMode: "codex" | "codex_chatgpt_only" | "openai_api" | "ollama";
   pdfMode: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
   researchBackendModel: string;
   chatModel: string;
@@ -35,7 +35,7 @@ export interface WebConfigFormData {
   defaultTopic: string;
   defaultConstraints: string;
   defaultObjectiveMetric: string;
-  llmMode: "codex_chatgpt_only" | "openai_api" | "ollama";
+  llmMode: "codex" | "codex_chatgpt_only" | "openai_api" | "ollama";
   codexChatModelChoice: string;
   codexChatReasoningEffort: string;
   codexResearchBackendModelChoice: string;
@@ -96,7 +96,7 @@ export interface DoctorResponse {
   harness?: HarnessValidationReport;
   readiness?: {
     blocked: boolean;
-    llmMode?: "codex_chatgpt_only" | "openai_api" | "ollama";
+    llmMode?: "codex" | "codex_chatgpt_only" | "openai_api" | "ollama";
     pdfAnalysisMode?: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
     approvalMode: "manual" | "minimal" | "hybrid";
     executionApprovalMode: "manual" | "risk_ack" | "full_auto";

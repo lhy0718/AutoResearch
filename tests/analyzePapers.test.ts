@@ -1697,7 +1697,7 @@ describe("analyzePapers node", () => {
     ).toBe(true);
   });
 
-  it("uses serial warm-start for a small all-mode codex analysis until the first outputs land", async () => {
+  it("uses serial warm-start only for the first paper, then resumes normal concurrency", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-serial-warm-start-"));
     tempDirs.push(root);
     process.chdir(root);
@@ -1743,6 +1743,11 @@ describe("analyzePapers node", () => {
     const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
     expect(loggedTexts.some((text) => text.includes("Analyzing 4 paper(s) with concurrency 1."))).toBe(true);
     expect(loggedTexts.some((text) => text.includes("Serial warm-start is enabled until the first persisted outputs arrive."))).toBe(true);
+    expect(
+      loggedTexts.some((text) =>
+        text.includes("Warm-start persisted outputs; continuing remaining 3 paper(s) with concurrency 3.")
+      )
+    ).toBe(true);
   });
 
   it("rejects mismatched full-text sources before persisting analysis artifacts", async () => {
@@ -1966,6 +1971,108 @@ describe("analyzePapers node", () => {
     const manifest = JSON.parse(manifestRaw);
     expect(manifest.selectedPaperIds).toEqual(["p1", "p3"]);
 
+  });
+
+  it("keeps fallback shortlist focused on strong title anchors for the LoRA instruction-following brief", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-lora-fallback-guard-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-lora-fallback-guard";
+    const run = {
+      ...makeRun(runId),
+      title: "LoRA rank × dropout interaction for Mistral-7B instruction-following",
+      topic:
+        "Measure how LoRA rank and dropout affect Mistral-7B instruction-following quality against a fixed baseline."
+    };
+    await writeCorpus(runId, [
+      {
+        paper_id: "relevant_bactrian",
+        title: "Bactrian-X: Multilingual Replicable Instruction-Following Models with Low-Rank Adaptation",
+        abstract:
+          "Instruction tuning with low-rank adaptation improves multilingual instruction-following models.",
+        authors: ["Alice"],
+        citation_count: 87,
+        year: 2023,
+        pdf_url: "https://example.com/bactrian.pdf"
+      },
+      {
+        paper_id: "relevant_rank_dropout",
+        title: "Rank and Dropout Trade-offs in Low-Rank Adaptation for Instruction-Following Language Models",
+        abstract:
+          "A controlled study of rank and dropout settings for LoRA-based instruction-following language models.",
+        authors: ["Bob"],
+        citation_count: 12,
+        year: 2025,
+        pdf_url: "https://example.com/rank-dropout.pdf"
+      },
+      {
+        paper_id: "off_topic_medical_notes",
+        title: "Using fine-tuned large language models to parse clinical notes in musculoskeletal pain disorders",
+        abstract:
+          "A clinical-note parsing study that fine-tunes LLaMA models and references the Alpaca dataset.",
+        authors: ["Cara"],
+        citation_count: 38,
+        year: 2023,
+        pdf_url: "https://example.com/clinical.pdf"
+      },
+      {
+        paper_id: "off_topic_medical_vision",
+        title: "Point, Detect, Count: Multi-Task Medical Image Understanding with Instruction-Tuned Vision-Language Models",
+        abstract:
+          "A medical-image instruction-tuned VLM paper that applies LoRA to multimodal detection and counting tasks.",
+        authors: ["Dana"],
+        citation_count: 2,
+        year: 2025,
+        pdf_url: "https://example.com/vision.pdf"
+      }
+    ]);
+
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    await runContext.put("analyze_papers.request", {
+      topN: 2,
+      selectionMode: "top_n",
+      selectionPolicy: "hybrid_title_citation_recency_pdf_v2"
+    });
+
+    let analyzePdfCalls = 0;
+    const eventStream = new InMemoryEventStream();
+    const node = createAnalyzePapersNode({
+      config: {
+        providers: { llm_mode: "openai_api" },
+        analysis: {
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream,
+      llm: new FixedErrorLLM(new Error("paper_selection_rerank_timeout_after_20000ms")),
+      pdfTextLlm: new SequenceJsonLLM([]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: {
+        hasApiKey: async () => true,
+        analyzePdf: async () => {
+          analyzePdfCalls += 1;
+          return { text: jsonOutput(`summary ${analyzePdfCalls}`, `claim ${analyzePdfCalls}`) };
+        }
+      } as unknown as ResponsesPdfAnalysisClient
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+    expect(analyzePdfCalls).toBe(2);
+
+    const manifestRaw = await readFile(path.join(".autolabos", "runs", runId, "analysis_manifest.json"), "utf8");
+    const manifest = JSON.parse(manifestRaw);
+    expect(new Set(manifest.selectedPaperIds)).toEqual(new Set(["relevant_bactrian", "relevant_rank_dropout"]));
+
+    const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
+    expect(summariesRaw).toContain('"paper_id":"relevant_bactrian"');
+    expect(summariesRaw).toContain('"paper_id":"relevant_rank_dropout"');
+    expect(summariesRaw).not.toContain('"paper_id":"off_topic_medical_notes"');
+    expect(summariesRaw).not.toContain('"paper_id":"off_topic_medical_vision"');
   });
 
   it("pauses instead of accepting a deterministic shortlist when top-n rerank fails", async () => {

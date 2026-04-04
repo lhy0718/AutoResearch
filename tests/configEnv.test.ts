@@ -1,6 +1,7 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
 import os from "node:os";
+import YAML from "yaml";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -9,6 +10,7 @@ import {
   getDefaultPdfAnalysisModeForLlmMode,
   hasOpenAiApiKey,
   hasSemanticScholarApiKey,
+  hydrateProcessEnvFromWorkspace,
   loadConfig,
   resolveAppPaths,
   resolveOpenAiApiKey,
@@ -29,6 +31,7 @@ import { AppConfig } from "../src/types.js";
 
 const ORIGINAL_SEMANTIC_SCHOLAR_API_KEY = process.env.SEMANTIC_SCHOLAR_API_KEY;
 const ORIGINAL_OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const ORIGINAL_ANALYSIS_PLANNER_TIMEOUT_MS = process.env.AUTOLABOS_ANALYSIS_PLANNER_TIMEOUT_MS;
 
 async function recordWizardQuestions(
   paths: ReturnType<typeof resolveAppPaths>,
@@ -171,6 +174,12 @@ afterEach(() => {
     process.env.OPENAI_API_KEY = ORIGINAL_OPENAI_API_KEY;
   }
 
+  if (ORIGINAL_ANALYSIS_PLANNER_TIMEOUT_MS === undefined) {
+    delete process.env.AUTOLABOS_ANALYSIS_PLANNER_TIMEOUT_MS;
+  } else {
+    process.env.AUTOLABOS_ANALYSIS_PLANNER_TIMEOUT_MS = ORIGINAL_ANALYSIS_PLANNER_TIMEOUT_MS;
+  }
+
 });
 
 describe("config .env overrides", () => {
@@ -208,6 +217,51 @@ describe("config .env overrides", () => {
     expect(loaded.experiments.allow_network).toBe(false);
     expect(loaded.experiments.network_policy).toBe("blocked");
     expect(loaded.experiments.network_purpose).toBeUndefined();
+  });
+
+  it("loads sparse config files when brief-driven sections are omitted", async () => {
+    const { paths } = await createWorkspace();
+    const sparse = { ...makeConfig() } as Record<string, unknown>;
+    delete sparse.papers;
+    delete sparse.research;
+    delete sparse.workflow;
+    delete sparse.experiments;
+    delete sparse.paper;
+    delete sparse.paths;
+
+    await fs.writeFile(paths.configFile, YAML.stringify(sparse), "utf8");
+
+    const loaded = await loadConfig(paths);
+
+    expect(loaded.papers).toEqual({
+      max_results: 200,
+      per_second_limit: 1
+    });
+    expect(loaded.research).toEqual({
+      default_topic: "Multi-agent collaboration",
+      default_constraints: ["recent papers", "last 5 years"],
+      default_objective_metric: "state-of-the-art reproducibility"
+    });
+    expect(loaded.workflow.approval_mode).toBe("minimal");
+    expect(loaded.workflow.execution_approval_mode).toBe("manual");
+    expect(loaded.experiments).toEqual({
+      runner: "local_python",
+      timeout_sec: 3600,
+      allow_network: false,
+      network_policy: "blocked",
+      network_purpose: undefined,
+      candidate_isolation: "attempt_snapshot_restore"
+    });
+    expect(loaded.paper).toEqual({
+      template: "acl",
+      build_pdf: true,
+      latex_engine: "auto_install",
+      validation_mode: "default"
+    });
+    expect(loaded.paths).toEqual({
+      runs_dir: ".autolabos/runs",
+      logs_dir: ".autolabos/logs"
+    });
   });
 
   it("preserves declared experiment network policy and purpose when setup saves a network-enabled workspace", async () => {
@@ -284,7 +338,22 @@ describe("config .env overrides", () => {
 
     expect(config.project_name).toBe(path.basename(cwd));
     await expect(resolveSemanticScholarApiKey(cwd)).resolves.toBeUndefined();
-    await expect(fs.readFile(paths.configFile, "utf8")).resolves.toContain(`project_name: ${path.basename(cwd)}`);
+    const raw = await fs.readFile(paths.configFile, "utf8");
+    expect(raw).toContain(`project_name: ${path.basename(cwd)}`);
+    expect(raw).toContain("providers:");
+    expect(raw).toContain("papers:");
+    expect(raw).toContain("workflow:");
+    expect(raw).toContain("experiments:");
+    expect(raw).toContain("paper:");
+    expect(raw).toContain("paths:");
+    expect(raw).not.toContain("\nresearch:\n");
+    expect(raw).not.toContain("template:");
+    expect(raw).not.toContain("column_count:");
+    expect(raw).not.toContain("target_main_pages:");
+    expect(raw).not.toContain("minimum_main_pages:");
+    expect(raw).not.toContain("main_page_limit:");
+    expect(raw).not.toContain("references_counted:");
+    expect(raw).not.toContain("appendix_allowed:");
   });
 
   it("uses OPENAI_API_KEY from .env when Responses PDF mode is enabled", async () => {
@@ -302,6 +371,16 @@ describe("config .env overrides", () => {
     await fs.writeFile(path.join(cwd, ".env"), 'OPENAI_API_KEY="file-env-openai-key"\n', "utf8");
 
     await expect(resolveOpenAiApiKey(cwd)).resolves.toBe("file-env-openai-key");
+  });
+
+  it("hydrates process.env from workspace .env for runtime tuning variables", async () => {
+    const { cwd } = await createWorkspace();
+    delete process.env.AUTOLABOS_ANALYSIS_PLANNER_TIMEOUT_MS;
+    await fs.writeFile(path.join(cwd, ".env"), "AUTOLABOS_ANALYSIS_PLANNER_TIMEOUT_MS=15000\n", "utf8");
+
+    await hydrateProcessEnvFromWorkspace(cwd);
+
+    expect(process.env.AUTOLABOS_ANALYSIS_PLANNER_TIMEOUT_MS).toBe("15000");
   });
 
   it("writes OPENAI_API_KEY during setup when OpenAI API provider implies Responses PDF mode", async () => {
@@ -492,6 +571,22 @@ describe("config .env overrides", () => {
     expect(getDefaultPdfAnalysisModeForLlmMode(config.providers.llm_mode)).toBe("responses_api_pdf");
     await expect(resolveSemanticScholarApiKey(cwd)).resolves.toBe("semantic-key");
     await expect(resolveOpenAiApiKey(cwd)).resolves.toBe("openai-key");
+
+    const raw = await fs.readFile(paths.configFile, "utf8");
+    expect(raw).toContain("providers:");
+    expect(raw).toContain("papers:");
+    expect(raw).toContain("workflow:");
+    expect(raw).toContain("experiments:");
+    expect(raw).toContain("paper:");
+    expect(raw).toContain("paths:");
+    expect(raw).not.toContain("\nresearch:\n");
+    expect(raw).not.toContain("template:");
+    expect(raw).not.toContain("column_count:");
+    expect(raw).not.toContain("target_main_pages:");
+    expect(raw).not.toContain("minimum_main_pages:");
+    expect(raw).not.toContain("main_page_limit:");
+    expect(raw).not.toContain("references_counted:");
+    expect(raw).not.toContain("appendix_allowed:");
   });
 
   it("stores experiment model overrides during non-interactive setup", async () => {
@@ -619,11 +714,53 @@ describe("config .env overrides", () => {
 
     const raw = await fs.readFile(paths.configFile, "utf8");
     expect(raw).toContain("providers:");
+    expect(raw).toContain("papers:");
+    expect(raw).toContain("workflow:");
+    expect(raw).toContain("experiments:");
+    expect(raw).toContain("paper:");
+    expect(raw).toContain("paths:");
     expect(raw).not.toContain("\n  pdf:\n");
     expect(raw).not.toContain("\nanalysis:\n");
+    expect(raw).not.toContain("\nresearch:\n");
+    expect(raw).not.toContain("template:");
+    expect(raw).not.toContain("column_count:");
+    expect(raw).not.toContain("target_main_pages:");
+    expect(raw).not.toContain("minimum_main_pages:");
+    expect(raw).not.toContain("main_page_limit:");
+    expect(raw).not.toContain("references_counted:");
+    expect(raw).not.toContain("appendix_allowed:");
+    expect(raw).not.toContain("venue_style:");
+    expect(raw).not.toContain("target_venue_style:");
+    expect(raw).not.toContain("appendix_format:");
+    expect(raw).not.toContain("prefer_appendix_for:");
+    expect(raw).not.toContain("estimated_words_per_page:");
+    expect(raw).not.toContain("paper_profile:");
 
     const loaded = await loadConfig(paths);
     expect(getDefaultPdfAnalysisModeForLlmMode(loaded.providers.llm_mode)).toBe("responses_api_pdf");
+    expect(loaded.research.default_topic).toBe("Multi-agent collaboration");
+    expect(loaded.experiments.network_policy).toBe("blocked");
+    expect(loaded.paper.validation_mode).toBe("default");
+    expect(loaded.paper.template).toBe("acl");
+  });
+
+  it("does not persist manuscript-policy settings outside brief and template artifacts", async () => {
+    const { paths } = await createWorkspace();
+    const config = makeConfig();
+    config.paper.validation_mode = "strict_paper";
+
+    await saveConfig(paths, config);
+
+    const raw = await fs.readFile(paths.configFile, "utf8");
+    expect(raw).toContain("validation_mode: strict_paper");
+    expect(raw).not.toContain("target_venue_style:");
+    expect(raw).not.toContain("appendix_format:");
+    expect(raw).not.toContain("prefer_appendix_for:");
+    expect(raw).not.toContain("estimated_words_per_page:");
+    expect(raw).not.toContain("paper_profile:");
+
+    const loaded = await loadConfig(paths);
+    expect(loaded.paper.validation_mode).toBe("strict_paper");
   });
 
   it("does not create .autolabos if first-run setup aborts before completion", async () => {

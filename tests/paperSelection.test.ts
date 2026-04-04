@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { MockLLMClient } from "../src/core/llm/client.js";
 import {
@@ -47,6 +47,18 @@ class CapturePromptLlm extends MockLLMClient {
     };
   }
 }
+
+class HangingResponseLlm extends MockLLMClient {
+  override async complete(): Promise<{ text: string }> {
+    return await new Promise<{ text: string }>(() => {
+      // Intentionally never resolves; used to verify rerank timeout fallback.
+    });
+  }
+}
+
+afterEach(() => {
+  delete process.env.AUTOLABOS_ANALYSIS_RERANK_TIMEOUT_MS;
+});
 
 describe("paperSelection", () => {
   it("deterministically favors title similarity, citations, and recency", async () => {
@@ -374,6 +386,28 @@ describe("paperSelection", () => {
     expect(selection.rerankFallbackReason).not.toContain("shell_snapshot");
     // Deterministic fallback selects top N by deterministic score
     expect(selection.selectedPaperIds.length).toBe(1);
+  });
+
+  it("falls back deterministically when rerank exceeds the bounded timeout", async () => {
+    process.env.AUTOLABOS_ANALYSIS_RERANK_TIMEOUT_MS = "5";
+
+    const logs: string[] = [];
+    const selection = await selectPapersForAnalysis({
+      llm: new HangingResponseLlm(),
+      runTitle: "Multi-agent collaboration",
+      runTopic: "Multi-agent collaboration",
+      request: normalizeAnalysisSelectionRequest(1),
+      corpusRows: [
+        { paper_id: "p1", title: "Multi-agent collaboration", abstract: "A", authors: [], citation_count: 10, year: 2025 },
+        { paper_id: "p2", title: "Other collaboration paper", abstract: "B", authors: [], citation_count: 9, year: 2025 }
+      ],
+      onProgress: (message) => logs.push(message)
+    });
+
+    expect(selection.rerankApplied).toBe(false);
+    expect(selection.rerankFallbackReason).toContain("paper_selection_rerank_timeout_after_5ms");
+    expect(selection.selectedPaperIds).toEqual(["p1"]);
+    expect(logs.some((message) => message.includes("Rerank request failed: paper_selection_rerank_timeout_after_5ms"))).toBe(true);
   });
 
   it("keeps topic-specific tabular baseline papers ahead of generic ML classification titles", async () => {

@@ -118,7 +118,7 @@ function createSelectionRerankLlm(deps: NodeExecutionDeps): NodeExecutionDeps["l
     return deps.llm;
   }
 
-  if (providerConfig.llm_mode !== "codex_chatgpt_only") {
+  if (providerConfig.llm_mode !== "codex" && providerConfig.llm_mode !== "codex_chatgpt_only") {
     return deps.llm;
   }
 
@@ -184,6 +184,19 @@ const SELECTION_QUALITY_GENERIC_TOKENS = new Set([
   "predictive",
   "system",
   "systems"
+]);
+
+const SELECTION_QUALITY_WEAK_TITLE_ANCHORS = new Set([
+  "fine",
+  "finetune",
+  "finetuning",
+  "following",
+  "instruction",
+  "instructions",
+  "prompt",
+  "prompts",
+  "tuned",
+  "tuning"
 ]);
 
 interface LoadedAnalysisSelectionRequest {
@@ -334,6 +347,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         };
       }
       const includePageImages =
+        deps.config.providers?.llm_mode === "codex" ||
         deps.config.providers?.llm_mode === "codex_chatgpt_only" ||
         analysisMode === "ollama_vision";
       const openAiModel = deps.config.providers?.openai?.model || "gpt-5.4";
@@ -740,7 +754,8 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             ((analysisMode === "codex_text_image_hybrid" || analysisMode === "ollama_vision") &&
               request.selectionMode === "all" &&
               selection.selectedPaperIds.length <= SMALL_SELECTION_SERIAL_WARM_START_MAX));
-        const analysisConcurrency = warmStartSerial ? 1 : getAnalysisConcurrency(analysisMode);
+        const standardAnalysisConcurrency = getAnalysisConcurrency(analysisMode);
+        const analysisConcurrency = warmStartSerial ? 1 : standardAnalysisConcurrency;
         if (pendingRows.length > 0) {
           emitLog(`Analyzing ${pendingRows.length} paper(s) with concurrency ${analysisConcurrency}.`);
           if (warmStartSerial) {
@@ -753,11 +768,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         let zeroOutputPauseDecision: ZeroOutputPauseDecision | undefined;
         const persistQueue = createAsyncQueue();
 
-        try {
-          await runWithConcurrency(
-            pendingRows,
-            analysisConcurrency,
-            async (initialRow, index) => {
+        const analyzePendingRow = async (initialRow: AnalysisCorpusRow, index: number) => {
             attemptedRows += 1;
             let row = await refreshCorpusRowForSourceResolution(run.id, initialRow, {
               selectionMode: request.selectionMode,
@@ -1130,9 +1141,42 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                 );
               }
             }
-            },
-            () => Boolean(zeroOutputPauseDecision)
-          );
+        };
+
+        try {
+          if (warmStartSerial && pendingRows.length > 1) {
+            const warmStartRows = pendingRows.slice(0, 1);
+            const remainingRows = pendingRows.slice(1);
+            await runWithConcurrency(
+              warmStartRows,
+              1,
+              async (row, index) => analyzePendingRow(row, index),
+              () => Boolean(zeroOutputPauseDecision)
+            );
+            if (!zeroOutputPauseDecision && remainingRows.length > 0) {
+              const progressAfterWarmStart = buildAnalysisProgress(summaryRowsState, evidenceRowsState);
+              const warmStartProducedOutputs =
+                progressAfterWarmStart.summaryRows.length > 0 || progressAfterWarmStart.evidenceRows.length > 0;
+              if (warmStartProducedOutputs) {
+                emitLog(
+                  `Warm-start persisted outputs; continuing remaining ${remainingRows.length} paper(s) with concurrency ${standardAnalysisConcurrency}.`
+                );
+              }
+              await runWithConcurrency(
+                remainingRows,
+                warmStartProducedOutputs ? standardAnalysisConcurrency : 1,
+                async (row, index) => analyzePendingRow(row, index + warmStartRows.length),
+                () => Boolean(zeroOutputPauseDecision)
+              );
+            }
+          } else {
+            await runWithConcurrency(
+              pendingRows,
+              analysisConcurrency,
+              async (row, index) => analyzePendingRow(row, index),
+              () => Boolean(zeroOutputPauseDecision)
+            );
+          }
         } catch (error) {
           if (isAbortError(error)) {
             await persistQueue.onIdle();
@@ -2959,6 +3003,7 @@ function evaluateSelectionCandidateQuality(
   referenceAnchors: string[]
 ): {
   titleAnchorHits: number;
+  strongTitleAnchorHits: number;
   abstractAnchorHits: number;
   totalAnchorHits: number;
 } {
@@ -2969,9 +3014,13 @@ function evaluateSelectionCandidateQuality(
     (candidate.paper.abstract?.toLowerCase().match(/[a-z0-9]+/g) ?? []).map((token) => normalizeSelectionToken(token))
   );
   const titleAnchorHits = referenceAnchors.filter((token) => titleTokens.has(token)).length;
+  const strongTitleAnchorHits = referenceAnchors.filter(
+    (token) => titleTokens.has(token) && !SELECTION_QUALITY_WEAK_TITLE_ANCHORS.has(token)
+  ).length;
   const abstractAnchorHits = referenceAnchors.filter((token) => !titleTokens.has(token) && abstractTokens.has(token)).length;
   return {
     titleAnchorHits,
+    strongTitleAnchorHits,
     abstractAnchorHits,
     totalAnchorHits: titleAnchorHits + abstractAnchorHits
   };
@@ -2981,17 +3030,24 @@ function passesSelectionQualityGuard(
   candidate: RankedPaperCandidate,
   signals: {
     titleAnchorHits: number;
+    strongTitleAnchorHits: number;
     abstractAnchorHits: number;
     totalAnchorHits: number;
   },
   strictMode: boolean
 ): boolean {
-  if (signals.titleAnchorHits >= 1) {
+  if (signals.strongTitleAnchorHits >= 1) {
+    return true;
+  }
+  if (!strictMode && signals.titleAnchorHits >= 1) {
+    return true;
+  }
+  if (strictMode && signals.titleAnchorHits >= 2) {
     return true;
   }
   if (
-    signals.totalAnchorHits >= (strictMode ? 2 : 1) &&
-    candidate.scoreBreakdown.title_similarity_score >= (strictMode ? 0.12 : 0.08)
+    signals.totalAnchorHits >= (strictMode ? 3 : 1) &&
+    candidate.scoreBreakdown.title_similarity_score >= (strictMode ? 0.18 : 0.08)
   ) {
     return true;
   }
@@ -3038,7 +3094,7 @@ async function runAnalyzeCodexPreflight(input: {
   analysisMode: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
   researchModel: string | undefined;
 }): Promise<DoctorCheck[]> {
-  if (input.llmMode !== "codex_chatgpt_only") {
+  if (input.llmMode !== "codex" && input.llmMode !== "codex_chatgpt_only") {
     return [];
   }
   if (

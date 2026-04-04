@@ -3508,6 +3508,108 @@ describe("objective metric propagation", () => {
     });
   });
 
+  it("rejects preflight-only metrics as insufficient executed experiment evidence", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-preflight-only-"));
+    process.chdir(root);
+
+    const runId = "run-preflight-only";
+    const run = makeRun(runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    const memoryDir = path.join(runDir, "memory");
+    const publicDir = buildPublicExperimentDir(root, run);
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    await mkdir(memoryDir, { recursive: true });
+    await mkdir(publicDir, { recursive: true });
+    await writeFile(scriptPath, "print('preflight')\n", "utf8");
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "implement_experiments.run_command",
+            value: `python3 ${JSON.stringify(scriptPath)} --mode preflight --metrics-path ${JSON.stringify(metricsPath)}`,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.test_command",
+            value: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.cwd",
+            value: root,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.metrics_path",
+            value: `.autolabos/runs/${runId}/metrics.json`,
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "implement_experiments.pending_handoff_to_run_experiments",
+            value: true,
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const runNode = createRunExperimentsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        }),
+        runCommand: async () => {
+          await writeFile(
+            metricsPath,
+            JSON.stringify({
+              mode: "preflight",
+              status: "ok",
+              notes: "No training/evaluation executed. Environment and GPU readiness recorded.",
+              device: { gpu_count: 2 },
+              primary_metric: null
+            }, null, 2),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        }
+      } as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await runNode.execute({ run, graph: run.graph });
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("preflight metrics");
+
+    const reportRaw = await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8");
+    expect(reportRaw).toContain('"stage": "metrics"');
+    expect(reportRaw).toContain("no training or evaluation was executed");
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    expect(await memory.get("implement_experiments.runner_feedback")).toMatchObject({
+      stage: "metrics",
+      status: "fail"
+    });
+  });
+
   it("forces a fresh rerun for managed real_execution bundles when previous metrics exist", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-managed-fresh-rerun-"));
     process.chdir(root);

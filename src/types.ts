@@ -168,9 +168,6 @@ export interface RunUsageSummary {
 }
 
 export interface PaperProfileConfig {
-  venue_style: string;
-  /** Manuscript rhetoric/style target (e.g. "acl", "neurips", "generic_cs_paper"). */
-  target_venue_style?: string;
   /** Number of columns for the main body (1 or 2). Default: 2. */
   column_count: 1 | 2;
   /** Nominal page-count target used to size word budgets and section allocations. */
@@ -243,7 +240,7 @@ export interface AppConfig {
   version: 1;
   project_name: string;
   providers: {
-    llm_mode: "codex_chatgpt_only" | "openai_api" | "ollama";
+    llm_mode: "codex" | "codex_chatgpt_only" | "openai_api" | "ollama";
     codex: {
       model: string;
       chat_model?: string;
@@ -307,7 +304,6 @@ export interface AppConfig {
     latex_engine: "auto_install";
     validation_mode?: "default" | "strict_paper";
   };
-  paper_profile: PaperProfileConfig;
   paths: {
     runs_dir: string;
     logs_dir: string;
@@ -329,6 +325,18 @@ export interface AppConfig {
     exploration_enabled?: boolean;
   };
 }
+
+export type PersistedAppConfig = Omit<
+  AppConfig,
+  "papers" | "research" | "workflow" | "experiments" | "paper" | "paths"
+> & {
+  papers?: AppConfig["papers"];
+  research?: AppConfig["research"];
+  workflow?: AppConfig["workflow"];
+  experiments?: AppConfig["experiments"];
+  paper?: Partial<AppConfig["paper"]>;
+  paths?: AppConfig["paths"];
+};
 
 export interface DoctorCheck {
   name: string;

@@ -2,7 +2,7 @@ import type { CodexReasoningEffort } from "./codexCliClient.js";
 
 export const GPT_5_4_FAST_MODEL_LABEL = "gpt-5.4 (fast)";
 export const RECOMMENDED_CODEX_MODEL = "gpt-5.4";
-export const DEFAULT_CODEX_MODEL = "gpt-5.3-codex";
+export const DEFAULT_CODEX_MODEL = "gpt-5.4";
 
 // Official Codex model list from developers.openai.com/codex/models
 // (recommended + alternative models), verified 2026-03-06.

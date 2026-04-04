@@ -12,6 +12,11 @@ export type ParsedLatexTemplate = {
   bibliographyStyle: string | null;
 };
 
+export type LatexTemplatePolicy = {
+  appendixFormat: "double_column" | "single_column" | null;
+  estimatedWordsPerPage: number | null;
+};
+
 function normalizeLineEndings(value: string): string {
   return value.replace(/\r/g, "");
 }
@@ -149,6 +154,36 @@ export async function loadLatexTemplate(templatePath: string): Promise<ParsedLat
     sectionOrder: extractSectionOrder(raw),
     customCommands: extractCustomCommands(preamble),
     bibliographyStyle: extractBibliographyStyle(raw)
+  };
+}
+
+export function deriveLatexTemplatePolicy(parsedTemplate: ParsedLatexTemplate | null | undefined): LatexTemplatePolicy {
+  if (!parsedTemplate) {
+    return {
+      appendixFormat: null,
+      estimatedWordsPerPage: null
+    };
+  }
+
+  const inferredTwoColumnDefault =
+    parsedTemplate.columnLayout === 2
+    || (
+      parsedTemplate.columnLayout === null
+      && /\\documentclass(?:\[[^\]]*\])?\{(?:neurips|icml|iclr|aaai|acl)[^}]*\}/i.test(parsedTemplate.documentClass)
+    );
+  return {
+    appendixFormat:
+      parsedTemplate.columnLayout === 1
+        ? "single_column"
+        : inferredTwoColumnDefault
+          ? "double_column"
+          : null,
+    estimatedWordsPerPage:
+      parsedTemplate.columnLayout === 1
+        ? 700
+        : inferredTwoColumnDefault
+          ? 420
+          : null
   };
 }
 

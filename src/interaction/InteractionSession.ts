@@ -1881,11 +1881,12 @@ export class InteractionSession {
     const configuredLimit = Math.max(1, this.config.papers.max_results);
     const fetchCount = request.additional ? corpusCount + request.additional : request.limit ?? configuredLimit;
     const targetTotal = request.additional ? corpusCount + request.additional : fetchCount;
-    const query = request.query?.trim() || run.topic;
+    const explicitQuery = request.query?.trim() || undefined;
+    const query = explicitQuery || run.topic;
     const filters = normalizeCollectFiltersForNode(request);
     const endpoint = request.sort.field === "relevance" ? "/paper/search" : "/paper/search/bulk";
     const nodeRequest = {
-      query,
+      query: explicitQuery,
       limit: fetchCount,
       additional: request.additional,
       sort: request.sort,

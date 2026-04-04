@@ -56,7 +56,6 @@ export interface ImplementProjectionHints {
 
 export interface PaperCritiqueProjectionHints {
   manuscriptType?: string;
-  targetVenueStyle?: string;
   overallDecision?: string;
   blockingIssuesCount?: number;
   critiqueStage?: string;
@@ -291,7 +290,7 @@ export function projectRunForDisplay(run: RunRecord, hints?: RunProjectionHints)
   // Surface paper critique state when available
   const critiqueHints = effectiveHints?.paperCritique;
   if (critiqueHints?.manuscriptType && critiqueHints.manuscriptType !== "paper_ready") {
-    detailParts.push(`Manuscript: ${critiqueHints.manuscriptType}${critiqueHints.targetVenueStyle ? ` (${critiqueHints.targetVenueStyle})` : ""}.`);
+    detailParts.push(`Manuscript: ${critiqueHints.manuscriptType}.`);
   }
   if (critiqueHints?.blockingIssuesCount && critiqueHints.blockingIssuesCount > 0) {
     detailParts.push(`${critiqueHints.blockingIssuesCount} blocking critique issue(s).`);
