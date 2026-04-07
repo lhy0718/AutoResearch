@@ -56,6 +56,7 @@ export interface MarkdownRunBriefSections {
 }
 
 const RUN_BRIEF_TIMEOUT_REASONING = "medium";
+const DEFAULT_RUN_BRIEF_TIMEOUT_MS = 8_000;
 
 export function looksLikeRunBriefRequest(text: string): boolean {
   const normalized = text.trim();
@@ -80,14 +81,18 @@ export async function extractRunBrief(input: ExtractRunBriefInput): Promise<Extr
   }
 
   try {
-    const raw = await input.llm.runForText({
-      prompt: buildRunBriefPrompt(input.brief, input.defaults),
-      sandboxMode: "read-only",
-      approvalPolicy: "never",
-      systemPrompt: buildRunBriefSystemPrompt(),
-      reasoningEffort: RUN_BRIEF_TIMEOUT_REASONING,
-      abortSignal: input.abortSignal
-    });
+    const raw = await runBriefLlmWithTimeout(
+      input.llm,
+      {
+        prompt: buildRunBriefPrompt(input.brief, input.defaults),
+        sandboxMode: "read-only",
+        approvalPolicy: "never",
+        systemPrompt: buildRunBriefSystemPrompt(),
+        reasoningEffort: RUN_BRIEF_TIMEOUT_REASONING,
+        abortSignal: input.abortSignal
+      },
+      resolveRunBriefTimeoutMs()
+    );
     const parsed = parseRunBriefJson(raw, input.defaults, input.brief);
     const topic = resolveRunBriefTopic({
       explicitTopic: explicitAnchors.topic,
@@ -119,6 +124,55 @@ export async function extractRunBrief(input: ExtractRunBriefInput): Promise<Extr
     };
   } catch {
     return heuristic;
+  }
+}
+
+function resolveRunBriefTimeoutMs(): number {
+  const configured = Number.parseInt(process.env.AUTOLABOS_RUN_BRIEF_TIMEOUT_MS || "", 10);
+  if (Number.isFinite(configured) && configured > 0) {
+    return configured;
+  }
+  return DEFAULT_RUN_BRIEF_TIMEOUT_MS;
+}
+
+async function runBriefLlmWithTimeout(
+  llm: RunBriefTextClient,
+  opts: Parameters<RunBriefTextClient["runForText"]>[0],
+  timeoutMs: number
+): Promise<string> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return llm.runForText(opts);
+  }
+
+  const timeoutController = new AbortController();
+  const forwardAbort = () => timeoutController.abort(opts.abortSignal?.reason);
+  if (opts.abortSignal) {
+    if (opts.abortSignal.aborted) {
+      timeoutController.abort(opts.abortSignal.reason);
+    } else {
+      opts.abortSignal.addEventListener("abort", forwardAbort, { once: true });
+    }
+  }
+
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      llm.runForText({
+        ...opts,
+        abortSignal: timeoutController.signal
+      }),
+      new Promise<string>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          timeoutController.abort(new Error(`run_brief_timeout_after_${timeoutMs}ms`));
+          reject(new Error(`run_brief_timeout_after_${timeoutMs}ms`));
+        }, timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+    opts.abortSignal?.removeEventListener("abort", forwardAbort);
   }
 }
 

@@ -23,6 +23,7 @@ import {
   storeExperimentGovernanceDecision
 } from "../experimentGovernance.js";
 import { RunVerifierReport, RunVerifierTrigger } from "../experiments/runVerifierFeedback.js";
+import { detectPreflightOnlyMetrics } from "../experiments/executedMetrics.js";
 import { FailureMemory, buildErrorFingerprint } from "../experiments/failureMemory.js";
 import {
   buildExperimentRunManifest,
@@ -97,18 +98,6 @@ interface ManagedMatrixSliceArtifact {
   condition_metrics: Record<string, unknown>;
   comparison: Record<string, unknown>;
   summary: string;
-}
-
-function detectPreflightOnlyMetrics(metrics: Record<string, unknown>): string | null {
-  const mode = typeof metrics.mode === "string" ? metrics.mode.trim().toLowerCase() : "";
-  const notes = typeof metrics.notes === "string" ? metrics.notes.trim() : "";
-  if (mode === "preflight") {
-    return "Experiment only emitted preflight metrics; no training or evaluation was executed.";
-  }
-  if (/no training\/evaluation executed/i.test(notes)) {
-    return "Experiment reported that no training or evaluation was executed.";
-  }
-  return null;
 }
 
 export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHandler {

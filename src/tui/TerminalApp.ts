@@ -79,7 +79,15 @@ import {
 import { buildExplorationStatusSnapshot, formatExplorationStatusLines } from "../core/exploration/status.js";
 import { askLine } from "../utils/prompt.js";
 import { ensureDir, fileExists } from "../utils/fs.js";
-import { getDefaultPdfAnalysisModeForLlmMode, getPdfAnalysisModeForConfig, resolveOpenAiApiKey, upsertEnvVar } from "../config.js";
+import {
+  DEFAULT_RESEARCH_CONSTRAINTS,
+  DEFAULT_RESEARCH_OBJECTIVE_METRIC,
+  DEFAULT_RESEARCH_TOPIC,
+  getDefaultPdfAnalysisModeForLlmMode,
+  getPdfAnalysisModeForConfig,
+  resolveOpenAiApiKey,
+  upsertEnvVar
+} from "../config.js";
 import { executionProfileToDependencyMode } from "../runtime/executionProfile.js";
 import { AgentOrchestrator } from "../core/agents/agentOrchestrator.js";
 import { AutonomousRunController, buildDefaultOvernightPolicy, buildDefaultAutonomousPolicy } from "../core/agents/autonomousRunController.js";
@@ -94,6 +102,7 @@ import {
 import { InteractiveRunSupervisor } from "../core/runs/interactiveRunSupervisor.js";
 import { HumanInterventionRequest } from "../core/humanIntervention.js";
 import {
+  buildGuidedResearchBriefMarkdown,
   createResearchBriefFile,
   findLatestResearchBrief,
   getWorkspaceResearchBriefPath,
@@ -104,6 +113,11 @@ import {
   validateResearchBriefDraftMarkdown,
   validateResearchBriefFile
 } from "../core/runs/researchBriefFiles.js";
+import {
+  getGuidedBriefInterviewCopy,
+  GuidedBriefInterviewLanguage,
+  listGuidedBriefInterviewLanguages
+} from "../core/runs/guidedBriefInterview.js";
 import {
   buildReviewInsightCard,
   formatReviewPacketLines,
@@ -246,6 +260,12 @@ interface ActiveSelectionMenu {
   resolve: (value: string | undefined) => void;
 }
 
+interface GuidedBriefAutomationConfig {
+  language?: GuidedBriefInterviewLanguage;
+  answers: string[];
+  autoStartAnswer?: string;
+}
+
 interface RunHistoryFile {
   version: 1;
   items: string[];
@@ -366,6 +386,8 @@ export class TerminalApp {
   private pendingHumanIntervention?: PendingHumanInterventionState;
   private announcedHumanInterventionId?: string;
   private guidanceLanguage: GuidanceLanguage = detectInitialGuidanceLanguage();
+  private guidedBriefAutomation?: GuidedBriefAutomationConfig | null;
+  private startupAutomationCommands?: string[] | null;
   private enhancedNewlineSupported = detectLikelyEnhancedNewlineSupport();
   private suppressEnhancedEnterUntil = 0;
   private suppressTerminalQueryKeypressesUntil = 0;
@@ -427,6 +449,7 @@ export class TerminalApp {
     this.attachProcessTerminationHandlers();
     await this.attachKeyboard();
     this.render();
+    await this.runStartupAutomationCommands();
 
     await new Promise<void>((resolve) => {
       this.resolver = resolve;
@@ -2624,12 +2647,21 @@ export class TerminalApp {
     const filePath = getWorkspaceResearchBriefPath(workspaceRoot);
     const existed = await fileExists(filePath);
     await createResearchBriefFile(workspaceRoot);
-    this.pushLog(`${existed ? "Using existing" : "Created"} research brief: ${filePath}`);
+
+    if (!existed) {
+      const guidedBrief = await this.runGuidedBriefInterview(workspaceRoot);
+      await fs.writeFile(filePath, `${guidedBrief}\n`, "utf8");
+      this.pushLog("Guided brief draft written to Brief.md.");
+      this.pushLog(`Created guided research brief: ${filePath}`);
+    } else {
+      this.pushLog(`Using existing research brief: ${filePath}`);
+    }
 
     const openedInEditor = await this.openResearchBriefInEditor(filePath);
     if (!openedInEditor) {
-      this.pushLog("Edit Brief.md, then start it with /brief start --latest or /brief start <path>.");
-      return;
+      this.pushLog(
+        `${existed ? "Edit" : "Guided draft saved in"} Brief.md, then start it with /brief start --latest or /brief start <path>.`
+      );
     }
 
     const brief = await fs.readFile(filePath, "utf8");
@@ -2650,10 +2682,183 @@ export class TerminalApp {
       return;
     }
 
-    const autoStartAnswer = await this.askWithinTui("Start research from this brief now? (Y/n)", "Y");
+    const autoStartAnswer = (await this.askGuidedBriefAutoStartWithinTui("Start research from this brief now? (Y/n)", "Y")) ?? "Y";
     if (!["n", "no"].includes(autoStartAnswer.trim().toLowerCase())) {
+      this.pushLog("Validated brief. Starting governed run from Brief.md...");
       await this.startRunFromBriefPath(filePath);
     }
+  }
+
+  private async askRequiredWithinTui(
+    question: string,
+    defaultValue = "",
+    requiredAnswerMessage = "Please provide a short substantive answer so the brief can be generated."
+  ): Promise<string> {
+    while (true) {
+      const answer = (await this.askWithinTui(question, defaultValue)).trim();
+      if (answer.length > 0) {
+        return answer;
+      }
+      this.pushLog(requiredAnswerMessage);
+    }
+  }
+
+  private logGuidedBriefStep(step: number, total: number, label: string): void {
+    this.pushLog(`Guided brief step ${step}/${total}: ${label}`);
+  }
+
+  private async selectGuidedBriefInterviewLanguage(): Promise<GuidedBriefInterviewLanguage> {
+    const automation = await this.getGuidedBriefAutomation();
+    if (automation?.language) {
+      this.pushLog(`Guided brief automation selected language: ${automation.language}`);
+      return automation.language;
+    }
+    const options = listGuidedBriefInterviewLanguages();
+    const defaultLanguage: GuidedBriefInterviewLanguage = this.guidanceLanguage === "ko" ? "ko" : "en";
+    const selected = await this.openSelectionMenu(
+      getGuidedBriefInterviewCopy(defaultLanguage).selectionTitle,
+      options,
+      defaultLanguage
+    );
+    return options.some((option) => option.value === selected)
+      ? (selected as GuidedBriefInterviewLanguage)
+      : defaultLanguage;
+  }
+
+  private async runGuidedBriefInterview(workspaceRoot: string): Promise<string> {
+    const interviewLanguage = await this.selectGuidedBriefInterviewLanguage();
+    const copy = getGuidedBriefInterviewCopy(interviewLanguage);
+    for (const line of copy.introLines) {
+      this.pushLog(line);
+    }
+    const totalSteps = 21;
+    let step = 0;
+    const logStep = (label: string): void => {
+      step += 1;
+      this.logGuidedBriefStep(step, totalSteps, label);
+    };
+    const templateDefault = (await fileExists(path.join(workspaceRoot, "template.tex"))) ? "template.tex" : "";
+    logStep(copy.questions.topic);
+    const topic = await this.askRequiredGuidedBriefQuestion(copy.questions.topic, "", copy.requiredAnswerMessage);
+    logStep(copy.questions.primaryMetric);
+    const primaryMetric = await this.askRequiredGuidedBriefQuestion(
+      copy.questions.primaryMetric,
+      "",
+      copy.requiredAnswerMessage
+    );
+    logStep(copy.questions.meaningfulImprovement);
+    const meaningfulImprovement = await this.askRequiredGuidedBriefQuestion(
+      copy.questions.meaningfulImprovement,
+      "",
+      copy.requiredAnswerMessage
+    );
+    logStep(copy.questions.constraints);
+    const constraints = await this.askRequiredGuidedBriefQuestion(copy.questions.constraints, "", copy.requiredAnswerMessage);
+    logStep(copy.questions.researchQuestion);
+    const researchQuestion = await this.askRequiredGuidedBriefQuestion(
+      copy.questions.researchQuestion,
+      "",
+      copy.requiredAnswerMessage
+    );
+    logStep(copy.questions.whySmallExperiment);
+    const whySmallExperiment = await this.askRequiredGuidedBriefQuestion(
+      copy.questions.whySmallExperiment,
+      "",
+      copy.requiredAnswerMessage
+    );
+    logStep(copy.questions.baselineComparator);
+    const baselineComparator = await this.askRequiredGuidedBriefQuestion(
+      copy.questions.baselineComparator,
+      "",
+      copy.requiredAnswerMessage
+    );
+    logStep(copy.questions.datasetTaskBench);
+    const datasetTaskBench = await this.askRequiredGuidedBriefQuestion(
+      copy.questions.datasetTaskBench,
+      "",
+      copy.requiredAnswerMessage
+    );
+    logStep(copy.questions.targetComparison);
+    const targetComparison = await this.askRequiredGuidedBriefQuestion(
+      copy.questions.targetComparison,
+      "",
+      copy.requiredAnswerMessage
+    );
+    logStep(copy.questions.minimumAcceptableEvidence);
+    const minimumAcceptableEvidence = await this.askRequiredGuidedBriefQuestion(
+      copy.questions.minimumAcceptableEvidence,
+      "",
+      copy.requiredAnswerMessage
+    );
+    logStep(copy.questions.disallowedShortcuts);
+    const disallowedShortcuts = await this.askRequiredGuidedBriefQuestion(
+      copy.questions.disallowedShortcuts,
+      "",
+      copy.requiredAnswerMessage
+    );
+    logStep(copy.questions.allowedBudgetedPasses);
+    const allowedBudgetedPasses = await this.askRequiredGuidedBriefQuestion(
+      copy.questions.allowedBudgetedPasses,
+      "one bounded repair pass; rerun only failed conditions after a concrete fix",
+      copy.requiredAnswerMessage
+    );
+    logStep(copy.questions.paperCeiling);
+    const paperCeiling = await this.askRequiredGuidedBriefQuestion(
+      copy.questions.paperCeiling,
+      "research_memo",
+      copy.requiredAnswerMessage
+    );
+    logStep(copy.questions.minimumExperimentPlan);
+    const minimumExperimentPlan = await this.askRequiredGuidedBriefQuestion(
+      copy.questions.minimumExperimentPlan,
+      "",
+      copy.requiredAnswerMessage
+    );
+    logStep(copy.questions.failureConditions);
+    const failureConditions = await this.askRequiredGuidedBriefQuestion(
+      copy.questions.failureConditions,
+      "",
+      copy.requiredAnswerMessage
+    );
+    logStep(copy.questions.secondaryMetrics);
+    const secondaryMetrics = await this.askGuidedBriefQuestion(copy.questions.secondaryMetrics, "");
+    logStep(copy.questions.manuscriptTemplate);
+    const manuscriptTemplate = await this.askGuidedBriefQuestion(copy.questions.manuscriptTemplate, templateDefault);
+    logStep(copy.questions.appendixPrefer);
+    const appendixPrefer = await this.askGuidedBriefQuestion(
+      copy.questions.appendixPrefer,
+      "hyperparameter_grids; extended_error_analysis"
+    );
+    logStep(copy.questions.appendixKeepMain);
+    const appendixKeepMain = await this.askGuidedBriefQuestion(copy.questions.appendixKeepMain, "main_result_tables");
+    logStep(copy.questions.notes);
+    const notes = await this.askGuidedBriefQuestion(copy.questions.notes, "");
+    logStep(copy.questions.questionsRisks);
+    const questionsRisks = await this.askGuidedBriefQuestion(copy.questions.questionsRisks, "");
+
+    return buildGuidedResearchBriefMarkdown({
+      topic,
+      primaryMetric,
+      secondaryMetrics,
+      meaningfulImprovement,
+      constraints,
+      researchQuestion,
+      whySmallExperiment,
+      baselineComparator,
+      datasetTaskBench,
+      targetComparison,
+      minimumAcceptableEvidence,
+      disallowedShortcuts,
+      allowedBudgetedPasses,
+      paperCeiling,
+      minimumExperimentPlan,
+      failureConditions,
+      manuscriptTemplate,
+      appendixPrefer,
+      appendixKeepMain,
+      notes,
+      questionsRisks
+    });
   }
 
   private async createRunFromBrief(input: {
@@ -2667,18 +2872,29 @@ export class TerminalApp {
   }): Promise<RunRecord> {
     this.creatingRunFromBrief = true;
     this.creatingRunTargetId = undefined;
+    this.pushLog("Extracting structured run brief from the Research Brief...");
     this.render();
     try {
       const extracted = await extractRunBrief({
         brief: input.brief,
         defaults: {
-          topic: input.topic?.trim() || this.config.research.default_topic,
-          constraints: input.constraints?.length ? input.constraints : this.config.research.default_constraints,
-          objectiveMetric: input.objectiveMetric?.trim() || this.config.research.default_objective_metric
+          topic: input.topic?.trim() || this.config.research?.default_topic || DEFAULT_RESEARCH_TOPIC,
+          constraints:
+            input.constraints?.length
+              ? input.constraints
+              : this.config.research?.default_constraints || [...DEFAULT_RESEARCH_CONSTRAINTS],
+          objectiveMetric:
+            input.objectiveMetric?.trim()
+            || this.config.research?.default_objective_metric
+            || DEFAULT_RESEARCH_OBJECTIVE_METRIC
         },
         llm: this.getCommandIntentClient(),
         abortSignal: input.abortSignal
       });
+      this.pushLog("Structured run brief extracted.");
+      if (extracted.source === "heuristic_fallback") {
+        this.pushLog("Run brief extraction fell back to heuristic parsing.");
+      }
       for (const line of summarizeRunBrief(extracted)) {
         this.pushLog(line);
       }
@@ -2696,6 +2912,7 @@ export class TerminalApp {
         constraints: extracted.constraints,
         objectiveMetric: extracted.objectiveMetric
       });
+      this.pushLog("Created governed run record.");
       this.creatingRunTargetId = run.id;
       await this.refreshRunIndex();
       await this.setActiveRunId(run.id);
@@ -2769,6 +2986,7 @@ export class TerminalApp {
   }
 
   private async startRunFromBriefPath(filePath: string, abortSignal?: AbortSignal): Promise<RunRecord | undefined> {
+    this.pushLog(`Starting research from brief: ${filePath}`);
     const validation = await validateResearchBriefFile(filePath);
     for (const line of summarizeBriefValidation(validation)) {
       this.pushLog(line);
@@ -5385,6 +5603,119 @@ export class TerminalApp {
     const answer = await askLine(question, defaultValue);
     this.attachKeyboard();
     return answer;
+  }
+
+  private async getGuidedBriefAutomation(): Promise<GuidedBriefAutomationConfig | null> {
+    if (this.guidedBriefAutomation !== undefined) {
+      return this.guidedBriefAutomation;
+    }
+
+    const automationPath = process.env.AUTOLABOS_GUIDED_BRIEF_AUTOMATION_FILE?.trim();
+    if (!automationPath) {
+      this.guidedBriefAutomation = null;
+      return this.guidedBriefAutomation;
+    }
+
+    const resolvedPath = path.isAbsolute(automationPath)
+      ? automationPath
+      : path.join(process.cwd(), automationPath);
+    try {
+      const raw = await fs.readFile(resolvedPath, "utf8");
+      const parsed = JSON.parse(raw) as Partial<GuidedBriefAutomationConfig>;
+      this.guidedBriefAutomation = {
+        language: parsed.language,
+        answers: Array.isArray(parsed.answers)
+          ? parsed.answers.filter((value): value is string => typeof value === "string")
+          : [],
+        autoStartAnswer: typeof parsed.autoStartAnswer === "string" ? parsed.autoStartAnswer : undefined
+      };
+      this.pushLog(`Guided brief automation loaded from ${resolvedPath}.`);
+      return this.guidedBriefAutomation;
+    } catch (error) {
+      this.guidedBriefAutomation = null;
+      this.pushLog(
+        `Guided brief automation could not be loaded (${resolvedPath}): ${error instanceof Error ? error.message : String(error)}`
+      );
+      return this.guidedBriefAutomation;
+    }
+  }
+
+  private async getStartupAutomationCommands(): Promise<string[] | null> {
+    if (this.startupAutomationCommands !== undefined) {
+      return this.startupAutomationCommands;
+    }
+
+    const commandsPath = process.env.AUTOLABOS_STARTUP_COMMANDS_FILE?.trim();
+    if (!commandsPath) {
+      this.startupAutomationCommands = null;
+      return this.startupAutomationCommands;
+    }
+
+    const resolvedPath = path.isAbsolute(commandsPath)
+      ? commandsPath
+      : path.join(process.cwd(), commandsPath);
+    try {
+      const raw = await fs.readFile(resolvedPath, "utf8");
+      const parsed = JSON.parse(raw) as unknown;
+      this.startupAutomationCommands = Array.isArray(parsed)
+        ? parsed.filter((value): value is string => typeof value === "string").map((value) => value.trim()).filter(Boolean)
+        : [];
+      this.pushLog(`Startup automation loaded from ${resolvedPath}.`);
+      return this.startupAutomationCommands;
+    } catch (error) {
+      this.startupAutomationCommands = null;
+      this.pushLog(
+        `Startup automation could not be loaded (${resolvedPath}): ${error instanceof Error ? error.message : String(error)}`
+      );
+      return this.startupAutomationCommands;
+    }
+  }
+
+  private async runStartupAutomationCommands(): Promise<void> {
+    const commands = await this.getStartupAutomationCommands();
+    if (!commands?.length) {
+      return;
+    }
+    for (const command of commands) {
+      this.pushLog(`Startup automation running: ${command}`);
+      await this.submitInputText(command);
+      if (this.stopped) {
+        break;
+      }
+    }
+  }
+
+  private async askGuidedBriefQuestion(question: string, defaultValue = ""): Promise<string> {
+    const automation = await this.getGuidedBriefAutomation();
+    if (automation && automation.answers.length > 0) {
+      const answer = automation.answers.shift() ?? "";
+      this.pushLog(`Guided brief automation answered: ${question}`);
+      return answer;
+    }
+    return this.askWithinTui(question, defaultValue);
+  }
+
+  private async askRequiredGuidedBriefQuestion(
+    question: string,
+    defaultValue = "",
+    requiredAnswerMessage = "Please provide a short substantive answer so the brief can be generated."
+  ): Promise<string> {
+    while (true) {
+      const answer = (await this.askGuidedBriefQuestion(question, defaultValue)).trim();
+      if (answer.length > 0) {
+        return answer;
+      }
+      this.pushLog(requiredAnswerMessage);
+    }
+  }
+
+  private async askGuidedBriefAutoStartWithinTui(question: string, defaultValue = ""): Promise<string> {
+    const automation = await this.getGuidedBriefAutomation();
+    if (automation?.autoStartAnswer) {
+      this.pushLog(`Guided brief automation answered: ${question}`);
+      return automation.autoStartAnswer;
+    }
+    return this.askWithinTui(question, defaultValue);
   }
 
   private pushLog(line: string): void {

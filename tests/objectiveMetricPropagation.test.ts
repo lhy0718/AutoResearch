@@ -1335,6 +1335,24 @@ describe("objective metric propagation", () => {
       ),
       "utf8"
     );
+    await writeFile(
+      path.join(runDir, "run_experiments_verify_report.json"),
+      JSON.stringify(
+        {
+          status: "pass",
+          trigger: "auto_handoff",
+          stage: "success",
+          summary:
+            "Best-effort objective match inferred from overlapping metric terms (gpu). Objective metric met: device.gpu_count=2 >= 0.015.",
+          command: "python experiment.py --mode preflight",
+          metrics_path: path.join(runDir, "metrics.json"),
+          log_file: path.join(runDir, "exec_logs", "run_experiments.txt")
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
 
     const analyzeNode = createAnalyzeResultsNode({
       config: {} as any,
@@ -3608,6 +3626,78 @@ describe("objective metric propagation", () => {
       stage: "metrics",
       status: "fail"
     });
+  });
+
+  it("does not promote preflight-only metrics into analyze_results objective summaries or result tables", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-preflight-only-"));
+    process.chdir(root);
+
+    const runId = "run-analyze-preflight-only";
+    const run = {
+      ...makeRun(runId),
+      currentNode: "analyze_results" as const,
+      objectiveMetric:
+        "Mean zero-shot accuracy across ARC-Challenge and HellaSwag; meaningful improvement >= 0.015."
+    };
+    run.graph.currentNode = "analyze_results";
+
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          mode: "preflight",
+          status: "ok",
+          notes: "No training/evaluation executed. Environment and GPU readiness recorded.",
+          device: { gpu_count: 2, peak_vram_gb: 0 },
+          constraints: { sample_count: 10000, seed: 42 },
+          primary_metric: null
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const analyzeNode = createAnalyzeResultsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await analyzeNode.execute({ run, graph: run.graph });
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("preflight metrics");
+
+    const analysis = JSON.parse(
+      await readFile(path.join(runDir, "result_analysis.json"), "utf8")
+    ) as {
+      overview: { objective_status: string; objective_summary: string; matched_metric_key?: string };
+      metric_table: Array<{ key: string }>;
+      results_table: Array<unknown>;
+      warnings: string[];
+      verifier_feedback?: { summary: string };
+    };
+    expect(analysis.overview.objective_status).toBe("missing");
+    expect(analysis.overview.objective_summary).toContain("preflight metrics");
+    expect(analysis.overview.matched_metric_key ?? "").toBe("");
+    expect(analysis.metric_table).toEqual([]);
+    expect(analysis.results_table).toEqual([]);
+    expect(analysis.warnings.some((warning) => warning.includes("preflight metrics"))).toBe(true);
+    expect(analysis.verifier_feedback).toBeUndefined();
+
+    const resultTable = JSON.parse(
+      await readFile(path.join(runDir, "result_table.json"), "utf8")
+    ) as { primary_metric: string; conditions: Array<unknown>; summary: string };
+    expect(resultTable.primary_metric).toBe("");
+    expect(resultTable.conditions).toEqual([]);
+    expect(resultTable.summary).toContain("preflight metrics");
   });
 
   it("forces a fresh rerun for managed real_execution bundles when previous metrics exist", async () => {

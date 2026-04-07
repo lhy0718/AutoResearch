@@ -3002,7 +3002,32 @@ describe("TerminalApp pending natural plan execution", () => {
       const paths = resolveAppPaths(cwd);
       await ensureScaffold(paths);
       const app = makeApp();
+      app.openSelectionMenu = vi.fn().mockResolvedValue("en");
       app.openResearchBriefInEditor = vi.fn().mockResolvedValue(false);
+      app.askWithinTui = vi
+        .fn()
+        .mockResolvedValueOnce("Evaluate compact-model instruction-tuning recipe choices under a local budget.")
+        .mockResolvedValueOnce("Mean zero-shot accuracy across ARC-Challenge and HellaSwag.")
+        .mockResolvedValueOnce("+1.0 point over the tuned baseline.")
+        .mockResolvedValueOnce("2x RTX 4090 only; public datasets only; seed=42.")
+        .mockResolvedValueOnce("Which lightweight recipe choice improves benchmark accuracy most reliably?")
+        .mockResolvedValueOnce("Public benchmarks exist; four-condition comparison is feasible; a named baseline is available.")
+        .mockResolvedValueOnce("Baseline name: tuned LoRA baseline; Why relevant: standard compact-model comparator; Comparison dimension: accuracy and runtime.")
+        .mockResolvedValueOnce("Datasets: public instruction subset; Task type: instruction tuning and zero-shot evaluation; Validation discipline: fixed seed and prompts.")
+        .mockResolvedValueOnce("Proposed method: strongest alternative recipe; Comparator: tuned baseline; Dimension: benchmark accuracy delta.")
+        .mockResolvedValueOnce("At least +1.0 point over baseline; all planned conditions execute; bootstrap CI required.")
+        .mockResolvedValueOnce("No fabricated metrics; no skipped baseline; no checkpoint carry-over.")
+        .mockResolvedValueOnce("One bounded repair pass; rerun only failed conditions.")
+        .mockResolvedValueOnce("research_memo")
+        .mockResolvedValueOnce("One tuned baseline; three alternatives; one result table; one limitations note.")
+        .mockResolvedValueOnce("Baseline fails; metrics missing; no defensible quantitative comparison.")
+        .mockResolvedValueOnce("")
+        .mockResolvedValueOnce("template.tex")
+        .mockResolvedValueOnce("hyperparameter_grids; environment_dump")
+        .mockResolvedValueOnce("main_result_tables; primary_recipe_ablation")
+        .mockResolvedValueOnce("Stay within local workstation limits.")
+        .mockResolvedValueOnce("Will the compact model provide enough signal?")
+        .mockResolvedValueOnce("n");
 
       await app.handleNewRun();
 
@@ -3014,7 +3039,17 @@ describe("TerminalApp pending natural plan execution", () => {
       expect(raw).toContain("## Dataset / Task / Bench");
       expect(raw).toContain("## Minimum Experiment Plan");
       expect(raw).toContain("## Failure Conditions");
-      expect(app.logs.some((line: string) => line.includes("Created research brief:"))).toBe(true);
+      expect(raw).toContain("Evaluate compact-model instruction-tuning recipe choices under a local budget.");
+      expect(raw).toContain("template.tex");
+      expect(app.logs.some((line: string) => line.includes("Created guided research brief:"))).toBe(true);
+      expect(app.logs).toContain("Guided brief step 1/21: Topic");
+      expect(app.logs).toContain("Guided brief step 21/21: Questions / risks (optional)");
+      expect(app.logs).toContain("Guided brief draft written to Brief.md.");
+      expect(app.openSelectionMenu).toHaveBeenCalledWith(
+        "Select guided brief interview language",
+        expect.any(Array),
+        "en"
+      );
     } finally {
       process.chdir(originalCwd);
       await rm(cwd, { recursive: true, force: true });
@@ -3029,6 +3064,29 @@ describe("TerminalApp pending natural plan execution", () => {
       const paths = resolveAppPaths(cwd);
       await ensureScaffold(paths);
       const app = makeApp();
+      app.openSelectionMenu = vi.fn().mockResolvedValue("en");
+      app.askWithinTui = vi
+        .fn()
+        .mockResolvedValueOnce("Budget-aware test-time reasoning for small language models.")
+        .mockResolvedValueOnce("Pass@1.")
+        .mockResolvedValueOnce("+0.05 pass@1.")
+        .mockResolvedValueOnce("6 hour limit; public benchmark only.")
+        .mockResolvedValueOnce("Can bounded test-time reasoning improve benchmark pass@1?")
+        .mockResolvedValueOnce("The benchmark is public; one baseline and one proposal are feasible.")
+        .mockResolvedValueOnce("Baseline name: single-agent baseline; Why relevant: simplest comparator; Comparison dimension: pass@1.")
+        .mockResolvedValueOnce("Dataset: public reasoning benchmark; Task: inference-time strategy comparison; Validation discipline: fixed prompts.")
+        .mockResolvedValueOnce("Proposed method: adaptive reasoning; Comparator: single-agent baseline; Dimension: pass@1 delta.")
+        .mockResolvedValueOnce("At least +0.05 pass@1; one baseline and one proposal run.")
+        .mockResolvedValueOnce("No fabricated metrics; no skipped baseline.")
+        .mockResolvedValueOnce("One bounded repair pass.")
+        .mockResolvedValueOnce("research_memo")
+        .mockResolvedValueOnce("One baseline run; one proposal run; one result table.")
+        .mockResolvedValueOnce("No usable benchmark; baseline unavailable; no defensible comparison.")
+        .mockResolvedValueOnce("")
+        .mockResolvedValueOnce("")
+        .mockResolvedValueOnce("")
+        .mockResolvedValueOnce("")
+        .mockResolvedValueOnce("");
       app.openResearchBriefInEditor = vi.fn(async (filePath: string) => {
         await writeFile(
           filePath,
@@ -3053,8 +3111,160 @@ describe("TerminalApp pending natural plan execution", () => {
       expect(
         app.logs.some((line: string) => line.includes('Replace the placeholder text in "## Objective Metric"'))
       ).toBe(false);
-      expect(app.askWithinTui).not.toHaveBeenCalled();
+      expect(app.askWithinTui).toHaveBeenCalled();
+      expect(app.logs).not.toContain("Starting research from latest brief...");
+      expect(app.logs).not.toContain("Starting research from Brief.md...");
     } finally {
+      process.chdir(originalCwd);
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("asks guided /new interview questions in the selected language", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "autolabos-brief-language-"));
+    const originalCwd = process.cwd();
+    process.chdir(cwd);
+    try {
+      const paths = resolveAppPaths(cwd);
+      await ensureScaffold(paths);
+      const app = makeApp();
+      app.openSelectionMenu = vi.fn().mockResolvedValue("ko");
+      app.openResearchBriefInEditor = vi.fn().mockResolvedValue(false);
+      app.askWithinTui = vi
+        .fn()
+        .mockResolvedValueOnce("작은 언어 모델의 추론 비용 대비 성능을 비교합니다.")
+        .mockResolvedValueOnce("평균 정확도")
+        .mockResolvedValueOnce("+1.0pp")
+        .mockResolvedValueOnce("공개 데이터만 사용; 로컬 예산만 사용")
+        .mockResolvedValueOnce("어떤 경량 전략이 가장 일관된 개선을 주는가?")
+        .mockResolvedValueOnce("작은 비교 실험으로 충분히 검증 가능함")
+        .mockResolvedValueOnce("튜닝된 단일 베이스라인")
+        .mockResolvedValueOnce("공개 벤치마크; 추론 전략 비교")
+        .mockResolvedValueOnce("베이스라인 대비 정확도 차이")
+        .mockResolvedValueOnce("모든 조건이 실행되고 기준보다 +1.0pp 이상")
+        .mockResolvedValueOnce("지표 조작 금지; 베이스라인 생략 금지")
+        .mockResolvedValueOnce("한 번의 제한된 수정 패스")
+        .mockResolvedValueOnce("research_memo")
+        .mockResolvedValueOnce("베이스라인 1회; 대안 1회; 결과표 1개")
+        .mockResolvedValueOnce("베이스라인 실패; 비교 불가")
+        .mockResolvedValueOnce("")
+        .mockResolvedValueOnce("")
+        .mockResolvedValueOnce("")
+        .mockResolvedValueOnce("")
+        .mockResolvedValueOnce("")
+        .mockResolvedValueOnce("")
+        .mockResolvedValueOnce("n");
+
+      await app.handleNewRun();
+
+      expect(app.askWithinTui).toHaveBeenNthCalledWith(1, "주제", "");
+      expect(app.askWithinTui).toHaveBeenNthCalledWith(2, "주요 평가 지표", "");
+      expect(app.logs).toContain("가이드형 Research Brief 인터뷰를 시작합니다.");
+      expect(app.logs).toContain("Guided brief step 1/21: 주제");
+    } finally {
+      process.chdir(originalCwd);
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("can complete guided /new from an automation file without interactive answers", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "autolabos-brief-automation-"));
+    const originalCwd = process.cwd();
+    const originalAutomationFile = process.env.AUTOLABOS_GUIDED_BRIEF_AUTOMATION_FILE;
+    process.chdir(cwd);
+    try {
+      const paths = resolveAppPaths(cwd);
+      await ensureScaffold(paths);
+      const automationPath = path.join(cwd, "guided-brief-automation.json");
+      await writeFile(
+        automationPath,
+        JSON.stringify(
+          {
+            language: "en",
+            answers: [
+              "Instruction tuning recipe comparisons for compact open models.",
+              "Average zero-shot accuracy across ARC-Challenge and HellaSwag.",
+              "+1.0 percentage point over the tuned baseline.",
+              "2x RTX 4090 maximum; public data only; seed=42.",
+              "Which lightweight recipe choice improves benchmark accuracy most reliably?",
+              "A four-condition comparison is feasible with a compact model and public evaluation tasks.",
+              "Baseline name: tuned LoRA baseline; Why relevant: standard comparator; Comparison dimension: accuracy and runtime.",
+              "Dataset: bounded instruction subset; Task: instruction tuning and zero-shot evaluation; Validation discipline: fixed prompts and seed.",
+              "Proposed method: strongest lightweight alternative; Comparator: tuned baseline; Dimension: benchmark accuracy delta.",
+              "Executed experiments, baseline comparison, result table, and explicit claim-to-evidence mapping.",
+              "No fabricated metrics; no skipped baseline; no checkpoint carry-over.",
+              "One bounded repair pass; rerun only failed conditions.",
+              "research_memo",
+              "One tuned baseline; three alternatives; one result table; one limitations note.",
+              "Baseline fails; metrics missing; no defensible quantitative comparison.",
+              "",
+              "template.tex",
+              "hyperparameter_grids; extended_error_analysis",
+              "main_result_tables; best_vs_baseline_comparison",
+              "Keep claims evidence-bounded.",
+              "Will the compact model produce enough signal?"
+            ],
+            autoStartAnswer: "n"
+          },
+          null,
+          2
+        ),
+        "utf8"
+      );
+      process.env.AUTOLABOS_GUIDED_BRIEF_AUTOMATION_FILE = automationPath;
+
+      const app = makeApp();
+      app.openResearchBriefInEditor = vi.fn().mockResolvedValue(false);
+
+      await app.handleNewRun();
+
+      const raw = await readFile(path.join(cwd, "Brief.md"), "utf8");
+      expect(raw).toContain("Instruction tuning recipe comparisons for compact open models.");
+      expect(raw).toContain("template.tex");
+      expect(raw).toContain("## Appendix Preferences");
+      expect(app.logs).toContain(`Guided brief automation loaded from ${automationPath}.`);
+      expect(app.logs).toContain("Guided brief automation selected language: en");
+      expect(app.logs).toContain("Guided brief step 21/21: Questions / risks (optional)");
+      expect(app.logs).toContain("Guided brief draft written to Brief.md.");
+      expect(app.logs).not.toContain("Starting research from latest brief...");
+    } finally {
+      if (originalAutomationFile === undefined) {
+        delete process.env.AUTOLABOS_GUIDED_BRIEF_AUTOMATION_FILE;
+      } else {
+        process.env.AUTOLABOS_GUIDED_BRIEF_AUTOMATION_FILE = originalAutomationFile;
+      }
+      process.chdir(originalCwd);
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("can run startup automation commands after boot", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "autolabos-startup-automation-"));
+    const originalCwd = process.cwd();
+    const originalStartupFile = process.env.AUTOLABOS_STARTUP_COMMANDS_FILE;
+    process.chdir(cwd);
+    try {
+      const paths = resolveAppPaths(cwd);
+      await ensureScaffold(paths);
+      const commandsPath = path.join(cwd, "startup-commands.json");
+      await writeFile(commandsPath, JSON.stringify(["/new", "/doctor"], null, 2), "utf8");
+      process.env.AUTOLABOS_STARTUP_COMMANDS_FILE = commandsPath;
+
+      const app = makeApp();
+      (app as any).submitInputText = vi.fn().mockResolvedValue(undefined);
+
+      await (app as any).runStartupAutomationCommands();
+
+      expect(app.logs).toContain(`Startup automation loaded from ${commandsPath}.`);
+      expect(app.logs).toContain("Startup automation running: /new");
+      expect(app.logs).toContain("Startup automation running: /doctor");
+      expect((app as any).submitInputText.mock.calls).toEqual([["/new"], ["/doctor"]]);
+    } finally {
+      if (originalStartupFile === undefined) {
+        delete process.env.AUTOLABOS_STARTUP_COMMANDS_FILE;
+      } else {
+        process.env.AUTOLABOS_STARTUP_COMMANDS_FILE = originalStartupFile;
+      }
       process.chdir(originalCwd);
       await rm(cwd, { recursive: true, force: true });
     }

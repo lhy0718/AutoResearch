@@ -4185,6 +4185,193 @@ describe("ImplementSessionManager", () => {
     expect(capturedPrompt).not.toContain('"resolved_constraint_profile":');
   });
 
+  it("falls back to staged_llm when a codex implement turn reports the filesystem tooling blocker", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-codex-fallback-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Codex Implement Fallback Run",
+      topic: "bounded experiment implementation",
+      constraints: ["real artifacts"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "experiment.py");
+    const publicConfigPath = path.join(publicDir, "config.json");
+    let codexCalls = 0;
+    let llmCalls = 0;
+    let stagedFallbackPrompt = "";
+    let stagedFallbackSystemPrompt = "";
+    const codex = {
+      runTurnStream: async () => {
+        codexCalls += 1;
+        return {
+          threadId: "thread-codex-blocked",
+          finalText: JSON.stringify({
+            summary:
+              "Implementation remains blocked by the environment rather than the experiment design: every Codex local filesystem action needed to inspect, create, edit, or verify workspace files aborts before execution with `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`.",
+            run_command: `python3 ${JSON.stringify(publicScriptPath)} --config ${JSON.stringify(publicConfigPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+            changed_files: [],
+            artifacts: [],
+            public_artifacts: [],
+            public_dir: publicDir,
+            script_path: publicScriptPath,
+            metrics_path: path.join(runDir, "metrics.json"),
+            experiment_mode: "real_execution"
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexCliClient;
+    const llm = {
+      complete: async (prompt: string, options?: { systemPrompt?: string }) => {
+        llmCalls += 1;
+        stagedFallbackPrompt = prompt;
+        stagedFallbackSystemPrompt = options?.systemPrompt || "";
+        return {
+          text: JSON.stringify({
+            summary: "Implemented a runnable experiment script through staged_llm fallback.",
+            run_command: `python3 ${JSON.stringify(publicScriptPath)} --config ${JSON.stringify(publicConfigPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+            changed_files: [publicScriptPath, publicConfigPath],
+            artifacts: [publicScriptPath, publicConfigPath],
+            public_artifacts: [publicScriptPath, publicConfigPath],
+            script_path: publicScriptPath,
+            metrics_path: path.join(runDir, "metrics.json"),
+            experiment_mode: "real_execution",
+            file_edits: [
+              {
+                path: publicScriptPath,
+                content: "print('ok')"
+              },
+              {
+                path: publicConfigPath,
+                content: "{\"pilot_size\": 4}\n"
+              }
+            ]
+          }),
+          threadId: "thread-staged-fallback"
+        };
+      }
+    };
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      llm: llm as any,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+
+    expect(codexCalls).toBe(1);
+    expect(llmCalls).toBe(1);
+    expect(result.verifyReport).toMatchObject({ status: "pass" });
+    expect(result.scriptPath).toBe(publicScriptPath);
+    expect(result.publicArtifacts).toContain(publicScriptPath);
+    expect(result.publicArtifacts).toContain(publicConfigPath);
+    expect(readFileSync(publicScriptPath, "utf8")).toBe("print('ok')");
+    expect(readFileSync(publicConfigPath, "utf8")).toContain("\"pilot_size\": 4");
+    expect(stagedFallbackPrompt).toContain("filesystem-blocker recovery mode");
+    expect(stagedFallbackPrompt).toContain("Do NOT repeat the blocker narrative");
+    expect(stagedFallbackPrompt).toContain("A valid response MUST include non-empty file_edits");
+    expect(stagedFallbackPrompt).not.toContain("Previous local verification:");
+    expect(stagedFallbackSystemPrompt).toContain("Filesystem-blocker recovery mode:");
+  });
+
+  it("starts reruns directly in staged_llm mode when the previous implement summary already recorded the filesystem tooling blocker", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-known-fallback-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Known Filesystem Blocker Rerun",
+      topic: "bounded experiment implementation",
+      constraints: ["real artifacts"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    await runContext.put(
+      "implement_experiments.last_summary",
+      "Implementation remains blocked by the environment: every Codex local filesystem action aborts with `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`."
+    );
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "experiment.py");
+    let codexCalls = 0;
+    let llmCalls = 0;
+    const codex = {
+      runTurnStream: async () => {
+        codexCalls += 1;
+        throw new Error("Codex should be skipped when the rerun already knows about the filesystem blocker");
+      }
+    } as unknown as CodexCliClient;
+    const llm = {
+      complete: async () => {
+        llmCalls += 1;
+        return {
+          text: JSON.stringify({
+            summary: "Implemented the experiment directly through staged_llm recovery mode.",
+            run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+            changed_files: [publicScriptPath],
+            artifacts: [publicScriptPath],
+            public_artifacts: [publicScriptPath],
+            script_path: publicScriptPath,
+            metrics_path: path.join(runDir, "metrics.json"),
+            experiment_mode: "real_execution",
+            file_edits: [
+              {
+                path: publicScriptPath,
+                content: "print('rerun ok')\n"
+              }
+            ]
+          }),
+          threadId: "thread-known-fallback"
+        };
+      }
+    };
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      llm: llm as any,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+
+    expect(codexCalls).toBe(0);
+    expect(llmCalls).toBe(1);
+    expect(result.verifyReport).toMatchObject({ status: "pass" });
+    expect(result.scriptPath).toBe(publicScriptPath);
+    expect(readFileSync(publicScriptPath, "utf8")).toBe("print('rerun ok')\n");
+  });
+
   it("chains OpenAI API implement retries through response thread ids", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-openai-retry-"));
     tempDirs.push(workspace);

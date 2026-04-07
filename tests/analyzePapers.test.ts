@@ -291,6 +291,58 @@ class ImagePayloadTimeoutLLM extends MockLLMClient {
   }
 }
 
+class FullTextThenAbstractFallbackLLM extends MockLLMClient {
+  extractorCallsWithImages = 0;
+  extractorCallsWithoutImages = 0;
+  extractorCallsAbstract = 0;
+
+  override async complete(prompt: string, opts?: LLMCompleteOptions): Promise<{ text: string }> {
+    if (opts?.systemPrompt?.includes("planning agent")) {
+      return {
+        text: JSON.stringify({
+          focus_sections: ["methods"],
+          target_claims: ["claim"],
+          extraction_priorities: ["metrics"],
+          verification_checks: ["source-grounded"],
+          risk_flags: []
+        })
+      };
+    }
+    if (opts?.systemPrompt?.includes("verification agent")) {
+      return {
+        text: jsonOutput("reviewed abstract fallback summary", "reviewed abstract fallback claim")
+      };
+    }
+    if (opts?.systemPrompt?.includes("scientific literature analyst")) {
+      if (prompt.includes("Source type: abstract")) {
+        this.extractorCallsAbstract += 1;
+        return {
+          text: jsonOutput("abstract fallback summary", "abstract fallback claim")
+        };
+      }
+      if ((opts.inputImagePaths?.length ?? 0) > 0) {
+        this.extractorCallsWithImages += 1;
+      } else {
+        this.extractorCallsWithoutImages += 1;
+      }
+      return await new Promise<{ text: string }>((_resolve, reject) => {
+        if (opts.abortSignal?.aborted) {
+          reject(new Error("Operation aborted by user"));
+          return;
+        }
+        opts.abortSignal?.addEventListener(
+          "abort",
+          () => reject(new Error("Operation aborted by user")),
+          { once: true }
+        );
+      });
+    }
+    return {
+      text: jsonOutput("summary", "claim")
+    };
+  }
+}
+
 class TimeoutOnlyExtractorLLM extends MockLLMClient {
   callCount = 0;
 
@@ -616,7 +668,13 @@ describe("analyzePapers node", () => {
     const eventStream = new InMemoryEventStream();
     const node = createAnalyzePapersNode({
       config: {
-        providers: makeCodexProviderConfig(),
+        providers: {
+          llm_mode: "openai_api",
+          openai: {
+            model: "gpt-5.4",
+            reasoning_effort: "high"
+          }
+        },
         analysis: {
           responses_model: "gpt-5.4"
         }
@@ -962,7 +1020,7 @@ describe("analyzePapers node", () => {
     expect(summariesAfterSecond.match(/"paper_id":"p2"/g)?.length).toBe(1);
   });
 
-  it("pauses with preserved partial evidence when an extractor attempt times out", async () => {
+  it("continues after an extractor timeout when abstract fallback still persists outputs", async () => {
     process.env.AUTOLABOS_ANALYSIS_EXTRACT_TIMEOUT_MS = "10";
 
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-extract-timeout-"));
@@ -1000,17 +1058,22 @@ describe("analyzePapers node", () => {
     const result = await node.execute({ run, graph: run.graph });
     expect(result.status).toBe("success");
     expect(result.needsApproval).toBe(true);
-    expect(result.transitionRecommendation?.action).toBe("pause_for_human");
-    expect(result.summary).toContain("Preserved partial analysis");
+    expect(result.transitionRecommendation).toBeUndefined();
 
     const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
     const evidenceRaw = await readFile(path.join(".autolabos", "runs", runId, "evidence_store.jsonl"), "utf8");
-    expect(summariesRaw.trim().split("\n")).toHaveLength(1);
-    expect(evidenceRaw.trim().split("\n")).toHaveLength(1);
+    expect(summariesRaw.trim().split("\n")).toHaveLength(2);
+    expect(evidenceRaw.trim().split("\n")).toHaveLength(2);
 
     const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
     expect(loggedTexts.some((text) => text.includes("extractor exceeded the 10ms timeout"))).toBe(true);
     expect(loggedTexts.some((text) => text.includes('Persisted analysis outputs for "Paper 1"'))).toBe(true);
+    expect(
+      loggedTexts.some((text) =>
+        text.includes("Abstract-only analysis still timed out. Using a deterministic abstract fallback analysis")
+      )
+    ).toBe(true);
+    expect(loggedTexts.some((text) => text.includes('Persisted analysis outputs for "Paper 2"'))).toBe(true);
   });
 
   it("preserves partial artifacts when the corpus regresses but the selection request is unchanged", async () => {
@@ -1308,7 +1371,7 @@ describe("analyzePapers node", () => {
     expect(loggedTexts.some((text) => text.includes("Pausing instead of spending the rest of the selection"))).toBe(true);
   });
 
-  it("uses a larger early zero-output sample when all failures are timeout-only", async () => {
+  it("uses a larger early timeout-only sample but keeps going once abstract fallbacks persist outputs", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-timeout-zero-output-"));
     tempDirs.push(root);
     process.chdir(root);
@@ -1348,13 +1411,24 @@ describe("analyzePapers node", () => {
     const result = await node.execute({ run, graph: run.graph });
     expect(result.status).toBe("success");
     expect(result.needsApproval).toBe(true);
-    expect(result.transitionRecommendation?.action).toBe("pause_for_human");
-    expect(result.summary).toContain("first 3 attempted paper(s) all failed");
-    expect(result.toolCallsUsed).toBe(3);
-    expect(llm.callCount).toBeLessThan(30);
+    expect(result.transitionRecommendation).toBeUndefined();
 
-    const evidence = result.transitionRecommendation?.evidence ?? [];
-    expect(evidence.some((line) => line.includes("after 3 attempted paper analyses"))).toBe(true);
+    const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
+    const evidenceRaw = await readFile(path.join(".autolabos", "runs", runId, "evidence_store.jsonl"), "utf8");
+    expect(summariesRaw.trim().split("\n").length).toBeGreaterThanOrEqual(3);
+    expect(evidenceRaw.trim().split("\n").length).toBeGreaterThanOrEqual(3);
+
+    const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
+    expect(
+      loggedTexts.some((text) =>
+        text.includes("Abstract-only analysis still timed out. Using a deterministic abstract fallback analysis")
+      )
+    ).toBe(true);
+    expect(
+      loggedTexts.some((text) =>
+        text.includes("Warm-start persisted outputs; continuing remaining")
+      )
+    ).toBe(true);
   });
 
 
@@ -1427,6 +1501,89 @@ describe("analyzePapers node", () => {
 
     const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
     expect(loggedTexts.some((text) => text.includes("Retrying once with full text only"))).toBe(true);
+  });
+
+  it("materializes a deterministic abstract-only fallback immediately when full-text retries still time out", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-abstract-timeout-fallback-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    process.env.AUTOLABOS_ANALYSIS_EXTRACT_TIMEOUT_MS = "5";
+
+    const runId = "run-analyze-abstract-timeout-fallback";
+    const run = makeRun(runId);
+    await writeCorpus(runId, [
+      {
+        paper_id: "p1",
+        title: "Paper 1",
+        abstract: "Abstract 1",
+        authors: ["Alice"],
+        pdf_url: "https://example.com/p1.pdf"
+      }
+    ]);
+    writeCachedPaperTextSync(runId, "p1", "Recovered cached full text");
+    writeCachedPageImagesSync(runId, "p1", 3);
+
+    const llm = new FullTextThenAbstractFallbackLLM();
+    const eventStream = new InMemoryEventStream();
+    const node = createAnalyzePapersNode({
+      config: {
+        providers: {
+          llm_mode: "codex_chatgpt_only",
+          codex: {
+            model: "gpt-5.4",
+            pdf_model: "gpt-5.4"
+          }
+        },
+        analysis: {
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream,
+      llm,
+      pdfTextLlm: llm,
+      codex: {
+        checkCliAvailable: async () => ({ ok: true, detail: "codex available" }),
+        checkLoginStatus: async () => ({ ok: true, detail: "logged in" }),
+        checkEnvironmentReadiness: async () => []
+      } as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+    expect(result.needsApproval).toBe(true);
+    expect(llm.extractorCallsWithImages).toBe(1);
+    expect(llm.extractorCallsWithoutImages).toBe(1);
+    expect(llm.extractorCallsAbstract).toBe(0);
+
+    const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
+    expect(summariesRaw).toContain("Abstract 1");
+    expect(summariesRaw).toContain('"source_type":"abstract"');
+
+    const manifestRaw = await readFile(
+      path.join(".autolabos", "runs", runId, "analysis_manifest.json"),
+      "utf8"
+    );
+    expect(manifestRaw).toContain('"status": "completed"');
+    expect(manifestRaw).toContain('"source_type": "abstract"');
+    expect(manifestRaw).toContain('"fallback_reason": "analysis_timeout_abstract_fallback"');
+
+    const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
+    expect(loggedTexts.some((text) => text.includes("Retrying once with full text only"))).toBe(true);
+    expect(
+      loggedTexts.some((text) =>
+        text.includes("Falling back to abstract-only analysis for this paper")
+      )
+    ).toBe(true);
+    expect(
+      loggedTexts.some((text) =>
+        text.includes("Using a deterministic abstract fallback immediately after repeated full-text timeouts")
+      )
+    ).toBe(true);
   });
 
   it("pauses for human when the requested model hits a usage limit before any outputs are produced", async () => {
@@ -2073,6 +2230,107 @@ describe("analyzePapers node", () => {
     expect(summariesRaw).toContain('"paper_id":"relevant_rank_dropout"');
     expect(summariesRaw).not.toContain('"paper_id":"off_topic_medical_notes"');
     expect(summariesRaw).not.toContain('"paper_id":"off_topic_medical_vision"');
+  });
+
+  it("keeps fallback shortlist focused on compact-model instruction-tuning anchors for a broader brief", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-compact-brief-guard-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-compact-brief-guard";
+    const run = {
+      ...makeRun(runId),
+      title: "Identify which lightweight instruction-tuning recipe choices matter most for compact open language models",
+      topic:
+        "Identify which lightweight instruction-tuning recipe choices matter most for compact open language models under a local workstation budget while keeping the experiment small and executable."
+    };
+    await writeCorpus(runId, [
+      {
+        paper_id: "relevant_compact_lora",
+        title: "Instruction Tuning with Low-Rank Adaptation for Compact Open Language Models",
+        abstract:
+          "A compact-model study of instruction tuning with LoRA under a bounded local budget.",
+        authors: ["Alice"],
+        citation_count: 52,
+        year: 2024,
+        pdf_url: "https://example.com/compact-lora.pdf"
+      },
+      {
+        paper_id: "relevant_recipe_tradeoff",
+        title: "Lightweight Recipe Trade-offs for Compact Instruction-Tuned Language Models",
+        abstract:
+          "Compares small recipe changes for compact instruction-tuned open models under fixed compute.",
+        authors: ["Bob"],
+        citation_count: 15,
+        year: 2025,
+        pdf_url: "https://example.com/recipe-tradeoffs.pdf"
+      },
+      {
+        paper_id: "off_topic_clinical_notes",
+        title: "Using fine-tuned large language models to parse clinical notes in musculoskeletal pain disorders",
+        abstract:
+          "This clinical-note study uses large language models under local constraints and mentions instruction tuning and low-rank adaptation in the abstract background.",
+        authors: ["Cara"],
+        citation_count: 75,
+        year: 2023,
+        pdf_url: "https://example.com/clinical-notes.pdf"
+      },
+      {
+        paper_id: "off_topic_multimodal_recommender",
+        title: "ATFLRec: A Multimodal Recommender System with Audio-Text Fusion and Low-Rank Adaptation via Instruction-Tuned Large Language Model",
+        abstract:
+          "A multimodal recommender paper that mentions instruction tuning and low-rank adaptation but targets recommendation-specific fusion rather than compact-model recipe trade-offs.",
+        authors: ["Dina"],
+        citation_count: 66,
+        year: 2025,
+        pdf_url: "https://example.com/multimodal-rec.pdf"
+      }
+    ]);
+
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    await runContext.put("analyze_papers.request", {
+      topN: 2,
+      selectionMode: "top_n",
+      selectionPolicy: "hybrid_title_citation_recency_pdf_v2"
+    });
+
+    let analyzePdfCalls = 0;
+    const node = createAnalyzePapersNode({
+      config: {
+        providers: { llm_mode: "openai_api" },
+        analysis: {
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new FixedErrorLLM(new Error("paper_selection_rerank_timeout_after_20000ms")),
+      pdfTextLlm: new SequenceJsonLLM([]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: {
+        hasApiKey: async () => true,
+        analyzePdf: async () => {
+          analyzePdfCalls += 1;
+          return { text: jsonOutput(`summary ${analyzePdfCalls}`, `claim ${analyzePdfCalls}`) };
+        }
+      } as unknown as ResponsesPdfAnalysisClient
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+    expect(analyzePdfCalls).toBe(2);
+
+    const manifestRaw = await readFile(path.join(".autolabos", "runs", runId, "analysis_manifest.json"), "utf8");
+    const manifest = JSON.parse(manifestRaw);
+    expect(new Set(manifest.selectedPaperIds)).toEqual(new Set(["relevant_compact_lora", "relevant_recipe_tradeoff"]));
+
+    const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
+    expect(summariesRaw).toContain('"paper_id":"relevant_compact_lora"');
+    expect(summariesRaw).toContain('"paper_id":"relevant_recipe_tradeoff"');
+    expect(summariesRaw).not.toContain('"paper_id":"off_topic_clinical_notes"');
+    expect(summariesRaw).not.toContain('"paper_id":"off_topic_multimodal_recommender"');
   });
 
   it("pauses instead of accepting a deterministic shortlist when top-n rerank fails", async () => {

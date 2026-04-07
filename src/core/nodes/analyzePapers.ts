@@ -17,6 +17,7 @@ import {
   PaperEvidenceRow,
   PaperSummaryRow,
   parsePaperAnalysisJson,
+  synthesizeDeterministicAbstractFallbackResult,
   shouldFallbackResponsesPdfToLocalText
 } from "../analysis/paperAnalyzer.js";
 import { OllamaPdfAnalysisClient } from "../../integrations/ollama/ollamaPdfAnalysisClient.js";
@@ -24,6 +25,7 @@ import { getPdfAnalysisModeForConfig } from "../../config.js";
 import {
   AnalysisCorpusRow,
   ResolvedPaperSource,
+  buildAbstractFallbackText,
   resolvePaperPdfUrl,
   resolvePaperTextSource
 } from "../analysis/paperText.js";
@@ -134,39 +136,57 @@ function createSelectionRerankLlm(deps: NodeExecutionDeps): NodeExecutionDeps["l
 
 const SELECTION_QUALITY_STOPWORDS = new Set([
   "a",
+  "about",
   "an",
   "analysis",
   "and",
   "approach",
+  "broad",
   "benchmark",
   "benchmarks",
+  "collect",
   "comparison",
   "comparisons",
+  "concrete",
   "dataset",
   "datasets",
+  "enough",
   "evaluation",
+  "executable",
   "for",
   "from",
+  "identify",
   "in",
   "method",
   "methods",
+  "most",
   "of",
   "on",
   "paper",
   "public",
+  "relevant",
   "research",
   "results",
+  "should",
+  "single",
   "small",
+  "stay",
   "study",
   "task",
   "tasks",
   "the",
+  "this",
   "toward",
+  "under",
   "using",
+  "while",
+  "which",
   "with"
 ]);
 
 const SELECTION_QUALITY_GENERIC_TOKENS = new Set([
+  "budget",
+  "choice",
   "classification",
   "classifications",
   "classifier",
@@ -175,15 +195,22 @@ const SELECTION_QUALITY_GENERIC_TOKENS = new Set([
   "dataset",
   "datasets",
   "deep",
+  "experiment",
   "learning",
+  "language",
+  "literature",
+  "local",
+  "matter",
   "machine",
   "model",
   "models",
+  "open",
   "prediction",
   "predictions",
   "predictive",
   "system",
-  "systems"
+  "systems",
+  "workstation"
 ]);
 
 const SELECTION_QUALITY_WEAK_TITLE_ANCHORS = new Set([
@@ -197,6 +224,30 @@ const SELECTION_QUALITY_WEAK_TITLE_ANCHORS = new Set([
   "prompts",
   "tuned",
   "tuning"
+]);
+
+const SELECTION_QUALITY_DOMAIN_TOKENS = new Set([
+  "audio",
+  "biomedical",
+  "chatbot",
+  "chatbots",
+  "clinical",
+  "emotion",
+  "emotions",
+  "financial",
+  "health",
+  "healthcare",
+  "image",
+  "images",
+  "medical",
+  "medicine",
+  "multimodal",
+  "recommendation",
+  "recommender",
+  "retrieval",
+  "speech",
+  "vision",
+  "visual"
 ]);
 
 interface LoadedAnalysisSelectionRequest {
@@ -2496,17 +2547,47 @@ async function analyzePaperWithPageImageTimeoutFallback(args: {
     args.onProgress?.(
       `Extractor timed out with ${args.source.pageImagePaths?.length ?? 0} rendered PDF page image(s). Retrying once with full text only.`
     );
-    return {
-      analysis: await analyzePaperWithLlm({
-        llm: args.llm,
-        paper: args.paper,
-        source: downgradedSource,
-        maxAttempts: 1,
-        abortSignal: args.abortSignal,
-        onProgress: args.onProgress
-      }),
-      source: downgradedSource
-    };
+    try {
+      return {
+        analysis: await analyzePaperWithLlm({
+          llm: args.llm,
+          paper: args.paper,
+          source: downgradedSource,
+          maxAttempts: 1,
+          abortSignal: args.abortSignal,
+          onProgress: args.onProgress
+        }),
+        source: downgradedSource
+      };
+    } catch (retryError) {
+      if (!shouldRetryAnalysisAsAbstractFallback(downgradedSource, retryError)) {
+        throw retryError;
+      }
+      const abstractSource: ResolvedPaperSource = {
+        sourceType: "abstract",
+        text: buildAbstractFallbackText(args.paper),
+        fullTextAvailable: false,
+        pdfUrl: downgradedSource.pdfUrl,
+        pdfCachePath: downgradedSource.pdfCachePath,
+        textCachePath: downgradedSource.textCachePath,
+        fallbackReason: "analysis_timeout_abstract_fallback"
+      };
+      args.onProgress?.(
+        "Full-text extraction timed out again after removing rendered page images. Falling back to abstract-only analysis for this paper."
+      );
+      args.onProgress?.(
+        "Using a deterministic abstract fallback immediately after repeated full-text timeouts so the first persisted analysis row can be materialized without another long LLM roundtrip."
+      );
+      return {
+        analysis: synthesizeDeterministicAbstractFallbackResult({
+          paper: args.paper,
+          source: abstractSource,
+          failureReason: retryError instanceof Error ? retryError.message : String(retryError),
+          attempts: 1
+        }),
+        source: abstractSource
+      };
+    }
   }
 }
 
@@ -2594,6 +2675,14 @@ async function analyzePaperWithOllamaVisionBatch(args: {
 
 function shouldRetryAnalysisWithoutPageImages(source: ResolvedPaperSource, error: unknown): boolean {
   if (source.sourceType !== "full_text" || (source.pageImagePaths?.length ?? 0) === 0) {
+    return false;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return /^paper_analysis_extractor_timeout_after_\d+ms$/u.test(message);
+}
+
+function shouldRetryAnalysisAsAbstractFallback(source: ResolvedPaperSource, error: unknown): boolean {
+  if (source.sourceType !== "full_text" || (source.pageImagePaths?.length ?? 0) > 0) {
     return false;
   }
   const message = error instanceof Error ? error.message : String(error);
@@ -3006,6 +3095,7 @@ function evaluateSelectionCandidateQuality(
   strongTitleAnchorHits: number;
   abstractAnchorHits: number;
   totalAnchorHits: number;
+  offTopicDomainHits: number;
 } {
   const titleTokens = new Set(
     (candidate.paper.title.toLowerCase().match(/[a-z0-9]+/g) ?? []).map((token) => normalizeSelectionToken(token))
@@ -3018,11 +3108,16 @@ function evaluateSelectionCandidateQuality(
     (token) => titleTokens.has(token) && !SELECTION_QUALITY_WEAK_TITLE_ANCHORS.has(token)
   ).length;
   const abstractAnchorHits = referenceAnchors.filter((token) => !titleTokens.has(token) && abstractTokens.has(token)).length;
+  const referenceAnchorSet = new Set(referenceAnchors);
+  const offTopicDomainHits = Array.from(SELECTION_QUALITY_DOMAIN_TOKENS).filter(
+    (token) => titleTokens.has(token) && !referenceAnchorSet.has(token)
+  ).length;
   return {
     titleAnchorHits,
     strongTitleAnchorHits,
     abstractAnchorHits,
-    totalAnchorHits: titleAnchorHits + abstractAnchorHits
+    totalAnchorHits: titleAnchorHits + abstractAnchorHits,
+    offTopicDomainHits
   };
 }
 
@@ -3033,9 +3128,16 @@ function passesSelectionQualityGuard(
     strongTitleAnchorHits: number;
     abstractAnchorHits: number;
     totalAnchorHits: number;
+    offTopicDomainHits: number;
   },
   strictMode: boolean
 ): boolean {
+  if (strictMode && signals.titleAnchorHits === 0) {
+    return false;
+  }
+  if (strictMode && signals.offTopicDomainHits > 0) {
+    return false;
+  }
   if (signals.strongTitleAnchorHits >= 1) {
     return true;
   }

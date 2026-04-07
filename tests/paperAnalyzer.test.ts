@@ -198,6 +198,12 @@ const source: ResolvedPaperSource = {
   fallbackReason: "no_pdf_url"
 };
 
+const fullTextSource: ResolvedPaperSource = {
+  sourceType: "full_text",
+  text: "Full text with extracted content.",
+  fullTextAvailable: true
+};
+
 const originalReviewTimeout = process.env.AUTOLABOS_ANALYSIS_REVIEW_TIMEOUT_MS;
 const originalPlannerTimeout = process.env.AUTOLABOS_ANALYSIS_PLANNER_TIMEOUT_MS;
 const originalExtractTimeout = process.env.AUTOLABOS_ANALYSIS_EXTRACT_TIMEOUT_MS;
@@ -481,7 +487,7 @@ describe("paperAnalyzer", () => {
       analyzePaperWithLlm({
         llm: new HangingExtractorLLM(),
         paper,
-        source,
+        source: fullTextSource,
         maxAttempts: 1,
         onProgress: (message) => progress.push(message)
       })
@@ -494,6 +500,34 @@ describe("paperAnalyzer", () => {
     ).toBe(true);
   });
 
+  it("synthesizes a minimal abstract-only analysis when abstract extraction still times out", async () => {
+    process.env.AUTOLABOS_ANALYSIS_EXTRACT_TIMEOUT_MS = "10";
+    const progress: string[] = [];
+
+    const result = await analyzePaperWithLlm({
+      llm: new HangingExtractorLLM(),
+      paper,
+      source,
+      maxAttempts: 1,
+      onProgress: (message) => progress.push(message)
+    });
+
+    expect(result.summaryRow.source_type).toBe("abstract");
+    expect(result.summaryRow.summary).toContain("This paper studies agentic workflows");
+    expect(result.summaryRow.limitations).toContain(
+      "Abstract-only fallback; no verified full-text extraction completed before timeout."
+    );
+    expect(result.evidenceRows).toHaveLength(1);
+    expect(result.evidenceRows[0].source_type).toBe("abstract");
+    expect(result.evidenceRows[0].confidence).toBe(0.3);
+    expect(result.evidenceRows[0].confidence_reason).toContain("weak abstract-only evidence");
+    expect(
+      progress.some((message) =>
+        message.includes("Abstract-only analysis still timed out. Using a deterministic abstract fallback analysis")
+      )
+    ).toBe(true);
+  });
+
   it("uses the bounded default extractor timeout when no override is set", async () => {
     delete process.env.AUTOLABOS_ANALYSIS_EXTRACT_TIMEOUT_MS;
     vi.useFakeTimers();
@@ -501,7 +535,7 @@ describe("paperAnalyzer", () => {
     const promise = analyzePaperWithLlm({
       llm: new HangingExtractorLLM(),
       paper,
-      source
+      source: fullTextSource
     });
     const expectation = expect(promise).rejects.toThrow("paper_analysis_extractor_timeout_after_120000ms");
 

@@ -41,6 +41,30 @@ export interface ParsedAppendixPreferences {
   keepInMainBody: string[];
 }
 
+export interface GuidedResearchBriefAnswers {
+  topic: string;
+  primaryMetric: string;
+  secondaryMetrics?: string;
+  meaningfulImprovement: string;
+  constraints: string;
+  researchQuestion: string;
+  whySmallExperiment: string;
+  baselineComparator: string;
+  datasetTaskBench: string;
+  targetComparison: string;
+  minimumAcceptableEvidence: string;
+  disallowedShortcuts: string;
+  allowedBudgetedPasses: string;
+  paperCeiling: string;
+  minimumExperimentPlan: string;
+  failureConditions: string;
+  manuscriptTemplate?: string;
+  appendixPrefer?: string;
+  appendixKeepMain?: string;
+  notes?: string;
+  questionsRisks?: string;
+}
+
 type RequiredResearchBriefSectionKey = Exclude<
   ResearchBriefSectionKey,
   "manuscriptFormat" | "manuscriptTemplate" | "appendixPreferences" | "notes" | "questionsRisks"
@@ -309,6 +333,117 @@ export function buildResearchBriefTemplate(): string {
       ""
     ])
   ].join("\n");
+}
+
+function splitStructuredLines(text: string): string[] {
+  return text
+    .split(/\r?\n|;/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function toBulletSection(text: string): string[] {
+  const lines = splitStructuredLines(text);
+  return lines.length > 0 ? lines.map((line) => `- ${line}`) : ["-"];
+}
+
+function sanitizeScalar(text: string | undefined): string {
+  return text?.trim() || "-";
+}
+
+export function buildGuidedResearchBriefMarkdown(input: GuidedResearchBriefAnswers): string {
+  const appendixPrefer = splitStructuredLines(input.appendixPrefer ?? "");
+  const appendixKeepMain = splitStructuredLines(input.appendixKeepMain ?? "");
+  const manuscriptTemplate = input.manuscriptTemplate?.trim();
+  const sections: string[] = [
+    "# Research Brief",
+    "",
+    "## Topic",
+    sanitizeScalar(input.topic),
+    "",
+    "## Objective Metric",
+    `- Primary metric: ${sanitizeScalar(input.primaryMetric)}`,
+    `- Secondary metrics (if any): ${sanitizeScalar(input.secondaryMetrics)}`,
+    `- What counts as meaningful improvement: ${sanitizeScalar(input.meaningfulImprovement)}`,
+    "",
+    "## Constraints",
+    ...toBulletSection(input.constraints),
+    "",
+    "## Plan",
+    "1. collect paper-scale related work",
+    "2. identify the comparator family and lock a named baseline",
+    "3. form a falsifiable hypothesis",
+    "4. design a small but real experiment",
+    "5. implement and run the baseline plus alternative condition(s)",
+    "6. analyze results with explicit quantitative comparison",
+    "7. draft only after the evidence gate is met",
+    "",
+    "## Manuscript Format",
+    "- Columns: 2",
+    "- Main body pages: 8",
+    "- References excluded from page limit: yes",
+    "- Appendices excluded from page limit: yes",
+    "",
+    "## Manuscript Template",
+    manuscriptTemplate || "",
+    "",
+    "## Appendix Preferences",
+    "Prefer appendix for:",
+    ...(appendixPrefer.length > 0 ? appendixPrefer.map((line) => `- ${line}`) : ["- hyperparameter_grids"]),
+    "",
+    "Keep in main body:",
+    ...(appendixKeepMain.length > 0 ? appendixKeepMain.map((line) => `- ${line}`) : ["- main_result_tables"]),
+    "",
+    "## Research Question",
+    sanitizeScalar(input.researchQuestion),
+    "",
+    "## Why This Can Be Tested With A Small Real Experiment",
+    ...toBulletSection(input.whySmallExperiment),
+    "",
+    "## Baseline / Comparator",
+    ...toBulletSection(input.baselineComparator),
+    "",
+    "## Dataset / Task / Bench",
+    ...toBulletSection(input.datasetTaskBench),
+    "",
+    "## Target Comparison",
+    ...toBulletSection(input.targetComparison),
+    "",
+    "## Minimum Acceptable Evidence",
+    ...toBulletSection(input.minimumAcceptableEvidence),
+    "",
+    "## Disallowed Shortcuts",
+    ...toBulletSection(input.disallowedShortcuts),
+    "",
+    "## Allowed Budgeted Passes",
+    ...toBulletSection(input.allowedBudgetedPasses),
+    "",
+    "## Paper Ceiling If Evidence Remains Weak",
+    sanitizeScalar(input.paperCeiling),
+    "",
+    "## Minimum Experiment Plan",
+    ...toBulletSection(input.minimumExperimentPlan),
+    "",
+    "## Paper-worthiness Gate",
+    "- Is the research question explicit? must be verified during the run.",
+    "- Is the related work sufficient to position the study? must be verified during the run.",
+    "- Is there at least one explicit baseline? required.",
+    "- Is there at least one real executed experiment? required.",
+    "- Is there at least one quantitative comparison? required.",
+    "- Can major claims be traced to evidence? required.",
+    "- Are limitations stated? required.",
+    "",
+    "## Failure Conditions",
+    ...toBulletSection(input.failureConditions),
+    "",
+    "## Notes",
+    sanitizeScalar(input.notes),
+    "",
+    "## Questions / Risks",
+    sanitizeScalar(input.questionsRisks),
+    ""
+  ];
+  return sections.join("\n");
 }
 
 export function getWorkspaceResearchBriefPath(workspaceRoot: string): string {

@@ -30,6 +30,7 @@ import { buildAnalyzeResultsCompletionSummary } from "../resultAnalysisPresentat
 import { synthesizeAnalysisReport } from "../resultAnalysisSynthesis.js";
 import { RunVerifierReport } from "../experiments/runVerifierFeedback.js";
 import { ExperimentPortfolio, ExperimentRunManifest } from "../experiments/experimentPortfolio.js";
+import { detectPreflightOnlyMetrics } from "../experiments/executedMetrics.js";
 import type { ExperimentContract } from "../experiments/experimentContract.js";
 import { GraphNodeId, TransitionRecommendation } from "../../types.js";
 import { runAnalyzeResultsPanel } from "../analyzeResultsPanel.js";
@@ -125,6 +126,17 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         });
       }
       metrics = await hydrateDetailedExperimentMetrics(metrics, publicDir, inputWarnings);
+      const preflightOnlyMetricsMessage = detectPreflightOnlyMetrics(metrics);
+      const analysisMetrics = preflightOnlyMetricsMessage ? {} : metrics;
+      if (preflightOnlyMetricsMessage) {
+        inputWarnings.push(preflightOnlyMetricsMessage);
+        deps.eventStream.emit({
+          type: "OBS_RECEIVED",
+          runId: run.id,
+          node: "analyze_results",
+          payload: { text: preflightOnlyMetricsMessage }
+        });
+      }
       const latestResultsPath = await buildLatestResultsFromCsvArtifact(metrics, run.id, inputWarnings);
       const managedBundleValidation = await validateManagedBundleLock({
         contract: comparisonContract,
@@ -188,7 +200,19 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
       // Always re-evaluate in analyze_results: the metrics here are enriched
       // with AOCS-derived condition_metrics and top-level aggregates that
       // run_experiments did not have, so the cached metric match may be stale.
-      const objectiveEvaluation = evaluateObjectiveMetric(metrics, objectiveProfile, effectiveObjectiveMetric);
+      const objectiveEvaluation = preflightOnlyMetricsMessage
+        ? {
+            rawObjectiveMetric: effectiveObjectiveMetric,
+            profileSource: objectiveProfile.source,
+            primaryMetric: objectiveProfile.primaryMetric,
+            preferredMetricKeys: objectiveProfile.preferredMetricKeys,
+            direction: objectiveProfile.direction,
+            comparator: objectiveProfile.comparator,
+            targetValue: objectiveProfile.targetValue,
+            status: "missing" as const,
+            summary: preflightOnlyMetricsMessage
+          }
+        : evaluateObjectiveMetric(analysisMetrics, objectiveProfile, effectiveObjectiveMetric);
       if (
         !cachedEvaluation ||
         cachedEvaluation.status !== objectiveEvaluation.status ||
@@ -241,15 +265,19 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
             "recent_paper_reproducibility.json"
           ))) ||
         undefined;
+      const analysisRunVerifierReport =
+        preflightOnlyMetricsMessage && runVerifierReport?.status !== "fail"
+          ? undefined
+          : runVerifierReport;
       const summary = buildAnalysisReport({
         run,
-        metrics,
+        metrics: analysisMetrics,
         objectiveProfile,
         objectiveEvaluation,
         experimentPlanRaw,
         observationsRaw,
         inputWarnings,
-        runVerifierReport,
+        runVerifierReport: analysisRunVerifierReport,
         experimentPortfolio,
         runManifest,
         supplementalMetrics,
@@ -680,9 +708,10 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         tags: ["analyze_results"]
       });
 
-      if (metricsLoadError || noNumericMetrics) {
+      if (metricsLoadError || preflightOnlyMetricsMessage || noNumericMetrics) {
         const error =
           metricsLoadError ||
+          preflightOnlyMetricsMessage ||
           `Structured result analysis requires at least one numeric metric in ${metricsPath}.`;
         if (!metricsLoadError) {
           deps.eventStream.emit({

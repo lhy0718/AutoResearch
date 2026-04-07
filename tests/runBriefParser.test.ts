@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   extractRunBrief,
@@ -7,6 +7,16 @@ import {
 } from "../src/core/runs/runBriefParser.js";
 
 describe("runBriefParser", () => {
+  const originalRunBriefTimeout = process.env.AUTOLABOS_RUN_BRIEF_TIMEOUT_MS;
+
+  afterEach(() => {
+    if (originalRunBriefTimeout === undefined) {
+      delete process.env.AUTOLABOS_RUN_BRIEF_TIMEOUT_MS;
+    } else {
+      process.env.AUTOLABOS_RUN_BRIEF_TIMEOUT_MS = originalRunBriefTimeout;
+    }
+  });
+
   it("detects natural-language run brief requests", () => {
     expect(looksLikeRunBriefRequest("새 연구를 시작해줘\n주제: 멀티에이전트 코드 리뷰")).toBe(true);
     expect(looksLikeRunBriefRequest("Start a new research run on agentic experiment planning")).toBe(true);
@@ -215,6 +225,47 @@ describe("runBriefParser", () => {
       "Prefer CPU-only execution and lightweight Python dependencies.",
       "Avoid large model downloads, GPU-specific methods, and heavy preprocessing pipelines.",
       "Use a fixed train/validation/test protocol and report macro-F1, runtime, and memory consistently."
+    ]);
+  });
+
+  it("falls back heuristically when the run-brief llm hangs", async () => {
+    process.env.AUTOLABOS_RUN_BRIEF_TIMEOUT_MS = "5";
+
+    const llm = {
+      runForText: vi.fn(async () => await new Promise<string>(() => {}))
+    };
+
+    const extracted = await extractRunBrief({
+      brief: [
+        "# Research Brief",
+        "",
+        "## Topic",
+        "",
+        "Compact instruction tuning recipes for open models.",
+        "",
+        "## Objective Metric",
+        "",
+        "Average 0-shot accuracy on ARC-Challenge and HellaSwag",
+        "",
+        "## Constraints",
+        "",
+        "- Use a bounded real experiment.",
+        "- Keep seed 42 fixed."
+      ].join("\n"),
+      defaults: {
+        topic: "default topic",
+        constraints: ["default constraint"],
+        objectiveMetric: "default metric"
+      },
+      llm
+    });
+
+    expect(extracted.source).toBe("heuristic_fallback");
+    expect(extracted.topic).toBe("Compact instruction tuning recipes for open models.");
+    expect(extracted.objectiveMetric).toBe("Average 0-shot accuracy on ARC-Challenge and HellaSwag");
+    expect(extracted.constraints).toEqual([
+      "Use a bounded real experiment.",
+      "Keep seed 42 fixed."
     ]);
   });
 });

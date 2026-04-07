@@ -77,6 +77,20 @@ export interface PaperAnalysisResult {
   rawJson: RawPaperAnalysis;
 }
 
+export function synthesizeDeterministicAbstractFallbackResult(args: {
+  paper: AnalysisCorpusRow;
+  source: ResolvedPaperSource;
+  failureReason: string;
+  attempts?: number;
+}): PaperAnalysisResult {
+  const fallbackDraft = buildDeterministicAbstractTimeoutFallback(args.paper, args.source, args.failureReason);
+  return {
+    ...normalizePaperAnalysis(args.paper, args.source, fallbackDraft),
+    attempts: args.attempts ?? 1,
+    rawJson: fallbackDraft
+  };
+}
+
 export const ANALYSIS_SYSTEM_PROMPT = [
   "You are a scientific literature analyst for AutoLabOS.",
   "Return one JSON object only.",
@@ -169,6 +183,17 @@ export async function analyzePaperWithLlm(args: {
       args.onProgress?.(
         `Analysis attempt ${attempt}/${imageBearingAttemptLimit} failed: ${describeAnalysisAttemptFailureReason(lastError)}`
       );
+      if (shouldSynthesizeAbstractTimeoutFallback(args.source, lastError)) {
+        args.onProgress?.(
+          "Abstract-only analysis still timed out. Using a deterministic abstract fallback analysis to preserve a minimal, source-grounded summary."
+        );
+        return synthesizeDeterministicAbstractFallbackResult({
+          paper: args.paper,
+          source: args.source,
+          failureReason: lastError.message,
+          attempts: attempt
+        });
+      }
       if (isPaperAnalysisTimeoutError(lastError)) {
         throw lastError;
       }
@@ -606,6 +631,77 @@ function isAbortError(error: unknown): boolean {
   }
   const message = error.message.toLowerCase();
   return message.includes("aborted") || message.includes("abort");
+}
+
+function shouldSynthesizeAbstractTimeoutFallback(source: ResolvedPaperSource, error: unknown): boolean {
+  return source.sourceType === "abstract" && isPaperAnalysisTimeoutError(error);
+}
+
+function buildDeterministicAbstractTimeoutFallback(
+  paper: AnalysisCorpusRow,
+  source: ResolvedPaperSource,
+  failureReason: string
+): RawPaperAnalysis {
+  const abstract = paper.abstract?.trim() || "";
+  const fallbackSummary = summarizeAbstractForTimeoutFallback(abstract, paper.title);
+  const abstractSentence = firstMeaningfulSentence(abstract);
+  const evidenceSpan = trimToLength(abstract || source.text || paper.title, 240);
+  const claim = trimToLength(abstractSentence || fallbackSummary, 220);
+  return {
+    summary: fallbackSummary,
+    key_findings: abstractSentence ? [trimToLength(abstractSentence, 180)] : [],
+    limitations: ["Abstract-only fallback; no verified full-text extraction completed before timeout."],
+    datasets: [],
+    metrics: [],
+    novelty: "Not established from abstract-only fallback evidence.",
+    reproducibility_notes: [
+      `Synthesized from title/abstract only after analysis timed out (${failureReason}).`
+    ],
+    evidence_items: [
+      {
+        claim,
+        method_slot: "Not specified from abstract-only fallback.",
+        result_slot: fallbackSummary,
+        limitation_slot: "Full-text extraction or extraction review did not complete before timeout.",
+        dataset_slot: "Not specified.",
+        metric_slot: "Not specified.",
+        evidence_span: evidenceSpan,
+        confidence: 0.3,
+        confidence_reason:
+          "This item was synthesized from title/abstract only after repeated analysis timeouts, so it should be treated as weak abstract-only evidence."
+      }
+    ]
+  };
+}
+
+function summarizeAbstractForTimeoutFallback(abstract: string, title: string): string {
+  const sentence = firstMeaningfulSentence(abstract);
+  if (sentence) {
+    return trimToLength(sentence, 280);
+  }
+  if (abstract) {
+    return trimToLength(abstract, 280);
+  }
+  return trimToLength(`Abstract-only fallback for "${title}".`, 280);
+}
+
+function firstMeaningfulSentence(text: string): string | undefined {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return undefined;
+  }
+  const sentences = normalized
+    .split(/(?<=[.!?])\s+/u)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length > 24);
+  return sentences[0] || normalized;
+}
+
+function trimToLength(text: string, maxLength: number): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 }
 
 export function buildPaperAnalysisPrompt(

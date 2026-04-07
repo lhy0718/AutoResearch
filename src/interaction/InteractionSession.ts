@@ -306,6 +306,9 @@ export class InteractionSession {
       llm: this.getCommandIntentClient(),
       abortSignal: input.abortSignal
     });
+    if (extracted.source === "heuristic_fallback") {
+      this.pushLog("Run brief extraction fell back to heuristic parsing.");
+    }
     for (const line of summarizeRunBrief(extracted)) {
       this.pushLog(line);
     }

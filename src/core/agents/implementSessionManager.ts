@@ -337,7 +337,7 @@ export class ImplementSessionManager {
     const metricsPath = path.join(runDir, "metrics.json");
     const defaultPublicDir = buildPublicExperimentDir(this.deps.workspaceRoot, run);
     const experimentLlmProfile = resolveExperimentLlmProfile(this.deps.config);
-    const useCodexSession =
+    const canUseCodexSession =
       typeof this.deps.codex?.runTurnStream === "function" &&
       this.deps.config?.providers?.llm_mode !== "openai_api" &&
       this.deps.config?.providers?.llm_mode !== "ollama";
@@ -369,6 +369,8 @@ export class ImplementSessionManager {
       longTermMemory,
       environmentSnapshot
     );
+    const useCodexSession =
+      canUseCodexSession && !shouldFallbackToStagedImplementLlm(taskSpec.context.previous_summary || "");
     await writeJsonFile(path.join(runDir, "implement_task_spec.json"), taskSpec);
 
     const queueProgressUpdate = (
@@ -688,6 +690,41 @@ export class ImplementSessionManager {
                 }
               }
             });
+            if (this.deps.llm && shouldFallbackToStagedImplementLlm(result.finalText)) {
+              emitImplementObservation(
+                "codex",
+                "Codex implement turn reported a filesystem tooling blocker; retrying this attempt in staged_llm mode.",
+                {
+                  attempt,
+                  threadId: activeThreadId,
+                  publicDir: defaultPublicDir
+                }
+              );
+              const llmTimeoutMs = getImplementLlmTimeoutMs(this.deps.config);
+              const filesystemFallbackPrompt = this.buildFilesystemFallbackRecoveryPrompt({
+                taskSpec,
+                searchLocalization,
+                branchPlan,
+                attempt
+              });
+              const filesystemFallbackSystemPrompt = appendFilesystemFallbackOverrideToPrompt(attemptSystemPrompt);
+              const completion = await this.completeStagedLlmRequest({
+                prompt: filesystemFallbackPrompt,
+                systemPrompt: filesystemFallbackSystemPrompt,
+                timeoutMs: llmTimeoutMs,
+                abortSignal,
+                attempt,
+                threadId: activeThreadId,
+                publicDir: defaultPublicDir,
+                emitImplementObservation,
+                reasoningEffort: experimentLlmProfile.reasoningEffort
+              });
+              result = {
+                threadId: completion.threadId || activeThreadId,
+                finalText: completion.text,
+                events: []
+              };
+            }
           } else {
             if (!this.deps.llm) {
               throw new Error("implement_experiments is configured for staged_llm mode, but no LLM client is available.");
@@ -1715,6 +1752,43 @@ export class ImplementSessionManager {
     }
 
     return lines.join("\n");
+  }
+
+  private buildFilesystemFallbackRecoveryPrompt(params: {
+    taskSpec: ImplementTaskSpec;
+    searchLocalization: LocalizationResult;
+    branchPlan: BranchPlan;
+    attempt: number;
+  }): string {
+    const sandboxTaskSpec = rewriteWorkspacePathsForSandbox(params.taskSpec, this.deps.workspaceRoot);
+    const sandboxSearchLocalization = rewriteWorkspacePathsForSandbox(params.searchLocalization, this.deps.workspaceRoot);
+    const sandboxBranchPlan = rewriteWorkspacePathsForSandbox(params.branchPlan, this.deps.workspaceRoot);
+    const promptTaskSpec = compactTaskSpecForStagedLlmPrompt(sandboxTaskSpec);
+    const promptSearchLocalization = compactLocalizationForStagedLlmPrompt(sandboxSearchLocalization);
+    const promptBranchPlan = compactBranchPlanForStagedLlmPrompt(sandboxBranchPlan);
+
+    return [
+      `Implementation attempt ${params.attempt}/${MAX_IMPLEMENT_ATTEMPTS} (filesystem-blocker recovery mode).`,
+      "The previous Codex filesystem/tooling blocker has already been detected and handled by AutoLabOS.",
+      "Do NOT repeat the blocker narrative, sandbox explanation, or any request to retry Codex filesystem actions.",
+      "Treat this as a fresh staged_llm implementation task and return ONLY one JSON object.",
+      "A valid response MUST include non-empty file_edits for every created or modified text artifact needed for the runnable experiment bundle.",
+      "At minimum, emit file_edits for the runnable script and any required config or README referenced by your commands.",
+      "If inspection is incomplete, synthesize the smallest bounded implementation that satisfies the locked task spec, branch focus, and localization hints.",
+      "Task spec:",
+      JSON.stringify(promptTaskSpec, null, 2),
+      "",
+      "Search-backed localization hints:",
+      JSON.stringify(promptSearchLocalization, null, 2),
+      "",
+      "Branch focus:",
+      JSON.stringify(promptBranchPlan, null, 2),
+      "",
+      "Output contract reminder:",
+      "- Return ONLY one JSON object with keys: summary, experiment_mode, run_command, test_command, working_dir, changed_files, artifacts, public_dir, public_artifacts, script_path, metrics_path, localization, assumptions, file_edits.",
+      "- file_edits must contain full UTF-8 contents for each referenced file.",
+      "- Responses that only describe the blocker or omit file_edits are invalid."
+    ].join("\n");
   }
 
   private async completeStagedLlmRequest(input: {
@@ -3580,6 +3654,30 @@ function isDeferredExecutionArtifactPath(filePath: string): boolean {
     base === "objective_evaluation.json" ||
     base === "recent_paper_reproducibility.json"
   );
+}
+
+function shouldFallbackToStagedImplementLlm(finalText: string): boolean {
+  const normalized = finalText.toLowerCase();
+  return (
+    normalized.includes("bwrap: loopback: failed rtm_newaddr: operation not permitted") ||
+    normalized.includes("codex local filesystem action") ||
+    normalized.includes("sandbox startup failure")
+  );
+}
+
+function appendFilesystemFallbackOverrideToPrompt(prompt: string): string {
+  return [
+    prompt,
+    "",
+    "Filesystem-blocker recovery mode:",
+    "- A previous Codex workspace filesystem/tooling blocker has already been detected and handled by AutoLabOS.",
+    "- Do NOT repeat the blocker narrative, sandbox failure explanation, or any request to retry Codex filesystem actions.",
+    "- In this staged_llm mode, you must synthesize the implementation directly as structured file_edits.",
+    "- A valid response must include file_edits for each created or modified text artifact needed for the runnable experiment bundle.",
+    "- At minimum, emit file_edits for the runnable script and any required config or README referenced by your commands.",
+    "- If prior attempts failed before materializing files, treat that as resolved context rather than the answer.",
+    "- If inspection is incomplete, generate the smallest bounded implementation that satisfies the task spec, localization hints, and verification command."
+  ].join("\n");
 }
 
 async function publishReusableArtifacts(params: {
