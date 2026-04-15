@@ -4,7 +4,9 @@ import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)));
-const testTmpRoot = path.join(repoRoot, "test", ".tmp");
+const validationRoot =
+  process.env.AUTOLABOS_VALIDATION_WORKSPACE_ROOT || getDefaultValidationWorkspaceRoot(repoRoot);
+const testTmpRoot = path.join(validationRoot, ".tmp");
 
 mkdirSync(testTmpRoot, { recursive: true });
 for (const entry of readdirSync(testTmpRoot)) {
@@ -59,4 +61,8 @@ function resolveCommand(command) {
     return `${command}.cmd`;
   }
   return command;
+}
+
+function getDefaultValidationWorkspaceRoot(projectRoot) {
+  return path.join(path.dirname(projectRoot), ".autolabos-validation");
 }

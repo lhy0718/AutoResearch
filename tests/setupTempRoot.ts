@@ -2,8 +2,11 @@ import path from "node:path";
 import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+import { getDefaultValidationWorkspaceRoot } from "../src/validationWorkspace.js";
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const testRoot = process.env.TMPDIR || path.join(repoRoot, "test", ".tmp");
+const validationRoot = process.env.AUTOLABOS_VALIDATION_WORKSPACE_ROOT || getDefaultValidationWorkspaceRoot(repoRoot);
+const testRoot = path.join(validationRoot, ".tmp");
 
 mkdirSync(testRoot, { recursive: true });
 

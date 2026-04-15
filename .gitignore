@@ -23,10 +23,6 @@ web/dist/
 # AutoLabOS runtime artifacts
 .autolabos/
 
-# Manual example / real-validation workspace
-/test/*
-!/test/smoke/
-
 # Logs / coverage
 coverage/
 .nyc_output/

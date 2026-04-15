@@ -14,8 +14,11 @@ import {
   buildMinimalLiveFixtureReviewArtifacts,
   writeLiveFixtureWorkspace
 } from "./helpers/liveFixtureWorkspace.js";
+import { VALIDATION_WORKSPACE_ROOT_ENV } from "../src/validationWorkspace.js";
 
 const tempDirs: string[] = [];
+let originalValidationWorkspaceRoot: string | undefined;
+let originalValidationWorkspaceRootKnown = false;
 
 afterEach(() => {
   while (tempDirs.length > 0) {
@@ -24,11 +27,23 @@ afterEach(() => {
       rmSync(dir, { recursive: true, force: true });
     }
   }
+  if (originalValidationWorkspaceRootKnown) {
+    if (originalValidationWorkspaceRoot === undefined) {
+      delete process.env[VALIDATION_WORKSPACE_ROOT_ENV];
+    } else {
+      process.env[VALIDATION_WORKSPACE_ROOT_ENV] = originalValidationWorkspaceRoot;
+    }
+    originalValidationWorkspaceRoot = undefined;
+    originalValidationWorkspaceRootKnown = false;
+  }
 });
 
 describe("harness validators", () => {
   it("accepts a live_fixture run status paired with a completeness checklist", async () => {
     const workspace = createTempWorkspace("autolabos-harness-validator-live-fixture-");
+    originalValidationWorkspaceRoot = process.env[VALIDATION_WORKSPACE_ROOT_ENV];
+    originalValidationWorkspaceRootKnown = true;
+    process.env[VALIDATION_WORKSPACE_ROOT_ENV] = workspace;
     const { runDir } = await writeLiveFixtureWorkspace({
       workspaceRoot: workspace,
       runId: "run-live-fixture",

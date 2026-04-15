@@ -425,8 +425,7 @@ function normalizeDependencyMode(
 async function probeWorkspaceWriteability(
   workspaceRoot: string
 ): Promise<{ ok: boolean; probePath: string; detail: string }> {
-  const candidateProbeDir = path.join(workspaceRoot, "test");
-  const probeDir = await directoryExists(candidateProbeDir) ? candidateProbeDir : workspaceRoot;
+  const probeDir = workspaceRoot;
   const probePath = path.join(probeDir, `.autolabos-doctor-write-probe-${process.pid}.tmp`);
   try {
     await fs.mkdir(probeDir, { recursive: true });

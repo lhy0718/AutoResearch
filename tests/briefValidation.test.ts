@@ -24,7 +24,7 @@ function fullBrief(): string {
     "- compute/time budget: keep the full experiment runnable on a single workstation in under 6 hours.",
     "- dataset or environment limits: use public benchmarks with a reproducible split.",
     "- provider/tooling constraints: local Python runner only.",
-    "- reproducibility constraints: persist scripts, configs, and result tables under test/output/.",
+    "- reproducibility constraints: persist scripts, configs, and result tables under outputs/ within the active workspace.",
     "- forbidden shortcuts: no fabricated metrics or workflow-only evidence.",
     "",
     "## Plan",

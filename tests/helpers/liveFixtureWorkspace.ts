@@ -23,6 +23,11 @@ import {
   RunValidationScope,
   WorkflowApprovalMode
 } from "../../src/types.js";
+import {
+  resolveValidationFixtureRoot,
+  resolveValidationWorkspaceRoot,
+  isPathInsideOrEqual
+} from "../../src/validationWorkspace.js";
 
 const FIXED_NODE_ORDER: GraphNodeId[] = [
   "collect_papers",
@@ -66,12 +71,11 @@ export interface LiveFixtureWorkspaceOptions {
 }
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const canonicalLiveValidationRoot = path.join(repoRoot, "test");
-const canonicalLiveFixtureDir = path.join(canonicalLiveValidationRoot, ".live");
 
 export async function createLiveFixtureWorkspaceRoot(prefix = "autolabos-live-fixture-"): Promise<string> {
-  await mkdir(canonicalLiveFixtureDir, { recursive: true });
-  return mkdtemp(path.join(canonicalLiveFixtureDir, prefix));
+  const fixtureRoot = resolveValidationFixtureRoot(process.env, repoRoot);
+  await mkdir(fixtureRoot, { recursive: true });
+  return mkdtemp(path.join(fixtureRoot, prefix));
 }
 
 export async function writeLiveFixtureWorkspace(
@@ -159,20 +163,20 @@ function assertLiveFixtureWorkspaceRoot(workspaceRoot: string, validationScope: 
   if (validationScope !== "live_fixture") {
     return;
   }
-  const relative = path.relative(canonicalLiveValidationRoot, workspaceRoot);
-  const insideTestRoot = relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-  if (!insideTestRoot) {
+  const validationRoot = resolveValidationWorkspaceRoot(process.env, repoRoot);
+  if (!isPathInsideOrEqual(workspaceRoot, validationRoot)) {
     throw new Error(
-      `live_fixture workspaces must live under ${canonicalLiveValidationRoot}; received ${workspaceRoot}`
+      `live_fixture workspaces must live under ${validationRoot}; received ${workspaceRoot}`
     );
   }
 }
 
 async function copyTestEnvIfPresent(workspaceRoot: string): Promise<void> {
-  if (path.resolve(workspaceRoot) === canonicalLiveValidationRoot) {
+  const validationRoot = resolveValidationWorkspaceRoot(process.env, repoRoot);
+  if (path.resolve(workspaceRoot) === validationRoot) {
     return;
   }
-  const testEnvPath = path.join(canonicalLiveValidationRoot, ".env");
+  const testEnvPath = path.join(validationRoot, ".env");
   try {
     const envRaw = await readFile(testEnvPath, "utf8");
     const destination = path.join(workspaceRoot, ".env");

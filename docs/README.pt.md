@@ -175,7 +175,7 @@ Fluxo típico de primeiro uso:
 Notas:
 
 - se `.autolabos/config.yaml` não existir, as duas interfaces guiam o onboarding
-- não execute o AutoLabOS a partir da raiz do repositório; use `test/` ou seu próprio workspace
+- não execute o AutoLabOS a partir da raiz do repositório; use um diretório de workspace separado para a execução de pesquisa
 - TUI e Web UI compartilham o mesmo runtime, os mesmos artifacts e os mesmos checkpoints
 
 ### Pré-requisitos
@@ -259,7 +259,6 @@ O AutoLabOS foi projetado em torno de governed execution, não de prompt-only or
 | Claims | tão fortes quanto o modelo conseguir escrever | limitadas por evidence e claim ceiling |
 | Review | cleanup pass opcional | structural gate capaz de bloquear a escrita |
 | Failures | são esquecidos e tentados de novo | registrados com fingerprint em failure memory |
-| Validation | secundária | `/doctor`, harnesses, smoke e live validation são first-class |
 | Interfaces | caminhos de código separados | TUI e Web compartilham um único runtime |
 
 Por isso, o sistema deve ser entendido mais como research infrastructure do que como paper generator.
@@ -299,9 +298,6 @@ A reprodutibilidade é imposta por artifacts, checkpoints e inspectable transiti
 O AutoLabOS trata validation surfaces como first-class.
 
 - `/doctor` verifica environment e workspace readiness antes de um run começar
-- harness validation protege workflow, artifact e governance contracts
-- targeted smoke checks fornecem cobertura diagnóstica de regressão
-- quando o comportamento interativo importa, usa-se live validation
 
 Paper readiness não é apenas uma impressão produzida por um prompt.
 
@@ -310,13 +306,6 @@ Paper readiness não é apenas uma impressão produzida por um prompt.
 - **Review packet + specialist panel** decidem se o caminho do manuscrito deve advance, revise ou backtrack
 
 `paper_readiness.json` pode incluir `overall_score`. Esse valor deve ser lido como um sinal interno de qualidade do run, não como um benchmark científico universal. Alguns caminhos avançados de evaluation / self-improvement usam esse sinal para comparar runs ou candidatos de prompt mutation.
-
-<details>
-<summary><strong>Por que esse modelo de validation importa</strong></summary>
-
-As hipóteses de qualidade são transformadas em checks explícitos. O comportamento real importa mais do que a aparência no nível do prompt. O objetivo não é “o modelo escreveu algo convincente”, e sim “este run pode ser inspecionado e defendido”.
-
-</details>
 
 ---
 
@@ -336,7 +325,7 @@ Ele pode incluir:
 - `outputs/eval-harness/history.jsonl`
 - arquivos atuais de `node-prompts/` para o node alvo
 
-O LLM é instruído por `TASK.md` a responder apenas com `TARGET_FILE + unified diff`, e o alvo fica restrito a `node-prompts/`. No modo apply, o candidato precisa passar em `validate:harness`; se falhar, ocorre rollback e um audit log é escrito. `--no-apply` apenas gera o context. `--dry-run` mostra o diff sem alterar arquivos.
+O LLM é instruído por `TASK.md` a responder apenas com `TARGET_FILE + unified diff`, e o alvo fica restrito a `node-prompts/`. No modo apply, o candidato precisa passar em validation checks; se falhar, ocorre rollback e um audit log é escrito. `--no-apply` apenas gera o context. `--dry-run` mostra o diff sem alterar arquivos.
 
 ### `autolabos evolve`
 
@@ -425,29 +414,6 @@ O AutoLabOS também fornece built-in harness presets como `base`, `compact`, `fa
 - workflows que não precisam de artifact trail ou review gates
 - projetos que preferem free-form agent behavior em vez de governed execution
 - casos em que uma ferramenta simples de resumo de literatura é suficiente
-
----
-
-## Desenvolvimento
-
-```bash
-npm install
-npm run build
-npm test
-npm run test:web
-npm run validate:harness
-```
-
-Escolha o menor conjunto de validation que cubra honestamente a mudança. Para defects interativos, se o ambiente permitir, não fique apenas nos tests: execute novamente o mesmo fluxo de TUI / Web.
-
-Comandos úteis:
-
-```bash
-npm run test:watch
-npm run test:smoke:natural-collect
-npm run test:smoke:natural-collect-execute
-npm run test:smoke:all
-```
 
 ---
 
@@ -574,10 +540,8 @@ outputs/<title-slug>-<run_id_prefix>/
 O AutoLabOS é um projeto OSS ativo de research engineering. As referências canônicas para comportamento e contracts estão em `docs/`, especialmente:
 
 - `docs/architecture.md`
-- `docs/tui-live-validation.md`
 - `docs/experiment-quality-bar.md`
 - `docs/paper-quality-bar.md`
 - `docs/reproducibility.md`
 - `docs/research-brief-template.md`
 
-Se você mudar comportamento de runtime, trate esses documentos, os tests publicados e os observable artifacts como source of truth.

@@ -18,7 +18,7 @@ describe("paper submission sanitization", () => {
       topic: "Efficient test-time reasoning for small language models",
       objectiveMetric: "accuracy_delta_vs_baseline > 0",
       constraints: [
-        "provider/tooling constraints: keep auditable artifacts under `test/.autolabos/` and `test/output/`."
+        "provider/tooling constraints: keep auditable artifacts under `.autolabos/` and `outputs/` within the active workspace."
       ],
       paperSummaries: [
         {

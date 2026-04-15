@@ -74,12 +74,15 @@ When a temp workspace exists only to validate operator surfaces, it may declare
   that the validation target actually needs.
 - Live fixtures should still emit a matching `run_completeness_checklist.json` so the
   reduced scope is explicit and inspectable.
-- Real live-validation workspaces should live under `test/`, not `/tmp`.
+- By default, live-validation workspaces live under a sibling `.autolabos-validation/` root outside the repository.
+- If needed, you can override that root with `AUTOLABOS_VALIDATION_WORKSPACE_ROOT`.
+- Do not hardcode a machine-specific absolute path into the repository; configure it
+  through the environment at runtime instead.
 - Reuse the shared fixture helper in `tests/helpers/liveFixtureWorkspace.ts` when
   constructing review/paper operator workspaces.
-- The helper creates workspaces under `test/.live/` and copies `test/.env` into the
-  fixture root when present, so `/doctor` sees the same workspace-local secret surface
-  as a normal `test/` run.
+- The helper creates workspaces under `<validation-root>/.live/` and copies
+  `<validation-root>/.env` into the fixture root when present, so `/doctor` sees
+  the same workspace-local secret surface as a normal run.
 - Do not hand-write `run_status.json` and checklist payloads separately.
 
 ## 5) Live bug -> regression test workflow

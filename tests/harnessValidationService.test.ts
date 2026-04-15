@@ -13,8 +13,11 @@ import {
   buildMinimalLiveFixtureReviewArtifacts,
   writeLiveFixtureWorkspace
 } from "./helpers/liveFixtureWorkspace.js";
+import { VALIDATION_WORKSPACE_ROOT_ENV } from "../src/validationWorkspace.js";
 
 const tempDirs: string[] = [];
+let originalValidationWorkspaceRoot: string | undefined;
+let originalValidationWorkspaceRootKnown = false;
 
 afterEach(() => {
   while (tempDirs.length > 0) {
@@ -22,6 +25,15 @@ afterEach(() => {
     if (dir) {
       rmSync(dir, { recursive: true, force: true });
     }
+  }
+  if (originalValidationWorkspaceRootKnown) {
+    if (originalValidationWorkspaceRoot === undefined) {
+      delete process.env[VALIDATION_WORKSPACE_ROOT_ENV];
+    } else {
+      process.env[VALIDATION_WORKSPACE_ROOT_ENV] = originalValidationWorkspaceRoot;
+    }
+    originalValidationWorkspaceRoot = undefined;
+    originalValidationWorkspaceRootKnown = false;
   }
 });
 
@@ -76,12 +88,10 @@ describe("harnessValidationService", () => {
     expect(report.findings.some((f) => f.code === "issues_file_missing")).toBe(false);
   });
 
-  it("reports issues_file_missing when ISSUES.md absent from both workspace and parent (LV-028)", async () => {
+  it("reports issues_file_missing when a non-repo workspace has no local or parent ISSUES.md", async () => {
     const parent = createTempWorkspace("autolabos-harness-noissuefile-");
     const child = path.join(parent, "child");
     await mkdir(child, { recursive: true });
-
-    // No ISSUES.md anywhere
 
     const report = await runHarnessValidation({
       workspaceRoot: child,
@@ -94,6 +104,9 @@ describe("harnessValidationService", () => {
 
   it("suppresses issues_file_missing when every observed run declares validation_scope=live_fixture", async () => {
     const workspace = createTempWorkspace("autolabos-harness-live-fixture-");
+    originalValidationWorkspaceRoot = process.env[VALIDATION_WORKSPACE_ROOT_ENV];
+    originalValidationWorkspaceRootKnown = true;
+    process.env[VALIDATION_WORKSPACE_ROOT_ENV] = workspace;
     await writeLiveFixtureWorkspace({
       workspaceRoot: workspace,
       runId: "fixture-run",
@@ -132,6 +145,35 @@ describe("harnessValidationService", () => {
 
     expect(report.targets.find((target) => target.scope === "test_records")?.runStoreCount).toBe(0);
     expect(report.runsChecked).toBe(1);
+  });
+
+  it("scans live-fixture run stores under an external validation root when configured", async () => {
+    originalValidationWorkspaceRoot = process.env[VALIDATION_WORKSPACE_ROOT_ENV];
+    originalValidationWorkspaceRootKnown = true;
+
+    const workspace = createTempWorkspace("autolabos-harness-external-workspace-");
+    const externalValidationRoot = createTempWorkspace("autolabos-harness-external-validation-root-");
+    process.env[VALIDATION_WORKSPACE_ROOT_ENV] = externalValidationRoot;
+
+    await writeFile(path.join(workspace, "ISSUES.md"), "## Issue: ok\n- Status: open\n", "utf8");
+    const fixtureWorkspace = path.join(externalValidationRoot, ".live", "fixture-one");
+    await writeLiveFixtureWorkspace({
+      workspaceRoot: fixtureWorkspace,
+      runId: "fixture-run",
+      includeConfig: false,
+      artifacts: buildMinimalLiveFixtureReviewArtifacts("2026-03-28T12:00:00.000Z"),
+      now: "2026-03-28T12:00:00.000Z"
+    });
+
+    const report = await runHarnessValidation({
+      workspaceRoot: workspace,
+      includeWorkspaceRuns: false,
+      includeTestRunStores: true
+    });
+
+    expect(report.targets.find((target) => target.scope === "test_records")?.runStoreCount).toBe(1);
+    expect(report.runsChecked).toBe(1);
+    expect(report.findings.some((f) => f.code === "issues_file_missing")).toBe(false);
   });
 });
 

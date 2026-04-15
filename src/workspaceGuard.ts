@@ -16,6 +16,6 @@ export function assertNotProjectRootWorkspace(cwd: string, operation = "AutoLabO
     return;
   }
   throw new Error(
-    `${operation} must not run from the repository root (${PROJECT_ROOT}). Use test/ or another workspace directory instead.`
+    `${operation} must not run from the repository root (${PROJECT_ROOT}). Use a separate workspace directory instead.`
   );
 }

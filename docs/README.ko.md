@@ -175,7 +175,6 @@ autolabos web    # Web UI
 참고:
 
 - `.autolabos/config.yaml`이 없으면 두 UI 모두 온보딩을 안내합니다.
-- 저장소 루트에서 바로 실행하지 마세요. `test/` 같은 workspace나 별도의 연구 workspace를 사용하세요.
 - TUI와 Web UI는 같은 runtime, 같은 artifacts, 같은 checkpoints를 공유합니다.
 
 ### 사전 준비
@@ -259,7 +258,6 @@ AutoLabOS는 prompt-only orchestration이 아니라 governed execution을 중심
 | 주장 | 모델이 생성하는 만큼 강해짐 | evidence와 claim ceiling에 의해 제한 |
 | 리뷰 | 선택적 cleanup pass | 집필을 막을 수 있는 structural gate |
 | 실패 | 잊히고 재시도됨 | failure memory에 fingerprint로 기록 |
-| 검증 | 부차적 | `/doctor`, harness, smoke, live validation이 first-class |
 | 인터페이스 | 각기 다른 코드 경로 | TUI와 Web이 하나의 runtime 공유 |
 
 그래서 이 시스템은 논문 생성기보다는 연구 인프라에 가깝게 읽혀야 합니다.
@@ -299,9 +297,6 @@ failure fingerprint는 persisted되어, 구조적 오류나 반복되는 equival
 AutoLabOS는 validation surface를 first-class로 다룹니다.
 
 - `/doctor`는 run 시작 전에 환경과 workspace readiness를 검사합니다.
-- harness validation은 workflow, artifact, governance contract를 보호합니다.
-- targeted smoke check는 진단용 회귀 커버리지를 제공합니다.
-- interactive behavior가 중요할 때는 live validation을 사용합니다.
 
 논문 준비도는 단일한 프롬프트 감상이 아닙니다.
 
@@ -310,13 +305,6 @@ AutoLabOS는 validation surface를 first-class로 다룹니다.
 - **Review packet + specialist panel**은 원고 경로가 advance, revise, backtrack 중 무엇을 택해야 하는지 결정합니다.
 
 `paper_readiness.json`에는 `overall_score`가 들어갈 수 있습니다. 이 값은 시스템 내부의 run-quality signal로 읽어야 하며, 보편적인 scientific benchmark처럼 보면 안 됩니다. 일부 고급 evaluation / self-improvement 흐름은 이 점수를 run이나 prompt mutation 후보를 비교하는 데 사용합니다.
-
-<details>
-<summary><strong>왜 이 validation 모델이 중요한가</strong></summary>
-
-품질 가정은 명시적인 검사로 바뀝니다. 프롬프트 수준의 그럴듯함보다 실제 동작이 더 중요합니다. 목표는 "모델이 설득력 있게 썼다"가 아니라 "이 run을 inspection하고 defend할 수 있다"는 상태입니다.
-
-</details>
 
 ---
 
@@ -336,7 +324,7 @@ AutoLabOS에는 bounded self-improvement path가 있지만, 이는 blind autonom
 - `outputs/eval-harness/history.jsonl`
 - 대상 노드에 대한 현재 `node-prompts/` 파일
 
-LLM은 `TASK.md`를 통해 `TARGET_FILE + unified diff` 형식만 반환하도록 제한되며, target은 `node-prompts/` 안으로 제한됩니다. apply mode에서는 후보가 `validate:harness`를 통과해야 하고, 실패하면 rollback되며 audit log가 남습니다. `--no-apply`는 context만 생성하고, `--dry-run`은 파일을 바꾸지 않고 diff만 보여줍니다.
+LLM은 `TASK.md`를 통해 `TARGET_FILE + unified diff` 형식만 반환하도록 제한되며, target은 `node-prompts/` 안으로 제한됩니다. apply mode에서는 후보가 validation checks를 통과해야 하고, 실패하면 rollback되며 audit log가 남습니다. `--no-apply`는 context만 생성하고, `--dry-run`은 파일을 바꾸지 않고 diff만 보여줍니다.
 
 ### `autolabos evolve`
 
@@ -425,29 +413,6 @@ AutoLabOS에는 `base`, `compact`, `failure-aware`, `review-heavy` 같은 built-
 - artifact trail이나 review gate가 필요 없는 workflow
 - governed execution보다 free-form agent behavior를 더 원하는 프로젝트
 - 단순 문헌 요약 도구만으로 충분한 경우
-
----
-
-## 개발
-
-```bash
-npm install
-npm run build
-npm test
-npm run test:web
-npm run validate:harness
-```
-
-변경을 커버할 수 있는 가장 작은 honest validation set을 고르세요. interactive defect에서는 환경이 허용하면, 테스트만으로 끝내지 말고 같은 TUI 또는 Web 흐름을 다시 실행해야 합니다.
-
-유용한 명령:
-
-```bash
-npm run test:watch
-npm run test:smoke:natural-collect
-npm run test:smoke:natural-collect-execute
-npm run test:smoke:all
-```
 
 ---
 
@@ -574,10 +539,7 @@ outputs/<title-slug>-<run_id_prefix>/
 AutoLabOS는 활발히 개발 중인 OSS research-engineering 프로젝트입니다. 동작과 계약의 canonical reference는 저장소의 `docs/` 아래 문서들입니다. 특히 다음을 먼저 보세요.
 
 - `docs/architecture.md`
-- `docs/tui-live-validation.md`
 - `docs/experiment-quality-bar.md`
 - `docs/paper-quality-bar.md`
 - `docs/reproducibility.md`
 - `docs/research-brief-template.md`
-
-runtime behavior를 바꿀 때는 이 문서들, shipped tests, observable artifact를 source of truth로 취급해야 합니다.

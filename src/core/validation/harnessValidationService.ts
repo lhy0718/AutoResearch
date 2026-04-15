@@ -3,6 +3,12 @@ import { Dirent, promises as fs } from "node:fs";
 
 import { resolveAppPaths } from "../../config.js";
 import { GraphNodeId, RunRecord } from "../../types.js";
+import { getProjectRoot } from "../../workspaceGuard.js";
+import {
+  VALIDATION_WORKSPACE_ROOT_ENV,
+  isPathInsideOrEqual,
+  resolveValidationWorkspaceRoot
+} from "../../validationWorkspace.js";
 import {
   HarnessValidationIssue,
   validateLiveValidationIssueFile,
@@ -76,10 +82,15 @@ export async function runHarnessValidation(options: HarnessValidationOptions): P
   let resolvedIssuesPath = issuesPath;
   let missingIssueLogFinding: HarnessValidationFinding | undefined;
   if (!(await fileExists(resolvedIssuesPath))) {
-    // Fall back to parent directory (e.g. project root when workspace is test/)
-    const parentCandidate = path.join(path.dirname(workspaceRoot), "ISSUES.md");
-    if (await fileExists(parentCandidate)) {
-      resolvedIssuesPath = parentCandidate;
+    const fallbackCandidates = [path.join(path.dirname(workspaceRoot), "ISSUES.md")];
+    if (shouldFallbackToProjectIssueLog(workspaceRoot)) {
+      fallbackCandidates.push(path.join(getProjectRoot(), "ISSUES.md"));
+    }
+    for (const candidate of fallbackCandidates) {
+      if (await fileExists(candidate)) {
+        resolvedIssuesPath = candidate;
+        break;
+      }
     }
   }
   if (await fileExists(resolvedIssuesPath)) {
@@ -324,8 +335,14 @@ async function collectRunStoreSources(input: {
   }
 
   if (input.includeTestRunStores) {
-    for (const relativeRoot of ["test", "tests"]) {
-      const testRoot = path.join(input.workspaceRoot, relativeRoot);
+    const candidateRoots = new Set<string>([
+      path.join(input.workspaceRoot, "test"),
+      path.join(input.workspaceRoot, "tests")
+    ]);
+    if (process.env[VALIDATION_WORKSPACE_ROOT_ENV]?.trim()) {
+      candidateRoots.add(resolveValidationWorkspaceRoot());
+    }
+    for (const testRoot of candidateRoots) {
       const testFiles = await findRunStoreFiles(testRoot);
       for (const filePath of testFiles) {
         const resolved = path.resolve(filePath);
@@ -339,6 +356,20 @@ async function collectRunStoreSources(input: {
   }
 
   return sources.sort((a, b) => a.runStorePath.localeCompare(b.runStorePath));
+}
+
+function shouldFallbackToProjectIssueLog(workspaceRoot: string): boolean {
+  const projectRoot = getProjectRoot();
+  if (isPathInsideOrEqual(workspaceRoot, projectRoot)) {
+    return true;
+  }
+
+  const configuredValidationRoot = process.env[VALIDATION_WORKSPACE_ROOT_ENV]?.trim();
+  if (!configuredValidationRoot) {
+    return false;
+  }
+
+  return isPathInsideOrEqual(workspaceRoot, resolveValidationWorkspaceRoot());
 }
 
 async function findRunStoreFiles(root: string): Promise<string[]> {
