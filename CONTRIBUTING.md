@@ -70,6 +70,14 @@ Please prefer:
 - readable code over clever abstractions
 - updating docs when behavior or commands change
 
+## README scope
+
+Keep `README.md` and the translated README files user-facing.
+
+- Prefer product and usage guidance over maintainer workflow notes.
+- Put contributor, CI, validation, live-debugging, and repository-operations guidance in `CONTRIBUTING.md` or `docs/`, not in the README files.
+- Avoid adding internal-only warnings or operator procedures to README text when they are only relevant for development or maintenance.
+
 ## Pull request checklist
 
 Before opening a pull request, please make sure you have:
