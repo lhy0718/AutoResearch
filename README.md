@@ -31,7 +31,7 @@
     <a href="./docs/README.ru.md"><strong>Русский</strong></a>
   </p>
 
-  <p><sub>Localized README files are maintained translations of this document. For normative wording and latest edits, use the English README as the canonical reference.</sub></p>
+  <p><sub>Localized README files are maintained translations of this document. The English README is updated first.</sub></p>
 
   <p>
     <a href="https://github.com/lhy0718/AutoLabOS/actions/workflows/ci.yml">
@@ -99,7 +99,7 @@ In practice:
 4. Weak evidence triggers backtracking or downgrade instead of automatic polishing.
 5. If the review gate passes, `write_paper` drafts a manuscript from bounded evidence.
 
-The historical 9-node contract remains the architectural baseline. In the current runtime, `figure_audit` is the one approved post-analysis checkpoint inserted between `analyze_results` and `review` so figure-quality critique can checkpoint and resume independently.
+In the current runtime, `figure_audit` sits between `analyze_results` and `review` so figure-quality critique can checkpoint and resume independently.
 
 ```mermaid
 stateDiagram-v2
@@ -196,7 +196,7 @@ The brief is not just a startup note. It is the governed contract for a run.
 
 That makes the brief part of the audit trail, not just part of the prompt.
 
-In the current contract, `.autolabos/config.yaml` is primarily for provider/runtime defaults and workspace policy. Run-specific research intent, evidence bars, baseline expectations, manuscript-format targets, and manuscript template path belong in the brief. Persisted config may therefore omit brief-owned sections such as research defaults and some manuscript-profile or paper-template fields.
+In practice, `.autolabos/config.yaml` holds provider and workspace defaults, while the brief carries run-specific research intent, evidence bars, baseline expectations, manuscript-format targets, and manuscript template path.
 
 ```bash
 /new
@@ -288,12 +288,14 @@ Failure fingerprints are persisted so structural errors and repeated equivalent 
 
 ### Reproducibility Through Artifacts
 
+Runs stay inspectable because the system persists artifacts, checkpoints, and transitions instead of relying on hidden state.
+
 
 ---
 
-## Validation And Harness-Oriented Quality Model
+## Quality Model
 
-AutoLabOS treats validation surfaces as first-class.
+AutoLabOS makes quality checks visible during a run.
 
 - `/doctor` checks environment and workspace readiness before a run starts
 
@@ -415,131 +417,6 @@ AutoLabOS also has built-in harness presets such as `base`, `compact`, `failure-
 
 ---
 
-## Advanced Details
-
-<details>
-<summary><strong>Execution modes</strong></summary>
-
-AutoLabOS preserves the governed workflow and safety gates across every mode.
-
-| Mode | Command | Behavior |
-|---|---|---|
-| **Interactive** | `autolabos` | Slash-command TUI with explicit approval gates |
-| **Minimal approval** | Config: `approval_mode: minimal` | Auto-approves safe transitions |
-| **Hybrid approval** | Config: `approval_mode: hybrid` | Auto-advances strong low-risk transitions, pauses risky or low-confidence ones |
-| **Overnight** | `/agent overnight [run]` | Unattended single pass, 24-hour limit, conservative backtracking |
-| **Autonomous** | `/agent autonomous [run]` | Open-ended bounded research exploration |
-
-</details>
-
-<details>
-<summary><strong>Governance artifact flow</strong></summary>
-
-```mermaid
-flowchart LR
-    Brief["Research Brief<br/>completeness artifact"] --> Design["design_experiments"]
-    Design --> Contract["Experiment Contract<br/>hypothesis, single change,<br/>confound check"]
-    Design --> Consistency["Brief-Design Consistency<br/>warnings artifact"]
-    Contract --> Run["run_experiments"]
-    Run --> Failures["Failure Memory<br/>fingerprinted JSONL"]
-    Run --> Analyze["analyze_results"]
-    Analyze --> Decision["Attempt Decision<br/>keep/discard/replicate"]
-    Decision --> FigureAudit["figure_audit"]
-    FigureAudit --> Review["review"]
-    Failures --> Review
-    Contract --> Review
-    Review --> Ceiling["Pre-Review Summary<br/>claim ceiling detail"]
-    Ceiling --> Paper["write_paper"]
-```
-
-</details>
-
-<details>
-<summary><strong>Artifact flow</strong></summary>
-
-```mermaid
-flowchart TB
-    A["collect_papers"] --> A1["corpus.jsonl, bibtex.bib"]
-    A1 --> B["analyze_papers"]
-    B --> B1["paper_summaries.jsonl, evidence_store.jsonl"]
-    B1 --> C["generate_hypotheses"]
-    C --> C1["hypotheses.jsonl"]
-    C1 --> D["design_experiments"]
-    D --> D1["experiment_plan.yaml, experiment_contract.json,<br/>brief_design_consistency.json"]
-    D1 --> E["implement_experiments"]
-    E --> F["run_experiments"]
-    F --> F1["metrics.json, failure_memory.jsonl,<br/>objective_evaluation.json"]
-    F1 --> G["analyze_results"]
-    G --> G1["result_analysis.json, attempt_decisions.jsonl,<br/>transition_recommendation.json"]
-    G1 --> H["figure_audit"]
-    H --> H1["gate1_gate2_issues.json,<br/>figure_audit_summary.json"]
-    H1 --> I["review"]
-    I --> I1["pre_review_summary.json, review_packet.json,<br/>minimum_gate.json, paper_critique.json"]
-    I1 --> J["write_paper"]
-    J --> J1["main.tex, references.bib,<br/>scientific_validation.json, main.pdf"]
-```
-
-</details>
-
-<details>
-<summary><strong>Node architecture</strong></summary>
-
-| Node | Role(s) | What it does |
-|---|---|---|
-| `collect_papers` | collector, curator | Discovers and curates candidate paper set via Semantic Scholar |
-| `analyze_papers` | reader, evidence extractor | Extracts summaries and evidence from selected papers |
-| `generate_hypotheses` | hypothesis agent + skeptical reviewer | Synthesizes ideas from literature, then pressure-tests them |
-| `design_experiments` | designer + feasibility/statistical/ops panel | Filters plans for practicality, writes experiment contract |
-| `implement_experiments` | implementer | Produces code and workspace changes through ACI actions |
-| `run_experiments` | runner + failure triager + rerun planner | Drives execution, records failures, decides reruns |
-| `analyze_results` | analyst + metric auditor + confounder detector | Checks result reliability, writes attempt decisions |
-| `figure_audit` | figure auditor + optional vision critique | Checks evidence alignment, captions/references, and publication readiness before review |
-| `review` | 5-specialist panel + claim ceiling + two-layer gate | Structural review - blocks writing if evidence is insufficient |
-| `write_paper` | paper writer + reviewer critique | Drafts manuscript, runs post-draft critique, builds PDF |
-
-</details>
-
-<details>
-<summary><strong>Bounded automation</strong></summary>
-
-| Node | Internal automation | Bound |
-|---|---|---|
-| `analyze_papers` | Auto-expands evidence window when too sparse | <= 2 expansions |
-| `design_experiments` | Deterministic panel scoring + experiment contract | Runs once per design |
-| `run_experiments` | Failure triage + one-shot transient rerun | Never retries structural failures |
-| `run_experiments` | Failure memory fingerprinting | >= 3 identical exhausts retries |
-| `analyze_results` | Objective rematching + result panel calibration | One rematch before human pause |
-| `figure_audit` | Gate 3 figure critique + summary aggregation | Vision critique remains independently resumable |
-| `write_paper` | Related-work scout + validation-aware repair | 1 repair pass max |
-
-</details>
-
-<details>
-<summary><strong>Public output bundle</strong></summary>
-
-```
-outputs/<title-slug>-<run_id_prefix>/
-  ├── paper/
-  ├── experiment/
-  ├── analysis/
-  ├── review/
-  ├── results/
-  ├── reproduce/
-  ├── manifest.json
-  └── README.md
-```
-
-</details>
-
----
-
 ## Status
 
-AutoLabOS is an active OSS research-engineering project. The canonical references for behavior and contracts are the repository docs under `docs/`, especially:
-
-- `docs/architecture.md`
-- `docs/experiment-quality-bar.md`
-- `docs/paper-quality-bar.md`
-- `docs/reproducibility.md`
-- `docs/research-brief-template.md`
-
+AutoLabOS is an active OSS research-engineering project. For deeper details beyond this overview, see the documents under docs.
