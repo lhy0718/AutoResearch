@@ -144,7 +144,7 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
         evidenceSeeds: evidenceRows,
         branchCount: request.branchCount,
         topK: request.topK,
-        timeoutMs: Number(process.env.AUTOLABOS_HYPOTHESIS_TIMEOUT_MS) || 45_000,
+        timeoutMs: Number(process.env.AUTOLABOS_HYPOTHESIS_TIMEOUT_MS) || 1_800_000,
         onProgress: emitLog
       });
       await flushProgressUpdates();

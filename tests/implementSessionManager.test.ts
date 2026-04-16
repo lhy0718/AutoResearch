@@ -20,7 +20,7 @@ import {
 import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 import { RunStore } from "../src/core/runs/runStore.js";
 import { buildPublicExperimentDir, buildPublicRunManifestPath } from "../src/core/publicArtifacts.js";
-import { CodexCliClient } from "../src/integrations/codex/codexCliClient.js";
+import { CodexNativeClient } from "../src/integrations/codex/codexCliClient.js";
 import { LocalAciAdapter } from "../src/tools/aciLocalAdapter.js";
 import { buildHeuristicObjectiveMetricProfile } from "../src/core/objectiveMetric.js";
 
@@ -187,7 +187,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const eventStream = new InMemoryEventStream();
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);
@@ -361,7 +361,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const manager = new ImplementSessionManager({
       config: createTestConfig(),
@@ -433,7 +433,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const manager = new ImplementSessionManager({
       config: {
@@ -555,7 +555,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const manager = new ImplementSessionManager({
       config: createTestConfig(),
@@ -621,7 +621,7 @@ describe("ImplementSessionManager", () => {
         }),
         events: []
       })
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const manager = new ImplementSessionManager({
       config: createTestConfig(),
@@ -698,7 +698,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const manager = new ImplementSessionManager({
       config: createTestConfig(),
@@ -776,7 +776,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const manager = new ImplementSessionManager({
       config: createTestConfig(),
@@ -846,7 +846,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const manager = new ImplementSessionManager({
       config: createTestConfig(),
@@ -932,7 +932,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const manager = new ImplementSessionManager({
       config: createTestConfig(),
@@ -1034,7 +1034,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const manager = new ImplementSessionManager({
       config: createTestConfig(),
@@ -1119,7 +1119,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const eventStream = new InMemoryEventStream();
     const manager = new ImplementSessionManager({
@@ -1241,7 +1241,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const node = createImplementExperimentsNode(
       {
@@ -1316,7 +1316,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const manager = new ImplementSessionManager({
       config: createTestConfig(),
@@ -1388,7 +1388,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const eventStream = new InMemoryEventStream();
     const manager = new ImplementSessionManager({
@@ -1530,7 +1530,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const eventStream = new InMemoryEventStream();
     const manager = new ImplementSessionManager({
@@ -1667,7 +1667,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const eventStream = new InMemoryEventStream();
     const manager = new ImplementSessionManager({
@@ -1775,7 +1775,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const eventStream = new InMemoryEventStream();
     const manager = new ImplementSessionManager({
@@ -1894,7 +1894,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const eventStream = new InMemoryEventStream();
     const manager = new ImplementSessionManager({
@@ -2030,7 +2030,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const eventStream = new InMemoryEventStream();
     const manager = new ImplementSessionManager({
@@ -2191,7 +2191,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const eventStream = new InMemoryEventStream();
     const manager = new ImplementSessionManager({
@@ -2341,7 +2341,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const manager = new ImplementSessionManager({
       config: createTestConfig("attempt_worktree"),
@@ -2441,7 +2441,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const manager = new ImplementSessionManager({
       config: createTestConfig("attempt_worktree"),
@@ -2522,7 +2522,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const manager = new ImplementSessionManager({
       config: createTestConfig("attempt_worktree"),
@@ -2580,7 +2580,7 @@ describe("ImplementSessionManager", () => {
         }),
         events: []
       })
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const manager = new ImplementSessionManager({
       config: {
@@ -2682,7 +2682,7 @@ describe("ImplementSessionManager", () => {
 
     const manager = new ImplementSessionManager({
       config: createTestConfig(),
-      codex: {} as CodexCliClient,
+      codex: {} as CodexNativeClient,
       aci: new LocalAciAdapter(),
       eventStream: new InMemoryEventStream(),
       runStore,
@@ -2772,7 +2772,7 @@ describe("ImplementSessionManager", () => {
 
     const manager = new ImplementSessionManager({
       config: createTestConfig(),
-      codex: {} as CodexCliClient,
+      codex: {} as CodexNativeClient,
       aci: new LocalAciAdapter(),
       eventStream: new InMemoryEventStream(),
       runStore,
@@ -2871,7 +2871,7 @@ describe("ImplementSessionManager", () => {
 
     const manager = new ImplementSessionManager({
       config: createTestConfig(),
-      codex: {} as CodexCliClient,
+      codex: {} as CodexNativeClient,
       aci: new LocalAciAdapter(),
       eventStream: new InMemoryEventStream(),
       runStore,
@@ -2951,7 +2951,7 @@ describe("ImplementSessionManager", () => {
 
     const manager = new ImplementSessionManager({
       config: createTestConfig(),
-      codex: {} as CodexCliClient,
+      codex: {} as CodexNativeClient,
       aci: new LocalAciAdapter(),
       eventStream: new InMemoryEventStream(),
       runStore,
@@ -3041,7 +3041,7 @@ describe("ImplementSessionManager", () => {
     );
         throw new Error("codex exec failed (exit 1)");
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const manager = new ImplementSessionManager({
       config: createTestConfig(),
@@ -3122,7 +3122,7 @@ describe("ImplementSessionManager", () => {
         callCount += 1;
         throw new Error("Codex should not have been called");
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const manager = new ImplementSessionManager({
       config: createTestConfig(),
@@ -3267,7 +3267,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const manager = new ImplementSessionManager({
       config: createTestConfig(),
@@ -3368,7 +3368,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const manager = new ImplementSessionManager({
       config: createTestConfig(),
@@ -3493,7 +3493,7 @@ describe("ImplementSessionManager", () => {
         callCount += 1;
         throw new Error("Codex should not be used for dry-run metrics-only recovery");
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const manager = new ImplementSessionManager({
       config: createTestConfig(),
@@ -3598,7 +3598,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const manager = new ImplementSessionManager({
       config: createTestConfig(),
@@ -3709,7 +3709,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const manager = new ImplementSessionManager({
       config: createTestConfig(),
@@ -3819,7 +3819,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const manager = new ImplementSessionManager({
       config: createTestConfig(),
@@ -3860,7 +3860,7 @@ describe("ImplementSessionManager", () => {
       runTurnStream: async () => {
         throw new Error("codex exec failed (exit 1)");
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const node = createImplementExperimentsNode({
       config: createTestConfig(),
@@ -3939,7 +3939,7 @@ describe("ImplementSessionManager", () => {
           codexCalls += 1;
           throw new Error("Codex should not be used when llm_mode=openai_api");
         }
-      } as unknown as CodexCliClient;
+      } as unknown as CodexNativeClient;
       const llm = {
         complete: async (_prompt: string, opts?: { abortSignal?: AbortSignal }) =>
           await new Promise((_, reject) => {
@@ -4057,7 +4057,7 @@ describe("ImplementSessionManager", () => {
         codexCalls += 1;
         throw new Error("Codex should not be used when llm_mode=openai_api");
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
     const llm = {
       complete: async () => ({
         text: JSON.stringify({
@@ -4138,7 +4138,7 @@ describe("ImplementSessionManager", () => {
       runTurnStream: async () => {
         throw new Error("Codex should not be used when llm_mode=openai_api");
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
     const llm = {
       complete: async (prompt: string) => {
         capturedPrompt = prompt;
@@ -4185,7 +4185,7 @@ describe("ImplementSessionManager", () => {
     expect(capturedPrompt).not.toContain('"resolved_constraint_profile":');
   });
 
-  it("falls back to staged_llm when a codex implement turn reports the filesystem tooling blocker", async () => {
+  it("uses staged_llm directly when the runtime no longer enters a codex implement turn", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-codex-fallback-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
@@ -4232,7 +4232,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
     const llm = {
       complete: async (prompt: string, options?: { systemPrompt?: string }) => {
         llmCalls += 1;
@@ -4277,7 +4277,7 @@ describe("ImplementSessionManager", () => {
 
     const result = await manager.run(run);
 
-    expect(codexCalls).toBe(1);
+    expect(codexCalls).toBe(0);
     expect(llmCalls).toBe(1);
     expect(result.verifyReport).toMatchObject({ status: "pass" });
     expect(result.scriptPath).toBe(publicScriptPath);
@@ -4285,11 +4285,10 @@ describe("ImplementSessionManager", () => {
     expect(result.publicArtifacts).toContain(publicConfigPath);
     expect(readFileSync(publicScriptPath, "utf8")).toBe("print('ok')");
     expect(readFileSync(publicConfigPath, "utf8")).toContain("\"pilot_size\": 4");
-    expect(stagedFallbackPrompt).toContain("filesystem-blocker recovery mode");
-    expect(stagedFallbackPrompt).toContain("Do NOT repeat the blocker narrative");
-    expect(stagedFallbackPrompt).toContain("A valid response MUST include non-empty file_edits");
+    expect(stagedFallbackPrompt).toContain("Implementation attempt 1/3.");
+    expect(stagedFallbackPrompt).toContain("Include file_edits entries with the full UTF-8 contents");
     expect(stagedFallbackPrompt).not.toContain("Previous local verification:");
-    expect(stagedFallbackSystemPrompt).toContain("Filesystem-blocker recovery mode:");
+    expect(stagedFallbackSystemPrompt).not.toContain("Filesystem-blocker recovery mode:");
   });
 
   it("starts reruns directly in staged_llm mode when the previous implement summary already recorded the filesystem tooling blocker", async () => {
@@ -4326,7 +4325,7 @@ describe("ImplementSessionManager", () => {
         codexCalls += 1;
         throw new Error("Codex should be skipped when the rerun already knows about the filesystem blocker");
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
     const llm = {
       complete: async () => {
         llmCalls += 1;
@@ -4402,7 +4401,7 @@ describe("ImplementSessionManager", () => {
         codexCalls += 1;
         throw new Error("Codex should not be used when llm_mode=openai_api");
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
     const llm = {
       complete: async (prompt: string, opts?: { threadId?: string }) => {
         prompts.push(prompt);
@@ -4584,7 +4583,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const manager = new ImplementSessionManager({
       config: createTestConfig(),
@@ -4630,7 +4629,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const manager = new ImplementSessionManager({
       config: {
@@ -4747,7 +4746,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const manager = new ImplementSessionManager({
       config: {
@@ -4882,7 +4881,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const manager = new ImplementSessionManager({
       config: createTestConfig(),
@@ -4950,7 +4949,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const eventStream = new InMemoryEventStream();
     const manager = new ImplementSessionManager({
@@ -5064,7 +5063,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const eventStream = new InMemoryEventStream();
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);
@@ -5162,7 +5161,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const manager = new ImplementSessionManager({
       config: createTestConfig(),
@@ -5255,7 +5254,7 @@ describe("ImplementSessionManager", () => {
           events: []
         };
       }
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
 
     const manager = new ImplementSessionManager({
       config: createTestConfig(),

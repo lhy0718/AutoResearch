@@ -108,9 +108,13 @@ export interface HypothesisPlanningArtifacts {
   };
   llm_trace: {
     axes?: HypothesisLlmExchange;
+    axes_partial?: HypothesisLlmExchange;
     drafts: HypothesisDraftLlmExchange[];
+    draft_partials?: HypothesisDraftLlmExchange[];
     review?: HypothesisLlmExchange;
+    review_partial?: HypothesisLlmExchange;
     single_pass?: HypothesisLlmExchange;
+    single_pass_partial?: HypothesisLlmExchange;
   };
 }
 
@@ -189,6 +193,17 @@ export interface HypothesisPromptOverrides {
 export interface DesignPromptOverrides {
   systemPrompt?: string;
 }
+
+const STAGED_HYPOTHESIS_EVIDENCE_PANEL_LIMIT = 8;
+const SINGLE_PASS_HYPOTHESIS_EVIDENCE_LIMIT = 6;
+const ROLE_SUPPORT_EVIDENCE_LIMIT = 4;
+const HYPOTHESIS_PROMPT_CLAIM_LIMIT = 120;
+const HYPOTHESIS_PROMPT_LIMITATION_LIMIT = 80;
+const HYPOTHESIS_PROMPT_SLOT_LIMIT = 48;
+const STAGED_AXES_BATCH_SIZE = 2;
+const HYPOTHESIS_ROLE_BATCH_SIZE = 2;
+const HYPOTHESIS_REVIEW_BATCH_SIZE = 4;
+const SINGLE_PASS_EVIDENCE_BATCH_SIZE = 2;
 
 interface RawHypothesisJson {
   summary?: unknown;
@@ -271,6 +286,16 @@ interface RawDesignCandidate {
   resource_notes?: unknown;
 }
 
+class TimedLlmCompletionError extends Error {
+  constructor(
+    message: string,
+    readonly tracePatch: Partial<HypothesisPlanningArtifacts["llm_trace"]>
+  ) {
+    super(message);
+    this.name = "TimedLlmCompletionError";
+  }
+}
+
 export async function generateHypothesesFromEvidence(args: {
   llm: LLMClient;
   runTitle: string;
@@ -285,7 +310,7 @@ export async function generateHypothesesFromEvidence(args: {
 }): Promise<HypothesisPlanningResult> {
   const branchCount = Math.max(2, args.branchCount ?? 6);
   const topK = Math.max(1, args.topK ?? 2);
-  const timeoutMs = Math.max(1, args.timeoutMs ?? 45_000);
+  const timeoutMs = Math.max(1, args.timeoutMs ?? 1_800_000);
 
   try {
     return await runStagedHypothesisPipeline({
@@ -296,39 +321,84 @@ export async function generateHypothesesFromEvidence(args: {
     });
   } catch (stagedError) {
     const stagedReason = stagedError instanceof Error ? stagedError.message : String(stagedError);
+    const stagedPartialTrace = extractTimedLlmPartialTrace(stagedError);
+    if (stagedPartialTrace.axes_partial?.completion) {
+      args.onProgress?.("Captured partial evidence-axis output before the staged hypothesis timeout.");
+    } else if (stagedPartialTrace.draft_partials?.length) {
+      args.onProgress?.("Captured partial hypothesis-draft output before the staged timeout.");
+    } else if (stagedPartialTrace.review_partial?.completion) {
+      args.onProgress?.("Captured partial hypothesis-review output before the staged timeout.");
+    }
     args.onProgress?.(`Staged hypothesis pipeline failed, retrying single-pass generation: ${stagedReason}`);
 
     try {
-      args.onProgress?.(`Submitting single-pass hypothesis generation request for ${args.evidenceSeeds.length} evidence seed(s).`);
-      const singlePassPrompt = buildHypothesisPrompt(
-        args.runTitle,
-        args.runTopic,
-        args.objectiveMetric,
+      const singlePassEvidencePanel = selectHypothesisEvidencePanel(
         args.evidenceSeeds,
-        branchCount,
-        topK
+        SINGLE_PASS_HYPOTHESIS_EVIDENCE_LIMIT
       );
-      const completion = await withTimeout(
-        args.llm.complete(
-          singlePassPrompt,
-          {
-            systemPrompt: resolveHypothesisPrompts(args.promptOverrides).systemPrompt,
-            onProgress: (event) => emitProgress(args.onProgress, "Hypothesis LLM", event)
-          }
-        ),
-        timeoutMs,
-        "hypothesis_single_pass_timeout"
-      );
-      args.onProgress?.("Received single-pass hypothesis generation output. Parsing JSON.");
-      const parsed = parseHypothesisJson(completion.text);
-      const normalizedCandidates = normalizeHypothesisCandidates(
-        parsed.candidates,
-        branchCount,
-        args.evidenceSeeds,
-        "single_pass"
-      );
+      const singlePassPromptExchanges: HypothesisLlmExchange[] = [];
+      const singlePassCandidates: HypothesisCandidate[] = [];
+      const singlePassSummaries: string[] = [];
+      const singlePassBatches = chunkArray(singlePassEvidencePanel, SINGLE_PASS_EVIDENCE_BATCH_SIZE);
+      const candidateCounts = distributeCounts(branchCount, singlePassBatches.length);
+
+      for (const [batchIndex, evidenceBatch] of singlePassBatches.entries()) {
+        const requestedCount = Math.max(1, candidateCounts[batchIndex] ?? 1);
+        args.onProgress?.(
+          `Submitting single-pass hypothesis generation request for batch ${batchIndex + 1}/${singlePassBatches.length} with ${evidenceBatch.length} compact evidence seed(s).`
+        );
+        const singlePassPrompt = buildHypothesisPrompt(
+          args.runTitle,
+          args.runTopic,
+          args.objectiveMetric,
+          evidenceBatch,
+          requestedCount,
+          Math.min(topK, requestedCount)
+        );
+        const completion = await completeWithCapturedProgress({
+          timeoutMs,
+          label: "hypothesis_single_pass_timeout",
+          tracePatchFactory: (partialCompletion) =>
+            partialCompletion
+              ? {
+                  single_pass_partial: {
+                    prompt: singlePassPrompt,
+                    completion: partialCompletion
+                  }
+                }
+              : {},
+          promiseFactory: (captureProgress, abortSignal) =>
+            args.llm.complete(singlePassPrompt, {
+              systemPrompt: resolveHypothesisPrompts(args.promptOverrides).systemPrompt,
+              abortSignal,
+              onProgress: (event) => {
+                captureProgress(event);
+                emitProgress(args.onProgress, "Hypothesis LLM", event);
+              }
+            })
+        });
+        singlePassPromptExchanges.push({
+          prompt: singlePassPrompt,
+          completion: completion.text
+        });
+        args.onProgress?.("Received single-pass hypothesis generation output. Parsing JSON.");
+        const parsed = parseHypothesisJson(completion.text);
+        const parsedSummary = toOptionalString(parsed.summary);
+        if (parsedSummary) {
+          singlePassSummaries.push(parsedSummary);
+        }
+        const normalized = normalizeHypothesisCandidates(
+          parsed.candidates,
+          requestedCount,
+          evidenceBatch,
+          "single_pass",
+          singlePassCandidates.filter((candidate) => candidate.generator_kind === "single_pass").length
+        );
+        singlePassCandidates.push(...normalized);
+      }
+
       const gatedCandidates = applyHypothesisHardGates({
-        candidates: normalizedCandidates,
+        candidates: singlePassCandidates,
         evidenceSeeds: args.evidenceSeeds,
         objectiveMetric: args.objectiveMetric
       });
@@ -348,7 +418,7 @@ export async function generateHypothesesFromEvidence(args: {
         throw new Error("No valid hypothesis candidates were returned.");
       }
       const summary =
-        toOptionalString(parsed.summary) ||
+        singlePassSummaries.at(-1) ||
         buildHypothesisSelectionSummary(gatedCandidates.kept, selected.selected, [], "single-pass");
       return {
         source: "llm",
@@ -356,7 +426,7 @@ export async function generateHypothesesFromEvidence(args: {
         candidates: gatedCandidates.kept,
         selected: selected.selected,
         fallbackReason: stagedReason,
-        toolCallsUsed: 1,
+        toolCallsUsed: singlePassPromptExchanges.length,
         artifacts: {
           pipeline: "single_pass",
           evidence_axes: [],
@@ -369,15 +439,17 @@ export async function generateHypothesesFromEvidence(args: {
           },
           llm_trace: {
             drafts: [],
-            single_pass: {
-              prompt: singlePassPrompt,
-              completion: completion.text
-            }
+            ...stagedPartialTrace,
+            single_pass: combineLlmExchanges(singlePassPromptExchanges)
           }
         }
       };
     } catch (legacyError) {
       const legacyReason = legacyError instanceof Error ? legacyError.message : String(legacyError);
+      const singlePassPartialTrace = extractTimedLlmPartialTrace(legacyError);
+      if (singlePassPartialTrace.single_pass_partial?.completion) {
+        args.onProgress?.("Captured partial single-pass hypothesis output before timeout.");
+      }
       args.onProgress?.(`Hypothesis generation fallback: ${legacyReason}`);
       const fallback = buildFallbackHypotheses(args.evidenceSeeds, branchCount, topK);
       const fallbackSelection = selectHypothesesWithDiversity(
@@ -406,7 +478,9 @@ export async function generateHypothesesFromEvidence(args: {
             scores: fallbackSelection.scores
           },
           llm_trace: {
-            drafts: []
+            drafts: [],
+            ...stagedPartialTrace,
+            ...singlePassPartialTrace
           }
         }
       };
@@ -427,37 +501,65 @@ async function runStagedHypothesisPipeline(args: {
   promptOverrides?: HypothesisPromptOverrides;
 }): Promise<HypothesisPlanningResult> {
   const prompts = resolveHypothesisPrompts(args.promptOverrides);
-  const evidencePanel = selectHypothesisEvidencePanel(args.evidenceSeeds, 24);
+  const evidencePanel = selectHypothesisEvidencePanel(args.evidenceSeeds, STAGED_HYPOTHESIS_EVIDENCE_PANEL_LIMIT);
   let toolCallsUsed = 0;
   const llmTrace: HypothesisPlanningArtifacts["llm_trace"] = {
-    drafts: []
+    drafts: [],
+    draft_partials: []
   };
 
-  args.onProgress?.(`Synthesizing evidence axes from ${evidencePanel.length} curated evidence item(s).`);
-  const axesPrompt = buildHypothesisAxesPrompt(args.runTitle, args.runTopic, args.objectiveMetric, evidencePanel);
-  const axesCompletion = await withTimeout(
-    args.llm.complete(
-      axesPrompt,
-      {
-        systemPrompt: prompts.axesSystemPrompt,
-        onProgress: (event) => emitProgress(args.onProgress, "Hypothesis axes", event)
-      }
-    ),
-    args.timeoutMs,
-    "hypothesis_axes_timeout"
-  );
-  toolCallsUsed += 1;
-  llmTrace.axes = {
-    prompt: axesPrompt,
-    completion: axesCompletion.text
-  };
-  const parsedAxes = parseHypothesisAxisJson(axesCompletion.text);
-  const axes = normalizeHypothesisAxes(parsedAxes.axes, evidencePanel);
+  const axesPromptExchanges: HypothesisLlmExchange[] = [];
+  const axesBatches = chunkArray(evidencePanel, STAGED_AXES_BATCH_SIZE);
+  const accumulatedAxes: HypothesisEvidenceAxis[] = [];
+  const axesSummaries: string[] = [];
+
+  for (const [batchIndex, evidenceBatch] of axesBatches.entries()) {
+    args.onProgress?.(
+      `Synthesizing evidence axes from batch ${batchIndex + 1}/${axesBatches.length} (${evidenceBatch.length} curated evidence item(s)).`
+    );
+    const axesPrompt = buildHypothesisAxesPrompt(args.runTitle, args.runTopic, args.objectiveMetric, evidenceBatch);
+    const axesCompletion = await completeWithCapturedProgress({
+      timeoutMs: args.timeoutMs,
+      label: "hypothesis_axes_timeout",
+      tracePatchFactory: (partialCompletion) =>
+        partialCompletion
+          ? {
+              axes_partial: {
+                prompt: axesPrompt,
+                completion: partialCompletion
+              }
+            }
+          : {},
+      promiseFactory: (captureProgress, abortSignal) =>
+        args.llm.complete(axesPrompt, {
+          systemPrompt: prompts.axesSystemPrompt,
+          abortSignal,
+          onProgress: (event) => {
+            captureProgress(event);
+            emitProgress(args.onProgress, "Hypothesis axes", event);
+          }
+        })
+    });
+    toolCallsUsed += 1;
+    axesPromptExchanges.push({
+      prompt: axesPrompt,
+      completion: axesCompletion.text
+    });
+    const parsedAxes = parseHypothesisAxisJson(axesCompletion.text);
+    const parsedAxesSummary = toOptionalString(parsedAxes.summary);
+    if (parsedAxesSummary) {
+      axesSummaries.push(parsedAxesSummary);
+    }
+    const normalizedBatchAxes = normalizeHypothesisAxes(parsedAxes.axes, evidenceBatch);
+    accumulatedAxes.push(...reindexHypothesisAxes(normalizedBatchAxes, accumulatedAxes.length));
+  }
+  llmTrace.axes = combineLlmExchanges(axesPromptExchanges);
+  const axes = dedupeHypothesisAxes(accumulatedAxes).slice(0, 4);
   if (axes.length === 0) {
     throw new Error("no_hypothesis_axes");
   }
 
-  const draftTarget = Math.max(args.branchCount + 2, 6);
+  const draftTarget = Math.max(args.branchCount, 6);
   const roleCounts = distributeCounts(draftTarget, 3);
   const rolePlan: Array<{ kind: HypothesisGeneratorKind; count: number }> = [
     { kind: "mechanism", count: roleCounts[0] ?? 0 },
@@ -466,41 +568,71 @@ async function runStagedHypothesisPipeline(args: {
   ];
 
   const draftGroups: HypothesisCandidate[][] = [];
+  const draftCountsByKind = new Map<HypothesisGeneratorKind, number>();
   for (const role of rolePlan) {
     if (role.count <= 0) {
       continue;
     }
-    args.onProgress?.(`Generating ${roleLabel(role.kind)} hypothesis drafts (${role.count}).`);
-    const rolePrompt = buildHypothesisRolePrompt(
-      role.kind,
-      args.runTitle,
-      args.runTopic,
-      args.objectiveMetric,
-      axes,
-      evidencePanel,
-      role.count
-    );
-    const completion = await withTimeout(
-      args.llm.complete(
-        rolePrompt,
-        {
-          systemPrompt: prompts.systemPrompt,
-          onProgress: (event) => emitProgress(args.onProgress, `${roleLabel(role.kind)} drafts`, event)
-        }
-      ),
-      args.timeoutMs,
-      `hypothesis_${role.kind}_timeout`
-    );
-    toolCallsUsed += 1;
-    llmTrace.drafts.push({
-      kind: role.kind,
-      requested_count: role.count,
-      prompt: rolePrompt,
-      completion: completion.text
-    });
-    const parsed = parseHypothesisJson(completion.text);
-    const normalized = normalizeHypothesisCandidates(parsed.candidates, role.count, evidencePanel, role.kind);
-    draftGroups.push(normalized);
+    const roleBatchCounts = chunkCount(role.count, HYPOTHESIS_ROLE_BATCH_SIZE);
+    const roleGenerated: HypothesisCandidate[] = [];
+    for (const [batchIndex, requestedCount] of roleBatchCounts.entries()) {
+      args.onProgress?.(
+        `Generating ${roleLabel(role.kind)} hypothesis drafts batch ${batchIndex + 1}/${roleBatchCounts.length} (${requestedCount}).`
+      );
+      const rolePrompt = buildHypothesisRolePrompt(
+        role.kind,
+        args.runTitle,
+        args.runTopic,
+        args.objectiveMetric,
+        axes,
+        evidencePanel,
+        requestedCount
+      );
+      const completion = await completeWithCapturedProgress({
+        timeoutMs: args.timeoutMs,
+        label: `hypothesis_${role.kind}_timeout`,
+        tracePatchFactory: (partialCompletion) =>
+          partialCompletion
+            ? {
+                draft_partials: [
+                  {
+                    kind: role.kind,
+                    requested_count: requestedCount,
+                    prompt: rolePrompt,
+                    completion: partialCompletion
+                  }
+                ]
+              }
+            : {},
+        promiseFactory: (captureProgress, abortSignal) =>
+          args.llm.complete(rolePrompt, {
+            systemPrompt: prompts.systemPrompt,
+            abortSignal,
+            onProgress: (event) => {
+              captureProgress(event);
+              emitProgress(args.onProgress, `${roleLabel(role.kind)} drafts`, event);
+            }
+          })
+      });
+      toolCallsUsed += 1;
+      llmTrace.drafts.push({
+        kind: role.kind,
+        requested_count: requestedCount,
+        prompt: rolePrompt,
+        completion: completion.text
+      });
+      const parsed = parseHypothesisJson(completion.text);
+      const normalized = normalizeHypothesisCandidates(
+        parsed.candidates,
+        requestedCount,
+        evidencePanel,
+        role.kind,
+        draftCountsByKind.get(role.kind) ?? 0
+      );
+      draftCountsByKind.set(role.kind, (draftCountsByKind.get(role.kind) ?? 0) + normalized.length);
+      roleGenerated.push(...normalized);
+    }
+    draftGroups.push(roleGenerated);
   }
 
   const drafts = dedupeHypothesisCandidates(draftGroups.flat()).slice(0, Math.max(args.branchCount + 3, args.branchCount));
@@ -508,42 +640,67 @@ async function runStagedHypothesisPipeline(args: {
     throw new Error("no_hypothesis_drafts");
   }
 
-  args.onProgress?.(`Reviewing ${drafts.length} hypothesis draft(s) for causal clarity and experimentability.`);
-  const reviewPrompt = buildHypothesisReviewPrompt(
-    args.runTitle,
-    args.runTopic,
-    args.objectiveMetric,
-    axes,
-    evidencePanel,
-    drafts,
-    args.topK
-  );
-  const reviewCompletion = await withTimeout(
-    args.llm.complete(
-      reviewPrompt,
-      {
-        systemPrompt: prompts.reviewSystemPrompt,
-        onProgress: (event) => emitProgress(args.onProgress, "Hypothesis review", event)
-      }
-    ),
-    args.timeoutMs,
-    "hypothesis_review_timeout"
-  );
-  toolCallsUsed += 1;
-  llmTrace.review = {
-    prompt: reviewPrompt,
-    completion: reviewCompletion.text
-  };
-  const parsedReviews = parseHypothesisReviewJson(reviewCompletion.text);
-  const reviews = normalizeHypothesisReviews(parsedReviews.reviews, drafts);
-  if (reviews.length === 0) {
-    throw new Error("no_hypothesis_reviews");
+  const reviewPromptExchanges: HypothesisLlmExchange[] = [];
+  const reviews: HypothesisReview[] = [];
+  const reviewSummaries: string[] = [];
+  const reviewBatches = chunkArray(drafts, HYPOTHESIS_REVIEW_BATCH_SIZE);
+  for (const [batchIndex, draftBatch] of reviewBatches.entries()) {
+    args.onProgress?.(
+      `Reviewing hypothesis draft batch ${batchIndex + 1}/${reviewBatches.length} (${draftBatch.length}) for causal clarity and experimentability.`
+    );
+    const reviewPrompt = buildHypothesisReviewPrompt(
+      args.runTitle,
+      args.runTopic,
+      args.objectiveMetric,
+      axes,
+      evidencePanel,
+      draftBatch,
+      Math.min(args.topK, draftBatch.length)
+    );
+    const reviewCompletion = await completeWithCapturedProgress({
+      timeoutMs: args.timeoutMs,
+      label: "hypothesis_review_timeout",
+      tracePatchFactory: (partialCompletion) =>
+        partialCompletion
+          ? {
+              review_partial: {
+                prompt: reviewPrompt,
+                completion: partialCompletion
+              }
+            }
+          : {},
+      promiseFactory: (captureProgress, abortSignal) =>
+        args.llm.complete(reviewPrompt, {
+          systemPrompt: prompts.reviewSystemPrompt,
+          abortSignal,
+          onProgress: (event) => {
+            captureProgress(event);
+            emitProgress(args.onProgress, "Hypothesis review", event);
+          }
+        })
+    });
+    toolCallsUsed += 1;
+    reviewPromptExchanges.push({
+      prompt: reviewPrompt,
+      completion: reviewCompletion.text
+    });
+    const parsedReviews = parseHypothesisReviewJson(reviewCompletion.text);
+    const parsedReviewSummary = toOptionalString(parsedReviews.summary);
+    if (parsedReviewSummary) {
+      reviewSummaries.push(parsedReviewSummary);
+    }
+    const normalizedReviews = normalizeHypothesisReviews(parsedReviews.reviews, draftBatch);
+    if (normalizedReviews.length === 0) {
+      throw new Error("no_hypothesis_reviews");
+    }
+    const reviewedIds = new Set(normalizedReviews.map((review) => review.candidate_id));
+    const missingReviewCount = draftBatch.filter((candidate) => !reviewedIds.has(candidate.id)).length;
+    if (missingReviewCount > 0) {
+      throw new Error(`incomplete_hypothesis_reviews:${missingReviewCount}`);
+    }
+    reviews.push(...normalizedReviews);
   }
-  const reviewedIds = new Set(reviews.map((review) => review.candidate_id));
-  const missingReviewCount = drafts.filter((candidate) => !reviewedIds.has(candidate.id)).length;
-  if (missingReviewCount > 0) {
-    throw new Error(`incomplete_hypothesis_reviews:${missingReviewCount}`);
-  }
+  llmTrace.review = combineLlmExchanges(reviewPromptExchanges);
   const reviewedCandidates = dedupeHypothesisCandidates(applyHypothesisReviews(drafts, reviews));
   const gatedCandidates = applyHypothesisHardGates({
     candidates: reviewedCandidates,
@@ -571,8 +728,8 @@ async function runStagedHypothesisPipeline(args: {
   return {
     source: "llm",
     summary:
-      toOptionalString(parsedReviews.summary) ||
-      toOptionalString(parsedAxes.summary) ||
+      reviewSummaries.at(-1) ||
+      axesSummaries.at(-1) ||
       buildHypothesisSelectionSummary(gatedCandidates.kept, selection.selected, axes, "staged"),
     candidates: gatedCandidates.kept,
     selected: selection.selected,
@@ -608,7 +765,7 @@ export async function designExperimentsFromHypotheses(args: {
 }): Promise<ExperimentDesignResult> {
   const prompts = resolveDesignPrompts(args.promptOverrides);
   const candidateCount = Math.max(2, args.candidateCount ?? 3);
-  const timeoutMs = Math.max(1, args.timeoutMs ?? 45_000);
+  const timeoutMs = Math.max(1, args.timeoutMs ?? 1_800_000);
 
   try {
     args.onProgress?.(`Submitting experiment design request for ${args.hypotheses.length} hypothesis/hypotheses.`);
@@ -724,8 +881,8 @@ function buildHypothesisPrompt(
     "Evidence seeds:"
   ];
 
-  evidenceSeeds.slice(0, 16).forEach((seed, index) => {
-    lines.push(renderEvidenceSeed(seed, index));
+  evidenceSeeds.forEach((seed, index) => {
+    lines.push(renderHypothesisPromptEvidenceSeed(seed, index));
   });
 
   return lines.join("\n");
@@ -762,7 +919,7 @@ function buildHypothesisAxesPrompt(
   ];
 
   evidenceSeeds.forEach((seed, index) => {
-    lines.push(renderEvidenceSeed(seed, index));
+    lines.push(renderHypothesisPromptEvidenceSeed(seed, index));
   });
 
   return lines.join("\n");
@@ -832,8 +989,8 @@ function buildHypothesisRolePrompt(
   });
 
   lines.push("Supporting evidence panel:");
-  evidenceSeeds.slice(0, 16).forEach((seed, index) => {
-    lines.push(renderEvidenceSeed(seed, index));
+  evidenceSeeds.slice(0, ROLE_SUPPORT_EVIDENCE_LIMIT).forEach((seed, index) => {
+    lines.push(renderHypothesisPromptEvidenceSeed(seed, index));
   });
 
   return lines.join("\n");
@@ -1039,6 +1196,74 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
   }
 }
 
+async function completeWithCapturedProgress<T>(args: {
+  promiseFactory: (onProgress: (event: LLMProgressEvent) => void, abortSignal: AbortSignal) => Promise<T>;
+  timeoutMs: number;
+  label: string;
+  tracePatchFactory: (partialCompletion: string) => Partial<HypothesisPlanningArtifacts["llm_trace"]>;
+}): Promise<T> {
+  const partialBuffer = { text: "" };
+  const controller = new AbortController();
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let settled = false;
+
+  return await new Promise<T>((resolve, reject) => {
+    const cleanup = () => {
+      settled = true;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = undefined;
+      }
+    };
+
+    timeoutId = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      controller.abort();
+      cleanup();
+      reject(
+        new TimedLlmCompletionError(
+          `${args.label}:${args.timeoutMs}ms`,
+          args.tracePatchFactory(partialBuffer.text.trim())
+        )
+      );
+    }, args.timeoutMs);
+
+    args.promiseFactory(
+      (event) => {
+        if (event.type === "delta" && event.text.trim()) {
+          partialBuffer.text += event.text;
+        }
+      },
+      controller.signal
+    )
+      .then((value) => {
+        if (settled) {
+          return;
+        }
+        cleanup();
+        resolve(value);
+      })
+      .catch((error) => {
+        if (settled) {
+          return;
+        }
+        cleanup();
+        reject(error);
+      });
+  });
+}
+
+function extractTimedLlmPartialTrace(
+  error: unknown
+): Partial<HypothesisPlanningArtifacts["llm_trace"]> {
+  if (!(error instanceof TimedLlmCompletionError)) {
+    return {};
+  }
+  return error.tracePatch;
+}
+
 function parseHypothesisJson(text: string): RawHypothesisJson {
   return parseStructuredModelJsonObject<RawHypothesisJson>(text, {
     emptyError: "empty_json_output",
@@ -1079,11 +1304,14 @@ function normalizeHypothesisCandidates(
   rawCandidates: unknown,
   branchCount: number,
   evidenceSeeds: HypothesisEvidenceSeed[],
-  generatorKind: HypothesisGeneratorKind
+  generatorKind: HypothesisGeneratorKind,
+  idOffset = 0
 ): HypothesisCandidate[] {
   const items = Array.isArray(rawCandidates) ? rawCandidates : [];
   const normalized = items
-    .map((item, index) => normalizeHypothesisCandidate(item as RawHypothesisCandidate, index, evidenceSeeds, generatorKind))
+    .map((item, index) =>
+      normalizeHypothesisCandidate(item as RawHypothesisCandidate, index, evidenceSeeds, generatorKind, idOffset)
+    )
     .filter((candidate): candidate is HypothesisCandidate => Boolean(candidate))
     .slice(0, branchCount);
   return dedupeById(normalized, (candidate) => candidate.id);
@@ -1093,7 +1321,8 @@ function normalizeHypothesisCandidate(
   raw: RawHypothesisCandidate,
   index: number,
   evidenceSeeds: HypothesisEvidenceSeed[],
-  generatorKind: HypothesisGeneratorKind
+  generatorKind: HypothesisGeneratorKind,
+  idOffset = 0
 ): HypothesisCandidate | undefined {
   const text = toOptionalString(raw.text);
   if (!text) {
@@ -1102,7 +1331,7 @@ function normalizeHypothesisCandidate(
   const evidenceLinks = normalizeStringArray(raw.evidence_links).filter(Boolean);
   const fallbackEvidence = evidenceLinks.length > 0 ? evidenceLinks : [evidenceSeeds[index % Math.max(1, evidenceSeeds.length)]?.evidence_id || "ev_1"];
   return {
-    id: buildHypothesisCandidateId(generatorKind, index),
+    id: buildHypothesisCandidateId(generatorKind, index, idOffset),
     text,
     novelty: clampScore(raw.novelty),
     feasibility: clampScore(raw.feasibility),
@@ -1230,8 +1459,8 @@ function applyHypothesisReviews(
   });
 }
 
-function buildHypothesisCandidateId(generatorKind: HypothesisGeneratorKind, index: number): string {
-  return `${generatorKind}_${index + 1}`;
+function buildHypothesisCandidateId(generatorKind: HypothesisGeneratorKind, index: number, idOffset = 0): string {
+  return `${generatorKind}_${index + 1 + idOffset}`;
 }
 
 function applyHypothesisHardGates(args: {
@@ -1508,6 +1737,69 @@ function selectHypothesisEvidencePanel(
   return selected;
 }
 
+function chunkArray<T>(items: T[], chunkSize: number): T[][] {
+  const safeSize = Math.max(1, chunkSize);
+  const output: T[][] = [];
+  for (let index = 0; index < items.length; index += safeSize) {
+    output.push(items.slice(index, index + safeSize));
+  }
+  return output;
+}
+
+function chunkCount(total: number, batchSize: number): number[] {
+  const safeBatchSize = Math.max(1, batchSize);
+  const output: number[] = [];
+  let remaining = Math.max(0, total);
+  while (remaining > 0) {
+    const current = Math.min(safeBatchSize, remaining);
+    output.push(current);
+    remaining -= current;
+  }
+  return output;
+}
+
+function combineLlmExchanges(exchanges: HypothesisLlmExchange[]): HypothesisLlmExchange | undefined {
+  if (exchanges.length === 0) {
+    return undefined;
+  }
+  if (exchanges.length === 1) {
+    return exchanges[0];
+  }
+  return {
+    prompt: exchanges.map((exchange, index) => `# batch ${index + 1}\n${exchange.prompt}`).join("\n\n"),
+    completion: exchanges.map((exchange, index) => `# batch ${index + 1}\n${exchange.completion}`).join("\n\n")
+  };
+}
+
+function reindexHypothesisAxes(
+  axes: HypothesisEvidenceAxis[],
+  idOffset: number
+): HypothesisEvidenceAxis[] {
+  return axes.map((axis, index) => ({
+    ...axis,
+    id: `ax_${idOffset + index + 1}`
+  }));
+}
+
+function dedupeHypothesisAxes(axes: HypothesisEvidenceAxis[]): HypothesisEvidenceAxis[] {
+  const byKey = new Map<string, HypothesisEvidenceAxis>();
+  for (const axis of axes) {
+    const key = normalizeHypothesisText([axis.label, axis.mechanism, axis.intervention].join(" "));
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, axis);
+      continue;
+    }
+    byKey.set(key, {
+      ...existing,
+      evidence_links: dedupeStrings([...existing.evidence_links, ...axis.evidence_links]),
+      boundary_condition: existing.boundary_condition || axis.boundary_condition,
+      evaluation_hint: existing.evaluation_hint || axis.evaluation_hint
+    });
+  }
+  return [...byKey.values()];
+}
+
 function renderEvidenceSeed(seed: HypothesisEvidenceSeed, index: number): string {
   return [
     `${index + 1}. evidence_id=${seed.evidence_id ?? `ev_${index + 1}`}`,
@@ -1524,9 +1816,34 @@ function renderEvidenceSeed(seed: HypothesisEvidenceSeed, index: number): string
     .join(" | ");
 }
 
+function renderHypothesisPromptEvidenceSeed(seed: HypothesisEvidenceSeed, index: number): string {
+  return [
+    `${index + 1}. evidence_id=${seed.evidence_id ?? `ev_${index + 1}`}`,
+    `claim=${truncateHypothesisPromptText(seed.claim ?? "unknown")}`,
+    seed.limitation_slot
+      ? `limitation=${truncateHypothesisPromptText(seed.limitation_slot, HYPOTHESIS_PROMPT_LIMITATION_LIMIT)}`
+      : undefined,
+    seed.dataset_slot
+      ? `dataset=${truncateHypothesisPromptText(seed.dataset_slot, HYPOTHESIS_PROMPT_SLOT_LIMIT)}`
+      : undefined,
+    seed.metric_slot
+      ? `metric=${truncateHypothesisPromptText(seed.metric_slot, HYPOTHESIS_PROMPT_SLOT_LIMIT)}`
+      : undefined,
+    typeof seed.confidence === "number" ? `confidence=${seed.confidence}` : undefined,
+    seed.source_type ? `source_type=${seed.source_type}` : undefined
+  ]
+    .filter(Boolean)
+    .join(" | ");
+}
+
 function truncateEvidenceReason(value: string): string {
   const trimmed = value.trim();
   return trimmed.length > 120 ? `${trimmed.slice(0, 117)}...` : trimmed;
+}
+
+function truncateHypothesisPromptText(value: string, limit = HYPOTHESIS_PROMPT_CLAIM_LIMIT): string {
+  const trimmed = value.trim();
+  return trimmed.length > limit ? `${trimmed.slice(0, Math.max(0, limit - 3))}...` : trimmed;
 }
 
 function roleLabel(kind: HypothesisGeneratorKind): string {

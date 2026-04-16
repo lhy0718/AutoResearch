@@ -1,7 +1,8 @@
 import {
-  CodexCliClient,
+  CodexNativeClient,
   extractCodexCompletionUsageFromEvents
 } from "../../integrations/codex/codexCliClient.js";
+import { CodexOAuthResponsesTextClient } from "../../integrations/codex/oauthResponsesTextClient.js";
 import { OpenAiResponsesTextClient } from "../../integrations/openai/responsesTextClient.js";
 import { OllamaClient } from "../../integrations/ollama/ollamaClient.js";
 import { computeModelUsageCostUsd } from "./modelPricing.js";
@@ -43,9 +44,9 @@ interface CodexClientDefaults {
   fastMode?: boolean;
 }
 
-export class CodexLLMClient implements LLMClient {
+export class CodexNativeLLMClient implements LLMClient {
   constructor(
-    private readonly codex: CodexCliClient,
+    private readonly codex: CodexNativeClient,
     private readonly defaults: CodexClientDefaults = {}
   ) {}
 
@@ -89,6 +90,7 @@ export class CodexLLMClient implements LLMClient {
   }
 }
 
+
 export class OpenAiResponsesLLMClient implements LLMClient {
   constructor(
     private readonly openai: OpenAiResponsesTextClient,
@@ -117,6 +119,39 @@ export class OpenAiResponsesLLMClient implements LLMClient {
     return {
       text: result.text,
       threadId: result.responseId || this.openai.lastResponseId(),
+      usage: result.usage
+    };
+  }
+}
+
+export class CodexOAuthResponsesLLMClient implements LLMClient {
+  constructor(
+    private readonly codexOAuth: CodexOAuthResponsesTextClient,
+    private readonly defaults: { model?: string; reasoningEffort?: string } = {}
+  ) {}
+
+  async complete(
+    prompt: string,
+    opts?: LLMCompleteOptions
+  ): Promise<LLMCompletion> {
+    opts?.onProgress?.({ type: "status", text: "Submitting request to Codex OAuth backend." });
+    const result = await this.codexOAuth.complete({
+      prompt,
+      threadId: opts?.threadId,
+      previousResponseId: opts?.threadId,
+      systemPrompt: opts?.systemPrompt,
+      inputImagePaths: opts?.inputImagePaths,
+      model: opts?.model || this.defaults.model,
+      reasoningEffort: opts?.reasoningEffort || this.defaults.reasoningEffort,
+      abortSignal: opts?.abortSignal,
+      onProgress: (message) => {
+        opts?.onProgress?.({ type: "status", text: message });
+      }
+    });
+
+    return {
+      text: result.text,
+      threadId: result.responseId || this.codexOAuth.lastResponseId(),
       usage: result.usage
     };
   }

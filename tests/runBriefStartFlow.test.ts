@@ -53,7 +53,7 @@ describe("run brief start flow", () => {
           default_objective_metric: "default metric"
         },
         providers: {
-          llm_mode: "codex_chatgpt_only",
+          llm_mode: "openai_api",
           codex: {
             model: "gpt-5.3-codex",
             chat_model: "gpt-5.3-codex",
@@ -64,7 +64,9 @@ describe("run brief start flow", () => {
           },
           openai: {
             model: "gpt-5.4",
-            reasoning_effort: "medium"
+            chat_model: "gpt-5.4",
+            reasoning_effort: "medium",
+            chat_reasoning_effort: "medium"
           }
         },
         analysis: {
@@ -81,7 +83,9 @@ describe("run brief start flow", () => {
           throw new Error("llm unavailable");
         })
       } as any,
-      openAiTextClient: undefined,
+      openAiTextClient: {
+        runForText: vi.fn().mockResolvedValue("")
+      } as any,
       eventStream: new InMemoryEventStream(),
       orchestrator: {
         runCurrentAgentWithOptions

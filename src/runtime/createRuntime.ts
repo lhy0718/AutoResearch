@@ -14,9 +14,15 @@ import {
 import { AppConfig, ExecutionProfile, NodeOptionPackageName } from "../types.js";
 import { RunStore } from "../core/runs/runStore.js";
 import { TitleGenerator } from "../core/runs/titleGenerator.js";
-import { CodexCliClient } from "../integrations/codex/codexCliClient.js";
+import { CodexNativeClient } from "../integrations/codex/codexCliClient.js";
+import { resolveCodexOAuthCredentials } from "../integrations/codex/oauthAuth.js";
 import { EventStream, PersistedEventStream } from "../core/events.js";
-import { CodexLLMClient, OllamaLLMClient, OpenAiResponsesLLMClient, RoutedLLMClient } from "../core/llm/client.js";
+import {
+  CodexOAuthResponsesLLMClient,
+  OllamaLLMClient,
+  OpenAiResponsesLLMClient,
+  RoutedLLMClient
+} from "../core/llm/client.js";
 import { LocalAciAdapter } from "../tools/aciLocalAdapter.js";
 import { SemanticScholarClient } from "../tools/semanticScholar.js";
 import { OpenAlexClient } from "../tools/openAlex.js";
@@ -28,6 +34,7 @@ import { StateGraphRuntime } from "../core/stateGraph/runtime.js";
 import { AgentOrchestrator } from "../core/agents/agentOrchestrator.js";
 import { ResponsesPdfAnalysisClient } from "../integrations/openai/responsesPdfAnalysisClient.js";
 import { OpenAiResponsesTextClient } from "../integrations/openai/responsesTextClient.js";
+import { CodexOAuthResponsesTextClient } from "../integrations/codex/oauthResponsesTextClient.js";
 import { OllamaClient } from "../integrations/ollama/ollamaClient.js";
 import { OllamaPdfAnalysisClient } from "../integrations/ollama/ollamaPdfAnalysisClient.js";
 import { DEFAULT_OLLAMA_BASE_URL } from "../integrations/ollama/modelCatalog.js";
@@ -43,7 +50,7 @@ export interface AutoLabOSRuntime {
   executionProfile: ExecutionProfile;
   runStore: RunStore;
   titleGenerator: TitleGenerator;
-  codex: CodexCliClient;
+  codex: CodexNativeClient;
   openAiTextClient: OpenAiResponsesTextClient;
   eventStream: EventStream;
   checkpointStore: CheckpointStore;
@@ -121,27 +128,31 @@ export async function createAutoLabOSRuntime(
   await hydrateProcessEnvFromWorkspace(paths.cwd);
   const resolvedExecutionProfile = executionProfile || (await detectExecutionProfile());
   const runStore = new RunStore(paths, { nodeOptionPackageName });
-  const codex = new CodexCliClient(paths.cwd, {
+  const codex = new CodexNativeClient(paths.cwd, {
     model: config.providers.codex.model || "gpt-5.4",
     reasoningEffort: config.providers.codex.reasoning_effort || "xhigh",
     fastMode: config.providers.codex.fast_mode === true
   });
   const openAiText = new OpenAiResponsesTextClient(() => resolveOpenAiApiKey(paths.cwd));
-  const codexTaskLlm = new CodexLLMClient(codex, {
+  const codexOAuthText = new CodexOAuthResponsesTextClient(() => resolveCodexOAuthCredentials(), {
     model: config.providers.codex.model,
-    reasoningEffort: config.providers.codex.reasoning_effort,
-    fastMode: config.providers.codex.fast_mode
+    reasoningEffort: config.providers.codex.reasoning_effort
   });
-  const codexExperimentLlm = new CodexLLMClient(codex, {
+  const codexOAuthTaskLlm = new CodexOAuthResponsesLLMClient(codexOAuthText, {
+    model: config.providers.codex.model,
+    reasoningEffort: config.providers.codex.reasoning_effort
+  });
+  const codexOAuthExperimentLlm = new CodexOAuthResponsesLLMClient(codexOAuthText, {
     model: config.providers.codex.experiment_model || config.providers.codex.model,
     reasoningEffort:
-      config.providers.codex.experiment_reasoning_effort || config.providers.codex.reasoning_effort,
-    fastMode: config.providers.codex.experiment_fast_mode ?? config.providers.codex.fast_mode
+      config.providers.codex.experiment_reasoning_effort || config.providers.codex.reasoning_effort
   });
-  const codexPdfLlm = new CodexLLMClient(codex, {
-    model: config.providers.codex.model,
-    reasoningEffort: config.providers.codex.reasoning_effort,
-    fastMode: config.providers.codex.fast_mode
+  const codexOAuthChatLlm = new CodexOAuthResponsesLLMClient(codexOAuthText, {
+    model: config.providers.codex.chat_model || config.providers.codex.model,
+    reasoningEffort:
+      config.providers.codex.chat_reasoning_effort ||
+      config.providers.codex.command_reasoning_effort ||
+      config.providers.codex.reasoning_effort
   });
   const openAiTaskLlm = new OpenAiResponsesLLMClient(openAiText, {
     model: config.providers.openai.model,
@@ -203,26 +214,16 @@ export async function createAutoLabOSRuntime(
     return {
       runForText: async ({ prompt, sandboxMode, approvalPolicy, systemPrompt, abortSignal }) =>
         (
-          await codex.runTurnStream({
+          await codexOAuthText.complete({
             prompt,
-            sandboxMode: (sandboxMode || "read-only") as
-              | "read-only"
-              | "workspace-write"
-              | "danger-full-access",
-            approvalPolicy: (approvalPolicy || "never") as
-              | "never"
-              | "on-request"
-              | "on-failure"
-              | "untrusted",
             systemPrompt,
             abortSignal,
             model: config.providers.codex.chat_model || config.providers.codex.model,
             reasoningEffort:
-              (config.providers.codex.chat_reasoning_effort ||
-                config.providers.codex.command_reasoning_effort) as never,
-            fastMode: config.providers.codex.chat_fast_mode
+              config.providers.codex.chat_reasoning_effort ||
+              config.providers.codex.command_reasoning_effort
           })
-        ).finalText
+        ).text
     };
   });
 
@@ -230,17 +231,17 @@ export async function createAutoLabOSRuntime(
   const llm = new RoutedLLMClient(() => {
     if (config.providers.llm_mode === "openai_api") return openAiTaskLlm;
     if (config.providers.llm_mode === "ollama") return ollamaTaskLlm;
-    return codexTaskLlm;
+    return codexOAuthTaskLlm;
   });
   const pdfTextLlm = new RoutedLLMClient(() => {
     if (config.providers.llm_mode === "openai_api") return openAiPdfLlm;
     if (config.providers.llm_mode === "ollama") return ollamaPdfLlm;
-    return codexPdfLlm;
+    return codexOAuthTaskLlm;
   });
   const experimentLlm = new RoutedLLMClient(() => {
     if (config.providers.llm_mode === "openai_api") return openAiExperimentLlm;
     if (config.providers.llm_mode === "ollama") return ollamaExperimentLlm;
-    return codexExperimentLlm;
+    return codexOAuthExperimentLlm;
   });
   const aci = new LocalAciAdapter({
     allowNetwork: config.experiments.allow_network === true

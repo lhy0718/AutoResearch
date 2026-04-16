@@ -340,7 +340,7 @@ describe("buildNaturalAssistantResponseWithLlm", () => {
     expect(response.lines[0]).toContain("20편");
   });
 
-  it("streams intermediate LLM events when runTurnStream is available", async () => {
+  it("returns the streamed text client output without requiring a legacy runTurnStream path", async () => {
     const run = makeRun({ id: "run-stream", status: "running" });
     const progress: string[] = [];
 
@@ -350,24 +350,13 @@ describe("buildNaturalAssistantResponseWithLlm", () => {
       activeRunId: run.id,
       logs: [],
       llm: {
-        runForText: async () => {
-          throw new Error("runForText should not be used when stream is available");
-        },
-        runTurnStream: async ({ onEvent }) => {
-          onEvent?.({ type: "thread.started" });
-          onEvent?.({ type: "response.output_text.delta", delta: "현재 " });
-          onEvent?.({ type: "response.output_text.delta", delta: "논문은 20편입니다." });
-          onEvent?.({ type: "response.completed" });
-          return {
-            finalText: JSON.stringify({
-              reply_lines: ["현재 논문은 20편입니다."],
-              target_run_id: run.id,
-              recommended_command: "",
-              should_offer_execute: false
-            }),
-            events: []
-          };
-        }
+        runForText: async () =>
+          JSON.stringify({
+            reply_lines: ["현재 논문은 20편입니다."],
+            target_run_id: run.id,
+            recommended_command: "",
+            should_offer_execute: false
+          })
       },
       onProgress: (line) => {
         progress.push(line);
@@ -375,8 +364,6 @@ describe("buildNaturalAssistantResponseWithLlm", () => {
     });
 
     expect(response.lines[0]).toContain("20편");
-    expect(progress.some((line) => line === "LLM: LLM request started.")).toBe(false);
-    expect(progress.some((line) => line === "LLM: Session started.")).toBe(false);
-    expect(progress.some((line) => line.includes("LLM>"))).toBe(true);
+    expect(progress).toEqual([]);
   });
 });

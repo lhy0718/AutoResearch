@@ -22,7 +22,8 @@ import {
   RECOMMENDED_CODEX_MODEL,
   resolveCodexModelSelection
 } from "./integrations/codex/modelCatalog.js";
-import { CodexCliClient } from "./integrations/codex/codexCliClient.js";
+import { CodexNativeClient } from "./integrations/codex/codexCliClient.js";
+import { checkCodexOAuthStatus } from "./integrations/codex/oauthAuth.js";
 import {
   DEFAULT_OPENAI_RESPONSES_MODEL,
   DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT,
@@ -127,7 +128,7 @@ export interface NonInteractiveSetupInput {
 }
 
 export interface SetupWizardOptions {
-  codexCli?: Pick<CodexCliClient, "checkCliAvailable" | "checkLoginStatus">;
+  codexClient?: Pick<CodexNativeClient, "checkCliAvailable" | "checkLoginStatus">;
   outputWriter?: Pick<typeof output, "write">;
 }
 
@@ -550,6 +551,7 @@ function normalizeLoadedConfig(config: PersistedAppConfig): AppConfig {
       model: RECOMMENDED_CODEX_MODEL,
       chat_model: DEFAULT_CODEX_CHAT_SETUP_MODEL,
       experiment_model: RECOMMENDED_CODEX_MODEL,
+      text_transport: "oauth_responses",
       reasoning_effort: DEFAULT_BACKEND_REASONING_EFFORT,
       chat_reasoning_effort: DEFAULT_CODEX_CHAT_SETUP_REASONING_EFFORT,
       experiment_reasoning_effort: DEFAULT_BACKEND_REASONING_EFFORT,
@@ -626,6 +628,7 @@ function normalizeLoadedConfig(config: PersistedAppConfig): AppConfig {
   }
   codex.chat_model = codex.chat_model?.trim() || codex.model;
   codex.experiment_model = codex.experiment_model?.trim() || codex.model;
+  codex.text_transport = "oauth_responses";
   if (!codex.reasoning_effort) {
     codex.reasoning_effort = "xhigh";
   }
@@ -693,6 +696,7 @@ function normalizeLoadedConfig(config: PersistedAppConfig): AppConfig {
     model: codex.model,
     chat_model: codex.chat_model,
     experiment_model: codex.experiment_model,
+    text_transport: codex.text_transport,
     reasoning_effort: codex.reasoning_effort,
     chat_reasoning_effort: codex.chat_reasoning_effort,
     experiment_reasoning_effort: codex.experiment_reasoning_effort,
@@ -1222,29 +1226,18 @@ async function maybeNotifyCodexLoginStatus(
   }
 
   const writer = opts.outputWriter || output;
-  const codexCli = opts.codexCli || (promptReader === askLine ? new CodexCliClient(paths.cwd) : undefined);
-  if (!codexCli) {
-    return;
-  }
 
   try {
-    const cliCheck = await codexCli.checkCliAvailable();
-    if (!cliCheck.ok) {
+    const authCheck = await checkCodexOAuthStatus();
+    if (!authCheck.ok) {
       writer.write(
-        "Codex CLI was not detected right now. You can finish setup now and sign in later with `codex login`, then verify with `/doctor`.\n"
+        "Codex OAuth login was not detected right now. You can finish setup now and sign in later with `codex login`, then verify with `/doctor`.\n"
       );
       return;
     }
-
-    const loginCheck = await codexCli.checkLoginStatus();
-    if (!loginCheck.ok) {
-      writer.write(
-        "Codex CLI login was not detected. You can finish setup now and sign in later with `codex login`, then verify with `/doctor`.\n"
-      );
-    }
   } catch {
     writer.write(
-      "Codex CLI login could not be verified right now. You can finish setup now and sign in later with `codex login`, then verify with `/doctor`.\n"
+      "Codex OAuth login could not be verified right now. You can finish setup now and sign in later with `codex login`, then verify with `/doctor`.\n"
     );
   }
 }

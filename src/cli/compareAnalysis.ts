@@ -4,8 +4,10 @@ import { promises as fs } from "node:fs";
 
 import { bootstrapAutoLabOSRuntime } from "../runtime/createRuntime.js";
 import { resolveOpenAiApiKey } from "../config.js";
+import { resolveCodexOAuthCredentials } from "../integrations/codex/oauthAuth.js";
 import { ResponsesPdfAnalysisClient } from "../integrations/openai/responsesPdfAnalysisClient.js";
-import { CodexLLMClient } from "../core/llm/client.js";
+import { CodexOAuthResponsesLLMClient } from "../core/llm/client.js";
+import { CodexOAuthResponsesTextClient } from "../integrations/codex/oauthResponsesTextClient.js";
 import {
   analyzePaperWithLlm,
   analyzePaperWithResponsesPdf,
@@ -107,13 +109,9 @@ export async function runCompareAnalysisCli(options: CompareAnalysisCliOptions):
   }
   const evaluationContext = await buildComparisonEvaluationContext(options.cwd, run.id);
 
-  const cliCheck = await bootstrap.runtime.codex.checkCliAvailable();
-  if (!cliCheck.ok) {
-    throw new Error(`Codex CLI is not available: ${cliCheck.detail}`);
-  }
   const loginCheck = await bootstrap.runtime.codex.checkLoginStatus();
   if (!loginCheck.ok) {
-    throw new Error(`Codex login is required for comparison: ${loginCheck.detail}`);
+    throw new Error(`Codex OAuth login is required for comparison: ${loginCheck.detail}`);
   }
 
   const responsesClient = new ResponsesPdfAnalysisClient(() => resolveOpenAiApiKey(bootstrap.paths.cwd));
@@ -133,10 +131,13 @@ export async function runCompareAnalysisCli(options: CompareAnalysisCliOptions):
     throw new Error("No comparable papers with PDF URLs were found for this run.");
   }
 
-  const codexPdfLlm = new CodexLLMClient(bootstrap.runtime.codex, {
+  const codexOAuthText = new CodexOAuthResponsesTextClient(() => resolveCodexOAuthCredentials(), {
     model: bootstrap.config.providers.codex.model,
-    reasoningEffort: bootstrap.config.providers.codex.reasoning_effort,
-    fastMode: bootstrap.config.providers.codex.fast_mode
+    reasoningEffort: bootstrap.config.providers.codex.reasoning_effort
+  });
+  const codexPdfLlm = new CodexOAuthResponsesLLMClient(codexOAuthText, {
+    model: bootstrap.config.providers.codex.model,
+    reasoningEffort: bootstrap.config.providers.codex.reasoning_effort
   });
 
   const results: ComparisonArtifactPaper[] = [];

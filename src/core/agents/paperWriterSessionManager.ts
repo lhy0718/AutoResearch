@@ -2,7 +2,7 @@ import { AppConfig, PaperProfileConfig, RunRecord } from "../../types.js";
 import { EventStream } from "../events.js";
 import { LLMClient } from "../llm/client.js";
 import { RunStore } from "../runs/runStore.js";
-import { CodexCliClient } from "../../integrations/codex/codexCliClient.js";
+import { CodexNativeClient } from "../../integrations/codex/codexCliClient.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import {
   buildSuggestedPaperTitle,
@@ -77,7 +77,7 @@ interface SessionTraceEntry {
     | "manuscript_review_audit"
     | "manuscript_repair_1"
     | "manuscript_repair_2";
-  mode: "codex_session" | "staged_llm";
+  mode: "codex_native" | "staged_llm";
   threadId?: string;
   fallbackUsed: boolean;
   startedAt: string;
@@ -89,7 +89,7 @@ interface SessionTraceEntry {
 export interface PaperWriterSessionResult {
   draft: PaperDraft;
   manuscript: PaperManuscript;
-  source: "codex_session" | "staged_llm" | "fallback";
+  source: "codex_native" | "staged_llm" | "fallback";
   threadId?: string;
   outline: PaperWriterOutline;
   review: PaperWriterReview;
@@ -102,7 +102,7 @@ export interface PaperWriterValidationRepairResult {
   attempted: boolean;
   applied: boolean;
   draft: PaperDraft;
-  source: "codex_session" | "staged_llm" | "fallback";
+  source: "codex_native" | "staged_llm" | "fallback";
   threadId?: string;
   error?: string;
 }
@@ -110,7 +110,7 @@ export interface PaperWriterValidationRepairResult {
 export interface PaperWriterManuscriptReviewResult {
   review: ManuscriptReviewArtifact;
   rawText?: string;
-  source: "codex_session" | "staged_llm" | "fallback";
+  source: "codex_native" | "staged_llm" | "fallback";
   threadId?: string;
   error?: string;
 }
@@ -118,7 +118,7 @@ export interface PaperWriterManuscriptReviewResult {
 export interface PaperWriterManuscriptReviewAuditResult {
   audit: ManuscriptReviewAuditArtifact;
   rawText?: string;
-  source: "codex_session" | "staged_llm" | "fallback";
+  source: "codex_native" | "staged_llm" | "fallback";
   threadId?: string;
   error?: string;
 }
@@ -128,14 +128,14 @@ export interface PaperWriterManuscriptRepairResult {
   applied: boolean;
   manuscript: PaperManuscript;
   rawText?: string;
-  source: "codex_session" | "staged_llm" | "fallback";
+  source: "codex_native" | "staged_llm" | "fallback";
   threadId?: string;
   error?: string;
 }
 
 interface PaperWriterSessionDeps {
   config: AppConfig;
-  codex: CodexCliClient;
+  codex: CodexNativeClient;
   llm: LLMClient;
   eventStream: EventStream;
   runStore: RunStore;
@@ -157,7 +157,7 @@ interface PaperWriterSessionInput {
 export interface LatexRepairResult {
   tex?: string;
   threadId?: string;
-  source: "codex_session" | "staged_llm";
+  source: "codex_native" | "staged_llm";
   error?: string;
 }
 
@@ -175,11 +175,8 @@ export class PaperWriterSessionManager {
     let activeThreadId =
       input.run.nodeThreads.write_paper ||
       (await runContext.get<string>("write_paper.thread_id"));
-    const useCodexSession =
-      typeof this.deps.codex?.runTurnStream === "function" &&
-      this.deps.config?.providers?.llm_mode !== "openai_api" &&
-      this.deps.config?.providers?.llm_mode !== "ollama";
-    const mode: "codex_session" | "staged_llm" = useCodexSession ? "codex_session" : "staged_llm";
+    const useCodexSession = !hasStructuredLlmClient(this.deps.llm);
+    const mode: "codex_native" | "staged_llm" = useCodexSession ? "codex_native" : "staged_llm";
     const trace: SessionTraceEntry[] = [];
     const errors: string[] = [];
     let stageFallbacks = 0;
@@ -402,8 +399,8 @@ export class PaperWriterSessionManager {
       draft: finalDraft,
       manuscript,
       source:
-        mode === "codex_session"
-          ? "codex_session"
+        mode === "codex_native"
+          ? "codex_native"
           : stageFallbacks < 5
             ? "staged_llm"
             : "fallback",
@@ -426,17 +423,14 @@ export class PaperWriterSessionManager {
     let activeThreadId =
       input.run.nodeThreads.write_paper ||
       (await runContext.get<string>("write_paper.thread_id"));
-    const useCodexSession =
-      typeof this.deps.codex?.runTurnStream === "function" &&
-      this.deps.config?.providers?.llm_mode !== "openai_api" &&
-      this.deps.config?.providers?.llm_mode !== "ollama";
-    const mode: "codex_session" | "staged_llm" = useCodexSession ? "codex_session" : "staged_llm";
+    const useCodexSession = !hasStructuredLlmClient(this.deps.llm);
+    const mode: "codex_native" | "staged_llm" = useCodexSession ? "codex_native" : "staged_llm";
 
     this.emit(input.run, `Paper writer LaTeX repair started in ${mode} mode.`);
 
     try {
       let text = "";
-      if (mode === "codex_session") {
+      if (mode === "codex_native") {
         const result = await this.deps.codex.runTurnStream({
           prompt: buildLatexRepairPrompt(input.tex, input.buildLog),
           threadId: activeThreadId,
@@ -521,11 +515,8 @@ export class PaperWriterSessionManager {
     let activeThreadId =
       input.run.nodeThreads.write_paper ||
       (await runContext.get<string>("write_paper.thread_id"));
-    const useCodexSession =
-      typeof this.deps.codex?.runTurnStream === "function" &&
-      this.deps.config?.providers?.llm_mode !== "openai_api" &&
-      this.deps.config?.providers?.llm_mode !== "ollama";
-    const mode: "codex_session" | "staged_llm" = useCodexSession ? "codex_session" : "staged_llm";
+    const useCodexSession = !hasStructuredLlmClient(this.deps.llm);
+    const mode: "codex_native" | "staged_llm" = useCodexSession ? "codex_native" : "staged_llm";
     const trace = (await runContext.get<SessionTraceEntry[]>("write_paper.session_trace")) || [];
 
     this.emit(
@@ -603,11 +594,8 @@ export class PaperWriterSessionManager {
     let activeThreadId =
       input.run.nodeThreads.write_paper ||
       (await runContext.get<string>("write_paper.thread_id"));
-    const useCodexSession =
-      typeof this.deps.codex?.runTurnStream === "function" &&
-      this.deps.config?.providers?.llm_mode !== "openai_api" &&
-      this.deps.config?.providers?.llm_mode !== "ollama";
-    const mode: "codex_session" | "staged_llm" = useCodexSession ? "codex_session" : "staged_llm";
+    const useCodexSession = !hasStructuredLlmClient(this.deps.llm);
+    const mode: "codex_native" | "staged_llm" = useCodexSession ? "codex_native" : "staged_llm";
     const trace = (await runContext.get<SessionTraceEntry[]>("write_paper.session_trace")) || [];
 
     this.emit(
@@ -686,11 +674,8 @@ export class PaperWriterSessionManager {
     let activeThreadId =
       input.run.nodeThreads.write_paper ||
       (await runContext.get<string>("write_paper.thread_id"));
-    const useCodexSession =
-      typeof this.deps.codex?.runTurnStream === "function" &&
-      this.deps.config?.providers?.llm_mode !== "openai_api" &&
-      this.deps.config?.providers?.llm_mode !== "ollama";
-    const mode: "codex_session" | "staged_llm" = useCodexSession ? "codex_session" : "staged_llm";
+    const useCodexSession = !hasStructuredLlmClient(this.deps.llm);
+    const mode: "codex_native" | "staged_llm" = useCodexSession ? "codex_native" : "staged_llm";
     const trace = (await runContext.get<SessionTraceEntry[]>("write_paper.session_trace")) || [];
     const stage = input.passIndex === 1 ? "manuscript_repair_1" : "manuscript_repair_2";
 
@@ -778,11 +763,8 @@ export class PaperWriterSessionManager {
     let activeThreadId =
       input.run.nodeThreads.write_paper ||
       (await runContext.get<string>("write_paper.thread_id"));
-    const useCodexSession =
-      typeof this.deps.codex?.runTurnStream === "function" &&
-      this.deps.config?.providers?.llm_mode !== "openai_api" &&
-      this.deps.config?.providers?.llm_mode !== "ollama";
-    const mode: "codex_session" | "staged_llm" = useCodexSession ? "codex_session" : "staged_llm";
+    const useCodexSession = !hasStructuredLlmClient(this.deps.llm);
+    const mode: "codex_native" | "staged_llm" = useCodexSession ? "codex_native" : "staged_llm";
     const trace = (await runContext.get<SessionTraceEntry[]>("write_paper.session_trace")) || [];
 
     if (input.validationIssues.length === 0) {
@@ -878,7 +860,7 @@ export class PaperWriterSessionManager {
       | "manuscript_review_audit"
       | "manuscript_repair_1"
       | "manuscript_repair_2";
-    mode: "codex_session" | "staged_llm";
+    mode: "codex_native" | "staged_llm";
     threadId?: string;
     systemPrompt: string;
     prompt: string;
@@ -889,7 +871,7 @@ export class PaperWriterSessionManager {
     const startedAt = new Date().toISOString();
     this.emit(input.run, `Paper writer stage "${input.stage}" started.`);
 
-    if (input.mode === "codex_session") {
+    if (input.mode === "codex_native") {
       const timeoutMs = resolvePaperWriterStageTimeoutMs();
       const controller = new AbortController();
       const cleanupAbort = forwardAbort(input.abortSignal, controller);
@@ -1474,4 +1456,10 @@ function extractLatexResponse(text: string): string {
     throw new Error("latex_repair_response_missing_full_document");
   }
   return `${source}\n`;
+}
+
+function hasStructuredLlmClient(
+  llm: { complete?: unknown } | undefined
+): llm is { complete: (...args: unknown[]) => Promise<unknown> } {
+  return typeof llm?.complete === "function";
 }

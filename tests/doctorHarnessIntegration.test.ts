@@ -7,7 +7,7 @@ import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as doctorModule from "../src/core/doctor.js";
-import { CodexCliClient } from "../src/integrations/codex/codexCliClient.js";
+import { CodexNativeClient } from "../src/integrations/codex/codexCliClient.js";
 
 const tempDirs: string[] = [];
 
@@ -397,12 +397,12 @@ describe("runDoctorReport", () => {
   });
 });
 
-function createCodexStub(): CodexCliClient {
+function createCodexStub(): CodexNativeClient {
   return {
     checkCliAvailable: async () => ({ ok: true, detail: "stub cli" }),
     checkLoginStatus: async () => ({ ok: true, detail: "stub login" }),
     checkEnvironmentReadiness: async () => []
-  } as unknown as CodexCliClient;
+  } as unknown as CodexNativeClient;
 }
 
 function createTempWorkspace(prefix: string): string {

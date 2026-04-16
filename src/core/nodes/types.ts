@@ -8,7 +8,7 @@ import { OpenAlexClient } from "../../tools/openAlex.js";
 import { CrossrefClient } from "../../tools/crossref.js";
 import { ArxivClient } from "../../tools/arxiv.js";
 import { GraphNodeHandler, GraphNodeResult } from "../stateGraph/types.js";
-import { CodexCliClient } from "../../integrations/codex/codexCliClient.js";
+import { CodexNativeClient } from "../../integrations/codex/codexCliClient.js";
 import { ResponsesPdfAnalysisClient } from "../../integrations/openai/responsesPdfAnalysisClient.js";
 import { OllamaPdfAnalysisClient } from "../../integrations/ollama/ollamaPdfAnalysisClient.js";
 
@@ -20,7 +20,7 @@ export interface NodeExecutionDeps {
   llm: LLMClient;
   experimentLlm: LLMClient;
   pdfTextLlm: LLMClient;
-  codex: CodexCliClient;
+  codex: CodexNativeClient;
   aci: AgentComputerInterface;
   semanticScholar: SemanticScholarClient;
   openAlex?: OpenAlexClient;

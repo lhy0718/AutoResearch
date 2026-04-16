@@ -73,7 +73,9 @@ import {
   readRepositoryKnowledgeIndex
 } from "../core/repositoryKnowledge.js";
 import { buildRunLiteratureIndexLines, writeRunLiteratureIndex } from "../core/literatureIndex.js";
-import { CodexCliClient, CodexReasoningEffort } from "../integrations/codex/codexCliClient.js";
+import { CodexNativeClient, CodexReasoningEffort } from "../integrations/codex/codexCliClient.js";
+import { CodexOAuthResponsesTextClient } from "../integrations/codex/oauthResponsesTextClient.js";
+import { resolveCodexOAuthCredentials } from "../integrations/codex/oauthAuth.js";
 import { OpenAiResponsesTextClient } from "../integrations/openai/responsesTextClient.js";
 import { OllamaClient } from "../integrations/ollama/ollamaClient.js";
 import { OllamaLLMClient } from "../core/llm/client.js";
@@ -139,7 +141,7 @@ export interface InteractionSessionDeps {
   executionProfile?: ExecutionProfile;
   runStore: RunStore;
   titleGenerator: TitleGenerator;
-  codex: CodexCliClient;
+  codex: CodexNativeClient;
   openAiTextClient?: OpenAiResponsesTextClient;
   eventStream: EventStream;
   orchestrator: AgentOrchestrator;
@@ -173,7 +175,7 @@ export class InteractionSession {
   private readonly executionProfile: ExecutionProfile;
   private readonly runStore: RunStore;
   private readonly titleGenerator: TitleGenerator;
-  private readonly codex: CodexCliClient;
+  private readonly codex: CodexNativeClient;
   private readonly openAiTextClient?: OpenAiResponsesTextClient;
   private readonly eventStream: EventStream;
   private readonly orchestrator: AgentOrchestrator;
@@ -2092,7 +2094,7 @@ export class InteractionSession {
       reasoningEffort?: string;
       abortSignal?: AbortSignal;
     }) => Promise<string>;
-    runTurnStream?: CodexCliClient["runTurnStream"];
+    runTurnStream?: CodexNativeClient["runTurnStream"];
   } {
     if (this.config.providers.llm_mode === "openai_api" && this.openAiTextClient) {
       return {
@@ -2128,28 +2130,26 @@ export class InteractionSession {
           ).text
       };
     }
-    const codexRunTurnStream = this.codex.runTurnStream.bind(this.codex);
+    const codexOAuthClient = new CodexOAuthResponsesTextClient(() => resolveCodexOAuthCredentials(), {
+      model: this.config.providers.codex.chat_model || this.config.providers.codex.model,
+      reasoningEffort:
+        this.config.providers.codex.chat_reasoning_effort ||
+        this.config.providers.codex.command_reasoning_effort ||
+        this.config.providers.codex.reasoning_effort
+    });
     return {
       runForText: async (opts) =>
-        (
-          await codexRunTurnStream({
-            prompt: opts.prompt,
-            sandboxMode: (opts.sandboxMode || "read-only") as
-              | "read-only"
-              | "workspace-write"
-              | "danger-full-access",
-            approvalPolicy: (opts.approvalPolicy || "never") as "never" | "on-request" | "on-failure" | "untrusted",
-            systemPrompt: opts.systemPrompt,
-            reasoningEffort:
-              ((opts.reasoningEffort as string | undefined) ||
-                this.config.providers.codex.chat_reasoning_effort ||
-                this.config.providers.codex.command_reasoning_effort) as never,
-            model: this.config.providers.codex.chat_model || this.config.providers.codex.model,
-            fastMode: this.config.providers.codex.chat_fast_mode,
-            abortSignal: opts.abortSignal
-          })
-        ).finalText,
-      runTurnStream: codexRunTurnStream
+        codexOAuthClient.runForText({
+          prompt: opts.prompt,
+          systemPrompt: opts.systemPrompt,
+          abortSignal: opts.abortSignal,
+          model: this.config.providers.codex.chat_model || this.config.providers.codex.model,
+          reasoningEffort:
+            (opts.reasoningEffort as string | undefined) ||
+            this.config.providers.codex.chat_reasoning_effort ||
+            this.config.providers.codex.command_reasoning_effort ||
+            this.config.providers.codex.reasoning_effort
+        })
     };
   }
 
@@ -2204,23 +2204,19 @@ export class InteractionSession {
       this.config.providers.codex.chat_reasoning_effort ||
       this.config.providers.codex.command_reasoning_effort ||
       this.config.providers.codex.reasoning_effort;
+    const codexOAuthClient = new CodexOAuthResponsesTextClient(() => resolveCodexOAuthCredentials(), {
+      model: this.config.providers.codex.chat_model || this.config.providers.codex.model,
+      reasoningEffort
+    });
     return {
       runForText: async (opts) =>
-        (
-          await this.codex.runTurnStream({
-            prompt: opts.prompt,
-            sandboxMode: (opts.sandboxMode || "read-only") as
-              | "read-only"
-              | "workspace-write"
-              | "danger-full-access",
-            approvalPolicy: (opts.approvalPolicy || "never") as "never" | "on-request" | "on-failure" | "untrusted",
-            systemPrompt: opts.systemPrompt,
-            reasoningEffort: reasoningEffort as never,
-            model: this.config.providers.codex.chat_model || this.config.providers.codex.model,
-            fastMode: this.config.providers.codex.chat_fast_mode,
-            abortSignal: opts.abortSignal
-          })
-        ).finalText
+        codexOAuthClient.runForText({
+          prompt: opts.prompt,
+          systemPrompt: opts.systemPrompt,
+          abortSignal: opts.abortSignal,
+          model: this.config.providers.codex.chat_model || this.config.providers.codex.model,
+          reasoningEffort: reasoningEffort as string
+        })
     };
   }
 

@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-04-05
+Last updated: 2026-04-16
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
@@ -27,7 +27,144 @@ Usage rules:
 
 ---
 
-## Active live validation issues
+## Resolved live validation issues
+
+No live-validation defects are currently open. The resolved entries below are kept as recent validation history and regression context.
+
+## Issue: LV-097
+
+- Status: resolved
+- Validation target: existing external-workspace TUI `/retry` flow for paused `analyze_papers` on run `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+- Environment/session context: default external validation root `.autolabos-validation`, real TUI startup automation, resumed paused session after `LV-096` was closed
+
+- Reproduction steps:
+  1. Start a real TUI session in `.autolabos-validation`.
+  2. Resume the paused run `73050f85-6b56-4385-8c31-2ec69a5b7dec` with `/retry`.
+  3. Let `analyze_papers` rerun its rerank-fallback shortlist and inspect `run_record.json`, `events.jsonl`, `paper_summaries.jsonl`, and `evidence_store.jsonl`.
+  4. Wait until the first selected paper (`Compresso...`) reaches planner timeout on the full-text path.
+
+- Expected behavior:
+  - A paused existing session should preserve or quickly re-materialize a first persisted summary/evidence row when `analyze_papers` is retried.
+  - If the shortlist changes, the reset should still recover to a persisted first row within the same bounded retry cycle.
+
+- Actual behavior:
+  - Before the fix, `/retry` could recompute the rerank-fallback shortlist and log:
+    - `Analysis selection changed since the previous run. Resetting summaries/evidence for the new paper set.`
+  - The existing `paper_summaries.jsonl` and `evidence_store.jsonl` were removed.
+  - The rerun then reached:
+    - `Analyzing paper 1/30: "Compresso: Structured Pruning with Collaborative Prompting Learns Compact Large Language Models".`
+    - `[cef2e06efd484520808dfbeeee2029c4d06bd799] Planner unavailable, falling back to direct extraction: planner exceeded the 15000ms timeout`
+  - with no persisted rows re-created.
+  - After the fix and same-flow revalidation:
+    - `/retry` now reuses the cached selection instead of resetting persisted outputs.
+    - Full-text planner timeout on resumed papers logs:
+      - `Planner timed out on a full-text source. Using a deterministic source-grounded fallback analysis so the first persisted row can be materialized without another long LLM roundtrip.`
+    - Persisted rows re-materialize and continue accumulating in the same resumed run.
+
+- Fresh vs existing session comparison:
+  - Fresh session: the earlier fresh external-workspace `/brief start --latest` flow for the same run family already materialized persisted rows, including the abstract-only planner-timeout fallback fixed in `LV-096`.
+  - Existing session: after the fix, the paused-session `/retry` path now reuses the cached selection and materializes deterministic full-text fallback rows instead of stalling at zero.
+  - Divergence: no remaining fresh-vs-existing divergence observed at the first-row persistence boundary.
+
+- Root cause hypothesis:
+  - Type: `resume_reload_bug`
+  - Hypothesis confirmed: retrying `analyze_papers` from a paused run could re-enter selection planning and, when it hit a full-text planner-timeout paper before any new rows were re-materialized, the direct-extraction path left the run at zero persisted rows. The fix makes planner-timeout on a full-text source materialize a conservative full-text fallback row immediately.
+
+- Code/test changes:
+  - Code:
+    - `src/core/analysis/paperAnalyzer.ts`
+      - planner timeout on a full-text source now returns a deterministic source-grounded fallback draft immediately instead of falling through to a long direct-extraction wait when the planner has already timed out.
+  - Tests:
+    - `tests/paperAnalyzer.test.ts`
+      - added a regression for planner timeout on a full-text source.
+    - `tests/analyzePapers.test.ts`
+      - added a node-level regression that persists a full-text fallback row when the first selected paper hits planner timeout.
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Re-validation result: fixed in the same real external-workspace TUI `/retry` flow
+
+- Follow-up risks:
+  - Deterministic full-text fallback rows are intentionally weaker than normal structured extraction+review, so they should stay under the existing claim ceiling.
+  - Analyze latency remains non-trivial because full-text planner timeouts still burn wall time before the fallback kicks in, but the resumed session no longer regresses to a zero-row stall.
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_record.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/analysis_manifest.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/paper_summaries.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/evidence_store.jsonl`
+
+- Resolution notes:
+  - After rebuilding, the same paused external-workspace run was resumed with a real TUI `/retry`.
+  - The resumed flow now logs:
+    - `Reusing cached paper rerank from analysis_manifest.json for top 30; skipping a new LLM rerank.`
+    - `Planner timed out on a full-text source. Using a deterministic source-grounded fallback analysis so the first persisted row can be materialized without another long LLM roundtrip.`
+    - `Persisted analysis outputs for "...\" (1 summary row, 1 evidence row(s)).`
+  - In the same resumed run, `paper_summaries.jsonl` and `evidence_store.jsonl` were re-created and continued growing beyond the first paper; at validation time the run had already reached 7 persisted summary rows and 7 persisted evidence rows while still running.
+
+## Issue: LV-096
+
+- Status: resolved
+- Validation target: real external-workspace TUI flow `/brief start --latest` through `analyze_papers` first-paper persistence, plus an abstract-only `pdf_extract_failed` paper in the same run
+- Environment/session context: default external validation root `.autolabos-validation`, real TUI startup automation, run `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+
+- Reproduction steps:
+  1. Start a real TUI session in `.autolabos-validation`.
+  2. Run `/brief start --latest`.
+  3. Let `collect_papers` complete and `analyze_papers` begin on `Compresso...`.
+  4. Observe the first paper hit full-text planner timeout, then full-text extractor timeout, then full-text-only retry timeout.
+  5. Inspect `events.jsonl`, `paper_summaries.jsonl`, `evidence_store.jsonl`, and `run_record.json`.
+
+- Expected behavior:
+  - After repeated full-text timeout exhaustion, the node should materialize a weak but honest persisted output for the first paper so warm-start can end.
+  - If a later selected paper falls back to `pdf_extract_failed`, a planner timeout on the abstract-only path should also materialize a deterministic fallback row instead of stalling before persistence.
+
+- Actual behavior:
+  - Before the fix, the abstract-only `pdf_extract_failed` branch could log:
+    - `Planning analysis focus, claim targets, and verification checks.`
+    - `Planner unavailable, falling back to direct extraction: planner exceeded the 45000ms timeout`
+    - with no persisted rows yet materialized.
+  - After the fix and same-flow revalidation:
+    - `Compresso...` persisted a deterministic abstract fallback row immediately after the repeated full-text timeouts.
+    - A later abstract-only paper (`Federated Low-Rank Adaptation for Large Language Model Fine-Tuning Over Wireless Networks`) logged:
+      - `Planner timed out on an abstract-only source. Using a deterministic abstract fallback analysis to preserve a minimal, source-grounded summary.`
+      - `Persisted analysis outputs for "Federated Low-Rank Adaptation for Large Language Model Fine-Tuning Over Wireless Networks" (1 summary row, 1 evidence row(s)).`
+  - `paper_summaries.jsonl` and `evidence_store.jsonl` now materialize in the same run, and `run_record.json` records `Persisted 2 summary row(s) and 2 evidence row(s).`
+
+- Fresh vs existing session comparison:
+  - Fresh session: `/brief start --latest` succeeds, `collect_papers` completes, and `analyze_papers` now persists rows during the same bounded analyze cycle.
+  - Existing session: no separate resumed session was required for the closing validation because the fixed fresh external-workspace run now proves both the repeated full-text timeout fallback and the abstract-only planner-timeout fallback materialize persisted outputs.
+  - Divergence: no remaining fresh-vs-existing difference observed at the persistence boundary.
+
+- Root cause hypothesis:
+  - Type: `race_timing_bug`
+  - Hypothesis confirmed: the `pdf_extract_failed` abstract path routed planner timeout into a second extraction-style LLM pass instead of synthesizing a deterministic fallback immediately, delaying warm-start persistence behind another timeout-prone step.
+
+- Code/test changes:
+  - Code:
+    - `src/core/analysis/paperAnalyzer.ts`
+      - planner timeout on an abstract-only source now returns a deterministic fallback draft immediately instead of falling through to direct extraction.
+  - Tests:
+    - `tests/paperAnalyzer.test.ts`
+      - added a regression for planner timeout on an abstract-only source.
+
+- Regression status:
+  - Automated regression test linked: yes (`paperAnalyzer` planner-timeout abstract fallback case)
+  - Re-validation result: fixed in a real external-workspace TUI flow under `.autolabos-validation`
+
+- Follow-up risks:
+  - Full-text planner/extractor retries still consume noticeable wall time before the existing repeated-timeout fallback kicks in, so analyze latency remains a quality-of-life concern even though persistence now succeeds.
+  - The external-workspace TUI path is now proven through `collect_papers` and persisted `analyze_papers` rows, so future regressions at this boundary should be revalidated on the same workspace style, not only under repository-local fixtures.
+
+- Evidence/artifacts:
+  - `.autolabos-validation/Brief.md`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_record.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/collect_result.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/analysis_manifest.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/paper_summaries.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/evidence_store.jsonl`
 
 ## Issue: LV-095
 

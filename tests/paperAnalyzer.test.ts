@@ -96,6 +96,25 @@ class HangingExtractorLLM extends MockLLMClient {
   }
 }
 
+class HangingPlannerLLM extends MockLLMClient {
+  override async complete(_prompt: string, opts?: { systemPrompt?: string; abortSignal?: AbortSignal }): Promise<{ text: string }> {
+    if (opts?.systemPrompt?.includes("planning agent")) {
+      return await new Promise<{ text: string }>((_resolve, reject) => {
+        if (opts.abortSignal?.aborted) {
+          reject(new Error("Operation aborted by user"));
+          return;
+        }
+        opts.abortSignal?.addEventListener(
+          "abort",
+          () => reject(new Error("Operation aborted by user")),
+          { once: true }
+        );
+      });
+    }
+    throw new Error("extractor should not run");
+  }
+}
+
 class HangingResponsesPdfClient {
   callCount = 0;
 
@@ -528,6 +547,57 @@ describe("paperAnalyzer", () => {
     ).toBe(true);
   });
 
+  it("synthesizes a minimal abstract-only analysis when the planner times out on an abstract-only source", async () => {
+    process.env.AUTOLABOS_ANALYSIS_PLANNER_TIMEOUT_MS = "10";
+    const progress: string[] = [];
+
+    const result = await analyzePaperWithLlm({
+      llm: new HangingPlannerLLM(),
+      paper,
+      source,
+      maxAttempts: 1,
+      onProgress: (message) => progress.push(message)
+    });
+
+    expect(result.summaryRow.source_type).toBe("abstract");
+    expect(result.summaryRow.summary).toContain("This paper studies agentic workflows");
+    expect(result.summaryRow.limitations).toContain(
+      "Abstract-only fallback; no verified full-text extraction completed before timeout."
+    );
+    expect(result.evidenceRows).toHaveLength(1);
+    expect(result.evidenceRows[0].source_type).toBe("abstract");
+    expect(result.evidenceRows[0].confidence).toBe(0.3);
+    expect(progress).toContain(
+      "Planner timed out on an abstract-only source. Using a deterministic abstract fallback analysis to preserve a minimal, source-grounded summary."
+    );
+  });
+
+  it("synthesizes a source-grounded full-text analysis when the planner times out on a full-text source", async () => {
+    process.env.AUTOLABOS_ANALYSIS_PLANNER_TIMEOUT_MS = "10";
+    const progress: string[] = [];
+
+    const result = await analyzePaperWithLlm({
+      llm: new HangingPlannerLLM(),
+      paper,
+      source: fullTextSource,
+      maxAttempts: 1,
+      onProgress: (message) => progress.push(message)
+    });
+
+    expect(result.summaryRow.source_type).toBe("full_text");
+    expect(result.summaryRow.summary).toContain("Full text with extracted content.");
+    expect(result.summaryRow.limitations).toContain(
+      "Deterministic full-text fallback; planner timed out before structured extraction and review completed."
+    );
+    expect(result.evidenceRows).toHaveLength(1);
+    expect(result.evidenceRows[0].source_type).toBe("full_text");
+    expect(result.evidenceRows[0].confidence).toBe(0.45);
+    expect(result.evidenceRows[0].confidence_reason).toContain("planner timeout");
+    expect(progress).toContain(
+      "Planner timed out on a full-text source. Using a deterministic source-grounded fallback analysis so the first persisted row can be materialized without another long LLM roundtrip."
+    );
+  });
+
   it("uses the bounded default extractor timeout when no override is set", async () => {
     delete process.env.AUTOLABOS_ANALYSIS_EXTRACT_TIMEOUT_MS;
     vi.useFakeTimers();
@@ -537,12 +607,12 @@ describe("paperAnalyzer", () => {
       paper,
       source: fullTextSource
     });
-    const expectation = expect(promise).rejects.toThrow("paper_analysis_extractor_timeout_after_120000ms");
+    const expectation = expect(promise).rejects.toThrow("paper_analysis_extractor_timeout_after_240000ms");
 
-    await vi.advanceTimersByTimeAsync(120_000);
+    await vi.advanceTimersByTimeAsync(240_000);
 
     await expectation;
-  });
+  }, 15_000);
 
   it("passes rendered PDF page images into hybrid LLM analysis", async () => {
     const llm = {
@@ -760,7 +830,7 @@ describe("shouldFallbackResponsesPdfToLocalText", () => {
   });
 
   it("triggers fallback for paper-analysis timeout fingerprints", () => {
-    expect(shouldFallbackResponsesPdfToLocalText(new Error("paper_analysis_extractor_timeout_after_45000ms"))).toBe(true);
+    expect(shouldFallbackResponsesPdfToLocalText(new Error("paper_analysis_extractor_timeout_after_240000ms"))).toBe(true);
     expect(shouldFallbackResponsesPdfToLocalText(new Error("paper_analysis_extractor_timeout_after_120000ms"))).toBe(true);
     expect(shouldFallbackResponsesPdfToLocalText(new Error("extractor exceeded the 120000ms timeout"))).toBe(true);
   });

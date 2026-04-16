@@ -21,6 +21,7 @@ const originalCwd = process.cwd();
 const originalFetch = globalThis.fetch;
 const originalHome = process.env.HOME;
 const originalAnalysisExtractTimeout = process.env.AUTOLABOS_ANALYSIS_EXTRACT_TIMEOUT_MS;
+const originalAnalysisPlannerTimeout = process.env.AUTOLABOS_ANALYSIS_PLANNER_TIMEOUT_MS;
 
 function makeCodexProviderConfig() {
   return {
@@ -51,6 +52,11 @@ afterEach(async () => {
     delete process.env.AUTOLABOS_ANALYSIS_EXTRACT_TIMEOUT_MS;
   } else {
     process.env.AUTOLABOS_ANALYSIS_EXTRACT_TIMEOUT_MS = originalAnalysisExtractTimeout;
+  }
+  if (originalAnalysisPlannerTimeout === undefined) {
+    delete process.env.AUTOLABOS_ANALYSIS_PLANNER_TIMEOUT_MS;
+  } else {
+    process.env.AUTOLABOS_ANALYSIS_PLANNER_TIMEOUT_MS = originalAnalysisPlannerTimeout;
   }
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
@@ -194,6 +200,25 @@ class TitleSelectiveHangingExtractorLLM extends MockLLMClient {
     }
     return {
       text: jsonOutput(this.options.summary ?? "summary", this.options.claim ?? "claim")
+    };
+  }
+}
+
+class HangingPlannerOnlyLLM extends MockLLMClient {
+  override async complete(_prompt: string, opts?: LLMCompleteOptions): Promise<{ text: string }> {
+    if (opts?.systemPrompt?.includes("planning agent")) {
+      return await new Promise<{ text: string }>((_resolve, reject) => {
+        if (opts.abortSignal?.aborted) {
+          reject(new Error("Operation aborted by user"));
+          return;
+        }
+        opts.abortSignal?.addEventListener("abort", () => reject(new Error("Operation aborted by user")), {
+          once: true
+        });
+      });
+    }
+    return {
+      text: jsonOutput("reviewed summary", "claim")
     };
   }
 }
@@ -966,7 +991,14 @@ describe("analyzePapers node", () => {
 
     const firstNode = createAnalyzePapersNode({
       config: {
-        providers: makeCodexProviderConfig(),
+        providers: {
+          llm_mode: "openai_api",
+          openai: {
+            model: "gpt-5.4",
+            chat_model: "gpt-5.4",
+            reasoning_effort: "medium"
+          }
+        },
         analysis: {
           responses_model: "gpt-5.4"
         }
@@ -1584,6 +1616,84 @@ describe("analyzePapers node", () => {
         text.includes("Using a deterministic abstract fallback immediately after repeated full-text timeouts")
       )
     ).toBe(true);
+  });
+
+  it("materializes a deterministic full-text fallback immediately when the planner times out on the first selected paper", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-fulltext-planner-timeout-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    process.env.AUTOLABOS_ANALYSIS_PLANNER_TIMEOUT_MS = "5";
+
+    const runId = "run-analyze-fulltext-planner-timeout";
+    const run = makeRun(runId);
+    await writeCorpus(runId, [
+      {
+        paper_id: "p1",
+        title: "Paper 1",
+        abstract: "Abstract 1",
+        authors: ["Alice"],
+        pdf_url: "https://example.com/p1.pdf"
+      }
+    ]);
+    writeCachedPaperTextSync(runId, "p1", "Recovered cached full text describing a compact PEFT recipe and its measured behavior.");
+    writeCachedPageImagesSync(runId, "p1", 3);
+
+    const llm = new HangingPlannerOnlyLLM();
+    const eventStream = new InMemoryEventStream();
+    const node = createAnalyzePapersNode({
+      config: {
+        providers: {
+          llm_mode: "codex_chatgpt_only",
+          codex: {
+            model: "gpt-5.4",
+            pdf_model: "gpt-5.4"
+          }
+        },
+        analysis: {
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream,
+      llm,
+      pdfTextLlm: llm,
+      codex: {
+        checkCliAvailable: async () => ({ ok: true, detail: "codex available" }),
+        checkLoginStatus: async () => ({ ok: true, detail: "logged in" }),
+        checkEnvironmentReadiness: async () => []
+      } as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
+    expect(result.needsApproval).toBe(true);
+
+    const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
+    expect(summariesRaw).toContain('"source_type":"full_text"');
+    expect(summariesRaw).toContain("compact PEFT recipe");
+
+    const evidenceRaw = await readFile(path.join(".autolabos", "runs", runId, "evidence_store.jsonl"), "utf8");
+    expect(evidenceRaw).toContain('"source_type":"full_text"');
+    expect(evidenceRaw).toContain('"confidence":0.45');
+
+    const manifestRaw = await readFile(
+      path.join(".autolabos", "runs", runId, "analysis_manifest.json"),
+      "utf8"
+    );
+    expect(manifestRaw).toContain('"status": "completed"');
+    expect(manifestRaw).toContain('"source_type": "full_text"');
+
+    const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
+    expect(
+      loggedTexts.some((text) =>
+        text.includes("Planner timed out on a full-text source. Using a deterministic source-grounded fallback analysis")
+      )
+    ).toBe(true);
+    expect(loggedTexts.some((text) => text.includes('Persisted analysis outputs for "Paper 1"'))).toBe(true);
   });
 
   it("pauses for human when the requested model hits a usage limit before any outputs are produced", async () => {
@@ -3575,7 +3685,7 @@ describe("analyzePapers node", () => {
     expect(evidenceRaw.trim().split("\n")).toHaveLength(1);
     expect(summariesRaw).toContain('"paper_id":"p2"');
     expect(summariesRaw).not.toContain('"paper_id":"p1"');
-  });
+  }, 10000);
 
   it("re-analyzes papers when the analysis mode fingerprint changes", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-mode-change-"));

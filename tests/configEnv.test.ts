@@ -27,6 +27,7 @@ import {
   DEFAULT_OLLAMA_RESEARCH_MODEL,
   DEFAULT_OLLAMA_VISION_MODEL
 } from "../src/integrations/ollama/modelCatalog.js";
+import * as codexOAuthAuth from "../src/integrations/codex/oauthAuth.js";
 import { AppConfig } from "../src/types.js";
 
 const ORIGINAL_SEMANTIC_SCHOLAR_API_KEY = process.env.SEMANTIC_SCHOLAR_API_KEY;
@@ -517,9 +518,12 @@ describe("config .env overrides", () => {
   });
 
   it("guides the user to sign in later when Codex login is missing during setup", async () => {
+    const oauthSpy = vi
+      .spyOn(codexOAuthAuth, "checkCodexOAuthStatus")
+      .mockResolvedValue({ ok: false, detail: "not logged in" });
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autolabos-setup-codex-login-guidance-"));
     const paths = resolveAppPaths(cwd);
-    const fakeCodexCli = {
+    const fakeCodexClient = {
       checkCliAvailable: vi.fn().mockResolvedValue({ ok: true, detail: "codex available" }),
       checkLoginStatus: vi.fn().mockResolvedValue({ ok: false, detail: "not logged in" })
     };
@@ -535,7 +539,7 @@ describe("config .env overrides", () => {
         "Research backend reasoning effort": "xhigh"
       }),
       {
-        codexCli: fakeCodexCli,
+        codexClient: fakeCodexClient,
         outputWriter: {
           write: (message: string) => {
             messages.push(message);
@@ -545,10 +549,11 @@ describe("config .env overrides", () => {
       }
     );
 
-    expect(fakeCodexCli.checkCliAvailable).toHaveBeenCalledTimes(1);
-    expect(fakeCodexCli.checkLoginStatus).toHaveBeenCalledTimes(1);
+    expect(fakeCodexClient.checkCliAvailable).not.toHaveBeenCalled();
+    expect(fakeCodexClient.checkLoginStatus).not.toHaveBeenCalled();
     expect(messages.join("")).toContain("sign in later with `codex login`");
     expect(messages.join("")).toContain("`/doctor`");
+    oauthSpy.mockRestore();
   });
 
   it("supports non-interactive setup for the web onboarding flow", async () => {

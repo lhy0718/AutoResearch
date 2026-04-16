@@ -37,7 +37,7 @@ import {
   runNonInteractiveSetup
 } from "../config.js";
 import { getDoctorAggregateStatus, mapDoctorCheckForApi, runDoctorReport } from "../core/doctor.js";
-import { CodexCliClient } from "../integrations/codex/codexCliClient.js";
+import { CodexNativeClient } from "../integrations/codex/codexCliClient.js";
 import { writeRunLiteratureIndex } from "../core/literatureIndex.js";
 import { readRepositoryKnowledgeIndex } from "../core/repositoryKnowledge.js";
 import { readEvalHarnessHistoryEntries } from "../core/evaluation/evalHarness.js";
@@ -295,7 +295,7 @@ class AutoLabOSWebController {
 
       if (pathname === "/api/doctor" && method === "GET") {
         if (!this.runtime) {
-          const codex = new CodexCliClient(this.cwd, {
+          const codex = new CodexNativeClient(this.cwd, {
             model: DEFAULT_CODEX_MODEL,
             reasoningEffort: "medium",
             fastMode: false

@@ -1,8 +1,11 @@
 import path from "node:path";
 import os from "node:os";
-import { spawn } from "node:child_process";
-import readline from "node:readline";
 import { constants as fsConstants, promises as fs } from "node:fs";
+import {
+  checkCodexOAuthStatus,
+  resolveCodexOAuthCredentials
+} from "./oauthAuth.js";
+import { CodexOAuthResponsesTextClient } from "./oauthResponsesTextClient.js";
 
 export type CodexSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 export type CodexApprovalPolicy = "never" | "on-request" | "on-failure" | "untrusted";
@@ -115,11 +118,21 @@ export function selectPreferredCodexFinalText(options: {
   return uniqueCandidates[0] || "";
 }
 
-export class CodexCliClient {
+export class CodexNativeClient {
+  private readonly oauthTextClient: CodexOAuthResponsesTextClient;
+
   constructor(
     private readonly defaultWorkingDirectory: string,
     private readonly defaults: CodexRunDefaults = {}
-  ) {}
+  ) {
+    this.oauthTextClient = new CodexOAuthResponsesTextClient(
+      () => resolveCodexOAuthCredentials(),
+      {
+        model: this.defaults.model,
+        reasoningEffort: this.defaults.reasoningEffort
+      }
+    );
+  }
 
   updateDefaults(next: CodexRunDefaults): void {
     if (typeof next.model === "string" && next.model.trim()) {
@@ -131,31 +144,18 @@ export class CodexCliClient {
     if (typeof next.fastMode === "boolean") {
       this.defaults.fastMode = next.fastMode;
     }
+    this.oauthTextClient.updateDefaults({
+      model: this.defaults.model,
+      reasoningEffort: this.defaults.reasoningEffort
+    });
   }
 
   async checkCliAvailable(): Promise<CliCheckResult> {
-    const result = await this.runCommand(["--version"]);
-    if (result.exitCode === 0) {
-      return { ok: true, detail: result.stdout.trim() || "codex available" };
-    }
-    return { ok: false, detail: result.stderr.trim() || "codex not available" };
+    return checkCodexOAuthStatus();
   }
 
   async checkLoginStatus(): Promise<CliCheckResult> {
-    const result = await this.runCommand(["login", "status"]);
-    if (result.exitCode !== 0) {
-      return {
-        ok: false,
-        detail: result.stderr.trim() || result.stdout.trim() || "unable to verify login"
-      };
-    }
-
-    const text = `${result.stdout}\n${result.stderr}`.toLowerCase();
-    const ok = text.includes("logged in") || text.includes("authenticated") || text.includes("chatgpt");
-    return {
-      ok,
-      detail: result.stdout.trim() || "login status checked"
-    };
+    return checkCodexOAuthStatus();
   }
 
   async checkEnvironmentReadiness(opts?: {
@@ -240,149 +240,90 @@ export class CodexCliClient {
     }
 
     const events: CodexEvent[] = [];
-    let discoveredThreadId: string | undefined = opts.threadId;
-    let finalText = "";
-    let deltaBuffer = "";
-    let aborted = false;
-    const runtimeEnv = await this.ensureRuntimeDirectories();
-
-    const workingDirectory = presentCodexPath(opts.workingDirectory || this.defaultWorkingDirectory);
-    const args = [
-      "exec",
-      "--json",
-      "--skip-git-repo-check",
-      "--cd",
-      workingDirectory,
-      "--sandbox",
-      opts.sandboxMode
-    ];
-
-    const inputImagePaths = (opts.inputImagePaths || []).filter(Boolean);
-    if (inputImagePaths.length > 0) {
-      args.push("--image", inputImagePaths.join(","));
-    }
-
-    // codex-cli >=0.107 uses config override for approval policy.
-    args.push("-c", `approval_policy="${opts.approvalPolicy}"`);
-
-    const model = opts.model || this.defaults.model;
-    if (model) {
-      args.push("-m", model);
-    }
-
-    const reasoningEffort = opts.reasoningEffort || this.defaults.reasoningEffort;
-    if (reasoningEffort) {
-      args.push("-c", `model_reasoning_effort="${reasoningEffort}"`);
-    }
-
-    const fastMode = typeof opts.fastMode === "boolean" ? opts.fastMode : this.defaults.fastMode;
-    if (typeof fastMode === "boolean") {
-      args.push("-c", `fast_mode=${fastMode ? "true" : "false"}`);
-    }
-
-    const prompt = opts.systemPrompt ? `${opts.systemPrompt}\n\n${opts.prompt}` : opts.prompt;
-
-    if (opts.threadId) {
-      args.push("resume", opts.threadId, prompt);
-    } else {
-      args.push(prompt);
-    }
-
-    const child = spawn("codex", args, {
-      cwd: workingDirectory,
-      env: runtimeEnv
-    });
-
-    let forcedKillTimer: NodeJS.Timeout | undefined;
-    const abortHandler = () => {
-      aborted = true;
-      child.kill("SIGTERM");
-      forcedKillTimer = setTimeout(() => {
-        if (!child.killed) {
-          child.kill("SIGKILL");
-        }
-      }, 1500);
+    const emit = (event: CodexEvent) => {
+      const normalized = normalizeAgentEvent(event, opts.agentId);
+      events.push(normalized);
+      opts.onEvent?.(normalized);
     };
 
-    if (opts.abortSignal) {
-      if (opts.abortSignal.aborted) {
-        abortHandler();
-      } else {
-        opts.abortSignal.addEventListener("abort", abortHandler, { once: true });
-      }
-    }
-
-    let stderr = "";
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString("utf8");
-    });
-
-    const rl = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
-    for await (const line of rl) {
-      const trimmed = line.trim();
-      if (!trimmed) {
-        continue;
-      }
-
-      let rawEvent: CodexEvent;
-      try {
-        rawEvent = JSON.parse(trimmed) as CodexEvent;
-      } catch {
-        continue;
-      }
-
-      const event = normalizeAgentEvent(rawEvent, opts.agentId);
-      events.push(event);
-      opts.onEvent?.(event);
-
-      if (rawEvent.type === "thread.started") {
-        const rawThreadId = rawEvent.thread_id;
-        if (typeof rawThreadId === "string") {
-          discoveredThreadId = rawThreadId;
+    let result;
+    try {
+      result = await this.oauthTextClient.complete({
+        prompt: opts.prompt,
+        threadId: opts.threadId,
+        previousResponseId: opts.threadId,
+        systemPrompt: opts.systemPrompt,
+        inputImagePaths: opts.inputImagePaths,
+        model: opts.model || this.defaults.model,
+        reasoningEffort: opts.reasoningEffort || this.defaults.reasoningEffort,
+        abortSignal: opts.abortSignal,
+        onProgress: (message) => {
+          emit({
+            type: "status",
+            message
+          });
         }
+      });
+    } catch (error) {
+      if (opts.abortSignal?.aborted || isAbortLikeError(error)) {
+        throw new Error("Operation aborted by user");
       }
+      throw error;
+    }
 
-      if (rawEvent.type === "item.completed") {
-        const text = extractCompletedText(rawEvent);
-        if (text) {
-          finalText = text;
+    const discoveredThreadId = result.responseId || opts.threadId;
+    if (discoveredThreadId) {
+      emit({
+        type: "thread.started",
+        thread_id: discoveredThreadId
+      });
+    }
+
+    if (result.text) {
+      emit({
+        type: "response.output_text.delta",
+        delta: result.text
+      });
+    }
+
+    const usagePayload = result.usage
+      ? {
+          input_tokens: result.usage.inputTokens,
+          output_tokens: result.usage.outputTokens
         }
-      }
+      : undefined;
 
-      const delta = extractDeltaText(rawEvent);
-      if (delta) {
-        deltaBuffer += delta;
+    emit({
+      type: "item.completed",
+      item: {
+        text: result.text,
+        model: result.model,
+        usage: usagePayload
       }
-    }
-
-    const exitCode: number = await new Promise((resolve) => {
-      child.once("close", (code) => resolve(code ?? 1));
     });
-
-    if (forcedKillTimer) {
-      clearTimeout(forcedKillTimer);
-    }
-    if (opts.abortSignal) {
-      opts.abortSignal.removeEventListener("abort", abortHandler);
-    }
-
-    if (aborted || opts.abortSignal?.aborted) {
-      throw new Error("Operation aborted by user");
-    }
-
-    if (exitCode !== 0) {
-      throw new Error(stderr.trim() || `codex exec failed (exit ${exitCode})`);
-    }
-
-    finalText = selectPreferredCodexFinalText({
-      completedText: finalText,
-      deltaText: deltaBuffer,
-      fallbackText: extractFallbackText(events)
+    emit({
+      type: "response.completed",
+      response: {
+        id: discoveredThreadId,
+        model: result.model,
+        usage: usagePayload,
+        output: [
+          {
+            type: "message",
+            content: [
+              {
+                type: "output_text",
+                text: result.text
+              }
+            ]
+          }
+        ]
+      }
     });
 
     return {
       threadId: discoveredThreadId,
-      finalText,
+      finalText: result.text,
       events
     };
   }
@@ -498,30 +439,15 @@ export class CodexCliClient {
       };
     }
   }
+}
 
-  private async runCommand(args: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-    const child = spawn("codex", args, {
-      cwd: this.defaultWorkingDirectory,
-      env: process.env
-    });
 
-    let stdout = "";
-    let stderr = "";
-
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString("utf8");
-    });
-
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString("utf8");
-    });
-
-    const exitCode: number = await new Promise((resolve) => {
-      child.once("close", (code) => resolve(code ?? 1));
-    });
-
-    return { exitCode, stdout, stderr };
+function isAbortLikeError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
   }
+  const name = typeof (error as { name?: unknown }).name === "string" ? (error as { name: string }).name : "";
+  return name === "AbortError";
 }
 
 function remapPathPrefix(filePath: string, fromPrefix: string, toPrefix: string): string | undefined {

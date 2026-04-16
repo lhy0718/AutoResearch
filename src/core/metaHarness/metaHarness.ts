@@ -7,11 +7,13 @@ import { buildWorkspaceRunRoot } from "../runs/runPaths.js";
 import { readPersistedRunEvents, type AutoLabOSEvent } from "../events.js";
 import { applyWithSafetyNet, type HarnessApplyResult } from "./harnessApplier.js";
 import {
-  CodexLLMClient,
+  CodexOAuthResponsesLLMClient,
   LLMClient,
   OllamaLLMClient,
   OpenAiResponsesLLMClient
 } from "../llm/client.js";
+import { resolveCodexOAuthCredentials } from "../../integrations/codex/oauthAuth.js";
+import { CodexOAuthResponsesTextClient } from "../../integrations/codex/oauthResponsesTextClient.js";
 import { OllamaClient } from "../../integrations/ollama/ollamaClient.js";
 import { DEFAULT_OLLAMA_BASE_URL } from "../../integrations/ollama/modelCatalog.js";
 import { ensureDir, fileExists } from "../../utils/fs.js";
@@ -264,10 +266,13 @@ function createMetaHarnessLlm(runtime: AutoLabOSRuntime): LLMClient {
       { model: providers.ollama?.chat_model || providers.ollama?.research_model }
     );
   }
-  return new CodexLLMClient(runtime.codex, {
+  const codexOAuthText = new CodexOAuthResponsesTextClient(() => resolveCodexOAuthCredentials(), {
     model: providers.codex.chat_model || providers.codex.model,
-    reasoningEffort: providers.codex.chat_reasoning_effort || providers.codex.reasoning_effort,
-    fastMode: providers.codex.chat_fast_mode ?? providers.codex.fast_mode
+    reasoningEffort: providers.codex.chat_reasoning_effort || providers.codex.reasoning_effort
+  });
+  return new CodexOAuthResponsesLLMClient(codexOAuthText, {
+    model: providers.codex.chat_model || providers.codex.model,
+    reasoningEffort: providers.codex.chat_reasoning_effort || providers.codex.reasoning_effort
   });
 }
 

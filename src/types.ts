@@ -245,6 +245,7 @@ export interface AppConfig {
       model: string;
       chat_model?: string;
       experiment_model?: string;
+      text_transport?: "cli" | "oauth_responses";
       reasoning_effort: "minimal" | "low" | "medium" | "high" | "xhigh";
       chat_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
       experiment_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";

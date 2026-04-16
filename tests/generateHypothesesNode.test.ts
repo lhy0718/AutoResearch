@@ -49,6 +49,32 @@ class BlockingQueueJsonLLMClient extends MockLLMClient {
   }
 }
 
+class QueueProgressThenHangLLMClient extends MockLLMClient {
+  private index = 0;
+
+  constructor(private readonly partialOutputs: string[]) {
+    super();
+  }
+
+  override async complete(
+    _prompt: string,
+    opts?: { onProgress?: (event: { type: "status" | "delta"; text: string }) => void; abortSignal?: AbortSignal }
+  ): Promise<{ text: string }> {
+    const partial = this.partialOutputs[Math.min(this.index, this.partialOutputs.length - 1)] ?? "";
+    this.index += 1;
+    if (partial) {
+      opts?.onProgress?.({ type: "delta", text: partial });
+    }
+    return await new Promise<{ text: string }>((_, reject) => {
+      opts?.abortSignal?.addEventListener(
+        "abort",
+        () => reject(new Error("Operation aborted by user")),
+        { once: true }
+      );
+    });
+  }
+}
+
 afterEach(() => {
   delete process.env.AUTOLABOS_HYPOTHESIS_TIMEOUT_MS;
   process.chdir(ORIGINAL_CWD);
@@ -764,6 +790,50 @@ describe("normalizeGenerateHypothesesRequest", () => {
     expect((interventionScore?.final_score ?? 0)).toBeGreaterThan(mechanismScore?.final_score ?? 0);
     const logs = eventStream.history().map((event) => String(event.payload?.text ?? ""));
     expect(logs.some((line) => line.includes("Evidence-quality guardrail"))).toBe(true);
+  });
+
+  it("persists partial staged and single-pass traces when hypothesis generation times out into fallback", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-hypothesis-partial-timeout-"));
+    process.chdir(root);
+
+    const runId = "run-hypothesis-partial-timeout";
+    const run = makeRun(runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "evidence_store.jsonl"),
+      [JSON.stringify({ evidence_id: "ev_1", paper_id: "paper_1", claim: "Planning matters." })].join("\n") + "\n",
+      "utf8"
+    );
+    await writeFile(path.join(runDir, "corpus.jsonl"), [JSON.stringify({ paper_id: "paper_1", title: "Paper One" })].join("\n") + "\n", "utf8");
+    process.env.AUTOLABOS_HYPOTHESIS_TIMEOUT_MS = "10";
+
+    const llm = new QueueProgressThenHangLLMClient([
+      '{"summary":"partial axes"',
+      '{"summary":"partial single-pass"'
+    ]);
+
+    const node = createGenerateHypothesesNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm,
+      pdfTextLlm: llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const llmTrace = await readFile(path.join(runDir, "hypothesis_generation", "llm_trace.json"), "utf8");
+    expect(llmTrace).toContain('"axes_partial"');
+    expect(llmTrace).toContain('partial axes');
+    expect(llmTrace).toContain('"single_pass_partial"');
+    expect(llmTrace).toContain('partial single-pass');
   });
 
   it("blocks low-quality single-paper fallback hypotheses before experiment design", async () => {

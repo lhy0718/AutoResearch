@@ -5,13 +5,13 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  CodexCliClient,
+  CodexNativeClient,
   normalizeCodexWorkspacePath,
   presentCodexPath,
   selectPreferredCodexFinalText
 } from "../src/integrations/codex/codexCliClient.js";
 
-describe("CodexCliClient fake response sequence", () => {
+describe("CodexNativeClient fake response sequence", () => {
   const tempDirs: string[] = [];
   const originalCodexHome = process.env.CODEX_HOME;
 
@@ -38,7 +38,7 @@ describe("CodexCliClient fake response sequence", () => {
       { reply_lines: ["second"] }
     ]);
 
-    const client = new CodexCliClient(process.cwd());
+    const client = new CodexNativeClient(process.cwd());
     const first = await client.runForText({
       prompt: "one",
       sandboxMode: "read-only",
@@ -69,7 +69,7 @@ describe("CodexCliClient fake response sequence", () => {
     tempDirs.push(root);
     process.env.CODEX_HOME = path.join(root, ".codex");
 
-    const client = new CodexCliClient(process.cwd());
+    const client = new CodexNativeClient(process.cwd());
     const checks = await client.checkEnvironmentReadiness({
       models: ["gpt-5.4"],
       includeModelCapacity: true
@@ -98,7 +98,7 @@ describe("CodexCliClient fake response sequence", () => {
     vi.spyOn(os, "homedir").mockReturnValue(root);
     delete process.env.CODEX_HOME;
 
-    const client = new CodexCliClient(workspace);
+    const client = new CodexNativeClient(workspace);
     const checks = await client.checkEnvironmentReadiness();
 
     const fallbackHome = path.join(workspace, ".autolabos", "runtime", "codex-home");
@@ -123,7 +123,7 @@ describe("CodexCliClient fake response sequence", () => {
     await writeFile(codexHomeFile, "not-a-directory", "utf8");
     process.env.CODEX_HOME = codexHomeFile;
 
-    const client = new CodexCliClient(process.cwd());
+    const client = new CodexNativeClient(process.cwd());
     const checks = await client.checkEnvironmentReadiness();
 
     expect(checks.find((check) => check.name === "codex-home")).toMatchObject({
@@ -138,7 +138,7 @@ describe("CodexCliClient fake response sequence", () => {
     tempDirs.push(root);
     process.env.CODEX_HOME = path.join(root, ".codex");
 
-    const client = new CodexCliClient(process.cwd());
+    const client = new CodexNativeClient(process.cwd());
     const checks = await client.checkEnvironmentReadiness({
       models: ["gpt-5.3-codex-spark"],
       includeModelCapacity: true

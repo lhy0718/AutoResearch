@@ -42,7 +42,10 @@ import {
 import { CollectEnrichmentLogEntry } from "../collection/types.js";
 import { DoctorCheck, RunRecord, TransitionRecommendation } from "../../types.js";
 import { RECOMMENDED_CODEX_MODEL } from "../../integrations/codex/modelCatalog.js";
-import { CodexLLMClient } from "../llm/client.js";
+import { checkCodexOAuthStatus } from "../../integrations/codex/oauthAuth.js";
+import { CodexOAuthResponsesLLMClient } from "../llm/client.js";
+import { resolveCodexOAuthCredentials } from "../../integrations/codex/oauthAuth.js";
+import { CodexOAuthResponsesTextClient } from "../../integrations/codex/oauthResponsesTextClient.js";
 
 interface AnalysisManifest {
   version: 2 | 3;
@@ -124,13 +127,19 @@ function createSelectionRerankLlm(deps: NodeExecutionDeps): NodeExecutionDeps["l
     return deps.llm;
   }
 
-  return new CodexLLMClient(deps.codex, {
+  const codexOAuthText = new CodexOAuthResponsesTextClient(() => resolveCodexOAuthCredentials(), {
     model: providerConfig.codex.chat_model || providerConfig.codex.model,
     reasoningEffort:
       providerConfig.codex.command_reasoning_effort ||
       providerConfig.codex.chat_reasoning_effort ||
-      providerConfig.codex.reasoning_effort,
-    fastMode: providerConfig.codex.chat_fast_mode ?? providerConfig.codex.fast_mode
+      providerConfig.codex.reasoning_effort
+  });
+  return new CodexOAuthResponsesLLMClient(codexOAuthText, {
+    model: providerConfig.codex.chat_model || providerConfig.codex.model,
+    reasoningEffort:
+      providerConfig.codex.command_reasoning_effort ||
+      providerConfig.codex.chat_reasoning_effort ||
+      providerConfig.codex.reasoning_effort
   });
 }
 
@@ -3199,18 +3208,10 @@ async function runAnalyzeCodexPreflight(input: {
   if (input.llmMode !== "codex" && input.llmMode !== "codex_chatgpt_only") {
     return [];
   }
-  if (
-    typeof input.codex?.checkCliAvailable !== "function" ||
-    typeof input.codex?.checkLoginStatus !== "function"
-  ) {
-    return [];
-  }
 
   const checks: DoctorCheck[] = [];
-  const cli = await input.codex.checkCliAvailable();
-  checks.push({ name: "codex-cli", ok: cli.ok, detail: cli.detail });
-  const login = await input.codex.checkLoginStatus();
-  checks.push({ name: "codex-login", ok: login.ok, detail: login.detail });
+  const oauth = await checkCodexOAuthStatus();
+  checks.push({ name: "codex-oauth", ok: oauth.ok, detail: oauth.detail });
   if (typeof input.codex.checkEnvironmentReadiness === "function") {
     checks.push(
       ...(await input.codex.checkEnvironmentReadiness()).map((check) => ({

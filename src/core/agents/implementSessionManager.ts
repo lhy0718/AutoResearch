@@ -8,7 +8,7 @@ import { EventStream } from "../events.js";
 import { LLMClient } from "../llm/client.js";
 import { RunStore } from "../runs/runStore.js";
 import { AppConfig, RunRecord } from "../../types.js";
-import { CodexCliClient, CodexEvent, RunTurnResult } from "../../integrations/codex/codexCliClient.js";
+import { CodexEvent, CodexNativeClient, RunTurnResult } from "../../integrations/codex/codexCliClient.js";
 import { mapCodexEventToAutoLabOSEvents } from "../../integrations/codex/codexEventMapper.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { EpisodeMemory, EpisodeRecord } from "../memory/episodeMemory.js";
@@ -72,7 +72,7 @@ export class ImplementSessionStopError extends Error {
 
 interface ImplementSessionDeps {
   config: AppConfig;
-  codex: CodexCliClient;
+  codex: CodexNativeClient;
   llm?: LLMClient;
   aci: AgentComputerInterface;
   eventStream: EventStream;
@@ -337,10 +337,7 @@ export class ImplementSessionManager {
     const metricsPath = path.join(runDir, "metrics.json");
     const defaultPublicDir = buildPublicExperimentDir(this.deps.workspaceRoot, run);
     const experimentLlmProfile = resolveExperimentLlmProfile(this.deps.config);
-    const canUseCodexSession =
-      typeof this.deps.codex?.runTurnStream === "function" &&
-      this.deps.config?.providers?.llm_mode !== "openai_api" &&
-      this.deps.config?.providers?.llm_mode !== "ollama";
+    const canUseCodexSession = !hasStructuredLlmClient(this.deps.llm);
     const currentThreadId =
       run.nodeThreads.implement_experiments ||
       (await runContext.get<string>("implement_experiments.thread_id"));
@@ -442,7 +439,7 @@ export class ImplementSessionManager {
     });
     emitImplementObservation(
       "preflight",
-      `Implementation session starting in ${useCodexSession ? "codex_session" : "staged_llm"} mode.`,
+      `Implementation session starting in ${useCodexSession ? "codex_native" : "staged_llm"} mode.`,
       { publicDir: defaultPublicDir }
     );
 
@@ -615,14 +612,14 @@ export class ImplementSessionManager {
           fromWorkspaceRoot: this.deps.workspaceRoot,
           toWorkspaceRoot: isolation.workspaceRoot
         }),
-        sessionMode: useCodexSession ? "codex_session" : "staged_llm"
+        sessionMode: useCodexSession ? "codex_native" : "staged_llm"
       });
       const attemptSystemPrompt = this.buildSystemPrompt(
         isolation.runDir,
         isolation.publicDir,
         isolation.metricsPath,
         experimentLlmProfile,
-        useCodexSession ? "codex_session" : "staged_llm",
+        useCodexSession ? "codex_native" : "staged_llm",
         taskSpec.context.environment_snapshot
       );
 
@@ -1388,7 +1385,7 @@ export class ImplementSessionManager {
     publicDir: string,
     metricsPath: string,
     experimentLlmProfile: ReturnType<typeof resolveExperimentLlmProfile>,
-    sessionMode: "codex_session" | "staged_llm",
+    sessionMode: "codex_native" | "staged_llm",
     environmentSnapshot?: EnvironmentSnapshot
   ): string {
     const sandboxRunDir = rewriteWorkspacePathsForSandbox(runDir, this.deps.workspaceRoot);
@@ -1398,7 +1395,7 @@ export class ImplementSessionManager {
     return [
       ...environmentBlock,
       "You are the AutoLabOS implementer role.",
-      sessionMode === "codex_session"
+      sessionMode === "codex_native"
         ? "Work directly in the workspace using Codex tools."
         : "You cannot edit files directly. Return full file contents in file_edits so AutoLabOS can materialize the implementation exactly as specified.",
       "Prefer concrete, runnable changes over prose.",
@@ -1573,7 +1570,7 @@ export class ImplementSessionManager {
     previousAttempt?: AttemptRecord;
     existingChangedFiles: string[];
     historicalChangedFiles: string[];
-    sessionMode: "codex_session" | "staged_llm";
+    sessionMode: "codex_native" | "staged_llm";
   }): string {
     const useCompactApiPrompt = params.sessionMode === "staged_llm";
     const sandboxTaskSpec = rewriteWorkspacePathsForSandbox(params.taskSpec, this.deps.workspaceRoot);
@@ -5462,4 +5459,10 @@ function formatEnvironmentSnapshotBlock(snapshot?: EnvironmentSnapshot): string[
 
 function dedupeStrings(values: Array<string | undefined | null>): string[] {
   return [...new Set(values.filter((value): value is string => typeof value === "string" && value.length > 0))];
+}
+
+function hasStructuredLlmClient(
+  llm: { complete?: unknown } | undefined
+): llm is { complete: (...args: unknown[]) => Promise<unknown> } {
+  return typeof llm?.complete === "function";
 }

@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { CodexCliClient } from "../src/integrations/codex/codexCliClient.js";
+import { CodexNativeClient } from "../src/integrations/codex/codexCliClient.js";
 import { OpenAiResponsesTextClient } from "../src/integrations/openai/responsesTextClient.js";
-import { CodexLLMClient, OpenAiResponsesLLMClient } from "../src/core/llm/client.js";
+import { CodexNativeLLMClient, OpenAiResponsesLLMClient } from "../src/core/llm/client.js";
 
 describe("LLM client pricing propagation", () => {
   it("passes through OpenAI Responses usage and cost", async () => {
@@ -33,7 +33,7 @@ describe("LLM client pricing propagation", () => {
   });
 
   it("extracts Codex token usage and computes cost when events expose usage", async () => {
-    const codex = new CodexCliClient(process.cwd());
+    const codex = new CodexNativeClient(process.cwd());
     vi.spyOn(codex, "runTurnStream").mockResolvedValue({
       threadId: "thread_1",
       finalText: "done",
@@ -49,7 +49,7 @@ describe("LLM client pricing propagation", () => {
       ]
     });
 
-    const client = new CodexLLMClient(codex, { model: "gpt-5.2-codex" });
+    const client = new CodexNativeLLMClient(codex, { model: "gpt-5.2-codex" });
     const result = await client.complete("fix this");
 
     expect(result).toEqual({
@@ -64,7 +64,7 @@ describe("LLM client pricing propagation", () => {
   });
 
   it("preserves Codex tokens but leaves dollars undefined for unpriced models", async () => {
-    const codex = new CodexCliClient(process.cwd());
+    const codex = new CodexNativeClient(process.cwd());
     vi.spyOn(codex, "runTurnStream").mockResolvedValue({
       threadId: "thread_2",
       finalText: "done",
@@ -80,7 +80,7 @@ describe("LLM client pricing propagation", () => {
       ]
     });
 
-    const client = new CodexLLMClient(codex, { model: "gpt-5.3-codex-spark" });
+    const client = new CodexNativeLLMClient(codex, { model: "gpt-5.3-codex-spark" });
     const result = await client.complete("fix this");
 
     expect(result.usage).toEqual({

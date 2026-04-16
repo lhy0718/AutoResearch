@@ -20,9 +20,44 @@ class QueueJsonLLMClient extends MockLLMClient {
   }
 }
 
+class CapturingQueueJsonLLMClient extends QueueJsonLLMClient {
+  readonly prompts: string[] = [];
+
+  override async complete(prompt: string): Promise<{ text: string }> {
+    this.prompts.push(prompt);
+    return await super.complete(prompt);
+  }
+}
+
 class HangingLLMClient extends MockLLMClient {
   override async complete(): Promise<{ text: string }> {
     return await new Promise<{ text: string }>(() => {});
+  }
+}
+
+class QueueProgressThenHangLLMClient extends MockLLMClient {
+  private index = 0;
+
+  constructor(private readonly partialOutputs: string[]) {
+    super();
+  }
+
+  override async complete(
+    _prompt: string,
+    opts?: { onProgress?: (event: { type: "status" | "delta"; text: string }) => void; abortSignal?: AbortSignal }
+  ): Promise<{ text: string }> {
+    const partial = this.partialOutputs[Math.min(this.index, this.partialOutputs.length - 1)] ?? "";
+    this.index += 1;
+    if (partial) {
+      opts?.onProgress?.({ type: "delta", text: partial });
+    }
+    return await new Promise<{ text: string }>((_, reject) => {
+      opts?.abortSignal?.addEventListener(
+        "abort",
+        () => reject(new Error("Operation aborted by user")),
+        { once: true }
+      );
+    });
   }
 }
 
@@ -199,6 +234,30 @@ describe("researchPlanning helpers", () => {
     expect(result.candidates.length).toBeGreaterThanOrEqual(2);
     expect(result.selected).toHaveLength(2);
     expect(result.artifacts.pipeline).toBe("fallback");
+  });
+
+  it("captures partial staged and single-pass hypothesis output before timeout fallback", async () => {
+    const llm = new QueueProgressThenHangLLMClient([
+      '{"summary":"partial axes"',
+      '{"summary":"partial single-pass"'
+    ]);
+
+    const result = await generateHypothesesFromEvidence({
+      llm,
+      runTitle: "Multi-Agent Collaboration",
+      runTopic: "Multi-Agent Collaboration",
+      objectiveMetric: "accuracy >= 0.9",
+      evidenceSeeds: [{ evidence_id: "ev_1", claim: "Planning matters." }],
+      branchCount: 4,
+      topK: 2,
+      timeoutMs: 10
+    });
+
+    expect(result.source).toBe("fallback");
+    expect(result.fallbackReason).toContain("hypothesis_axes_timeout:10ms");
+    expect(result.fallbackReason).toContain("hypothesis_single_pass_timeout:10ms");
+    expect(result.artifacts.llm_trace.axes_partial?.completion).toContain("partial axes");
+    expect(result.artifacts.llm_trace.single_pass_partial?.completion).toContain("partial single-pass");
   });
 
   it("repairs truncated hypothesis-planning JSON and continues the staged pipeline", async () => {
@@ -403,7 +462,7 @@ describe("researchPlanning helpers", () => {
   });
 
   it("falls back to single-pass generation when staged review coverage is incomplete", async () => {
-    const llm = new QueueJsonLLMClient([
+    const llm = new CapturingQueueJsonLLMClient([
       JSON.stringify({
         summary: "Mapped evidence into one axis.",
         axes: [
@@ -524,6 +583,60 @@ describe("researchPlanning helpers", () => {
     expect(result.artifacts.pipeline).toBe("single_pass");
     expect(result.fallbackReason).toContain("incomplete_hypothesis_reviews:2");
     expect(result.selected.map((item) => item.id)).toEqual(["single_pass_1"]);
+    const singlePassPrompt = llm.prompts.at(-1) ?? "";
+    expect((singlePassPrompt.match(/evidence_id=/g) ?? []).length).toBeLessThanOrEqual(6);
+    expect(singlePassPrompt).not.toContain("paper_id=");
+    expect(singlePassPrompt).not.toContain("confidence_reason=");
+  });
+
+  it("compresses staged hypothesis evidence prompts to a smaller compact panel", async () => {
+    const llm = new CapturingQueueJsonLLMClient([
+      JSON.stringify({
+        summary: "Mapped evidence into one axis.",
+        axes: [
+          {
+            id: "ax_1",
+            label: "Structured communication",
+            mechanism: "Typed handoffs reduce ambiguity.",
+            intervention: "Use schema-constrained messages.",
+            evidence_links: ["ev_1", "ev_2"]
+          }
+        ]
+      }),
+      JSON.stringify({ summary: "Generated mechanism drafts.", candidates: [] }),
+      JSON.stringify({ summary: "Generated contradiction drafts.", candidates: [] }),
+      JSON.stringify({ summary: "Generated intervention drafts.", candidates: [] }),
+      JSON.stringify({
+        summary: "No drafts survived review.",
+        reviews: []
+      })
+    ]);
+
+    await generateHypothesesFromEvidence({
+      llm,
+      runTitle: "Multi-Agent Collaboration",
+      runTopic: "Multi-Agent Collaboration",
+      objectiveMetric: "state-of-the-art reproducibility",
+      evidenceSeeds: Array.from({ length: 20 }, (_, index) => ({
+        evidence_id: `ev_${index + 1}`,
+        paper_id: `paper_${index + 1}`,
+        claim: `This is a deliberately verbose evidence claim number ${index + 1} that should be truncated before hypothesis planning prompts are built because long claims increase latency and token pressure.`,
+        limitation_slot: `limitation_${index + 1}`,
+        dataset_slot: `dataset_${index + 1}`,
+        metric_slot: `metric_${index + 1}`,
+        confidence: 0.4,
+        source_type: index % 2 === 0 ? "full_text" : "abstract",
+        confidence_reason:
+          "This long confidence rationale should never be forwarded into the compact hypothesis planning prompts."
+      })),
+      branchCount: 6,
+      topK: 2
+    });
+
+    const axesPrompt = llm.prompts[0] ?? "";
+    expect((axesPrompt.match(/evidence_id=/g) ?? []).length).toBeLessThanOrEqual(8);
+    expect(axesPrompt).not.toContain("paper_id=");
+    expect(axesPrompt).not.toContain("confidence_reason=");
   });
 
   it("hard-gates weakly grounded hypotheses on evidence count, limitation handling, and measurement readiness", async () => {
@@ -548,6 +661,10 @@ describe("researchPlanning helpers", () => {
             evidence_links: ["ev_2", "ev_3"]
           }
         ]
+      }),
+      JSON.stringify({
+        summary: "Refined axes with the remaining evidence.",
+        axes: []
       }),
       JSON.stringify({
         summary: "Generated mechanism drafts.",

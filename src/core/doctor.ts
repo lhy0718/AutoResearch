@@ -11,7 +11,8 @@ import {
   ExperimentNetworkPurpose,
   WorkflowApprovalMode
 } from "../types.js";
-import { CodexCliClient } from "../integrations/codex/codexCliClient.js";
+import { CodexNativeClient } from "../integrations/codex/codexCliClient.js";
+import { checkCodexOAuthStatus } from "../integrations/codex/oauthAuth.js";
 import { RECOMMENDED_CODEX_MODEL } from "../integrations/codex/modelCatalog.js";
 import { OllamaClient } from "../integrations/ollama/ollamaClient.js";
 import {
@@ -91,7 +92,7 @@ interface CompiledPageValidationSnapshot {
 const MINIMUM_DOCTOR_FREE_SPACE_BYTES = 500 * 1024 * 1024;
 
 export async function runDoctorReport(
-  codex: CodexCliClient,
+  codex: CodexNativeClient,
   opts?: DoctorRunOptions
 ): Promise<DoctorReport> {
   const checks: DoctorCheck[] = [];
@@ -120,11 +121,8 @@ export async function runDoctorReport(
     opts.pdfAnalysisMode === "codex_text_image_hybrid";
 
   if (requiresCodexChecks) {
-    const cli = await codex.checkCliAvailable();
-    checks.push({ name: "codex-cli", ok: cli.ok, detail: cli.detail });
-
-    const login = await codex.checkLoginStatus();
-    checks.push({ name: "codex-login", ok: login.ok, detail: login.detail });
+    const oauth = await checkCodexOAuthStatus();
+    checks.push({ name: "codex-oauth", ok: oauth.ok, detail: oauth.detail });
 
     if (typeof codex.checkEnvironmentReadiness === "function") {
       const codexEnvironmentChecks = await codex.checkEnvironmentReadiness();
@@ -359,7 +357,7 @@ export async function runDoctorReport(
 }
 
 export async function runDoctor(
-  codex: CodexCliClient,
+  codex: CodexNativeClient,
   opts?: DoctorRunOptions
 ): Promise<DoctorCheck[]> {
   const report = await runDoctorReport(codex, opts);
@@ -566,8 +564,7 @@ export function buildDoctorHighlightLines(report: DoctorReport): string[] {
   }
   const providerFailures = report.readiness.failedChecks.filter((check) =>
     check === "openai-api-key"
-      || check === "codex-cli"
-      || check === "codex-login"
+      || check === "codex-oauth"
       || check.startsWith("ollama-")
       || check === "python"
       || check === "pip"

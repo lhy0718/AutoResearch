@@ -8,7 +8,7 @@ import { InMemoryEventStream } from "../src/core/events.js";
 import { MockLLMClient } from "../src/core/llm/client.js";
 import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 import { PaperWriterSessionManager } from "../src/core/agents/paperWriterSessionManager.js";
-import { CodexCliClient } from "../src/integrations/codex/codexCliClient.js";
+import { CodexNativeClient } from "../src/integrations/codex/codexCliClient.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { RunRecord } from "../src/types.js";
 
@@ -404,8 +404,8 @@ describe("PaperWriterSessionManager", () => {
           llm_mode: "codex_chatgpt_only"
         }
       } as any,
-      codex: new CodexCliClient(root),
-      llm: new MockLLMClient(),
+      codex: new CodexNativeClient(root),
+      llm: {} as any,
       eventStream: new InMemoryEventStream(),
       runStore: {
         async getRun(id: string) {
@@ -523,7 +523,7 @@ describe("PaperWriterSessionManager", () => {
       }
     });
 
-    expect(result.source).toBe("codex_session");
+    expect(result.source).toBe("codex_native");
     expect(result.threadId).toBe("fake-thread");
     expect(result.trace).toHaveLength(5);
     expect(result.draft.title).toBe("Schema Benchmark: A Reproducibility Study of Agent Collaboration");
@@ -578,7 +578,7 @@ describe("PaperWriterSessionManager", () => {
           );
         });
       }
-    } satisfies Pick<CodexCliClient, "runTurnStream">;
+    } satisfies Pick<CodexNativeClient, "runTurnStream">;
 
     const manager = new PaperWriterSessionManager({
       config: {
@@ -586,8 +586,8 @@ describe("PaperWriterSessionManager", () => {
           llm_mode: "codex_chatgpt_only"
         }
       } as any,
-      codex: timeoutCodex as CodexCliClient,
-      llm: new MockLLMClient(),
+      codex: timeoutCodex as CodexNativeClient,
+      llm: {} as any,
       eventStream: new InMemoryEventStream(),
       runStore: {
         async getRun() {
@@ -709,7 +709,7 @@ describe("PaperWriterSessionManager", () => {
     expect(await readFile(path.join(runDir, "paper", "draft.json"), "utf8")).toContain('"sections"');
   });
 
-  it("LV-017: uses staged_llm mode when llm_mode is ollama (not codex_session)", async () => {
+  it("LV-017: uses staged_llm mode when llm_mode is ollama (not codex_native)", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-ollama-"));
     process.chdir(root);
 
@@ -735,7 +735,7 @@ describe("PaperWriterSessionManager", () => {
           llm_mode: "ollama"
         }
       } as any,
-      codex: new CodexCliClient(root),
+      codex: new CodexNativeClient(root),
       llm: new MockLLMClient(),
       eventStream,
       runStore: {
@@ -809,7 +809,7 @@ describe("PaperWriterSessionManager", () => {
 
     const modeMsg = events.find((m) => m.includes("mode"));
     expect(modeMsg).toContain("staged_llm");
-    expect(modeMsg).not.toContain("codex_session");
+    expect(modeMsg).not.toContain("codex_native");
   });
 
   it("falls back stage-by-stage when staged_llm paper writing hits fetch failed", async () => {
@@ -838,7 +838,7 @@ describe("PaperWriterSessionManager", () => {
           llm_mode: "openai_api"
         }
       } as any,
-      codex: new CodexCliClient(root),
+      codex: new CodexNativeClient(root),
       llm: {
         async complete() {
           throw new Error("fetch failed");

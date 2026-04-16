@@ -19,7 +19,7 @@ import {
 } from "../types.js";
 import { RunStore } from "../core/runs/runStore.js";
 import { TitleGenerator } from "../core/runs/titleGenerator.js";
-import { CodexCliClient, CodexReasoningEffort } from "../integrations/codex/codexCliClient.js";
+import { CodexNativeClient, CodexReasoningEffort } from "../integrations/codex/codexCliClient.js";
 import { AutoLabOSEvent, EventStream, readPersistedRunEvents } from "../core/events.js";
 import {
   buildCodexModelSelectionChoices,
@@ -204,7 +204,7 @@ interface TerminalAppDeps {
   executionProfile?: ExecutionProfile;
   runStore: RunStore;
   titleGenerator: TitleGenerator;
-  codex: CodexCliClient;
+  codex: CodexNativeClient;
   openAiTextClient?: OpenAiResponsesTextClient;
   eventStream: EventStream;
   orchestrator: AgentOrchestrator;
@@ -319,7 +319,7 @@ export class TerminalApp {
   private readonly executionProfile: ExecutionProfile;
   private readonly runStore: RunStore;
   private readonly titleGenerator: TitleGenerator;
-  private readonly codex: CodexCliClient;
+  private readonly codex: CodexNativeClient;
   private readonly openAiTextClient?: OpenAiResponsesTextClient;
   private readonly eventStream: EventStream;
   private readonly orchestrator: AgentOrchestrator;
@@ -4597,7 +4597,7 @@ export class TerminalApp {
       reasoningEffort?: string;
       abortSignal?: AbortSignal;
     }) => Promise<string>;
-    runTurnStream?: CodexCliClient["runTurnStream"];
+    runTurnStream?: CodexNativeClient["runTurnStream"];
   } {
     if (this.config.providers.llm_mode === "openai_api" && this.openAiTextClient) {
       return {

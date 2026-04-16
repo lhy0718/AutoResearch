@@ -91,6 +91,20 @@ export function synthesizeDeterministicAbstractFallbackResult(args: {
   };
 }
 
+export function synthesizeDeterministicPlannerTimeoutFallbackResult(args: {
+  paper: AnalysisCorpusRow;
+  source: ResolvedPaperSource;
+  failureReason: string;
+  attempts?: number;
+}): PaperAnalysisResult {
+  const fallbackDraft = buildDeterministicPlannerTimeoutFallback(args.paper, args.source, args.failureReason);
+  return {
+    ...normalizePaperAnalysis(args.paper, args.source, fallbackDraft),
+    attempts: args.attempts ?? 1,
+    rawJson: fallbackDraft
+  };
+}
+
 export const ANALYSIS_SYSTEM_PROMPT = [
   "You are a scientific literature analyst for AutoLabOS.",
   "Return one JSON object only.",
@@ -117,9 +131,9 @@ const ANALYSIS_REVIEWER_SYSTEM_PROMPT = [
   "Whenever you lower confidence or keep a caveat, fill confidence_reason with a short source-grounded explanation."
 ].join(" ");
 
-const DEFAULT_ANALYSIS_PLANNER_TIMEOUT_MS = 45_000;
-const DEFAULT_ANALYSIS_EXTRACT_TIMEOUT_MS = 120_000;
-const DEFAULT_ANALYSIS_REVIEW_TIMEOUT_MS = 45_000;
+const DEFAULT_ANALYSIS_PLANNER_TIMEOUT_MS = 120_000;
+const DEFAULT_ANALYSIS_EXTRACT_TIMEOUT_MS = 240_000;
+const DEFAULT_ANALYSIS_REVIEW_TIMEOUT_MS = 120_000;
 
 export async function analyzePaperWithLlm(args: {
   llm: LLMClient;
@@ -183,11 +197,13 @@ export async function analyzePaperWithLlm(args: {
       args.onProgress?.(
         `Analysis attempt ${attempt}/${imageBearingAttemptLimit} failed: ${describeAnalysisAttemptFailureReason(lastError)}`
       );
-      if (shouldSynthesizeAbstractTimeoutFallback(args.source, lastError)) {
+      if (shouldSynthesizeAnalysisAttemptTimeoutFallback(args.source, lastError)) {
         args.onProgress?.(
-          "Abstract-only analysis still timed out. Using a deterministic abstract fallback analysis to preserve a minimal, source-grounded summary."
+          args.source.sourceType === "abstract"
+            ? "Abstract-only analysis still timed out. Using a deterministic abstract fallback analysis to preserve a minimal, source-grounded summary."
+            : "Full-text analysis still timed out. Using a deterministic source-grounded fallback analysis so the first persisted row can be materialized without another long LLM roundtrip."
         );
-        return synthesizeDeterministicAbstractFallbackResult({
+        return synthesizeDeterministicPlannerTimeoutFallbackResult({
           paper: args.paper,
           source: args.source,
           failureReason: lastError.message,
@@ -318,6 +334,21 @@ async function planPaperAnalysisWithLlm(args: {
   } catch (error) {
     if (isAbortError(error)) {
       throw error;
+    }
+    if (shouldSynthesizePlannerTimeoutFallback(args.source, error)) {
+      args.onProgress?.(
+        args.source.sourceType === "abstract"
+          ? "Planner timed out on an abstract-only source. Using a deterministic abstract fallback analysis to preserve a minimal, source-grounded summary."
+          : "Planner timed out on a full-text source. Using a deterministic source-grounded fallback analysis so the first persisted row can be materialized without another long LLM roundtrip."
+      );
+      return {
+        plan: buildFallbackAnalysisPlan(args.paper, args.source),
+        draft: buildDeterministicPlannerTimeoutFallback(
+          args.paper,
+          args.source,
+          error instanceof Error ? error.message : String(error)
+        )
+      };
     }
     args.onProgress?.(
       `Planner unavailable, falling back to direct extraction: ${describePlannerFallbackReason(
@@ -625,6 +656,11 @@ function isPaperAnalysisTimeoutError(error: unknown): boolean {
   return /paper_analysis_(planner|extractor|reviewer)_timeout_after_\d+ms/i.test(message);
 }
 
+function isPaperAnalysisPlannerTimeoutError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /paper_analysis_planner_timeout_after_\d+ms/i.test(message);
+}
+
 function isAbortError(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return false;
@@ -633,8 +669,18 @@ function isAbortError(error: unknown): boolean {
   return message.includes("aborted") || message.includes("abort");
 }
 
-function shouldSynthesizeAbstractTimeoutFallback(source: ResolvedPaperSource, error: unknown): boolean {
-  return source.sourceType === "abstract" && isPaperAnalysisTimeoutError(error);
+function shouldSynthesizeAnalysisAttemptTimeoutFallback(source: ResolvedPaperSource, error: unknown): boolean {
+  if (source.sourceType === "abstract") {
+    return isPaperAnalysisTimeoutError(error);
+  }
+  if (source.sourceType === "full_text") {
+    return isPaperAnalysisPlannerTimeoutError(error);
+  }
+  return false;
+}
+
+function shouldSynthesizePlannerTimeoutFallback(source: ResolvedPaperSource, error: unknown): boolean {
+  return isPaperAnalysisPlannerTimeoutError(error) && (source.sourceType === "abstract" || source.sourceType === "full_text");
 }
 
 function buildDeterministicAbstractTimeoutFallback(
@@ -669,6 +715,49 @@ function buildDeterministicAbstractTimeoutFallback(
         confidence: 0.3,
         confidence_reason:
           "This item was synthesized from title/abstract only after repeated analysis timeouts, so it should be treated as weak abstract-only evidence."
+      }
+    ]
+  };
+}
+
+function buildDeterministicPlannerTimeoutFallback(
+  paper: AnalysisCorpusRow,
+  source: ResolvedPaperSource,
+  failureReason: string
+): RawPaperAnalysis {
+  if (source.sourceType === "abstract") {
+    return buildDeterministicAbstractTimeoutFallback(paper, source, failureReason);
+  }
+
+  const sourceText = source.text?.trim() || buildAbstractFallbackText(paper);
+  const firstSentence = firstMeaningfulSentence(sourceText);
+  const summary = trimToLength(firstSentence || sourceText || paper.title, 280);
+  const evidenceSpan = trimToLength(sourceText || paper.title, 240);
+  const claim = trimToLength(firstSentence || summary, 220);
+  return {
+    summary,
+    key_findings: firstSentence ? [trimToLength(firstSentence, 180)] : [],
+    limitations: [
+      "Deterministic full-text fallback; planner timed out before structured extraction and review completed."
+    ],
+    datasets: [],
+    metrics: [],
+    novelty: "Not established from planner-timeout fallback evidence.",
+    reproducibility_notes: [
+      `Synthesized from extracted full text after the planner timed out (${failureReason}).`
+    ],
+    evidence_items: [
+      {
+        claim,
+        method_slot: "Not yet structured; planner timed out before extraction planning completed.",
+        result_slot: summary,
+        limitation_slot: "Structured extraction and review did not complete before timeout.",
+        dataset_slot: "Not yet structured.",
+        metric_slot: "Not yet structured.",
+        evidence_span: evidenceSpan,
+        confidence: 0.45,
+        confidence_reason:
+          "This item was synthesized directly from the extracted full text after a planner timeout, so it is weaker than a normal structured extraction+review pass."
       }
     ]
   };

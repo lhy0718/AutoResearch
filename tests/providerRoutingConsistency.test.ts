@@ -11,7 +11,7 @@ import { InMemoryEventStream } from "../src/core/events.js";
 import { RunStore } from "../src/core/runs/runStore.js";
 import { InteractionSession } from "../src/interaction/InteractionSession.js";
 import { DEFAULT_OLLAMA_BASE_URL, DEFAULT_OLLAMA_CHAT_MODEL } from "../src/integrations/ollama/modelCatalog.js";
-import { CodexCliClient } from "../src/integrations/codex/codexCliClient.js";
+import { CodexNativeClient } from "../src/integrations/codex/codexCliClient.js";
 import { TerminalApp } from "../src/tui/TerminalApp.js";
 import { AppConfig } from "../src/types.js";
 
@@ -82,7 +82,7 @@ function makeOllamaConfig(): AppConfig {
   };
 }
 
-function makeTerminalApp(config: AppConfig, codex: CodexCliClient): TerminalApp {
+function makeTerminalApp(config: AppConfig, codex: CodexNativeClient): TerminalApp {
   const app = new TerminalApp({
     config,
     runStore: {} as any,
@@ -145,7 +145,7 @@ describe("provider routing consistency", () => {
       runTurnStream: vi.fn(async () => {
         throw new Error("Codex should not be used when llm_mode=ollama");
       })
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
     const session = new InteractionSession({
       workspaceRoot: workspace,
       config: makeOllamaConfig(),
@@ -173,7 +173,7 @@ describe("provider routing consistency", () => {
       runForText: vi.fn(async () => {
         throw new Error("Codex should not be used when llm_mode=ollama");
       })
-    } as unknown as CodexCliClient;
+    } as unknown as CodexNativeClient;
     const app = makeTerminalApp(makeOllamaConfig(), codex);
 
     const client = (app as any).getNaturalAssistantClient();

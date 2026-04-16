@@ -1,7 +1,6 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
 
-import { CodexCliClient } from "../../integrations/codex/codexCliClient.js";
 import { GRAPH_NODE_ORDER, RunRecord } from "../../types.js";
 import { parseSlashCommand } from "./parseSlash.js";
 
@@ -78,9 +77,9 @@ interface NaturalAssistantTextClient {
     prompt: string;
     sandboxMode?: string;
     approvalPolicy?: string;
+    abortSignal?: AbortSignal;
     systemPrompt?: string;
   }): Promise<string>;
-  runTurnStream?: CodexCliClient["runTurnStream"];
 }
 
 export async function buildNaturalAssistantResponseWithLlm(
@@ -663,20 +662,12 @@ async function runForTextWithTimeout(
 ): Promise<string> {
   let timer: NodeJS.Timeout | undefined;
   try {
-    const execute = typeof llm.runTurnStream === "function"
-      ? llm
-          .runTurnStream({
-            ...args,
-            onEvent: (event) => {
-              progress?.onEvent(event);
-            }
-          })
-          .then((result) => result.finalText)
-      : llm.runForText({
-          prompt: args.prompt,
-          sandboxMode: args.sandboxMode,
-          approvalPolicy: args.approvalPolicy
-        });
+    const execute = llm.runForText({
+      prompt: args.prompt,
+      sandboxMode: args.sandboxMode,
+      approvalPolicy: args.approvalPolicy,
+      abortSignal: args.abortSignal
+    });
 
     return await Promise.race([
       execute,

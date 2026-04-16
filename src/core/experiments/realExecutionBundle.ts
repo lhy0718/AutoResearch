@@ -421,7 +421,6 @@ import math
 import os
 import platform
 import statistics
-import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -597,6 +596,29 @@ def has_fake_response_mode() -> bool:
     )
 
 
+def resolve_codex_auth_file() -> Path:
+    codex_home = os.environ.get("CODEX_HOME", "").strip()
+    if codex_home:
+        return Path(codex_home) / "auth.json"
+    return Path.home() / ".codex" / "auth.json"
+
+
+def resolve_codex_access_token() -> str:
+    auth_file = resolve_codex_auth_file()
+    try:
+        payload = json.loads(auth_file.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"Codex OAuth auth file was not found at {auth_file}.") from exc
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Codex OAuth auth file at {auth_file} is not valid JSON.") from exc
+
+    tokens = payload.get("tokens") if isinstance(payload, dict) else None
+    access_token = tokens.get("access_token") if isinstance(tokens, dict) else None
+    if not isinstance(access_token, str) or not access_token.strip():
+        raise RuntimeError(f"Codex OAuth access token was not found in {auth_file}.")
+    return access_token.strip()
+
+
 def call_openai(prompt: str, system_prompt: str, model: str, reasoning_effort: str) -> str:
     fake = resolve_fake_response()
     if fake:
@@ -640,82 +662,52 @@ def call_openai(prompt: str, system_prompt: str, model: str, reasoning_effort: s
     return text
 
 
-def extract_codex_text(stdout: str) -> str:
-    completed = ""
-    deltas: list[str] = []
-    for raw_line in stdout.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        event_type = str(event.get("type", ""))
-        if event_type == "item.completed":
-            item = event.get("item")
-            if isinstance(item, dict):
-                text = item.get("text")
-                if isinstance(text, str) and text.strip():
-                    completed = text
-        delta = event.get("delta")
-        if isinstance(delta, str) and delta:
-            deltas.append(delta)
-    return completed.strip() or "".join(deltas).strip() or stdout.strip()
-
-
 def ensure_codex_ready() -> None:
     if has_fake_response_mode():
         return
-    version = subprocess.run(
-        ["codex", "--version"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if version.returncode != 0:
-        raise RuntimeError(version.stderr.strip() or "codex CLI is not available.")
-    login = subprocess.run(
-        ["codex", "login", "status"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    output = (login.stdout + "\n" + login.stderr).lower()
-    if login.returncode != 0 or ("logged in" not in output and "authenticated" not in output and "chatgpt" not in output):
-        raise RuntimeError("codex CLI is installed but not logged in.")
+    resolve_codex_access_token()
 
 
 def call_codex(prompt: str, system_prompt: str, model: str, reasoning_effort: str, fast_mode: bool, cwd: str) -> str:
     fake = resolve_fake_response()
     if fake:
         return fake
-    combined_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
-    command = [
-        "codex",
-        "exec",
-        "--json",
-        "--skip-git-repo-check",
-        "--cd",
-        cwd,
-        "--sandbox",
-        "read-only",
-        "-c",
-        'approval_policy="never"',
-        "-m",
-        model,
-        "-c",
-        f'model_reasoning_effort="{reasoning_effort}"',
-        "-c",
-        f"fast_mode={'true' if fast_mode else 'false'}",
-        combined_prompt,
-    ]
-    completed = subprocess.run(command, capture_output=True, text=True, check=False)
-    if completed.returncode != 0:
-        raise RuntimeError(completed.stderr.strip() or f"codex exec failed ({completed.returncode})")
-    text = extract_codex_text(completed.stdout)
+    access_token = resolve_codex_access_token()
+    body: dict[str, Any] = {
+        "model": model,
+        "instructions": system_prompt or "You are Codex. Follow the user's request carefully.",
+        "store": False,
+        "stream": False,
+        "input": [
+            {
+                "role": "user",
+                "content": [{"type": "input_text", "text": prompt}],
+            }
+        ],
+        "text": {"format": {"type": "text"}},
+        "reasoning": {"effort": reasoning_effort},
+    }
+    request = urllib.request.Request(
+        "https://chatgpt.com/backend-api/codex/responses",
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=300) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"Codex OAuth request failed: {exc.code} {detail}".strip()) from exc
+    if isinstance(payload.get("error"), dict) and payload["error"].get("message"):
+        raise RuntimeError(f"Codex OAuth returned an error: {payload['error']['message']}")
+    text = extract_output_text(payload)
     if not text:
-        raise RuntimeError("codex exec returned no text output.")
+        raise RuntimeError("Codex OAuth returned no text output.")
     return text
 
 

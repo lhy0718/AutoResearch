@@ -35,7 +35,7 @@ import { OllamaPdfAnalysisClient } from "../src/integrations/ollama/ollamaPdfAna
 import {
   OllamaLLMClient,
   RoutedLLMClient,
-  CodexLLMClient,
+  CodexNativeLLMClient,
   OpenAiResponsesLLMClient
 } from "../src/core/llm/client.js";
 import { runDoctorReport } from "../src/core/doctor.js";
@@ -234,7 +234,7 @@ describe("Ollama setup wizard", () => {
   it("setup wizard skips Codex login notification for ollama mode", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autolabos-setup-ollama-no-codex-"));
     const paths = resolveAppPaths(cwd);
-    const fakeCodexCli = {
+    const fakeCodexClient = {
       checkCliAvailable: vi.fn(),
       checkLoginStatus: vi.fn()
     };
@@ -251,13 +251,13 @@ describe("Ollama setup wizard", () => {
         "Vision/PDF model": ""
       }),
       {
-        codexCli: fakeCodexCli,
+        codexClient: fakeCodexClient,
         outputWriter: { write: (msg: string) => { messages.push(msg); return true; } }
       }
     );
 
-    expect(fakeCodexCli.checkCliAvailable).not.toHaveBeenCalled();
-    expect(fakeCodexCli.checkLoginStatus).not.toHaveBeenCalled();
+    expect(fakeCodexClient.checkCliAvailable).not.toHaveBeenCalled();
+    expect(fakeCodexClient.checkLoginStatus).not.toHaveBeenCalled();
     expect(messages.join("")).not.toContain("codex login");
   });
 
