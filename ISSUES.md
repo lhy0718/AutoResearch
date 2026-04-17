@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-04-16
+Last updated: 2026-04-17
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
@@ -14,7 +14,8 @@ Usage rules:
 ## Current active status
 
 - Active live-validation defects:
-  - None currently open.
+  - `LV-102` `run_experiments` now reaches the repaired public runner bundle, but that runner can still fail fast with `RuntimeError("Missing parse_args() in runner setup chunk.")`, so the next blocker has moved from implement-stage materialization to runner integrity across chunk joins.
+  - `LV-098` IEEE staging `pdf_url` rows cache HTML instead of PDF, so `analyze_papers` cannot preserve supplemental page images on abstract fallback for those papers.
 - Active research/paper-readiness watchlist: see `Research and paper-readiness watchlist` below.
 - Current watchlist snapshot:
   - `R-001` Result-table discipline and claim→evidence linkage — `MITIGATED`
@@ -29,7 +30,366 @@ Usage rules:
 
 ## Resolved live validation issues
 
-No live-validation defects are currently open. The resolved entries below are kept as recent validation history and regression context.
+The resolved entries below are kept as recent validation history and regression context.
+
+## Issue: LV-101
+
+- Status: resolved
+- Validation target: existing external-workspace TUI `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec` after the deferred-results patch
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - node: `implement_experiments`
+
+- Reproduction steps:
+  1. Relaunch a fresh real TUI session in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let attempt 1/3 enter staged LLM mode and wait for the bounded hard timeout.
+  4. Inspect `implement_experiments/status.json`, `implement_experiments/progress.jsonl`, and `events.jsonl`.
+
+- Expected behavior:
+  - The staged implementation turn should either stream/output usable Codex text and continue into implementation validation, or fail for a narrower request-level reason before consuming the full 600000ms budget.
+
+- Actual behavior:
+  - The same-flow retry used to stall before producing any implement-stage text, first as one giant staged LLM turn and later as the first runner chunk after decomposition.
+  - After the staged runner was split into purpose-aligned chunks, the same persisted run eventually advanced through all three runner chunks and completed the rest of the implement bundle:
+    - `Generating staged_llm unit 1/3 chunk 2/3: Dataset preparation, model setup, PEFT condition execution, and benchmark evaluation (...)`
+    - `Generating staged_llm unit 1/3 chunk 3/3: Result aggregation, metrics JSON writing, public artifact export, and main entrypoint (...)`
+    - `Generating staged_llm unit 2/3: Bounded experiment plan (...)`
+    - `Generating staged_llm unit 3/3: Experiment usage and interpretation guide (...)`
+    - `Implementation turn completed.`
+    - `Local verification passed via python -m py_compile .../run_peft_instruction_study.py.`
+  - The final `implement_experiments/status.json` for the same persisted run is now `completed` with `verifyStatus: "pass"`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately needed; the same persisted run was retried from a rebuilt real TUI session.
+  - Existing session: the repaired flow now crosses the former stall boundary, completes implement-stage materialization, and passes local verification.
+  - Divergence: none remains at the original boundary.
+
+- Root cause hypothesis:
+  - Type: `race_timing_bug`
+  - Hypothesis: the original staged implement request was too coarse; after purpose-aligned decomposition and chunked runner generation, the same live path can now materialize and verify successfully.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added staged-LLM heartbeat progress updates and partial-response snapshotting to `implement_experiments`
+      - added shared `decomposition_plan` contract emission plus a bounded staged repair turn when scaffolds omit that plan
+      - added dynamic materialization chunk planning for large text-file units so runnable scripts can be generated as purpose-aligned subcalls instead of one giant file turn
+    - `src/core/decompositionPlan.ts`
+      - added reusable dynamic decomposition-plan types/parsing for future prompt-splitting migrations
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added a regression that timeouting staged-LLM requests persist partial-response artifacts and timeout observations when progress is observed
+      - added regressions for decomposition-plan artifact emission and decomposition-plan repair when the scaffold omits it
+      - updated staged-LLM implement regressions to cover dynamic materialization plans and chunked runner generation
+
+- Regression status:
+  - Automated regression test linked: yes (`tests/implementSessionManager.test.ts`)
+  - Re-validation result: resolved in the same persisted run `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - New observation: the same-flow retry now survives the former stall, completes `implement_experiments`, and passes local `py_compile` verification.
+
+- Most likely failing boundary:
+  - resolved staged LLM request/materialization boundary inside `implement_experiments`
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/decomposition_plan.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/decomposition_plan_raw_response.txt`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/unit_plans/runner_script.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/unit_plans/runner_script_raw_response.txt`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/unit_plans/runner__chunk1_setup_and_plan.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`
+
+- Recommended next step:
+  - move downstream to the new `run_experiments` failure now that the implement-stage stall is resolved.
+
+## Issue: LV-100
+
+- Status: resolved
+- Validation target: existing external-workspace TUI `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec` after the native Codex stream-materialization fix
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - node: `implement_experiments`
+
+- Reproduction steps:
+  1. Relaunch a fresh real TUI session in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let the staged implementation turn finish and inspect `implement_experiments/progress.jsonl`, `verify_report.json`, and the public experiment directory.
+
+- Expected behavior:
+  - `implement_experiments` should allow future public result files such as `outputs/.../experiment/results/summary.json` to remain absent at implement time.
+  - Those files should be treated like deferred execution outputs that `run_experiments` is responsible for materializing later.
+
+- Actual behavior:
+  - Before the patch, the same live run could complete an implementation turn and then fail attempt 1 with:
+    - `Implementer referenced artifact(s) that were not materialized: outputs/.../experiment/results/summary.json, .../condition_results.json, .../report.md`
+  - The missing paths were public result files under `outputs/.../experiment/results/*`, not immediate implement-stage artifacts.
+  - The node then restored the branch snapshot and retried instead of handing off to `run_experiments`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately needed.
+  - Existing session: the same persisted run now crosses the former boundary, completes `implement_experiments`, and enters `run_experiments` instead of failing on deferred public result files.
+  - Divergence: none remains at the original boundary.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: implement-stage artifact validation was projecting future public run outputs into the current materialization set and treating them as missing supplemental artifacts, even though those `results/*` files should only exist after `run_experiments`.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - broadened deferred execution artifact recognition so public `outputs/.../experiment/results/*` paths are treated as deferred run-time outputs rather than immediate implement-stage requirements
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added a regression that missing public experiment result files under `outputs/.../experiment/results/*` do not fail implement-stage validation
+
+- Regression status:
+  - Automated regression test linked: yes (`tests/implementSessionManager.test.ts`)
+  - `npm test`: passed
+  - `npm run build`: passed
+  - `npm run validate:harness`: passed
+  - Same-flow live revalidation: resolved; the same persisted run no longer fails on missing deferred `results/*` artifacts and instead proceeds into `run_experiments`.
+
+- Most likely failing boundary:
+  - implement-stage artifact-validation boundary inside `materializeDeclaredArtifacts(...)` / deferred output classification
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/verify_report.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/`
+
+- Recommended next step:
+  - keep following the same persisted run from `run_experiments`, where the next real blocker is now runner integrity rather than implement-stage artifact classification.
+
+## Issue: LV-102
+
+- Status: in_progress
+- Validation target: same persisted external-workspace run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after `implement_experiments` was repaired with dynamic decomposition, runner chunking, and local `py_compile` verification
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - nodes reached: `implement_experiments -> run_experiments`
+
+- Reproduction steps:
+  1. Relaunch a fresh real TUI session in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let `implement_experiments` complete and hand off to `run_experiments`.
+  4. Inspect `run_record.json`, `events.jsonl`, and the runner traceback produced by `run_experiments`.
+
+- Expected behavior:
+  - The repaired public runner should preserve required setup helpers such as `parse_args()` across chunk joins and should survive both local `py_compile` verification and the initial `run_experiments` invocation.
+
+- Actual behavior:
+  - The same persisted run now completes `implement_experiments` and passes local `python -m py_compile`.
+  - The next downstream failure is inside `run_experiments`, where the generated runner aborts immediately with:
+    - `RuntimeError("Missing parse_args() in runner setup chunk.")`
+  - `run_record.json` now shows:
+    - `implement_experiments.status: completed`
+    - `run_experiments.status: failed`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately reproduced yet.
+  - Existing session: reproduced directly on the same persisted run after implement-stage recovery.
+  - Divergence: unknown; this is currently a downstream runner-integrity bug, not a session-state mismatch.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: chunked runner materialization can still produce an internally inconsistent final script where later orchestration code expects setup-surface helpers that were omitted, overwritten, or not preserved correctly across subchunk joins. Local `py_compile` is too weak to catch this semantic integrity failure.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - repairs Python runners that define `build_arg_parser()` but omit a callable `parse_args()` helper by inserting a bounded compatibility shim before handoff
+      - re-runs local verification after the shim is materialized so the persisted public runner surface reflects the repaired contract before `run_experiments`
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added a regression that a generated Python runner missing `parse_args()` is repaired before handoff and still passes local `py_compile`
+
+- Regression status:
+  - Automated regression test linked: yes (`tests/implementSessionManager.test.ts`)
+  - `npm test`: passed after adding the `parse_args()` repair regression
+  - `npm run build`: passed after adding the repair
+  - `npm run validate:harness`: passed after updating this entry
+  - Same-flow live revalidation: in progress; the same persisted run now starts a fresh `implement_experiments` repair thread from runner feedback and has already advanced through scaffold, decomposition repair, materialization planning, and runner subchunk planning into `unit 1/3 chunk 1/3 subchunk 1/2`, but it has not yet re-crossed the downstream `run_experiments` boundary.
+
+- Most likely failing boundary:
+  - runner integrity across staged chunk/subchunk joins in `implement_experiments`, only surfaced by `run_experiments`
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_record.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+- Recommended next step:
+  - strengthen implement-stage verification so chunked runner bundles must pass a bounded semantic smoke check (for example, required helper presence and callable entrypoint integrity) before handing off to `run_experiments`.
+
+## Issue: LV-099
+
+- Status: resolved
+- Validation target: existing external-workspace TUI `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec` on the rebuilt native Codex runtime after removing automatic `previous_response_id` forwarding
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - rebuilt runtime launched from `dist/cli/main.js`
+
+- Reproduction steps:
+  1. Start a fresh real TUI session in `.autolabos-validation` on the rebuilt runtime.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let the staged LLM attempt localize branch focus and submit the native Codex OAuth request.
+  4. Inspect `implement_experiments/status.json`, `implement_experiments/progress.jsonl`, `events.jsonl`, and `run_record.json`.
+
+- Expected behavior:
+  - The retry should progress beyond `Submitting request to Codex OAuth Responses backend.`
+  - After streamed Codex output arrives, the run should materialize a structured implementation result or at least salvage non-empty final text for parsing into a runnable bundle.
+
+- Actual behavior:
+  - Before the parser fix, the same live retry progressed to:
+    - `Submitting request to Codex OAuth backend.`
+    - `Submitting request to Codex OAuth Responses backend.`
+    - `Received streamed Codex OAuth output.`
+    - then failed with:
+      - `Implementation execution failed before any runnable implementation was produced: Codex OAuth backend returned no output text (status=in_progress).`
+  - After the parser fix and same-flow revalidation, the retried run no longer reproduces that failure.
+  - The live flow now advances past native Codex text materialization, validates the returned implementation, and continues into later branch/attempt handling.
+  - A separate downstream problem remains possible in the same node when the implementer references artifacts that were never materialized, but that is no longer the native stream-materialization boundary covered by `LV-099`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: no separate fresh-from-bootstrap repro was needed for this parser boundary; the same persisted run was retried from a freshly relaunched rebuilt TUI session.
+  - Existing session: before the fix, the same persisted run failed at `Codex OAuth backend returned no output text (status=in_progress)` after streamed output arrived.
+  - Revalidated session: after the fix, that same persisted run proceeds past text materialization and into later implementation validation/retry handling.
+  - Fresh-vs-existing divergence is not the issue here; the original symptom disappeared in the same persisted run on a rebuilt fresh TUI session.
+
+- Root cause hypothesis:
+  - Type: `race_timing_bug`
+  - Hypothesis confirmed: the native Codex OAuth stream parser was too narrow. It trusted `response.output_text.delta` plus `response.completed` as the primary success path and could drop usable text when the backend emitted completion-bearing `item.completed`/`*.done`-style events without a final `response.completed` payload.
+
+- Code/test changes:
+  - Code:
+    - `src/integrations/codex/oauthResponsesTextClient.ts`
+      - no longer infers `previous_response_id` from `threadId`
+      - now salvages completion-bearing text candidates from `item.completed`, `message.completed`, and `*.done`/`*.completed` stream events
+      - now merges response payload snapshots across stream events instead of trusting only `response.completed`
+      - now selects the best available final text from streamed deltas, payload output, and salvaged completion candidates
+    - `src/core/llm/client.ts`
+      - stopped auto-forwarding `threadId` as `previousResponseId` for native Codex OAuth completions
+    - `src/integrations/codex/codexCliClient.ts`
+      - stopped auto-forwarding `threadId` as `previousResponseId` when the native Codex wrapper issues a text completion
+  - Tests:
+    - `tests/codexOAuthTextClient.test.ts`
+      - added regression coverage that `threadId` alone no longer serializes `previous_response_id`
+      - explicit `previousResponseId` still serializes when intentionally provided
+      - added regressions that salvage text from `item.completed` without `response.completed`
+      - added regressions that salvage text from `response.output_text.done`
+
+- Regression status:
+  - Automated regression test linked: yes (`tests/codexOAuthTextClient.test.ts`)
+  - Re-validation result: fixed in the same live retry flow; the original `status=in_progress` no-output failure no longer reproduces.
+
+- Most likely failing boundary:
+  - resolved native Codex OAuth stream-materialization boundary inside `implement_experiments` staged LLM mode
+
+- Follow-up risks:
+  - Later `implement_experiments` validation can still fail for unrelated reasons such as missing materialized artifacts or branch-level implementation drift.
+  - Long-running prompts may still expose new native Codex event shapes; the current parser is broader, but future provider changes could require more salvage coverage.
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_record.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/verify_report.json`
+
+- Recommended next step:
+  - continue the same live `implement_experiments` flow and treat any remaining failure after text materialization as a new downstream issue rather than a recurrence of `LV-099`.
+
+- Resolution notes:
+  - The same persisted run `73050f85-6b56-4385-8c31-2ec69a5b7dec` was retried again from a freshly relaunched rebuilt TUI session.
+  - The retried flow no longer reproduced `Codex OAuth backend returned no output text (status=in_progress)`.
+  - In the same live run, `implement_experiments` progressed beyond text materialization, validated the returned implementation, and emitted later-stage observations such as:
+    - `Implementer referenced artifact(s) that were not materialized: ...`
+    - `Restored 36 path(s) before retrying the next candidate branch.`
+    - `Implementation attempt 2/3 started.`
+  - Those later observations confirm the original native stream-materialization boundary was crossed successfully and the parser fix changed the runtime behavior in the intended same flow.
+
+## Issue: LV-098
+
+- Status: in_progress
+- Validation target: fresh external-workspace TUI `/brief start --latest` rerun for IEEE PEFT papers that previously reached `pdf_extract_failed` abstract fallback despite a nominal `pdf_url`
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation/.live/abstract-image-rerun-wgj0hk`
+  - run: `4600d589-7162-4d46-8d2e-a6939713bafc`
+  - target papers:
+    - `doi:10.1109/lsp.2024.3377590` (`Chain-of-LoRA...`)
+    - `doi:10.1109/globecom52923.2024.10901572` (`Federated Low-Rank Adaptation...`)
+
+- Reproduction steps:
+  1. Start a fresh external workspace and run real TUI `/brief start --latest`.
+  2. Let `collect_papers` finish and `analyze_papers` reach the two IEEE target papers above.
+  3. Observe source resolution log lines and inspect the cached `analysis_cache/pdfs/*` and `analysis_cache/page_images/*` artifacts for those paper ids.
+
+- Expected behavior:
+  - If a real PDF is available but text extraction is unusable, `resolvePaperTextSource(...)` should preserve rendered page images and log:
+    - `PDF extraction produced no usable text. Falling back to abstract with supplemental page images.`
+  - The later analyzer path should then attach those images on the extractor call.
+
+- Actual behavior:
+  - The fresh rerun still logs:
+    - `[doi:10.1109/lsp.2024.3377590] PDF extraction produced no usable text. Falling back to abstract.`
+    - `[doi:10.1109/globecom52923.2024.10901572] PDF extraction produced no usable text. Falling back to abstract.`
+  - Both papers persist as `source=abstract` with no supplemental page images.
+  - Direct inspection of the cached pseudo-PDFs shows they are HTML, not PDF:
+    - `<!DOCTYPE html> ... <script> var MEMBER_PROFILE_...`
+  - Their page-image directories exist but contain no PNG files, so this is not a later analyzer drop; the renderer never received a real PDF to rasterize.
+
+- Fresh vs existing session comparison:
+  - Fresh session: the earlier fresh rerun in `.live/abstract-image-rerun-wgj0hk` reproduces the IEEE staging-url failure, the newer fresh rerun in `.live/ieee-filter-rerun-9RKL01` proves the new `no_pdf_url` path is working for other unusable metadata rows, and the targeted fresh rerun in `.live/ieee-targeted-fresh-20260416-213634` confirms both IEEE targets are selected in the active top-30 with `pdf_availability_score: 0`, but the live node has not yet advanced far enough to emit their per-paper source-resolution logs.
+  - Existing session: no separate resumed-session divergence has been observed; the defect is anchored at fresh source resolution against persisted corpus metadata before resume handling matters.
+  - Divergence: no meaningful fresh-vs-existing divergence established so far; the remaining gap is target-paper coverage in the fresh rerun.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: persisted corpus rows can carry invalid IEEE staging `pdf_url` values from provider metadata (for example `http://xplorestaging.ieee.org/...pdf?arnumber=...`) that return HTML instead of a PDF binary. When those URLs are cached, the image-rescue path never gets a real PDF to render, so abstract fallback cannot preserve supplemental page images.
+
+- Code/test changes:
+  - Code:
+    - `src/core/analysis/paperText.ts`
+      - added a smaller `pdftoppm -scale-to 1024` rescue render attempt for real PDFs that fail default rasterization.
+      - added invalid-PDF detection so HTML masquerading as `.pdf` is no longer silently cached as a PDF.
+      - now treats known unusable IEEE staging hosts such as `xplorestaging.ieee.org` as non-usable `pdf_url` metadata before download.
+  - Tests:
+    - `tests/paperTextImageFallback.test.ts`
+    - `tests/paperText.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes (`tests/paperText.test.ts`, `tests/paperTextImageFallback.test.ts`)
+  - Re-validation result: pending same-flow confirmation for the two IEEE targets; the latest fresh reruns already show real `No PDF URL found. Using abstract fallback.` behavior for other unusable rows in the same patched runtime, and the targeted rerun now proves both IEEE targets are in the selected set under the patched resolver.
+
+- Most likely failing boundary:
+  - persisted metadata / source-resolution boundary
+
+- Follow-up risks:
+  - the target IEEE papers may still require alternate public-PDF enrichment even after the staging host is rejected, so this patch may only convert the failure from fake-PDF handling to honest `no_pdf_url` fallback.
+  - even with both targets selected, long-running earlier papers can delay the same-flow per-paper confirmation because the node is still bounded and sequential enough that rank 4/25 may take time to surface in logs.
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.live/abstract-image-rerun-wgj0hk/.autolabos/runs/4600d589-7162-4d46-8d2e-a6939713bafc/events.jsonl`
+  - `.autolabos-validation/.live/abstract-image-rerun-wgj0hk/.autolabos/runs/4600d589-7162-4d46-8d2e-a6939713bafc/corpus.jsonl`
+  - `.autolabos-validation/.live/abstract-image-rerun-wgj0hk/.autolabos/runs/4600d589-7162-4d46-8d2e-a6939713bafc/analysis_cache/pdfs/doi_10.1109_lsp.2024.3377590.pdf`
+  - `.autolabos-validation/.live/abstract-image-rerun-wgj0hk/.autolabos/runs/4600d589-7162-4d46-8d2e-a6939713bafc/analysis_cache/pdfs/doi_10.1109_globecom52923.2024.10901572.pdf`
+  - `.autolabos-validation/.live/abstract-image-rerun-wgj0hk/.autolabos/runs/4600d589-7162-4d46-8d2e-a6939713bafc/analysis_cache/page_images/doi_10.1109_lsp.2024.3377590/`
+  - `.autolabos-validation/.live/abstract-image-rerun-wgj0hk/.autolabos/runs/4600d589-7162-4d46-8d2e-a6939713bafc/analysis_cache/page_images/doi_10.1109_globecom52923.2024.10901572/`
+  - `.autolabos-validation/.live/ieee-filter-rerun-9RKL01/.autolabos/runs/686eee86-9033-4ad9-8017-af4b3bf2d7f0/events.jsonl`
+  - `.autolabos-validation/.live/ieee-filter-rerun-9RKL01/.autolabos/runs/686eee86-9033-4ad9-8017-af4b3bf2d7f0/corpus.jsonl`
+  - `.autolabos-validation/.live/ieee-targeted-fresh-20260416-213634/.autolabos/runs/00575beb-de5b-4c57-9316-0377db0f2c4f/events.jsonl`
+  - `.autolabos-validation/.live/ieee-targeted-fresh-20260416-213634/.autolabos/runs/00575beb-de5b-4c57-9316-0377db0f2c4f/analysis_manifest.json`
+  - `.autolabos-validation/.live/ieee-targeted-fresh-20260416-213634/.autolabos/runs/00575beb-de5b-4c57-9316-0377db0f2c4f/corpus.jsonl`
+
+- Recommended next step:
+  - add a metadata-repair or alternate-PDF-resolution step for known bad IEEE staging URLs before `downloadPdf(...)` is attempted, or explicitly downgrade those rows as `invalid_pdf_content` with a clearer operator-facing note.
 
 ## Issue: LV-097
 

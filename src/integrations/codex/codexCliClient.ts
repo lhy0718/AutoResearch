@@ -251,7 +251,6 @@ export class CodexNativeClient {
       result = await this.oauthTextClient.complete({
         prompt: opts.prompt,
         threadId: opts.threadId,
-        previousResponseId: opts.threadId,
         systemPrompt: opts.systemPrompt,
         inputImagePaths: opts.inputImagePaths,
         model: opts.model || this.defaults.model,

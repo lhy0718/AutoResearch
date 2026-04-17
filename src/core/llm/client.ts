@@ -138,7 +138,6 @@ export class CodexOAuthResponsesLLMClient implements LLMClient {
     const result = await this.codexOAuth.complete({
       prompt,
       threadId: opts?.threadId,
-      previousResponseId: opts?.threadId,
       systemPrompt: opts?.systemPrompt,
       inputImagePaths: opts?.inputImagePaths,
       model: opts?.model || this.defaults.model,

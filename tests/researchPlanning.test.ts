@@ -61,6 +61,26 @@ class QueueProgressThenHangLLMClient extends MockLLMClient {
   }
 }
 
+class AbortAwareHangingLLMClient extends MockLLMClient {
+  aborted = false;
+
+  override async complete(
+    _prompt: string,
+    opts?: { abortSignal?: AbortSignal }
+  ): Promise<{ text: string }> {
+    return await new Promise<{ text: string }>((_, reject) => {
+      opts?.abortSignal?.addEventListener(
+        "abort",
+        () => {
+          this.aborted = true;
+          reject(new Error("Operation aborted by user"));
+        },
+        { once: true }
+      );
+    });
+  }
+}
+
 describe("researchPlanning helpers", () => {
   it("generates structured hypothesis candidates from LLM JSON", async () => {
     const llm = new QueueJsonLLMClient([
@@ -1130,5 +1150,47 @@ describe("researchPlanning helpers", () => {
     expect(result.selected.evaluation_steps).toContain(
       "Move the next bounded local branch materially closer to the registered pilot scope while keeping the run locally executable."
     );
+  });
+
+  it("aborts the in-flight experiment design completion when the timeout fires", async () => {
+    const llm = new AbortAwareHangingLLMClient();
+
+    const result = await designExperimentsFromHypotheses({
+      llm,
+      runTitle: "Budget-aware reasoning",
+      runTopic: "Budget-aware reasoning",
+      objectiveMetric: "accuracy_delta_vs_baseline",
+      hypotheses: [
+        {
+          hypothesis_id: "h_1",
+          text: "Adaptive stopping improves budget-aware reasoning quality."
+        }
+      ],
+      constraintProfile: {
+        source: "heuristic_fallback",
+        collect: {},
+        writing: {},
+        experiment: {
+          designNotes: [],
+          implementationNotes: [],
+          evaluationNotes: []
+        },
+        assumptions: []
+      },
+      objectiveProfile: {
+        source: "heuristic_fallback",
+        raw: "accuracy_delta_vs_baseline",
+        primaryMetric: "accuracy_delta_vs_baseline",
+        preferredMetricKeys: ["accuracy_delta_vs_baseline"],
+        analysisFocus: [],
+        paperEmphasis: [],
+        assumptions: []
+      },
+      timeoutMs: 5
+    });
+
+    expect(result.source).toBe("fallback");
+    expect(result.fallbackReason).toContain("experiment_design_timeout:5ms");
+    expect(llm.aborted).toBe(true);
   });
 });

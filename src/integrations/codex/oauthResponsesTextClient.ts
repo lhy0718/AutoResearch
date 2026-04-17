@@ -50,7 +50,12 @@ interface CodexResponsesApiResponse {
 interface CodexResponsesEvent {
   type?: string;
   delta?: string;
+  text?: string;
   response?: CodexResponsesApiResponse;
+  item?: Record<string, unknown>;
+  content?: unknown;
+  output_text?: string;
+  message?: string;
 }
 
 export class CodexOAuthResponsesTextClient {
@@ -136,9 +141,8 @@ export class CodexOAuthResponsesTextClient {
       }
     };
 
-    const previousResponseId = opts.previousResponseId || opts.threadId;
-    if (previousResponseId) {
-      body.previous_response_id = previousResponseId;
+    if (opts.previousResponseId) {
+      body.previous_response_id = opts.previousResponseId;
     }
 
     opts.onProgress?.("Submitting request to Codex OAuth Responses backend.");
@@ -236,6 +240,7 @@ async function readCodexStream(
   let buffer = "";
   let text = "";
   let payload: CodexResponsesApiResponse = {};
+  const candidateTexts = new Set<string>();
 
   while (true) {
     const { done, value } = await reader.read();
@@ -249,13 +254,10 @@ async function readCodexStream(
       buffer = buffer.slice(boundaryIndex + 2);
       const event = parseSseFrame(frame);
       if (event) {
-        if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
-          text += event.delta;
-        }
-        if (event.type === "response.completed" && event.response) {
-          payload = event.response;
-        } else if (event.type === "response.created" && event.response && !payload.id) {
-          payload = event.response;
+        text += extractDeltaText(event);
+        rememberCandidateText(candidateTexts, extractCompletedTextCandidate(event));
+        if (event.response) {
+          payload = mergePayload(payload, event.response);
         }
       }
       boundaryIndex = buffer.indexOf("\n\n");
@@ -266,17 +268,16 @@ async function readCodexStream(
   if (trailing) {
     const event = parseSseFrame(trailing);
     if (event) {
-      if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
-        text += event.delta;
-      }
-      if (event.type === "response.completed" && event.response) {
-        payload = event.response;
+      text += extractDeltaText(event);
+      rememberCandidateText(candidateTexts, extractCompletedTextCandidate(event));
+      if (event.response) {
+        payload = mergePayload(payload, event.response);
       }
     }
   }
 
   onProgress?.("Received streamed Codex OAuth output.");
-  return { text: text.trim(), payload };
+  return { text: selectBestText(text, payload, candidateTexts), payload };
 }
 
 function parseSseFrame(frame: string): CodexResponsesEvent | undefined {
@@ -310,6 +311,139 @@ function extractOutputText(payload: CodexResponsesApiResponse): string {
     }
   }
   return parts.join("").trim();
+}
+
+function extractDeltaText(event: CodexResponsesEvent): string {
+  const type = typeof event.type === "string" ? event.type : "";
+  if (!type.includes("delta")) {
+    return "";
+  }
+  return (
+    asString(event.delta) ||
+    extractTextFromUnknown(event.item) ||
+    extractTextFromUnknown(event.content) ||
+    ""
+  );
+}
+
+function extractCompletedTextCandidate(event: CodexResponsesEvent): string | undefined {
+  const type = typeof event.type === "string" ? event.type : "";
+
+  if (
+    type === "response.completed" ||
+    type === "item.completed" ||
+    type === "message.completed" ||
+    type.endsWith(".completed") ||
+    type.endsWith(".done")
+  ) {
+    return (
+      extractTextFromUnknown(event.item) ||
+      extractTextFromUnknown(event.content) ||
+      asNonEmptyString(event.text) ||
+      asNonEmptyString(event.output_text) ||
+      asNonEmptyString(event.message) ||
+      extractOutputText(event.response || {})
+    );
+  }
+
+  return undefined;
+}
+
+function extractTextFromUnknown(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || undefined;
+  }
+  if (Array.isArray(value)) {
+    const joined = value.map((item) => extractTextFromUnknown(item) || "").join("").trim();
+    return joined || undefined;
+  }
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  const direct =
+    asNonEmptyString(record.text) ||
+    asNonEmptyString(record.output_text) ||
+    asNonEmptyString(record.delta) ||
+    asNonEmptyString(record.message) ||
+    asNonEmptyString(record.content);
+  if (direct) {
+    return direct;
+  }
+
+  const nested = extractTextFromUnknown(record.item) || extractTextFromUnknown(record.content);
+  if (nested) {
+    return nested;
+  }
+
+  const textValue = record.text;
+  if (textValue && typeof textValue === "object") {
+    const valueText = asNonEmptyString((textValue as Record<string, unknown>).value);
+    if (valueText) {
+      return valueText;
+    }
+  }
+
+  return undefined;
+}
+
+function mergePayload(
+  current: CodexResponsesApiResponse,
+  next: CodexResponsesApiResponse
+): CodexResponsesApiResponse {
+  return {
+    ...current,
+    ...next,
+    output: next.output && next.output.length > 0 ? next.output : current.output,
+    usage: next.usage || current.usage,
+    error: next.error || current.error,
+    incomplete_details: next.incomplete_details || current.incomplete_details
+  };
+}
+
+function rememberCandidateText(target: Set<string>, text: string | undefined): void {
+  const trimmed = text?.trim();
+  if (trimmed) {
+    target.add(trimmed);
+  }
+}
+
+function selectBestText(
+  deltaText: string,
+  payload: CodexResponsesApiResponse,
+  candidateTexts: Set<string>
+): string {
+  const options = [deltaText.trim(), extractOutputText(payload), ...candidateTexts].filter(Boolean);
+  if (options.length === 0) {
+    return "";
+  }
+
+  return options.sort((a, b) => scoreTextCandidate(b) - scoreTextCandidate(a))[0] || "";
+}
+
+function scoreTextCandidate(text: string): number {
+  let score = text.length;
+  if (text.startsWith("{") || text.startsWith("[")) {
+    score += 2_000;
+  }
+  if (/[}\]]\s*$/u.test(text)) {
+    score += 1_000;
+  }
+  return score;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function asNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed || undefined;
 }
 
 function buildMissingOutputError(payload: CodexResponsesApiResponse): string {

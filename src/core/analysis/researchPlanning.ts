@@ -769,26 +769,30 @@ export async function designExperimentsFromHypotheses(args: {
 
   try {
     args.onProgress?.(`Submitting experiment design request for ${args.hypotheses.length} hypothesis/hypotheses.`);
-    const completion = await withTimeout(
-      args.llm.complete(
-        buildDesignPrompt(
-          args.runTitle,
-          args.runTopic,
-          args.objectiveMetric,
-          args.hypotheses,
-          args.constraintProfile,
-          args.objectiveProfile,
-          args.retryContext,
-          candidateCount
-        ),
-        {
-          systemPrompt: prompts.systemPrompt,
-          onProgress: (event) => emitProgress(args.onProgress, "Design LLM", event)
-        }
-      ),
-      timeoutMs,
-      "experiment_design_timeout"
+    const designPrompt = buildDesignPrompt(
+      args.runTitle,
+      args.runTopic,
+      args.objectiveMetric,
+      args.hypotheses,
+      args.constraintProfile,
+      args.objectiveProfile,
+      args.retryContext,
+      candidateCount
     );
+    const completion = await completeWithCapturedProgress({
+      timeoutMs,
+      label: "experiment_design_timeout",
+      tracePatchFactory: () => ({}),
+      promiseFactory: (captureProgress, abortSignal) =>
+        args.llm.complete(designPrompt, {
+          systemPrompt: prompts.systemPrompt,
+          abortSignal,
+          onProgress: (event) => {
+            captureProgress(event);
+            emitProgress(args.onProgress, "Design LLM", event);
+          }
+        })
+    });
     args.onProgress?.("Received experiment design output. Parsing JSON.");
     const parsed = parseDesignJson(completion.text);
     const candidates = normalizeDesignCandidates(

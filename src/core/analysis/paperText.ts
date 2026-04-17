@@ -311,7 +311,11 @@ function buildEvenlySpacedPageNumbers(totalPages: number, count: number): number
 }
 
 export function resolvePaperPdfUrl(paper: AnalysisCorpusRow): string | undefined {
-  return toNonEmptyString(paper.pdf_url) || extractPdfLikeUrl(paper.url);
+  const directPdfUrl = toNonEmptyString(paper.pdf_url);
+  if (directPdfUrl && !isKnownUnusablePdfUrl(directPdfUrl)) {
+    return directPdfUrl;
+  }
+  return extractPdfLikeUrl(paper.url);
 }
 
 
@@ -381,7 +385,15 @@ async function readCachedPageImages(
 
 async function downloadPdf(url: string, filePath: string, abortSignal?: AbortSignal): Promise<void> {
   if (await fileExists(filePath)) {
-    return;
+    try {
+      const cached = await fs.readFile(filePath);
+      if (looksLikePdfBuffer(cached)) {
+        return;
+      }
+      await fs.rm(filePath, { force: true });
+    } catch {
+      // Fall through and re-fetch.
+    }
   }
   const response = await fetch(url, {
     headers: {
@@ -394,8 +406,34 @@ async function downloadPdf(url: string, filePath: string, abortSignal?: AbortSig
     throw new Error(`pdf_download_failed:${response.status}`);
   }
   const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  if (!looksLikePdfBuffer(buffer)) {
+    const contentType = response.headers.get("content-type")?.trim() || "unknown";
+    throw new Error(`pdf_download_invalid_content:${contentType}`);
+  }
   await ensureDir(path.dirname(filePath));
-  await fs.writeFile(filePath, Buffer.from(arrayBuffer));
+  await fs.writeFile(filePath, buffer);
+}
+
+function looksLikePdfBuffer(buffer: Buffer): boolean {
+  if (buffer.length === 0) {
+    return false;
+  }
+  const preview = buffer.subarray(0, Math.min(buffer.length, 1024)).toString("latin1");
+  return preview.trimStart().startsWith("%PDF-");
+}
+
+function isKnownUnusablePdfUrl(url: string): boolean {
+  const host = safeHost(url);
+  return host === "xplorestaging.ieee.org";
+}
+
+function safeHost(url: string): string | undefined {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return undefined;
+  }
 }
 
 async function extractPdfPageTexts(filePath: string, abortSignal?: AbortSignal): Promise<string[]> {
@@ -442,17 +480,23 @@ async function renderPdfPageImages(args: {
     const stem = path.join(args.imageDir, `page-${String(page).padStart(3, "0")}`);
     const pngPath = `${stem}.png`;
     if (!(await fileExists(pngPath))) {
-      try {
-        await execFileAsync(
-          "pdftoppm",
-          ["-f", String(page), "-l", String(page), "-singlefile", "-png", args.pdfPath, stem],
-          {
+      const attemptArgvSets = [
+        ["-f", String(page), "-l", String(page), "-singlefile", "-png", args.pdfPath, stem],
+        // Some PDFs fail at the default raster size but succeed when we force a smaller render.
+        ["-f", String(page), "-l", String(page), "-singlefile", "-png", "-scale-to", "1024", args.pdfPath, stem]
+      ];
+      for (const argv of attemptArgvSets) {
+        try {
+          await execFileAsync("pdftoppm", argv, {
             signal: args.abortSignal,
             maxBuffer: 8 * 1024 * 1024
-          }
-        );
-      } catch {
-        continue;
+          });
+        } catch {
+          continue;
+        }
+        if (await fileExists(pngPath)) {
+          break;
+        }
       }
     }
     if (await fileExists(pngPath)) {

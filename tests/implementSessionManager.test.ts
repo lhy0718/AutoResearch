@@ -802,6 +802,87 @@ describe("ImplementSessionManager", () => {
     expect(verifyReport?.summary).not.toContain("not materialized");
   });
 
+  it("does not fail implement-stage validation when the only missing declared artifact is a deferred public experiment result", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-deferred-public-results-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Deferred Public Results Run",
+      topic: "agent reasoning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const privateScriptPath = path.join(runDir, "run_tabular_baselines.py");
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "run_tabular_baselines.py");
+    const deferredSummaryPath = path.join(publicDir, "results", "summary.json");
+    const deferredConditionsPath = path.join(publicDir, "results", "condition_results.json");
+    const deferredReportPath = path.join(publicDir, "results", "report.md");
+    const codex = {
+      runTurnStream: async ({ onEvent }: { onEvent?: (event: Record<string, unknown>) => void }) => {
+        writeFileSync(privateScriptPath, "print('ok')\n", "utf8");
+        onEvent?.({ type: "file.changed", path: privateScriptPath });
+        return {
+          threadId: "thread-impl-deferred-public-results",
+          finalText: JSON.stringify({
+            summary: "Implemented the runnable script; run_experiments will materialize the public result bundle.",
+            run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+            changed_files: [privateScriptPath],
+            artifacts: [
+              privateScriptPath,
+              deferredSummaryPath,
+              deferredConditionsPath,
+              deferredReportPath
+            ],
+            public_artifacts: [
+              publicScriptPath,
+              deferredSummaryPath,
+              deferredConditionsPath,
+              deferredReportPath
+            ],
+            script_path: publicScriptPath,
+            experiment_mode: "real_execution"
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    const result = await manager.run(run);
+    const verifyReport = await memory.get<{ status: string; summary: string }>(
+      "implement_experiments.verify_report"
+    );
+
+    expect(result.scriptPath).toBe(publicScriptPath);
+    expect(existsSync(deferredSummaryPath)).toBe(false);
+    expect(existsSync(deferredConditionsPath)).toBe(false);
+    expect(existsSync(deferredReportPath)).toBe(false);
+    expect(verifyReport).toMatchObject({
+      status: "pass"
+    });
+    expect(verifyReport?.summary).not.toContain("not materialized");
+  });
+
   it("does not fail local verification when the verification command references only deferred metrics output", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-verify-deferred-metrics-"));
     tempDirs.push(workspace);
@@ -3992,6 +4073,93 @@ describe("ImplementSessionManager", () => {
     }
   });
 
+  it("captures partial staged_llm progress artifacts before a bounded timeout fires", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-openai-timeout-partial-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const originalTimeout = process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS;
+    const originalHeartbeat = process.env.AUTOLABOS_IMPLEMENT_LLM_PROGRESS_HEARTBEAT_MS;
+    process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS = "10";
+    process.env.AUTOLABOS_IMPLEMENT_LLM_PROGRESS_HEARTBEAT_MS = "1";
+
+    try {
+      const runStore = new RunStore(paths);
+      const run = await runStore.createRun({
+        title: "Implementation OpenAI Timeout Partial Run",
+        topic: "small model reasoning",
+        constraints: ["recent"],
+        objectiveMetric: "accuracy"
+      });
+
+      const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+      mkdirSync(runDir, { recursive: true });
+      writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+      const codex = {
+        runTurnStream: async () => {
+          throw new Error("Codex should not be used when llm_mode=openai_api");
+        }
+      } as unknown as CodexNativeClient;
+      const llm = {
+        complete: async (_prompt: string, opts?: { abortSignal?: AbortSignal; onProgress?: (event: { type: "status" | "delta"; text: string }) => void }) =>
+          await new Promise((_, reject) => {
+            opts?.onProgress?.({ type: "delta", text: "partial hypothesis draft" });
+            const signal = opts?.abortSignal;
+            if (!signal) {
+              return;
+            }
+            signal.addEventListener(
+              "abort",
+              () => reject(new Error("aborted by timeout")),
+              { once: true }
+            );
+          })
+      };
+
+      const config = createTestConfig();
+      config.providers.llm_mode = "openai_api";
+      const manager = new ImplementSessionManager({
+        config,
+        codex,
+        llm: llm as any,
+        aci: new LocalAciAdapter(),
+        eventStream: new InMemoryEventStream(),
+        runStore,
+        workspaceRoot: workspace
+      });
+
+      await expect(manager.run(run)).rejects.toThrow(
+        "implement_experiments staged_llm request timed out after 10ms"
+      );
+      const partialText = readFileSync(
+        path.join(runDir, "implement_experiments", "partial_response.txt"),
+        "utf8"
+      );
+      const progressLog = readFileSync(
+        path.join(runDir, "implement_experiments", "progress.jsonl"),
+        "utf8"
+      );
+
+      expect(partialText).toContain("partial hypothesis draft");
+      expect(progressLog).toContain("LLM> partial hypothesis draft");
+      expect(progressLog).toContain("staged_llm timeout preserved");
+    } finally {
+      if (originalTimeout === undefined) {
+        delete process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS;
+      } else {
+        process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS = originalTimeout;
+      }
+      if (originalHeartbeat === undefined) {
+        delete process.env.AUTOLABOS_IMPLEMENT_LLM_PROGRESS_HEARTBEAT_MS;
+      } else {
+        process.env.AUTOLABOS_IMPLEMENT_LLM_PROGRESS_HEARTBEAT_MS = originalHeartbeat;
+      }
+    }
+  });
+
   it("applies a bounded staged_llm timeout by default", () => {
     const config = createTestConfig();
     config.providers.llm_mode = "openai_api";
@@ -4209,7 +4377,7 @@ describe("ImplementSessionManager", () => {
     const publicConfigPath = path.join(publicDir, "config.json");
     let codexCalls = 0;
     let llmCalls = 0;
-    let stagedFallbackPrompt = "";
+    const stagedFallbackPrompts: string[] = [];
     let stagedFallbackSystemPrompt = "";
     const codex = {
       runTurnStream: async () => {
@@ -4236,29 +4404,83 @@ describe("ImplementSessionManager", () => {
     const llm = {
       complete: async (prompt: string, options?: { systemPrompt?: string }) => {
         llmCalls += 1;
-        stagedFallbackPrompt = prompt;
+        stagedFallbackPrompts.push(prompt);
         stagedFallbackSystemPrompt = options?.systemPrompt || "";
+        if (llmCalls === 1) {
+          return {
+            text: JSON.stringify({
+              summary: "Implemented a runnable experiment script through staged_llm fallback.",
+              run_command: `python3 ${JSON.stringify(publicScriptPath)} --config ${JSON.stringify(publicConfigPath)}`,
+              test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+              changed_files: [publicScriptPath, publicConfigPath],
+              artifacts: [publicScriptPath, publicConfigPath],
+              public_artifacts: [publicScriptPath, publicConfigPath],
+              script_path: publicScriptPath,
+              metrics_path: path.join(runDir, "metrics.json"),
+              experiment_mode: "real_execution",
+              decomposition_plan: {
+                objective: "Materialize the smallest runnable PEFT bundle.",
+                strategy: "purpose_adaptive",
+                rationale: "This experiment needs one runner script and one config file.",
+                units: [
+                  {
+                    id: "runner",
+                    unit_type: "text_file",
+                    title: "Runner script",
+                    purpose: "Execute the bounded PEFT experiment.",
+                    generation_mode: "materialize_text_file",
+                    target_path: publicScriptPath,
+                    verification_focus: ["run_command"]
+                  },
+                  {
+                    id: "config",
+                    unit_type: "config_file",
+                    title: "Experiment config",
+                    purpose: "Declare the bounded experiment settings.",
+                    generation_mode: "materialize_text_file",
+                    target_path: publicConfigPath,
+                    depends_on: ["runner"],
+                    verification_focus: ["config_loads"]
+                  }
+                ]
+              },
+              file_plan: [publicScriptPath, publicConfigPath]
+            }),
+            threadId: "thread-staged-fallback-scaffold"
+          };
+        }
+        if (llmCalls === 2) {
+          return {
+            text: JSON.stringify({
+              strategy: "test_runner_chunks",
+              rationale: "Keep the runner in one bounded chunk for this regression.",
+              chunks: [
+                {
+                  id: "runner_full",
+                  title: "Runner full content",
+                  purpose: "Materialize the full runner content in one chunk.",
+                  content_kind: "code_section",
+                  include_imports: true,
+                  include_entrypoint: true
+                }
+              ]
+            }),
+            threadId: "thread-staged-fallback-runner-plan"
+          };
+        }
+        if (llmCalls === 3) {
+          return {
+            text: JSON.stringify({
+              chunk_id: "runner_full",
+              content: "print('ok')"
+            }),
+            threadId: "thread-staged-fallback-script"
+          };
+        }
         return {
           text: JSON.stringify({
-            summary: "Implemented a runnable experiment script through staged_llm fallback.",
-            run_command: `python3 ${JSON.stringify(publicScriptPath)} --config ${JSON.stringify(publicConfigPath)}`,
-            test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
-            changed_files: [publicScriptPath, publicConfigPath],
-            artifacts: [publicScriptPath, publicConfigPath],
-            public_artifacts: [publicScriptPath, publicConfigPath],
-            script_path: publicScriptPath,
-            metrics_path: path.join(runDir, "metrics.json"),
-            experiment_mode: "real_execution",
-            file_edits: [
-              {
-                path: publicScriptPath,
-                content: "print('ok')"
-              },
-              {
-                path: publicConfigPath,
-                content: "{\"pilot_size\": 4}\n"
-              }
-            ]
+            path: publicConfigPath,
+            content: "{\"pilot_size\": 4}\n"
           }),
           threadId: "thread-staged-fallback"
         };
@@ -4278,16 +4500,25 @@ describe("ImplementSessionManager", () => {
     const result = await manager.run(run);
 
     expect(codexCalls).toBe(0);
-    expect(llmCalls).toBe(1);
+    expect(llmCalls).toBe(4);
     expect(result.verifyReport).toMatchObject({ status: "pass" });
     expect(result.scriptPath).toBe(publicScriptPath);
     expect(result.publicArtifacts).toContain(publicScriptPath);
     expect(result.publicArtifacts).toContain(publicConfigPath);
     expect(readFileSync(publicScriptPath, "utf8")).toBe("print('ok')");
     expect(readFileSync(publicConfigPath, "utf8")).toContain("\"pilot_size\": 4");
-    expect(stagedFallbackPrompt).toContain("Implementation attempt 1/3.");
-    expect(stagedFallbackPrompt).toContain("Include file_edits entries with the full UTF-8 contents");
-    expect(stagedFallbackPrompt).not.toContain("Previous local verification:");
+    const decompositionPlan = JSON.parse(
+      readFileSync(path.join(runDir, "implement_experiments", "decomposition_plan.json"), "utf8")
+    ) as { units: Array<{ target_path?: string }> };
+    expect(decompositionPlan.units.map((unit) => unit.target_path)).toEqual([publicScriptPath, publicConfigPath]);
+    expect(stagedFallbackPrompts[0]).toContain("Implementation attempt 1/3.");
+    expect(stagedFallbackPrompts[0]).toContain("scaffold-first contract");
+    expect(stagedFallbackPrompts[0]).toContain("decomposition_plan");
+    expect(stagedFallbackPrompts[0]).toContain("file_plan");
+    expect(stagedFallbackPrompts[0]).not.toContain("Previous local verification:");
+    expect(stagedFallbackPrompts[1]).toContain("Staged implement materialization subplan.");
+    expect(stagedFallbackPrompts[2]).toContain(`Target file: ${publicScriptPath}`);
+    expect(stagedFallbackPrompts[3]).toContain(`Target file: ${publicConfigPath}`);
     expect(stagedFallbackSystemPrompt).not.toContain("Filesystem-blocker recovery mode:");
   });
 
@@ -4329,23 +4560,62 @@ describe("ImplementSessionManager", () => {
     const llm = {
       complete: async () => {
         llmCalls += 1;
+        if (llmCalls === 1) {
+          return {
+            text: JSON.stringify({
+              summary: "Implemented the experiment directly through staged_llm recovery mode.",
+              run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
+              test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+              changed_files: [publicScriptPath],
+              artifacts: [publicScriptPath],
+              public_artifacts: [publicScriptPath],
+              script_path: publicScriptPath,
+              metrics_path: path.join(runDir, "metrics.json"),
+              experiment_mode: "real_execution",
+              decomposition_plan: {
+                objective: "Materialize the primary experiment runner only.",
+                strategy: "purpose_adaptive",
+                rationale: "This rerun only needs the main script.",
+                units: [
+                  {
+                    id: "runner",
+                    unit_type: "text_file",
+                    title: "Runner script",
+                    purpose: "Provide the main runnable experiment entrypoint.",
+                    generation_mode: "materialize_text_file",
+                    target_path: publicScriptPath,
+                    verification_focus: ["run_command"]
+                  }
+                ]
+              },
+              file_plan: [publicScriptPath]
+            }),
+            threadId: "thread-known-fallback-scaffold"
+          };
+        }
+        if (llmCalls === 2) {
+          return {
+            text: JSON.stringify({
+              strategy: "test_runner_chunks",
+              rationale: "Keep the single runner in one bounded chunk for this regression.",
+              chunks: [
+                {
+                  id: "runner_full",
+                  title: "Runner full content",
+                  purpose: "Materialize the full runner content in one chunk.",
+                  content_kind: "code_section",
+                  include_imports: true,
+                  include_entrypoint: true
+                }
+              ]
+            }),
+            threadId: "thread-known-fallback-plan"
+          };
+        }
         return {
           text: JSON.stringify({
-            summary: "Implemented the experiment directly through staged_llm recovery mode.",
-            run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
-            test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
-            changed_files: [publicScriptPath],
-            artifacts: [publicScriptPath],
-            public_artifacts: [publicScriptPath],
-            script_path: publicScriptPath,
-            metrics_path: path.join(runDir, "metrics.json"),
-            experiment_mode: "real_execution",
-            file_edits: [
-              {
-                path: publicScriptPath,
-                content: "print('rerun ok')\n"
-              }
-            ]
+            chunk_id: "runner_full",
+            content: "print('rerun ok')\n"
           }),
           threadId: "thread-known-fallback"
         };
@@ -4365,10 +4635,408 @@ describe("ImplementSessionManager", () => {
     const result = await manager.run(run);
 
     expect(codexCalls).toBe(0);
-    expect(llmCalls).toBe(1);
+    expect(llmCalls).toBe(3);
     expect(result.verifyReport).toMatchObject({ status: "pass" });
     expect(result.scriptPath).toBe(publicScriptPath);
     expect(readFileSync(publicScriptPath, "utf8")).toBe("print('rerun ok')\n");
+  });
+
+  it("synthesizes a decomposition plan when the staged scaffold omits it", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-decomposition-repair-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Decomposition Repair Run",
+      topic: "bounded experiment implementation",
+      constraints: ["real artifacts"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    await runContext.put(
+      "implement_experiments.last_summary",
+      "Implementation remains blocked by the environment: every Codex local filesystem action aborts with `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`."
+    );
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "experiment.py");
+    const prompts: string[] = [];
+    let llmCalls = 0;
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {
+        runTurnStream: async () => {
+          throw new Error("Codex should not be used in the known staged_llm fallback path");
+        }
+      } as unknown as CodexNativeClient,
+      llm: {
+        complete: async (prompt: string) => {
+          prompts.push(prompt);
+          llmCalls += 1;
+          if (llmCalls === 1) {
+            return {
+              text: JSON.stringify({
+                summary: "Scaffold without explicit decomposition plan.",
+                run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
+                test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+                changed_files: [publicScriptPath],
+                artifacts: [publicScriptPath],
+                public_artifacts: [publicScriptPath],
+                script_path: publicScriptPath,
+                metrics_path: path.join(runDir, "metrics.json"),
+                experiment_mode: "real_execution",
+                file_plan: [publicScriptPath]
+              }),
+              threadId: "thread-scaffold"
+            };
+          }
+          if (llmCalls === 2) {
+            return {
+              text: JSON.stringify({
+                decomposition_plan: {
+                  objective: "Materialize the primary runner only.",
+                  strategy: "purpose_adaptive_repair",
+                  rationale: "The current repair target is a single script.",
+                  units: [
+                    {
+                      id: "runner",
+                      unit_type: "text_file",
+                      title: "Primary experiment runner",
+                      purpose: "Provide the main runnable experiment entrypoint.",
+                      generation_mode: "materialize_text_file",
+                      target_path: publicScriptPath,
+                      verification_focus: ["run_command"]
+                    }
+                  ]
+                }
+              }),
+              threadId: "thread-plan"
+            };
+          }
+          if (llmCalls === 3) {
+            return {
+              text: JSON.stringify({
+                strategy: "test_runner_chunks",
+                rationale: "Keep the repaired runner in one chunk for this regression.",
+                chunks: [
+                  {
+                    id: "runner_full",
+                    title: "Runner full content",
+                    purpose: "Materialize the full repaired runner content.",
+                    content_kind: "code_section",
+                    include_imports: true,
+                    include_entrypoint: true
+                  }
+                ]
+              }),
+              threadId: "thread-runner-plan"
+            };
+          }
+          return {
+            text: JSON.stringify({
+              chunk_id: "runner_full",
+              content: "print('plan repaired')\n"
+            }),
+            threadId: "thread-file"
+          };
+        }
+      } as any,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const decompositionPlan = JSON.parse(
+      readFileSync(path.join(runDir, "implement_experiments", "decomposition_plan.json"), "utf8")
+    ) as { strategy?: string; units: Array<{ target_path?: string }> };
+
+    expect(llmCalls).toBe(4);
+    expect(prompts[1]).toContain("Staged implement decomposition planning repair.");
+    expect(prompts[1]).toContain("Do not use markdown fences.");
+    expect(prompts[2]).toContain("Staged implement materialization subplan.");
+    expect(decompositionPlan.strategy).toBe("purpose_adaptive_repair");
+    expect(decompositionPlan.units.map((unit) => unit.target_path)).toEqual([publicScriptPath]);
+    expect(
+      readFileSync(
+        path.join(runDir, "implement_experiments", "decomposition_plan_raw_response.txt"),
+        "utf8"
+      )
+    ).toContain("\"decomposition_plan\"");
+    expect(result.scriptPath).toBe(publicScriptPath);
+    expect(readFileSync(publicScriptPath, "utf8")).toBe("print('plan repaired')\n");
+  });
+
+  it("subdivides a large runner chunk into smaller purpose-aligned subchunks before materializing code", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-subchunk-plan-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Subchunked Runner Run",
+      topic: "bounded experiment implementation",
+      constraints: ["real artifacts"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    await runContext.put(
+      "implement_experiments.last_summary",
+      "Implementation remains blocked by the environment: every Codex local filesystem action aborts with `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`."
+    );
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "experiment.py");
+    const prompts: string[] = [];
+    let llmCalls = 0;
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {
+        runTurnStream: async () => {
+          throw new Error("Codex should not be used in the known staged_llm fallback path");
+        }
+      } as unknown as CodexNativeClient,
+      llm: {
+        complete: async (prompt: string) => {
+          prompts.push(prompt);
+          llmCalls += 1;
+          if (llmCalls === 1) {
+            return {
+              text: JSON.stringify({
+                summary: "Runner scaffold with one large text unit.",
+                run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
+                test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+                changed_files: [publicScriptPath],
+                artifacts: [publicScriptPath],
+                public_artifacts: [publicScriptPath],
+                script_path: publicScriptPath,
+                metrics_path: path.join(runDir, "metrics.json"),
+                experiment_mode: "real_execution",
+                decomposition_plan: {
+                  objective: "Materialize the primary runner only.",
+                  strategy: "purpose_adaptive",
+                  rationale: "This rerun only needs the main script.",
+                  units: [
+                    {
+                      id: "runner",
+                      unit_type: "text_file",
+                      title: "Primary experiment runner",
+                      purpose: "Provide the main runnable experiment entrypoint.",
+                      generation_mode: "materialize_text_file",
+                      target_path: publicScriptPath,
+                      verification_focus: ["run_command", "baseline_first_ordering"]
+                    }
+                  ]
+                },
+                file_plan: [publicScriptPath]
+              }),
+              threadId: "thread-subchunk-scaffold"
+            };
+          }
+          if (llmCalls === 2) {
+            return {
+              text: JSON.stringify({
+                strategy: "test_runner_chunks",
+                rationale: "Keep a large runner split into setup, execution, and entrypoint sections.",
+                chunks: [
+                  {
+                    id: "chunk1_setup_and_plan",
+                    title: "Setup, configuration, and shared utilities",
+                    purpose: "Implement imports, config loading, seed control, and plan validation.",
+                    content_kind: "code_section",
+                    include_imports: true,
+                    include_entrypoint: false
+                  },
+                  {
+                    id: "chunk2_execution_core",
+                    title: "Execution core",
+                    purpose: "Implement the core experiment helpers.",
+                    content_kind: "code_section",
+                    include_imports: false,
+                    include_entrypoint: false
+                  },
+                  {
+                    id: "chunk3_reporting_and_entrypoint",
+                    title: "Reporting and entrypoint",
+                    purpose: "Implement reporting and the entrypoint.",
+                    content_kind: "code_section",
+                    include_imports: false,
+                    include_entrypoint: true
+                  }
+                ]
+              }),
+              threadId: "thread-subchunk-plan"
+            };
+          }
+          if (llmCalls === 3) {
+            return {
+              text: JSON.stringify({
+                strategy: "setup_subchunks",
+                rationale: "Split setup into runtime surface and validation helpers.",
+                chunks: [
+                  {
+                    id: "chunk1_runtime_surface",
+                    title: "Runtime surface",
+                    purpose: "Imports, CLI, config loading, and seed setup.",
+                    content_kind: "code_section",
+                    include_imports: true,
+                    include_entrypoint: false
+                  },
+                  {
+                    id: "chunk1_validation_helpers",
+                    title: "Validation helpers",
+                    purpose: "Plan validation and shared helpers.",
+                    content_kind: "code_section",
+                    include_imports: false,
+                    include_entrypoint: false,
+                    depends_on: ["chunk1_runtime_surface"]
+                  }
+                ]
+              }),
+              threadId: "thread-subchunk-subplan"
+            };
+          }
+          if (llmCalls === 4) {
+            return {
+              text: JSON.stringify({
+                chunk_id: "chunk1_runtime_surface",
+                content: [
+                  "import argparse",
+                  "",
+                  "def parse_args():",
+                  "    parser = argparse.ArgumentParser()",
+                  "    parser.add_argument('--dry-run', action='store_true')",
+                  "    return parser.parse_args()",
+                  "",
+                  "def set_seed(seed: int = 42):",
+                  "    return seed"
+                ].join("\n")
+              }),
+              threadId: "thread-subchunk-runtime"
+            };
+          }
+          if (llmCalls === 5) {
+            return {
+              text: JSON.stringify({
+                chunk_id: "chunk1_validation_helpers",
+                content: [
+                  "def validate_plan():",
+                  "    return True",
+                  "",
+                  "def main():",
+                  "    parse_args()",
+                  "    set_seed()",
+                  "    validate_plan()",
+                  "    print('ok')",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    main()"
+                ].join("\n")
+              }),
+              threadId: "thread-subchunk-helpers"
+            };
+          }
+          if (llmCalls === 6) {
+            return {
+              text: JSON.stringify({
+                chunk_id: "chunk2_execution_core",
+                content: "def run_condition():\n    return {'status': 'skipped'}\n"
+              }),
+              threadId: "thread-subchunk-exec"
+            };
+          }
+          if (llmCalls === 7) {
+            return {
+              text: JSON.stringify({
+                strategy: "entrypoint_subchunks",
+                rationale: "Split reporting from the CLI entrypoint.",
+                chunks: [
+                  {
+                    id: "chunk3_reporting_and_entrypoint__reporting",
+                    title: "Reporting",
+                    purpose: "Write metrics and public reporting artifacts.",
+                    content_kind: "code_section",
+                    include_imports: false,
+                    include_entrypoint: false
+                  },
+                  {
+                    id: "chunk3_reporting_and_entrypoint__entrypoint",
+                    title: "Entrypoint",
+                    purpose: "Expose the main CLI entrypoint.",
+                    content_kind: "code_section",
+                    include_imports: false,
+                    include_entrypoint: true,
+                    depends_on: ["chunk3_reporting_and_entrypoint__reporting"]
+                  }
+                ]
+              }),
+              threadId: "thread-subchunk-entrypoint-plan"
+            };
+          }
+          if (llmCalls === 8) {
+            return {
+              text: JSON.stringify({
+                chunk_id: "chunk3_reporting_and_entrypoint__reporting",
+                content: "def write_metrics():\n    return None\n"
+              }),
+              threadId: "thread-subchunk-reporting"
+            };
+          }
+          return {
+            text: JSON.stringify({
+              chunk_id: "chunk3_reporting_and_entrypoint__entrypoint",
+              content: "if __name__ == '__main__':\n    main()\n"
+            }),
+            threadId: "thread-subchunk-entrypoint"
+          };
+        }
+      } as any,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+
+    expect(llmCalls).toBe(9);
+    expect(prompts[2]).toContain("Staged implement chunk subdivision plan.");
+    expect(prompts[3]).toContain("Parent chunk being decomposed:");
+    expect(prompts[3]).toContain("chunk1_setup_and_plan");
+    expect(prompts[6]).toContain("Staged implement chunk subdivision plan.");
+    expect(prompts[7]).toContain("chunk3_reporting_and_entrypoint");
+    expect(result.scriptPath).toBe(publicScriptPath);
+    expect(readFileSync(publicScriptPath, "utf8")).toContain("import argparse");
+    expect(readFileSync(publicScriptPath, "utf8")).toContain("def validate_plan():");
+    expect(readFileSync(publicScriptPath, "utf8")).toContain("def write_metrics():");
+    expect(
+      readFileSync(
+        path.join(runDir, "implement_experiments", "unit_plans", "runner__chunk1_setup_and_plan.json"),
+        "utf8"
+      )
+    ).toContain("setup_subchunks");
+    expect(
+      readFileSync(
+        path.join(runDir, "implement_experiments", "unit_plans", "runner__chunk3_reporting_and_entrypoint.json"),
+        "utf8"
+      )
+    ).toContain("entrypoint_subchunks");
   });
 
   it("chains OpenAI API implement retries through response thread ids", async () => {
@@ -4696,6 +5364,102 @@ describe("ImplementSessionManager", () => {
       next_action: "retry_patch"
     });
     expect(await memory.get("implement_experiments.auto_handoff_to_run_experiments")).toBe(false);
+  });
+
+  it("repairs a missing parse_args helper before handing a python runner off to run_experiments", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-parse-args-repair-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Repair Missing Parse Args",
+      topic: "agent reasoning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+
+    const codex = {
+      runTurnStream: async () => ({
+        threadId: "thread-parse-args-repair",
+        finalText: JSON.stringify({
+          summary: "Implemented the experiment runner.",
+          run_command: `python3 ${JSON.stringify(scriptPath)} --config plan.yaml --output-dir ${JSON.stringify(publicDir)} --metrics-out ${JSON.stringify(metricsPath)}`,
+          test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+          working_dir: publicDir,
+          experiment_mode: "staged_llm",
+          changed_files: [scriptPath],
+          artifacts: [scriptPath],
+          public_dir: publicDir,
+          public_artifacts: [scriptPath],
+          script_path: scriptPath,
+          metrics_path: metricsPath,
+          localization: {
+            summary: "Localized the runner script.",
+            selected_files: [scriptPath],
+            candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+          },
+          file_edits: [
+            {
+              path: scriptPath,
+              content: [
+                "from __future__ import annotations",
+                "",
+                "import argparse",
+                "",
+                "def build_arg_parser():",
+                "    parser = argparse.ArgumentParser()",
+                "    parser.add_argument('--config')",
+                "    parser.add_argument('--output-dir')",
+                "    parser.add_argument('--metrics-out')",
+                "    return parser",
+                "",
+                "def _resolve_callable(name):",
+                "    return globals().get(name)",
+                "",
+                "def main(argv=None):",
+                "    parse_args_fn = _resolve_callable('parse_args')",
+                "    if parse_args_fn is None:",
+                "        raise RuntimeError('Missing parse_args() in runner setup chunk.')",
+                "    parse_args_fn(argv)",
+                "    return 0",
+                "",
+                "if __name__ == '__main__':",
+                "    raise SystemExit(main())",
+                ""
+              ].join("\n")
+            }
+          ],
+          assumptions: []
+        }),
+        events: []
+      })
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const repairedSource = readFileSync(result.scriptPath!, "utf8");
+    expect(repairedSource).toContain("def parse_args(argv=None):");
+    expect(result.testCommand).toContain("py_compile");
   });
 
   it("ignores model-supplied paths that escape the workspace", async () => {

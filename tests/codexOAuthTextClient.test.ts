@@ -80,4 +80,142 @@ describe("CodexOAuthResponsesTextClient", () => {
       }
     });
   });
+
+  it("does not send previous_response_id when only a threadId is provided", async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body || "{}"));
+      expect(body).not.toHaveProperty("previous_response_id");
+      return new Response(
+        [
+          'event: response.completed',
+          'data: {"type":"response.completed","response":{"id":"codex_resp_2","model":"gpt-5.3-codex","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}]}}',
+          ""
+        ].join("\n"),
+        {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" }
+        }
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new CodexOAuthResponsesTextClient(
+      async () => ({
+        accessToken: "test-access-token",
+        accountId: "acct_123"
+      }),
+      { model: "gpt-5.3-codex", reasoningEffort: "high" }
+    );
+
+    const result = await client.complete({
+      prompt: "hello",
+      threadId: "thread-opaque-id"
+    });
+
+    expect(result.text).toBe("ok");
+  });
+
+  it("sends previous_response_id only when explicitly provided", async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body || "{}"));
+      expect(body.previous_response_id).toBe("resp_explicit");
+      return new Response(
+        [
+          'event: response.completed',
+          'data: {"type":"response.completed","response":{"id":"codex_resp_3","model":"gpt-5.3-codex","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}]}}',
+          ""
+        ].join("\n"),
+        {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" }
+        }
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new CodexOAuthResponsesTextClient(
+      async () => ({
+        accessToken: "test-access-token",
+        accountId: "acct_123"
+      }),
+      { model: "gpt-5.3-codex", reasoningEffort: "high" }
+    );
+
+    const result = await client.complete({
+      prompt: "hello",
+      threadId: "thread-opaque-id",
+      previousResponseId: "resp_explicit"
+    });
+
+    expect(result.text).toBe("ok");
+  });
+
+  it("salvages text from item.completed when the stream never emits response.completed", async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        [
+          'event: response.created',
+          'data: {"type":"response.created","response":{"id":"codex_resp_4","model":"gpt-5.3-codex","status":"in_progress","output":[]}}',
+          "",
+          'event: item.completed',
+          'data: {"type":"item.completed","item":{"type":"message","content":[{"type":"output_text","text":"partial-but-usable"}]}}',
+          ""
+        ].join("\n"),
+        {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" }
+        }
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new CodexOAuthResponsesTextClient(
+      async () => ({
+        accessToken: "test-access-token",
+        accountId: "acct_123"
+      }),
+      { model: "gpt-5.3-codex", reasoningEffort: "high" }
+    );
+
+    const result = await client.complete({ prompt: "hello" });
+
+    expect(result).toMatchObject({
+      text: "partial-but-usable",
+      responseId: "codex_resp_4",
+      model: "gpt-5.3-codex"
+    });
+  });
+
+  it("salvages output_text.done text when the response payload never leaves in_progress", async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        [
+          'event: response.created',
+          'data: {"type":"response.created","response":{"id":"codex_resp_5","model":"gpt-5.3-codex","status":"in_progress","output":[]}}',
+          "",
+          'event: response.output_text.done',
+          'data: {"type":"response.output_text.done","text":"final text from done event"}',
+          ""
+        ].join("\n"),
+        {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" }
+        }
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new CodexOAuthResponsesTextClient(
+      async () => ({
+        accessToken: "test-access-token",
+        accountId: "acct_123"
+      }),
+      { model: "gpt-5.3-codex", reasoningEffort: "high" }
+    );
+
+    const result = await client.complete({ prompt: "hello" });
+
+    expect(result.text).toBe("final text from done event");
+    expect(result.responseId).toBe("codex_resp_5");
+  });
 });

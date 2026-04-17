@@ -43,6 +43,12 @@ import {
   LocalizationSearchHit
 } from "./implementationLocalizer.js";
 import { EnvironmentSnapshot } from "../environmentSnapshot.js";
+import {
+  buildDynamicDecompositionPlan,
+  DynamicDecompositionPlan,
+  DynamicDecompositionUnit,
+  parseDynamicDecompositionPlan
+} from "../decompositionPlan.js";
 
 export interface ImplementSessionSummary {
   summary: string;
@@ -85,6 +91,29 @@ interface StructuredImplementFileEdit {
   content: string;
 }
 
+interface DynamicMaterializationChunk {
+  id: string;
+  title: string;
+  purpose: string;
+  content_kind: "code_section" | "config_block" | "documentation_section" | "text_section";
+  include_imports?: boolean;
+  include_entrypoint?: boolean;
+  depends_on?: string[];
+  verification_focus?: string[];
+}
+
+interface DynamicMaterializationPlan {
+  strategy?: string;
+  rationale?: string;
+  chunks: DynamicMaterializationChunk[];
+}
+
+interface DynamicChunkSubdivisionContext {
+  unit: DynamicDecompositionUnit;
+  materializationPlan: DynamicMaterializationPlan;
+  chunk: DynamicMaterializationChunk;
+}
+
 interface StructuredImplementResponse {
   summary?: string;
   run_command?: string;
@@ -99,6 +128,8 @@ interface StructuredImplementResponse {
   metrics_path?: string;
   localization?: unknown;
   assumptions?: string[];
+  decomposition_plan?: DynamicDecompositionPlan;
+  file_plan?: string[];
   file_edits?: StructuredImplementFileEdit[];
 }
 
@@ -121,6 +152,15 @@ const MAX_IMPLEMENT_ATTEMPTS = 3;
 const SEARCH_BRANCH_FOCUS_LIMIT = 1;
 const IMPLEMENT_PROGRESS_STATUS_ARTIFACT = path.join("implement_experiments", "status.json");
 const IMPLEMENT_PROGRESS_LOG_ARTIFACT = path.join("implement_experiments", "progress.jsonl");
+const IMPLEMENT_PARTIAL_RESPONSE_ARTIFACT = path.join("implement_experiments", "partial_response.txt");
+const IMPLEMENT_SCAFFOLD_ARTIFACT = path.join("implement_experiments", "scaffold.json");
+const IMPLEMENT_DECOMPOSITION_PLAN_ARTIFACT = path.join("implement_experiments", "decomposition_plan.json");
+const IMPLEMENT_DECOMPOSITION_PLAN_RAW_RESPONSE_ARTIFACT = path.join(
+  "implement_experiments",
+  "decomposition_plan_raw_response.txt"
+);
+const IMPLEMENT_FILE_PLAN_ARTIFACT = path.join("implement_experiments", "file_plan.json");
+const IMPLEMENT_UNIT_PLAN_DIR = path.join("implement_experiments", "unit_plans");
 const NON_RESTORABLE_RUN_DIR_ENTRIES = new Set([
   "implement_experiments",
   "memory",
@@ -705,8 +745,13 @@ export class ImplementSessionManager {
                 attempt
               });
               const filesystemFallbackSystemPrompt = appendFilesystemFallbackOverrideToPrompt(attemptSystemPrompt);
-              const completion = await this.completeStagedLlmRequest({
-                prompt: filesystemFallbackPrompt,
+              const completion = await this.completeStagedLlmImplementationBundle({
+                runDir,
+                workspaceRoot: isolation.workspaceRoot,
+                taskSpec: promptTaskSpec,
+                searchLocalization: promptSearchLocalization,
+                branchPlan: promptBranchPlan,
+                scaffoldPrompt: filesystemFallbackPrompt,
                 systemPrompt: filesystemFallbackSystemPrompt,
                 timeoutMs: llmTimeoutMs,
                 abortSignal,
@@ -727,8 +772,13 @@ export class ImplementSessionManager {
               throw new Error("implement_experiments is configured for staged_llm mode, but no LLM client is available.");
             }
             const llmTimeoutMs = getImplementLlmTimeoutMs(this.deps.config);
-            const completion = await this.completeStagedLlmRequest({
-              prompt: attemptPrompt,
+            const completion = await this.completeStagedLlmImplementationBundle({
+              runDir,
+              workspaceRoot: isolation.workspaceRoot,
+              taskSpec: promptTaskSpec,
+              searchLocalization: promptSearchLocalization,
+              branchPlan: promptBranchPlan,
+              scaffoldPrompt: attemptPrompt,
               systemPrompt: attemptSystemPrompt,
               timeoutMs: llmTimeoutMs,
               abortSignal,
@@ -1662,8 +1712,12 @@ export class ImplementSessionManager {
       "- If an existing script already exists and uses CPU-only, you MUST patch it to use GPU."
     ];
     if (params.sessionMode === "staged_llm") {
-      lines.splice(10, 0, "6. Include file_edits entries with the full UTF-8 contents for every created or modified text file.");
-      lines.splice(11, 0, "7. The API-mode context below is compacted to the highest-signal fields only; do not assume omitted fields are required.");
+      lines.splice(10, 0, "6. This staged_llm attempt uses a scaffold-first contract.");
+      lines.splice(11, 0, "7. Return scaffold metadata first and include a decomposition_plan that adapts to the research purpose, experiment type, and runnable surface.");
+      lines.splice(12, 0, "8. decomposition_plan units may cover code, config, documentation, execution, analysis, or verification work; only include units the current experiment actually needs.");
+      lines.splice(13, 0, "9. Include file_plan only as a compatibility projection of decomposition units that must materialize as text files.");
+      lines.splice(14, 0, "10. Do NOT include file contents in the scaffold response.");
+      lines.splice(15, 0, "11. The API-mode context below is compacted to the highest-signal fields only; do not assume omitted fields are required.");
     }
 
     lines.push("", "Search-backed localization hints:", JSON.stringify(promptSearchLocalization, null, 2));
@@ -1789,6 +1843,7 @@ export class ImplementSessionManager {
   }
 
   private async completeStagedLlmRequest(input: {
+    runDir: string;
     prompt: string;
     systemPrompt: string;
     timeoutMs: number;
@@ -1803,6 +1858,31 @@ export class ImplementSessionManager {
     ) => void;
     reasoningEffort?: string;
   }): Promise<{ text: string; threadId?: string }> {
+    const partialResponsePath = normalizeFsPath(path.join(input.runDir, IMPLEMENT_PARTIAL_RESPONSE_ARTIFACT));
+    const heartbeatMs = getImplementLlmProgressHeartbeatMs();
+    let partialText = "";
+    let lastSnapshotLength = 0;
+    let sawProgressEvent = false;
+    let sawDeltaEvent = false;
+    let lastProgressAt = Date.now();
+    let heartbeatTimer: NodeJS.Timeout | undefined;
+    const persistPartialSnapshot = async () => {
+      if (!partialText.trim()) {
+        return;
+      }
+      await ensureDir(path.dirname(partialResponsePath));
+      await fs.writeFile(partialResponsePath, partialText, "utf8");
+      lastSnapshotLength = partialText.length;
+    };
+    const maybePersistPartialSnapshot = async () => {
+      if (partialText.length === lastSnapshotLength) {
+        return;
+      }
+      if (partialText.length - lastSnapshotLength < 64 && partialText.length < 256) {
+        return;
+      }
+      await persistPartialSnapshot();
+    };
     const timeoutController = input.timeoutMs > 0 ? new AbortController() : undefined;
     const timeoutId = timeoutController
       ? setTimeout(() => timeoutController.abort(), input.timeoutMs)
@@ -1812,6 +1892,20 @@ export class ImplementSessionManager {
         ? AbortSignal.any([input.abortSignal, timeoutController.signal])
         : timeoutController.signal
       : input.abortSignal;
+    if (heartbeatMs > 0) {
+      heartbeatTimer = setInterval(() => {
+        const silenceMs = Date.now() - lastProgressAt;
+        const silenceSec = Math.max(1, Math.floor(silenceMs / 1000));
+        const heartbeatMessage = sawProgressEvent
+          ? `Still waiting on staged_llm provider output; no new provider progress for ${silenceSec}s.`
+          : `Still waiting on staged_llm provider output; no provider progress observed for ${silenceSec}s.`;
+        input.emitImplementObservation("codex", heartbeatMessage, {
+          attempt: input.attempt,
+          threadId: input.threadId,
+          publicDir: input.publicDir
+        });
+      }, heartbeatMs);
+    }
     try {
       const completion = await this.deps.llm!.complete(input.prompt, {
         threadId: input.threadId,
@@ -1820,8 +1914,15 @@ export class ImplementSessionManager {
         abortSignal: llmAbortSignal,
         onProgress: (event) => {
           const text = event.text.trim();
+          lastProgressAt = Date.now();
+          sawProgressEvent = true;
           if (!text) {
             return;
+          }
+          if (event.type === "delta") {
+            sawDeltaEvent = true;
+            partialText += `${text}\n`;
+            void maybePersistPartialSnapshot();
           }
           input.emitImplementObservation("codex", event.type === "delta" ? `LLM> ${text}` : text, {
             attempt: input.attempt,
@@ -1830,20 +1931,786 @@ export class ImplementSessionManager {
           });
         }
       });
+      if (completion.text.trim()) {
+        partialText = completion.text;
+        await persistPartialSnapshot();
+      }
       return {
         text: completion.text,
         threadId: completion.threadId
       };
     } catch (error) {
+      await persistPartialSnapshot();
       if (timeoutController?.signal.aborted && !input.abortSignal?.aborted) {
+        const timeoutMessage = sawDeltaEvent
+          ? `staged_llm timeout preserved ${partialText.trim().length} chars of partial output in ${formatArtifactPath(partialResponsePath)}.`
+          : sawProgressEvent
+            ? `staged_llm timed out after provider progress without any text delta; partial snapshot remains empty.`
+            : `staged_llm timed out before any provider progress was observed.`;
+        input.emitImplementObservation("codex", timeoutMessage, {
+          attempt: input.attempt,
+          threadId: input.threadId,
+          publicDir: input.publicDir
+        });
         throw new Error(`implement_experiments staged_llm request timed out after ${input.timeoutMs}ms`);
       }
       throw error;
     } finally {
+      if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+      }
       if (timeoutId) {
         clearTimeout(timeoutId);
       }
     }
+  }
+
+  private async completeStagedLlmImplementationBundle(input: {
+    runDir: string;
+    workspaceRoot: string;
+    taskSpec: ImplementTaskSpec;
+    searchLocalization: LocalizationResult;
+    branchPlan: BranchPlan;
+    scaffoldPrompt: string;
+    systemPrompt: string;
+    timeoutMs: number;
+    abortSignal?: AbortSignal;
+    attempt: number;
+    threadId?: string;
+    publicDir: string;
+    emitImplementObservation: (
+      stage: ImplementProgressStage,
+      message: string,
+      extras?: Partial<ImplementProgressStatus>
+    ) => void;
+    reasoningEffort?: string;
+  }): Promise<{ text: string; threadId?: string }> {
+    if (!shouldDecomposeStagedImplementLlm(this.deps.config)) {
+      return this.completeStagedLlmRequest({
+        runDir: input.runDir,
+        prompt: input.scaffoldPrompt,
+        systemPrompt: input.systemPrompt,
+        timeoutMs: input.timeoutMs,
+        abortSignal: input.abortSignal,
+        attempt: input.attempt,
+        threadId: input.threadId,
+        publicDir: input.publicDir,
+        emitImplementObservation: input.emitImplementObservation,
+        reasoningEffort: input.reasoningEffort
+      });
+    }
+
+    input.emitImplementObservation(
+      "codex",
+      "Planning staged_llm implementation scaffold before generating file contents.",
+      {
+        attempt: input.attempt,
+        threadId: input.threadId,
+        publicDir: input.publicDir
+      }
+    );
+    const scaffoldCompletion = await this.completeStagedLlmRequest({
+      runDir: input.runDir,
+      prompt: input.scaffoldPrompt,
+      systemPrompt: appendStagedImplementScaffoldOverrideToPrompt(input.systemPrompt),
+      timeoutMs: input.timeoutMs,
+      abortSignal: input.abortSignal,
+      attempt: input.attempt,
+      threadId: input.threadId,
+      publicDir: input.publicDir,
+      emitImplementObservation: input.emitImplementObservation,
+      reasoningEffort: input.reasoningEffort
+    });
+    const scaffoldParsed = parseStructuredResponse(scaffoldCompletion.text);
+    let activeThreadId = scaffoldCompletion.threadId || input.threadId;
+    const decompositionPlanRepair =
+      scaffoldParsed.value.decomposition_plan
+        ? undefined
+        : await this.completeStagedLlmDecompositionPlan({
+        runDir: input.runDir,
+        workspaceRoot: input.workspaceRoot,
+        taskSpec: input.taskSpec,
+        searchLocalization: input.searchLocalization,
+        branchPlan: input.branchPlan,
+        scaffold: scaffoldParsed.value,
+        systemPrompt: input.systemPrompt,
+        timeoutMs: input.timeoutMs,
+        abortSignal: input.abortSignal,
+        attempt: input.attempt,
+        threadId: activeThreadId,
+        publicDir: input.publicDir,
+        emitImplementObservation: input.emitImplementObservation,
+        reasoningEffort: input.reasoningEffort
+      });
+    activeThreadId = decompositionPlanRepair?.threadId || activeThreadId;
+    const decompositionPlan =
+      scaffoldParsed.value.decomposition_plan ||
+      decompositionPlanRepair?.plan ||
+      deriveStructuredDecompositionPlan(scaffoldParsed.value, input.workspaceRoot);
+    const materializationUnits = decompositionPlan.units.filter(isMaterializableTextUnit);
+    if (materializationUnits.length === 0) {
+      throw new Error("staged_llm scaffold did not declare any materializable text units");
+    }
+    await writeJsonFile(path.join(input.runDir, IMPLEMENT_SCAFFOLD_ARTIFACT), scaffoldParsed.value);
+    await writeJsonFile(path.join(input.runDir, IMPLEMENT_DECOMPOSITION_PLAN_ARTIFACT), decompositionPlan);
+    await writeJsonFile(path.join(input.runDir, IMPLEMENT_FILE_PLAN_ARTIFACT), {
+      files: materializationUnits.map((unit) => unit.target_path),
+      units: materializationUnits.map((unit) => ({
+        id: unit.id,
+        unit_type: unit.unit_type,
+        title: unit.title,
+        purpose: unit.purpose,
+        target_path: unit.target_path,
+        depends_on: unit.depends_on,
+        verification_focus: unit.verification_focus
+      }))
+    });
+
+    const fileEdits: StructuredImplementFileEdit[] = [];
+    for (const [index, unit] of materializationUnits.entries()) {
+      const filePath = unit.target_path!;
+      const materializationPlanResult = shouldDecomposeMaterializationUnit(unit)
+        ? await this.completeStagedLlmMaterializationPlan({
+            runDir: input.runDir,
+            taskSpec: input.taskSpec,
+            searchLocalization: input.searchLocalization,
+            branchPlan: input.branchPlan,
+            scaffold: scaffoldParsed.value,
+            decompositionPlan,
+            unit,
+            timeoutMs: input.timeoutMs,
+            abortSignal: input.abortSignal,
+            attempt: input.attempt,
+            threadId: activeThreadId,
+            publicDir: input.publicDir,
+            emitImplementObservation: input.emitImplementObservation,
+            reasoningEffort: input.reasoningEffort
+          })
+        : undefined;
+      const materializationPlan = materializationPlanResult?.plan || deriveFallbackMaterializationPlan(unit);
+      activeThreadId = materializationPlanResult?.threadId || activeThreadId;
+      await ensureDir(path.join(input.runDir, IMPLEMENT_UNIT_PLAN_DIR));
+      await writeJsonFile(
+        path.join(input.runDir, IMPLEMENT_UNIT_PLAN_DIR, `${sanitizeArtifactId(unit.id)}.json`),
+        materializationPlan
+      );
+
+      if (materializationPlan.chunks.length === 1) {
+        input.emitImplementObservation(
+          "codex",
+          `Generating staged_llm unit ${index + 1}/${materializationUnits.length}: ${unit.title} (${formatArtifactPath(filePath)})`,
+          {
+            attempt: input.attempt,
+            threadId: activeThreadId,
+            publicDir: input.publicDir
+          }
+        );
+        const fileCompletion = await this.completeStagedLlmRequest({
+          runDir: input.runDir,
+          prompt: this.buildStagedImplementFilePrompt({
+            taskSpec: input.taskSpec,
+            searchLocalization: input.searchLocalization,
+            branchPlan: input.branchPlan,
+            scaffold: scaffoldParsed.value,
+            decompositionPlan,
+            unit,
+            index: index + 1,
+            total: materializationUnits.length
+          }),
+          systemPrompt: appendStagedImplementFileOverrideToPrompt(input.systemPrompt, filePath),
+          timeoutMs: input.timeoutMs,
+          abortSignal: input.abortSignal,
+          attempt: input.attempt,
+          threadId: activeThreadId,
+          publicDir: input.publicDir,
+          emitImplementObservation: input.emitImplementObservation,
+          reasoningEffort: input.reasoningEffort
+        });
+        activeThreadId = fileCompletion.threadId || activeThreadId;
+        fileEdits.push(parseStructuredFileEditResponse(fileCompletion.text, input.workspaceRoot, filePath));
+        continue;
+      }
+
+      let draftContent = "";
+      for (const [chunkIndex, chunk] of materializationPlan.chunks.entries()) {
+        const chunkSubdivisionPlanResult = shouldDecomposeMaterializationChunk({
+          unit,
+          materializationPlan,
+          chunk
+        })
+          ? await this.completeStagedLlmChunkSubdivisionPlan({
+              runDir: input.runDir,
+              taskSpec: input.taskSpec,
+              searchLocalization: input.searchLocalization,
+              branchPlan: input.branchPlan,
+              scaffold: scaffoldParsed.value,
+              decompositionPlan,
+              unit,
+              materializationPlan,
+              chunk,
+              timeoutMs: input.timeoutMs,
+              abortSignal: input.abortSignal,
+              attempt: input.attempt,
+              threadId: activeThreadId,
+              publicDir: input.publicDir,
+              emitImplementObservation: input.emitImplementObservation,
+              reasoningEffort: input.reasoningEffort
+            })
+          : undefined;
+        activeThreadId = chunkSubdivisionPlanResult?.threadId || activeThreadId;
+        const executableChunks =
+          chunkSubdivisionPlanResult?.plan?.chunks && chunkSubdivisionPlanResult.plan.chunks.length > 0
+            ? chunkSubdivisionPlanResult.plan.chunks
+            : [chunk];
+
+        let chunkDraft = "";
+        for (const [subchunkIndex, executableChunk] of executableChunks.entries()) {
+          const chunkLabel =
+            executableChunks.length > 1
+              ? `chunk ${chunkIndex + 1}/${materializationPlan.chunks.length} subchunk ${subchunkIndex + 1}/${executableChunks.length}`
+              : `chunk ${chunkIndex + 1}/${materializationPlan.chunks.length}`;
+          input.emitImplementObservation(
+            "codex",
+            `Generating staged_llm unit ${index + 1}/${materializationUnits.length} ${chunkLabel}: ${executableChunk.title} (${formatArtifactPath(filePath)})`,
+            {
+              attempt: input.attempt,
+              threadId: activeThreadId,
+              publicDir: input.publicDir
+            }
+          );
+          const chunkCompletion = await this.completeStagedLlmRequest({
+            runDir: input.runDir,
+            prompt: this.buildStagedImplementFileChunkPrompt({
+              taskSpec: input.taskSpec,
+              searchLocalization: input.searchLocalization,
+              branchPlan: input.branchPlan,
+              scaffold: scaffoldParsed.value,
+              decompositionPlan,
+              unit,
+              materializationPlan,
+              chunk: executableChunk,
+              parentChunk: executableChunks.length > 1 ? chunk : undefined,
+              chunkSubdivisionPlan: executableChunks.length > 1 ? chunkSubdivisionPlanResult?.plan : undefined,
+              chunkIndex: chunkIndex + 1,
+              chunkTotal: materializationPlan.chunks.length,
+              draftSoFar: draftContent,
+              chunkDraftSoFar: chunkDraft
+            }),
+            systemPrompt: appendStagedImplementChunkOverrideToPrompt(input.systemPrompt, filePath, executableChunk.id),
+            timeoutMs: input.timeoutMs,
+            abortSignal: input.abortSignal,
+            attempt: input.attempt,
+            threadId: activeThreadId,
+            publicDir: input.publicDir,
+            emitImplementObservation: input.emitImplementObservation,
+            reasoningEffort: input.reasoningEffort
+          });
+          activeThreadId = chunkCompletion.threadId || activeThreadId;
+          const chunkContent = parseStructuredChunkResponse(chunkCompletion.text, executableChunk.id);
+          chunkDraft =
+            chunkDraft.trim().length > 0
+              ? `${chunkDraft.trimEnd()}\n\n${chunkContent.trimStart()}`
+              : chunkContent;
+        }
+        draftContent =
+          draftContent.trim().length > 0
+            ? `${draftContent.trimEnd()}\n\n${chunkDraft.trimStart()}`
+            : chunkDraft;
+      }
+      fileEdits.push({
+        path: filePath,
+        content: draftContent
+      });
+    }
+
+    return {
+      threadId: activeThreadId,
+      text: JSON.stringify({
+        ...scaffoldParsed.value,
+        file_edits: fileEdits
+      })
+    };
+  }
+
+  private buildStagedImplementFilePrompt(params: {
+    taskSpec: ImplementTaskSpec;
+    searchLocalization: LocalizationResult;
+    branchPlan: BranchPlan;
+    scaffold: StructuredImplementResponse;
+    decompositionPlan: DynamicDecompositionPlan;
+    unit: DynamicDecompositionUnit;
+    index: number;
+    total: number;
+  }): string {
+    return [
+      `Staged implement unit generation ${params.index}/${params.total}.`,
+      `Target file: ${params.unit.target_path}`,
+      "Return ONLY one JSON object with keys: path, content.",
+      "Use UTF-8 text. Do not wrap the file content in markdown fences.",
+      "",
+      "Compact task spec:",
+      JSON.stringify(compactTaskSpecForStagedLlmPrompt(params.taskSpec), null, 2),
+      "",
+      "Search-backed localization hints:",
+      JSON.stringify(compactLocalizationForStagedLlmPrompt(params.searchLocalization), null, 2),
+      "",
+      "Branch focus:",
+      JSON.stringify(compactBranchPlanForStagedLlmPrompt(params.branchPlan), null, 2),
+      "",
+      "Approved scaffold contract:",
+      JSON.stringify(
+        {
+          summary: params.scaffold.summary,
+          experiment_mode: params.scaffold.experiment_mode,
+          run_command: params.scaffold.run_command,
+          test_command: params.scaffold.test_command,
+          working_dir: params.scaffold.working_dir,
+          changed_files: params.scaffold.changed_files,
+          artifacts: params.scaffold.artifacts,
+          public_dir: params.scaffold.public_dir,
+          public_artifacts: params.scaffold.public_artifacts,
+          script_path: params.scaffold.script_path,
+          metrics_path: params.scaffold.metrics_path,
+          assumptions: params.scaffold.assumptions,
+          file_plan: params.scaffold.file_plan,
+          decomposition_plan: params.scaffold.decomposition_plan
+        },
+        null,
+        2
+      ),
+      "",
+      "Approved decomposition plan:",
+      JSON.stringify(params.decompositionPlan, null, 2),
+      "",
+      "Requested decomposition unit:",
+      JSON.stringify(params.unit, null, 2),
+      "",
+      "Generate only the requested target file content needed to satisfy the approved scaffold and decomposition unit."
+    ].join("\n");
+  }
+
+  private async completeStagedLlmMaterializationPlan(input: {
+    runDir: string;
+    taskSpec: ImplementTaskSpec;
+    searchLocalization: LocalizationResult;
+    branchPlan: BranchPlan;
+    scaffold: StructuredImplementResponse;
+    decompositionPlan: DynamicDecompositionPlan;
+    unit: DynamicDecompositionUnit;
+    timeoutMs: number;
+    abortSignal?: AbortSignal;
+    attempt: number;
+    threadId?: string;
+    publicDir: string;
+    emitImplementObservation: (
+      stage: ImplementProgressStage,
+      message: string,
+      extras?: Partial<ImplementProgressStatus>
+    ) => void;
+    reasoningEffort?: string;
+  }): Promise<{ plan: DynamicMaterializationPlan; threadId?: string } | undefined> {
+    input.emitImplementObservation(
+      "codex",
+      `Planning dynamic materialization chunks for ${input.unit.title}.`,
+      {
+        attempt: input.attempt,
+        threadId: input.threadId,
+        publicDir: input.publicDir
+      }
+    );
+    const completion = await this.completeStagedLlmRequest({
+      runDir: input.runDir,
+      prompt: this.buildStagedImplementMaterializationPlanPrompt({
+        taskSpec: input.taskSpec,
+        searchLocalization: input.searchLocalization,
+        branchPlan: input.branchPlan,
+        scaffold: input.scaffold,
+        decompositionPlan: input.decompositionPlan,
+        unit: input.unit
+      }),
+      systemPrompt: appendStagedImplementMaterializationPlanOverrideToPrompt(input.unit.target_path || ""),
+      timeoutMs: input.timeoutMs,
+      abortSignal: input.abortSignal,
+      attempt: input.attempt,
+      threadId: input.threadId,
+      publicDir: input.publicDir,
+      emitImplementObservation: input.emitImplementObservation,
+      reasoningEffort: input.reasoningEffort
+    });
+    const rawPath = path.join(
+      input.runDir,
+      IMPLEMENT_UNIT_PLAN_DIR,
+      `${sanitizeArtifactId(input.unit.id)}_raw_response.txt`
+    );
+    await ensureDir(path.dirname(rawPath));
+    await fs.writeFile(rawPath, completion.text, "utf8");
+    const plan = parseDynamicMaterializationPlan(parseJsonObject(completion.text), input.unit);
+    if (!plan) {
+      return {
+        plan: deriveFallbackMaterializationPlan(input.unit),
+        threadId: completion.threadId || input.threadId
+      };
+    }
+    return {
+      plan,
+      threadId: completion.threadId || input.threadId
+    };
+  }
+
+  private buildStagedImplementMaterializationPlanPrompt(params: {
+    taskSpec: ImplementTaskSpec;
+    searchLocalization: LocalizationResult;
+    branchPlan: BranchPlan;
+    scaffold: StructuredImplementResponse;
+    decompositionPlan: DynamicDecompositionPlan;
+    unit: DynamicDecompositionUnit;
+  }): string {
+    return [
+      "Staged implement materialization subplan.",
+      "Return only a single bare JSON object with keys: strategy, rationale, chunks.",
+      "Each chunk must be a non-overlapping ordered unit of work for the requested file.",
+      "Chunk schema: {\"id\": string, \"title\": string, \"purpose\": string, \"content_kind\": \"code_section\"|\"config_block\"|\"documentation_section\"|\"text_section\", \"include_imports\"?: boolean, \"include_entrypoint\"?: boolean, \"depends_on\"?: string[], \"verification_focus\"?: string[]}.",
+      "Prefer 2 or 3 chunks for a large runner script. Prefer 1 chunk for a simple config or README.",
+      "Make the chunking adapt to the experiment purpose and verification focus, not a fixed template.",
+      "",
+      "Compact task spec:",
+      JSON.stringify(compactTaskSpecForStagedLlmPrompt(params.taskSpec), null, 2),
+      "",
+      "Branch focus:",
+      JSON.stringify(compactBranchPlanForStagedLlmPrompt(params.branchPlan), null, 2),
+      "",
+      "Localization hints:",
+      JSON.stringify(compactLocalizationForStagedLlmPrompt(params.searchLocalization), null, 2),
+      "",
+      "Approved scaffold summary:",
+      JSON.stringify(
+        {
+          summary: params.scaffold.summary,
+          run_command: params.scaffold.run_command,
+          test_command: params.scaffold.test_command,
+          script_path: params.scaffold.script_path,
+          metrics_path: params.scaffold.metrics_path
+        },
+        null,
+        2
+      ),
+      "",
+      "Approved decomposition unit:",
+      JSON.stringify(params.unit, null, 2),
+      "",
+      "Approved top-level decomposition plan:",
+      JSON.stringify(params.decompositionPlan, null, 2)
+    ].join("\n");
+  }
+
+  private buildStagedImplementFileChunkPrompt(params: {
+    taskSpec: ImplementTaskSpec;
+    searchLocalization: LocalizationResult;
+    branchPlan: BranchPlan;
+    scaffold: StructuredImplementResponse;
+    decompositionPlan: DynamicDecompositionPlan;
+    unit: DynamicDecompositionUnit;
+    materializationPlan: DynamicMaterializationPlan;
+    chunk: DynamicMaterializationChunk;
+    parentChunk?: DynamicMaterializationChunk;
+    chunkSubdivisionPlan?: DynamicMaterializationPlan;
+    chunkIndex: number;
+    chunkTotal: number;
+    draftSoFar: string;
+    chunkDraftSoFar: string;
+  }): string {
+    return [
+      `Staged implement unit chunk generation ${params.chunkIndex}/${params.chunkTotal}.`,
+      `Target file: ${params.unit.target_path}`,
+      `Target chunk: ${params.chunk.id} — ${params.chunk.title}`,
+      "Return ONLY one JSON object with keys: chunk_id, content.",
+      "Return only the requested chunk content. Do not repeat earlier chunks. Do not emit markdown fences.",
+      "",
+      "Compact task spec:",
+      JSON.stringify(compactTaskSpecForStagedLlmPrompt(params.taskSpec), null, 2),
+      "",
+      "Branch focus:",
+      JSON.stringify(compactBranchPlanForStagedLlmPrompt(params.branchPlan), null, 2),
+      "",
+      "Localization hints:",
+      JSON.stringify(compactLocalizationForStagedLlmPrompt(params.searchLocalization), null, 2),
+      "",
+      "Approved scaffold summary:",
+      JSON.stringify(
+        {
+          summary: params.scaffold.summary,
+          run_command: params.scaffold.run_command,
+          test_command: params.scaffold.test_command,
+          script_path: params.scaffold.script_path,
+          metrics_path: params.scaffold.metrics_path
+        },
+        null,
+        2
+      ),
+      "",
+      "Approved decomposition unit:",
+      JSON.stringify(params.unit, null, 2),
+      "",
+      "Approved materialization chunk plan:",
+      JSON.stringify(params.materializationPlan, null, 2),
+      "",
+      ...(params.parentChunk
+        ? [
+            "Parent chunk being decomposed:",
+            JSON.stringify(params.parentChunk, null, 2),
+            ""
+          ]
+        : []),
+      ...(params.chunkSubdivisionPlan
+        ? [
+            "Approved chunk subdivision plan:",
+            JSON.stringify(params.chunkSubdivisionPlan, null, 2),
+            ""
+          ]
+        : []),
+      "Requested chunk:",
+      JSON.stringify(params.chunk, null, 2),
+      "",
+      "Current chunk draft so far:",
+      JSON.stringify(compactDraftForChunkPrompt(params.chunkDraftSoFar), null, 2),
+      "",
+      "Draft so far:",
+      JSON.stringify(compactDraftForChunkPrompt(params.draftSoFar), null, 2)
+    ].join("\n");
+  }
+
+  private async completeStagedLlmChunkSubdivisionPlan(input: {
+    runDir: string;
+    taskSpec: ImplementTaskSpec;
+    searchLocalization: LocalizationResult;
+    branchPlan: BranchPlan;
+    scaffold: StructuredImplementResponse;
+    decompositionPlan: DynamicDecompositionPlan;
+    unit: DynamicDecompositionUnit;
+    materializationPlan: DynamicMaterializationPlan;
+    chunk: DynamicMaterializationChunk;
+    timeoutMs: number;
+    abortSignal?: AbortSignal;
+    attempt: number;
+    threadId?: string;
+    publicDir: string;
+    emitImplementObservation: (
+      stage: ImplementProgressStage,
+      message: string,
+      extras?: Partial<ImplementProgressStatus>
+    ) => void;
+    reasoningEffort?: string;
+  }): Promise<{ plan: DynamicMaterializationPlan; threadId?: string } | undefined> {
+    input.emitImplementObservation(
+      "codex",
+      `Planning dynamic subchunks for ${input.chunk.title}.`,
+      {
+        attempt: input.attempt,
+        threadId: input.threadId,
+        publicDir: input.publicDir
+      }
+    );
+    const completion = await this.completeStagedLlmRequest({
+      runDir: input.runDir,
+      prompt: this.buildStagedImplementChunkSubdivisionPlanPrompt({
+        taskSpec: input.taskSpec,
+        searchLocalization: input.searchLocalization,
+        branchPlan: input.branchPlan,
+        scaffold: input.scaffold,
+        decompositionPlan: input.decompositionPlan,
+        unit: input.unit,
+        materializationPlan: input.materializationPlan,
+        chunk: input.chunk
+      }),
+      systemPrompt: appendStagedImplementMaterializationPlanOverrideToPrompt(input.unit.target_path || ""),
+      timeoutMs: input.timeoutMs,
+      abortSignal: input.abortSignal,
+      attempt: input.attempt,
+      threadId: input.threadId,
+      publicDir: input.publicDir,
+      emitImplementObservation: input.emitImplementObservation,
+      reasoningEffort: input.reasoningEffort
+    });
+    const baseId = `${sanitizeArtifactId(input.unit.id)}__${sanitizeArtifactId(input.chunk.id)}`;
+    const rawPath = path.join(input.runDir, IMPLEMENT_UNIT_PLAN_DIR, `${baseId}_raw_response.txt`);
+    await ensureDir(path.dirname(rawPath));
+    await fs.writeFile(rawPath, completion.text, "utf8");
+    const plan = parseDynamicMaterializationPlan(parseJsonObject(completion.text), input.unit);
+    if (!plan) {
+      return {
+        plan: deriveFallbackChunkSubdivisionPlan(input.unit, input.chunk),
+        threadId: completion.threadId || input.threadId
+      };
+    }
+    await writeJsonFile(path.join(input.runDir, IMPLEMENT_UNIT_PLAN_DIR, `${baseId}.json`), plan);
+    return {
+      plan,
+      threadId: completion.threadId || input.threadId
+    };
+  }
+
+  private buildStagedImplementChunkSubdivisionPlanPrompt(params: {
+    taskSpec: ImplementTaskSpec;
+    searchLocalization: LocalizationResult;
+    branchPlan: BranchPlan;
+    scaffold: StructuredImplementResponse;
+    decompositionPlan: DynamicDecompositionPlan;
+    unit: DynamicDecompositionUnit;
+    materializationPlan: DynamicMaterializationPlan;
+    chunk: DynamicMaterializationChunk;
+  }): string {
+    return [
+      "Staged implement chunk subdivision plan.",
+      "Return only a single bare JSON object with keys: strategy, rationale, chunks.",
+      "Subdivide only the requested parent chunk into smaller non-overlapping ordered subchunks.",
+      "Chunk schema: {\"id\": string, \"title\": string, \"purpose\": string, \"content_kind\": \"code_section\"|\"config_block\"|\"documentation_section\"|\"text_section\", \"include_imports\"?: boolean, \"include_entrypoint\"?: boolean, \"depends_on\"?: string[], \"verification_focus\"?: string[]}.",
+      "Prefer exactly 2 subchunks when the parent chunk is large or mixes setup plus validation concerns.",
+      "Make the split align to the experiment purpose and verification focus, not a generic code template.",
+      "",
+      "Compact task spec:",
+      JSON.stringify(compactTaskSpecForStagedLlmPrompt(params.taskSpec), null, 2),
+      "",
+      "Branch focus:",
+      JSON.stringify(compactBranchPlanForStagedLlmPrompt(params.branchPlan), null, 2),
+      "",
+      "Localization hints:",
+      JSON.stringify(compactLocalizationForStagedLlmPrompt(params.searchLocalization), null, 2),
+      "",
+      "Approved scaffold summary:",
+      JSON.stringify(
+        {
+          summary: params.scaffold.summary,
+          run_command: params.scaffold.run_command,
+          test_command: params.scaffold.test_command,
+          script_path: params.scaffold.script_path,
+          metrics_path: params.scaffold.metrics_path
+        },
+        null,
+        2
+      ),
+      "",
+      "Approved decomposition unit:",
+      JSON.stringify(params.unit, null, 2),
+      "",
+      "Approved materialization plan:",
+      JSON.stringify(params.materializationPlan, null, 2),
+      "",
+      "Requested parent chunk to subdivide:",
+      JSON.stringify(params.chunk, null, 2)
+    ].join("\n");
+  }
+
+  private async completeStagedLlmDecompositionPlan(input: {
+    runDir: string;
+    workspaceRoot: string;
+    taskSpec: ImplementTaskSpec;
+    searchLocalization: LocalizationResult;
+    branchPlan: BranchPlan;
+    scaffold: StructuredImplementResponse;
+    systemPrompt: string;
+    timeoutMs: number;
+    abortSignal?: AbortSignal;
+    attempt: number;
+    threadId?: string;
+    publicDir: string;
+    emitImplementObservation: (
+      stage: ImplementProgressStage,
+      message: string,
+      extras?: Partial<ImplementProgressStatus>
+    ) => void;
+    reasoningEffort?: string;
+  }): Promise<{ plan?: DynamicDecompositionPlan; threadId?: string } | undefined> {
+    input.emitImplementObservation(
+      "codex",
+      "Scaffold omitted decomposition_plan; synthesizing a purpose-aligned staged_llm decomposition plan.",
+      {
+        attempt: input.attempt,
+        threadId: input.threadId,
+        publicDir: input.publicDir
+      }
+    );
+
+    const completion = await this.completeStagedLlmRequest({
+      runDir: input.runDir,
+      prompt: this.buildStagedImplementDecompositionPlanPrompt({
+        taskSpec: input.taskSpec,
+        searchLocalization: input.searchLocalization,
+        branchPlan: input.branchPlan,
+        scaffold: input.scaffold
+      }),
+      systemPrompt: appendStagedImplementDecompositionOverrideToPrompt(input.systemPrompt),
+      timeoutMs: input.timeoutMs,
+      abortSignal: input.abortSignal,
+      attempt: input.attempt,
+      threadId: input.threadId,
+      publicDir: input.publicDir,
+      emitImplementObservation: input.emitImplementObservation,
+      reasoningEffort: input.reasoningEffort
+    });
+    await ensureDir(path.dirname(path.join(input.runDir, IMPLEMENT_DECOMPOSITION_PLAN_RAW_RESPONSE_ARTIFACT)));
+    await fs.writeFile(
+      path.join(input.runDir, IMPLEMENT_DECOMPOSITION_PLAN_RAW_RESPONSE_ARTIFACT),
+      completion.text,
+      "utf8"
+    );
+    const parsed = parseDynamicDecompositionPlan(parseJsonObject(completion.text));
+    if (!parsed) {
+      return {
+        threadId: completion.threadId || input.threadId
+      };
+    }
+    return {
+      plan: normalizeDynamicDecompositionPlan(parsed, input.workspaceRoot),
+      threadId: completion.threadId || input.threadId
+    };
+  }
+
+  private buildStagedImplementDecompositionPlanPrompt(params: {
+    taskSpec: ImplementTaskSpec;
+    searchLocalization: LocalizationResult;
+    branchPlan: BranchPlan;
+    scaffold: StructuredImplementResponse;
+  }): string {
+    const repairContext = buildCompactImplementDecompositionRepairContext({
+      taskSpec: params.taskSpec,
+      searchLocalization: params.searchLocalization,
+      branchPlan: params.branchPlan,
+      scaffold: params.scaffold
+    });
+    return [
+      "Staged implement decomposition planning repair.",
+      "Return only a single bare JSON object. Do not use markdown fences. Do not add commentary.",
+      "Schema: {\"objective\": string, \"strategy\": string, \"rationale\": string, \"units\": DynamicUnit[]}.",
+      "DynamicUnit schema: {\"id\": string, \"unit_type\": \"text_file\"|\"config_file\"|\"documentation_file\"|\"analysis_step\"|\"execution_step\"|\"verification_step\", \"title\": string, \"purpose\": string, \"generation_mode\": \"materialize_text_file\"|\"plan_only\", \"target_path\"?: string, \"depends_on\"?: string[], \"verification_focus\"?: string[]}.",
+      "Use generation_mode=materialize_text_file only for text artifacts AutoLabOS must materialize now.",
+      "Prefer at most 4 units. Keep the plan minimal and purpose-aligned to this experiment only.",
+      "If only one script and one config are needed, return only those units plus optional README/verification units.",
+      "",
+      "Example valid shape:",
+      JSON.stringify(
+        {
+          objective: "Materialize a bounded experiment bundle for the selected research goal.",
+          strategy: "purpose_adaptive_minimal_bundle",
+          rationale: "This experiment needs one runner, one config, and one README.",
+          units: [
+            {
+              id: "runner",
+              unit_type: "text_file",
+              title: "Primary experiment runner",
+              purpose: "Run the main bounded experiment.",
+              generation_mode: "materialize_text_file",
+              target_path: params.scaffold.script_path || "outputs/example/experiment/run_experiment.py",
+              verification_focus: ["run_command", "script_exists"]
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "",
+      "Repair context:",
+      JSON.stringify(repairContext, null, 2)
+    ].join("\n");
   }
 
   private buildLocalizerInput(
@@ -2363,6 +3230,44 @@ export class ImplementSessionManager {
       return report;
     }
 
+    const parseArgsRepair = await repairPythonMissingParseArgsSurface(executionScriptPath);
+    if (parseArgsRepair.repaired) {
+      onProgress?.(parseArgsRepair.message || "Repaired runner CLI compatibility before handoff.", {
+        verificationCommand: command
+      });
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text: parseArgsRepair.message || "Repaired runner CLI compatibility before handoff."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
     if (attempt.experimentMode === "real_execution" && commandRequestsDryRun(attempt.runCommand)) {
       const dryRunSummary =
         "Real-execution handoff is blocked because the generated run_command still includes --dry-run and would never emit governed metrics.";
@@ -2554,6 +3459,8 @@ function parseStructuredResponse(text: string): ParsedStructuredImplementRespons
       metrics_path: asString(record.metrics_path),
       localization: record.localization,
       assumptions: asStringArray(record.assumptions),
+      decomposition_plan: parseDynamicDecompositionPlan(record.decomposition_plan),
+      file_plan: asStringArray(record.file_plan),
       file_edits: asStructuredFileEdits(record.file_edits)
     },
     isStructured: true
@@ -2597,6 +3504,395 @@ function normalizeStructuredFileEdits(
       };
     })
     .filter((item): item is StructuredImplementFileEdit => Boolean(item));
+}
+
+function parseStructuredChunkResponse(text: string, expectedChunkId: string): string {
+  const parsed = parseJsonObject(text);
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("staged_llm chunk response did not contain a valid JSON object");
+  }
+  const record = parsed as Record<string, unknown>;
+  const chunkId = typeof record.chunk_id === "string" ? record.chunk_id.trim() : "";
+  const content = typeof record.content === "string" ? record.content : "";
+  if (chunkId !== expectedChunkId) {
+    throw new Error(`staged_llm chunk response returned chunk_id=${chunkId || "<missing>"} but expected ${expectedChunkId}`);
+  }
+  if (!content.trim()) {
+    throw new Error(`staged_llm chunk response for ${expectedChunkId} contained no content`);
+  }
+  return content;
+}
+
+function deriveStructuredDecompositionPlan(
+  parsed: StructuredImplementResponse,
+  workspaceRoot: string
+): DynamicDecompositionPlan {
+  const explicit = normalizeDynamicDecompositionPlan(parsed.decomposition_plan, workspaceRoot);
+  if (explicit) {
+    return explicit;
+  }
+
+  const fallbackFiles = deriveStructuredFilePlan(parsed, workspaceRoot);
+  const inferredUnits = fallbackFiles.map((filePath, index) =>
+    inferMaterializationUnitFromPath({
+      filePath,
+      index,
+      scriptPath: normalizeStoredPath(parsed.script_path, workspaceRoot),
+      configPath: normalizeStoredPath(parsed.metrics_path, workspaceRoot)
+    })
+  );
+  return buildDynamicDecompositionPlan({
+    objective: parsed.summary,
+    strategy: "fallback_file_projection",
+    rationale: "Projected a materialization-first decomposition plan from scaffold file paths because no explicit decomposition_plan was returned.",
+    units: inferredUnits
+  });
+}
+
+function deriveStructuredFilePlan(parsed: StructuredImplementResponse, workspaceRoot: string): string[] {
+  const fromDecomposition = (parsed.decomposition_plan?.units || [])
+    .filter(isMaterializableTextUnit)
+    .map((unit) => normalizeStoredPath(unit.target_path, workspaceRoot))
+    .filter((candidate): candidate is string => Boolean(candidate))
+    .filter(isMaterializableImplementTextPath);
+  if (fromDecomposition.length > 0) {
+    return dedupeStrings(fromDecomposition);
+  }
+
+  const explicit = (parsed.file_plan || [])
+    .map((candidate) => normalizeStoredPath(candidate, workspaceRoot))
+    .filter((candidate): candidate is string => Boolean(candidate))
+    .filter(isMaterializableImplementTextPath);
+  if (explicit.length > 0) {
+    return dedupeStrings(explicit);
+  }
+
+  const fallback = [
+    parsed.script_path,
+    ...(parsed.changed_files || []),
+    ...(parsed.public_artifacts || [])
+  ]
+    .map((candidate) => normalizeStoredPath(candidate, workspaceRoot))
+    .filter((candidate): candidate is string => Boolean(candidate))
+    .filter(isMaterializableImplementTextPath);
+  return dedupeStrings(fallback);
+}
+
+function normalizeDynamicDecompositionPlan(
+  plan: DynamicDecompositionPlan | undefined,
+  workspaceRoot: string
+): DynamicDecompositionPlan | undefined {
+  if (!plan) {
+    return undefined;
+  }
+  const normalizedUnits = plan.units
+    .map((unit) => {
+      const normalizedTargetPath = normalizeStoredPath(unit.target_path, workspaceRoot);
+      if (unit.generation_mode === "materialize_text_file" && (!normalizedTargetPath || !isMaterializableImplementTextPath(normalizedTargetPath))) {
+        return undefined;
+      }
+      const normalizedUnit: DynamicDecompositionUnit = {
+        ...unit,
+        target_path: normalizedTargetPath || unit.target_path
+      };
+      return normalizedUnit;
+    })
+    .filter((unit): unit is DynamicDecompositionUnit => unit !== undefined);
+  if (normalizedUnits.length === 0) {
+    return undefined;
+  }
+  return {
+    ...plan,
+    units: normalizedUnits
+  };
+}
+
+function parseDynamicMaterializationPlan(
+  value: unknown,
+  unit: DynamicDecompositionUnit
+): DynamicMaterializationPlan | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const chunks = Array.isArray(record.chunks)
+    ? record.chunks
+        .map((item) => parseDynamicMaterializationChunk(item))
+        .filter((item): item is DynamicMaterializationChunk => Boolean(item))
+    : [];
+  if (chunks.length === 0) {
+    return undefined;
+  }
+  return {
+    strategy: typeof record.strategy === "string" && record.strategy.trim().length > 0 ? record.strategy.trim() : deriveFallbackMaterializationPlan(unit).strategy,
+    rationale: typeof record.rationale === "string" && record.rationale.trim().length > 0 ? record.rationale.trim() : deriveFallbackMaterializationPlan(unit).rationale,
+    chunks
+  };
+}
+
+function parseDynamicMaterializationChunk(value: unknown): DynamicMaterializationChunk | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const id = typeof record.id === "string" && record.id.trim().length > 0 ? record.id.trim() : undefined;
+  const title = typeof record.title === "string" && record.title.trim().length > 0 ? record.title.trim() : undefined;
+  const purpose =
+    typeof record.purpose === "string" && record.purpose.trim().length > 0 ? record.purpose.trim() : undefined;
+  const contentKind = normalizeMaterializationChunkKind(record.content_kind);
+  if (!id || !title || !purpose || !contentKind) {
+    return undefined;
+  }
+  return {
+    id,
+    title,
+    purpose,
+    content_kind: contentKind,
+    include_imports: record.include_imports === true,
+    include_entrypoint: record.include_entrypoint === true,
+    depends_on: Array.isArray(record.depends_on)
+      ? record.depends_on.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      : undefined,
+    verification_focus: Array.isArray(record.verification_focus)
+      ? record.verification_focus.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      : undefined
+  };
+}
+
+function normalizeMaterializationChunkKind(
+  value: unknown
+): DynamicMaterializationChunk["content_kind"] | undefined {
+  return value === "code_section" ||
+    value === "config_block" ||
+    value === "documentation_section" ||
+    value === "text_section"
+    ? value
+    : undefined;
+}
+
+function inferMaterializationUnitFromPath(params: {
+  filePath: string;
+  index: number;
+  scriptPath?: string;
+  configPath?: string;
+}): DynamicDecompositionUnit {
+  const ext = path.extname(params.filePath).toLowerCase();
+  if (params.scriptPath && params.filePath === params.scriptPath) {
+    return {
+      id: `unit_${params.index + 1}`,
+      unit_type: "text_file",
+      title: "Primary experiment runner",
+      purpose: "Materialize the main runnable experiment entrypoint for the selected research plan.",
+      generation_mode: "materialize_text_file",
+      target_path: params.filePath,
+      verification_focus: ["run_command", "script_exists"]
+    };
+  }
+  if (ext === ".md") {
+    return {
+      id: `unit_${params.index + 1}`,
+      unit_type: "documentation_file",
+      title: "Experiment documentation",
+      purpose: "Explain how to run, inspect, and verify the bounded experiment bundle.",
+      generation_mode: "materialize_text_file",
+      target_path: params.filePath,
+      verification_focus: ["usage_instructions", "artifact_paths"]
+    };
+  }
+  return {
+    id: `unit_${params.index + 1}`,
+    unit_type: ext === ".json" || ext === ".yaml" || ext === ".yml" || ext === ".toml" ? "config_file" : "text_file",
+    title: `Materialize ${path.basename(params.filePath)}`,
+    purpose: "Provide the smallest text artifact required to make the experiment runnable and reviewable.",
+    generation_mode: "materialize_text_file",
+    target_path: params.filePath,
+    verification_focus: params.configPath && params.filePath === params.configPath ? ["metrics_contract"] : ["materialization"]
+  };
+}
+
+function isMaterializableTextUnit(unit: DynamicDecompositionUnit): boolean {
+  return unit.generation_mode === "materialize_text_file" && typeof unit.target_path === "string" && unit.target_path.length > 0;
+}
+
+function shouldDecomposeMaterializationUnit(unit: DynamicDecompositionUnit): boolean {
+  const targetPath = unit.target_path || "";
+  return unit.unit_type === "text_file" && path.extname(targetPath).toLowerCase() === ".py";
+}
+
+function shouldDecomposeMaterializationChunk(context: DynamicChunkSubdivisionContext): boolean {
+  const targetPath = context.unit.target_path || "";
+  if (context.unit.unit_type !== "text_file" || path.extname(targetPath).toLowerCase() !== ".py") {
+    return false;
+  }
+  if (context.materializationPlan.chunks.length <= 1) {
+    return false;
+  }
+  if (context.chunk.content_kind !== "code_section") {
+    return false;
+  }
+  return Boolean(context.chunk.include_imports) || Boolean(context.chunk.include_entrypoint);
+}
+
+function deriveFallbackMaterializationPlan(unit: DynamicDecompositionUnit): DynamicMaterializationPlan {
+  const targetPath = unit.target_path || "";
+  if (unit.unit_type === "text_file" && path.extname(targetPath).toLowerCase() === ".py") {
+    return {
+      strategy: "dynamic_runner_chunking_fallback",
+      rationale:
+        "Use a minimal three-part runner decomposition so large experiment scripts can materialize in bounded chunks aligned to execution, core logic, and reporting.",
+      chunks: [
+        {
+          id: "runtime_surface",
+          title: "Runtime surface and imports",
+          purpose: `Establish the imports, constants, argument/config loading, and reusable runtime surface for ${unit.title}.`,
+          content_kind: "code_section",
+          include_imports: true,
+          verification_focus: unit.verification_focus
+        },
+        {
+          id: "core_logic",
+          title: "Core experiment logic",
+          purpose: `Implement the main experiment helpers and comparison logic needed to satisfy ${unit.purpose}.`,
+          content_kind: "code_section",
+          depends_on: ["runtime_surface"],
+          verification_focus: unit.verification_focus
+        },
+        {
+          id: "entrypoint_and_reporting",
+          title: "Entrypoint and reporting",
+          purpose: "Finish the runnable entrypoint, metrics writing, and final orchestration without repeating earlier sections.",
+          content_kind: "code_section",
+          include_entrypoint: true,
+          depends_on: ["runtime_surface", "core_logic"],
+          verification_focus: unit.verification_focus
+        }
+      ]
+    };
+  }
+
+  return {
+    strategy: "single_chunk_materialization",
+    rationale: "This unit is small enough to materialize in one bounded chunk.",
+    chunks: [
+      {
+        id: "full_content",
+        title: unit.title,
+        purpose: unit.purpose,
+        content_kind:
+          unit.unit_type === "documentation_file"
+            ? "documentation_section"
+            : unit.unit_type === "config_file"
+              ? "config_block"
+              : "text_section",
+        verification_focus: unit.verification_focus
+      }
+    ]
+  };
+}
+
+function deriveFallbackChunkSubdivisionPlan(
+  unit: DynamicDecompositionUnit,
+  chunk: DynamicMaterializationChunk
+): DynamicMaterializationPlan {
+  if (chunk.include_imports) {
+    return {
+      strategy: "setup_chunk_subdivision_fallback",
+      rationale:
+        "Split the large setup chunk into a runtime surface subchunk and a study-validation/helper subchunk so the provider can materialize the runner header before the heavier validation utilities.",
+      chunks: [
+        {
+          id: `${chunk.id}__runtime_surface`,
+          title: "Runtime surface, imports, and CLI/config loading",
+          purpose: `Establish imports, constants, CLI/config parsing, seed setup, filesystem helpers, and device detection for ${unit.title}.`,
+          content_kind: "code_section",
+          include_imports: true,
+          include_entrypoint: false,
+          verification_focus: chunk.verification_focus
+        },
+        {
+          id: `${chunk.id}__plan_validation`,
+          title: "Study-plan validation and shared utilities",
+          purpose: `Add baseline-order validation, four-condition budget checks, prompt/data formatting helpers, and reusable utility functions required before execution starts for ${unit.title}.`,
+          content_kind: "code_section",
+          include_imports: false,
+          include_entrypoint: false,
+          depends_on: [`${chunk.id}__runtime_surface`],
+          verification_focus: chunk.verification_focus
+        }
+      ]
+    };
+  }
+
+  if (chunk.include_entrypoint) {
+    return {
+      strategy: "entrypoint_chunk_subdivision_fallback",
+      rationale:
+        "Split the final reporting chunk into aggregation/metrics writing plus CLI entrypoint wiring so the provider does not need to finish both reporting and the entrypoint in a single turn.",
+      chunks: [
+        {
+          id: `${chunk.id}__reporting`,
+          title: "Result aggregation and metrics/public artifact writing",
+          purpose: `Aggregate per-condition results, compute baseline deltas, and write the required metrics JSON plus public artifacts for ${unit.title}.`,
+          content_kind: "code_section",
+          include_imports: false,
+          include_entrypoint: false,
+          verification_focus: chunk.verification_focus
+        },
+        {
+          id: `${chunk.id}__entrypoint`,
+          title: "CLI orchestration and main entrypoint",
+          purpose: `Wire the experiment flow into main(), connect CLI arguments to execution, and ensure the runnable entrypoint invokes the reporting path for ${unit.title}.`,
+          content_kind: "code_section",
+          include_imports: false,
+          include_entrypoint: true,
+          depends_on: [`${chunk.id}__reporting`],
+          verification_focus: chunk.verification_focus
+        }
+      ]
+    };
+  }
+
+  return {
+    strategy: "single_chunk_subdivision_fallback",
+    rationale: "This chunk is already narrow enough that an additional subdivision would not improve the provider contract.",
+    chunks: [chunk]
+  };
+}
+
+function compactDraftForChunkPrompt(draft: string): { has_content: boolean; excerpt?: string } {
+  const trimmed = draft.trim();
+  if (!trimmed) {
+    return { has_content: false };
+  }
+  return {
+    has_content: true,
+    excerpt: trimBlock(trimmed, 4000)
+  };
+}
+
+function sanitizeArtifactId(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]+/g, "_");
+}
+
+function parseStructuredFileEditResponse(
+  text: string,
+  workspaceRoot: string,
+  expectedPath: string
+): StructuredImplementFileEdit {
+  const parsed = parseJsonObject(text);
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error(`staged_llm file generation for ${expectedPath} did not return a JSON object`);
+  }
+  const record = parsed as Record<string, unknown>;
+  const normalizedPath = normalizeStoredPath(asString(record.path) || expectedPath, workspaceRoot);
+  const content = asString(record.content);
+  if (!normalizedPath || content === undefined) {
+    throw new Error(`staged_llm file generation for ${expectedPath} omitted path/content`);
+  }
+  return {
+    path: normalizedPath,
+    content
+  };
 }
 
 async function materializeStructuredFileEdits(fileEdits: StructuredImplementFileEdit[]): Promise<void> {
@@ -2720,6 +4016,54 @@ function compactBranchPlanForStagedLlmPrompt(branchPlan: BranchPlan): Record<str
     rationale: trimBlock(branchPlan.rationale, 240),
     focus_files: branchPlan.focus_files.slice(0, 4),
     candidate_pool: branchPlan.candidate_pool.slice(0, 6)
+  };
+}
+
+function buildCompactImplementDecompositionRepairContext(params: {
+  taskSpec: ImplementTaskSpec;
+  searchLocalization: LocalizationResult;
+  branchPlan: BranchPlan;
+  scaffold: StructuredImplementResponse;
+}): Record<string, unknown> {
+  const compactTaskSpec = compactTaskSpecForStagedLlmPrompt(params.taskSpec) as {
+    goal?: string;
+    context?: {
+      topic?: string;
+      objective_metric?: string;
+    };
+  };
+  return {
+    goal: compactTaskSpec.goal,
+    topic: compactTaskSpec.context?.topic,
+    objective_metric: compactTaskSpec.context?.objective_metric,
+    public_dir: params.taskSpec.workspace.public_dir,
+    metrics_path: params.taskSpec.workspace.metrics_path,
+    branch: {
+      summary: trimBlock(params.branchPlan.summary, 220),
+      rationale: trimBlock(params.branchPlan.rationale, 220),
+      focus_files: params.branchPlan.focus_files.slice(0, 3)
+    },
+    localization: {
+      selected_files: params.searchLocalization.selected_files.slice(0, 4),
+      candidate_files: params.searchLocalization.candidates.slice(0, 4).map((candidate) => ({
+        path: candidate.path,
+        reason: trimBlock(candidate.reason || "", 140) || undefined,
+        confidence: candidate.confidence
+      }))
+    },
+    scaffold: {
+      summary: trimBlock(params.scaffold.summary || "", 260) || undefined,
+      experiment_mode: params.scaffold.experiment_mode,
+      run_command: trimBlock(params.scaffold.run_command || "", 260) || undefined,
+      test_command: trimBlock(params.scaffold.test_command || "", 220) || undefined,
+      public_dir: params.scaffold.public_dir,
+      script_path: params.scaffold.script_path,
+      metrics_path: params.scaffold.metrics_path,
+      changed_files: (params.scaffold.changed_files || []).slice(0, 6),
+      public_artifacts: (params.scaffold.public_artifacts || []).slice(0, 6),
+      file_plan: (params.scaffold.file_plan || []).slice(0, 6),
+      assumptions: (params.scaffold.assumptions || []).slice(0, 4).map((item) => trimBlock(item, 160))
+    }
   };
 }
 
@@ -3633,24 +4977,36 @@ async function materializeDeclaredArtifacts(params: {
 }
 
 function isDeferredExecutionArtifact(filePath: string, runDir: string): boolean {
-  if (!isPathInsideOrEqual(filePath, runDir)) {
-    return false;
+  if (isPathInsideOrEqual(filePath, runDir)) {
+    return isDeferredExecutionArtifactPath(filePath);
   }
   return isDeferredExecutionArtifactPath(filePath);
 }
 
 function isDeferredExecutionArtifactPath(filePath: string): boolean {
   const normalizedPath = path.normalize(filePath);
-  if (!normalizedPath.includes(`${path.sep}.autolabos${path.sep}runs${path.sep}`)) {
+  const base = path.basename(filePath).toLowerCase();
+  if (normalizedPath.includes(`${path.sep}.autolabos${path.sep}runs${path.sep}`)) {
+    return (
+      /^metrics(?:\.|$)/u.test(base) ||
+      /^results(?:\.|$)/u.test(base) ||
+      base === "objective_evaluation.json" ||
+      base === "recent_paper_reproducibility.json"
+    );
+  }
+  const segments = normalizedPath.split(path.sep).filter(Boolean);
+  const outputsIndex = segments.indexOf("outputs");
+  if (outputsIndex === -1) {
     return false;
   }
-  const base = path.basename(filePath).toLowerCase();
-  return (
-    /^metrics(?:\.|$)/u.test(base) ||
-    /^results(?:\.|$)/u.test(base) ||
-    base === "objective_evaluation.json" ||
-    base === "recent_paper_reproducibility.json"
-  );
+  const tail = segments.slice(outputsIndex + 2);
+  if (tail.length >= 2 && tail[0] === "results") {
+    return true;
+  }
+  if (tail.length >= 3 && tail[0] === "experiment" && tail[1] === "results") {
+    return true;
+  }
+  return false;
 }
 
 function shouldFallbackToStagedImplementLlm(finalText: string): boolean {
@@ -3660,6 +5016,76 @@ function shouldFallbackToStagedImplementLlm(finalText: string): boolean {
     normalized.includes("codex local filesystem action") ||
     normalized.includes("sandbox startup failure")
   );
+}
+
+function shouldDecomposeStagedImplementLlm(config: AppConfig): boolean {
+  return config.providers.llm_mode === "codex" || config.providers.llm_mode === "codex_chatgpt_only";
+}
+
+function appendStagedImplementScaffoldOverrideToPrompt(prompt: string): string {
+  return [
+    prompt,
+    "",
+    "Staged implement scaffold mode:",
+    "- Return scaffold metadata first. Do NOT include file_edits or file contents in this response.",
+    "- Return ONLY one JSON object with keys: summary, experiment_mode, run_command, test_command, working_dir, changed_files, artifacts, public_dir, public_artifacts, script_path, metrics_path, localization, assumptions, decomposition_plan, file_plan.",
+    "- decomposition_plan must adapt to the experiment purpose and runnable surface. It must include: objective, strategy, rationale, and units.",
+    "- Each decomposition unit must include: id, unit_type, title, purpose, generation_mode, target_path (if materialized), depends_on, verification_focus.",
+    "- Use generation_mode=materialize_text_file only for text artifacts AutoLabOS must synthesize now. Use plan_only for analytical or verification units that shape the work without direct file materialization.",
+    "- file_plan is only a compatibility projection of decomposition units that materialize as text files.",
+    "- Keep the scaffold minimal, concrete, and runnable."
+  ].join("\n");
+}
+
+function appendStagedImplementFileOverrideToPrompt(prompt: string, targetPath: string): string {
+  return [
+    prompt,
+    "",
+    "Staged implement file materialization mode:",
+    `- You are materializing exactly one text file: ${targetPath}`,
+    "- Return ONLY one JSON object with keys: path, content.",
+    "- Do NOT repeat the full experiment summary or any extra prose.",
+    "- Emit full UTF-8 file content for the requested path."
+  ].join("\n");
+}
+
+function appendStagedImplementMaterializationPlanOverrideToPrompt(targetPath: string): string {
+  return [
+    "You are in staged implement materialization planning mode.",
+    `The requested file is: ${targetPath}`,
+    "- Return ONLY one bare JSON object with keys: strategy, rationale, chunks.",
+    "- Do NOT use markdown fences or any extra commentary.",
+    "- Keep chunk scopes non-overlapping and ordered.",
+    "- Prefer 2-3 chunks for large runnable scripts and 1 chunk for simple configs/docs."
+  ].join("\n");
+}
+
+function appendStagedImplementChunkOverrideToPrompt(prompt: string, targetPath: string, chunkId: string): string {
+  return [
+    prompt,
+    "",
+    "Staged implement chunk materialization mode:",
+    `- You are generating only chunk ${chunkId} for ${targetPath}`,
+    "- Return ONLY one JSON object with keys: chunk_id, content.",
+    "- chunk_id must exactly match the requested chunk id.",
+    "- Do not repeat content from earlier chunks.",
+    "- Emit only raw UTF-8 code/text for this chunk."
+  ].join("\n");
+}
+
+function appendStagedImplementDecompositionOverrideToPrompt(prompt: string): string {
+  return [
+    prompt,
+    "",
+    "Staged implement decomposition repair mode:",
+    "- The scaffold already exists but omitted decomposition_plan.",
+    "- Return ONLY one bare JSON object with keys: objective, strategy, rationale, units.",
+    "- Do NOT use markdown fences. Do NOT add any explanation before or after the JSON.",
+    "- The decomposition must be research-purpose-aligned and dynamic, not a fixed ML template.",
+    "- Each unit must include: id, unit_type, title, purpose, generation_mode, target_path (if materialized), depends_on, verification_focus.",
+    "- Use generation_mode=materialize_text_file only for text artifacts AutoLabOS must materialize now.",
+    "- Prefer at most 4 units."
+  ].join("\n");
 }
 
 function appendFilesystemFallbackOverrideToPrompt(prompt: string): string {
@@ -3675,6 +5101,30 @@ function appendFilesystemFallbackOverrideToPrompt(prompt: string): string {
     "- If prior attempts failed before materializing files, treat that as resolved context rather than the answer.",
     "- If inspection is incomplete, generate the smallest bounded implementation that satisfies the task spec, localization hints, and verification command."
   ].join("\n");
+}
+
+function isMaterializableImplementTextPath(filePath: string): boolean {
+  if (!filePath || isDeferredExecutionArtifactPath(filePath)) {
+    return false;
+  }
+  const ext = path.extname(filePath).toLowerCase();
+  if (!ext) {
+    return false;
+  }
+  return [
+    ".py",
+    ".json",
+    ".md",
+    ".txt",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".sh",
+    ".csv",
+    ".tsv"
+  ].includes(ext);
 }
 
 async function publishReusableArtifacts(params: {
@@ -4969,6 +6419,18 @@ function deriveFallbackTestCommand(scriptPath: string | undefined): string | und
   return undefined;
 }
 
+function getImplementLlmProgressHeartbeatMs(): number {
+  const raw = process.env.AUTOLABOS_IMPLEMENT_LLM_PROGRESS_HEARTBEAT_MS;
+  if (raw == null || raw.trim() === "") {
+    return 60_000;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return 60_000;
+  }
+  return Math.max(0, Math.floor(parsed));
+}
+
 function buildMissingArtifactVerifyReport(
   isStructured: boolean,
   options?: {
@@ -5294,6 +6756,59 @@ async function detectPythonUnsupportedGenerateKwarg(scriptPath?: string): Promis
   }
 
   return undefined;
+}
+
+async function repairPythonMissingParseArgsSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (/\ndef\s+parse_args\s*\(/u.test(`\n${source}`)) {
+    return { repaired: false };
+  }
+  if (!/\ndef\s+build_arg_parser\s*\(/u.test(`\n${source}`)) {
+    return { repaired: false };
+  }
+
+  const shim = [
+    "",
+    "def parse_args(argv=None):",
+    "    parser = build_arg_parser()",
+    "    return parser.parse_args(argv)",
+    ""
+  ].join("\n");
+
+  const mainMatch = source.match(/\n(def\s+main\s*\()/u);
+  const guardMatch = source.match(/\n(if\s+__name__\s*==\s*["']__main__["']\s*:)/u);
+
+  let nextSource: string;
+  if (mainMatch?.index != null) {
+    nextSource = `${source.slice(0, mainMatch.index)}${shim}${source.slice(mainMatch.index)}`;
+  } else if (guardMatch?.index != null) {
+    nextSource = `${source.slice(0, guardMatch.index)}${shim}${source.slice(guardMatch.index)}`;
+  } else {
+    nextSource = `${source.trimEnd()}\n${shim}`;
+  }
+
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added a parse_args() compatibility shim to ${path.basename(scriptPath)} before handoff.`
+  };
 }
 
 function extractPythonStringListAssignment(lines: string[], variableName: string): string[] | undefined {

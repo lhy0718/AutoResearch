@@ -133,6 +133,40 @@ describe("paperText", () => {
     expect(source.fallbackReason).toContain("pdf_download_failed:404");
   });
 
+  it("treats known unusable IEEE staging PDF URLs as no usable PDF URL", async () => {
+    const source = await resolvePaperTextSource({
+      runId: "run-1",
+      paper: makePaper({
+        pdf_url: "http://xplorestaging.ieee.org/ielx7/97/10380231/10472574.pdf?arnumber=10472574",
+        url: "https://ieeexplore.ieee.org/document/10472574/"
+      })
+    });
+
+    expect(source.sourceType).toBe("abstract");
+    expect(source.fallbackReason).toBe("no_pdf_url");
+  });
+
+  it("falls back to abstract when a claimed PDF response is actually HTML", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-text-invalid-pdf-"));
+    tempDirs.push(root);
+    process.chdir(root);
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response("<!DOCTYPE html><html><body>not a pdf</body></html>", {
+          status: 200,
+          headers: { "content-type": "text/html; charset=utf-8" }
+        })
+    ) as typeof fetch;
+
+    const source = await resolvePaperTextSource({
+      runId: "run-1",
+      paper: makePaper({ pdf_url: "https://example.org/not-really.pdf" })
+    });
+
+    expect(source.sourceType).toBe("abstract");
+    expect(source.fallbackReason).toContain("pdf_download_invalid_content:text/html; charset=utf-8");
+  });
+
   it("selects all pages for hybrid image attachment when the paper is short", () => {
     const pages = selectHybridPdfPageNumbers({
       pageTexts: [
