@@ -39,6 +39,29 @@ function makeCodexProviderConfig() {
   };
 }
 
+function makeCodexReadyStub() {
+  return {
+    checkCliAvailable: async () => ({ ok: true, detail: "codex available" }),
+    checkLoginStatus: async () => ({ ok: true, detail: "logged in" }),
+    checkEnvironmentReadiness: async () => []
+  } as any;
+}
+
+async function seedCodexOAuthHome(root: string): Promise<void> {
+  process.env.HOME = root;
+  await mkdir(path.join(root, ".codex"), { recursive: true });
+  await writeFile(
+    path.join(root, ".codex", "auth.json"),
+    JSON.stringify({
+      tokens: {
+        access_token: "test-codex-access-token",
+        account_id: "test-account"
+      }
+    }),
+    "utf8"
+  );
+}
+
 afterEach(async () => {
   process.chdir(originalCwd);
   globalThis.fetch = originalFetch;
@@ -918,6 +941,7 @@ describe("analyzePapers node", () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-post-persist-refresh-"));
     tempDirs.push(root);
     process.chdir(root);
+    await seedCodexOAuthHome(root);
 
     const runId = "run-analyze-post-persist-refresh";
     const run = makeRun(runId);
@@ -950,7 +974,7 @@ describe("analyzePapers node", () => {
       runStore: runStore as any,
       eventStream,
       llm: new SequenceJsonLLM([jsonOutput("summary 1", "claim 1")]),
-      codex: {} as any,
+      codex: makeCodexReadyStub(),
       aci: {} as any,
       semanticScholar: {} as any,
       responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
@@ -1058,6 +1082,7 @@ describe("analyzePapers node", () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-extract-timeout-"));
     tempDirs.push(root);
     process.chdir(root);
+    await seedCodexOAuthHome(root);
 
     const runId = "run-analyze-extract-timeout";
     const run = makeRun(runId);
@@ -1081,7 +1106,7 @@ describe("analyzePapers node", () => {
         summary: "summary 1",
         claim: "claim 1"
       }),
-      codex: {} as any,
+      codex: makeCodexReadyStub(),
       aci: {} as any,
       semanticScholar: {} as any,
       responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
@@ -1356,6 +1381,7 @@ describe("analyzePapers node", () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-early-zero-output-"));
     tempDirs.push(root);
     process.chdir(root);
+    await seedCodexOAuthHome(root);
 
     const runId = "run-analyze-early-zero-output";
     const run = makeRun(runId);
@@ -1381,7 +1407,7 @@ describe("analyzePapers node", () => {
       runStore: {} as any,
       eventStream,
       llm,
-      codex: {} as any,
+      codex: makeCodexReadyStub(),
       aci: {} as any,
       semanticScholar: {} as any,
       responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
@@ -1407,6 +1433,7 @@ describe("analyzePapers node", () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-timeout-zero-output-"));
     tempDirs.push(root);
     process.chdir(root);
+    await seedCodexOAuthHome(root);
 
     process.env.AUTOLABOS_ANALYSIS_EXTRACT_TIMEOUT_MS = "5";
 
@@ -1434,7 +1461,7 @@ describe("analyzePapers node", () => {
       runStore: {} as any,
       eventStream,
       llm,
-      codex: {} as any,
+      codex: makeCodexReadyStub(),
       aci: {} as any,
       semanticScholar: {} as any,
       responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
@@ -1468,6 +1495,7 @@ describe("analyzePapers node", () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-image-timeout-fallback-"));
     tempDirs.push(root);
     process.chdir(root);
+    await seedCodexOAuthHome(root);
 
     process.env.AUTOLABOS_ANALYSIS_EXTRACT_TIMEOUT_MS = "5";
 
@@ -1539,6 +1567,7 @@ describe("analyzePapers node", () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-abstract-timeout-fallback-"));
     tempDirs.push(root);
     process.chdir(root);
+    await seedCodexOAuthHome(root);
 
     process.env.AUTOLABOS_ANALYSIS_EXTRACT_TIMEOUT_MS = "5";
 
@@ -1622,6 +1651,7 @@ describe("analyzePapers node", () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-fulltext-planner-timeout-"));
     tempDirs.push(root);
     process.chdir(root);
+    await seedCodexOAuthHome(root);
 
     process.env.AUTOLABOS_ANALYSIS_PLANNER_TIMEOUT_MS = "5";
 
@@ -1700,6 +1730,7 @@ describe("analyzePapers node", () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-usage-limit-"));
     tempDirs.push(root);
     process.chdir(root);
+    await seedCodexOAuthHome(root);
 
     const runId = "run-analyze-usage-limit";
     const run = makeRun(runId);
@@ -1720,7 +1751,7 @@ describe("analyzePapers node", () => {
           "You've hit your usage limit for GPT-5.3-Codex-Spark. Switch to another model now, or try again at 8:24 PM."
         )
       ),
-      codex: {} as any,
+      codex: makeCodexReadyStub(),
       aci: {} as any,
       semanticScholar: {} as any,
       responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
@@ -1749,6 +1780,7 @@ describe("analyzePapers node", () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-env-preflight-"));
     tempDirs.push(root);
     process.chdir(root);
+    await seedCodexOAuthHome(root);
 
     const runId = "run-analyze-env-preflight";
     const run = makeRun(runId);
@@ -1804,7 +1836,7 @@ describe("analyzePapers node", () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-spark-preflight-"));
     tempDirs.push(root);
     process.chdir(root);
-    process.env.HOME = root;
+    await seedCodexOAuthHome(root);
 
     const runId = "run-analyze-spark-preflight";
     const run = makeRun(runId);
@@ -1968,6 +2000,7 @@ describe("analyzePapers node", () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-serial-warm-start-"));
     tempDirs.push(root);
     process.chdir(root);
+    await seedCodexOAuthHome(root);
 
     const runId = "run-analyze-serial-warm-start";
     const run = makeRun(runId);
@@ -1998,7 +2031,7 @@ describe("analyzePapers node", () => {
       eventStream,
       llm: new SequenceJsonLLM(repeatedJson),
       pdfTextLlm: new SequenceJsonLLM(repeatedJson),
-      codex: {} as any,
+      codex: makeCodexReadyStub(),
       aci: {} as any,
       semanticScholar: {} as any,
       responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
@@ -2021,6 +2054,7 @@ describe("analyzePapers node", () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-source-mismatch-"));
     tempDirs.push(root);
     process.chdir(root);
+    await seedCodexOAuthHome(root);
 
     const runId = "run-analyze-source-mismatch";
     const run = makeRun(runId);
@@ -2053,7 +2087,7 @@ describe("analyzePapers node", () => {
       runStore: {} as any,
       eventStream,
       llm,
-      codex: {} as any,
+      codex: makeCodexReadyStub(),
       aci: {} as any,
       semanticScholar: {} as any,
       responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
@@ -3615,6 +3649,7 @@ describe("analyzePapers node", () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-topn-replace-"));
     tempDirs.push(root);
     process.chdir(root);
+    await seedCodexOAuthHome(root);
 
     const runId = "run-analyze-topn-replace";
     const run = makeRun(runId);
@@ -3645,7 +3680,7 @@ describe("analyzePapers node", () => {
         jsonOutput("summary 1", "claim 1"),
         jsonOutput("summary 2", "claim 2")
       ]),
-      codex: {} as any,
+      codex: makeCodexReadyStub(),
       aci: {} as any,
       semanticScholar: {} as any,
       responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
@@ -3691,6 +3726,7 @@ describe("analyzePapers node", () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-mode-change-"));
     tempDirs.push(root);
     process.chdir(root);
+    await seedCodexOAuthHome(root);
 
     const runId = "run-analyze-mode-change";
     const run = makeRun(runId);
@@ -3716,7 +3752,7 @@ describe("analyzePapers node", () => {
       runStore: {} as any,
       eventStream: new InMemoryEventStream(),
       llm: new SequenceJsonLLM([jsonOutput("local summary", "local claim")]),
-      codex: {} as any,
+      codex: makeCodexReadyStub(),
       aci: {} as any,
       semanticScholar: {} as any,
       responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
