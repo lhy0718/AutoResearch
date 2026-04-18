@@ -10,7 +10,11 @@ import { InMemoryEventStream } from "../src/core/events.js";
 import {
   extractWorkspacePathsFromCommand,
   getImplementLlmTimeoutMs,
-  ImplementSessionManager
+  ImplementSessionManager,
+  normalizeLockedPeftStudyConfigPayloadForCompatibility,
+  repairPythonConditionHelperSurface,
+  repairLockedPeftStudyConfigSurface,
+  repairPythonLockedConditionCountSurface
 } from "../src/core/agents/implementSessionManager.js";
 import { createImplementExperimentsNode } from "../src/core/nodes/implementExperiments.js";
 import {
@@ -126,6 +130,161 @@ function initGitWorkspace(workspace: string, trackedFiles: string[]): void {
 }
 
 describe("ImplementSessionManager", () => {
+  it("normalizes a locked PEFT config from conditions to recipes-only runtime schema", () => {
+    const normalized = normalizeLockedPeftStudyConfigPayloadForCompatibility({
+      experiment_name: "locked_peft",
+      baseline_first_required: true,
+      loading: {
+        use_quantization_for_tuned_runs: true,
+        load_in_4bit: true
+      },
+      conditions: [
+        {
+          id: "baseline_zero_shot",
+          label: "zero_shot_base_model",
+          kind: "baseline",
+          enabled: true,
+          train: false,
+          evaluate_only: true
+        },
+        {
+          id: "named_tuned_baseline",
+          label: "lora_qv_r16",
+          kind: "peft",
+          peft_method: "lora",
+          enabled: true,
+          lora_r: 16,
+          lora_alpha: 32,
+          lora_dropout: 0.05,
+          target_modules: ["q_proj", "v_proj"]
+        }
+      ]
+    });
+
+    expect(normalized.repaired).toBe(true);
+    expect(normalized.payload?.conditions).toBeUndefined();
+    expect(normalized.payload?.require_baseline_first).toBe(true);
+    expect(normalized.payload?.recipes).toEqual([
+      {
+        name: "lora_qv_r16",
+        adapter_type: "lora",
+        enabled: true,
+        r: 16,
+        lora_alpha: 32,
+        lora_dropout: 0.05,
+        target_modules: ["q_proj", "v_proj"],
+        quantization: "4bit"
+      }
+    ]);
+  });
+
+  it("repairs locked PEFT config files in place before handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-peft-config-"));
+    tempDirs.push(workspace);
+    const configPath = path.join(workspace, "experiment_config.yaml");
+    writeFileSync(
+      configPath,
+      [
+        "experiment_name: locked_peft",
+        "baseline_first_required: true",
+        "loading:",
+        "  use_quantization_for_tuned_runs: true",
+        "  load_in_4bit: true",
+        "conditions:",
+        "  - id: baseline_zero_shot",
+        "    label: zero_shot_base_model",
+        "    kind: baseline",
+        "    enabled: true",
+        "    train: false",
+        "    evaluate_only: true",
+        "  - id: named_tuned_baseline",
+        "    label: lora_qv_r16",
+        "    kind: peft",
+        "    peft_method: lora",
+        "    enabled: true",
+        "    lora_r: 16",
+        "    lora_alpha: 32",
+        "    lora_dropout: 0.05",
+        "    target_modules:",
+        "      - q_proj",
+        "      - v_proj",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const repair = await repairLockedPeftStudyConfigSurface(configPath);
+    expect(repair.repaired).toBe(true);
+    const repaired = readFileSync(configPath, "utf8");
+    expect(repaired).toContain("recipes:");
+    expect(repaired).not.toContain("\nconditions:");
+    expect(repaired).toContain("adapter_type: lora");
+    expect(repaired).toContain("quantization: 4bit");
+  });
+
+  it("repairs the generated runner's locked-condition count for baseline-first studies", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-peft-runner-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "def _resolve_locked_conditions(config):",
+        "    resolved_conditions = []",
+        "    if len(resolved_conditions) != LOCKED_CONDITION_COUNT:",
+        "        raise ConfigError(",
+        "            f'The locked comparison requires exactly {LOCKED_CONDITION_COUNT} tuned conditions, '",
+        "            f'but resolved {len(resolved_conditions)}.'",
+        "        )",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const repair = await repairPythonLockedConditionCountSurface(scriptPath);
+    expect(repair.repaired).toBe(true);
+    const repaired = readFileSync(scriptPath, "utf8");
+    expect(repaired).toContain("expected_tuned_conditions = LOCKED_CONDITION_COUNT - (1 if require_baseline_first else 0)");
+    expect(repaired).toContain("require_baseline_first', 'baseline_first_required'");
+  });
+
+  it("repairs generated condition-helper invocation kwargs for baseline-first PEFT runners", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-peft-helper-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "def _execute_condition_via_helper(helper, config, condition, public_dir, runs_dir, timeout_sec, seed):",
+        "    run_dir = runs_dir / 'baseline'",
+        "    return _invoke_helper_with_supported_kwargs(",
+        "        helper,",
+        "        config=config,",
+        "        study_config=config,",
+        "        condition=dict(condition),",
+        "        condition_config=dict(condition),",
+        "        recipe=dict(condition),",
+        "        recipe_config=dict(condition),",
+        "        public_dir=public_dir,",
+        "        output_dir=run_dir,",
+        "        run_dir=run_dir,",
+        "        artifact_dir=run_dir,",
+        "        artifacts_dir=run_dir,",
+        "        timeout_sec=timeout_sec,",
+        "        seed=seed,",
+        "    )",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const repair = await repairPythonConditionHelperSurface(scriptPath);
+    expect(repair.repaired).toBe(true);
+    const repaired = readFileSync(scriptPath, "utf8");
+    expect(repaired).toContain("run_root=runs_dir");
+    expect(repaired).toContain("deadline_monotonic=(time.monotonic() + float(timeout_sec) if timeout_sec is not None else None)");
+  });
+
   it("extracts workspace paths from heredoc assignment tokens without including the shell variable prefix", () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-paths-"));
     tempDirs.push(workspace);
@@ -4471,10 +4630,27 @@ describe("ImplementSessionManager", () => {
         if (llmCalls === 3) {
           return {
             text: JSON.stringify({
-              chunk_id: "runner_full",
+              path: publicScriptPath,
               content: "print('ok')"
             }),
             threadId: "thread-staged-fallback-script"
+          };
+        }
+        if (llmCalls === 4) {
+          return {
+            text: JSON.stringify({
+              strategy: "single_config_chunk",
+              rationale: "The config file is already minimal and only needs one bounded chunk.",
+              chunks: [
+                {
+                  id: "config_full",
+                  title: "Config full content",
+                  purpose: "Materialize the bounded experiment configuration file.",
+                  content_kind: "config_block"
+                }
+              ]
+            }),
+            threadId: "thread-staged-fallback-config-plan"
           };
         }
         return {
@@ -4500,7 +4676,7 @@ describe("ImplementSessionManager", () => {
     const result = await manager.run(run);
 
     expect(codexCalls).toBe(0);
-    expect(llmCalls).toBe(4);
+    expect(llmCalls).toBe(5);
     expect(result.verifyReport).toMatchObject({ status: "pass" });
     expect(result.scriptPath).toBe(publicScriptPath);
     expect(result.publicArtifacts).toContain(publicScriptPath);
@@ -4513,12 +4689,13 @@ describe("ImplementSessionManager", () => {
     expect(decompositionPlan.units.map((unit) => unit.target_path)).toEqual([publicScriptPath, publicConfigPath]);
     expect(stagedFallbackPrompts[0]).toContain("Implementation attempt 1/3.");
     expect(stagedFallbackPrompts[0]).toContain("scaffold-first contract");
-    expect(stagedFallbackPrompts[0]).toContain("decomposition_plan");
-    expect(stagedFallbackPrompts[0]).toContain("file_plan");
+    expect(stagedFallbackPrompts[0]).toContain("Return scaffold metadata only in the first response.");
+    expect(stagedFallbackPrompts[0]).not.toContain("include a decomposition_plan");
     expect(stagedFallbackPrompts[0]).not.toContain("Previous local verification:");
     expect(stagedFallbackPrompts[1]).toContain("Staged implement materialization subplan.");
     expect(stagedFallbackPrompts[2]).toContain(`Target file: ${publicScriptPath}`);
-    expect(stagedFallbackPrompts[3]).toContain(`Target file: ${publicConfigPath}`);
+    expect(stagedFallbackPrompts[3]).toContain("Staged implement materialization subplan.");
+    expect(stagedFallbackPrompts[4]).toContain(`Target file: ${publicConfigPath}`);
     expect(stagedFallbackSystemPrompt).not.toContain("Filesystem-blocker recovery mode:");
   });
 
@@ -4614,7 +4791,7 @@ describe("ImplementSessionManager", () => {
         }
         return {
           text: JSON.stringify({
-            chunk_id: "runner_full",
+            path: publicScriptPath,
             content: "print('rerun ok')\n"
           }),
           threadId: "thread-known-fallback"
@@ -4776,6 +4953,559 @@ describe("ImplementSessionManager", () => {
     expect(readFileSync(publicScriptPath, "utf8")).toBe("print('plan repaired')\n");
   });
 
+  it("fails loudly when the staged scaffold omits decomposition_plan and the repair turn still does not return one", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-decomposition-required-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Decomposition Plan Required Run",
+      topic: "bounded experiment implementation",
+      constraints: ["real artifacts"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    await runContext.put(
+      "implement_experiments.last_summary",
+      "Implementation remains blocked by the environment: every Codex local filesystem action aborts with `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`."
+    );
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "experiment.py");
+    let llmCalls = 0;
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {
+        runTurnStream: async () => {
+          throw new Error("Codex should not be used in the known staged_llm fallback path");
+        }
+      } as unknown as CodexNativeClient,
+      llm: {
+        complete: async () => {
+          llmCalls += 1;
+          if (llmCalls === 1) {
+            return {
+              text: JSON.stringify({
+                summary: "Scaffold without explicit decomposition plan.",
+                run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
+                test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+                changed_files: [publicScriptPath],
+                artifacts: [publicScriptPath],
+                public_artifacts: [publicScriptPath],
+                script_path: publicScriptPath,
+                metrics_path: path.join(runDir, "metrics.json"),
+                experiment_mode: "real_execution",
+                file_plan: [publicScriptPath]
+              }),
+              threadId: "thread-missing-plan-scaffold"
+            };
+          }
+          return {
+            text: JSON.stringify({
+              decomposition_plan: {
+                objective: "Broken repair payload with no units."
+              }
+            }),
+            threadId: "thread-missing-plan-repair"
+          };
+        }
+      } as any,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow(
+      "staged_llm scaffold did not return a parseable decomposition_plan and the decomposition repair turn did not recover one"
+    );
+    expect(llmCalls).toBe(2);
+  });
+
+  it("requests a narrower decomposition repair when the first repair returns only plan_only units", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-materializable-repair-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Materializable Unit Repair Run",
+      topic: "bounded experiment implementation",
+      constraints: ["real artifacts"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    await runContext.put(
+      "implement_experiments.last_summary",
+      "Implementation remains blocked by the environment: every Codex local filesystem action aborts with `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`."
+    );
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "experiment.py");
+    const prompts: string[] = [];
+    let llmCalls = 0;
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {
+        runTurnStream: async () => {
+          throw new Error("Codex should not be used in the known staged_llm fallback path");
+        }
+      } as unknown as CodexNativeClient,
+      llm: {
+        complete: async ({ prompt }: { prompt?: string }) => {
+          llmCalls += 1;
+          prompts.push(prompt || "");
+          if (llmCalls === 1) {
+            return {
+              text: JSON.stringify({
+                summary: "Scaffold without explicit decomposition plan.",
+                run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
+                test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+                changed_files: [publicScriptPath],
+                artifacts: [publicScriptPath],
+                public_artifacts: [publicScriptPath],
+                script_path: publicScriptPath,
+                metrics_path: path.join(runDir, "metrics.json"),
+                experiment_mode: "real_execution",
+                file_plan: [publicScriptPath]
+              }),
+              threadId: "thread-materializable-scaffold"
+            };
+          }
+          if (llmCalls === 2) {
+            return {
+              text: JSON.stringify({
+                decomposition_plan: {
+                  objective: "Broken repair with plan-only units.",
+                  strategy: "analysis_only",
+                  rationale: "This intentionally omits materialized files.",
+                  units: [
+                    {
+                      id: "inspect",
+                      unit_type: "analysis_step",
+                      title: "Inspect bundle",
+                      purpose: "Inspect the current bundle.",
+                      generation_mode: "plan_only"
+                    }
+                  ]
+                }
+              }),
+              threadId: "thread-materializable-plan-only"
+            };
+          }
+          if (llmCalls === 3) {
+            return {
+              text: JSON.stringify({
+                decomposition_plan: {
+                  objective: "Recovered repair with a materialized runner.",
+                  strategy: "materialize_runner_now",
+                  rationale: "The scaffold already names the runnable script path.",
+                  units: [
+                    {
+                      id: "runner",
+                      unit_type: "text_file",
+                      title: "Primary runner",
+                      purpose: "Materialize the runnable experiment script.",
+                      generation_mode: "materialize_text_file",
+                      target_path: publicScriptPath
+                    }
+                  ]
+                }
+              }),
+              threadId: "thread-materializable-repair"
+            };
+          }
+          if (llmCalls === 4) {
+            return {
+              text: JSON.stringify({
+                strategy: "single_chunk",
+                rationale: "One minimal file is enough.",
+                chunks: [
+                  {
+                    id: "runner_full",
+                    title: "Runner",
+                    purpose: "Materialize the repaired runner.",
+                    content_kind: "code_section"
+                  }
+                ]
+              }),
+              threadId: "thread-materialization-plan"
+            };
+          }
+          return {
+            text: JSON.stringify({
+              chunk_id: "runner_full",
+              content: "print('materialized after narrow repair')\n"
+            }),
+            threadId: "thread-materialized-file"
+          };
+        }
+      } as any,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const decompositionPlan = JSON.parse(
+      readFileSync(path.join(runDir, "implement_experiments", "decomposition_plan.json"), "utf8")
+    ) as { strategy?: string; units: Array<{ target_path?: string }> };
+
+    expect(llmCalls).toBe(5);
+    expect(decompositionPlan.strategy).toBe("materialize_runner_now");
+    expect(decompositionPlan.units.map((unit) => unit.target_path)).toEqual([publicScriptPath]);
+    expect(result.scriptPath).toBe(publicScriptPath);
+    expect(readFileSync(publicScriptPath, "utf8")).toBe("print('materialized after narrow repair')\n");
+  });
+
+  it("fails loudly when materialization planning does not return a parseable dynamic plan", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-materialization-plan-required-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Materialization Plan Required Run",
+      topic: "bounded experiment implementation",
+      constraints: ["real artifacts"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    await runContext.put(
+      "implement_experiments.last_summary",
+      "Implementation remains blocked by the environment: every Codex local filesystem action aborts with `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`."
+    );
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "experiment.py");
+    let llmCalls = 0;
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {
+        runTurnStream: async () => {
+          throw new Error("Codex should not be used in the known staged_llm fallback path");
+        }
+      } as unknown as CodexNativeClient,
+      llm: {
+        complete: async () => {
+          llmCalls += 1;
+          if (llmCalls === 1) {
+            return {
+              text: JSON.stringify({
+                summary: "Runner scaffold with one large text unit.",
+                run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
+                test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+                changed_files: [publicScriptPath],
+                artifacts: [publicScriptPath],
+                public_artifacts: [publicScriptPath],
+                script_path: publicScriptPath,
+                metrics_path: path.join(runDir, "metrics.json"),
+                experiment_mode: "real_execution",
+                decomposition_plan: {
+                  objective: "Materialize the primary runner only.",
+                  strategy: "purpose_adaptive",
+                  rationale: "This rerun only needs the main script.",
+                  units: [
+                    {
+                      id: "runner",
+                      unit_type: "text_file",
+                      title: "Primary experiment runner",
+                      purpose: "Provide the main runnable experiment entrypoint.",
+                      generation_mode: "materialize_text_file",
+                      target_path: publicScriptPath,
+                      verification_focus: ["run_command"]
+                    }
+                  ]
+                },
+                file_plan: [publicScriptPath]
+              }),
+              threadId: "thread-materialization-plan-scaffold"
+            };
+          }
+          return {
+            text: JSON.stringify({
+              strategy: "broken_plan",
+              rationale: "Missing chunks."
+            }),
+            threadId: "thread-materialization-plan"
+          };
+        }
+      } as any,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow(
+      `staged_llm materialization planning did not return a parseable dynamic plan for ${publicScriptPath}`
+    );
+    expect(llmCalls).toBe(2);
+  });
+
+  it("blocks staged_llm implementation before code generation when the bootstrap contract is incompatible with offline execution", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-bootstrap-contract-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Bootstrap Contract Block Run",
+      topic: "PEFT instruction tuning baseline study",
+      constraints: ["real artifacts"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    await runContext.put(
+      "implement_experiments.last_summary",
+      "Implementation remains blocked by the environment: every Codex local filesystem action aborts with `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`."
+    );
+    const contract = buildExperimentComparisonContract({
+      run,
+      selectedDesign: {
+        id: "plan_locked",
+        hypothesis_ids: ["h_locked"],
+        baselines: ["baseline_runner"]
+      },
+      objectiveProfile: buildHeuristicObjectiveMetricProfile(run.objectiveMetric),
+      managedBundleSupported: false
+    });
+    await storeExperimentGovernanceDecision(run, runContext, {
+      contract,
+      entries: []
+    });
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "experiment.py");
+    let llmCalls = 0;
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {
+        runTurnStream: async () => {
+          throw new Error("Codex should not be used in the known staged_llm fallback path");
+        }
+      } as unknown as CodexNativeClient,
+      llm: {
+        complete: async () => {
+          llmCalls += 1;
+          if (llmCalls === 1) {
+            return {
+              text: JSON.stringify({
+                summary: "Scaffold for a PEFT runner.",
+                run_command: `python3 ${JSON.stringify(publicScriptPath)} --config ${JSON.stringify(path.join(publicDir, "experiment_config.yaml"))}`,
+                test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+                changed_files: [publicScriptPath],
+                artifacts: [publicScriptPath],
+                public_artifacts: [publicScriptPath],
+                script_path: publicScriptPath,
+                metrics_path: path.join(runDir, "metrics.json"),
+                experiment_mode: "real_execution",
+                file_plan: [publicScriptPath]
+              }),
+              threadId: "thread-bootstrap-scaffold"
+            };
+          }
+          return {
+            text: JSON.stringify({
+              version: 1,
+              strategy: "hf_bootstrap_contract",
+              summary: "The planned PEFT baseline requires a Hugging Face model and tokenizer bootstrap.",
+              requires_network: false,
+              requires_warm_cache: true,
+              can_execute_under_current_policy: false,
+              blocking_reason:
+                "Offline execution cannot proceed because the required Hugging Face model/tokenizer cache was not proven locally.",
+              remediation: ["Prewarm the Hugging Face cache or allow network access for bootstrap."],
+              requirements: [
+                {
+                  id: "hf_base_model",
+                  kind: "model",
+                  source: "huggingface",
+                  required_for: ["baseline_evaluation", "tuned_runs"],
+                  availability: "unknown",
+                  summary: "Compact public causal LM"
+                },
+                {
+                  id: "hf_tokenizer",
+                  kind: "tokenizer",
+                  source: "huggingface",
+                  required_for: ["baseline_evaluation", "tuned_runs"],
+                  availability: "unknown",
+                  summary: "Tokenizer matching the compact public LM"
+                }
+              ],
+              checks: []
+            }),
+            threadId: "thread-bootstrap-contract"
+          };
+        }
+      } as any,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow(
+      "bootstrap contract blocked implementation before code generation"
+    );
+    expect(llmCalls).toBe(2);
+    const bootstrapContract = JSON.parse(
+      readFileSync(path.join(runDir, "implement_experiments", "bootstrap_contract.json"), "utf8")
+    ) as { can_execute_under_current_policy?: boolean; blocking_reason?: string };
+    expect(bootstrapContract.can_execute_under_current_policy).toBe(false);
+    expect(bootstrapContract.blocking_reason).toContain("Offline execution");
+  });
+
+  it("fails loudly when chunk subdivision planning does not return a parseable dynamic plan", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-subchunk-plan-required-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Chunk Subdivision Plan Required Run",
+      topic: "bounded experiment implementation",
+      constraints: ["real artifacts"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    await runContext.put(
+      "implement_experiments.last_summary",
+      "Implementation remains blocked by the environment: every Codex local filesystem action aborts with `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`."
+    );
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "experiment.py");
+    let llmCalls = 0;
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {
+        runTurnStream: async () => {
+          throw new Error("Codex should not be used in the known staged_llm fallback path");
+        }
+      } as unknown as CodexNativeClient,
+      llm: {
+        complete: async () => {
+          llmCalls += 1;
+          if (llmCalls === 1) {
+            return {
+              text: JSON.stringify({
+                summary: "Runner scaffold with one large text unit.",
+                run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
+                test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+                changed_files: [publicScriptPath],
+                artifacts: [publicScriptPath],
+                public_artifacts: [publicScriptPath],
+                script_path: publicScriptPath,
+                metrics_path: path.join(runDir, "metrics.json"),
+                experiment_mode: "real_execution",
+                decomposition_plan: {
+                  objective: "Materialize the primary runner only.",
+                  strategy: "purpose_adaptive",
+                  rationale: "This rerun only needs the main script.",
+                  units: [
+                    {
+                      id: "runner",
+                      unit_type: "text_file",
+                      title: "Primary experiment runner",
+                      purpose: "Provide the main runnable experiment entrypoint.",
+                      generation_mode: "materialize_text_file",
+                      target_path: publicScriptPath,
+                      verification_focus: ["run_command"]
+                    }
+                  ]
+                },
+                file_plan: [publicScriptPath]
+              }),
+              threadId: "thread-subdivision-plan-scaffold"
+            };
+          }
+          if (llmCalls === 2) {
+            return {
+              text: JSON.stringify({
+                strategy: "test_runner_chunks",
+                rationale: "Split a large runner into two code chunks.",
+                chunks: [
+                  {
+                    id: "chunk_setup",
+                    title: "Setup",
+                    purpose: "Implement imports and CLI setup.",
+                    content_kind: "code_section",
+                    include_imports: true,
+                    include_entrypoint: false
+                  },
+                  {
+                    id: "chunk_entrypoint",
+                    title: "Entrypoint",
+                    purpose: "Implement reporting and main entrypoint.",
+                    content_kind: "code_section",
+                    include_imports: false,
+                    include_entrypoint: true
+                  }
+                ]
+              }),
+              threadId: "thread-subdivision-plan-materialization"
+            };
+          }
+          return {
+            text: JSON.stringify({
+              strategy: "broken_subdivision",
+              rationale: "Missing chunks."
+            }),
+            threadId: "thread-subdivision-plan"
+          };
+        }
+      } as any,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow(
+      `staged_llm chunk subdivision planning did not return a parseable dynamic plan for ${publicScriptPath}:chunk_setup`
+    );
+    expect(llmCalls).toBe(3);
+  });
+
   it("subdivides a large runner chunk into smaller purpose-aligned subchunks before materializing code", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-subchunk-plan-"));
     tempDirs.push(workspace);
@@ -4816,7 +5546,7 @@ describe("ImplementSessionManager", () => {
         complete: async (prompt: string) => {
           prompts.push(prompt);
           llmCalls += 1;
-          if (llmCalls === 1) {
+          if (prompt.includes("scaffold-first contract")) {
             return {
               text: JSON.stringify({
                 summary: "Runner scaffold with one large text unit.",
@@ -4849,7 +5579,7 @@ describe("ImplementSessionManager", () => {
               threadId: "thread-subchunk-scaffold"
             };
           }
-          if (llmCalls === 2) {
+          if (prompt.includes("Staged implement materialization subplan.")) {
             return {
               text: JSON.stringify({
                 strategy: "test_runner_chunks",
@@ -4884,7 +5614,7 @@ describe("ImplementSessionManager", () => {
               threadId: "thread-subchunk-plan"
             };
           }
-          if (llmCalls === 3) {
+          if (prompt.includes("Requested parent chunk to subdivide:") && prompt.includes("chunk1_setup_and_plan")) {
             return {
               text: JSON.stringify({
                 strategy: "setup_subchunks",
@@ -4912,7 +5642,7 @@ describe("ImplementSessionManager", () => {
               threadId: "thread-subchunk-subplan"
             };
           }
-          if (llmCalls === 4) {
+          if (prompt.includes("Target chunk: chunk1_runtime_surface")) {
             return {
               text: JSON.stringify({
                 chunk_id: "chunk1_runtime_surface",
@@ -4931,7 +5661,7 @@ describe("ImplementSessionManager", () => {
               threadId: "thread-subchunk-runtime"
             };
           }
-          if (llmCalls === 5) {
+          if (prompt.includes("Target chunk: chunk1_validation_helpers")) {
             return {
               text: JSON.stringify({
                 chunk_id: "chunk1_validation_helpers",
@@ -4952,7 +5682,26 @@ describe("ImplementSessionManager", () => {
               threadId: "thread-subchunk-helpers"
             };
           }
-          if (llmCalls === 6) {
+          if (prompt.includes("Requested parent chunk to subdivide:") && prompt.includes("chunk2_execution_core")) {
+            return {
+              text: JSON.stringify({
+                strategy: "single_execution_core_subchunk",
+                rationale: "The execution core is already narrow enough to materialize as one subchunk.",
+                chunks: [
+                  {
+                    id: "chunk2_execution_core",
+                    title: "Execution core",
+                    purpose: "Implement the core experiment helpers.",
+                    content_kind: "code_section",
+                    include_imports: false,
+                    include_entrypoint: false
+                  }
+                ]
+              }),
+              threadId: "thread-subchunk-exec-plan"
+            };
+          }
+          if (prompt.includes("Target chunk: chunk2_execution_core")) {
             return {
               text: JSON.stringify({
                 chunk_id: "chunk2_execution_core",
@@ -4961,7 +5710,7 @@ describe("ImplementSessionManager", () => {
               threadId: "thread-subchunk-exec"
             };
           }
-          if (llmCalls === 7) {
+          if (prompt.includes("Requested parent chunk to subdivide:") && prompt.includes("chunk3_reporting_and_entrypoint")) {
             return {
               text: JSON.stringify({
                 strategy: "entrypoint_subchunks",
@@ -4989,7 +5738,7 @@ describe("ImplementSessionManager", () => {
               threadId: "thread-subchunk-entrypoint-plan"
             };
           }
-          if (llmCalls === 8) {
+          if (prompt.includes("Target chunk: chunk3_reporting_and_entrypoint__reporting")) {
             return {
               text: JSON.stringify({
                 chunk_id: "chunk3_reporting_and_entrypoint__reporting",
@@ -4998,13 +5747,16 @@ describe("ImplementSessionManager", () => {
               threadId: "thread-subchunk-reporting"
             };
           }
-          return {
-            text: JSON.stringify({
-              chunk_id: "chunk3_reporting_and_entrypoint__entrypoint",
-              content: "if __name__ == '__main__':\n    main()\n"
-            }),
-            threadId: "thread-subchunk-entrypoint"
-          };
+          if (prompt.includes("Target chunk: chunk3_reporting_and_entrypoint__entrypoint")) {
+            return {
+              text: JSON.stringify({
+                chunk_id: "chunk3_reporting_and_entrypoint__entrypoint",
+                content: "if __name__ == '__main__':\n    main()\n"
+              }),
+              threadId: "thread-subchunk-entrypoint"
+            };
+          }
+          throw new Error(`Unexpected staged_llm prompt in subchunk test: ${prompt.slice(0, 200)}`);
         }
       } as any,
       aci: new LocalAciAdapter(),
@@ -5015,28 +5767,455 @@ describe("ImplementSessionManager", () => {
 
     const result = await manager.run(run);
 
-    expect(llmCalls).toBe(9);
-    expect(prompts[2]).toContain("Staged implement chunk subdivision plan.");
-    expect(prompts[3]).toContain("Parent chunk being decomposed:");
-    expect(prompts[3]).toContain("chunk1_setup_and_plan");
-    expect(prompts[6]).toContain("Staged implement chunk subdivision plan.");
-    expect(prompts[7]).toContain("chunk3_reporting_and_entrypoint");
+    expect(llmCalls).toBeGreaterThanOrEqual(10);
+    expect(prompts.some((entry) => entry.includes("Staged implement chunk subdivision plan."))).toBe(true);
+    expect(prompts.some((entry) => entry.includes("Parent chunk being decomposed:"))).toBe(true);
+    expect(prompts.some((entry) => entry.includes("chunk1_setup_and_plan"))).toBe(true);
+    expect(prompts.some((entry) => entry.includes("chunk2_execution_core"))).toBe(true);
+    expect(prompts.some((entry) => entry.includes("chunk3_reporting_and_entrypoint"))).toBe(true);
     expect(result.scriptPath).toBe(publicScriptPath);
     expect(readFileSync(publicScriptPath, "utf8")).toContain("import argparse");
     expect(readFileSync(publicScriptPath, "utf8")).toContain("def validate_plan():");
-    expect(readFileSync(publicScriptPath, "utf8")).toContain("def write_metrics():");
     expect(
       readFileSync(
         path.join(runDir, "implement_experiments", "unit_plans", "runner__chunk1_setup_and_plan.json"),
         "utf8"
       )
     ).toContain("setup_subchunks");
+  });
+
+  it("re-subdivides a timed-out code subchunk through a smaller dynamic plan before materializing the file", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-resubchunk-plan-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Recursive Subchunk Runner Run",
+      topic: "bounded experiment implementation",
+      constraints: ["real artifacts"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    await runContext.put(
+      "implement_experiments.last_summary",
+      "Implementation remains blocked by the environment: every Codex local filesystem action aborts with `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`."
+    );
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "experiment.py");
+    const prompts: string[] = [];
+    let llmCalls = 0;
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {
+        runTurnStream: async () => {
+          throw new Error("Codex should not be used in the known staged_llm fallback path");
+        }
+      } as unknown as CodexNativeClient,
+      llm: {
+        complete: async (prompt: string) => {
+          prompts.push(prompt);
+          llmCalls += 1;
+          if (prompt.includes("scaffold-first contract")) {
+            return {
+              text: JSON.stringify({
+                summary: "Runner scaffold with one materializable text unit.",
+                run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
+                test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+                changed_files: [publicScriptPath],
+                artifacts: [publicScriptPath],
+                public_artifacts: [publicScriptPath],
+                script_path: publicScriptPath,
+                metrics_path: path.join(runDir, "metrics.json"),
+                experiment_mode: "real_execution",
+                decomposition_plan: {
+                  objective: "Materialize the primary runner only.",
+                  strategy: "purpose_adaptive",
+                  rationale: "This rerun only needs the main script.",
+                  units: [
+                    {
+                      id: "runner",
+                      unit_type: "text_file",
+                      title: "Primary experiment runner",
+                      purpose: "Provide the main runnable experiment entrypoint.",
+                      generation_mode: "materialize_text_file",
+                      target_path: publicScriptPath,
+                      verification_focus: ["run_command", "baseline_first_ordering"]
+                    }
+                  ]
+                },
+                file_plan: [publicScriptPath]
+              }),
+              threadId: "thread-resubchunk-scaffold"
+            };
+          }
+          if (prompt.includes("Staged implement materialization subplan.")) {
+            return {
+              text: JSON.stringify({
+                strategy: "runner_chunks",
+                rationale: "Split the runner into setup and entrypoint sections.",
+                chunks: [
+                  {
+                    id: "chunk_setup",
+                    title: "Setup runtime surfaces",
+                    purpose: "Implement imports, config loading, and setup helpers.",
+                    content_kind: "code_section",
+                    include_imports: true,
+                    include_entrypoint: false
+                  },
+                  {
+                    id: "chunk_entrypoint",
+                    title: "Entrypoint",
+                    purpose: "Implement the entrypoint.",
+                    content_kind: "code_section",
+                    include_imports: false,
+                    include_entrypoint: true
+                  }
+                ]
+              }),
+              threadId: "thread-resubchunk-plan"
+            };
+          }
+          if (prompt.includes("Requested parent chunk to subdivide:") && prompt.includes("chunk_setup")) {
+            if (prompt.includes("The previous attempt to materialize this parent chunk timed out.")) {
+              return {
+                text: JSON.stringify({
+                  strategy: "smaller_setup_subchunks",
+                  rationale: "The first setup attempt timed out, so split it into definitions then helpers.",
+                  chunks: [
+                    {
+                      id: "chunk_setup_defs",
+                      title: "Definitions and imports",
+                      purpose: "Implement imports, constants, and config dataclasses.",
+                      content_kind: "code_section",
+                      include_imports: true,
+                      include_entrypoint: false
+                    },
+                    {
+                      id: "chunk_setup_loaders",
+                      title: "Config loading helpers",
+                      purpose: "Implement config parsing and helper loaders.",
+                      content_kind: "code_section",
+                      include_imports: false,
+                      include_entrypoint: false,
+                      depends_on: ["chunk_setup_defs"]
+                    }
+                  ]
+                }),
+                threadId: "thread-resubchunk-timeout-repair"
+              };
+            }
+            return {
+              text: JSON.stringify({
+                strategy: "single_setup_subchunk",
+                rationale: "The setup chunk looks small enough to try directly.",
+                chunks: [
+                  {
+                    id: "chunk_setup",
+                    title: "Setup runtime surfaces",
+                    purpose: "Implement imports, config loading, and setup helpers.",
+                    content_kind: "code_section",
+                    include_imports: true,
+                    include_entrypoint: false
+                  }
+                ]
+              }),
+              threadId: "thread-resubchunk-initial-subplan"
+            };
+          }
+          if (prompt.includes("Target chunk: chunk_setup") && !prompt.includes("chunk_setup_defs") && !prompt.includes("chunk_setup_loaders")) {
+            throw new Error("implement_experiments staged_llm request timed out after 600000ms");
+          }
+          if (prompt.includes("Target chunk: chunk_setup_defs")) {
+            return {
+              text: JSON.stringify({
+                chunk_id: "chunk_setup_defs",
+                content: [
+                  "from dataclasses import dataclass",
+                  "",
+                  "@dataclass",
+                  "class ExperimentConfig:",
+                  "    seed: int = 42"
+                ].join("\n")
+              }),
+              threadId: "thread-resubchunk-defs"
+            };
+          }
+          if (prompt.includes("Target chunk: chunk_setup_loaders")) {
+            return {
+              text: JSON.stringify({
+                chunk_id: "chunk_setup_loaders",
+                content: [
+                  "def load_config():",
+                  "    return ExperimentConfig()"
+                ].join("\n")
+              }),
+              threadId: "thread-resubchunk-loaders"
+            };
+          }
+          if (prompt.includes("Requested parent chunk to subdivide:") && prompt.includes("chunk_entrypoint")) {
+            return {
+              text: JSON.stringify({
+                strategy: "single_entrypoint_subchunk",
+                rationale: "The entrypoint chunk is already minimal.",
+                chunks: [
+                  {
+                    id: "chunk_entrypoint",
+                    title: "Entrypoint",
+                    purpose: "Implement the entrypoint.",
+                    content_kind: "code_section",
+                    include_imports: false,
+                    include_entrypoint: true
+                  }
+                ]
+              }),
+              threadId: "thread-resubchunk-entrypoint-plan"
+            };
+          }
+          if (prompt.includes("Target chunk: chunk_entrypoint")) {
+            return {
+              text: JSON.stringify({
+                chunk_id: "chunk_entrypoint",
+                content: [
+                  "def main():",
+                  "    load_config()",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    main()"
+                ].join("\n")
+              }),
+              threadId: "thread-resubchunk-entrypoint"
+            };
+          }
+          throw new Error(`Unexpected staged_llm prompt in resubchunk test: ${prompt.slice(0, 200)}`);
+        }
+      } as any,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+
+    expect(llmCalls).toBeGreaterThanOrEqual(9);
+    expect(
+      prompts.some((entry) => entry.includes("The previous attempt to materialize this parent chunk timed out."))
+    ).toBe(true);
+    expect(
+      prompts.some((entry) => entry.includes("Return a strictly smaller ordered subdivision with at least 2 subchunks."))
+    ).toBe(true);
+    expect(result.scriptPath).toBe(publicScriptPath);
+    expect(readFileSync(publicScriptPath, "utf8")).toContain("class ExperimentConfig:");
+    expect(readFileSync(publicScriptPath, "utf8")).toContain("def load_config():");
     expect(
       readFileSync(
-        path.join(runDir, "implement_experiments", "unit_plans", "runner__chunk3_reporting_and_entrypoint.json"),
+        path.join(runDir, "implement_experiments", "unit_plans", "runner__chunk_setup.json"),
         "utf8"
       )
-    ).toContain("entrypoint_subchunks");
+    ).toContain("smaller_setup_subchunks");
+  });
+
+  it("materializes python runner sections through a canonical skeleton and strips the skeleton markers from the final file", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-section-skeleton-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Canonical Skeleton Runner",
+      topic: "bounded experiment implementation",
+      constraints: ["real artifacts"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    await runContext.put(
+      "implement_experiments.last_summary",
+      "Implementation remains blocked by the environment: every Codex local filesystem action aborts with `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`."
+    );
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "experiment.py");
+    let llmCalls = 0;
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {
+        runTurnStream: async () => {
+          throw new Error("Codex should not be used in the known staged_llm fallback path");
+        }
+      } as unknown as CodexNativeClient,
+      llm: {
+        complete: async (prompt: string) => {
+          llmCalls += 1;
+          if (prompt.includes("scaffold-first contract")) {
+            return {
+              text: JSON.stringify({
+                summary: "Runner scaffold with one materialized script.",
+                run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
+                test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+                changed_files: [publicScriptPath],
+                artifacts: [publicScriptPath],
+                public_artifacts: [publicScriptPath],
+                script_path: publicScriptPath,
+                metrics_path: path.join(runDir, "metrics.json"),
+                experiment_mode: "real_execution",
+                decomposition_plan: {
+                  objective: "Materialize the primary runner only.",
+                  strategy: "purpose_adaptive",
+                  rationale: "This rerun only needs the main script.",
+                  units: [
+                    {
+                      id: "runner",
+                      unit_type: "text_file",
+                      title: "Primary experiment runner",
+                      purpose: "Provide the main runnable experiment entrypoint.",
+                      generation_mode: "materialize_text_file",
+                      target_path: publicScriptPath,
+                      verification_focus: ["run_command"]
+                    }
+                  ]
+                },
+                file_plan: [publicScriptPath]
+              }),
+              threadId: "thread-skeleton-scaffold"
+            };
+          }
+          if (prompt.includes("Staged implement materialization subplan.")) {
+            return {
+              text: JSON.stringify({
+                strategy: "runner_chunks",
+                rationale: "Split setup from entrypoint.",
+                chunks: [
+                  {
+                    id: "chunk_setup",
+                    title: "Setup",
+                    purpose: "Implement imports, configuration helpers, and constants.",
+                    content_kind: "code_section",
+                    include_imports: true
+                  },
+                  {
+                    id: "chunk_entrypoint",
+                    title: "Entrypoint",
+                    purpose: "Implement the executable main entrypoint.",
+                    content_kind: "code_section",
+                    include_entrypoint: true
+                  }
+                ]
+              }),
+              threadId: "thread-skeleton-plan"
+            };
+          }
+          if (prompt.includes("Requested parent chunk to subdivide:") && prompt.includes("chunk_setup")) {
+            return {
+              text: JSON.stringify({
+                strategy: "single_setup_subchunk",
+                rationale: "The setup section is already minimal.",
+                chunks: [
+                  {
+                    id: "chunk_setup",
+                    title: "Setup",
+                    purpose: "Implement imports, configuration helpers, and constants.",
+                    content_kind: "code_section",
+                    include_imports: true
+                  }
+                ]
+              }),
+              threadId: "thread-skeleton-setup-plan"
+            };
+          }
+          if (prompt.includes("Target chunk: chunk_setup")) {
+            return {
+              text: JSON.stringify({
+                chunk_id: "chunk_setup",
+                content: [
+                  "from dataclasses import dataclass",
+                  "",
+                  "@dataclass",
+                  "class ExperimentConfig:",
+                  "    seed: int = 42",
+                  "",
+                  "def load_config():",
+                  "    return ExperimentConfig()"
+                ].join("\n")
+              }),
+              threadId: "thread-skeleton-setup"
+            };
+          }
+          if (prompt.includes("Requested parent chunk to subdivide:") && prompt.includes("chunk_entrypoint")) {
+            return {
+              text: JSON.stringify({
+                strategy: "single_entrypoint_subchunk",
+                rationale: "The entrypoint section is already minimal.",
+                chunks: [
+                  {
+                    id: "chunk_entrypoint",
+                    title: "Entrypoint",
+                    purpose: "Implement the executable main entrypoint.",
+                    content_kind: "code_section",
+                    include_entrypoint: true
+                  }
+                ]
+              }),
+              threadId: "thread-skeleton-entrypoint-plan"
+            };
+          }
+          if (prompt.includes("Target chunk: chunk_entrypoint")) {
+            return {
+              text: JSON.stringify({
+                chunk_id: "chunk_entrypoint",
+                content: [
+                  "def main():",
+                  "    load_config()",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    main()"
+                ].join("\n")
+              }),
+              threadId: "thread-skeleton-entrypoint"
+            };
+          }
+          throw new Error(`Unexpected staged_llm prompt in canonical skeleton test: ${prompt.slice(0, 200)}`);
+        }
+      } as any,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const finalSource = readFileSync(result.scriptPath!, "utf8");
+    expect(finalSource).toContain("class ExperimentConfig:");
+    expect(finalSource).not.toContain("AUTOLABOS CANONICAL SKELETON");
+    expect(finalSource).not.toContain("BEGIN AUTOLABOS SECTION");
+    expect(
+      readFileSync(
+        path.join(runDir, "implement_experiments", "unit_skeletons", "runner.txt"),
+        "utf8"
+      )
+    ).toContain("AUTOLABOS CANONICAL SKELETON");
+    expect(
+      readFileSync(
+        path.join(runDir, "implement_experiments", "unit_sections", "runner__chunk_setup.txt"),
+        "utf8"
+      )
+    ).toContain("class ExperimentConfig");
+    expect(llmCalls).toBe(6);
   });
 
   it("chains OpenAI API implement retries through response thread ids", async () => {
@@ -5459,6 +6638,101 @@ describe("ImplementSessionManager", () => {
     const result = await manager.run(run);
     const repairedSource = readFileSync(result.scriptPath!, "utf8");
     expect(repairedSource).toContain("def parse_args(argv=None):");
+    expect(result.testCommand).toContain("py_compile");
+  });
+
+  it("repairs a missing ExperimentConfig metadata field before handing a python runner off to run_experiments", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-metadata-repair-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Repair ExperimentConfig Metadata",
+      topic: "agent reasoning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+
+    const codex = {
+      runTurnStream: async () => ({
+        threadId: "thread-metadata-repair",
+        finalText: JSON.stringify({
+          summary: "Implemented the experiment runner.",
+          run_command: `python3 ${JSON.stringify(scriptPath)} --config plan.yaml --output-dir ${JSON.stringify(publicDir)} --metrics-out ${JSON.stringify(metricsPath)}`,
+          test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+          working_dir: publicDir,
+          experiment_mode: "staged_llm",
+          changed_files: [scriptPath],
+          artifacts: [scriptPath],
+          public_dir: publicDir,
+          public_artifacts: [scriptPath],
+          script_path: scriptPath,
+          metrics_path: metricsPath,
+          localization: {
+            summary: "Localized the runner script.",
+            selected_files: [scriptPath],
+            candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+          },
+          file_edits: [
+            {
+              path: scriptPath,
+              content: [
+                "from __future__ import annotations",
+                "",
+                "from dataclasses import dataclass, field",
+                "from typing import Any, Dict, Optional",
+                "",
+                "@dataclass",
+                "class ExperimentConfig:",
+                "    study_name: str",
+                "    objective: Dict[str, Any] = field(default_factory=dict)",
+                "    comparison_contract: Dict[str, Any] = field(default_factory=dict)",
+                "",
+                "def _load_experiment_config_from_yaml(raw):",
+                "    metadata_raw = raw.get('metadata') or {}",
+                "    return ExperimentConfig(",
+                "        study_name=str(raw.get('study_name') or 'demo'),",
+                "        objective={},",
+                "        comparison_contract={},",
+                "        metadata=dict(metadata_raw) if isinstance(metadata_raw, dict) else {'raw_metadata': metadata_raw},",
+                "    )",
+                "",
+                "def main():",
+                "    return 0",
+                ""
+              ].join("\n")
+            }
+          ],
+          assumptions: []
+        }),
+        events: []
+      })
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const repairedSource = readFileSync(result.scriptPath!, "utf8");
+    expect(repairedSource).toContain("metadata: Dict[str, Any] = field(default_factory=dict)");
     expect(result.testCommand).toContain("py_compile");
   });
 

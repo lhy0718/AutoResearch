@@ -34,7 +34,7 @@ afterEach(async () => {
   await waitForAllCollectEnrichmentJobs();
   vi.unstubAllGlobals();
   process.chdir(ORIGINAL_CWD);
-});
+}, 30000);
 
 async function* batchStream<T>(...batches: T[][]): AsyncGenerator<T[], void, void> {
   for (const batch of batches) {

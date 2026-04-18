@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-04-17
+Last updated: 2026-04-18
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
@@ -14,7 +14,7 @@ Usage rules:
 ## Current active status
 
 - Active live-validation defects:
-  - `LV-102` `run_experiments` now reaches the repaired public runner bundle, but that runner can still fail fast with `RuntimeError("Missing parse_args() in runner setup chunk.")`, so the next blocker has moved from implement-stage materialization to runner integrity across chunk joins.
+  - `LV-104` same persisted `run_experiments` rerun now survives the earlier runner/config compatibility failures, but the PEFT study still aborts during baseline evaluation because outgoing traffic is disabled and the required Hugging Face model/tokenizer assets are not available in the local cache.
   - `LV-098` IEEE staging `pdf_url` rows cache HTML instead of PDF, so `analyze_papers` cannot preserve supplemental page images on abstract fallback for those papers.
 - Active research/paper-readiness watchlist: see `Research and paper-readiness watchlist` below.
 - Current watchlist snapshot:
@@ -31,6 +31,73 @@ Usage rules:
 ## Resolved live validation issues
 
 The resolved entries below are kept as recent validation history and regression context.
+
+## Issue: LV-103
+
+- Status: in_progress
+- Validation target: existing external-workspace TUI same-flow `/retry` of `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after removing heuristic decomposition/materialization/subdivision fallbacks
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - node: `implement_experiments`
+
+- Reproduction steps:
+  1. Remove heuristic `implement_experiments` fallback projection/chunking paths so staged LLM decomposition, materialization planning, and subdivision planning all require parseable provider plans.
+  2. Run `npm run build`, `npm test`, and `npm run validate:harness`.
+  3. Relaunch the real TUI in `.autolabos-validation`, reopen the failed run, and issue `/retry`.
+  4. Inspect `implement_experiments/status.json` and `implement_experiments/progress.jsonl`.
+
+- Expected behavior:
+  - The same-flow retry should either emit a parseable staged scaffold/decomposition response and continue, or fail quickly with an explicit “missing dynamic plan” style error instead of silently reusing heuristic projections.
+
+- Actual behavior:
+  - The heuristic projection path is gone: the rerun now stops at the first staged scaffold request instead of auto-projecting a decomposition/materialization plan.
+  - In the live same-flow rerun, `implement_experiments/status.json` remained at:
+    - `status: "running"`
+    - `stage: "codex"`
+    - `message: "Submitting request to Codex OAuth Responses backend."`
+  - `progress.jsonl` for the new retry only recorded:
+    - preflight/setup
+    - search-backed localization
+    - `Planning staged_llm implementation scaffold before generating file contents.`
+    - `Submitting request to Codex OAuth backend.`
+    - `Submitting request to Codex OAuth Responses backend.`
+  - No new provider progress, no text delta, and no persisted scaffold/decomposition artifact appeared before operator cancellation.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not yet rerun after the heuristic-removal patch.
+  - Existing session: the same persisted run now proves the heuristic fallback is gone, but the first scaffold request can still hang silently.
+  - Divergence: not yet evaluated.
+
+- Root cause hypothesis:
+  - Type: `race_timing_bug`
+  - Hypothesis: removing heuristic projection correctly forces the provider to supply an explicit dynamic plan, but the initial staged scaffold request still suffers from a Codex no-delta stall boundary before any parseable response is materialized.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - removed heuristic fallback projection for `decomposition_plan`
+      - removed heuristic fallback materialization/subdivision plans
+      - removed heuristic gating that skipped planning for “simple” units/chunks
+      - tightened staged prompts to ask for the smallest purpose-aligned unit/chunk/subchunk set without fixed-size guidance
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added regressions that fail loudly when decomposition, materialization, or subdivision plans are missing/unparseable instead of silently falling back
+
+- Regression status:
+  - Automated regression test linked: yes (`tests/implementSessionManager.test.ts`)
+  - Re-validation result: pass for build/test/harness; live same-flow rerun confirms heuristic fallback removal but is still blocked at the first scaffold request.
+
+- Most likely failing boundary:
+  - staged scaffold provider-response boundary inside `implement_experiments`
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_record.json`
+
+- Recommended next step:
+  - instrument or narrow the initial staged scaffold request so the heuristic-free path can either materialize an explicit plan or fail with a narrower provider-side boundary.
 
 ## Issue: LV-101
 
@@ -166,7 +233,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 ## Issue: LV-102
 
-- Status: in_progress
+- Status: resolved
 - Validation target: same persisted external-workspace run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after `implement_experiments` was repaired with dynamic decomposition, runner chunking, and local `py_compile` verification
 - Environment/session context:
   - real TUI workspace: `.autolabos-validation`
@@ -183,12 +250,10 @@ The resolved entries below are kept as recent validation history and regression 
   - The repaired public runner should preserve required setup helpers such as `parse_args()` across chunk joins and should survive both local `py_compile` verification and the initial `run_experiments` invocation.
 
 - Actual behavior:
-  - The same persisted run now completes `implement_experiments` and passes local `python -m py_compile`.
-  - The next downstream failure is inside `run_experiments`, where the generated runner aborts immediately with:
+  - Before the fix, the same persisted run completed `implement_experiments` and passed local `python -m py_compile`, but the generated runner then aborted immediately inside `run_experiments` with:
     - `RuntimeError("Missing parse_args() in runner setup chunk.")`
-  - `run_record.json` now shows:
-    - `implement_experiments.status: completed`
-    - `run_experiments.status: failed`
+  - After the compatibility repair and same-flow continuation, that boundary no longer reproduces.
+  - The same persisted run now advances beyond the `parse_args()`/config-join surface and fails later for a different reason (offline Hugging Face bootstrap), so `LV-102` is no longer the dominant blocker.
 
 - Fresh vs existing session comparison:
   - Fresh session: not separately reproduced yet.
@@ -204,19 +269,22 @@ The resolved entries below are kept as recent validation history and regression 
     - `src/core/agents/implementSessionManager.ts`
       - repairs Python runners that define `build_arg_parser()` but omit a callable `parse_args()` helper by inserting a bounded compatibility shim before handoff
       - re-runs local verification after the shim is materialized so the persisted public runner surface reflects the repaired contract before `run_experiments`
+      - normalizes locked PEFT configs to the recipes-only runtime schema before handoff
+      - aligns generated runner helper invocation kwargs and baseline-first locked-condition counting before handoff
   - Tests:
     - `tests/implementSessionManager.test.ts`
       - added a regression that a generated Python runner missing `parse_args()` is repaired before handoff and still passes local `py_compile`
+      - added regressions for locked PEFT config normalization, baseline-first locked-condition counting, and condition-helper kwarg repair
 
 - Regression status:
   - Automated regression test linked: yes (`tests/implementSessionManager.test.ts`)
-  - `npm test`: passed after adding the `parse_args()` repair regression
-  - `npm run build`: passed after adding the repair
+  - `npx vitest run tests/implementSessionManager.test.ts`: passed after the runner/config compatibility repairs
+  - `npm run build`: passed after the repairs
   - `npm run validate:harness`: passed after updating this entry
-  - Same-flow live revalidation: in progress; the same persisted run now starts a fresh `implement_experiments` repair thread from runner feedback and has already advanced through scaffold, decomposition repair, materialization planning, and runner subchunk planning into `unit 1/3 chunk 1/3 subchunk 1/2`, but it has not yet re-crossed the downstream `run_experiments` boundary.
+  - Same-flow live revalidation: resolved; the same persisted run now crosses the old runner-integrity boundary and reaches a later offline-model/bootstrap failure in `run_experiments`.
 
 - Most likely failing boundary:
-  - runner integrity across staged chunk/subchunk joins in `implement_experiments`, only surfaced by `run_experiments`
+  - resolved runner integrity across staged chunk/subchunk joins in `implement_experiments`, only surfaced by `run_experiments`
 
 - Evidence/artifacts:
   - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_record.json`
@@ -225,7 +293,67 @@ The resolved entries below are kept as recent validation history and regression 
   - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 - Recommended next step:
-  - strengthen implement-stage verification so chunked runner bundles must pass a bounded semantic smoke check (for example, required helper presence and callable entrypoint integrity) before handing off to `run_experiments`.
+  - keep the implement-stage compatibility repairs, and treat offline Hugging Face bootstrap as the next real `run_experiments` blocker rather than a recurrence of this runner-integrity issue.
+
+## Issue: LV-104
+
+- Status: in_progress
+- Validation target: same persisted external-workspace run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the `run_experiments` runner/config compatibility repairs
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - nodes reached: `implement_experiments -> run_experiments`
+
+- Reproduction steps:
+  1. Continue the same persisted run after the implement-stage compatibility repairs.
+  2. Retry `run_experiments` against the repaired public bundle.
+  3. Inspect `exec_logs/run_experiments.txt` and `run_experiments_verify_report.json`.
+
+- Expected behavior:
+  - The repaired PEFT study runner should begin baseline evaluation on the declared compact public model and proceed into real execution on the workstation.
+
+- Actual behavior:
+  - The same persisted run now gets past the earlier config-shape and helper-signature failures.
+  - The next runtime failure is during baseline model/tokenizer bootstrap:
+    - `OSError: We couldn't connect to 'https://huggingface.co' ... outgoing traffic has been disabled.`
+  - The traceback now originates inside the embedded Hugging Face evaluation step, not in runner/config compatibility glue.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately rerun yet for this exact offline bootstrap boundary.
+  - Existing session: reproduced directly on the same persisted run after repairing the public runner bundle in place.
+  - Divergence: none established yet; the blocker is currently environment/policy-facing rather than a stale-state mismatch.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: the generated PEFT study correctly references public Hugging Face model/tokenizer assets, but the run still inherits an offline execution policy (`allow_network=false`) without a prewarmed local cache, so the first baseline evaluation cannot start.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added handoff-time normalization for locked PEFT configs
+      - added runner compatibility repairs for baseline-first locked-condition counting and condition-helper kwargs
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added regressions for the locked PEFT config/runtime compatibility repairs
+
+- Regression status:
+  - Automated regression test linked: yes (`tests/implementSessionManager.test.ts`)
+  - `npx vitest run tests/implementSessionManager.test.ts`: passed
+  - `npm run build`: passed
+  - `npm run validate:harness`: passed
+  - Same-flow live revalidation: in progress; the persisted run now reaches the offline Hugging Face bootstrap failure as the next real blocker.
+
+- Most likely failing boundary:
+  - `run_experiments` environment/bootstrap policy for public Hugging Face assets under offline execution
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/experiment_config.yaml`
+
+- Recommended next step:
+  - decide whether this PEFT study is allowed to bootstrap public Hugging Face assets online, or whether the workflow must instead prewarm/require a local model cache before handing off to `run_experiments`.
 
 ## Issue: LV-099
 

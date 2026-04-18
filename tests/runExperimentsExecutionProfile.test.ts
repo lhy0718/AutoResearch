@@ -1,10 +1,11 @@
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, mkdir, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 
 import { InMemoryEventStream } from "../src/core/events.js";
 import { MockLLMClient } from "../src/core/llm/client.js";
+import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 import { createRunExperimentsNode } from "../src/core/nodes/runExperiments.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { RunRecord } from "../src/types.js";
@@ -86,5 +87,69 @@ describe("run_experiments execution profile behavior", () => {
     ) as { status: string; summary: string };
     expect(verifierReport.status).toBe("skipped");
     expect(verifierReport.summary).toContain("plan_only");
+  });
+
+  it("fails fast when the implement bootstrap contract already blocks execution under the current policy", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-bootstrap-contract-"));
+    process.chdir(root);
+    const run = makeRun("run-bootstrap-blocked");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    const publicDir = path.join(root, "outputs", "experiment");
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await mkdir(publicDir, { recursive: true });
+    await writeFile(
+      path.join(publicDir, "bootstrap_contract.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          can_execute_under_current_policy: false,
+          blocking_reason:
+            "Offline execution cannot proceed because the required Hugging Face model/tokenizer cache was not proven locally.",
+          remediation: ["Prewarm the cache or allow network bootstrap."]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.public_dir", publicDir);
+
+    const aci = {
+      runCommand: vi.fn(),
+      runTests: vi.fn()
+    };
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: aci as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(String(result.error || "")).toContain("Offline execution cannot proceed");
+    expect(aci.runCommand).not.toHaveBeenCalled();
+    expect(aci.runTests).not.toHaveBeenCalled();
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string };
+    expect(verifierReport.status).toBe("fail");
+    expect(verifierReport.stage).toBe("policy");
+    expect(verifierReport.summary).toContain("Offline execution cannot proceed");
   });
 });
