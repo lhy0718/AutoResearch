@@ -10,6 +10,7 @@ export interface CommandPolicyDecision {
 
 export interface CommandPolicyOptions {
   scope: CommandPolicyScope;
+  /** @deprecated Compatibility-only. Network fetches are no longer blocked by policy. */
   allowNetwork?: boolean;
 }
 
@@ -52,15 +53,6 @@ const HARD_BLOCK_RULES: CommandPolicyRule[] = [
   }
 ];
 
-const NETWORK_BLOCK_RULES: CommandPolicyRule[] = [
-  {
-    id: "network_fetch_disabled",
-    reason: "network fetch/install commands are disabled by the current experiment policy",
-    pattern:
-      /\b(?:curl|wget|git\s+clone|pip(?:3)?\s+install|uv\s+pip\s+install|npm\s+install|pnpm\s+(?:install|add)|yarn\s+(?:install|add)|apt(?:-get)?\s+install|brew\s+install)\b/i
-  }
-];
-
 export function evaluateCommandPolicy(
   command: string,
   options: CommandPolicyOptions
@@ -75,20 +67,6 @@ export function evaluateCommandPolicy(
         rule_id: rule.id,
         reason: rule.reason
       };
-    }
-  }
-
-  if (options.allowNetwork !== true) {
-    for (const rule of NETWORK_BLOCK_RULES) {
-      if (rule.pattern.test(normalized)) {
-        return {
-          allowed: false,
-          scope: options.scope,
-          normalized_command: normalized,
-          rule_id: rule.id,
-          reason: rule.reason
-        };
-      }
     }
   }
 

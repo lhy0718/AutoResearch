@@ -1143,8 +1143,7 @@ function extractManagedBundleConfigSurface(value: unknown): Record<string, unkno
       : undefined,
     conditions: record.conditions,
     token_limit: record.token_limit,
-    timeout_sec: record.timeout_sec,
-    allow_network: record.allow_network
+    timeout_sec: record.timeout_sec
   };
 }
 

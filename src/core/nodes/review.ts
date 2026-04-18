@@ -278,9 +278,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         currentNode: "review",
         lifecycleStatus: "needs_approval",
         approvalMode: deps.config?.workflow?.approval_mode || "minimal",
-        networkPolicy:
-          deps.config?.experiments?.network_policy
-          || (deps.config?.experiments?.allow_network ? "declared" : "blocked"),
+        networkPolicy: deps.config?.experiments?.network_policy,
         networkPurpose: deps.config?.experiments?.network_purpose
       });
       const runStatusPath = await writeRunArtifact(
@@ -448,7 +446,6 @@ function buildReviewReadinessRiskArtifact(input: {
 }): ReadinessRiskArtifact {
   const risks: ReadinessRisk[] = buildNetworkDependencyReadinessRisks({
     source: "review",
-    allowNetwork: input.config.experiments?.allow_network === true,
     networkPolicy: input.config.experiments?.network_policy,
     networkPurpose: input.config.experiments?.network_purpose,
     executionApprovalMode: input.config.workflow?.execution_approval_mode

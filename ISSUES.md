@@ -14,7 +14,6 @@ Usage rules:
 ## Current active status
 
 - Active live-validation defects:
-  - `LV-104` same persisted `run_experiments` rerun now survives the earlier runner/config compatibility failures, but the PEFT study still aborts during baseline evaluation because outgoing traffic is disabled and the required Hugging Face model/tokenizer assets are not available in the local cache.
   - `LV-098` IEEE staging `pdf_url` rows cache HTML instead of PDF, so `analyze_papers` cannot preserve supplemental page images on abstract fallback for those papers.
 - Active research/paper-readiness watchlist: see `Research and paper-readiness watchlist` below.
 - Current watchlist snapshot:
@@ -297,63 +296,92 @@ The resolved entries below are kept as recent validation history and regression 
 
 ## Issue: LV-104
 
-- Status: in_progress
-- Validation target: same persisted external-workspace run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the `run_experiments` runner/config compatibility repairs
+- Status: resolved
+- Validation target: same persisted external-workspace run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after removing `allow_network` as a runtime execution gate and rerunning `run_experiments` through the real TUI
 - Environment/session context:
   - real TUI workspace: `.autolabos-validation`
   - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
   - nodes reached: `implement_experiments -> run_experiments`
 
 - Reproduction steps:
-  1. Continue the same persisted run after the implement-stage compatibility repairs.
-  2. Retry `run_experiments` against the repaired public bundle.
-  3. Inspect `exec_logs/run_experiments.txt` and `run_experiments_verify_report.json`.
+  1. Remove `allow_network` as an execution-blocking runtime contract and keep network usage as metadata/labeling only.
+  2. Rebuild and rerun the validation suite.
+  3. Relaunch the real TUI in `.autolabos-validation`.
+  4. Run `/agent retry run_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  5. Inspect `run_record.json`, `events.jsonl`, `pgrep` process state, and the active experiment bundle.
 
 - Expected behavior:
-  - The repaired PEFT study runner should begin baseline evaluation on the declared compact public model and proceed into real execution on the workstation.
+  - The same persisted run should no longer stop before execution with an offline-policy/bootstrap refusal tied to `allow_network=false`.
+  - `run_experiments` should be allowed to proceed into real model/dataset bootstrap, with network usage treated as a runtime dependency rather than a policy block.
 
 - Actual behavior:
-  - The same persisted run now gets past the earlier config-shape and helper-signature failures.
-  - The next runtime failure is during baseline model/tokenizer bootstrap:
-    - `OSError: We couldn't connect to 'https://huggingface.co' ... outgoing traffic has been disabled.`
-  - The traceback now originates inside the embedded Hugging Face evaluation step, not in runner/config compatibility glue.
+  - Before the policy change, the repaired PEFT runner failed immediately at the baseline Hugging Face bootstrap boundary with:
+    - `LocalEntryNotFoundError: ... outgoing traffic has been disabled`
+    - `To enable hf.co look-ups and downloads online, set 'local_files_only' to False.`
+  - After removing the runtime network gate and rerunning the same persisted run through the real TUI, the old failure boundary no longer reproduces:
+    - the retry is accepted in the real TUI
+    - the persisted run moves back to `status: "running"` / `currentNode: "run_experiments"`
+    - the parent PEFT runner process is alive
+    - the embedded Hugging Face evaluation subprocess is also alive and actively executing the model/dataset bootstrap code path
+  - The original `allow_network` / offline-policy blocker is therefore gone; the remaining downstream runtime outcome is now a true execution question rather than a policy refusal.
 
 - Fresh vs existing session comparison:
-  - Fresh session: not separately rerun yet for this exact offline bootstrap boundary.
-  - Existing session: reproduced directly on the same persisted run after repairing the public runner bundle in place.
-  - Divergence: none established yet; the blocker is currently environment/policy-facing rather than a stale-state mismatch.
+  - Fresh session: a fresh full run had already shown the earlier bootstrap-policy gate at `implement_experiments`.
+  - Existing session: after the policy removal, the same persisted run was retried from a freshly relaunched real TUI session and now proceeds into active execution instead of failing immediately at the offline-policy boundary.
+  - Divergence: the existing-session rerun confirms the old failure was policy/runtime-contract driven rather than a stale-session-only artifact.
 
 - Root cause hypothesis:
   - Type: `persisted_state_bug`
-  - Hypothesis: the generated PEFT study correctly references public Hugging Face model/tokenizer assets, but the run still inherits an offline execution policy (`allow_network=false`) without a prewarmed local cache, so the first baseline evaluation cannot start.
+  - Hypothesis: the earlier failure was caused by an execution contract that still forced the workflow to behave as offline/local-only when public Hugging Face assets were not prewarmed. Removing `allow_network` as a runtime gate and treating network use as metadata unblocked the same-flow execution path.
 
 - Code/test changes:
   - Code:
+    - `src/types.ts`
+      - downgraded `allow_network` to deprecated compatibility metadata
+    - `src/config.ts`
+      - stopped persisting `allow_network` in new configs and normalized network state through metadata-only `network_policy`
+    - `src/tools/commandPolicy.ts`
+      - removed network fetch blocking from command policy
+    - `src/tools/aciLocalAdapter.ts`
+      - stopped forcing Hugging Face tooling into offline mode via the deprecated network flag
     - `src/core/agents/implementSessionManager.ts`
-      - added handoff-time normalization for locked PEFT configs
-      - added runner compatibility repairs for baseline-first locked-condition counting and condition-helper kwargs
+      - changed the bootstrap/environment contract so remote Hugging Face assets are treated as explicit runtime requirements instead of execution blockers
+    - `src/core/nodes/runExperiments.ts`
+      - removed the hard stop on bootstrap `requires_network` and downgraded it to runtime observation/labeling
   - Tests:
+    - `tests/aciLocalAdapter.test.ts`
+    - `tests/commandPolicy.test.ts`
+    - `tests/configEnv.test.ts`
+    - `tests/doctorHarnessIntegration.test.ts`
     - `tests/implementSessionManager.test.ts`
-      - added regressions for the locked PEFT config/runtime compatibility repairs
+    - `tests/readinessRisks.test.ts`
+    - `tests/runExperimentsExecutionProfile.test.ts`
+      - updated/added regressions proving network use is metadata-only and no longer a hard execution block
 
 - Regression status:
-  - Automated regression test linked: yes (`tests/implementSessionManager.test.ts`)
-  - `npx vitest run tests/implementSessionManager.test.ts`: passed
+  - Automated regression tests linked: yes
+  - `npx vitest run tests/configEnv.test.ts tests/commandPolicy.test.ts tests/aciLocalAdapter.test.ts tests/readinessRisks.test.ts tests/doctorHarnessIntegration.test.ts tests/runExperimentsExecutionProfile.test.ts tests/implementSessionManager.test.ts`: passed
   - `npm run build`: passed
+  - `npm test`: passed
   - `npm run validate:harness`: passed
-  - Same-flow live revalidation: in progress; the persisted run now reaches the offline Hugging Face bootstrap failure as the next real blocker.
+  - Same-flow live revalidation: resolved for the original boundary; the persisted run no longer fails at the old offline-policy/bootstrap gate and instead proceeds into active `run_experiments` execution with the Hugging Face evaluation subprocess alive.
 
 - Most likely failing boundary:
-  - `run_experiments` environment/bootstrap policy for public Hugging Face assets under offline execution
+  - resolved execution-policy boundary for public Hugging Face assets
 
 - Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_record.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`
   - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
   - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
   - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
   - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/experiment_config.yaml`
+  - active process evidence from same-flow retry:
+    - parent runner `python .../run_peft_instruction_study.py`
+    - embedded evaluation subprocess `python -c ... AutoModelForCausalLM.from_pretrained(...) ... load_dataset(...)`
 
 - Recommended next step:
-  - decide whether this PEFT study is allowed to bootstrap public Hugging Face assets online, or whether the workflow must instead prewarm/require a local model cache before handing off to `run_experiments`.
+  - continue tracking the in-flight `run_experiments` retry to determine the next real runtime blocker now that the old network-policy gate has been removed.
 
 ## Issue: LV-099
 

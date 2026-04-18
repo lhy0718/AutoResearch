@@ -40,6 +40,7 @@ export interface DoctorRunOptions {
   codeExecutionExpected?: boolean;
   candidateIsolation?: "attempt_snapshot_restore" | "attempt_worktree";
   manualOverride?: boolean;
+  /** @deprecated Compatibility-only. Network access is no longer controlled by this boolean. */
   allowNetwork?: boolean;
   networkPolicy?: ExperimentNetworkPolicy;
   networkPurpose?: ExperimentNetworkPurpose;
@@ -107,12 +108,12 @@ export async function runDoctorReport(
     opts?.codeExecutionExpected && (dependencyMode === "docker" || dependencyMode === "remote_gpu")
   );
   const webRestrictionRequired = Boolean(opts?.codeExecutionExpected && dependencyMode !== "plan_only");
-  const allowNetwork = opts?.allowNetwork === true;
-  const networkPolicy = normalizeDoctorNetworkPolicy(opts?.networkPolicy, allowNetwork);
+  const networkPolicy = normalizeDoctorNetworkPolicy(opts?.networkPolicy, opts?.networkPurpose);
   const networkPurpose = normalizeDoctorNetworkPurpose(opts?.networkPurpose);
-  const networkDeclarationPresent = !allowNetwork || Boolean(networkPolicy && networkPurpose);
+  const networkDeclarationPresent =
+    !networkPolicy || networkPolicy === "blocked" || Boolean(networkPolicy && networkPurpose);
   const networkApprovalSatisfied =
-    !allowNetwork || executionApprovalMode === "manual" || executionApprovalMode === "risk_ack";
+    !networkPolicy || networkPolicy === "blocked" || executionApprovalMode === "manual" || executionApprovalMode === "risk_ack";
   const manualOverride = opts?.manualOverride === true;
   const requiresCodexChecks =
     !opts ||
@@ -205,10 +206,9 @@ export async function runDoctorReport(
     });
     checks.push({
       name: "experiment-web-restriction",
-      ok: !webRestrictionRequired || !allowNetwork || (networkDeclarationPresent && networkApprovalSatisfied),
+      ok: !webRestrictionRequired || networkDeclarationPresent,
       status: resolveExperimentWebRestrictionStatus({
         webRestrictionRequired,
-        allowNetwork,
         networkPolicy,
         networkPurpose,
         networkDeclarationPresent,
@@ -216,7 +216,6 @@ export async function runDoctorReport(
       }),
       detail: buildExperimentWebRestrictionDetail({
         webRestrictionRequired,
-        allowNetwork,
         networkPolicy,
         networkPurpose,
         networkDeclarationPresent,
@@ -384,13 +383,13 @@ function normalizeDoctorApprovalMode(
 
 function normalizeDoctorNetworkPolicy(
   value: DoctorRunOptions["networkPolicy"],
-  allowNetwork: boolean
+  purpose?: DoctorRunOptions["networkPurpose"]
 ): ExperimentNetworkPolicy | undefined {
-  if (!allowNetwork) {
-    return "blocked";
-  }
-  if (value === "declared" || value === "required") {
+  if (value === "blocked" || value === "declared" || value === "required") {
     return value;
+  }
+  if (purpose) {
+    return "declared";
   }
   return undefined;
 }
@@ -652,27 +651,28 @@ export function getDoctorAggregateStatus(input: {
 
 function resolveExperimentWebRestrictionStatus(input: {
   webRestrictionRequired: boolean;
-  allowNetwork: boolean;
   networkPolicy?: ExperimentNetworkPolicy;
   networkPurpose?: ExperimentNetworkPurpose;
   networkDeclarationPresent: boolean;
   networkApprovalSatisfied: boolean;
 }): DoctorCheckStatus {
-  if (!input.webRestrictionRequired || !input.allowNetwork) {
+  if (!input.webRestrictionRequired) {
     return "ok";
   }
-  if (!input.networkDeclarationPresent || !input.networkPolicy || !input.networkPurpose) {
-    return "fail";
+  if (!input.networkPolicy || input.networkPolicy === "blocked") {
+    return "ok";
+  }
+  if (!input.networkDeclarationPresent || !input.networkPurpose) {
+    return "warning";
   }
   if (!input.networkApprovalSatisfied) {
-    return "fail";
+    return "warning";
   }
   return "warning";
 }
 
 function buildExperimentWebRestrictionDetail(input: {
   webRestrictionRequired: boolean;
-  allowNetwork: boolean;
   networkPolicy?: ExperimentNetworkPolicy;
   networkPurpose?: ExperimentNetworkPurpose;
   networkDeclarationPresent: boolean;
@@ -681,14 +681,14 @@ function buildExperimentWebRestrictionDetail(input: {
   if (!input.webRestrictionRequired) {
     return "Code execution is not expected to need web restriction.";
   }
-  if (!input.allowNetwork) {
-    return "Code execution is expected and network access remains disabled.";
+  if (!input.networkPolicy || input.networkPolicy === "blocked") {
+    return "Code execution is expected and no explicit network dependency is declared.";
   }
   if (!input.networkDeclarationPresent || !input.networkPolicy || !input.networkPurpose) {
-    return "Code execution is expected and allow_network is enabled, but the run is missing a declared network_policy/network_purpose contract.";
+    return "Code execution is expected and appears network-assisted, but the run is missing a concrete network_purpose declaration.";
   }
   if (input.executionApprovalMode === "full_auto") {
-    return `Code execution declares a ${input.networkPolicy} network dependency for ${input.networkPurpose}, but execution approval mode full_auto is not allowed for network-enabled runs.`;
+    return `Code execution declares a ${input.networkPolicy} network dependency for ${input.networkPurpose}; full_auto remains a high-risk mode and should be treated as network-assisted.`;
   }
   if (input.networkPolicy === "required") {
     return `Code execution declares a network-critical dependency for ${input.networkPurpose}; reproducibility caveats and explicit operator review remain required.`;

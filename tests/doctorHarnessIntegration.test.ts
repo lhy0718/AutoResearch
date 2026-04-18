@@ -152,7 +152,7 @@ describe("runDoctorReport", () => {
         name: "experiment-web-restriction",
         ok: true,
         status: "ok",
-        detail: expect.stringContaining("network access remains disabled")
+        detail: expect.stringContaining("no explicit network dependency is declared")
       })
     );
   });
@@ -238,7 +238,7 @@ describe("runDoctorReport", () => {
     );
   });
 
-  it("fails doctor readiness when network access is enabled without a declared policy", async () => {
+  it("treats a missing network declaration as an unlabeled local run unless explicit metadata is present", async () => {
     const workspace = createTempWorkspace("autolabos-doctor-network-undeclared-");
     await seedDoctorTooling(workspace);
     await seedDoctorWorkspace(workspace);
@@ -259,15 +259,15 @@ describe("runDoctorReport", () => {
       })
     );
 
-    expect(report.readiness.blocked).toBe(true);
-    expect(report.readiness.networkDeclarationPresent).toBe(false);
-    expect(report.readiness.failedChecks).toContain("experiment-web-restriction");
+    expect(report.readiness.blocked).toBe(false);
+    expect(report.readiness.networkDeclarationPresent).toBe(true);
+    expect(report.readiness.warningChecks).not.toContain("experiment-web-restriction");
     expect(report.checks).toContainEqual(
       expect.objectContaining({
         name: "experiment-web-restriction",
-        ok: false,
-        status: "fail",
-        detail: expect.stringContaining("missing a declared network_policy/network_purpose")
+        ok: true,
+        status: "ok",
+        detail: expect.stringContaining("no explicit network dependency is declared")
       })
     );
   });

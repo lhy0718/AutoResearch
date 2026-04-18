@@ -160,7 +160,6 @@ interface ImplementBootstrapContract {
   summary?: string;
   requires_network?: boolean;
   requires_warm_cache?: boolean;
-  can_execute_under_current_policy?: boolean;
   blocking_reason?: string;
   remediation?: string[];
   requirements: ImplementBootstrapRequirement[];
@@ -239,7 +238,6 @@ interface ImplementTaskSpec {
   execution: {
     runner: AppConfig["experiments"]["runner"];
     timeout_sec: number;
-    allow_network: boolean;
   };
   context: {
     topic: string;
@@ -1597,8 +1595,7 @@ export class ImplementSessionManager {
       },
       execution: {
         runner: this.deps.config.experiments.runner,
-        timeout_sec: this.deps.config.experiments.timeout_sec,
-        allow_network: this.deps.config.experiments.allow_network === true
+        timeout_sec: this.deps.config.experiments.timeout_sec
       },
       context: {
         topic: run.topic,
@@ -2110,8 +2107,7 @@ export class ImplementSessionManager {
     ]);
     const bootstrapEvaluation = await evaluateImplementBootstrapContract({
       contract: bootstrapContractResult.contract,
-      workspaceRoot: input.workspaceRoot,
-      allowNetwork: input.taskSpec.execution.allow_network
+      workspaceRoot: input.workspaceRoot
     });
     if (bootstrapEvaluation.status === "block") {
       throw new Error(`bootstrap contract blocked implementation before code generation: ${bootstrapEvaluation.summary}`);
@@ -2693,11 +2689,11 @@ export class ImplementSessionManager {
   }): string {
     return [
       "Staged implement bootstrap contract planning.",
-      "Return only a single bare JSON object with keys: version, strategy, summary, requires_network, requires_warm_cache, can_execute_under_current_policy, blocking_reason, remediation, requirements, checks.",
+      "Return only a single bare JSON object with keys: version, strategy, summary, requires_network, requires_warm_cache, blocking_reason, remediation, requirements, checks.",
       "requirements schema: {\"id\": string, \"kind\": \"model\"|\"tokenizer\"|\"dataset\"|\"binary\"|\"library\"|\"reference_data\"|\"service\", \"source\": \"huggingface\"|\"local\"|\"python\"|\"system\"|\"other\", \"required_for\": string[], \"local_path\"?: string, \"availability\"?: \"assumed_local\"|\"download_required\"|\"unknown\", \"summary\"?: string, \"remediation\"?: string}.",
       "checks schema: {\"id\": string, \"check_type\": \"path_exists\"|\"command_available\"|\"python_module_available\", \"target\": string, \"reason\": string}.",
-      "If offline execution would block the plan, set can_execute_under_current_policy=false and explain the blocking_reason.",
       "When Hugging Face models/tokenizers or remote datasets are needed, list them explicitly in requirements instead of assuming they are present.",
+      "Use blocking_reason only for non-network blockers that would still fail even if remote assets can be fetched, such as missing local paths, unavailable binaries, or missing required Python packages.",
       "",
       "Compact task spec:",
       JSON.stringify(compactTaskSpecForStagedLlmPrompt(params.taskSpec), null, 2),
@@ -3398,8 +3394,7 @@ export class ImplementSessionManager {
         publicDir: normalizedPublicDir,
         metricsPath: normalizedMetricsPath,
         experimentLlmProfile: params.experimentLlmProfile,
-        timeoutSec: this.deps.config.experiments.timeout_sec,
-        allowNetwork: this.deps.config.experiments.allow_network
+        timeoutSec: this.deps.config.experiments.timeout_sec
       });
       experimentMode = promoted.experimentMode;
       baseSummary = promoted.summary;
@@ -4373,10 +4368,6 @@ function parseImplementBootstrapContract(value: unknown): ImplementBootstrapCont
     summary: asOptionalString(record.summary),
     requires_network: record.requires_network === true,
     requires_warm_cache: record.requires_warm_cache === true,
-    can_execute_under_current_policy:
-      typeof record.can_execute_under_current_policy === "boolean"
-        ? record.can_execute_under_current_policy
-        : undefined,
     blocking_reason: asOptionalString(record.blocking_reason),
     remediation: asOptionalStringArray(record.remediation),
     requirements,
@@ -4412,13 +4403,9 @@ function buildDefaultImplementBootstrapContract(taskSpec: ImplementTaskSpec): Im
   return {
     version: 1,
     strategy: "deterministic_default",
-    summary:
-      taskSpec.execution.allow_network
-        ? "No explicit bootstrap risks were identified before code generation."
-        : "Offline execution is requested; no explicit remote bootstrap requirement was identified before code generation.",
+    summary: "No explicit bootstrap risks were identified before code generation.",
     requires_network: false,
     requires_warm_cache: false,
-    can_execute_under_current_policy: true,
     requirements: [],
     checks: []
   };
@@ -4527,19 +4514,14 @@ function asOptionalStringArray(value: unknown): string[] | undefined {
 async function evaluateImplementBootstrapContract(params: {
   contract: ImplementBootstrapContract;
   workspaceRoot: string;
-  allowNetwork: boolean;
 }): Promise<{ status: "pass" | "warn" | "block"; summary: string; missing: string[] }> {
   const missing: string[] = [];
   for (const requirement of params.contract.requirements) {
     const localPath = normalizeStoredPath(requirement.local_path, params.workspaceRoot);
-    if (requirement.source === "huggingface" && params.allowNetwork === false) {
-      if (!localPath || !(await fileExists(localPath))) {
-        missing.push(
-          `${requirement.id}: offline execution cannot prove local availability for Hugging Face ${requirement.kind}`
-        );
-      }
-    }
     if (localPath && !(await fileExists(localPath))) {
+      if (requirement.source === "huggingface") {
+        continue;
+      }
       missing.push(`${requirement.id}: expected local path is missing (${formatArtifactPath(localPath, params.workspaceRoot)})`);
     }
   }
@@ -4553,7 +4535,7 @@ async function evaluateImplementBootstrapContract(params: {
     }
   }
 
-  if (params.contract.can_execute_under_current_policy === false || missing.length > 0) {
+  if (params.contract.blocking_reason || missing.length > 0) {
     return {
       status: "block",
       summary:
@@ -4562,12 +4544,12 @@ async function evaluateImplementBootstrapContract(params: {
       missing
     };
   }
-  if (params.contract.requires_network && params.allowNetwork === false) {
+  if (params.contract.requires_network) {
     return {
       status: "warn",
       summary:
         params.contract.summary ||
-        "Bootstrap contract indicates remote assets, but no explicit offline block was declared.",
+        "Bootstrap contract indicates remote assets and will proceed as a network-assisted run if fetched on demand.",
       missing
     };
   }
@@ -4805,7 +4787,6 @@ function compactTaskSpecForChunkPrompt(taskSpec: ImplementTaskSpec): Record<stri
       metrics_path: taskSpec.workspace.metrics_path
     },
     execution: {
-      allow_network: taskSpec.execution.allow_network,
       runner: taskSpec.execution.runner
     },
     context: {

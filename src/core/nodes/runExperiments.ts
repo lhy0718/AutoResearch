@@ -242,39 +242,18 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
       const bootstrapContract = implementPublicDir
         ? await loadImplementBootstrapContract(implementPublicDir)
         : undefined;
-      if (bootstrapContract?.can_execute_under_current_policy === false) {
-        const summary =
-          bootstrapContract.blocking_reason ||
-          bootstrapContract.summary ||
-          "Bootstrap contract blocked experiment execution under the current policy.";
-        const report = buildRunVerifierReport({
-          status: "fail",
-          trigger,
-          stage: "policy",
-          summary,
-          suggestedNextAction:
-            bootstrapContract.remediation?.join(" ") ||
-            "Resolve the declared bootstrap/environment requirements before retrying run_experiments."
-        });
+      if (bootstrapContract?.requires_network) {
         deps.eventStream.emit({
           type: "OBS_RECEIVED",
           runId: run.id,
           node: "run_experiments",
           agentRole: "runner",
           payload: {
-            text: summary
+            text:
+              bootstrapContract.summary ||
+              "Bootstrap contract declares remote assets or services. This run will proceed as network-assisted if those assets are fetched on demand."
           }
         });
-        await persistRunVerifierReport(run, runContext, report);
-        await persistRunFailureState(runContext, {
-          error: summary
-        });
-        await recordRunFailure(summary, "structural");
-        return {
-          status: "failure",
-          error: summary,
-          toolCallsUsed: 0
-        };
       }
       let clearedSupplementalOutputs: string[] = [];
       if (managedSupplementalPlan) {
@@ -1718,7 +1697,7 @@ function resolveMaybeRelative(value: string | undefined, workspaceRoot: string):
 }
 
 async function loadImplementBootstrapContract(publicDir: string): Promise<{
-  can_execute_under_current_policy?: boolean;
+  requires_network?: boolean;
   blocking_reason?: string;
   summary?: string;
   remediation?: string[];
@@ -1730,10 +1709,7 @@ async function loadImplementBootstrapContract(publicDir: string): Promise<{
   try {
     const parsed = JSON.parse(await fs.readFile(contractPath, "utf8")) as Record<string, unknown>;
     return {
-      can_execute_under_current_policy:
-        typeof parsed.can_execute_under_current_policy === "boolean"
-          ? parsed.can_execute_under_current_policy
-          : undefined,
+      requires_network: parsed.requires_network === true,
       blocking_reason: typeof parsed.blocking_reason === "string" ? parsed.blocking_reason : undefined,
       summary: typeof parsed.summary === "string" ? parsed.summary : undefined,
       remediation: Array.isArray(parsed.remediation)

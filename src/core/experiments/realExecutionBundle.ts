@@ -24,6 +24,7 @@ interface RealExecutionBundleArgs {
   metricsPath: string;
   experimentLlmProfile: ExperimentLlmProfile;
   timeoutSec?: number;
+  /** @deprecated Compatibility-only. Network access is no longer controlled by this flag. */
   allowNetwork?: boolean;
 }
 
@@ -175,7 +176,6 @@ export async function writeRealExecutionBundle(
     private_metadata_dir: args.runDir,
     required_metrics_path: args.metricsPath,
     timeout_sec: args.timeoutSec || 3600,
-    allow_network: args.allowNetwork !== false,
     llm_profile: {
       provider: args.experimentLlmProfile.provider,
       model: args.experimentLlmProfile.model,

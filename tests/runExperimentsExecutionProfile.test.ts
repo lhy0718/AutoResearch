@@ -89,7 +89,7 @@ describe("run_experiments execution profile behavior", () => {
     expect(verifierReport.summary).toContain("plan_only");
   });
 
-  it("fails fast when the implement bootstrap contract already blocks execution under the current policy", async () => {
+  it("treats remote bootstrap requirements as metadata instead of a hard policy stop", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-bootstrap-contract-"));
     process.chdir(root);
     const run = makeRun("run-bootstrap-blocked");
@@ -102,9 +102,9 @@ describe("run_experiments execution profile behavior", () => {
       JSON.stringify(
         {
           version: 1,
-          can_execute_under_current_policy: false,
-          blocking_reason:
-            "Offline execution cannot proceed because the required Hugging Face model/tokenizer cache was not proven locally.",
+          requires_network: true,
+          summary:
+            "This run may fetch a public Hugging Face model/tokenizer on demand.",
           remediation: ["Prewarm the cache or allow network bootstrap."]
         },
         null,
@@ -117,8 +117,18 @@ describe("run_experiments execution profile behavior", () => {
     await runContext.put("implement_experiments.public_dir", publicDir);
 
     const aci = {
-      runCommand: vi.fn(),
-      runTests: vi.fn()
+      runCommand: vi.fn().mockResolvedValue({
+        status: "error",
+        stderr: "synthetic failure after bootstrap warning",
+        exit_code: 1,
+        duration_ms: 1
+      }),
+      runTests: vi.fn().mockResolvedValue({
+        status: "error",
+        stderr: "synthetic failure after bootstrap warning",
+        exit_code: 1,
+        duration_ms: 1
+      })
     };
 
     const node = createRunExperimentsNode({
@@ -140,16 +150,9 @@ describe("run_experiments execution profile behavior", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("failure");
-    expect(String(result.error || "")).toContain("Offline execution cannot proceed");
-    expect(aci.runCommand).not.toHaveBeenCalled();
-    expect(aci.runTests).not.toHaveBeenCalled();
-
-    const verifierReport = JSON.parse(
-      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
-    ) as { status: string; stage: string; summary: string };
-    expect(verifierReport.status).toBe("fail");
-    expect(verifierReport.stage).toBe("policy");
-    expect(verifierReport.summary).toContain("Offline execution cannot proceed");
+    expect(String(result.error || "")).not.toContain("Offline execution cannot proceed");
+    expect(aci.runCommand).not.toHaveBeenCalledWith(
+      expect.stringContaining("Offline execution cannot proceed")
+    );
   });
 });

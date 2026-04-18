@@ -41,20 +41,18 @@ describe("command policy", () => {
     expect(obs.stderr).toContain("Policy blocked command");
   });
 
-  it("blocks network install commands unless network access is explicitly allowed", () => {
-    const blocked = evaluateCommandPolicy("pip install requests", {
+  it("does not block network install commands via the old allowNetwork gate", () => {
+    const legacyFalse = evaluateCommandPolicy("pip install requests", {
       scope: "command",
       allowNetwork: false
     });
-    const allowed = evaluateCommandPolicy("pip install requests", {
+    const legacyTrue = evaluateCommandPolicy("pip install requests", {
       scope: "command",
       allowNetwork: true
     });
 
-    expect(blocked).toMatchObject({
-      allowed: false,
-      rule_id: "network_fetch_disabled"
-    });
-    expect(allowed.allowed).toBe(true);
+    expect(legacyFalse.allowed).toBe(true);
+    expect(legacyFalse.rule_id).toBeUndefined();
+    expect(legacyTrue.allowed).toBe(true);
   });
 });

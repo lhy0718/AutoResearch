@@ -243,9 +243,7 @@ export async function createAutoLabOSRuntime(
     if (config.providers.llm_mode === "ollama") return ollamaExperimentLlm;
     return codexOAuthExperimentLlm;
   });
-  const aci = new LocalAciAdapter({
-    allowNetwork: config.experiments.allow_network === true
-  });
+  const aci = new LocalAciAdapter();
   const semanticScholarApiKey = await resolveSemanticScholarApiKey(paths.cwd);
   const semanticScholar = new SemanticScholarClient({
     apiKey: semanticScholarApiKey,

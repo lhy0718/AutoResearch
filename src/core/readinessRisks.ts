@@ -98,27 +98,28 @@ export function parseReadinessRiskArtifact(raw: string): ReadinessRiskArtifact |
 
 export function buildNetworkDependencyReadinessRisks(input: {
   source: "review" | "paper";
-  allowNetwork: boolean;
+  /** @deprecated Compatibility-only. Network usage is inferred from network_policy metadata. */
+  allowNetwork?: boolean;
   networkPolicy?: ExperimentNetworkPolicy;
   networkPurpose?: ExperimentNetworkPurpose;
   executionApprovalMode?: ExecutionApprovalMode;
 }): ReadinessRisk[] {
-  if (!input.allowNetwork) {
+  if (!input.networkPolicy || input.networkPolicy === "blocked") {
     return [];
   }
 
-  if (!input.networkPolicy || !input.networkPurpose) {
+  if (!input.networkPurpose) {
     return [
       {
         risk_code: `${input.source}_network_dependency_undeclared`,
-        severity: "blocked",
+        severity: "warning",
         category: "network_dependency",
-        status: "blocked",
-        message: "Network access is enabled for experiment execution, but the run is missing a declared network policy or purpose.",
+        status: "unverified",
+        message: "This run appears network-assisted, but it is missing a concrete network purpose declaration.",
         triggered_by: ["network_policy"],
         affected_claim_ids: [],
         affected_citation_ids: [],
-        recommended_action: "Declare why this run needs network access, or disable allow_network before treating the run as ready.",
+        recommended_action: "Declare the network purpose so the run remains auditable as a network-assisted workflow.",
         recheck_condition: "The run records a declared or required network policy with a concrete purpose."
       }
     ];
@@ -128,14 +129,14 @@ export function buildNetworkDependencyReadinessRisks(input: {
     return [
       {
         risk_code: `${input.source}_network_dependency_full_auto_conflict`,
-        severity: "blocked",
+        severity: "warning",
         category: "network_dependency",
-        status: "blocked",
-        message: `Network-enabled experiment execution (${input.networkPolicy}:${input.networkPurpose}) conflicts with full_auto execution approval mode.`,
+        status: "unverified",
+        message: `Network-assisted experiment execution (${input.networkPolicy}:${input.networkPurpose}) is running under full_auto approval, so operator oversight is reduced.`,
         triggered_by: ["network_policy", "execution_approval_mode"],
         affected_claim_ids: [],
         affected_citation_ids: [],
-        recommended_action: "Downgrade execution approval to manual or risk_ack before treating the run as ready.",
+        recommended_action: "Prefer manual or risk_ack approval when external assets or services materially affect execution.",
         recheck_condition: "The run uses manual or risk_ack approval for the declared network dependency."
       }
     ];

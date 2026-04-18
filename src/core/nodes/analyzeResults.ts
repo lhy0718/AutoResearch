@@ -539,9 +539,7 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         run,
         currentNode: "analyze_results",
         approvalMode: deps.config?.workflow?.approval_mode || "minimal",
-        networkPolicy:
-          deps.config?.experiments?.network_policy
-          || (deps.config?.experiments?.allow_network ? "declared" : "blocked"),
+        networkPolicy: deps.config?.experiments?.network_policy,
         networkPurpose: deps.config?.experiments?.network_purpose
       });
       const runStatusPath = await writeRunArtifact(

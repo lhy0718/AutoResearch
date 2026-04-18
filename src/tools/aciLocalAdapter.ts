@@ -8,6 +8,7 @@ import { evaluateCommandPolicy, formatPolicyBlockMessage } from "./commandPolicy
 import { ensureDir } from "../utils/fs.js";
 
 export interface LocalAciAdapterOptions {
+  /** @deprecated Compatibility-only. Network access is no longer gated here. */
   allowNetwork?: boolean;
 }
 
@@ -119,24 +120,22 @@ export class LocalAciAdapter implements AgentComputerInterface {
 
   async runCommand(command: string, cwd?: string, signal?: AbortSignal): Promise<AciObservation> {
     const decision = evaluateCommandPolicy(command, {
-      scope: "command",
-      allowNetwork: this.options.allowNetwork === true
+      scope: "command"
     });
     if (!decision.allowed) {
       return blockedObservation(decision);
     }
-    return runShell(command, cwd, signal, this.options.allowNetwork === true);
+    return runShell(command, cwd, signal);
   }
 
   async runTests(command: string, cwd?: string, signal?: AbortSignal): Promise<AciObservation> {
     const decision = evaluateCommandPolicy(command, {
-      scope: "tests",
-      allowNetwork: this.options.allowNetwork === true
+      scope: "tests"
     });
     if (!decision.allowed) {
       return blockedObservation(decision);
     }
-    return runShell(command, cwd, signal, this.options.allowNetwork === true);
+    return runShell(command, cwd, signal);
   }
 
   async tailLogs(filePath: string, lines = 40): Promise<AciObservation> {
@@ -257,14 +256,13 @@ export class LocalAciAdapter implements AgentComputerInterface {
 function runShell(
   command: string,
   cwd?: string,
-  signal?: AbortSignal,
-  allowNetwork = false
+  signal?: AbortSignal
 ): Promise<AciObservation> {
   const started = Date.now();
   return new Promise((resolve) => {
     const child = spawn(process.env.SHELL || "/bin/sh", ["-lc", command], {
       cwd: cwd || process.cwd(),
-      env: buildManagedExecutionEnv(process.env, allowNetwork),
+      env: buildManagedExecutionEnv(process.env),
       stdio: ["ignore", "pipe", "pipe"],
       signal
     });
@@ -306,8 +304,8 @@ function runShell(
   });
 }
 
-function buildManagedExecutionEnv(baseEnv: NodeJS.ProcessEnv, allowNetwork: boolean): NodeJS.ProcessEnv {
-  const managedEnv: NodeJS.ProcessEnv = {
+function buildManagedExecutionEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return {
     ...baseEnv,
     OMP_NUM_THREADS: baseEnv.OMP_NUM_THREADS || "1",
     MKL_NUM_THREADS: baseEnv.MKL_NUM_THREADS || "1",
@@ -316,14 +314,6 @@ function buildManagedExecutionEnv(baseEnv: NodeJS.ProcessEnv, allowNetwork: bool
     TOKENIZERS_PARALLELISM: baseEnv.TOKENIZERS_PARALLELISM || "false",
     MALLOC_ARENA_MAX: baseEnv.MALLOC_ARENA_MAX || "2"
   };
-
-  if (!allowNetwork) {
-    managedEnv.HF_HUB_OFFLINE = baseEnv.HF_HUB_OFFLINE || "1";
-    managedEnv.TRANSFORMERS_OFFLINE = baseEnv.TRANSFORMERS_OFFLINE || "1";
-    managedEnv.HF_DATASETS_OFFLINE = baseEnv.HF_DATASETS_OFFLINE || "1";
-  }
-
-  return managedEnv;
 }
 
 function lowerChildPriority(pid?: number): void {

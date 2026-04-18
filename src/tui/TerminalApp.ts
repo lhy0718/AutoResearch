@@ -3153,7 +3153,6 @@ export class TerminalApp {
       sessionMode: this.activeRunId ? "existing" : "fresh",
       codeExecutionExpected: true,
       candidateIsolation: this.config.experiments.candidate_isolation,
-      allowNetwork: this.config.experiments.allow_network,
       networkPolicy: this.config.experiments.network_policy,
       networkPurpose: this.config.experiments.network_purpose,
       includeHarnessValidation: true,
@@ -3224,9 +3223,7 @@ export class TerminalApp {
       workspaceRoot: process.cwd(),
       runs,
       approvalMode: this.config.workflow?.approval_mode || "minimal",
-      networkPolicy:
-        this.config.experiments?.network_policy
-        || (this.config.experiments?.allow_network ? "declared" : "blocked"),
+      networkPolicy: this.config.experiments?.network_policy,
       networkPurpose: this.config.experiments?.network_purpose
     });
     if (parsed.template) {
@@ -3313,9 +3310,7 @@ export class TerminalApp {
       workspaceRoot: process.cwd(),
       run,
       approvalMode: this.config.workflow?.approval_mode || "minimal",
-      networkPolicy:
-        this.config.experiments?.network_policy
-        || (this.config.experiments?.allow_network ? "declared" : "blocked"),
+      networkPolicy: this.config.experiments?.network_policy,
       networkPurpose: this.config.experiments?.network_purpose
     });
     await this.setActiveRunId(run.id);

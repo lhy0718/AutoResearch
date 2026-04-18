@@ -350,7 +350,6 @@ class AutoLabOSWebController {
           sessionMode: "fresh",
           codeExecutionExpected: true,
           candidateIsolation: this.runtime.config.experiments.candidate_isolation,
-          allowNetwork: this.runtime.config.experiments.allow_network,
           networkPolicy: this.runtime.config.experiments.network_policy,
           networkPurpose: this.runtime.config.experiments.network_purpose,
           includeHarnessValidation: true,
@@ -643,9 +642,7 @@ class AutoLabOSWebController {
           workspaceRoot: this.cwd,
           runs,
           approvalMode: this.runtime.config.workflow.approval_mode || "minimal",
-          networkPolicy:
-            this.runtime.config.experiments.network_policy
-            || (this.runtime.config.experiments.allow_network ? "declared" : "blocked"),
+          networkPolicy: this.runtime.config.experiments.network_policy,
           networkPurpose: this.runtime.config.experiments.network_purpose
         })
       : emptyJobsSnapshot();
@@ -809,7 +806,7 @@ function summarizeConfig(config: AutoLabOSRuntime["config"]): ConfigSummary {
         : config.providers.llm_mode === "ollama"
           ? undefined
           : config.providers.codex.experiment_reasoning_effort || config.providers.codex.reasoning_effort,
-    networkPolicy: config.experiments.network_policy || (config.experiments.allow_network ? undefined : "blocked"),
+    networkPolicy: config.experiments.network_policy,
     networkPurpose: config.experiments.network_purpose
   };
 }
@@ -861,8 +858,7 @@ function buildConfigFormData(
     ollamaExperimentModel: config?.providers.ollama?.experiment_model || DEFAULT_OLLAMA_EXPERIMENT_MODEL,
     ollamaVisionModel: config?.providers.ollama?.vision_model || DEFAULT_OLLAMA_VISION_MODEL,
     networkPolicy:
-      config?.experiments.network_policy
-      || (config?.experiments.allow_network ? "declared" : "blocked"),
+      config?.experiments.network_policy || "blocked",
     networkPurpose: config?.experiments.network_purpose || ""
   };
 }

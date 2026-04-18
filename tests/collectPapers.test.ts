@@ -389,7 +389,7 @@ describe("collectPapers bibtex", () => {
           String(event.payload?.text ?? "").includes("Semantic Scholar attempts: 1 request(s) succeeded on the first attempt.")
         )
     ).toBe(true);
-  });
+  }, 15_000);
 
   it("excludes blocked collected items from the corpus and records a governance trace", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-governance-blocked-"));

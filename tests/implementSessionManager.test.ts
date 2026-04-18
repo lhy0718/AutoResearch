@@ -5266,7 +5266,7 @@ describe("ImplementSessionManager", () => {
     expect(llmCalls).toBe(2);
   });
 
-  it("blocks staged_llm implementation before code generation when the bootstrap contract is incompatible with offline execution", async () => {
+  it("records network-assisted bootstrap requirements without failing the run at the bootstrap gate", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-bootstrap-contract-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
@@ -5340,11 +5340,8 @@ describe("ImplementSessionManager", () => {
               version: 1,
               strategy: "hf_bootstrap_contract",
               summary: "The planned PEFT baseline requires a Hugging Face model and tokenizer bootstrap.",
-              requires_network: false,
+              requires_network: true,
               requires_warm_cache: true,
-              can_execute_under_current_policy: false,
-              blocking_reason:
-                "Offline execution cannot proceed because the required Hugging Face model/tokenizer cache was not proven locally.",
               remediation: ["Prewarm the Hugging Face cache or allow network access for bootstrap."],
               requirements: [
                 {
@@ -5376,15 +5373,13 @@ describe("ImplementSessionManager", () => {
       workspaceRoot: workspace
     });
 
-    await expect(manager.run(run)).rejects.toThrow(
-      "bootstrap contract blocked implementation before code generation"
-    );
-    expect(llmCalls).toBe(2);
+    await expect(manager.run(run)).rejects.toThrow(/decomposition_plan|decomposition repair turn/i);
+    expect(llmCalls).toBeGreaterThanOrEqual(2);
     const bootstrapContract = JSON.parse(
       readFileSync(path.join(runDir, "implement_experiments", "bootstrap_contract.json"), "utf8")
-    ) as { can_execute_under_current_policy?: boolean; blocking_reason?: string };
-    expect(bootstrapContract.can_execute_under_current_policy).toBe(false);
-    expect(bootstrapContract.blocking_reason).toContain("Offline execution");
+    ) as { requires_network?: boolean; summary?: string };
+    expect(bootstrapContract.requires_network).toBe(true);
+    expect(bootstrapContract.summary).toContain("Hugging Face model and tokenizer bootstrap");
   });
 
   it("fails loudly when chunk subdivision planning does not return a parseable dynamic plan", async () => {

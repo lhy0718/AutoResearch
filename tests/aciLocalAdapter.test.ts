@@ -14,18 +14,18 @@ describe("LocalAciAdapter", () => {
     expect(obs.stdout?.trim()).toBe("1,1,1,1,false,2");
   });
 
-  it("forces huggingface tooling offline when network is disabled", async () => {
+  it("no longer forces huggingface tooling offline via the deprecated network flag", async () => {
     const adapter = new LocalAciAdapter({ allowNetwork: false });
 
     const obs = await adapter.runCommand(
-      "printf '%s' \"$HF_HUB_OFFLINE,$TRANSFORMERS_OFFLINE,$HF_DATASETS_OFFLINE\""
+      "printf '%s' \"${HF_HUB_OFFLINE-unset},${TRANSFORMERS_OFFLINE-unset},${HF_DATASETS_OFFLINE-unset}\""
     );
 
     expect(obs.status).toBe("ok");
-    expect(obs.stdout?.trim()).toBe("1,1,1");
+    expect(obs.stdout?.trim()).toBe("unset,unset,unset");
   });
 
-  it("does not force huggingface tooling offline when network is enabled", async () => {
+  it("keeps deprecated allowNetwork=true behavior equivalent to the default path", async () => {
     const adapter = new LocalAciAdapter({ allowNetwork: true });
 
     const obs = await adapter.runCommand(

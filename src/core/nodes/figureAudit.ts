@@ -99,9 +99,7 @@ export function createFigureAuditNode(deps: NodeExecutionDeps): GraphNodeHandler
         run,
         currentNode: "figure_audit",
         approvalMode: deps.config?.workflow?.approval_mode || "minimal",
-        networkPolicy:
-          deps.config?.experiments?.network_policy
-          || (deps.config?.experiments?.allow_network ? "declared" : "blocked"),
+        networkPolicy: deps.config?.experiments?.network_policy,
         networkPurpose: deps.config?.experiments?.network_purpose
       });
       await writeRunArtifact(run, "run_status.json", `${JSON.stringify(runStatus, null, 2)}\n`);

@@ -31,24 +31,17 @@ describe("buildNetworkDependencyReadinessRisks", () => {
     ]);
   });
 
-  it("blocks undeclared network-enabled runs", () => {
+  it("does not invent a network risk when no network metadata is declared", () => {
     const risks = buildNetworkDependencyReadinessRisks({
       source: "review",
       allowNetwork: true,
       executionApprovalMode: "manual"
     });
 
-    expect(risks).toEqual([
-      expect.objectContaining({
-        risk_code: "review_network_dependency_undeclared",
-        severity: "blocked",
-        category: "network_dependency",
-        status: "blocked"
-      })
-    ]);
+    expect(risks).toEqual([]);
   });
 
-  it("blocks full_auto when network access is enabled", () => {
+  it("warns when a required network-assisted run uses full_auto", () => {
     const risks = buildNetworkDependencyReadinessRisks({
       source: "paper",
       allowNetwork: true,
@@ -60,9 +53,9 @@ describe("buildNetworkDependencyReadinessRisks", () => {
     expect(risks).toEqual([
       expect.objectContaining({
         risk_code: "paper_network_dependency_full_auto_conflict",
-        severity: "blocked",
+        severity: "warning",
         category: "network_dependency",
-        status: "blocked"
+        status: "unverified"
       })
     ]);
   });

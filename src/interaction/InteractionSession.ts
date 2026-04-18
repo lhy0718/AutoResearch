@@ -1257,7 +1257,6 @@ export class InteractionSession {
       sessionMode: this.activeRunId ? "existing" : "fresh",
       codeExecutionExpected: true,
       candidateIsolation: this.config.experiments.candidate_isolation,
-      allowNetwork: this.config.experiments.allow_network,
       networkPolicy: this.config.experiments.network_policy,
       networkPurpose: this.config.experiments.network_purpose,
       includeHarnessValidation: true,
@@ -1317,9 +1316,7 @@ export class InteractionSession {
       workspaceRoot: this.workspaceRoot,
       runs,
       approvalMode: this.config.workflow?.approval_mode || "minimal",
-      networkPolicy:
-        this.config.experiments?.network_policy
-        || (this.config.experiments?.allow_network ? "declared" : "blocked"),
+      networkPolicy: this.config.experiments?.network_policy,
       networkPurpose: this.config.experiments?.network_purpose
     });
     if (parsed.template) {
@@ -1404,9 +1401,7 @@ export class InteractionSession {
       workspaceRoot: this.workspaceRoot,
       run,
       approvalMode: this.config.workflow?.approval_mode || "minimal",
-      networkPolicy:
-        this.config.experiments?.network_policy
-        || (this.config.experiments?.allow_network ? "declared" : "blocked"),
+      networkPolicy: this.config.experiments?.network_policy,
       networkPurpose: this.config.experiments?.network_purpose
     });
 

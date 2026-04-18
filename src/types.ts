@@ -294,7 +294,8 @@ export interface AppConfig {
   experiments: {
     runner: "local_python";
     timeout_sec: number;
-    allow_network: boolean;
+    /** @deprecated Legacy compatibility field. Network access is no longer controlled by a boolean gate. */
+    allow_network?: boolean;
     network_policy?: ExperimentNetworkPolicy;
     network_purpose?: ExperimentNetworkPurpose;
     candidate_isolation?: "attempt_snapshot_restore" | "attempt_worktree";

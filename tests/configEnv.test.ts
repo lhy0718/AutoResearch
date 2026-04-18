@@ -206,7 +206,7 @@ describe("config .env overrides", () => {
     expect(loaded.workflow.execution_approval_mode).toBe("manual");
   });
 
-  it("defaults experiment network_policy to blocked when allow_network is disabled", async () => {
+  it("maps legacy allow_network=false configs to blocked network metadata", async () => {
     const { paths } = await createWorkspace();
     const config = makeConfig();
     delete config.experiments.network_policy;
@@ -215,7 +215,7 @@ describe("config .env overrides", () => {
 
     const loaded = await loadConfig(paths);
 
-    expect(loaded.experiments.allow_network).toBe(false);
+    expect(loaded.experiments.allow_network).toBeUndefined();
     expect(loaded.experiments.network_policy).toBe("blocked");
     expect(loaded.experiments.network_purpose).toBeUndefined();
   });
@@ -248,8 +248,7 @@ describe("config .env overrides", () => {
     expect(loaded.experiments).toEqual({
       runner: "local_python",
       timeout_sec: 3600,
-      allow_network: false,
-      network_policy: "blocked",
+      network_policy: undefined,
       network_purpose: undefined,
       candidate_isolation: "attempt_snapshot_restore"
     });
@@ -283,7 +282,7 @@ describe("config .env overrides", () => {
 
     const loaded = await loadConfig(paths);
 
-    expect(loaded.experiments.allow_network).toBe(true);
+    expect(loaded.experiments.allow_network).toBeUndefined();
     expect(loaded.experiments.network_policy).toBe("declared");
     expect(loaded.experiments.network_purpose).toBe("logging");
   });

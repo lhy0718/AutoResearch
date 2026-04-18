@@ -283,7 +283,6 @@ function buildConfigFromWizardAnswers(answers: {
     experiments: {
       runner: "local_python",
       timeout_sec: 3600,
-      allow_network: answers.networkPolicy === "declared" || answers.networkPolicy === "required",
       network_policy: answers.networkPolicy || "blocked",
       network_purpose:
         answers.networkPolicy === "declared" || answers.networkPolicy === "required"
@@ -738,17 +737,15 @@ function normalizeLoadedConfig(config: PersistedAppConfig): AppConfig {
     execution_approval_mode: normalizeExecutionApprovalMode(config.workflow.execution_approval_mode),
     budget_guard_usd: normalizeBudgetGuardUsd(config.workflow.budget_guard_usd)
   };
-  const allowNetwork = config.experiments?.allow_network === true;
   const normalizedNetworkPolicy = normalizeExperimentNetworkPolicy(
     config.experiments?.network_policy,
-    allowNetwork
+    config.experiments?.allow_network
   );
   config.experiments = {
     runner: "local_python",
     timeout_sec: Math.max(1, config.experiments?.timeout_sec || 3600),
-    allow_network: allowNetwork,
     network_policy: normalizedNetworkPolicy,
-    network_purpose:
+      network_purpose:
       normalizedNetworkPolicy
       && normalizedNetworkPolicy !== "blocked"
         ? normalizeExperimentNetworkPurpose(config.experiments?.network_purpose)
@@ -854,13 +851,16 @@ function parseDotEnv(raw: string): Record<string, string> {
 
 function normalizeExperimentNetworkPolicy(
   value: unknown,
-  allowNetwork: boolean
+  legacyAllowNetwork?: boolean
 ): ExperimentNetworkPolicy | undefined {
-  if (!allowNetwork) {
-    return "blocked";
-  }
-  if (value === "declared" || value === "required") {
+  if (value === "blocked" || value === "declared" || value === "required") {
     return value;
+  }
+  if (legacyAllowNetwork === true) {
+    return "declared";
+  }
+  if (legacyAllowNetwork === false) {
+    return "blocked";
   }
   return undefined;
 }
