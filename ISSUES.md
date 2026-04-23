@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-04-18
+Last updated: 2026-04-23
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
@@ -14,7 +14,7 @@ Usage rules:
 ## Current active status
 
 - Active live-validation defects:
-  - `LV-105` same persisted `run_experiments` retry now completes after network-gate removal, but `run_experiments_verify_report.json` records `status: pass` even though `metrics.json` shows all tuned PEFT conditions failed and the configured objective metric is missing.
+  - `LV-103` staged `implement_experiments` same-flow retries now localize the correct runner and reject placeholder-only materialization, but the live Codex OAuth scaffold/bootstrap turns still fail before a runnable PEFT repair is produced.
   - `LV-098` IEEE staging `pdf_url` rows cache HTML instead of PDF, so `analyze_papers` cannot preserve supplemental page images on abstract fallback for those papers.
 - Active research/paper-readiness watchlist: see `Research and paper-readiness watchlist` below.
 - Current watchlist snapshot:
@@ -34,7 +34,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 ## Issue: LV-105
 
-- Status: in_progress
+- Status: resolved
 - Validation target: same persisted external-workspace run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after removing `allow_network` as a runtime execution gate and rerunning `run_experiments`
 - Environment/session context:
   - real TUI workspace: `.autolabos-validation`
@@ -52,7 +52,7 @@ The resolved entries below are kept as recent validation history and regression 
   - The verifier should classify the result as incomplete/degraded and keep the workflow from treating execution success as experiment adequacy.
 
 - Actual behavior:
-  - The same-flow retry now runs for about 306 seconds and completes the public PEFT runner after Hugging Face bootstrap.
+  - Original failing behavior: the same-flow retry ran for about 306 seconds and completed the public PEFT runner after Hugging Face bootstrap.
   - `run_experiments_verify_report.json` records:
     - `status: "pass"`
     - `stage: "success"`
@@ -66,24 +66,40 @@ The resolved entries below are kept as recent validation history and regression 
   - `analyze_results` then pauses with:
     - `Objective metric "accuracy_delta_vs_baseline" was not found in metrics.json.`
     - `Results table is incomplete: baseline and comparator must both be populated for every reported row.`
+  - Fixed behavior verified on 2026-04-23:
+    - the same persisted TUI retry reran `run_experiments`
+    - the PEFT command still produced incomplete comparator metrics
+    - `run_experiments` emitted `TEST_FAILED`
+    - `run_experiments_verify_report.json` now records:
+      - `status: "fail"`
+      - `stage: "metrics"`
+      - `summary: Experiment metrics contract failed: Objective metric "accuracy_delta_vs_baseline" was not found in metrics.json. Study aggregate reports incomplete execution (1 completed, 3 failed). No tuned comparator condition completed successfully. ...`
 
 - Fresh vs existing session comparison:
   - Fresh session: not separately rerun for this post-network-gate semantic boundary.
-  - Existing session: reproduced directly on the same persisted run after the network-policy fix.
-  - Divergence: none established yet; the failing boundary is in persisted run-verifier semantics rather than stale UI state.
+  - Existing session: reproduced directly on the same persisted run after the network-policy fix, then revalidated after the verifier fix.
+  - Divergence: none established; the failing boundary was in persisted run-verifier semantics rather than stale UI state.
 
 - Root cause hypothesis:
   - Type: `persisted_state_bug`
   - Hypothesis: `run_experiments` is currently treating process exit code and metrics-file materialization as sufficient for verifier pass, without enforcing the metrics contract that tuned comparator conditions and the configured objective metric must be present for a baseline/comparator experiment.
 
 - Code/test changes:
-  - Code: none yet for this issue.
-  - Tests: none yet for this issue.
+  - Code:
+    - `src/core/nodes/runExperiments.ts`
+      - added post-command metrics-contract validation after `objective_evaluation.json` is written
+      - fails verifier reports when the configured objective metric is missing
+      - fails baseline-first comparator runs when primary study aggregate reports incomplete execution, no successful tuned comparator, or non-numeric baseline/comparator/delta aggregate values
+  - Tests:
+    - `tests/runExperimentsExecutionProfile.test.ts`
+      - added regression coverage for a command that exits `0` but writes incomplete comparator metrics
 
 - Regression status:
-  - Automated regression test linked: no
-  - Same-flow live reproduction: confirmed
-  - Latest state: `run_experiments` completed, `analyze_results` paused for incomplete results table / missing objective metric.
+  - Automated regression test linked: yes
+  - Targeted tests: `npx vitest run tests/runExperimentsExecutionProfile.test.ts tests/objectiveMetricPropagation.test.ts` passed
+  - Broad validation: `npm run build`, `npm test`, and `npm run validate:harness` passed
+  - Same-flow live revalidation: confirmed
+  - Latest state: same persisted retry now marks `run_experiments_verify_report.json` as `status: "fail"` / `stage: "metrics"` instead of `pass`.
 
 - Most likely failing boundary:
   - `run_experiments` metrics-contract verification boundary after command success
@@ -96,12 +112,12 @@ The resolved entries below are kept as recent validation history and regression 
   - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
 
 - Recommended next step:
-  - tighten `run_experiments` verification so command success with failed tuned conditions or missing objective metrics is marked incomplete/degraded instead of clean pass, then rerun the same persisted node.
+  - Repair the generated PEFT experiment implementation so tuned comparator conditions complete successfully and the configured objective metric is written numerically before retrying the research workflow.
 
 ## Issue: LV-103
 
 - Status: in_progress
-- Validation target: existing external-workspace TUI same-flow `/retry` of `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after removing heuristic decomposition/materialization/subdivision fallbacks
+- Validation target: existing external-workspace TUI same-flow `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec` after removing heuristic decomposition/materialization/subdivision fallbacks and then tightening staged materialization/bootstrap guards
 - Environment/session context:
   - real TUI workspace: `.autolabos-validation`
   - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
@@ -114,30 +130,42 @@ The resolved entries below are kept as recent validation history and regression 
   4. Inspect `implement_experiments/status.json` and `implement_experiments/progress.jsonl`.
 
 - Expected behavior:
-  - The same-flow retry should either emit a parseable staged scaffold/decomposition response and continue, or fail quickly with an explicit “missing dynamic plan” style error instead of silently reusing heuristic projections.
+  - The same-flow retry should localize the real runner file, materialize substantive Python rather than placeholder skeleton text, and continue through staged scaffold/bootstrap/decomposition/materialization without provider-side aborts.
+  - If the provider cannot supply a valid scaffold or chunk, the run should fail narrowly and honestly rather than reusing heuristic projections or recovering comment-only public bundles.
 
 - Actual behavior:
-  - The heuristic projection path is gone: the rerun now stops at the first staged scaffold request instead of auto-projecting a decomposition/materialization plan.
-  - In the live same-flow rerun, `implement_experiments/status.json` remained at:
-    - `status: "running"`
-    - `stage: "codex"`
-    - `message: "Submitting request to Codex OAuth Responses backend."`
-  - `progress.jsonl` for the new retry only recorded:
-    - preflight/setup
-    - search-backed localization
-    - `Planning staged_llm implementation scaffold before generating file contents.`
-    - `Submitting request to Codex OAuth backend.`
-    - `Submitting request to Codex OAuth Responses backend.`
-  - No new provider progress, no text delta, and no persisted scaffold/decomposition artifact appeared before operator cancellation.
+  - The heuristic projection path is gone and the localizer now correctly focuses the true failing runner:
+    - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - Additional repo-side guards are now in place:
+    - placeholder/comment-only staged chunk responses are rejected instead of being accepted as materialized Python
+    - comment-only public bundles are no longer recoverable as valid implement results
+    - staged scaffold and bootstrap prompts were compacted to reduce provider payload size
+  - Live retries still fail at the Codex OAuth boundary before a runnable repair is produced:
+    - retry at `2026-04-23T08:04:36Z` progressed past scaffold planning, then failed during bootstrap with:
+      - `Implementation execution failed before any runnable implementation was produced: Codex OAuth backend returned an error ... request ID 7eb2608e-9fbc-4ab7-a0f9-2a04dba5b13a`
+    - retry at `2026-04-23T08:09:15Z` failed even earlier at scaffold with:
+      - `Implementation execution failed before any runnable implementation was produced: Codex OAuth backend returned an error ... request ID 6a75ce32-9ad4-41ac-8289-c530477e510c`
+    - earlier same-day retries also showed:
+      - provider abort after bootstrap wait: `This operation was aborted`
+      - provider error after chunk subdivision wait: request ID `9e317b4c-a0e8-4c47-b940-e25beebd8f32`
+    - latest live retry at `2026-04-23T09:12:18Z` confirmed the new prompt-artifact instrumentation works:
+      - `implement_experiments/scaffold_prompt.txt` is written before the first scaffold request
+      - `implement_experiments/scaffold_raw_response.txt` is written once scaffold planning completes
+      - `implement_experiments/bootstrap_contract_prompt.txt` is written before the bootstrap request
+      - the same run then advances to bootstrap and stalls again with:
+        - `threadId: "resp_01a31167d1197b170169e9e27346308191bee3b4f775c77621"`
+        - `status: "running"`
+        - `message: "Still waiting on staged_llm provider output; no new provider progress for 119s."`
+  - The public runner file remains stuck at a 44-line canonical skeleton placeholder, confirming that no substantive repair was materialized in the latest live retries.
 
 - Fresh vs existing session comparison:
-  - Fresh session: not yet rerun after the heuristic-removal patch.
-  - Existing session: the same persisted run now proves the heuristic fallback is gone, but the first scaffold request can still hang silently.
-  - Divergence: not yet evaluated.
+  - Fresh session: multiple fresh TUI relaunches on 2026-04-23 reproduced the same provider-side failure boundary.
+  - Existing session: the same persisted run shows better localization and stricter materialization validation, but still dies at the live Codex OAuth scaffold/bootstrap turn.
+  - Divergence: none established; the remaining blocker appears provider-side rather than resume-state-specific.
 
 - Root cause hypothesis:
   - Type: `race_timing_bug`
-  - Hypothesis: removing heuristic projection correctly forces the provider to supply an explicit dynamic plan, but the initial staged scaffold request still suffers from a Codex no-delta stall boundary before any parseable response is materialized.
+  - Hypothesis: the heuristic-free staged path is now behaving more honestly, but the live Codex OAuth provider remains unstable at the first scaffold/bootstrap planning turns for this run, intermittently returning backend errors or aborts before any usable structured response can be materialized.
 
 - Code/test changes:
   - Code:
@@ -146,24 +174,41 @@ The resolved entries below are kept as recent validation history and regression 
       - removed heuristic fallback materialization/subdivision plans
       - removed heuristic gating that skipped planning for “simple” units/chunks
       - tightened staged prompts to ask for the smallest purpose-aligned unit/chunk/subchunk set without fixed-size guidance
+      - rejected placeholder/comment-only staged Python chunk responses and empty final materializations
+      - blocked recovery of placeholder-only public script bundles
+      - compacted staged scaffold and bootstrap planning prompts to reduce provider request size
+    - `src/core/agents/implementationLocalizer.ts`
+      - added exact previous-script path preference so reruns prioritize the real failing runner over nearby manifests/analysis artifacts
   - Tests:
-    - `tests/implementSessionManager.test.ts`
+  - `tests/implementSessionManager.test.ts`
       - added regressions that fail loudly when decomposition, materialization, or subdivision plans are missing/unparseable instead of silently falling back
+      - added regression coverage for comment-only canonical-skeleton chunk responses
+      - added regression coverage that scaffold/bootstrap prompt artifacts and raw responses are persisted
+    - `tests/implementationLocalizer.test.ts`
+      - added regression coverage that prefers the exact previous run script over adjacent manifest files
 
 - Regression status:
-  - Automated regression test linked: yes (`tests/implementSessionManager.test.ts`)
-  - Re-validation result: pass for build/test/harness; live same-flow rerun confirms heuristic fallback removal but is still blocked at the first scaffold request.
+  - Automated regression test linked: yes (`tests/implementSessionManager.test.ts`, `tests/implementationLocalizer.test.ts`)
+  - Re-validation result:
+    - targeted implement/localizer regressions passed
+    - `npm run build` passed
+    - `npm test` passed
+    - live same-flow reruns still blocked by Codex OAuth backend errors/aborts
 
 - Most likely failing boundary:
-  - staged scaffold provider-response boundary inside `implement_experiments`
+  - staged scaffold/bootstrap provider-response boundary inside `implement_experiments`
 
 - Evidence/artifacts:
   - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
   - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/scaffold_prompt.txt`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/scaffold_raw_response.txt`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/bootstrap_contract_prompt.txt`
   - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_record.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 - Recommended next step:
-  - instrument or narrow the initial staged scaffold request so the heuristic-free path can either materialize an explicit plan or fail with a narrower provider-side boundary.
+  - continue collecting live request IDs and provider-stage evidence while keeping the heuristic-free/placeholder-safe path intact, so the remaining Codex OAuth failure can be isolated as a backend stability issue rather than an AutoLabOS silent fallback issue.
 
 ## Issue: LV-101
 

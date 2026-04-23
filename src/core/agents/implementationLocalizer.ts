@@ -51,6 +51,7 @@ interface CandidateAccumulator {
 }
 
 interface LocalizationFocusHints {
+  preferredExactPaths: string[];
   preferredOutputRoots: string[];
   preferredRunIds: string[];
   preferredBasenames: string[];
@@ -342,6 +343,12 @@ function scorePathFromQueries(
     score += 2;
   }
 
+  for (const preferredPath of focusHints.preferredExactPaths) {
+    if (filePath === preferredPath) {
+      score += 20;
+    }
+  }
+
   for (const outputRoot of focusHints.preferredOutputRoots) {
     if (isDescendantPath(filePath, outputRoot)) {
       score += 12;
@@ -390,11 +397,18 @@ function deriveLocalizationFocusHints(input: ImplementationLocalizerInput): Loca
     ...(input.existingChangedFiles || [])
   ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
 
+  const preferredExactPaths = new Set<string>();
   const preferredOutputRoots = new Set<string>();
   const preferredRunIds = new Set<string>();
   const preferredBasenames = new Set<string>();
 
   for (const value of rawValues) {
+    const scriptPath = extractScriptPath(value);
+    if (scriptPath) {
+      const normalizedScriptPath = normalizePath(scriptPath, input.workspaceRoot);
+      preferredExactPaths.add(normalizedScriptPath);
+      preferredBasenames.add(path.basename(normalizedScriptPath));
+    }
     for (const outputRoot of extractPreferredOutputRoots(value, input.workspaceRoot)) {
       preferredOutputRoots.add(outputRoot);
       const suffix = path.basename(outputRoot).match(/-([0-9a-f]{8})$/iu)?.[1];
@@ -405,13 +419,10 @@ function deriveLocalizationFocusHints(input: ImplementationLocalizerInput): Loca
     for (const runId of extractRunIds(value)) {
       preferredRunIds.add(runId.toLowerCase());
     }
-    const basename = extractScriptPath(value);
-    if (basename) {
-      preferredBasenames.add(path.basename(basename));
-    }
   }
 
   return {
+    preferredExactPaths: [...preferredExactPaths],
     preferredOutputRoots: [...preferredOutputRoots],
     preferredRunIds: [...preferredRunIds],
     preferredBasenames: [...preferredBasenames]

@@ -187,12 +187,18 @@ const IMPLEMENT_PROGRESS_STATUS_ARTIFACT = path.join("implement_experiments", "s
 const IMPLEMENT_PROGRESS_LOG_ARTIFACT = path.join("implement_experiments", "progress.jsonl");
 const IMPLEMENT_PARTIAL_RESPONSE_ARTIFACT = path.join("implement_experiments", "partial_response.txt");
 const IMPLEMENT_SCAFFOLD_ARTIFACT = path.join("implement_experiments", "scaffold.json");
+const IMPLEMENT_SCAFFOLD_PROMPT_ARTIFACT = path.join("implement_experiments", "scaffold_prompt.txt");
+const IMPLEMENT_SCAFFOLD_RAW_RESPONSE_ARTIFACT = path.join("implement_experiments", "scaffold_raw_response.txt");
 const IMPLEMENT_DECOMPOSITION_PLAN_ARTIFACT = path.join("implement_experiments", "decomposition_plan.json");
 const IMPLEMENT_DECOMPOSITION_PLAN_RAW_RESPONSE_ARTIFACT = path.join(
   "implement_experiments",
   "decomposition_plan_raw_response.txt"
 );
 const IMPLEMENT_BOOTSTRAP_CONTRACT_ARTIFACT = path.join("implement_experiments", "bootstrap_contract.json");
+const IMPLEMENT_BOOTSTRAP_CONTRACT_PROMPT_ARTIFACT = path.join(
+  "implement_experiments",
+  "bootstrap_contract_prompt.txt"
+);
 const IMPLEMENT_BOOTSTRAP_CONTRACT_RAW_RESPONSE_ARTIFACT = path.join(
   "implement_experiments",
   "bootstrap_contract_raw_response.txt"
@@ -2056,6 +2062,8 @@ export class ImplementSessionManager {
         publicDir: input.publicDir
       }
     );
+    await ensureDir(path.dirname(path.join(input.runDir, IMPLEMENT_SCAFFOLD_PROMPT_ARTIFACT)));
+    await fs.writeFile(path.join(input.runDir, IMPLEMENT_SCAFFOLD_PROMPT_ARTIFACT), input.scaffoldPrompt, "utf8");
     const scaffoldCompletion = await this.completeStagedLlmRequest({
       runDir: input.runDir,
       prompt: input.scaffoldPrompt,
@@ -2068,6 +2076,11 @@ export class ImplementSessionManager {
       emitImplementObservation: input.emitImplementObservation,
       reasoningEffort: input.reasoningEffort
     });
+    await fs.writeFile(
+      path.join(input.runDir, IMPLEMENT_SCAFFOLD_RAW_RESPONSE_ARTIFACT),
+      scaffoldCompletion.text,
+      "utf8"
+    );
     const scaffoldParsed = parseStructuredResponse(scaffoldCompletion.text);
     let activeThreadId = scaffoldCompletion.threadId || input.threadId;
     const bootstrapPlanningRequired = shouldRequireExplicitBootstrapPlanning(input.taskSpec, scaffoldParsed.value);
@@ -2353,6 +2366,7 @@ export class ImplementSessionManager {
         });
         activeThreadId = chunkCompletion.threadId || activeThreadId;
         const sectionContent = chunkCompletion.content;
+        ensureMaterializedChunkHasSubstance(sectionContent, filePath, plannedSection.section.id);
         completedSectionIds.push(plannedSection.section.id);
 
         if (useSectionedSkeleton) {
@@ -2400,6 +2414,7 @@ export class ImplementSessionManager {
         draftContent = stripCanonicalSkeletonMarkers(currentFileContent, filePath);
         await fs.writeFile(filePath, draftContent, "utf8");
       }
+      ensureMaterializedFileHasSubstance(draftContent, filePath);
       fileEdits.push({
         path: filePath,
         content: draftContent
@@ -2586,8 +2601,8 @@ export class ImplementSessionManager {
       "Return ONLY one JSON object with keys: path, content.",
       "Use UTF-8 text. Do not wrap the file content in markdown fences.",
       "",
-      "Compact task spec:",
-      JSON.stringify(compactTaskSpecForStagedLlmPrompt(params.taskSpec), null, 2),
+      "Focused task spec:",
+      JSON.stringify(compactTaskSpecForChunkPrompt(params.taskSpec), null, 2),
       "",
       "Search-backed localization hints:",
       JSON.stringify(compactLocalizationForStagedLlmPrompt(params.searchLocalization), null, 2),
@@ -2653,12 +2668,19 @@ export class ImplementSessionManager {
         publicDir: input.publicDir
       }
     );
+    const bootstrapPrompt = this.buildStagedImplementBootstrapContractPrompt({
+      taskSpec: input.taskSpec,
+      scaffold: input.scaffold
+    });
+    await ensureDir(path.dirname(path.join(input.runDir, IMPLEMENT_BOOTSTRAP_CONTRACT_PROMPT_ARTIFACT)));
+    await fs.writeFile(
+      path.join(input.runDir, IMPLEMENT_BOOTSTRAP_CONTRACT_PROMPT_ARTIFACT),
+      bootstrapPrompt,
+      "utf8"
+    );
     const completion = await this.completeStagedLlmRequest({
       runDir: input.runDir,
-      prompt: this.buildStagedImplementBootstrapContractPrompt({
-        taskSpec: input.taskSpec,
-        scaffold: input.scaffold
-      }),
+      prompt: bootstrapPrompt,
       systemPrompt: appendStagedImplementBootstrapContractOverrideToPrompt(input.systemPrompt),
       timeoutMs: input.timeoutMs,
       abortSignal: input.abortSignal,
@@ -2853,6 +2875,13 @@ export class ImplementSessionManager {
       "Return only the requested chunk content. Do not repeat earlier chunks. Do not emit markdown fences.",
       "Assume planning is already complete. Focus only on materializing the requested section for the approved file.",
       "Do not redesign the file. Treat the current file state and completed sections as the canonical skeleton you are filling.",
+      "Materialize executable source now. Do not return placeholder scaffolding, section summaries, or purpose restatements.",
+      ...(isPythonMaterializationPath(params.unit.target_path || "")
+        ? [
+            "Because the target is a Python source file, content must include concrete Python statements such as imports, assignments, defs, classes, or executable logic.",
+            "Do not return comment-only, TODO-only, or doc-outline-only content."
+          ]
+        : []),
       "",
       "Compact task spec:",
       JSON.stringify(compactTaskSpecForChunkPrompt(params.taskSpec), null, 2),
@@ -4245,6 +4274,37 @@ function parseStructuredChunkResponse(text: string, expectedChunkId: string): st
   return content;
 }
 
+function ensureMaterializedChunkHasSubstance(content: string, filePath: string, chunkId: string): void {
+  if (hasSubstantiveMaterializedContent(content, filePath)) {
+    return;
+  }
+  throw new Error(
+    `staged_llm chunk response for ${chunkId} on ${filePath} only contained placeholder/comment scaffolding`
+  );
+}
+
+function ensureMaterializedFileHasSubstance(content: string, filePath: string): void {
+  if (hasSubstantiveMaterializedContent(content, filePath)) {
+    return;
+  }
+  throw new Error(`staged_llm materialization for ${filePath} produced no substantive source content`);
+}
+
+function hasSubstantiveMaterializedContent(content: string, filePath: string): boolean {
+  const trimmed = content.trim();
+  if (!trimmed) {
+    return false;
+  }
+  if (!isPythonMaterializationPath(filePath)) {
+    return true;
+  }
+  return trimmed
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .some((line) => !line.startsWith("#"));
+}
+
 function isImplementStagedLlmTimeoutError(error: unknown): boolean {
   return error instanceof Error && /implement_experiments staged_llm request timed out after \d+ms/.test(error.message);
 }
@@ -4744,22 +4804,22 @@ function trimBlock(text: string, limit: number): string {
 
 function compactTaskSpecForStagedLlmPrompt(taskSpec: ImplementTaskSpec): Record<string, unknown> {
   return {
-    goal: trimBlock(taskSpec.goal, 320),
-    acceptance_criteria: taskSpec.acceptance_criteria.slice(0, 4).map((item) => trimBlock(item, 220)),
-    non_goals: taskSpec.non_goals.slice(0, 3).map((item) => trimBlock(item, 180)),
-    constraints: taskSpec.constraints.slice(0, 6).map((item) => trimBlock(item, 220)),
+    goal: trimBlock(taskSpec.goal, 220),
+    acceptance_criteria: taskSpec.acceptance_criteria.slice(0, 3).map((item) => trimBlock(item, 160)),
+    non_goals: taskSpec.non_goals.slice(0, 2).map((item) => trimBlock(item, 140)),
+    constraints: taskSpec.constraints.slice(0, 4).map((item) => trimBlock(item, 160)),
     workspace: {
       public_dir: taskSpec.workspace.public_dir,
       metrics_path: taskSpec.workspace.metrics_path
     },
     execution: taskSpec.execution,
     context: {
-      topic: trimBlock(taskSpec.context.topic, 480),
-      objective_metric: trimBlock(taskSpec.context.objective_metric, 280),
-      plan_excerpt: trimBlock(taskSpec.context.plan_excerpt, 3200),
-      hypotheses_excerpt: trimBlock(taskSpec.context.hypotheses_excerpt, 1200),
-      previous_summary: trimBlock(taskSpec.context.previous_summary || "", 320) || undefined,
-      previous_run_command: trimBlock(taskSpec.context.previous_run_command || "", 220) || undefined,
+      topic: trimBlock(taskSpec.context.topic, 240),
+      objective_metric: trimBlock(taskSpec.context.objective_metric, 180),
+      plan_excerpt: trimBlock(taskSpec.context.plan_excerpt, 1200),
+      hypotheses_excerpt: trimBlock(taskSpec.context.hypotheses_excerpt, 600),
+      previous_summary: trimBlock(taskSpec.context.previous_summary || "", 220) || undefined,
+      previous_run_command: trimBlock(taskSpec.context.previous_run_command || "", 160) || undefined,
       previous_script: taskSpec.context.previous_script,
       comparison_contract: taskSpec.context.comparison_contract
         ? {
@@ -4808,17 +4868,17 @@ function compactTaskSpecForChunkPrompt(taskSpec: ImplementTaskSpec): Record<stri
 
 function compactLocalizationForStagedLlmPrompt(localization: LocalizationResult): Record<string, unknown> {
   return {
-    summary: trimBlock(localization.summary || "", 220) || undefined,
+    summary: trimBlock(localization.summary || "", 180) || undefined,
     strategy: localization.strategy,
-    reasoning: trimBlock(localization.reasoning || "", 320) || undefined,
-    selected_files: localization.selected_files.slice(0, 6),
-    candidate_files: localization.candidates.slice(0, 6).map((candidate) => ({
+    reasoning: trimBlock(localization.reasoning || "", 220) || undefined,
+    selected_files: localization.selected_files.slice(0, 4),
+    candidate_files: localization.candidates.slice(0, 4).map((candidate) => ({
       path: candidate.path,
       symbol: candidate.symbol,
-      reason: trimBlock(candidate.reason || "", 180) || undefined,
+      reason: trimBlock(candidate.reason || "", 120) || undefined,
       confidence: candidate.confidence
     })),
-    search_queries: localization.search_queries?.slice(0, 4),
+    search_queries: localization.search_queries?.slice(0, 3),
     confidence: localization.confidence
   };
 }
@@ -4827,10 +4887,10 @@ function compactBranchPlanForStagedLlmPrompt(branchPlan: BranchPlan): Record<str
   return {
     branch_id: branchPlan.branch_id,
     source: branchPlan.source,
-    summary: trimBlock(branchPlan.summary, 220),
-    rationale: trimBlock(branchPlan.rationale, 240),
-    focus_files: branchPlan.focus_files.slice(0, 4),
-    candidate_pool: branchPlan.candidate_pool.slice(0, 6)
+    summary: trimBlock(branchPlan.summary, 160),
+    rationale: trimBlock(branchPlan.rationale, 180),
+    focus_files: branchPlan.focus_files.slice(0, 3),
+    candidate_pool: branchPlan.candidate_pool.slice(0, 4)
   };
 }
 
@@ -5293,6 +5353,10 @@ async function recoverStructuredResultFromPublicBundle(params: {
   }
 
   const scriptPath = path.join(params.publicDir, scriptName);
+  const scriptContent = await fs.readFile(scriptPath, "utf8").catch(() => "");
+  if (!hasSubstantiveMaterializedContent(scriptContent, scriptPath)) {
+    return undefined;
+  }
   const readmePath = path.join(params.publicDir, "README.md");
   const frozenConfigPath = path.join(params.publicDir, "frozen_config.json");
   const baselineSummaryPath = path.join(params.publicDir, "baseline_summary.json");

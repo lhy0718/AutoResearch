@@ -924,6 +924,72 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
       objectiveEvaluationSummary = objectiveEvaluation.summary;
       await writeRunArtifact(run, "metrics.json", JSON.stringify(parsedMetrics, null, 2));
       await writeRunArtifact(run, "objective_evaluation.json", JSON.stringify(objectiveEvaluation, null, 2));
+      const metricsContractIssues = validateRunMetricsContract({
+        metrics: parsedMetrics,
+        objectiveEvaluation,
+        comparisonContract
+      });
+      if (metricsContractIssues.length > 0) {
+        const contractMessage = `Experiment metrics contract failed: ${metricsContractIssues.join(" ")}`;
+        await persistPanelState();
+        const report = buildRunVerifierReport({
+          status: "fail",
+          trigger,
+          stage: "metrics",
+          summary: contractMessage,
+          command: primaryCommand,
+          cwd: resolved.cwd,
+          metricsPath: resolved.metricsPath,
+          exitCode: obs?.exit_code ?? 0,
+          stdout: obs?.stdout,
+          stderr: contractMessage,
+          logFile,
+          suggestedNextAction:
+            "Repair the experiment implementation so completed metrics include the configured objective metric and successful baseline/comparator results before analysis proceeds."
+        });
+        deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId: run.id,
+          node: "run_experiments",
+          agentRole: "runner",
+          payload: {
+            command: primaryCommand,
+            metrics_path: resolved.metricsPath,
+            stderr: contractMessage
+          }
+        });
+        await persistRunVerifierReport(run, runContext, report);
+        await persistRunFailureState(runContext, {
+          command: primaryCommand,
+          cwd: resolved.cwd,
+          logFile,
+          exitCode: obs?.exit_code ?? 0,
+          error: contractMessage
+        });
+        await persistGovernanceCrash({
+          run,
+          runContext,
+          comparisonContract,
+          implementationContext,
+          objectiveMetricName: run.objectiveMetric,
+          rationale: report.summary,
+          resourceUsage: {
+            stage: "metrics",
+            command: primaryCommand,
+            cwd: resolved.cwd,
+            exit_code: obs?.exit_code ?? 0,
+            log_file: logFile,
+            metrics_path: resolved.metricsPath,
+            objective_evaluation_status: objectiveEvaluation.status
+          }
+        });
+        await recordRunFailure(contractMessage, "structural");
+        return {
+          status: "failure",
+          error: contractMessage,
+          toolCallsUsed: preflightToolCallsUsed + primaryAttemptsUsed
+        };
+      }
       if (comparisonContract) {
         const managedBundleLock = await freezeManagedBundleLock({
           contract: comparisonContract,
@@ -2313,6 +2379,50 @@ function asString(value: unknown): string | undefined {
 
 function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function validateRunMetricsContract(input: {
+  metrics: Record<string, unknown>;
+  objectiveEvaluation: ObjectiveMetricEvaluation;
+  comparisonContract?: Awaited<ReturnType<typeof loadExperimentComparisonContract>>;
+}): string[] {
+  const issues: string[] = [];
+  if (input.objectiveEvaluation.status === "missing") {
+    issues.push(input.objectiveEvaluation.summary);
+  }
+
+  const study = asRecord(input.metrics.study);
+  const aggregate = asRecord(study.aggregate);
+  if (Object.keys(aggregate).length > 0) {
+    const failedCount = asNumber(aggregate.failed_condition_count);
+    const completedCount = asNumber(aggregate.completed_condition_count);
+    if (aggregate.all_conditions_succeeded === false) {
+      const counts = [
+        completedCount !== undefined ? `${completedCount} completed` : undefined,
+        failedCount !== undefined ? `${failedCount} failed` : undefined
+      ].filter(Boolean);
+      issues.push(
+        `Study aggregate reports incomplete execution${counts.length > 0 ? ` (${counts.join(", ")})` : ""}.`
+      );
+    }
+
+    const requiresComparator =
+      input.comparisonContract?.baseline_first_required === true ||
+      input.comparisonContract?.comparison_mode === "baseline_first_locked";
+    if (requiresComparator) {
+      const successfulTunedCount = asNumber(aggregate.successful_tuned_condition_count);
+      if (successfulTunedCount === 0) {
+        issues.push("No tuned comparator condition completed successfully.");
+      }
+      for (const key of ["baseline_mean_accuracy", "best_tuned_mean_accuracy", "best_tuned_delta_vs_baseline"]) {
+        if (Object.prototype.hasOwnProperty.call(aggregate, key) && asNumber(aggregate[key]) === undefined) {
+          issues.push(`Study aggregate did not include a numeric ${key}.`);
+        }
+      }
+    }
+  }
+
+  return [...new Set(issues.map((issue) => issue.trim()).filter(Boolean))];
 }
 
 function subtractNumbers(left: number | undefined, right: number | undefined): number | undefined {

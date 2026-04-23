@@ -185,4 +185,45 @@ describe("ImplementationLocalizer", () => {
     expect(result.selected_files.some((filePath) => filePath.includes(path.basename(currentOutput)))).toBe(true);
     expect(result.selected_files.some((filePath) => filePath.includes(path.basename(siblingOutput)))).toBe(false);
   });
+
+  it("prioritizes the exact previous run script over nearby manifest artifacts", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-localizer-script-priority-"));
+    tempDirs.push(workspace);
+
+    const outputRoot = path.join(workspace, "outputs", "identify-which-lightweight-parameter-efficient-i-73050f85");
+    const experimentDir = path.join(outputRoot, "experiment");
+    mkdirSync(experimentDir, { recursive: true });
+
+    const runnerPath = path.join(experimentDir, "run_peft_instruction_study.py");
+    writeFileSync(path.join(outputRoot, "manifest.json"), "{\"current\":true}\n", "utf8");
+    writeFileSync(
+      runnerPath,
+      [
+        "from transformers import TrainingArguments",
+        "def main():",
+        "    return TrainingArguments(output_dir='out')"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const localizer = new ImplementationLocalizer(new LocalAciAdapter());
+    const result = await localizer.localize({
+      workspaceRoot: workspace,
+      goal: "Repair the generated PEFT runner after run_experiments failed.",
+      topic: "peft instruction tuning repair",
+      objectiveMetric: "accuracy_delta_vs_baseline",
+      constraints: [],
+      planExcerpt: "Fix the generated experiment runner in the active output bundle.",
+      hypothesesExcerpt: "The executable runner should be repaired before retrying.",
+      previousFailureSummary:
+        "Experiment metrics contract failed after tuned training raised TypeError in TrainingArguments.",
+      previousRunCommand: `python3 ${JSON.stringify(runnerPath)} --metrics-path ${JSON.stringify(path.join(workspace, ".autolabos", "runs", "run-1", "metrics.json"))}`,
+      previousScript: runnerPath,
+      existingChangedFiles: []
+    });
+
+    expect(result.selected_files[0]).toBe(runnerPath);
+    expect(result.candidates[0]?.path).toBe(runnerPath);
+    expect(result.selected_files).toContain(runnerPath);
+  });
 });
