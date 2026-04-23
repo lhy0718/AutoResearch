@@ -2045,6 +2045,7 @@ export class ImplementSessionManager {
     ) => void;
     reasoningEffort?: string;
   }): Promise<{ text: string; threadId?: string }> {
+    await clearStagedLlmAttemptArtifacts(input.runDir);
     if (!shouldDecomposeStagedImplementLlm(this.deps.config)) {
       return this.completeStagedLlmRequest({
         runDir: input.runDir,
@@ -4344,6 +4345,35 @@ function hasSubstantiveMaterializedContent(content: string, filePath: string): b
 
 function isImplementStagedLlmTimeoutError(error: unknown): boolean {
   return error instanceof Error && /implement_experiments staged_llm request timed out after \d+ms/.test(error.message);
+}
+
+async function clearStagedLlmAttemptArtifacts(runDir: string): Promise<void> {
+  const targets = [
+    IMPLEMENT_PARTIAL_RESPONSE_ARTIFACT,
+    IMPLEMENT_SCAFFOLD_ARTIFACT,
+    IMPLEMENT_SCAFFOLD_PROMPT_ARTIFACT,
+    IMPLEMENT_SCAFFOLD_RAW_RESPONSE_ARTIFACT,
+    IMPLEMENT_DECOMPOSITION_PLAN_ARTIFACT,
+    IMPLEMENT_DECOMPOSITION_PLAN_RAW_RESPONSE_ARTIFACT,
+    IMPLEMENT_BOOTSTRAP_CONTRACT_ARTIFACT,
+    IMPLEMENT_BOOTSTRAP_CONTRACT_PROMPT_ARTIFACT,
+    IMPLEMENT_BOOTSTRAP_CONTRACT_RAW_RESPONSE_ARTIFACT,
+    IMPLEMENT_FILE_PLAN_ARTIFACT,
+    IMPLEMENT_UNIT_PLAN_DIR,
+    IMPLEMENT_UNIT_SECTION_DIR,
+    IMPLEMENT_UNIT_SKELETON_DIR,
+    IMPLEMENT_UNIT_CHUNK_PROMPT_DIR,
+    IMPLEMENT_UNIT_CHUNK_RESPONSE_DIR
+  ];
+  await Promise.all(
+    targets.map(async (target) => {
+      try {
+        await fs.rm(path.join(runDir, target), { force: true, recursive: true });
+      } catch {
+        // Best effort cleanup only; stale diagnostics should not block a new staged attempt.
+      }
+    })
+  );
 }
 
 function isRetryableImplementStagedLlmMaterializationError(error: unknown): boolean {

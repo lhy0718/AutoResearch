@@ -4854,6 +4854,13 @@ describe("ImplementSessionManager", () => {
 
     const publicDir = buildPublicExperimentDir(workspace, run);
     const publicScriptPath = path.join(publicDir, "experiment.py");
+    const staleChunkResponseDir = path.join(runDir, "implement_experiments", "unit_chunk_responses");
+    mkdirSync(staleChunkResponseDir, { recursive: true });
+    writeFileSync(
+      path.join(staleChunkResponseDir, "stale_previous_chunk_partial_on_error.txt"),
+      "stale previous chunk response",
+      "utf8"
+    );
     const prompts: string[] = [];
     let llmCalls = 0;
     const manager = new ImplementSessionManager({
@@ -6082,6 +6089,7 @@ describe("ImplementSessionManager", () => {
     const chunkResponseFiles = readdirSync(
       path.join(runDir, "implement_experiments", "unit_chunk_responses")
     );
+    expect(chunkResponseFiles.some((file) => file.includes("stale_previous_chunk"))).toBe(false);
     expect(chunkPromptFiles.some((file) => file.includes("chunk_setup_loaders"))).toBe(true);
     expect(chunkResponseFiles.some((file) => file.includes("chunk_setup_loaders"))).toBe(true);
     expect(chunkResponseFiles.some((file) => file.includes("chunk_setup") && file.endsWith("_error.txt"))).toBe(true);

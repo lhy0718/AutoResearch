@@ -221,6 +221,7 @@ The resolved entries below are kept as recent validation history and regression 
       - compacted staged scaffold and bootstrap planning prompts to reduce provider request size
       - raised the default staged LLM request timeout for `implement_experiments` from `600000ms` to `1800000ms`
       - clears the per-request partial snapshot before each staged LLM request so chunk `_partial_on_error` artifacts cannot reuse stale successful output
+      - clears stale staged attempt artifact directories at the start of each staged bundle while preserving progress/status logs
       - treats provider-side `terminated` during chunk materialization as a retryable transient failure that triggers smaller dynamic re-subdivision
       - writes chunk-specific `_error.txt` artifacts when materialization requests fail
     - `src/core/agents/implementationLocalizer.ts`
@@ -232,6 +233,7 @@ The resolved entries below are kept as recent validation history and regression 
       - added regression coverage that scaffold/bootstrap prompt artifacts and raw responses are persisted
       - added regression coverage that late chunk prompts/raw responses are persisted and that sibling/recursive subchunks receive parent draft context
       - added regression coverage that provider-side `terminated` re-subdivides the failing chunk and does not emit stale `_partial_on_error` snapshots
+      - added regression coverage that stale chunk response artifacts from a previous retry are removed before the next staged bundle writes fresh artifacts
     - `tests/implementationLocalizer.test.ts`
       - added regression coverage that prefers the exact previous run script over adjacent manifest files
 
