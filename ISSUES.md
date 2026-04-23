@@ -183,6 +183,16 @@ The resolved entries below are kept as recent validation history and regression 
         - staged resubdivision succeeded and launched `resp_0fbed7ef14f965550169ea39b0a9e881918e4dca403d0f22ab`
         - the live attempt ultimately ended with:
           - `Implementation execution failed before any runnable implementation was produced: terminated`
+    - latest live retry at `2026-04-23T22:05:40Z` confirmed late materialization artifact instrumentation reached the real flow:
+      - the run again localized the same runner and passed scaffold, bootstrap, decomposition repair, materialization planning, and chunk subdivision planning
+      - new per-chunk prompt artifacts appeared under `implement_experiments/unit_chunk_prompts`
+      - new per-chunk raw response artifacts appeared under `implement_experiments/unit_chunk_responses`
+      - observed live artifacts included:
+        - `peft_runner__runner_core_setup__d0__chunk_1_2_subchunk_1_3.txt` prompt (`12910` bytes) and response (`15955` bytes)
+        - `peft_runner__runner_core_data__d0__chunk_1_2_subchunk_2_3.txt` prompt (`13973` bytes) and response (`17838` bytes)
+        - `peft_runner__runner_core_eval__d0__chunk_1_2_subchunk_3_3.txt` prompt (`14128` bytes) while its response was still pending at last inspection
+      - latest observed stage was:
+        - `Generating staged_llm unit 1/1 chunk 1/2 subchunk 3/3: ARC-Challenge and HellaSwag zero-shot evaluation helpers`
   - The public runner file is no longer stuck at the 44-line canonical skeleton placeholder, but the live attempt still did not finish verification or produce a stable runnable repair.
 
 - Fresh vs existing session comparison:
@@ -223,6 +233,7 @@ The resolved entries below are kept as recent validation history and regression 
     - live same-flow reruns are no longer blocked at bootstrap on the latest retry, but still fail later during staged chunk/resubchunk generation
     - latest same-flow retry with the smaller scaffold prompt still narrows to the bootstrap wait boundary rather than producing a runnable repair
     - latest same-flow retry with the smaller bootstrap prompt reaches bootstrap faster, yields a parseable bootstrap contract, and materially grows the runner file before terminating later in materialization
+    - latest same-flow retry with per-chunk prompt/raw instrumentation confirms the next failure surface can now be audited at the individual chunk request level
 
 - Most likely failing boundary:
   - staged late materialization provider-response boundary inside `implement_experiments`, especially the baseline-first PEFT execution / aggregate-metrics chunk family
@@ -234,6 +245,8 @@ The resolved entries below are kept as recent validation history and regression 
   - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/scaffold_raw_response.txt`
   - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/bootstrap_contract_prompt.txt`
   - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/bootstrap_contract_raw_response.txt`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/unit_chunk_prompts/`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/unit_chunk_responses/`
   - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_record.json`
   - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
   - `docs/codex-oauth-live-diagnostics.md`

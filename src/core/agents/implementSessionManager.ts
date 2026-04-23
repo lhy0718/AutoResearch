@@ -207,6 +207,8 @@ const IMPLEMENT_FILE_PLAN_ARTIFACT = path.join("implement_experiments", "file_pl
 const IMPLEMENT_UNIT_PLAN_DIR = path.join("implement_experiments", "unit_plans");
 const IMPLEMENT_UNIT_SECTION_DIR = path.join("implement_experiments", "unit_sections");
 const IMPLEMENT_UNIT_SKELETON_DIR = path.join("implement_experiments", "unit_skeletons");
+const IMPLEMENT_UNIT_CHUNK_PROMPT_DIR = path.join("implement_experiments", "unit_chunk_prompts");
+const IMPLEMENT_UNIT_CHUNK_RESPONSE_DIR = path.join("implement_experiments", "unit_chunk_responses");
 const MAX_DYNAMIC_CHUNK_SUBDIVISION_DEPTH = 3;
 const NON_RESTORABLE_RUN_DIR_ENTRIES = new Set([
   "implement_experiments",
@@ -2331,7 +2333,10 @@ export class ImplementSessionManager {
         currentFileContent = skeleton;
       }
 
+      const chunkDraftsByParent = new Map<string, string>();
       for (const [sectionIndex, plannedSection] of plannedSections.entries()) {
+        const parentDraftKey = plannedSection.parentChunk?.id;
+        const chunkDraftSoFar = parentDraftKey ? chunkDraftsByParent.get(parentDraftKey) || "" : "";
         const chunkCompletion = await this.materializeStagedLlmChunkWithDynamicSubdivision({
           runDir: input.runDir,
           workspaceRoot: input.workspaceRoot,
@@ -2348,7 +2353,7 @@ export class ImplementSessionManager {
           chunkIndex: plannedSection.chunkIndex,
           chunkTotal: plannedSection.chunkTotal,
           draftSoFar: draftContent,
-          chunkDraftSoFar: "",
+          chunkDraftSoFar,
           timeoutMs: input.timeoutMs,
           abortSignal: input.abortSignal,
           attempt: input.attempt,
@@ -2368,6 +2373,9 @@ export class ImplementSessionManager {
         const sectionContent = chunkCompletion.content;
         ensureMaterializedChunkHasSubstance(sectionContent, filePath, plannedSection.section.id);
         completedSectionIds.push(plannedSection.section.id);
+        if (parentDraftKey) {
+          chunkDraftsByParent.set(parentDraftKey, appendDraftSection(chunkDraftSoFar, sectionContent));
+        }
 
         if (useSectionedSkeleton) {
           sectionOutputs.set(plannedSection.section.id, sectionContent);
@@ -2466,6 +2474,28 @@ export class ImplementSessionManager {
     completedSectionIds: string[];
     currentFileContent: string;
   }): Promise<{ content: string; threadId?: string }> {
+    const chunkArtifactId = buildMaterializationChunkArtifactId(input);
+    const chunkPrompt = this.buildStagedImplementFileChunkPrompt({
+      taskSpec: input.taskSpec,
+      searchLocalization: input.searchLocalization,
+      branchPlan: input.branchPlan,
+      scaffold: input.scaffold,
+      decompositionPlan: input.decompositionPlan,
+      unit: input.unit,
+      materializationPlan: input.materializationPlan,
+      chunk: input.chunk,
+      parentChunk: input.parentChunk,
+      chunkSubdivisionPlan: input.chunkSubdivisionPlan,
+      chunkIndex: input.chunkIndex,
+      chunkTotal: input.chunkTotal,
+      draftSoFar: input.draftSoFar,
+      chunkDraftSoFar: input.chunkDraftSoFar,
+      completedSectionIds: input.completedSectionIds,
+      currentFileContent: input.currentFileContent
+    });
+    const chunkPromptPath = path.join(input.runDir, IMPLEMENT_UNIT_CHUNK_PROMPT_DIR, `${chunkArtifactId}.txt`);
+    await ensureDir(path.dirname(chunkPromptPath));
+    await fs.writeFile(chunkPromptPath, chunkPrompt, "utf8");
     input.emitImplementObservation(
       "codex",
       `Generating staged_llm unit ${input.unitIndex}/${input.unitTotal} ${input.chunkLabel}: ${input.chunk.title} (${formatArtifactPath(input.unit.target_path || "")})`,
@@ -2479,24 +2509,7 @@ export class ImplementSessionManager {
     try {
       const chunkCompletion = await this.completeStagedLlmRequest({
         runDir: input.runDir,
-        prompt: this.buildStagedImplementFileChunkPrompt({
-          taskSpec: input.taskSpec,
-          searchLocalization: input.searchLocalization,
-          branchPlan: input.branchPlan,
-          scaffold: input.scaffold,
-          decompositionPlan: input.decompositionPlan,
-          unit: input.unit,
-          materializationPlan: input.materializationPlan,
-          chunk: input.chunk,
-          parentChunk: input.parentChunk,
-          chunkSubdivisionPlan: input.chunkSubdivisionPlan,
-          chunkIndex: input.chunkIndex,
-          chunkTotal: input.chunkTotal,
-          draftSoFar: input.draftSoFar,
-          chunkDraftSoFar: input.chunkDraftSoFar,
-          completedSectionIds: input.completedSectionIds,
-          currentFileContent: input.currentFileContent
-        }),
+        prompt: chunkPrompt,
         systemPrompt: appendStagedImplementChunkOverrideToPrompt(
           input.systemPrompt,
           input.unit.target_path || "",
@@ -2510,11 +2523,24 @@ export class ImplementSessionManager {
         emitImplementObservation: input.emitImplementObservation,
         reasoningEffort: input.reasoningEffort
       });
+      const chunkRawPath = path.join(input.runDir, IMPLEMENT_UNIT_CHUNK_RESPONSE_DIR, `${chunkArtifactId}.txt`);
+      await ensureDir(path.dirname(chunkRawPath));
+      await fs.writeFile(chunkRawPath, chunkCompletion.text, "utf8");
       return {
         content: parseStructuredChunkResponse(chunkCompletion.text, input.chunk.id),
         threadId: chunkCompletion.threadId || input.threadId
       };
     } catch (error) {
+      const partialSnapshot = await safeRead(path.join(input.runDir, IMPLEMENT_PARTIAL_RESPONSE_ARTIFACT));
+      if (partialSnapshot.trim().length > 0) {
+        const chunkPartialPath = path.join(
+          input.runDir,
+          IMPLEMENT_UNIT_CHUNK_RESPONSE_DIR,
+          `${chunkArtifactId}_partial_on_error.txt`
+        );
+        await ensureDir(path.dirname(chunkPartialPath));
+        await fs.writeFile(chunkPartialPath, partialSnapshot, "utf8");
+      }
       if (
         !isImplementStagedLlmTimeoutError(error) ||
         input.subdivisionDepth >= MAX_DYNAMIC_CHUNK_SUBDIVISION_DEPTH
@@ -2892,6 +2918,13 @@ export class ImplementSessionManager {
       "Approved materialization chunk plan summary:",
       JSON.stringify(compactMaterializationPlanForChunkPrompt(params.materializationPlan), null, 2),
       "",
+      ...(params.chunkDraftSoFar.trim().length > 0
+        ? [
+            "Parent chunk draft so far:",
+            JSON.stringify(compactDraftForChunkPrompt(params.chunkDraftSoFar), null, 2),
+            ""
+          ]
+        : []),
       ...(params.parentChunk
         ? [
             "Parent chunk being decomposed:",
@@ -3005,7 +3038,9 @@ export class ImplementSessionManager {
       "Subdivide only the requested parent chunk into smaller non-overlapping ordered subchunks.",
       "Chunk schema: {\"id\": string, \"title\": string, \"purpose\": string, \"content_kind\": \"code_section\"|\"config_block\"|\"documentation_section\"|\"text_section\", \"include_imports\"?: boolean, \"include_entrypoint\"?: boolean, \"depends_on\"?: string[], \"verification_focus\"?: string[]}.",
       "Choose the smallest ordered set of subchunks that matches the experiment purpose and verification focus.",
-      "Returning a single subchunk is valid when the parent chunk is already minimal. Return multiple subchunks only when the parent chunk truly contains separable work.",
+      "Split executable source by function responsibility whenever a parent chunk combines data access, model setup, training/execution, evaluation, or metrics aggregation.",
+      "Keep each subchunk narrow enough to materialize as one coherent helper group plus any directly associated call sites.",
+      "Returning a single subchunk is valid only when the parent chunk is already one narrow responsibility.",
       ...(params.forceSmallerSubdivision
         ? [
             "The previous attempt to materialize this parent chunk timed out.",
@@ -4704,6 +4739,10 @@ function compactDraftForChunkPrompt(draft: string): { has_content: boolean; exce
   };
 }
 
+function appendDraftSection(draft: string, section: string): string {
+  return draft.trim().length > 0 ? `${draft.trimEnd()}\n\n${section.trimStart()}` : section;
+}
+
 function sanitizeArtifactId(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]+/g, "_");
 }
@@ -4940,6 +4979,20 @@ function compactMaterializationChunkForChunkPrompt(chunk: DynamicMaterialization
     depends_on: chunk.depends_on?.slice(0, 4),
     verification_focus: chunk.verification_focus?.slice(0, 4)
   };
+}
+
+function buildMaterializationChunkArtifactId(input: {
+  unit: DynamicDecompositionUnit;
+  chunk: DynamicMaterializationChunk;
+  chunkLabel: string;
+  subdivisionDepth: number;
+}): string {
+  return [
+    sanitizeArtifactId(input.unit.id),
+    sanitizeArtifactId(input.chunk.id),
+    `d${input.subdivisionDepth}`,
+    sanitizeArtifactId(input.chunkLabel)
+  ].join("__");
 }
 
 function buildCompactImplementDecompositionRepairContext(params: {

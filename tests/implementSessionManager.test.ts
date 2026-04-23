@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync
+} from "node:fs";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import os from "node:os";
@@ -5776,6 +5785,17 @@ describe("ImplementSessionManager", () => {
 
     expect(llmCalls).toBeGreaterThanOrEqual(10);
     expect(prompts.some((entry) => entry.includes("Staged implement chunk subdivision plan."))).toBe(true);
+    expect(
+      prompts.some((entry) => entry.includes("Split executable source by function responsibility"))
+    ).toBe(true);
+    expect(
+      prompts.some(
+        (entry) =>
+          entry.includes("Target chunk: chunk1_validation_helpers") &&
+          entry.includes("Parent chunk draft so far:") &&
+          entry.includes("def parse_args")
+      )
+    ).toBe(true);
     expect(prompts.some((entry) => entry.includes("Parent chunk being decomposed:"))).toBe(true);
     expect(prompts.some((entry) => entry.includes("chunk1_setup_and_plan"))).toBe(true);
     expect(prompts.some((entry) => entry.includes("chunk2_execution_core"))).toBe(true);
@@ -5789,6 +5809,25 @@ describe("ImplementSessionManager", () => {
         "utf8"
       )
     ).toContain("setup_subchunks");
+    const chunkPromptFiles = readdirSync(
+      path.join(runDir, "implement_experiments", "unit_chunk_prompts")
+    );
+    const chunkResponseFiles = readdirSync(
+      path.join(runDir, "implement_experiments", "unit_chunk_responses")
+    );
+    expect(chunkPromptFiles.some((file) => file.includes("chunk1_runtime_surface"))).toBe(true);
+    expect(chunkResponseFiles.some((file) => file.includes("chunk1_runtime_surface"))).toBe(true);
+    expect(
+      readFileSync(
+        path.join(
+          runDir,
+          "implement_experiments",
+          "unit_chunk_responses",
+          chunkResponseFiles.find((file) => file.includes("chunk1_runtime_surface"))!
+        ),
+        "utf8"
+      )
+    ).toContain("\"chunk_id\":\"chunk1_runtime_surface\"");
   });
 
   it("re-subdivides a timed-out code subchunk through a smaller dynamic plan before materializing the file", async () => {
@@ -6020,6 +6059,14 @@ describe("ImplementSessionManager", () => {
     expect(
       prompts.some((entry) => entry.includes("Return a strictly smaller ordered subdivision with at least 2 subchunks."))
     ).toBe(true);
+    expect(
+      prompts.some(
+        (entry) =>
+          entry.includes("Target chunk: chunk_setup_loaders") &&
+          entry.includes("Parent chunk draft so far:") &&
+          entry.includes("class ExperimentConfig")
+      )
+    ).toBe(true);
     expect(result.scriptPath).toBe(publicScriptPath);
     expect(readFileSync(publicScriptPath, "utf8")).toContain("class ExperimentConfig:");
     expect(readFileSync(publicScriptPath, "utf8")).toContain("def load_config():");
@@ -6029,6 +6076,14 @@ describe("ImplementSessionManager", () => {
         "utf8"
       )
     ).toContain("smaller_setup_subchunks");
+    const chunkPromptFiles = readdirSync(
+      path.join(runDir, "implement_experiments", "unit_chunk_prompts")
+    );
+    const chunkResponseFiles = readdirSync(
+      path.join(runDir, "implement_experiments", "unit_chunk_responses")
+    );
+    expect(chunkPromptFiles.some((file) => file.includes("chunk_setup_loaders"))).toBe(true);
+    expect(chunkResponseFiles.some((file) => file.includes("chunk_setup_loaders"))).toBe(true);
   });
 
   it("materializes python runner sections through a canonical skeleton and strips the skeleton markers from the final file", async () => {

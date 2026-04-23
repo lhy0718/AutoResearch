@@ -123,6 +123,33 @@ Interpretation:
 - the dominant provider boundary is no longer always bootstrap
 - the current highest-value failure surface is the late PEFT execution / aggregate-metrics chunk family inside staged materialization
 
+### 7. Per-chunk materialization artifacts are now visible
+
+- Example live retry:
+  - `2026-04-23T22:05:40Z`
+- Sequence:
+  - scaffold completed
+  - bootstrap completed
+  - decomposition repair completed because the scaffold omitted `decomposition_plan`
+  - materialization planning completed
+  - chunk subdivision planning completed for:
+    - `Imports, experiment configuration, and reusable helpers`
+    - `Baseline-first PEFT comparison, reporting, and entrypoint`
+  - file materialization then generated per-chunk prompt and response artifacts
+- Observed prompt artifacts:
+  - `unit_chunk_prompts/peft_runner__runner_core_setup__d0__chunk_1_2_subchunk_1_3.txt` (`12910` bytes)
+  - `unit_chunk_prompts/peft_runner__runner_core_data__d0__chunk_1_2_subchunk_2_3.txt` (`13973` bytes)
+  - `unit_chunk_prompts/peft_runner__runner_core_eval__d0__chunk_1_2_subchunk_3_3.txt` (`14128` bytes)
+- Observed response artifacts:
+  - `unit_chunk_responses/peft_runner__runner_core_setup__d0__chunk_1_2_subchunk_1_3.txt` (`15955` bytes)
+  - `unit_chunk_responses/peft_runner__runner_core_data__d0__chunk_1_2_subchunk_2_3.txt` (`17838` bytes)
+
+Interpretation:
+
+- the late materialization boundary is now auditable at the exact chunk request level
+- if the provider stalls or returns malformed content, the corresponding prompt, raw response, or partial-on-error snapshot can be inspected without guessing from the global progress log
+- deterministic tests also verify that sibling subchunks receive the parent chunk draft-so-far, so later subchunks can continue from earlier generated helper groups
+
 ## Current evidence ceiling
 
 What we can now say confidently:
@@ -132,11 +159,13 @@ What we can now say confidently:
 - shrinking the scaffold prompt materially reduced request size but did not eliminate the bootstrap no-text-delta stall
 - shrinking the bootstrap contract prompt materially reduced request size and improved time-to-bootstrap; on the latest retry it produced a parseable bootstrap contract but did not eliminate later staged-materialization failures
 - on the latest retry, shrinking the bootstrap contract prompt was sufficient to clear bootstrap and expose a later late-chunk termination boundary
+- per-chunk prompt/raw response persistence now makes the late materialization boundary inspectable for each individual chunk request
 - AutoLabOS now preserves enough artifacts to compare:
   - exact scaffold prompt
   - scaffold raw response when present
   - exact bootstrap prompt
   - bootstrap raw response when present
+  - exact file-chunk prompt and raw response when present
   - progress heartbeat timeline
 
 What we cannot yet say confidently:
