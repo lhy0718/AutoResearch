@@ -4804,29 +4804,29 @@ function trimBlock(text: string, limit: number): string {
 
 function compactTaskSpecForStagedLlmPrompt(taskSpec: ImplementTaskSpec): Record<string, unknown> {
   return {
-    goal: trimBlock(taskSpec.goal, 220),
-    acceptance_criteria: taskSpec.acceptance_criteria.slice(0, 3).map((item) => trimBlock(item, 160)),
-    non_goals: taskSpec.non_goals.slice(0, 2).map((item) => trimBlock(item, 140)),
-    constraints: taskSpec.constraints.slice(0, 4).map((item) => trimBlock(item, 160)),
+    goal: trimBlock(taskSpec.goal, 160),
+    acceptance_criteria: taskSpec.acceptance_criteria.slice(0, 2).map((item) => trimBlock(item, 120)),
+    non_goals: taskSpec.non_goals.slice(0, 2).map((item) => trimBlock(item, 100)),
+    constraints: taskSpec.constraints.slice(0, 3).map((item) => trimBlock(item, 120)),
     workspace: {
       public_dir: taskSpec.workspace.public_dir,
       metrics_path: taskSpec.workspace.metrics_path
     },
     execution: taskSpec.execution,
     context: {
-      topic: trimBlock(taskSpec.context.topic, 240),
-      objective_metric: trimBlock(taskSpec.context.objective_metric, 180),
-      plan_excerpt: trimBlock(taskSpec.context.plan_excerpt, 1200),
-      hypotheses_excerpt: trimBlock(taskSpec.context.hypotheses_excerpt, 600),
-      previous_summary: trimBlock(taskSpec.context.previous_summary || "", 220) || undefined,
-      previous_run_command: trimBlock(taskSpec.context.previous_run_command || "", 160) || undefined,
+      topic: trimBlock(taskSpec.context.topic, 160),
+      objective_metric: trimBlock(taskSpec.context.objective_metric, 140),
+      plan_excerpt: trimBlock(taskSpec.context.plan_excerpt, 600),
+      hypotheses_excerpt: trimBlock(taskSpec.context.hypotheses_excerpt, 200),
+      previous_summary: trimBlock(taskSpec.context.previous_summary || "", 120) || undefined,
+      previous_run_command: trimBlock(taskSpec.context.previous_run_command || "", 120) || undefined,
       previous_script: taskSpec.context.previous_script,
       comparison_contract: taskSpec.context.comparison_contract
         ? {
             plan_id: taskSpec.context.comparison_contract.plan_id,
             comparison_mode: taskSpec.context.comparison_contract.comparison_mode,
             baseline_first_required: taskSpec.context.comparison_contract.baseline_first_required,
-            baseline_candidate_ids: taskSpec.context.comparison_contract.baseline_candidate_ids.slice(0, 3),
+            baseline_candidate_ids: taskSpec.context.comparison_contract.baseline_candidate_ids.slice(0, 2),
             budget_profile: taskSpec.context.comparison_contract.budget_profile,
             evaluator_contract_id: taskSpec.context.comparison_contract.evaluator_contract_id
           }
@@ -4868,17 +4868,16 @@ function compactTaskSpecForChunkPrompt(taskSpec: ImplementTaskSpec): Record<stri
 
 function compactLocalizationForStagedLlmPrompt(localization: LocalizationResult): Record<string, unknown> {
   return {
-    summary: trimBlock(localization.summary || "", 180) || undefined,
+    summary: trimBlock(localization.summary || "", 120) || undefined,
     strategy: localization.strategy,
-    reasoning: trimBlock(localization.reasoning || "", 220) || undefined,
-    selected_files: localization.selected_files.slice(0, 4),
-    candidate_files: localization.candidates.slice(0, 4).map((candidate) => ({
+    reasoning: trimBlock(localization.reasoning || "", 120) || undefined,
+    selected_files: localization.selected_files.slice(0, 3),
+    candidate_files: localization.candidates.slice(0, 2).map((candidate) => ({
       path: candidate.path,
       symbol: candidate.symbol,
-      reason: trimBlock(candidate.reason || "", 120) || undefined,
       confidence: candidate.confidence
     })),
-    search_queries: localization.search_queries?.slice(0, 3),
+    search_queries: localization.search_queries?.slice(0, 2),
     confidence: localization.confidence
   };
 }
@@ -4887,10 +4886,10 @@ function compactBranchPlanForStagedLlmPrompt(branchPlan: BranchPlan): Record<str
   return {
     branch_id: branchPlan.branch_id,
     source: branchPlan.source,
-    summary: trimBlock(branchPlan.summary, 160),
-    rationale: trimBlock(branchPlan.rationale, 180),
-    focus_files: branchPlan.focus_files.slice(0, 3),
-    candidate_pool: branchPlan.candidate_pool.slice(0, 4)
+    summary: trimBlock(branchPlan.summary, 120),
+    rationale: trimBlock(branchPlan.rationale, 120),
+    focus_files: branchPlan.focus_files.slice(0, 2),
+    candidate_pool: branchPlan.candidate_pool.slice(0, 2)
   };
 }
 
@@ -4978,17 +4977,17 @@ function buildCompactImplementDecompositionRepairContext(params: {
 
 function compactLongTermMemoryForStagedLlmPrompt(snapshot: LongTermMemorySnapshot): LongTermMemorySnapshot {
   return {
-    search_queries: snapshot.search_queries.slice(0, 3).map((item) => trimBlock(item, 120)),
-    retrieved: snapshot.retrieved.slice(0, 2).map((entry) => ({
+    search_queries: snapshot.search_queries.slice(0, 2).map((item) => trimBlock(item, 80)),
+    retrieved: snapshot.retrieved.slice(0, 1).map((entry) => ({
       ...entry,
-      text: trimBlock(entry.text, 220),
-      tags: entry.tags.slice(0, 4)
+      text: trimBlock(entry.text, 120),
+      tags: entry.tags.slice(0, 2)
     })),
     saved: snapshot.saved
       ? {
           ...snapshot.saved,
-          text: trimBlock(snapshot.saved.text, 220),
-          tags: snapshot.saved.tags.slice(0, 4)
+          text: trimBlock(snapshot.saved.text, 120),
+          tags: snapshot.saved.tags.slice(0, 2)
         }
       : undefined
   };

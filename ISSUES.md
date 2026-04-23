@@ -156,6 +156,16 @@ The resolved entries below are kept as recent validation history and regression 
         - `threadId: "resp_01a31167d1197b170169e9e27346308191bee3b4f775c77621"`
         - `status: "running"`
         - `message: "Still waiting on staged_llm provider output; no new provider progress for 119s."`
+    - latest live retry at `2026-04-23T12:54:56Z` confirmed the additional prompt-compaction patch reached the live run:
+      - `implement_experiments/scaffold_prompt.txt` shrank from `17781` bytes to `11984` bytes while `bootstrap_contract_prompt.txt` remained `8392` bytes
+      - scaffold again completed after two heartbeat waits and progressed into bootstrap with:
+        - `threadId: "resp_03bc692ebc4ffb2e0169ea16a1c9d48191934016106e50a3d7"`
+      - bootstrap then reproduced the same no-text-delta wait pattern through at least:
+        - `59s`
+        - `119s`
+        - `179s`
+        - `240s`
+        - `300s`
   - The public runner file remains stuck at a 44-line canonical skeleton placeholder, confirming that no substantive repair was materialized in the latest live retries.
 
 - Fresh vs existing session comparison:
@@ -194,6 +204,7 @@ The resolved entries below are kept as recent validation history and regression 
     - `npm run build` passed
     - `npm test` passed
     - live same-flow reruns still blocked by Codex OAuth backend errors/aborts
+    - latest same-flow retry with the smaller scaffold prompt still narrows to the bootstrap wait boundary rather than producing a runnable repair
 
 - Most likely failing boundary:
   - staged scaffold/bootstrap provider-response boundary inside `implement_experiments`

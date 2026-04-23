@@ -22,6 +22,7 @@ The goal is to separate:
   - `implement_experiments/scaffold_prompt.txt`
   - `implement_experiments/scaffold_raw_response.txt`
   - `implement_experiments/bootstrap_contract_prompt.txt`
+- the latest live compaction reduced the persisted scaffold prompt from `17781` bytes to `11984` bytes while leaving the bootstrap contract prompt at `8392` bytes
 
 ## Live failure phenotypes still observed
 
@@ -67,12 +68,29 @@ Interpretation:
 - the provider acknowledges the request and emits progress
 - no usable text delta reaches the staged materializer before the bounded timeout
 
+### 4. Smaller scaffold prompt still converges to the same bootstrap stall
+
+- Example live thread:
+  - `threadId: resp_03bc692ebc4ffb2e0169ea16a1c9d48191934016106e50a3d7`
+- Sequence:
+  - compressed scaffold prompt persisted at `11984` bytes
+  - scaffold still completed after heartbeat waits at `59s` and `119s`
+  - bootstrap request started immediately after scaffold completion
+  - bootstrap then reproduced the same no-text-delta wait at `59s`, `119s`, `179s`, `240s`, and `300s`
+  - public runner remained the same 44-line skeleton placeholder during the live retry
+
+Interpretation:
+
+- reducing scaffold prompt size helped the request reach bootstrap more consistently
+- the remaining blocker is still concentrated in the bootstrap provider turn, not in wrong-file localization or placeholder recovery
+
 ## Current evidence ceiling
 
 What we can now say confidently:
 
 - the remaining blocker is no longer silent heuristic fallback or wrong-file localization
 - the remaining blocker is concentrated at live `Codex OAuth` scaffold/bootstrap provider boundaries
+- shrinking the scaffold prompt materially reduced request size but did not eliminate the bootstrap no-text-delta stall
 - AutoLabOS now preserves enough artifacts to compare:
   - exact scaffold prompt
   - scaffold raw response when present
