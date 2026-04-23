@@ -14,7 +14,6 @@ Usage rules:
 ## Current active status
 
 - Active live-validation defects:
-  - `LV-103` staged `implement_experiments` same-flow retries now localize the correct runner and reject placeholder-only materialization, but the live Codex OAuth scaffold/bootstrap turns still fail before a runnable PEFT repair is produced.
   - `LV-098` IEEE staging `pdf_url` rows cache HTML instead of PDF, so `analyze_papers` cannot preserve supplemental page images on abstract fallback for those papers.
 - Active research/paper-readiness watchlist: see `Research and paper-readiness watchlist` below.
 - Current watchlist snapshot:
@@ -74,6 +73,13 @@ The resolved entries below are kept as recent validation history and regression 
       - `status: "fail"`
       - `stage: "metrics"`
       - `summary: Experiment metrics contract failed: Objective metric "accuracy_delta_vs_baseline" was not found in metrics.json. Study aggregate reports incomplete execution (1 completed, 3 failed). No tuned comparator condition completed successfully. ...`
+  - Follow-up live behavior verified on 2026-04-24 after the `implement_experiments` repair completed:
+    - targeted `/agent retry run_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec` launched the generated runner again
+    - the command completed and wrote a fresh `metrics.json`
+    - `run_experiments_verify_report.json` records `status: "pass"` / `stage: "success"` because the runner now emits the required metrics contract fields and exits `0`
+    - `metrics.json` includes numeric `accuracy_delta_vs_baseline`, `baseline_mean_accuracy`, `best_mean_accuracy`, per-condition accuracy rows, bootstrap CIs, GPU memory, and trainable-parameter counts
+    - the scientific result is still negative: `accuracy_delta_vs_baseline=0`, so `analyze_results` correctly pauses with `Objective metric not met: accuracy_delta_vs_baseline=0 does not satisfy >= 0.01.`
+    - this is no longer the LV-105 verifier defect; it is an honest experimental non-improvement result that should be handled by analysis/review, not hidden as a system failure.
 
 - Fresh vs existing session comparison:
   - Fresh session: not separately rerun for this post-network-gate semantic boundary.
@@ -100,9 +106,10 @@ The resolved entries below are kept as recent validation history and regression 
   - Broad validation: `npm run build`, `npm test`, and `npm run validate:harness` passed
   - Same-flow live revalidation: confirmed
   - Latest state: same persisted retry now marks `run_experiments_verify_report.json` as `status: "fail"` / `stage: "metrics"` instead of `pass`.
+  - Latest post-implementation same-flow retry: `run_experiments` completes with a metrics-contract pass, and `analyze_results` pauses on the scientific outcome because the objective threshold was not met.
 
 - Most likely failing boundary:
-  - `run_experiments` metrics-contract verification boundary after command success
+  - resolved; the remaining boundary is research adequacy/objective-outcome interpretation in `analyze_results`, not `run_experiments` verifier semantics
 
 - Evidence/artifacts:
   - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_record.json`
@@ -112,7 +119,7 @@ The resolved entries below are kept as recent validation history and regression 
   - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
 
 - Recommended next step:
-  - Repair the generated PEFT experiment implementation so tuned comparator conditions complete successfully and the configured objective metric is written numerically before retrying the research workflow.
+  - Treat the current `accuracy_delta_vs_baseline=0` as a real negative result unless a governed backtrack explicitly revises the experiment design or implementation; do not claim the target improvement was achieved.
 
 ## Issue: LV-103
 
