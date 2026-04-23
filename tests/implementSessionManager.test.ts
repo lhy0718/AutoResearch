@@ -4337,7 +4337,7 @@ describe("ImplementSessionManager", () => {
     const originalTimeout = process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS;
     delete process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS;
     try {
-      expect(getImplementLlmTimeoutMs(config)).toBe(600_000);
+      expect(getImplementLlmTimeoutMs(config)).toBe(1_800_000);
     } finally {
       if (originalTimeout === undefined) {
         delete process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS;
@@ -5830,7 +5830,7 @@ describe("ImplementSessionManager", () => {
     ).toContain("\"chunk_id\":\"chunk1_runtime_surface\"");
   });
 
-  it("re-subdivides a timed-out code subchunk through a smaller dynamic plan before materializing the file", async () => {
+  it("re-subdivides a provider-terminated code subchunk through a smaller dynamic plan before materializing the file", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-resubchunk-plan-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
@@ -5931,7 +5931,7 @@ describe("ImplementSessionManager", () => {
             };
           }
           if (prompt.includes("Requested parent chunk to subdivide:") && prompt.includes("chunk_setup")) {
-            if (prompt.includes("The previous attempt to materialize this parent chunk timed out.")) {
+            if (prompt.includes("The previous attempt to materialize this parent chunk did not complete.")) {
               return {
                 text: JSON.stringify({
                   strategy: "smaller_setup_subchunks",
@@ -5978,7 +5978,7 @@ describe("ImplementSessionManager", () => {
             };
           }
           if (prompt.includes("Target chunk: chunk_setup") && !prompt.includes("chunk_setup_defs") && !prompt.includes("chunk_setup_loaders")) {
-            throw new Error("implement_experiments staged_llm request timed out after 600000ms");
+            throw new Error("terminated");
           }
           if (prompt.includes("Target chunk: chunk_setup_defs")) {
             return {
@@ -6054,7 +6054,7 @@ describe("ImplementSessionManager", () => {
 
     expect(llmCalls).toBeGreaterThanOrEqual(9);
     expect(
-      prompts.some((entry) => entry.includes("The previous attempt to materialize this parent chunk timed out."))
+      prompts.some((entry) => entry.includes("The previous attempt to materialize this parent chunk did not complete."))
     ).toBe(true);
     expect(
       prompts.some((entry) => entry.includes("Return a strictly smaller ordered subdivision with at least 2 subchunks."))
@@ -6084,6 +6084,8 @@ describe("ImplementSessionManager", () => {
     );
     expect(chunkPromptFiles.some((file) => file.includes("chunk_setup_loaders"))).toBe(true);
     expect(chunkResponseFiles.some((file) => file.includes("chunk_setup_loaders"))).toBe(true);
+    expect(chunkResponseFiles.some((file) => file.includes("chunk_setup") && file.endsWith("_error.txt"))).toBe(true);
+    expect(chunkResponseFiles.some((file) => file.includes("chunk_setup") && file.endsWith("_partial_on_error.txt"))).toBe(false);
   });
 
   it("materializes python runner sections through a canonical skeleton and strips the skeleton markers from the final file", async () => {

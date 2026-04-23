@@ -1,6 +1,6 @@
 # Codex OAuth Live Diagnostics
 
-Last updated: 2026-04-23
+Last updated: 2026-04-24
 
 ## Scope
 
@@ -18,6 +18,7 @@ The goal is to separate:
 - placeholder/comment-only Python chunk responses are rejected instead of silently passing
 - placeholder-only public bundles are no longer recovered as valid implement results
 - staged scaffold and bootstrap prompts are compacted
+- the default local staged-LLM request timeout for `implement_experiments` is raised to `1800000ms`
 - live prompt artifacts are persisted:
   - `implement_experiments/scaffold_prompt.txt`
   - `implement_experiments/scaffold_raw_response.txt`
@@ -62,6 +63,7 @@ Interpretation:
   - terminal outcome:
     - `staged_llm timed out after provider progress without any text delta; partial snapshot remains empty.`
     - `implement_experiments staged_llm request timed out after 600000ms`
+  - the default local staged-LLM request budget has since been raised to `1800000ms` for future retries
 
 Interpretation:
 
@@ -150,6 +152,30 @@ Interpretation:
 - if the provider stalls or returns malformed content, the corresponding prompt, raw response, or partial-on-error snapshot can be inspected without guessing from the global progress log
 - deterministic tests also verify that sibling subchunks receive the parent chunk draft-so-far, so later subchunks can continue from earlier generated helper groups
 
+### 8. Late result aggregation can end with provider-side `terminated`
+
+- Example live retry:
+  - `2026-04-23T22:05:40Z`
+- Sequence:
+  - scaffold, bootstrap, decomposition repair, materialization planning, and chunk subdivision all completed
+  - successful chunk response artifacts were written for:
+    - `runner_core_setup`
+    - `runner_core_data`
+    - `runner_core_eval`
+    - `runner_baseline_and_recipe_execution`
+  - the public runner grew to `2333` lines
+  - the next request targeted:
+    - `runner_result_aggregation_and_persistence`
+  - the provider waited through `59s`, `120s`, and `180s` heartbeats, then the attempt ended with:
+    - `Implementation execution failed before any runnable implementation was produced: terminated`
+  - the emitted `_partial_on_error` artifact matched the previous successful response size, showing that the global partial snapshot can be stale across chunk requests
+
+Interpretation:
+
+- this failure is not the local `implement_experiments staged_llm request timed out after ...ms` path
+- the most useful next AutoLabOS-side behavior is to treat provider-side `terminated` during materialization as a transient chunk-generation failure and ask for a smaller subdivision
+- partial snapshots should be scoped to the current request before copying them into chunk-specific error artifacts
+
 ## Current evidence ceiling
 
 What we can now say confidently:
@@ -160,6 +186,8 @@ What we can now say confidently:
 - shrinking the bootstrap contract prompt materially reduced request size and improved time-to-bootstrap; on the latest retry it produced a parseable bootstrap contract but did not eliminate later staged-materialization failures
 - on the latest retry, shrinking the bootstrap contract prompt was sufficient to clear bootstrap and expose a later late-chunk termination boundary
 - per-chunk prompt/raw response persistence now makes the late materialization boundary inspectable for each individual chunk request
+- the newest late failure is provider-side `terminated`, not AutoLabOS's bounded staged-LLM timeout
+- the current partial-on-error artifact can be stale unless the partial snapshot is isolated per provider request
 - AutoLabOS now preserves enough artifacts to compare:
   - exact scaffold prompt
   - scaffold raw response when present
@@ -180,6 +208,8 @@ What we cannot yet say confidently:
 - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/scaffold_prompt.txt`
 - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/scaffold_raw_response.txt`
 - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/bootstrap_contract_prompt.txt`
+- `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/unit_chunk_prompts/`
+- `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/unit_chunk_responses/`
 - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ## Recommended next diagnostic step
@@ -187,3 +217,4 @@ What we cannot yet say confidently:
 - keep the current guarded staged path
 - continue collecting request IDs plus scaffold/bootstrap artifact pairs
 - treat new failures at these boundaries as provider-stage evidence first, not as proof that heuristic fallbacks should be reintroduced
+- make late materialization provider `terminated` retryable through dynamic re-subdivision before declaring the live attempt failed

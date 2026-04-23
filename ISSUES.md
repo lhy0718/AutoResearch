@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-04-23
+Last updated: 2026-04-24
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
@@ -190,9 +190,13 @@ The resolved entries below are kept as recent validation history and regression 
       - observed live artifacts included:
         - `peft_runner__runner_core_setup__d0__chunk_1_2_subchunk_1_3.txt` prompt (`12910` bytes) and response (`15955` bytes)
         - `peft_runner__runner_core_data__d0__chunk_1_2_subchunk_2_3.txt` prompt (`13973` bytes) and response (`17838` bytes)
-        - `peft_runner__runner_core_eval__d0__chunk_1_2_subchunk_3_3.txt` prompt (`14128` bytes) while its response was still pending at last inspection
-      - latest observed stage was:
-        - `Generating staged_llm unit 1/1 chunk 1/2 subchunk 3/3: ARC-Challenge and HellaSwag zero-shot evaluation helpers`
+        - `peft_runner__runner_core_eval__d0__chunk_1_2_subchunk_3_3.txt` prompt (`14128` bytes) and response (`17442` bytes)
+        - `peft_runner__runner_baseline_and_recipe_execution__d0__chunk_2_2_subchunk_1_3.txt` prompt and response (`38081` bytes)
+        - `peft_runner__runner_result_aggregation_and_persistence__d0__chunk_2_2_subchunk_2_3.txt` prompt while no matching final response was produced
+      - the public runner grew to `2333` lines before failure
+      - the failing request waited through `59s`, `120s`, and `180s` heartbeat observations and then ended with:
+        - `Implementation execution failed before any runnable implementation was produced: terminated`
+      - a `runner_result_aggregation_and_persistence` `_partial_on_error` artifact was emitted, but it matched the previous successful response size (`38081` bytes), indicating the global partial snapshot can be stale across chunk requests.
   - The public runner file is no longer stuck at the 44-line canonical skeleton placeholder, but the live attempt still did not finish verification or produce a stable runnable repair.
 
 - Fresh vs existing session comparison:
@@ -203,6 +207,7 @@ The resolved entries below are kept as recent validation history and regression 
 - Root cause hypothesis:
   - Type: `race_timing_bug`
   - Hypothesis: the heuristic-free staged path is now behaving more honestly, but the live Codex OAuth provider remains unstable at the first scaffold/bootstrap planning turns for this run, intermittently returning backend errors or aborts before any usable structured response can be materialized.
+  - Updated 2026-04-24 hypothesis: the remaining late materialization boundary includes provider-side `terminated` responses that are not AutoLabOS local timeout errors. Treating those as terminal prevents the existing dynamic re-subdivision path from making the request smaller. The global `partial_response.txt` is also reused across requests, so failed chunk snapshots can accidentally capture the previous successful chunk rather than the failed request.
 
 - Code/test changes:
   - Code:
@@ -214,6 +219,10 @@ The resolved entries below are kept as recent validation history and regression 
       - rejected placeholder/comment-only staged Python chunk responses and empty final materializations
       - blocked recovery of placeholder-only public script bundles
       - compacted staged scaffold and bootstrap planning prompts to reduce provider request size
+      - raised the default staged LLM request timeout for `implement_experiments` from `600000ms` to `1800000ms`
+      - clears the per-request partial snapshot before each staged LLM request so chunk `_partial_on_error` artifacts cannot reuse stale successful output
+      - treats provider-side `terminated` during chunk materialization as a retryable transient failure that triggers smaller dynamic re-subdivision
+      - writes chunk-specific `_error.txt` artifacts when materialization requests fail
     - `src/core/agents/implementationLocalizer.ts`
       - added exact previous-script path preference so reruns prioritize the real failing runner over nearby manifests/analysis artifacts
   - Tests:
@@ -221,6 +230,8 @@ The resolved entries below are kept as recent validation history and regression 
       - added regressions that fail loudly when decomposition, materialization, or subdivision plans are missing/unparseable instead of silently falling back
       - added regression coverage for comment-only canonical-skeleton chunk responses
       - added regression coverage that scaffold/bootstrap prompt artifacts and raw responses are persisted
+      - added regression coverage that late chunk prompts/raw responses are persisted and that sibling/recursive subchunks receive parent draft context
+      - added regression coverage that provider-side `terminated` re-subdivides the failing chunk and does not emit stale `_partial_on_error` snapshots
     - `tests/implementationLocalizer.test.ts`
       - added regression coverage that prefers the exact previous run script over adjacent manifest files
 
@@ -234,6 +245,8 @@ The resolved entries below are kept as recent validation history and regression 
     - latest same-flow retry with the smaller scaffold prompt still narrows to the bootstrap wait boundary rather than producing a runnable repair
     - latest same-flow retry with the smaller bootstrap prompt reaches bootstrap faster, yields a parseable bootstrap contract, and materially grows the runner file before terminating later in materialization
     - latest same-flow retry with per-chunk prompt/raw instrumentation confirms the next failure surface can now be audited at the individual chunk request level
+    - latest same-flow retry now narrows the next patch target to provider-side `terminated` handling and stale per-request partial snapshot isolation
+    - automated regression after the 2026-04-24 patch: `npx vitest run tests/implementSessionManager.test.ts`, `npm run build`, `npm test`, and `npm run validate:harness` passed
 
 - Most likely failing boundary:
   - staged late materialization provider-response boundary inside `implement_experiments`, especially the baseline-first PEFT execution / aggregate-metrics chunk family
@@ -252,7 +265,7 @@ The resolved entries below are kept as recent validation history and regression 
   - `docs/codex-oauth-live-diagnostics.md`
 
 - Recommended next step:
-  - keep the smaller bootstrap path, then narrow the late chunk-generation failure by persisting additional per-chunk raw responses or reducing the heaviest PEFT execution chunk further, so the remaining Codex OAuth termination can be isolated beyond bootstrap.
+  - keep the smaller bootstrap path, treat provider-side `terminated` during materialization as a retryable subdivision trigger, and isolate partial snapshots per request so failed chunk artifacts do not copy stale successful output.
 
 ## Issue: LV-101
 

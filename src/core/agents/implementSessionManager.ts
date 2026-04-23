@@ -1938,6 +1938,11 @@ export class ImplementSessionManager {
       }
       await persistPartialSnapshot();
     };
+    try {
+      await fs.rm(partialResponsePath, { force: true });
+    } catch {
+      // Best effort only: a stale partial snapshot should never block a provider request.
+    }
     const timeoutController = input.timeoutMs > 0 ? new AbortController() : undefined;
     const timeoutId = timeoutController
       ? setTimeout(() => timeoutController.abort(), input.timeoutMs)
@@ -2531,6 +2536,13 @@ export class ImplementSessionManager {
         threadId: chunkCompletion.threadId || input.threadId
       };
     } catch (error) {
+      const chunkErrorPath = path.join(
+        input.runDir,
+        IMPLEMENT_UNIT_CHUNK_RESPONSE_DIR,
+        `${chunkArtifactId}_error.txt`
+      );
+      await ensureDir(path.dirname(chunkErrorPath));
+      await fs.writeFile(chunkErrorPath, error instanceof Error ? error.message : String(error), "utf8");
       const partialSnapshot = await safeRead(path.join(input.runDir, IMPLEMENT_PARTIAL_RESPONSE_ARTIFACT));
       if (partialSnapshot.trim().length > 0) {
         const chunkPartialPath = path.join(
@@ -2542,15 +2554,16 @@ export class ImplementSessionManager {
         await fs.writeFile(chunkPartialPath, partialSnapshot, "utf8");
       }
       if (
-        !isImplementStagedLlmTimeoutError(error) ||
+        !isRetryableImplementStagedLlmMaterializationError(error) ||
         input.subdivisionDepth >= MAX_DYNAMIC_CHUNK_SUBDIVISION_DEPTH
       ) {
         throw error;
       }
 
+      const retryReason = isImplementStagedLlmTimeoutError(error) ? "timed out" : "was terminated";
       input.emitImplementObservation(
         "codex",
-        `Chunk generation timed out for ${input.chunk.title}; asking staged_llm to re-subdivide it into smaller work units.`,
+        `Chunk generation ${retryReason} for ${input.chunk.title}; asking staged_llm to re-subdivide it into smaller work units.`,
         {
           attempt: input.attempt,
           threadId: input.threadId,
@@ -3043,7 +3056,7 @@ export class ImplementSessionManager {
       "Returning a single subchunk is valid only when the parent chunk is already one narrow responsibility.",
       ...(params.forceSmallerSubdivision
         ? [
-            "The previous attempt to materialize this parent chunk timed out.",
+            "The previous attempt to materialize this parent chunk did not complete.",
             "Return a strictly smaller ordered subdivision with at least 2 subchunks."
           ]
         : []),
@@ -4331,6 +4344,18 @@ function hasSubstantiveMaterializedContent(content: string, filePath: string): b
 
 function isImplementStagedLlmTimeoutError(error: unknown): boolean {
   return error instanceof Error && /implement_experiments staged_llm request timed out after \d+ms/.test(error.message);
+}
+
+function isRetryableImplementStagedLlmMaterializationError(error: unknown): boolean {
+  return isImplementStagedLlmTimeoutError(error) || isProviderTerminatedStagedLlmError(error);
+}
+
+function isProviderTerminatedStagedLlmError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = error.message.trim().toLowerCase();
+  return message === "terminated" || message === "codex oauth backend returned an error: terminated";
 }
 
 function normalizeDynamicDecompositionPlan(
@@ -5782,7 +5807,7 @@ function stripDryRunFlag(command: string | undefined): string | undefined {
   return stripped || undefined;
 }
 
-const DEFAULT_IMPLEMENT_LLM_TIMEOUT_MS = 600_000;
+const DEFAULT_IMPLEMENT_LLM_TIMEOUT_MS = 1_800_000;
 
 export function getImplementLlmTimeoutMs(config: AppConfig): number {
   const raw = process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS?.trim();
