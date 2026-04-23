@@ -21,7 +21,7 @@ export interface AnalysisComparisonMetric {
 export interface AnalysisConditionComparison {
   id: string;
   label: string;
-  source: "metrics.comparison" | "metrics.condition_metrics";
+  source: "metrics.comparison" | "metrics.condition_metrics" | "metrics.results";
   metrics: AnalysisComparisonMetric[];
   hypothesis_supported?: boolean;
   summary: string;
@@ -650,6 +650,17 @@ function buildConditionComparisons(
         }
         comparisons.push(pair);
       }
+    }
+  }
+
+  if (comparisons.length === 0) {
+    const resultsComparison = buildResultsArrayConditionComparison({
+      metrics,
+      objectiveEvaluation,
+      objectiveProfile
+    });
+    if (resultsComparison) {
+      comparisons.push(resultsComparison);
     }
   }
 
@@ -1550,6 +1561,113 @@ function buildConditionMetricPair(args: {
     metrics: shared,
     summary: `${humanizeConditionLabel(args.primaryCondition)} vs ${humanizeConditionLabel(args.comparatorCondition)}: ${sharedSummary}.`
   };
+}
+
+function buildResultsArrayConditionComparison(args: {
+  metrics: Record<string, unknown>;
+  objectiveEvaluation: ObjectiveMetricEvaluation;
+  objectiveProfile: ObjectiveMetricProfile;
+}): AnalysisConditionComparison | undefined {
+  const resultRows = asArray(args.metrics.results).map((item) => asRecord(item));
+  if (resultRows.length < 2) {
+    return undefined;
+  }
+
+  const baselineRow = resultRows.find((row) => {
+    const recipe = asString(row.recipe)?.toLowerCase();
+    const peftType = asString(row.peft_type)?.toLowerCase();
+    return recipe === "baseline" || peftType === "none";
+  });
+  const bestRecipe = asString(args.metrics.best_recipe);
+  const comparatorRow = bestRecipe
+    ? resultRows.find((row) => asString(row.recipe) === bestRecipe && row !== baselineRow)
+    : undefined;
+
+  if (!baselineRow || !comparatorRow) {
+    return undefined;
+  }
+
+  const preferredKeys = buildResultArrayPreferredKeys(args.objectiveEvaluation, args.objectiveProfile);
+  const baselineMetrics = new Map(
+    flattenNumericMetrics(baselineRow).map((item) => [item.key, item.value])
+  );
+  const shared = flattenNumericMetrics(comparatorRow)
+    .filter((item) => baselineMetrics.has(item.key))
+    .filter((item) => isUsefulResultArrayMetric(item.key, preferredKeys))
+    .map((item) => {
+      const baselineValue = baselineMetrics.get(item.key) as number;
+      return {
+        key: item.key,
+        primary_value: item.value,
+        baseline_value: baselineValue,
+        value: Number((item.value - baselineValue).toFixed(4))
+      };
+    })
+    .sort((left, right) => {
+      const leftRank = metricPreferenceRank(left.key, preferredKeys);
+      const rightRank = metricPreferenceRank(right.key, preferredKeys);
+      if (leftRank !== rightRank) {
+        return leftRank - rightRank;
+      }
+      return Math.abs(right.value) - Math.abs(left.value);
+    })
+    .slice(0, 6);
+
+  if (shared.length === 0) {
+    return undefined;
+  }
+
+  const baselineName = asString(baselineRow.recipe) || "baseline";
+  const comparatorName = asString(comparatorRow.recipe) || bestRecipe || "comparator";
+  const sharedSummary = shared
+    .slice(0, 4)
+    .map((item) => `${item.key}: ${formatMetricValue(item.primary_value)} vs ${formatMetricValue(item.baseline_value)} (delta ${formatMetricValue(item.value)})`)
+    .join(", ");
+
+  return {
+    id: `${comparatorName}_vs_${baselineName}`,
+    label: `${humanizeConditionLabel(comparatorName)} vs ${humanizeConditionLabel(baselineName)}`,
+    source: "metrics.results",
+    metrics: shared,
+    summary: `${humanizeConditionLabel(comparatorName)} vs ${humanizeConditionLabel(baselineName)}: ${sharedSummary}.`
+  };
+}
+
+function buildResultArrayPreferredKeys(
+  objectiveEvaluation: ObjectiveMetricEvaluation,
+  objectiveProfile: ObjectiveMetricProfile
+): string[] {
+  return uniqueStrings([
+    objectiveEvaluation.matchedMetricKey,
+    objectiveProfile.primaryMetric,
+    ...objectiveProfile.preferredMetricKeys,
+    "mean_accuracy",
+    "arc_challenge_accuracy",
+    "hellaswag_accuracy",
+    "wall_clock_seconds",
+    "peak_gpu_memory_allocated_bytes",
+    "max_gpu_memory_allocated_bytes"
+  ]);
+}
+
+function metricPreferenceRank(key: string, preferredKeys: string[]): number {
+  const exact = preferredKeys.indexOf(key);
+  if (exact >= 0) {
+    return exact;
+  }
+  const lowerKey = key.toLowerCase();
+  const fuzzy = preferredKeys.findIndex((preferred) => {
+    const lowerPreferred = preferred.toLowerCase();
+    return lowerKey.includes(lowerPreferred) || lowerPreferred.includes(lowerKey);
+  });
+  return fuzzy >= 0 ? preferredKeys.length + fuzzy : Number.MAX_SAFE_INTEGER;
+}
+
+function isUsefulResultArrayMetric(key: string, preferredKeys: string[]): boolean {
+  if (metricPreferenceRank(key, preferredKeys) !== Number.MAX_SAFE_INTEGER) {
+    return true;
+  }
+  return /(?:^|_)(accuracy|acc|score|f1|precision|recall|loss|latency|runtime|memory|seconds|time)(?:_|$)/i.test(key);
 }
 
 function selectConditionByMetric(args: {

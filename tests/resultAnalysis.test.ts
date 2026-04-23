@@ -3,6 +3,89 @@ import { describe, expect, it } from "vitest";
 import { buildAnalysisReport } from "../src/core/resultAnalysis.js";
 
 describe("resultAnalysis", () => {
+  it("projects node-owned metrics.results rows into baseline/comparator condition comparisons", () => {
+    const report = buildAnalysisReport({
+      run: {
+        objectiveMetric: "Improve mean zero-shot accuracy over the LoRA baseline."
+      },
+      metrics: {
+        accuracy_delta_vs_baseline: 0,
+        baseline_mean_accuracy: 0.546875,
+        best_mean_accuracy: 0.546875,
+        best_recipe: "lora_qv_r8",
+        results: [
+          {
+            recipe: "baseline",
+            peft_type: "none",
+            status: "completed",
+            mean_accuracy: 0.546875,
+            arc_challenge_accuracy: 0.53125,
+            hellaswag_accuracy: 0.5625,
+            accuracy_delta_vs_baseline: 0,
+            wall_clock_seconds: 7.5
+          },
+          {
+            recipe: "lora_qv_r8",
+            peft_type: "lora",
+            status: "completed",
+            mean_accuracy: 0.546875,
+            arc_challenge_accuracy: 0.53125,
+            hellaswag_accuracy: 0.5625,
+            accuracy_delta_vs_baseline: 0,
+            wall_clock_seconds: 24.0,
+            peak_gpu_memory_allocated_bytes: 4477727232
+          }
+        ]
+      },
+      objectiveProfile: {
+        source: "llm",
+        raw: "Improve mean zero-shot accuracy over the LoRA baseline.",
+        primaryMetric: "accuracy_delta_vs_baseline",
+        preferredMetricKeys: ["accuracy_delta_vs_baseline", "mean_accuracy"],
+        comparator: ">=",
+        targetValue: 0.01,
+        targetDescription: "Accuracy should improve by at least one point.",
+        analysisFocus: [],
+        paperEmphasis: [],
+        assumptions: []
+      },
+      objectiveEvaluation: {
+        rawObjectiveMetric: "Improve mean zero-shot accuracy over the LoRA baseline.",
+        profileSource: "llm",
+        primaryMetric: "accuracy_delta_vs_baseline",
+        preferredMetricKeys: ["accuracy_delta_vs_baseline", "mean_accuracy"],
+        matchedMetricKey: "accuracy_delta_vs_baseline",
+        comparator: ">=",
+        targetValue: 0.01,
+        observedValue: 0,
+        status: "not_met",
+        summary: "Objective metric not met: accuracy_delta_vs_baseline=0 does not satisfy >= 0.01."
+      }
+    });
+
+    expect(report.condition_comparisons).toHaveLength(1);
+    expect(report.condition_comparisons[0]).toMatchObject({
+      id: "lora_qv_r8_vs_baseline",
+      source: "metrics.results"
+    });
+    expect(report.condition_comparisons[0]?.metrics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: "mean_accuracy",
+          baseline_value: 0.546875,
+          primary_value: 0.546875,
+          value: 0
+        }),
+        expect.objectContaining({
+          key: "accuracy_delta_vs_baseline",
+          baseline_value: 0,
+          primary_value: 0,
+          value: 0
+        })
+      ])
+    );
+  });
+
   it("extracts a preset runtime guardrail from the experiment plan and removes the stale threshold warning", () => {
     const report = buildAnalysisReport({
       run: {

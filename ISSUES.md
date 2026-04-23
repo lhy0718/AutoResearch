@@ -31,6 +31,90 @@ Usage rules:
 
 The resolved entries below are kept as recent validation history and regression context.
 
+## Issue: LV-106
+
+- Status: resolved
+- Validation target: same persisted external-workspace run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after successful `run_experiments` retry and automatic `analyze_results`
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - nodes reached: `run_experiments -> analyze_results`
+  - existing TUI session, resumed from the persisted run after prior implementation repairs
+
+- Reproduction steps:
+  1. In the existing real TUI session, run `/agent retry run_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  2. Wait for the node-owned PEFT runner to complete.
+  3. Inspect `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`.
+  4. Inspect `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/analysis/result_table.json`.
+  5. Inspect `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/transition_recommendation.json`.
+
+- Expected behavior:
+  - When `metrics.json` contains an executed baseline row and executed comparator rows under `results`, `analyze_results` should project those rows into `condition_comparisons` / `results_table`.
+  - The negative scientific result should remain visible as `accuracy_delta_vs_baseline=0`.
+  - The transition should be driven by the objective/evidence gate, for example a design backtrack, not by a false `incomplete_results_table` pause.
+
+- Actual behavior:
+  - `run_experiments_verify_report.json` records `status: "pass"` and the fresh metrics contract is present.
+  - `metrics.json` contains:
+    - baseline row with `recipe: "baseline"` and `mean_accuracy: 0.546875`
+    - comparator rows `lora_qv_r8` and `lora_qkvo_r16`
+    - top-level `best_recipe: "lora_qv_r8"`
+    - top-level `accuracy_delta_vs_baseline: 0`
+    - bootstrap confidence intervals in each executed result row
+  - `analysis/result_table.json` collapses the run to a single `primary` condition and leaves `comparisons: []`.
+  - `transition_recommendation.json` records:
+    - `action: "pause_for_human"`
+    - `reason: "incomplete_results_table"`
+    - evidence lines with `baseline=null, comparator=null`
+  - `analyze_results_panel/inputs.json` simultaneously shows the underlying baseline recommendation was `backtrack_to_design`, so the false table incompleteness is overriding the governed backtrack.
+  - Fixed behavior verified on 2026-04-24:
+    - the same persisted TUI run was relaunched with the rebuilt runtime
+    - `/agent retry analyze_results 73050f85-6b56-4385-8c31-2ec69a5b7dec` reran the real node
+    - `result_analysis.json` now contains `condition_comparisons[0].source: "metrics.results"`
+    - `result_analysis.json` now contains a structured `results_table` row with `metric: "mean_accuracy"`, `baseline: 0.546875`, and `comparator: 0.546875`
+    - `transition_recommendation.json` now records `action: "backtrack_to_design"` / `targetNode: "design_experiments"` rather than `pause_for_human` / `incomplete_results_table`
+    - the TUI applied `backtrack_to_design -> design_experiments` and paused before rerunning `design_experiments` because execution had started from `analyze_results`
+
+- Fresh vs existing session comparison:
+  - Fresh session: a new TUI process was launched in the same external validation workspace after rebuilding `dist`.
+  - Existing session: reproduced in the prior real persisted TUI session and confirmed through run-scoped plus public analysis artifacts.
+  - Divergence: the old process replayed the stale pause; the freshly launched rebuilt process reran `analyze_results` and cleared the false incomplete-table transition.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `buildConditionComparisons` only promotes `metrics.comparison` and `metrics.condition_metrics`. The current node-owned PEFT runner writes executed conditions under `metrics.results`, so `buildStructuredResultsTable` falls back to the contract schema and reports null baseline/comparator values even though the executed rows are present.
+
+- Code/test changes:
+  - Code:
+    - `src/core/resultAnalysis.ts`
+      - added projection from node-owned `metrics.results` arrays into `condition_comparisons` when explicit `baseline` and `best_recipe` rows are present
+      - preserves negative objective outcomes while allowing the structured results table to carry baseline/comparator values
+  - Tests:
+    - `tests/resultAnalysis.test.ts`
+      - added coverage for projecting `metrics.results` baseline/comparator rows into `condition_comparisons`
+    - `tests/objectiveMetricPropagation.test.ts`
+      - added coverage that `analyze_results` no longer pauses with `incomplete_results_table` when `metrics.results` contains baseline and best comparator rows
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted tests: `npx vitest run tests/resultAnalysis.test.ts tests/resultTable.test.ts tests/objectiveMetricPropagation.test.ts` passed
+  - Build: `npm run build` passed
+  - Same-flow live revalidation: passed
+  - Adjacent regression review: targeted result-table and objective-propagation tests passed; broad `npm test` and `npm run validate:harness` passed after this `ISSUES.md` update
+
+- Most likely failing boundary:
+  - resolved; the remaining active workflow state is the governed scientific backtrack to `design_experiments` after a real negative result.
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/analyze_results_panel/inputs.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/transition_recommendation.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/result_analysis.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/analysis/result_table.json`
+
+---
+
 ## Issue: LV-105
 
 - Status: resolved

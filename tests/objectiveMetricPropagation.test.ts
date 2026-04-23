@@ -2059,6 +2059,120 @@ describe("objective metric propagation", () => {
     ]);
   });
 
+  it("does not pause for an incomplete table when metrics.results has baseline and best comparator rows", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-results-array-table-"));
+    process.chdir(root);
+
+    const runId = "run-analyze-results-results-array-table";
+    const run = {
+      ...makeRun(runId),
+      currentNode: "analyze_results" as const,
+      objectiveMetric: "accuracy_delta_vs_baseline >= 0.01"
+    };
+    run.graph.currentNode = "analyze_results";
+
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          accuracy_delta_vs_baseline: 0,
+          baseline_mean_accuracy: 0.546875,
+          best_mean_accuracy: 0.546875,
+          best_recipe: "lora_qv_r8",
+          results: [
+            {
+              recipe: "baseline",
+              peft_type: "none",
+              status: "completed",
+              mean_accuracy: 0.546875,
+              arc_challenge_accuracy: 0.53125,
+              hellaswag_accuracy: 0.5625,
+              accuracy_delta_vs_baseline: 0
+            },
+            {
+              recipe: "lora_qv_r8",
+              peft_type: "lora",
+              status: "completed",
+              mean_accuracy: 0.546875,
+              arc_challenge_accuracy: 0.53125,
+              hellaswag_accuracy: 0.5625,
+              accuracy_delta_vs_baseline: 0
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "experiment_contract.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          run_id: runId,
+          created_at: new Date().toISOString(),
+          hypothesis: "LoRA should improve zero-shot accuracy",
+          causal_mechanism: "A tuned adapter should improve task accuracy",
+          single_change: "LoRA target module scope",
+          confounded: false,
+          expected_metric_effect: "Higher mean accuracy than baseline",
+          abort_condition: "Abort if accuracy regresses",
+          keep_or_discard_rule: "Keep if improved",
+          baselines: ["baseline"],
+          metrics: ["mean_accuracy", "accuracy_delta_vs_baseline"],
+          results_table_schema: [
+            {
+              metric: "mean_accuracy",
+              baseline: null,
+              comparator: null,
+              delta: null,
+              direction: "higher_better"
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const analyzeNode = createAnalyzeResultsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await analyzeNode.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(result.transitionRecommendation?.reason).not.toBe("incomplete_results_table");
+
+    const analysisRaw = JSON.parse(
+      await readFile(path.join(runDir, "result_analysis.json"), "utf8")
+    ) as {
+      condition_comparisons: Array<{ source: string }>;
+      results_table: Array<{ metric: string; baseline: number | null; comparator: number | null }>;
+    };
+    expect(analysisRaw.condition_comparisons[0]?.source).toBe("metrics.results");
+    expect(analysisRaw.results_table).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metric: "mean_accuracy",
+          baseline: 0.546875,
+          comparator: 0.546875
+        })
+      ])
+    );
+  });
+
   it("records critical risk signals and pauses for human review when metrics are statistically inconsistent", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-risk-signals-"));
     process.chdir(root);
