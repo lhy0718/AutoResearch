@@ -206,6 +206,7 @@ The resolved entries below are kept as recent validation history and regression 
   - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/bootstrap_contract_prompt.txt`
   - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_record.json`
   - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `docs/codex-oauth-live-diagnostics.md`
 
 - Recommended next step:
   - continue collecting live request IDs and provider-stage evidence while keeping the heuristic-free/placeholder-safe path intact, so the remaining Codex OAuth failure can be isolated as a backend stability issue rather than an AutoLabOS silent fallback issue.
