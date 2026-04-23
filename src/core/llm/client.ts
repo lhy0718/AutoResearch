@@ -143,8 +143,8 @@ export class CodexOAuthResponsesLLMClient implements LLMClient {
       model: opts?.model || this.defaults.model,
       reasoningEffort: opts?.reasoningEffort || this.defaults.reasoningEffort,
       abortSignal: opts?.abortSignal,
-      onProgress: (message) => {
-        opts?.onProgress?.({ type: "status", text: message });
+      onProgress: (event) => {
+        opts?.onProgress?.(event);
       }
     });
 

@@ -116,7 +116,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 ## Issue: LV-103
 
-- Status: in_progress
+- Status: resolved
 - Validation target: existing external-workspace TUI same-flow `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec` after removing heuristic decomposition/materialization/subdivision fallbacks and then tightening staged materialization/bootstrap guards
 - Environment/session context:
   - real TUI workspace: `.autolabos-validation`
@@ -198,16 +198,29 @@ The resolved entries below are kept as recent validation history and regression 
         - `Implementation execution failed before any runnable implementation was produced: terminated`
       - a `runner_result_aggregation_and_persistence` `_partial_on_error` artifact was emitted, but it matched the previous successful response size (`38081` bytes), indicating the global partial snapshot can be stale across chunk requests.
   - The public runner file is no longer stuck at the 44-line canonical skeleton placeholder, but the live attempt still did not finish verification or produce a stable runnable repair.
+  - Latest same-flow retry after routing single-chunk Python materialization through chunk generation completed successfully:
+    - retry started at `2026-04-23T23:02:54Z`
+    - dynamic materialization reached `Generating staged_llm unit 1/1 chunk 1/1: Implement the PEFT instruction study runner`
+    - the request waited through heartbeat observations up to `539s`, then returned streamed Codex OAuth output
+    - `unit_chunk_responses/peft_runner__peft_runner__d0__chunk_1_1.txt` was written
+    - the public runner was rewritten to `690` lines
+    - local verification passed via `python -m py_compile /home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+    - `implement_experiments/status.json` ended with `status: "completed"` and `verifyStatus: "pass"`
+  - A remaining observability gap was found during this same live retry:
+    - the Codex OAuth SSE parser accumulated `response.output_text.delta` internally, but the generic `CodexOAuthResponsesLLMClient` forwarded all progress as `status`
+    - as a result, `implement_experiments/partial_response.txt` and `LLM>` progress lines only appeared after final completion, not during long-running Codex OAuth text deltas
+    - this does not block completion, but it made long provider waits harder to inspect while the request was still running
 
 - Fresh vs existing session comparison:
-  - Fresh session: multiple fresh TUI relaunches on 2026-04-23 reproduced the same provider-side failure boundary.
-  - Existing session: the same persisted run shows better localization and stricter materialization validation, but still dies at the live Codex OAuth scaffold/bootstrap turn.
-  - Divergence: none established; the remaining blocker appears provider-side rather than resume-state-specific.
+  - Fresh session: multiple fresh TUI relaunches on 2026-04-23 reproduced the provider-side scaffold/bootstrap/materialization instability before the final patch set.
+  - Existing session: the same persisted run completed `implement_experiments` after the retryable `terminated`, per-request artifact isolation, and single-chunk Python chunk-routing fixes.
+  - Divergence: none established; the same persisted run moved from failure to completed after code changes rather than after a state reset.
 
 - Root cause hypothesis:
   - Type: `race_timing_bug`
   - Hypothesis: the heuristic-free staged path is now behaving more honestly, but the live Codex OAuth provider remains unstable at the first scaffold/bootstrap planning turns for this run, intermittently returning backend errors or aborts before any usable structured response can be materialized.
   - Updated 2026-04-24 hypothesis: the remaining late materialization boundary includes provider-side `terminated` responses that are not AutoLabOS local timeout errors. Treating those as terminal prevents the existing dynamic re-subdivision path from making the request smaller. The global `partial_response.txt` is also reused across requests, so failed chunk snapshots can accidentally capture the previous successful chunk rather than the failed request.
+  - Resolution update: confirmed. Once provider-side `terminated` was treated as retryable for materialization, request-local/attempt-local artifacts were isolated, and Python runner materialization always used the chunk path, the same live retry completed. The separate no-intermediate-output symptom was traced to Codex OAuth delta events being forwarded as `status` instead of `delta`.
 
 - Code/test changes:
   - Code:
@@ -227,7 +240,13 @@ The resolved entries below are kept as recent validation history and regression 
       - writes chunk-specific `_error.txt` artifacts when materialization requests fail
     - `src/core/agents/implementationLocalizer.ts`
       - added exact previous-script path preference so reruns prioritize the real failing runner over nearby manifests/analysis artifacts
+    - `src/integrations/codex/oauthResponsesTextClient.ts`
+      - emits Codex OAuth SSE `response.output_text.delta` frames as typed `delta` progress events while preserving status events
+    - `src/core/llm/client.ts`
+      - forwards Codex OAuth typed progress events unchanged so staged implement partial snapshots can observe real text deltas
   - Tests:
+  - `tests/codexOAuthTextClient.test.ts`
+      - added regression coverage that Codex OAuth streamed deltas reach the generic LLM progress callback
   - `tests/implementSessionManager.test.ts`
       - added regressions that fail loudly when decomposition, materialization, or subdivision plans are missing/unparseable instead of silently falling back
       - added regression coverage for comment-only canonical-skeleton chunk responses
@@ -250,10 +269,12 @@ The resolved entries below are kept as recent validation history and regression 
     - latest same-flow retry with the smaller bootstrap prompt reaches bootstrap faster, yields a parseable bootstrap contract, and materially grows the runner file before terminating later in materialization
     - latest same-flow retry with per-chunk prompt/raw instrumentation confirms the next failure surface can now be audited at the individual chunk request level
     - latest same-flow retry now narrows the next patch target to provider-side `terminated` handling and stale per-request partial snapshot isolation
+    - latest same-flow retry after those fixes completed `implement_experiments` with `verifyStatus: "pass"`
     - automated regression after the 2026-04-24 patch: `npx vitest run tests/implementSessionManager.test.ts`, `npm run build`, `npm test`, and `npm run validate:harness` passed
+    - targeted Codex OAuth progress regression after the observability patch: `npx vitest run tests/codexOAuthTextClient.test.ts` passed
 
 - Most likely failing boundary:
-  - staged late materialization provider-response boundary inside `implement_experiments`, especially the baseline-first PEFT execution / aggregate-metrics chunk family
+  - resolved for `implement_experiments` same-flow retry; next validation boundary is downstream `run_experiments` execution of the newly generated runner and its metrics contract
 
 - Evidence/artifacts:
   - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
@@ -269,7 +290,7 @@ The resolved entries below are kept as recent validation history and regression 
   - `docs/codex-oauth-live-diagnostics.md`
 
 - Recommended next step:
-  - keep the smaller bootstrap path, treat provider-side `terminated` during materialization as a retryable subdivision trigger, and isolate partial snapshots per request so failed chunk artifacts do not copy stale successful output.
+  - rebuild the runtime with Codex OAuth delta-forwarding, rerun the required validation suite, then continue to downstream `run_experiments` to verify the generated PEFT runner produces the required `accuracy_delta_vs_baseline` metrics rather than only passing `py_compile`.
 
 ## Issue: LV-101
 

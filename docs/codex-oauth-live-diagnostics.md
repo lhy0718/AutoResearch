@@ -4,12 +4,12 @@ Last updated: 2026-04-24
 
 ## Scope
 
-This note narrows live validation evidence for the remaining `implement_experiments` blocker on run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+This note records live validation evidence for the `implement_experiments` Codex OAuth blocker on run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
 
 The goal is to separate:
 
 - AutoLabOS-side correctness fixes that are already in place
-- remaining provider-side instability in live `Codex OAuth` scaffold/bootstrap turns
+- provider-side instability and observability gaps in live `Codex OAuth` scaffold/bootstrap/materialization turns
 
 ## Confirmed AutoLabOS-side improvements
 
@@ -21,6 +21,8 @@ The goal is to separate:
 - the default local staged-LLM request timeout for `implement_experiments` is raised to `1800000ms`
 - staged attempt diagnostic directories are cleared at the start of each staged bundle so prompt/response files from older retries do not masquerade as current evidence
 - Python runner materialization uses chunk generation even when the dynamic materialization plan returns only one chunk, so timeout/terminated retry logic remains available
+- provider-side `terminated` during staged materialization is treated as retryable and can trigger dynamic re-subdivision instead of immediately failing the node
+- Codex OAuth streamed text deltas are forwarded as typed `delta` progress events so staged implement partial snapshots can observe token output when the backend emits it
 - live prompt artifacts are persisted:
   - `implement_experiments/scaffold_prompt.txt`
   - `implement_experiments/scaffold_raw_response.txt`
@@ -180,18 +182,60 @@ Interpretation:
 - chunk prompt/response directories should also be attempt-local in practice; stale retry artifacts can otherwise obscure whether a new request emitted a fresh partial/error file
 - single-chunk Python plans should not fall back to whole-file staged generation because that bypasses chunk-level error capture and re-subdivision
 
+### 9. Single-chunk Python materialization can complete after a long no-delta wait
+
+- Example live retry:
+  - `2026-04-23T23:02:54Z`
+- Sequence:
+  - scaffold completed
+  - bootstrap completed
+  - decomposition repair completed because the scaffold omitted `decomposition_plan`
+  - materialization planning returned a single Python runner chunk
+  - because Python runner materialization now always uses chunk generation, the live log showed:
+    - `Generating staged_llm unit 1/1 chunk 1/1: Implement the PEFT instruction study runner`
+  - the provider then waited with no observable text delta through heartbeat observations up to `539s`
+  - streamed output eventually arrived and wrote:
+    - `unit_chunk_responses/peft_runner__peft_runner__d0__chunk_1_1.txt`
+  - the public runner was rewritten to `690` lines
+  - local verification passed via:
+    - `python -m py_compile /home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `implement_experiments/status.json` ended with:
+    - `status: "completed"`
+    - `verifyStatus: "pass"`
+
+Interpretation:
+
+- the same persisted run can now complete `implement_experiments` through the native Codex OAuth path
+- the long no-delta interval was not necessarily terminal once the local timeout was raised and the materialization path stayed inside chunk generation
+- the remaining validation boundary is downstream execution: the new runner still needs `run_experiments` to prove it produces the required objective metrics, not merely syntactically valid Python
+
+### 10. No-delta waits were partly an observability bug
+
+- During the successful retry above, no `partial_response.txt` existed while the request was still waiting.
+- Code inspection found that:
+  - `CodexOAuthResponsesTextClient` parsed `response.output_text.delta` frames and accumulated final text internally
+  - `CodexOAuthResponsesLLMClient` forwarded all Codex OAuth progress as `status`
+  - `implement_experiments` only persists partial snapshots for `delta` events
+
+Interpretation:
+
+- when the backend emits no text delta, AutoLabOS can only show heartbeat progress until final output arrives
+- before the delta-forwarding fix, even real Codex OAuth deltas would not have appeared as staged implement partial text
+- the observability patch does not make the provider emit tokens earlier, but it ensures any emitted text deltas become visible in progress logs and `partial_response.txt`
+
 ## Current evidence ceiling
 
 What we can now say confidently:
 
 - the remaining blocker is no longer silent heuristic fallback or wrong-file localization
-- the remaining blocker is concentrated at live `Codex OAuth` staged materialization boundaries, though bootstrap can still be sensitive
+- `implement_experiments` can now complete the same live persisted run through the native Codex OAuth path
+- bootstrap and staged materialization remain sensitive to long no-delta waits, but the latest same-flow retry did eventually complete
 - shrinking the scaffold prompt materially reduced request size but did not eliminate the bootstrap no-text-delta stall
 - shrinking the bootstrap contract prompt materially reduced request size and improved time-to-bootstrap; on the latest retry it produced a parseable bootstrap contract but did not eliminate later staged-materialization failures
 - on the latest retry, shrinking the bootstrap contract prompt was sufficient to clear bootstrap and expose a later late-chunk termination boundary
 - per-chunk prompt/raw response persistence now makes the late materialization boundary inspectable for each individual chunk request
-- the newest late failure is provider-side `terminated`, not AutoLabOS's bounded staged-LLM timeout
-- the current partial-on-error artifact can be stale unless the partial snapshot is isolated per provider request
+- provider-side `terminated` and stale partial snapshots were real failure contributors and are now covered by code/test regressions
+- Codex OAuth delta forwarding was an observability gap and is now covered by a targeted regression
 - AutoLabOS now preserves enough artifacts to compare:
   - exact scaffold prompt
   - scaffold raw response when present
@@ -202,8 +246,8 @@ What we can now say confidently:
 
 What we cannot yet say confidently:
 
-- whether the remaining failure is caused by provider overload, prompt shape sensitivity, request routing, or another upstream transport condition
-- whether the same bootstrap timeout always reproduces with identical backend behavior across runs
+- whether future provider-side no-delta waits are caused by provider load, prompt shape sensitivity, request routing, or another upstream transport condition
+- whether the generated PEFT runner will satisfy the downstream `run_experiments` metrics contract until that node is rerun
 
 ## Primary artifacts
 
@@ -218,7 +262,7 @@ What we cannot yet say confidently:
 
 ## Recommended next diagnostic step
 
-- keep the current guarded staged path
-- continue collecting request IDs plus scaffold/bootstrap artifact pairs
-- treat new failures at these boundaries as provider-stage evidence first, not as proof that heuristic fallbacks should be reintroduced
-- make late materialization provider `terminated` retryable through dynamic re-subdivision before declaring the live attempt failed
+- keep the current guarded staged path and do not reintroduce deterministic heuristic fallbacks
+- rebuild with Codex OAuth delta-forwarding so future live retries expose real text deltas when the backend emits them
+- continue to downstream `run_experiments` on run `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+- treat any future no-delta waits as provider-stage evidence first, but inspect `partial_response.txt`, chunk prompt/response artifacts, and status heartbeats before changing the decomposition policy

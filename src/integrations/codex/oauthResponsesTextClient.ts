@@ -17,6 +17,11 @@ export interface CodexOAuthResponsesTextDefaults {
   reasoningEffort?: string;
 }
 
+export interface CodexOAuthResponsesProgressEvent {
+  type: "status" | "delta";
+  text: string;
+}
+
 interface CodexResponsesApiResponse {
   id?: string;
   model?: string;
@@ -92,7 +97,7 @@ export class CodexOAuthResponsesTextClient {
     model?: string;
     reasoningEffort?: string;
     abortSignal?: AbortSignal;
-    onProgress?: (message: string) => void;
+    onProgress?: (event: CodexOAuthResponsesProgressEvent) => void;
   }): Promise<string> {
     const result = await this.complete(opts);
     return result.text;
@@ -107,7 +112,7 @@ export class CodexOAuthResponsesTextClient {
     model?: string;
     reasoningEffort?: string;
     abortSignal?: AbortSignal;
-    onProgress?: (message: string) => void;
+    onProgress?: (event: CodexOAuthResponsesProgressEvent) => void;
   }): Promise<CodexOAuthResponsesTextResult> {
     const credentials = await this.resolveCredentials();
     if (!credentials?.accessToken) {
@@ -145,7 +150,7 @@ export class CodexOAuthResponsesTextClient {
       body.previous_response_id = opts.previousResponseId;
     }
 
-    opts.onProgress?.("Submitting request to Codex OAuth Responses backend.");
+    opts.onProgress?.({ type: "status", text: "Submitting request to Codex OAuth Responses backend." });
 
     let response: Response;
     try {
@@ -190,7 +195,7 @@ export class CodexOAuthResponsesTextClient {
       usage.costUsd = computeModelUsageCostUsd(payload.model || String(body.model || this.defaults.model), usage);
     }
 
-    opts.onProgress?.("Received Codex OAuth output.");
+    opts.onProgress?.({ type: "status", text: "Received Codex OAuth output." });
 
     return {
       text,
@@ -225,7 +230,7 @@ function inferImageMimeType(imagePath: string): string {
 
 async function readCodexStream(
   response: Response,
-  onProgress?: (message: string) => void
+  onProgress?: (event: CodexOAuthResponsesProgressEvent) => void
 ): Promise<{ text: string; payload: CodexResponsesApiResponse }> {
   const reader = response.body?.getReader();
   if (!reader) {
@@ -254,7 +259,11 @@ async function readCodexStream(
       buffer = buffer.slice(boundaryIndex + 2);
       const event = parseSseFrame(frame);
       if (event) {
-        text += extractDeltaText(event);
+        const delta = extractDeltaText(event);
+        if (delta) {
+          text += delta;
+          onProgress?.({ type: "delta", text: delta });
+        }
         rememberCandidateText(candidateTexts, extractCompletedTextCandidate(event));
         if (event.response) {
           payload = mergePayload(payload, event.response);
@@ -268,7 +277,11 @@ async function readCodexStream(
   if (trailing) {
     const event = parseSseFrame(trailing);
     if (event) {
-      text += extractDeltaText(event);
+      const delta = extractDeltaText(event);
+      if (delta) {
+        text += delta;
+        onProgress?.({ type: "delta", text: delta });
+      }
       rememberCandidateText(candidateTexts, extractCompletedTextCandidate(event));
       if (event.response) {
         payload = mergePayload(payload, event.response);
@@ -276,7 +289,7 @@ async function readCodexStream(
     }
   }
 
-  onProgress?.("Received streamed Codex OAuth output.");
+  onProgress?.({ type: "status", text: "Received streamed Codex OAuth output." });
   return { text: selectBestText(text, payload, candidateTexts), payload };
 }
 

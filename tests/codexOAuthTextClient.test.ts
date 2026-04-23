@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { CodexOAuthResponsesLLMClient } from "../src/core/llm/client.js";
 import { CodexOAuthResponsesTextClient } from "../src/integrations/codex/oauthResponsesTextClient.js";
 
 afterEach(() => {
@@ -79,6 +80,53 @@ describe("CodexOAuthResponsesTextClient", () => {
         outputTokens: 30
       }
     });
+  });
+
+  it("forwards streamed text deltas through the generic LLM progress callback", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        return new Response(
+          [
+            'event: response.created',
+            'data: {"type":"response.created","response":{"id":"codex_resp_delta","model":"gpt-5.3-codex","status":"in_progress","output":[]}}',
+            "",
+            'event: response.output_text.delta',
+            'data: {"type":"response.output_text.delta","delta":"first "}',
+            "",
+            'event: response.output_text.delta',
+            'data: {"type":"response.output_text.delta","delta":"second"}',
+            "",
+            'event: response.completed',
+            'data: {"type":"response.completed","response":{"id":"codex_resp_delta","model":"gpt-5.3-codex","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"first second"}]}]}}',
+            ""
+          ].join("\n"),
+          {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" }
+          }
+        );
+      })
+    );
+
+    const textClient = new CodexOAuthResponsesTextClient(
+      async () => ({
+        accessToken: "test-access-token",
+        accountId: "acct_123"
+      }),
+      { model: "gpt-5.3-codex", reasoningEffort: "high" }
+    );
+    const llmClient = new CodexOAuthResponsesLLMClient(textClient);
+    const progress: Array<{ type: "status" | "delta"; text: string }> = [];
+
+    const result = await llmClient.complete("hello", {
+      onProgress: (event) => progress.push(event)
+    });
+
+    expect(result.text).toBe("first second");
+    expect(progress).toContainEqual({ type: "delta", text: "first " });
+    expect(progress).toContainEqual({ type: "delta", text: "second" });
+    expect(progress).toContainEqual({ type: "status", text: "Received Codex OAuth output." });
   });
 
   it("does not send previous_response_id when only a threadId is provided", async () => {
