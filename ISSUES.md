@@ -14,6 +14,7 @@ Usage rules:
 ## Current active status
 
 - Active live-validation defects:
+  - `LV-105` same persisted `run_experiments` retry now completes after network-gate removal, but `run_experiments_verify_report.json` records `status: pass` even though `metrics.json` shows all tuned PEFT conditions failed and the configured objective metric is missing.
   - `LV-098` IEEE staging `pdf_url` rows cache HTML instead of PDF, so `analyze_papers` cannot preserve supplemental page images on abstract fallback for those papers.
 - Active research/paper-readiness watchlist: see `Research and paper-readiness watchlist` below.
 - Current watchlist snapshot:
@@ -30,6 +31,72 @@ Usage rules:
 ## Resolved live validation issues
 
 The resolved entries below are kept as recent validation history and regression context.
+
+## Issue: LV-105
+
+- Status: in_progress
+- Validation target: same persisted external-workspace run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after removing `allow_network` as a runtime execution gate and rerunning `run_experiments`
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - nodes reached: `run_experiments -> analyze_results`
+
+- Reproduction steps:
+  1. Relaunch the real TUI in `.autolabos-validation`.
+  2. Run `/agent retry run_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Wait for the PEFT runner to complete after public Hugging Face model/dataset bootstrap.
+  4. Inspect `run_record.json`, `metrics.json`, `run_experiments_verify_report.json`, and `events.jsonl`.
+
+- Expected behavior:
+  - If the experiment command exits `0` but `metrics.json` reports failed tuned conditions, missing objective metrics, or an incomplete baseline/comparator table, `run_experiments` should not present the run as a clean pass.
+  - The verifier should classify the result as incomplete/degraded and keep the workflow from treating execution success as experiment adequacy.
+
+- Actual behavior:
+  - The same-flow retry now runs for about 306 seconds and completes the public PEFT runner after Hugging Face bootstrap.
+  - `run_experiments_verify_report.json` records:
+    - `status: "pass"`
+    - `stage: "success"`
+    - `exit_code: 0`
+  - However, `metrics.json` shows:
+    - baseline evaluation succeeded with ARC-Challenge/HellaSwag raw accuracies
+    - `successful_tuned_condition_count: 0`
+    - `failed_condition_count: 3`
+    - `all_conditions_succeeded: false`
+    - primary metric values such as `baseline_value`, `best_tuned_value`, and `best_tuned_delta_vs_baseline` are `null`
+  - `analyze_results` then pauses with:
+    - `Objective metric "accuracy_delta_vs_baseline" was not found in metrics.json.`
+    - `Results table is incomplete: baseline and comparator must both be populated for every reported row.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately rerun for this post-network-gate semantic boundary.
+  - Existing session: reproduced directly on the same persisted run after the network-policy fix.
+  - Divergence: none established yet; the failing boundary is in persisted run-verifier semantics rather than stale UI state.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: `run_experiments` is currently treating process exit code and metrics-file materialization as sufficient for verifier pass, without enforcing the metrics contract that tuned comparator conditions and the configured objective metric must be present for a baseline/comparator experiment.
+
+- Code/test changes:
+  - Code: none yet for this issue.
+  - Tests: none yet for this issue.
+
+- Regression status:
+  - Automated regression test linked: no
+  - Same-flow live reproduction: confirmed
+  - Latest state: `run_experiments` completed, `analyze_results` paused for incomplete results table / missing objective metric.
+
+- Most likely failing boundary:
+  - `run_experiments` metrics-contract verification boundary after command success
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_record.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+
+- Recommended next step:
+  - tighten `run_experiments` verification so command success with failed tuned conditions or missing objective metrics is marked incomplete/degraded instead of clean pass, then rerun the same persisted node.
 
 ## Issue: LV-103
 
