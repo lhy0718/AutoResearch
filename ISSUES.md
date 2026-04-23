@@ -166,7 +166,24 @@ The resolved entries below are kept as recent validation history and regression 
         - `179s`
         - `240s`
         - `300s`
-  - The public runner file remains stuck at a 44-line canonical skeleton placeholder, confirming that no substantive repair was materialized in the latest live retries.
+      - that retry eventually emitted streamed output after `360s` and then failed with:
+        - `Implementation execution failed before any runnable implementation was produced: staged_llm bootstrap planning did not return a parseable bootstrap contract`
+    - latest live retry at `2026-04-23T14:17:58Z` confirmed the bootstrap-specific compaction patch reached the live run:
+      - `implement_experiments/bootstrap_contract_prompt.txt` shrank further from `8392` bytes to `6234` bytes
+      - `implement_experiments/scaffold_prompt.txt` remained about `12KB` (`11987` bytes)
+      - scaffold now completed after a single `59s` heartbeat and advanced into bootstrap with:
+        - `threadId: "resp_0542f1f5a665db340169ea2a16ab4481919401ec38452679f2"`
+      - bootstrap planning then completed successfully enough to write a parseable raw contract artifact:
+        - `implement_experiments/bootstrap_contract_raw_response.txt` (`8762` bytes)
+      - the run progressed past bootstrap and deep into staged materialization:
+        - the public runner file expanded from the 44-line skeleton placeholder to `1923` lines
+        - chunk generation advanced through dataset caching, evaluation helpers, and baseline-first PEFT execution decomposition
+      - the remaining failure boundary shifted later in the flow:
+        - `resp_086a26e641d247890169ea356b56688191bbd401ba9dbf6b32` timed out after `540s` with no text delta for the aggregate-metrics execution chunk
+        - staged resubdivision succeeded and launched `resp_0fbed7ef14f965550169ea39b0a9e881918e4dca403d0f22ab`
+        - the live attempt ultimately ended with:
+          - `Implementation execution failed before any runnable implementation was produced: terminated`
+  - The public runner file is no longer stuck at the 44-line canonical skeleton placeholder, but the live attempt still did not finish verification or produce a stable runnable repair.
 
 - Fresh vs existing session comparison:
   - Fresh session: multiple fresh TUI relaunches on 2026-04-23 reproduced the same provider-side failure boundary.
@@ -203,11 +220,12 @@ The resolved entries below are kept as recent validation history and regression 
     - targeted implement/localizer regressions passed
     - `npm run build` passed
     - `npm test` passed
-    - live same-flow reruns still blocked by Codex OAuth backend errors/aborts
+    - live same-flow reruns are no longer blocked at bootstrap on the latest retry, but still fail later during staged chunk/resubchunk generation
     - latest same-flow retry with the smaller scaffold prompt still narrows to the bootstrap wait boundary rather than producing a runnable repair
+    - latest same-flow retry with the smaller bootstrap prompt reaches bootstrap faster, yields a parseable bootstrap contract, and materially grows the runner file before terminating later in materialization
 
 - Most likely failing boundary:
-  - staged scaffold/bootstrap provider-response boundary inside `implement_experiments`
+  - staged late materialization provider-response boundary inside `implement_experiments`, especially the baseline-first PEFT execution / aggregate-metrics chunk family
 
 - Evidence/artifacts:
   - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
@@ -215,12 +233,13 @@ The resolved entries below are kept as recent validation history and regression 
   - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/scaffold_prompt.txt`
   - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/scaffold_raw_response.txt`
   - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/bootstrap_contract_prompt.txt`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/bootstrap_contract_raw_response.txt`
   - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_record.json`
   - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
   - `docs/codex-oauth-live-diagnostics.md`
 
 - Recommended next step:
-  - continue collecting live request IDs and provider-stage evidence while keeping the heuristic-free/placeholder-safe path intact, so the remaining Codex OAuth failure can be isolated as a backend stability issue rather than an AutoLabOS silent fallback issue.
+  - keep the smaller bootstrap path, then narrow the late chunk-generation failure by persisting additional per-chunk raw responses or reducing the heaviest PEFT execution chunk further, so the remaining Codex OAuth termination can be isolated beyond bootstrap.
 
 ## Issue: LV-101
 

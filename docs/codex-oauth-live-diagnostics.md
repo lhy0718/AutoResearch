@@ -22,7 +22,7 @@ The goal is to separate:
   - `implement_experiments/scaffold_prompt.txt`
   - `implement_experiments/scaffold_raw_response.txt`
   - `implement_experiments/bootstrap_contract_prompt.txt`
-- the latest live compaction reduced the persisted scaffold prompt from `17781` bytes to `11984` bytes while leaving the bootstrap contract prompt at `8392` bytes
+- the latest live compactions reduced the persisted scaffold prompt from `17781` bytes to about `12KB` (`11984-11987` bytes) and the bootstrap contract prompt from `8392` bytes to `6234` bytes
 
 ## Live failure phenotypes still observed
 
@@ -84,17 +84,59 @@ Interpretation:
 - reducing scaffold prompt size helped the request reach bootstrap more consistently
 - the remaining blocker is still concentrated in the bootstrap provider turn, not in wrong-file localization or placeholder recovery
 
+### 5. Smaller bootstrap prompt improves entry time but not yet the contract boundary
+
+- Example live thread:
+  - `threadId: resp_0542f1f5a665db340169ea2a16ab4481919401ec38452679f2`
+- Sequence:
+  - compressed bootstrap contract prompt persisted at `6234` bytes
+  - scaffold completed after a single `59s` wait and emitted output at `~104s`
+  - bootstrap request started immediately after scaffold completion
+  - bootstrap then reproduced the no-text-delta wait at `59s`, `119s`, and `179s`
+  - this retry has not yet produced a parseable contract or runnable repair
+
+Interpretation:
+
+- reducing the bootstrap prompt appears to help the run reach the bootstrap turn faster
+- the dominant remaining blocker is still the live bootstrap-provider response boundary
+- the failure mode may be shifting from pure long-stall timeout toward late non-parseable bootstrap output, so artifact capture remains important
+
+### 6. Smaller bootstrap prompt can clear bootstrap and expose a later materialization blocker
+
+- Example live threads:
+  - bootstrap: `resp_0542f1f5a665db340169ea2a16ab4481919401ec38452679f2`
+  - late aggregate chunk: `resp_086a26e641d247890169ea356b56688191bbd401ba9dbf6b32`
+  - resubchunk after timeout: `resp_0fbed7ef14f965550169ea39b0a9e881918e4dca403d0f22ab`
+- Sequence:
+  - bootstrap contract prompt persisted at `6234` bytes
+  - scaffold completed after a single `59s` heartbeat
+  - bootstrap contract completed successfully enough to write `bootstrap_contract_raw_response.txt` (`8762` bytes)
+  - the run then progressed into staged file generation and materially expanded the public runner from `44` lines to `1923` lines
+  - the remaining long-stall shifted to the later chunk:
+    - `Baseline-first PEFT condition execution and aggregate metric computation`
+  - that chunk timed out after `540s` with no text delta, triggered dynamic resubdivision, and the follow-up resubchunk attempt later ended with:
+    - `Implementation execution failed before any runnable implementation was produced: terminated`
+
+Interpretation:
+
+- the bootstrap-specific compaction is a real improvement, not just a cosmetic size reduction
+- the dominant provider boundary is no longer always bootstrap
+- the current highest-value failure surface is the late PEFT execution / aggregate-metrics chunk family inside staged materialization
+
 ## Current evidence ceiling
 
 What we can now say confidently:
 
 - the remaining blocker is no longer silent heuristic fallback or wrong-file localization
-- the remaining blocker is concentrated at live `Codex OAuth` scaffold/bootstrap provider boundaries
+- the remaining blocker is concentrated at live `Codex OAuth` staged materialization boundaries, though bootstrap can still be sensitive
 - shrinking the scaffold prompt materially reduced request size but did not eliminate the bootstrap no-text-delta stall
+- shrinking the bootstrap contract prompt materially reduced request size and improved time-to-bootstrap; on the latest retry it produced a parseable bootstrap contract but did not eliminate later staged-materialization failures
+- on the latest retry, shrinking the bootstrap contract prompt was sufficient to clear bootstrap and expose a later late-chunk termination boundary
 - AutoLabOS now preserves enough artifacts to compare:
   - exact scaffold prompt
   - scaffold raw response when present
   - exact bootstrap prompt
+  - bootstrap raw response when present
   - progress heartbeat timeline
 
 What we cannot yet say confidently:

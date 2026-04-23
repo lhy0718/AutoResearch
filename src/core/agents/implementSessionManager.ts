@@ -2718,21 +2718,10 @@ export class ImplementSessionManager {
       "Use blocking_reason only for non-network blockers that would still fail even if remote assets can be fetched, such as missing local paths, unavailable binaries, or missing required Python packages.",
       "",
       "Compact task spec:",
-      JSON.stringify(compactTaskSpecForStagedLlmPrompt(params.taskSpec), null, 2),
+      JSON.stringify(compactTaskSpecForBootstrapPrompt(params.taskSpec), null, 2),
       "",
       "Approved scaffold summary:",
-      JSON.stringify(
-        {
-          summary: params.scaffold.summary,
-          experiment_mode: params.scaffold.experiment_mode,
-          run_command: params.scaffold.run_command,
-          test_command: params.scaffold.test_command,
-          script_path: params.scaffold.script_path,
-          metrics_path: params.scaffold.metrics_path
-        },
-        null,
-        2
-      )
+      JSON.stringify(compactScaffoldSummaryForBootstrapPrompt(params.scaffold), null, 2)
     ].join("\n");
   }
 
@@ -4837,6 +4826,32 @@ function compactTaskSpecForStagedLlmPrompt(taskSpec: ImplementTaskSpec): Record<
   };
 }
 
+function compactTaskSpecForBootstrapPrompt(taskSpec: ImplementTaskSpec): Record<string, unknown> {
+  return {
+    goal: trimBlock(taskSpec.goal, 120),
+    workspace: {
+      public_dir: taskSpec.workspace.public_dir,
+      metrics_path: taskSpec.workspace.metrics_path
+    },
+    execution: {
+      runner: taskSpec.execution.runner,
+      timeout_sec: taskSpec.execution.timeout_sec
+    },
+    context: {
+      topic: trimBlock(taskSpec.context.topic, 120),
+      objective_metric: trimBlock(taskSpec.context.objective_metric, 100),
+      previous_script: taskSpec.context.previous_script,
+      comparison_contract: taskSpec.context.comparison_contract
+        ? {
+            comparison_mode: taskSpec.context.comparison_contract.comparison_mode,
+            baseline_first_required: taskSpec.context.comparison_contract.baseline_first_required,
+            budget_profile: taskSpec.context.comparison_contract.budget_profile
+          }
+        : undefined
+    }
+  };
+}
+
 function compactTaskSpecForChunkPrompt(taskSpec: ImplementTaskSpec): Record<string, unknown> {
   return {
     goal: trimBlock(taskSpec.goal, 220),
@@ -5009,6 +5024,17 @@ function compactRunnerFeedbackForStagedLlmPrompt(
     metrics_path: feedback.metrics_path,
     suggested_next_action: trimBlock(feedback.suggested_next_action || "", 220) || undefined,
     recorded_at: feedback.recorded_at
+  };
+}
+
+function compactScaffoldSummaryForBootstrapPrompt(scaffold: StructuredImplementResponse): Record<string, unknown> {
+  return {
+    summary: trimBlock(scaffold.summary || "", 120) || undefined,
+    experiment_mode: scaffold.experiment_mode,
+    run_command: trimBlock(scaffold.run_command || "", 160) || undefined,
+    test_command: trimBlock(scaffold.test_command || "", 120) || undefined,
+    script_path: scaffold.script_path,
+    metrics_path: scaffold.metrics_path
   };
 }
 
