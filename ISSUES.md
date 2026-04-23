@@ -223,6 +223,7 @@ The resolved entries below are kept as recent validation history and regression 
       - clears the per-request partial snapshot before each staged LLM request so chunk `_partial_on_error` artifacts cannot reuse stale successful output
       - clears stale staged attempt artifact directories at the start of each staged bundle while preserving progress/status logs
       - treats provider-side `terminated` during chunk materialization as a retryable transient failure that triggers smaller dynamic re-subdivision
+      - routes single-chunk Python runner materialization through chunk generation instead of the whole-file staged generation path
       - writes chunk-specific `_error.txt` artifacts when materialization requests fail
     - `src/core/agents/implementationLocalizer.ts`
       - added exact previous-script path preference so reruns prioritize the real failing runner over nearby manifests/analysis artifacts
@@ -234,6 +235,7 @@ The resolved entries below are kept as recent validation history and regression 
       - added regression coverage that late chunk prompts/raw responses are persisted and that sibling/recursive subchunks receive parent draft context
       - added regression coverage that provider-side `terminated` re-subdivides the failing chunk and does not emit stale `_partial_on_error` snapshots
       - added regression coverage that stale chunk response artifacts from a previous retry are removed before the next staged bundle writes fresh artifacts
+      - added regression coverage that single-chunk Python runner plans still use chunk generation, preserving retry/re-subdivision behavior
     - `tests/implementationLocalizer.test.ts`
       - added regression coverage that prefers the exact previous run script over adjacent manifest files
 

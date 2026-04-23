@@ -20,6 +20,7 @@ The goal is to separate:
 - staged scaffold and bootstrap prompts are compacted
 - the default local staged-LLM request timeout for `implement_experiments` is raised to `1800000ms`
 - staged attempt diagnostic directories are cleared at the start of each staged bundle so prompt/response files from older retries do not masquerade as current evidence
+- Python runner materialization uses chunk generation even when the dynamic materialization plan returns only one chunk, so timeout/terminated retry logic remains available
 - live prompt artifacts are persisted:
   - `implement_experiments/scaffold_prompt.txt`
   - `implement_experiments/scaffold_raw_response.txt`
@@ -177,6 +178,7 @@ Interpretation:
 - the most useful next AutoLabOS-side behavior is to treat provider-side `terminated` during materialization as a transient chunk-generation failure and ask for a smaller subdivision
 - partial snapshots should be scoped to the current request before copying them into chunk-specific error artifacts
 - chunk prompt/response directories should also be attempt-local in practice; stale retry artifacts can otherwise obscure whether a new request emitted a fresh partial/error file
+- single-chunk Python plans should not fall back to whole-file staged generation because that bypasses chunk-level error capture and re-subdivision
 
 ## Current evidence ceiling
 

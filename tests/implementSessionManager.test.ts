@@ -4639,7 +4639,7 @@ describe("ImplementSessionManager", () => {
         if (llmCalls === 3) {
           return {
             text: JSON.stringify({
-              path: publicScriptPath,
+              chunk_id: "runner_full",
               content: "print('ok')"
             }),
             threadId: "thread-staged-fallback-script"
@@ -4702,7 +4702,7 @@ describe("ImplementSessionManager", () => {
     expect(stagedFallbackPrompts[0]).not.toContain("include a decomposition_plan");
     expect(stagedFallbackPrompts[0]).not.toContain("Previous local verification:");
     expect(stagedFallbackPrompts[1]).toContain("Staged implement materialization subplan.");
-    expect(stagedFallbackPrompts[2]).toContain(`Target file: ${publicScriptPath}`);
+    expect(stagedFallbackPrompts[2]).toContain("Target chunk: runner_full");
     expect(stagedFallbackPrompts[3]).toContain("Staged implement materialization subplan.");
     expect(stagedFallbackPrompts[4]).toContain(`Target file: ${publicConfigPath}`);
     expect(stagedFallbackSystemPrompt).not.toContain("Filesystem-blocker recovery mode:");
@@ -4800,7 +4800,7 @@ describe("ImplementSessionManager", () => {
         }
         return {
           text: JSON.stringify({
-            path: publicScriptPath,
+            chunk_id: "runner_full",
             content: "print('rerun ok')\n"
           }),
           threadId: "thread-known-fallback"
@@ -5835,6 +5835,148 @@ describe("ImplementSessionManager", () => {
         "utf8"
       )
     ).toContain("\"chunk_id\":\"chunk1_runtime_surface\"");
+  });
+
+  it("routes single-chunk python runner materialization through chunk generation instead of one full-file request", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-single-python-chunk-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Single Python Chunk Runner",
+      topic: "bounded experiment implementation",
+      constraints: ["real artifacts"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    await runContext.put(
+      "implement_experiments.last_summary",
+      "Implementation remains blocked by the environment: every Codex local filesystem action aborts with `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`."
+    );
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "experiment.py");
+    const prompts: string[] = [];
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {
+        runTurnStream: async () => {
+          throw new Error("Codex should not be used in the known staged_llm fallback path");
+        }
+      } as unknown as CodexNativeClient,
+      llm: {
+        complete: async (prompt: string) => {
+          prompts.push(prompt);
+          if (prompt.includes("scaffold-first contract")) {
+            return {
+              text: JSON.stringify({
+                summary: "Scaffold for a one-chunk Python runner.",
+                run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
+                test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+                changed_files: [publicScriptPath],
+                artifacts: [publicScriptPath],
+                public_artifacts: [publicScriptPath],
+                script_path: publicScriptPath,
+                metrics_path: path.join(runDir, "metrics.json"),
+                experiment_mode: "real_execution",
+                decomposition_plan: {
+                  objective: "Materialize the primary Python runner.",
+                  strategy: "purpose_adaptive",
+                  rationale: "One file is sufficient, but Python should still use chunk materialization.",
+                  units: [
+                    {
+                      id: "runner",
+                      unit_type: "text_file",
+                      title: "Primary Python runner",
+                      purpose: "Provide the executable experiment runner.",
+                      generation_mode: "materialize_text_file",
+                      target_path: publicScriptPath,
+                      verification_focus: ["python_compile"]
+                    }
+                  ]
+                },
+                file_plan: [publicScriptPath]
+              }),
+              threadId: "thread-single-python-scaffold"
+            };
+          }
+          if (prompt.includes("Staged implement bootstrap contract planning.")) {
+            return {
+              text: JSON.stringify({
+                version: 1,
+                strategy: "local_python_contract",
+                summary: "No external bootstrap required.",
+                requires_network: false,
+                requires_warm_cache: false,
+                remediation: [],
+                requirements: []
+              }),
+              threadId: "thread-single-python-bootstrap"
+            };
+          }
+          if (prompt.includes("Staged implement materialization subplan.")) {
+            return {
+              text: JSON.stringify({
+                strategy: "single_python_chunk",
+                rationale: "The runner is intentionally small.",
+                chunks: [
+                  {
+                    id: "runner_body",
+                    title: "Complete runner body",
+                    purpose: "Implement the compact Python runner.",
+                    content_kind: "code_section",
+                    include_imports: true,
+                    include_entrypoint: true
+                  }
+                ]
+              }),
+              threadId: "thread-single-python-plan"
+            };
+          }
+          if (prompt.includes("Staged implement unit generation")) {
+            throw new Error("Python runners must not use one full-file staged generation request");
+          }
+          if (prompt.includes("Target chunk: runner_body")) {
+            return {
+              text: JSON.stringify({
+                chunk_id: "runner_body",
+                content: [
+                  "import json",
+                  "",
+                  "def main():",
+                  "    print(json.dumps({'accuracy': 1.0}))",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    main()"
+                ].join("\n")
+              }),
+              threadId: "thread-single-python-chunk"
+            };
+          }
+          throw new Error(`Unexpected staged_llm prompt in single Python chunk test: ${prompt.slice(0, 200)}`);
+        }
+      } as any,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+
+    expect(result.scriptPath).toBe(publicScriptPath);
+    expect(prompts.some((prompt) => prompt.includes("Staged implement unit generation"))).toBe(false);
+    expect(prompts.some((prompt) => prompt.includes("Target chunk: runner_body"))).toBe(true);
+    expect(readFileSync(publicScriptPath, "utf8")).toContain("def main():");
   });
 
   it("re-subdivides a provider-terminated code subchunk through a smaller dynamic plan before materializing the file", async () => {

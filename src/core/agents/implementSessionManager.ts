@@ -2232,7 +2232,12 @@ export class ImplementSessionManager {
       const useSectionedSkeleton =
         shouldUseSectionedSkeletonForTarget(filePath) && materializationPlan.chunks.length > 1;
 
-      if (materializationPlan.chunks.length === 1 && !useSectionedSkeleton) {
+      const useDirectFileMaterialization =
+        materializationPlan.chunks.length === 1 &&
+        !useSectionedSkeleton &&
+        !isPythonMaterializationPath(filePath);
+
+      if (useDirectFileMaterialization) {
         input.emitImplementObservation(
           "codex",
           `Generating staged_llm unit ${index + 1}/${materializationUnits.length}: ${unit.title} (${formatArtifactPath(filePath)})`,
@@ -2426,6 +2431,9 @@ export class ImplementSessionManager {
       }
       if (useSectionedSkeleton) {
         draftContent = stripCanonicalSkeletonMarkers(currentFileContent, filePath);
+        await fs.writeFile(filePath, draftContent, "utf8");
+      } else {
+        await ensureDir(path.dirname(filePath));
         await fs.writeFile(filePath, draftContent, "utf8");
       }
       ensureMaterializedFileHasSubstance(draftContent, filePath);
