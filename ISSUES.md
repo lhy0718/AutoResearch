@@ -14,7 +14,7 @@ Usage rules:
 ## Current active status
 
 - Active live-validation defects:
-  - `LV-107` `implement_experiments` can auto-handoff a Python runner whose returned `run_command` uses CLI flags not accepted by the generated argparse surface.
+  - `LV-108` `run_experiments` can complete after writing failed private metrics while stale public study artifacts still show completed baseline/comparator rows.
   - `LV-098` IEEE staging `pdf_url` rows cache HTML instead of PDF, so `analyze_papers` cannot preserve supplemental page images on abstract fallback for those papers.
 - Active research/paper-readiness watchlist: see `Research and paper-readiness watchlist` below.
 - Current watchlist snapshot:
@@ -30,9 +30,80 @@ Usage rules:
 
 ## Active live validation issues
 
-## Issue: LV-107
+## Issue: LV-108
 
 - Status: active
+- Validation target: real backtrack flow for persisted external-workspace run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after LV-107 live revalidation
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - nodes reached after LV-107 guard: `implement_experiments -> run_experiments -> analyze_results`
+  - backend: native Codex OAuth backend, not CLI subprocess fallback
+
+- Reproduction steps:
+  1. Relaunch the rebuilt TUI in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Allow implementation attempt 1 to fail pre-handoff on the argparse/run-command verifier.
+  4. Allow implementation attempt 2 to complete and hand off to `run_experiments`.
+  5. Inspect `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`.
+  6. Inspect `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/study_results.json`.
+  7. Inspect `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/analysis/transition_recommendation.json`.
+
+- Expected behavior:
+  - `run_experiments` should fail or backtrack when every private metrics recipe fails before any baseline/comparator result is produced.
+  - Public experiment artifacts should not retain stale successful rows that disagree with the private `metrics.json` used by `analyze_results`.
+  - `analyze_results` should receive one coherent results surface, not failed private metrics plus stale public success artifacts.
+
+- Actual behavior:
+  - `run_experiments` completed after executing a compatible command:
+    - `python .../run_peft_instruction_study.py --model-name Qwen/Qwen2.5-1.5B --instruction-dataset yahma/alpaca-cleaned --recipes baseline,lora,rslora,adalora --max-steps 64 --per-device-train-batch-size 1 --gradient-accumulation-steps 16 --metrics-path .../metrics.json`
+  - Private `.autolabos/runs/.../metrics.json` recorded `completed_recipe_count: 0`, `failed_recipe_count: 4`, and per-recipe errors:
+    - `TypeError: RecipeSpec.__init__() missing 3 required positional arguments: 'name', 'use_peft', and 'description'`
+  - Private `device_info.study_peak_gpu_memory_gb` remained `0`, so the objective metric gate failed.
+  - Public `study_results.json` still contained completed baseline and comparator rows with non-null accuracies and GPU memory values from a different/stale result schema.
+  - `analyze_results` paused with `reason: "incomplete_results_table"` based on the failed private metrics.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in the newly launched rebuilt TUI process.
+  - Existing session: persisted artifacts show the same private/public disagreement.
+  - Divergence: no UI-only divergence; the defect is artifact/state consistency across private run metrics and public experiment outputs.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: the run accepts process exit code 0 and a written metrics file as successful execution even when all recipe rows failed structurally. Public experiment artifacts are not cleared or atomically regenerated for the new execution, so stale successful artifacts can survive beside failed private metrics.
+
+- Code/test changes:
+  - Code: pending
+  - Tests: pending
+
+- Regression status:
+  - Automated regression test linked: pending
+  - Targeted tests: pending
+  - Build: pending
+  - Harness: pending
+  - Same-flow live revalidation: pending
+  - Adjacent regression review: pending
+
+- Most likely failing boundary:
+  - `run_experiments` success criteria and artifact consistency checks around private `metrics.json` vs public experiment artifacts.
+  - Generated `run_peft_instruction_study.py` recipe construction / `RecipeSpec` compatibility in the implementation node.
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/study_results.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/analysis/result_analysis.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/analysis/transition_recommendation.json`
+
+---
+
+## Resolved live validation issues
+
+The resolved entries below are kept as recent validation history and regression context.
+
+## Issue: LV-107
+
+- Status: resolved
 - Validation target: real backtrack flow for persisted external-workspace run `73050f85-6b56-4385-8c31-2ec69a5b7dec`
 - Environment/session context:
   - real TUI workspace: `.autolabos-validation`
@@ -83,8 +154,14 @@ Usage rules:
   - Build: `npm run build` passed
   - Broad tests: `npm test` passed
   - Harness: `npm run validate:harness` passed after adding this entry
-  - Same-flow live revalidation: pending
-  - Adjacent regression review: broad implementation-session and full test suites passed; live same-flow retry remains pending
+  - Same-flow live revalidation: passed on 2026-04-24 in the real `.autolabos-validation` TUI flow
+  - Live evidence:
+    - `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec` entered native Codex OAuth `staged_llm` mode with runner feedback from the prior argparse failure
+    - implementation attempt 1 generated a runner whose `run_command` passed unsupported argparse flags
+    - the new verifier blocked auto-handoff with `verify_report.json` status `fail`, `failure_type: "implementation"`, `next_action: "retry_patch"`, and `stderr_excerpt: "run_command passes unsupported Python argparse flag(s): --max-train-examples..."`
+    - the TUI restored 57 paths and started implementation attempt 2 instead of handing the incompatible command to `run_experiments`
+    - attempt 2 produced a compatible command and `run_experiments` executed it without the prior `--output-dir` / `--max-eval-examples` argparse failure
+  - Adjacent regression review: broad implementation-session and full test suites passed; same-flow live retry confirmed the guarded backtrack path
 
 - Most likely failing boundary:
   - Python runner handoff verification in `src/core/agents/implementSessionManager.ts`.
@@ -96,10 +173,6 @@ Usage rules:
   - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ---
-
-## Resolved live validation issues
-
-The resolved entries below are kept as recent validation history and regression context.
 
 ## Issue: LV-106
 
