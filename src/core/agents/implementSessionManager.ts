@@ -3893,6 +3893,45 @@ export class ImplementSessionManager {
       }
     }
 
+    const runCommandArgparseMismatch = await detectPythonRunCommandArgparseMismatch(
+      executionScriptPath,
+      attempt.runCommand
+    );
+    if (runCommandArgparseMismatch) {
+      const report: VerifyReport = {
+        status: "fail",
+        command: attempt.runCommand,
+        cwd: attempt.workingDir,
+        exit_code: 0,
+        failure_type: "implementation",
+        next_action: "retry_patch",
+        stderr_excerpt: runCommandArgparseMismatch,
+        summary: buildVerificationFailureSummary(
+          attempt.runCommand,
+          "implementation",
+          runCommandArgparseMismatch
+        )
+      };
+      this.deps.eventStream.emit({
+        type: "TEST_FAILED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          command: attempt.runCommand,
+          cwd: attempt.workingDir,
+          failure_type: report.failure_type,
+          stderr: report.stderr_excerpt || report.summary,
+          attempt: attemptNumber
+        }
+      });
+      onProgress?.(report.summary, {
+        verificationCommand: attempt.runCommand,
+        verifyStatus: report.status
+      });
+      return report;
+    }
+
     const lockedConditionCountRepair = await repairPythonLockedConditionCountSurface(executionScriptPath);
     if (lockedConditionCountRepair.repaired) {
       onProgress?.(
@@ -7882,6 +7921,68 @@ async function repairPythonMissingParseArgsSurface(scriptPath?: string): Promise
     repaired: true,
     message: `Added a parse_args() compatibility shim to ${path.basename(scriptPath)} before handoff.`
   };
+}
+
+async function detectPythonRunCommandArgparseMismatch(
+  scriptPath?: string,
+  runCommand?: string
+): Promise<string | undefined> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py" || !runCommand?.trim()) {
+    return undefined;
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  if (!/\bargparse\b/u.test(source) || !/\badd_argument\s*\(/u.test(source)) {
+    return undefined;
+  }
+  if (/\bparse_known_args\s*\(/u.test(source)) {
+    return undefined;
+  }
+
+  const acceptedFlags = extractPythonArgparseLongFlags(source);
+  if (acceptedFlags.size === 0) {
+    return undefined;
+  }
+
+  const commandFlags = extractLongOptionFlags(runCommand);
+  const unsupported = commandFlags.filter((flag) => !acceptedFlags.has(flag));
+  if (unsupported.length === 0) {
+    return undefined;
+  }
+
+  const acceptedPreview = [...acceptedFlags].sort().slice(0, 20).join(", ");
+  return `run_command passes unsupported Python argparse flag(s): ${unsupported.join(
+    ", "
+  )}. Accepted flags include: ${acceptedPreview}. Align run_command with the generated runner CLI or add explicit argparse aliases before handoff.`;
+}
+
+function extractPythonArgparseLongFlags(source: string): Set<string> {
+  const flags = new Set<string>();
+  for (const match of source.matchAll(/\badd_argument\s*\(([\s\S]*?)\)/gu)) {
+    const argsText = match[1] || "";
+    for (const flagMatch of argsText.matchAll(/["'](--[A-Za-z0-9][A-Za-z0-9_-]*)["']/gu)) {
+      flags.add(flagMatch[1]);
+    }
+  }
+  return flags;
+}
+
+function extractLongOptionFlags(command: string): string[] {
+  const flags: string[] = [];
+  for (const match of command.matchAll(/(^|\s)(--[A-Za-z0-9][A-Za-z0-9_-]*)(?:[=\s]|$)/gu)) {
+    const flag = match[2];
+    if (flag === "--help" || flags.includes(flag)) {
+      continue;
+    }
+    flags.push(flag);
+  }
+  return flags;
 }
 
 async function repairPythonExperimentConfigMetadataSurface(scriptPath?: string): Promise<{

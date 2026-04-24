@@ -14,6 +14,7 @@ Usage rules:
 ## Current active status
 
 - Active live-validation defects:
+  - `LV-107` `implement_experiments` can auto-handoff a Python runner whose returned `run_command` uses CLI flags not accepted by the generated argparse surface.
   - `LV-098` IEEE staging `pdf_url` rows cache HTML instead of PDF, so `analyze_papers` cannot preserve supplemental page images on abstract fallback for those papers.
 - Active research/paper-readiness watchlist: see `Research and paper-readiness watchlist` below.
 - Current watchlist snapshot:
@@ -24,6 +25,75 @@ Usage rules:
   - `P-002` Compact quantitative result packaging — `MITIGATED`
   - `P-003` Related-work depth signaling — `MITIGATED`
 - If a new runtime/UI defect is reproduced, add it under `Active live validation issues` with a fresh `LV-*` identifier and one dominant root-cause class.
+
+---
+
+## Active live validation issues
+
+## Issue: LV-107
+
+- Status: active
+- Validation target: real backtrack flow for persisted external-workspace run `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - nodes reached after LV-106 fix: `analyze_results -> design_experiments -> implement_experiments -> run_experiments`
+  - backend: native Codex OAuth backend, not CLI subprocess fallback
+
+- Reproduction steps:
+  1. Relaunch the rebuilt TUI in `.autolabos-validation`.
+  2. Run `/agent retry analyze_results 73050f85-6b56-4385-8c31-2ec69a5b7dec` to apply the governed `backtrack_to_design` transition.
+  3. Use `/retry` at `design_experiments`.
+  4. Allow `design_experiments` to complete and auto-handoff into `implement_experiments`.
+  5. Allow `implement_experiments` to complete and auto-handoff into `run_experiments`.
+
+- Expected behavior:
+  - Before auto-handoff, implementation verification should ensure the generated runner accepts the exact `run_command` flags that `run_experiments` will execute.
+  - If `run_command` uses flags such as `--output-dir` or `--max-eval-examples`, the generated Python argparse surface should accept them or implementation verification should fail with `next_action: retry_patch`.
+  - `run_experiments` should not be the first place that discovers a trivial CLI contract mismatch.
+
+- Actual behavior:
+  - `implement_experiments` completed after `python -m py_compile` passed and auto-approved the handoff.
+  - The generated script accepted `--metrics-path` and `--public-dir`, but not `--output-dir` or `--max-eval-examples`.
+  - The persisted implementation `run_command` still included `--output-dir ... --max-eval-examples 500`.
+  - `run_experiments` failed immediately with argparse:
+    - `run_peft_instruction_study.py: error: unrecognized arguments: --output-dir ... --max-eval-examples 500`
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in a newly launched TUI process after rebuilding `dist`.
+  - Existing session: the failure is visible in the persisted run artifacts and `events.jsonl`.
+  - Divergence: no fresh-vs-existing UI divergence; the defect is a persisted implementation handoff contract issue.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: `implement_experiments` persists and trusts the LLM-returned `run_command` after only lightweight syntax verification. The verifier does not compare the returned command flags against the generated Python argparse surface, so a stale or incompatible command can be persisted and handed to `run_experiments`.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added pre-handoff detection for Python argparse surfaces where `run_command` passes long-form flags that the generated runner does not accept
+      - blocks auto-handoff with `failure_type: "implementation"` and `next_action: "retry_patch"` instead of letting `run_experiments` discover the CLI mismatch
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added coverage that a generated Python runner missing `--output-dir` / `--max-eval-examples` support does not auto-handoff to `run_experiments`
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted tests: `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "argparse mismatch|parse_args helper"` passed; `npx vitest run tests/implementSessionManager.test.ts` passed
+  - Build: `npm run build` passed
+  - Broad tests: `npm test` passed
+  - Harness: `npm run validate:harness` passed after adding this entry
+  - Same-flow live revalidation: pending
+  - Adjacent regression review: broad implementation-session and full test suites passed; live same-flow retry remains pending
+
+- Most likely failing boundary:
+  - Python runner handoff verification in `src/core/agents/implementSessionManager.ts`.
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_panel/triage.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/experiment_governance/implementation_context.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
 
 ---
 

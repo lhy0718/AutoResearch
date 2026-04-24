@@ -7003,6 +7003,111 @@ describe("ImplementSessionManager", () => {
     expect(result.testCommand).toContain("py_compile");
   });
 
+  it("blocks auto-handoff when a python run_command uses flags missing from argparse", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-argparse-mismatch-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Block Argparse Mismatch",
+      topic: "agent reasoning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    let callCount = 0;
+
+    const codex = {
+      runTurnStream: async () => {
+        callCount += 1;
+        return {
+          threadId: `thread-argparse-mismatch-${callCount}`,
+          finalText: JSON.stringify({
+            summary: "Implemented the experiment runner.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(path.join(publicDir, "results"))} --max-train-examples 5000 --max-eval-examples 500 --seed 42`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            experiment_mode: "real_execution",
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Localized the runner script.",
+              selected_files: [scriptPath],
+              candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+            },
+            file_edits: [
+              {
+                path: scriptPath,
+                content: [
+                  "from __future__ import annotations",
+                  "",
+                  "import argparse",
+                  "",
+                  "def build_arg_parser():",
+                  "    parser = argparse.ArgumentParser()",
+                  "    parser.add_argument('--metrics-path')",
+                  "    parser.add_argument('--public-dir')",
+                  "    parser.add_argument('--max-train-examples', type=int)",
+                  "    parser.add_argument('--seed', type=int)",
+                  "    return parser",
+                  "",
+                  "def parse_args(argv=None):",
+                  "    return build_arg_parser().parse_args(argv)",
+                  "",
+                  "def main(argv=None):",
+                  "    parse_args(argv)",
+                  "    return 0",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    raise SystemExit(main())",
+                  ""
+                ].join("\n")
+              }
+            ],
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await expect(manager.run(run)).rejects.toThrow("unsupported Python argparse flag");
+
+    expect(callCount).toBe(3);
+    expect(await memory.get<{ status: string; failure_type: string; next_action: string; stderr_excerpt: string }>("implement_experiments.verify_report")).toMatchObject({
+      status: "fail",
+      failure_type: "implementation",
+      next_action: "retry_patch",
+      stderr_excerpt: expect.stringContaining("--output-dir")
+    });
+    expect(await memory.get("implement_experiments.auto_handoff_to_run_experiments")).toBe(false);
+  });
+
   it("repairs a missing ExperimentConfig metadata field before handing a python runner off to run_experiments", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-metadata-repair-"));
     tempDirs.push(workspace);
