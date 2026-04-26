@@ -32,6 +32,8 @@ import {
   resolveCodexModelSelection
 } from "../integrations/codex/modelCatalog.js";
 import {
+  DEFAULT_OPENAI_RESPONSES_MODEL,
+  DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT,
   OPENAI_RESPONSES_MODEL_OPTIONS,
   getOpenAiResponsesReasoningOptions,
   normalizeOpenAiResponsesModel,
@@ -4144,7 +4146,7 @@ export class TerminalApp {
       const chatSlot = await this.selectCodexSlot(
         "general chat",
         this.getCurrentCodexSlotSelection("chat"),
-        this.config.providers.codex.chat_reasoning_effort || "low",
+        this.config.providers.codex.chat_reasoning_effort || "medium",
         "command"
       );
       if (!chatSlot) {
@@ -4156,7 +4158,7 @@ export class TerminalApp {
       const chatSlot = await this.selectOpenAiSlot(
         "general chat",
         this.config.providers.openai.chat_model || this.config.providers.openai.model,
-        this.config.providers.openai.chat_reasoning_effort || "low",
+        this.config.providers.openai.chat_reasoning_effort || DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT,
         "command"
       );
       if (!chatSlot) {
@@ -4819,7 +4821,7 @@ export class TerminalApp {
     if (slot === "chat") {
       return (this.config.providers.codex.chat_reasoning_effort ||
         this.config.providers.codex.command_reasoning_effort ||
-        "low") as CodexReasoningEffort;
+        "medium") as CodexReasoningEffort;
     }
     return this.config.providers.codex.reasoning_effort;
   }
@@ -4882,7 +4884,7 @@ export class TerminalApp {
     if (slot === "chat") {
       return (this.config.providers.openai.chat_reasoning_effort ||
         this.config.providers.openai.command_reasoning_effort ||
-        "low") as AppConfig["providers"]["openai"]["reasoning_effort"];
+        DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT) as AppConfig["providers"]["openai"]["reasoning_effort"];
     }
     return this.config.providers.openai.reasoning_effort;
   }
@@ -4952,17 +4954,17 @@ export class TerminalApp {
       return this.getRecommendedOllamaModel(slot);
     }
     if (this.config.providers.llm_mode === "openai_api") {
-      return `${this.getRecommendedOpenAiModel(slot)} + ${slot === "chat" ? "low" : "high"}`;
+      return `${this.getRecommendedOpenAiModel(slot)} + medium`;
     }
-    return `${this.getRecommendedCodexSelection(slot)} + ${slot === "chat" ? "low" : "high"}`;
+    return `${this.getRecommendedCodexSelection(slot)} + medium`;
   }
 
   private getRecommendedCodexSelection(slot: "chat" | "task"): string {
-    return "gpt-5.4";
+    return slot === "chat" ? DEFAULT_CODEX_MODEL : RECOMMENDED_CODEX_MODEL;
   }
 
   private getRecommendedOpenAiModel(slot: "chat" | "task"): string {
-    return "gpt-5.4";
+    return DEFAULT_OPENAI_RESPONSES_MODEL;
   }
 
   private getCurrentOllamaSlotModel(slot: "chat" | "task"): string {

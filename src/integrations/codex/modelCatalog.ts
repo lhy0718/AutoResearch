@@ -1,13 +1,14 @@
 import type { CodexReasoningEffort } from "./codexCliClient.js";
 
 export const GPT_5_4_FAST_MODEL_LABEL = "gpt-5.4 (fast)";
-export const RECOMMENDED_CODEX_MODEL = "gpt-5.4";
-export const DEFAULT_CODEX_MODEL = "gpt-5.4";
+export const RECOMMENDED_CODEX_MODEL = "gpt-5.5";
+export const DEFAULT_CODEX_MODEL = "gpt-5.5";
 
 // Official Codex model list from developers.openai.com/codex/models
 // (recommended + alternative models), verified 2026-03-06.
 export const OFFICIAL_CODEX_MODELS = [
   RECOMMENDED_CODEX_MODEL,
+  "gpt-5.4",
   "gpt-5.3-codex",
   "gpt-5.3-codex-spark",
   "gpt-5.2-codex",
@@ -32,6 +33,7 @@ const DEFAULT_REASONING_EFFORT_CHOICES: readonly CodexReasoningEffort[] = ["low"
 // per-model OpenAI docs where they exist. For preview/legacy models without
 // an explicit model page, the selector uses a conservative subset.
 const MODEL_REASONING_EFFORTS: Record<string, readonly CodexReasoningEffort[]> = {
+  "gpt-5.5": ["low", "medium", "high", "xhigh"],
   "gpt-5.4": ["low", "medium", "high", "xhigh"],
   "gpt-5.3-codex": ["low", "medium", "high", "xhigh"],
   "gpt-5.3-codex-spark": ["low", "medium", "high"],
@@ -121,7 +123,7 @@ export function getCurrentCodexModelSelectionValue(model: string | undefined, fa
 export function getCodexModelSelectionDescription(choice: string): string | undefined {
   switch (choice) {
     case RECOMMENDED_CODEX_MODEL:
-      return "Standard GPT-5.4 mode.";
+      return "Recommended GPT-5.5 mode.";
     case GPT_5_4_FAST_MODEL_LABEL:
       return "Fast mode: 1.5x speed, 2x credits.";
     case "gpt-5.3-codex-spark":

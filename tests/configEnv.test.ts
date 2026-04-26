@@ -406,7 +406,7 @@ describe("config .env overrides", () => {
     await expect(fs.readFile(path.join(cwd, ".env"), "utf8")).resolves.toContain('OPENAI_API_KEY="openai-key"');
   });
 
-  it("defaults first-run setup to the current openai_api gpt-5.4 low/high configuration", async () => {
+  it("defaults first-run setup to the current openai_api gpt-5.5 medium configuration", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "autolabos-setup-codex-defaults-"));
     const paths = resolveAppPaths(cwd);
 
@@ -423,13 +423,13 @@ describe("config .env overrides", () => {
     );
 
     expect(config.providers.llm_mode).toBe("openai_api");
-    expect(config.providers.openai.chat_model).toBe("gpt-5.4");
-    expect(config.providers.openai.chat_reasoning_effort).toBe("low");
-    expect(config.providers.openai.command_reasoning_effort).toBe("low");
-    expect(config.providers.openai.model).toBe("gpt-5.4");
-    expect(config.providers.openai.reasoning_effort).toBe("high");
-    expect(config.providers.openai.experiment_model).toBe("gpt-5.4");
-    expect(config.providers.openai.experiment_reasoning_effort).toBe("high");
+    expect(config.providers.openai.chat_model).toBe("gpt-5.5");
+    expect(config.providers.openai.chat_reasoning_effort).toBe("medium");
+    expect(config.providers.openai.command_reasoning_effort).toBe("medium");
+    expect(config.providers.openai.model).toBe("gpt-5.5");
+    expect(config.providers.openai.reasoning_effort).toBe("medium");
+    expect(config.providers.openai.experiment_model).toBe("gpt-5.5");
+    expect(config.providers.openai.experiment_reasoning_effort).toBe("medium");
   });
 
   it("asks OpenAI setup models before reasoning efforts and only once per slot", async () => {

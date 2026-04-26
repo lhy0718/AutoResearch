@@ -319,7 +319,12 @@ const SYNTHESIZE_METRIC_KEYS = [
   "bleu",
   "rouge",
   "rouge_l",
-  "success_rate"
+  "success_rate",
+  "mean_accuracy",
+  "mean_zero_shot_accuracy",
+  "zero_shot_accuracy",
+  "arc_challenge_accuracy",
+  "hellaswag_accuracy"
 ];
 
 /**
@@ -442,7 +447,52 @@ export function synthesizeRelativeMetrics(
     }
   }
 
+  // Strategy 4: recipe/condition result rows, e.g. PEFT runners that emit
+  // `results: [{ recipe, kind, mean_zero_shot_accuracy, ... }]`.
+  const results = metrics.results;
+  if (Array.isArray(results) && results.length >= 2) {
+    const records = results.filter(
+      (item: unknown): item is Record<string, unknown> =>
+        !!item && typeof item === "object" && !Array.isArray(item)
+    );
+    const baseline = records.find((record) => isBaselineResultRecord(record));
+    if (baseline) {
+      const nonBaseline = records.filter((record) => record !== baseline);
+      if (nonBaseline.length > 0) {
+        const enriched: Record<string, unknown> = { ...metrics };
+        for (const metricKey of SYNTHESIZE_METRIC_KEYS) {
+          const baseVal = typeof baseline[metricKey] === "number" ? (baseline[metricKey] as number) : undefined;
+          if (baseVal === undefined) continue;
+          let bestDelta = -Infinity;
+          for (const record of nonBaseline) {
+            const val = typeof record[metricKey] === "number" ? (record[metricKey] as number) : undefined;
+            if (val === undefined) continue;
+            const delta = val - baseVal;
+            if (delta > bestDelta) bestDelta = delta;
+          }
+          if (Number.isFinite(bestDelta)) {
+            enriched[`${metricKey}_delta_vs_baseline`] = bestDelta;
+            enriched[`${metricKey}_improvement_over_baseline`] = bestDelta;
+            if (metricKey.includes("accuracy")) {
+              enriched.accuracy_delta_vs_baseline = bestDelta;
+              enriched.accuracy_improvement_over_baseline = bestDelta;
+            }
+          }
+        }
+        return enriched;
+      }
+    }
+  }
+
   return metrics;
+}
+
+function isBaselineResultRecord(record: Record<string, unknown>): boolean {
+  const labels = ["name", "recipe", "condition", "method", "kind", "label"]
+    .map((key) => record[key])
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+  return BASELINE_PATTERN.test(labels);
 }
 
 function buildObjectiveMetricSystemPrompt(): string {
@@ -667,9 +717,16 @@ function inferBestEffortMetricMatch(
   if (metrics.length === 0) {
     return undefined;
   }
+  const relativeObjective = isRelativeObjectiveMetricRequest(preferredKeys, rawObjectiveMetric);
+  const candidateMetrics = relativeObjective
+    ? metrics.filter((metric) => isRelativeMetricKey(metric.key))
+    : metrics;
+  if (candidateMetrics.length === 0) {
+    return undefined;
+  }
 
   const objectiveTokens = tokenizeMetricText(rawObjectiveMetric).filter((token) => !GENERIC_OBJECTIVE_TOKENS.has(token));
-  const scored = metrics
+  const scored = candidateMetrics
     .map((metric) => {
       const metricTokens = tokenizeMetricText(metric.key);
       const sharedTokens = metricTokens.filter((token) => objectiveTokens.includes(token));
@@ -691,7 +748,7 @@ function inferBestEffortMetricMatch(
     };
   }
 
-  if (preferredKeys.length === 0 && metrics.length === 1) {
+  if (!relativeObjective && preferredKeys.length === 0 && metrics.length === 1) {
     return {
       metric: metrics[0],
       summaryPrefix: `Best-effort objective match inferred from the sole numeric metric "${metrics[0].key}".`
@@ -699,6 +756,16 @@ function inferBestEffortMetricMatch(
   }
 
   return undefined;
+}
+
+function isRelativeObjectiveMetricRequest(preferredKeys: string[], rawObjectiveMetric: string): boolean {
+  const text = `${preferredKeys.join(" ")} ${rawObjectiveMetric}`.toLowerCase();
+  return /\b(delta|improvement|improve|gain|lift)\b/u.test(text) || /\b(vs|versus|over)\s+(?:a\s+|the\s+)?baseline\b/u.test(text);
+}
+
+function isRelativeMetricKey(key: string): boolean {
+  const normalized = key.toLowerCase();
+  return normalized.includes("delta") || normalized.includes("improvement") || normalized.includes("gain") || normalized.includes("lift");
 }
 
 function normalizeMetricKey(value: string): string {

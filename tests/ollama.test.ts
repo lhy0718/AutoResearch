@@ -692,9 +692,9 @@ describe("Ollama end-to-end provider coexistence", () => {
       semanticScholarApiKey: "test-key"
     });
 
-    expect(config.providers.codex.model).toBe("gpt-5.4");
+    expect(config.providers.codex.model).toBe("gpt-5.5");
     expect(config.providers.codex.auth_required).toBe(true);
-    expect(config.providers.openai.model).toBe("gpt-5.4");
+    expect(config.providers.openai.model).toBe("gpt-5.5");
     expect(config.providers.openai.api_key_required).toBe(true);
     expect(config.providers.ollama).toBeDefined();
     expect(getDefaultPdfAnalysisModeForLlmMode(config.providers.llm_mode)).toBe("ollama_vision");

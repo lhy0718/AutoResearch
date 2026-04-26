@@ -42,6 +42,10 @@ import {
 import { CollectEnrichmentLogEntry } from "../collection/types.js";
 import { DoctorCheck, RunRecord, TransitionRecommendation } from "../../types.js";
 import { RECOMMENDED_CODEX_MODEL } from "../../integrations/codex/modelCatalog.js";
+import {
+  DEFAULT_OPENAI_RESPONSES_MODEL,
+  DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT
+} from "../../integrations/openai/modelCatalog.js";
 import { checkCodexOAuthStatus } from "../../integrations/codex/oauthAuth.js";
 import { CodexOAuthResponsesLLMClient } from "../llm/client.js";
 import { resolveCodexOAuthCredentials } from "../../integrations/codex/oauthAuth.js";
@@ -410,8 +414,9 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         deps.config.providers?.llm_mode === "codex" ||
         deps.config.providers?.llm_mode === "codex_chatgpt_only" ||
         analysisMode === "ollama_vision";
-      const openAiModel = deps.config.providers?.openai?.model || "gpt-5.4";
-      const openAiReasoningEffort = deps.config.providers?.openai?.reasoning_effort || "high";
+      const openAiModel = deps.config.providers?.openai?.model || DEFAULT_OPENAI_RESPONSES_MODEL;
+      const openAiReasoningEffort =
+        deps.config.providers?.openai?.reasoning_effort || DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT;
       const analysisFingerprint = buildAnalysisFingerprint({
         analysisMode,
         responsesModel: openAiModel,
@@ -956,8 +961,10 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                     client: deps.responsesPdfAnalysis,
                     paper: row,
                     pdfUrl,
-                    model: deps.config.providers?.openai?.model || "gpt-5.4",
-                    reasoningEffort: deps.config.providers?.openai?.reasoning_effort || "high",
+                    model: deps.config.providers?.openai?.model || DEFAULT_OPENAI_RESPONSES_MODEL,
+                    reasoningEffort:
+                      deps.config.providers?.openai?.reasoning_effort ||
+                      DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT,
                     maxAttempts: 2,
                     abortSignal,
                     onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)

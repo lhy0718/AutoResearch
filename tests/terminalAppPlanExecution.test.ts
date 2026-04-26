@@ -479,7 +479,7 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(app.logs).toContain("Current model backend: Codex CLI");
     expect(app.logs).toContain("Current model slots:");
     expectLogContaining(app.logs, "- general chat:");
-    expectLogContaining(app.logs, "Recommended: gpt-5.4 + low");
+    expectLogContaining(app.logs, "Recommended: gpt-5.5 + medium");
     expectLogContaining(app.logs, "- research backend:");
     expectLogContaining(app.logs, "Recommended:");
     expect(app.logs.some((line: string) => line.includes("- analysis/hypothesis:"))).toBe(false);
@@ -496,11 +496,11 @@ describe("TerminalApp pending natural plan execution", () => {
       expect.arrayContaining([
         expect.objectContaining({
           value: "chat",
-          description: expect.stringContaining("Recommended: gpt-5.4 + low")
+          description: expect.stringContaining("Recommended: gpt-5.5 + medium")
         }),
         expect.objectContaining({
           value: "backend",
-          description: expect.stringContaining("Recommended: gpt-5.4 + high")
+          description: expect.stringContaining("Recommended: gpt-5.5 + medium")
         })
       ]),
       "backend"
@@ -635,7 +635,7 @@ describe("TerminalApp pending natural plan execution", () => {
       "Select general chat model",
       expect.arrayContaining([
         expect.objectContaining({
-          value: "gpt-5.4",
+          value: "gpt-5.5",
           description: expect.stringContaining("Recommended preset.")
         })
       ]),

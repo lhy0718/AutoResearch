@@ -33,6 +33,7 @@ export interface ResolvedModelBilling {
 
 const TOKEN_PRICED_MODELS: Record<string, TokenPricedModelBilling> = {
   // OpenAI Responses family.
+  "gpt-5.5": { kind: "token", inputUsdPer1MTokens: 2.5, outputUsdPer1MTokens: 15 },
   "gpt-5.4": { kind: "token", inputUsdPer1MTokens: 2.5, outputUsdPer1MTokens: 15 },
   "gpt-5": { kind: "token", inputUsdPer1MTokens: 1.25, outputUsdPer1MTokens: 10 },
   "gpt-5-mini": { kind: "token", inputUsdPer1MTokens: 0.25, outputUsdPer1MTokens: 2 },

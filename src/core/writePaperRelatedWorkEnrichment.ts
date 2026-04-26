@@ -7,6 +7,10 @@ import {
   shouldFallbackResponsesPdfToLocalText
 } from "./analysis/paperAnalyzer.js";
 import { getPdfAnalysisModeForConfig } from "../config.js";
+import {
+  DEFAULT_OPENAI_RESPONSES_MODEL,
+  DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT
+} from "../integrations/openai/modelCatalog.js";
 import { AnalysisCorpusRow, resolvePaperPdfUrl, resolvePaperTextSource } from "./analysis/paperText.js";
 import { safeRead, writeRunArtifact } from "./nodes/helpers.js";
 import { StoredCorpusRow } from "./collection/types.js";
@@ -147,8 +151,9 @@ export async function maybeEnrichRelatedWorkScout(input: {
             client: input.responsesPdfAnalysis,
             paper: analysisPaper,
             pdfUrl,
-            model: input.config.providers.openai?.model || "gpt-5.4",
-            reasoningEffort: input.config.providers.openai?.reasoning_effort || "high",
+            model: input.config.providers.openai?.model || DEFAULT_OPENAI_RESPONSES_MODEL,
+            reasoningEffort:
+              input.config.providers.openai?.reasoning_effort || DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT,
             maxAttempts: 2,
             abortSignal: input.abortSignal,
             onProgress: (text) => input.emitLog?.(`[${row.paper_id}] ${text}`)
@@ -392,8 +397,8 @@ function buildEnrichmentAnalysisSignature(config: AppConfig): RelatedWorkEnrichm
       pdf_mode: pdfMode,
       llm_mode: llmMode,
       backend: "openai_research_backend",
-      model: config.providers?.openai?.model || "gpt-5.4",
-      reasoning_effort: config.providers?.openai?.reasoning_effort || "high"
+      model: config.providers?.openai?.model || DEFAULT_OPENAI_RESPONSES_MODEL,
+      reasoning_effort: config.providers?.openai?.reasoning_effort || DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT
     };
   }
 

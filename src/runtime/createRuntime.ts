@@ -129,8 +129,8 @@ export async function createAutoLabOSRuntime(
   const resolvedExecutionProfile = executionProfile || (await detectExecutionProfile());
   const runStore = new RunStore(paths, { nodeOptionPackageName });
   const codex = new CodexNativeClient(paths.cwd, {
-    model: config.providers.codex.model || "gpt-5.4",
-    reasoningEffort: config.providers.codex.reasoning_effort || "xhigh",
+    model: config.providers.codex.model || "gpt-5.5",
+    reasoningEffort: config.providers.codex.reasoning_effort || "medium",
     fastMode: config.providers.codex.fast_mode === true
   });
   const openAiText = new OpenAiResponsesTextClient(() => resolveOpenAiApiKey(paths.cwd));

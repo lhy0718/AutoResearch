@@ -76,6 +76,11 @@ export class ImplementSessionStopError extends Error {
   }
 }
 
+const IMPLEMENT_DELTA_PROGRESS_MIN_CHARS = 4_000;
+const IMPLEMENT_DELTA_PROGRESS_MIN_MS = 5_000;
+const IMPLEMENT_STAGED_LLM_TRANSIENT_RETRY_MAX_ATTEMPTS = 5;
+const IMPLEMENT_STAGED_LLM_TRANSIENT_RETRY_DELAY_MS = 1_000;
+
 interface ImplementSessionDeps {
   config: AppConfig;
   codex: CodexNativeClient;
@@ -862,6 +867,87 @@ export class ImplementSessionManager {
             runnerFeedback: promptTaskSpec.context.runner_feedback
           });
           if (!recovered) {
+            if (isRetryableImplementStagedLlmMaterializationError(error) && attempt < MAX_IMPLEMENT_ATTEMPTS) {
+              const verifyReport: VerifyReport = {
+                status: "fail",
+                failure_type: "implementation",
+                next_action: "retry_patch",
+                stderr_excerpt: trimBlock(errorMessage, 1200) || errorMessage,
+                summary: `Implementation materialization failed before a runnable bundle was produced; retrying with a fresh attempt: ${errorMessage}`
+              };
+              attemptRecords.push({
+                attempt,
+                summary: verifyReport.summary,
+                branch_plan: branchPlan,
+                localization: actualSearchLocalization,
+                search_localization: searchLocalization,
+                verify_report: verifyReport,
+                changed_files: [],
+                artifacts: [],
+                public_artifacts: [],
+                raw_response: "",
+                restored_after_failure: false,
+                restored_paths: []
+              });
+              await writeJsonFile(path.join(runDir, "verify_report.json"), verifyReport);
+              await writeJsonFile(path.join(runDir, "implement_attempts.json"), {
+                attempts: attemptRecords
+              });
+              emitImplementObservation("attempt", verifyReport.summary, {
+                attempt,
+                threadId: activeThreadId,
+                publicDir: isolation.publicDir
+              });
+
+              const restoreResult = await restoreIsolationContextForRetry(isolation);
+              if (restoreResult.restoredPaths.length > 0 || isolation.effectiveStrategy === "attempt_snapshot_restore") {
+                restoredAttemptCount += 1;
+              }
+              const lastAttempt = attemptRecords.at(-1);
+              if (lastAttempt) {
+                lastAttempt.restored_after_failure = true;
+                lastAttempt.restored_paths = restoreResult.restoredPaths;
+              }
+              await writeJsonFile(path.join(runDir, "implement_attempts.json"), {
+                attempts: attemptRecords
+              });
+              replaceSetContents(changedFiles, []);
+              replaceSetContents(artifacts, []);
+              replaceSetContents(publicArtifacts, []);
+              emitImplementObservation(
+                "attempt",
+                `Restored ${restoreResult.restoredPaths.length} path(s) before retrying after staged materialization failure.`,
+                {
+                  attempt,
+                  threadId: activeThreadId,
+                  publicDir: defaultPublicDir
+                }
+              );
+              const retryIsolationAttempt: CandidateIsolationAttemptReport = {
+                attempt,
+                requested_strategy: requestedIsolationStrategy,
+                effective_strategy: isolation.effectiveStrategy,
+                fallback_from: isolation.fallbackFrom,
+                fallback_reason: isolation.fallbackReason,
+                workspace_root: this.deps.workspaceRoot,
+                isolated_workspace_root:
+                  isolation.effectiveStrategy === "attempt_worktree" ? isolation.workspaceRoot : undefined,
+                snapshot_root: isolation.attemptSnapshot?.snapshotRoot,
+                worktree_path: isolation.worktreePath,
+                restored_paths: restoreResult.restoredPaths,
+                restored_after_failure: true,
+                cleanup_status: "completed",
+                cleanup_notes: [],
+                orphaned_residue_paths: isolation.orphanedResiduePaths,
+                started_at: attemptStartedAt,
+                finished_at: new Date().toISOString()
+              };
+              candidateIsolationAttempts.push(retryIsolationAttempt);
+              const retryCleanup = await cleanupIsolationContext(isolation);
+              retryIsolationAttempt.cleanup_status = retryCleanup.status;
+              retryIsolationAttempt.cleanup_notes = retryCleanup.notes;
+              continue;
+            }
             const verifyReport = buildImplementationTurnFailureReport(errorMessage);
             attemptRecords.push({
               attempt,
@@ -1522,6 +1608,7 @@ export class ImplementSessionManager {
       "Return ONLY one JSON object with keys: summary, experiment_mode, run_command, test_command, working_dir, changed_files, artifacts, public_dir, public_artifacts, script_path, metrics_path, localization, assumptions, file_edits.",
       "Use experiment_mode = real_execution | hybrid_validation | synthetic_validation.",
       "changed_files, artifacts, and public_artifacts must be arrays of workspace paths.",
+      "List only artifacts materialized during implement_experiments in changed_files, artifacts, and public_artifacts; do not list deferred runtime outputs such as metrics_path, results*.json, *_results.json, study_results.json, latest_results.json, or run.log unless you actually write them now.",
       "file_edits must be an array of objects with keys: path, content.",
       "localization must be an object with keys: summary, strategy, reasoning, selected_files, candidate_files, confidence.",
       "candidate_files must be an array of objects with keys: path, symbol, reason, confidence."
@@ -1893,6 +1980,7 @@ export class ImplementSessionManager {
       "Output contract reminder:",
       "- Return ONLY one JSON object with keys: summary, experiment_mode, run_command, test_command, working_dir, changed_files, artifacts, public_dir, public_artifacts, script_path, metrics_path, localization, assumptions, file_edits.",
       "- file_edits must contain full UTF-8 contents for each referenced file.",
+      "- changed_files, artifacts, and public_artifacts must list only files materialized during implement_experiments, not deferred runtime outputs such as metrics_path, results*.json, *_results.json, study_results.json, latest_results.json, or run.log.",
       "- Responses that only describe the blocker or omit file_edits are invalid."
     ].join("\n");
   }
@@ -1920,6 +2008,8 @@ export class ImplementSessionManager {
     let sawProgressEvent = false;
     let sawDeltaEvent = false;
     let lastProgressAt = Date.now();
+    let lastDeltaObservationAt = 0;
+    let lastDeltaObservationChars = 0;
     let heartbeatTimer: NodeJS.Timeout | undefined;
     const persistPartialSnapshot = async () => {
       if (!partialText.trim()) {
@@ -1943,6 +2033,31 @@ export class ImplementSessionManager {
     } catch {
       // Best effort only: a stale partial snapshot should never block a provider request.
     }
+    const emitDeltaProgressSummary = (force = false) => {
+      if (!sawDeltaEvent) {
+        return;
+      }
+      const now = Date.now();
+      const charCount = partialText.trim().length;
+      if (
+        !force &&
+        now - lastDeltaObservationAt < IMPLEMENT_DELTA_PROGRESS_MIN_MS &&
+        charCount - lastDeltaObservationChars < IMPLEMENT_DELTA_PROGRESS_MIN_CHARS
+      ) {
+        return;
+      }
+      lastDeltaObservationAt = now;
+      lastDeltaObservationChars = charCount;
+      input.emitImplementObservation(
+        "codex",
+        `LLM streamed ${charCount} chars; partial snapshot updated at ${formatArtifactPath(partialResponsePath)}.`,
+        {
+          attempt: input.attempt,
+          threadId: input.threadId,
+          publicDir: input.publicDir
+        }
+      );
+    };
     const timeoutController = input.timeoutMs > 0 ? new AbortController() : undefined;
     const timeoutId = timeoutController
       ? setTimeout(() => timeoutController.abort(), input.timeoutMs)
@@ -1967,30 +2082,78 @@ export class ImplementSessionManager {
       }, heartbeatMs);
     }
     try {
-      const completion = await this.deps.llm!.complete(input.prompt, {
-        threadId: input.threadId,
-        systemPrompt: input.systemPrompt,
-        reasoningEffort: input.reasoningEffort,
-        abortSignal: llmAbortSignal,
-        onProgress: (event) => {
-          const text = event.text.trim();
-          lastProgressAt = Date.now();
-          sawProgressEvent = true;
-          if (!text) {
-            return;
-          }
-          if (event.type === "delta") {
-            sawDeltaEvent = true;
-            partialText += `${text}\n`;
-            void maybePersistPartialSnapshot();
-          }
-          input.emitImplementObservation("codex", event.type === "delta" ? `LLM> ${text}` : text, {
-            attempt: input.attempt,
+      let completion: { text: string; threadId?: string } | undefined;
+      for (let requestAttempt = 1; requestAttempt <= IMPLEMENT_STAGED_LLM_TRANSIENT_RETRY_MAX_ATTEMPTS; requestAttempt += 1) {
+        try {
+          completion = await this.deps.llm!.complete(input.prompt, {
             threadId: input.threadId,
-            publicDir: input.publicDir
+            systemPrompt: input.systemPrompt,
+            reasoningEffort: input.reasoningEffort,
+            abortSignal: llmAbortSignal,
+            onProgress: (event) => {
+              const text = event.text.trim();
+              lastProgressAt = Date.now();
+              sawProgressEvent = true;
+              if (!text) {
+                return;
+              }
+              if (event.type === "delta") {
+                sawDeltaEvent = true;
+                partialText += `${text}\n`;
+                void maybePersistPartialSnapshot();
+                emitDeltaProgressSummary();
+                return;
+              }
+              input.emitImplementObservation("codex", text, {
+                attempt: input.attempt,
+                threadId: input.threadId,
+                publicDir: input.publicDir
+              });
+            }
           });
+          break;
+        } catch (error) {
+          const canRetryTransient =
+            !llmAbortSignal?.aborted &&
+            isTransientStagedLlmProviderError(error) &&
+            requestAttempt < IMPLEMENT_STAGED_LLM_TRANSIENT_RETRY_MAX_ATTEMPTS;
+          if (!canRetryTransient) {
+            throw error;
+          }
+          const discardedPartialChars = partialText.trim().length;
+          if (discardedPartialChars > 0) {
+            await persistPartialSnapshot();
+            partialText = "";
+            lastDeltaObservationChars = 0;
+            lastDeltaObservationAt = 0;
+            sawDeltaEvent = false;
+          }
+          input.emitImplementObservation(
+            "codex",
+            [
+              `Transient staged_llm provider error; retrying request ${requestAttempt + 1}/${IMPLEMENT_STAGED_LLM_TRANSIENT_RETRY_MAX_ATTEMPTS}: ${trimBlock(
+                error instanceof Error ? error.message : String(error),
+                400
+              )}`,
+              discardedPartialChars > 0
+                ? `Discarded ${discardedPartialChars} chars of incomplete provider output before retrying the same request.`
+                : undefined
+            ]
+              .filter(Boolean)
+              .join(" "),
+            {
+              attempt: input.attempt,
+              threadId: input.threadId,
+              publicDir: input.publicDir
+            }
+          );
+          await delay(IMPLEMENT_STAGED_LLM_TRANSIENT_RETRY_DELAY_MS * requestAttempt, llmAbortSignal);
         }
-      });
+      }
+      if (!completion) {
+        throw new Error("staged_llm provider did not return a completion");
+      }
+      emitDeltaProgressSummary(true);
       if (completion.text.trim()) {
         partialText = completion.text;
         await persistPartialSnapshot();
@@ -2378,7 +2541,34 @@ export class ImplementSessionManager {
           subdivisionDepth: 0,
           systemPrompt: input.systemPrompt,
           completedSectionIds,
-          currentFileContent
+          currentFileContent,
+          validateContent:
+            useSectionedSkeleton && isPythonMaterializationPath(filePath)
+              ? async (sectionContent) => {
+                  const candidateContent = applySectionContentToCanonicalSkeleton(
+                    currentFileContent,
+                    plannedSection.section.id,
+                    sectionContent,
+                    filePath
+                  );
+                  const candidatePath = path.join(
+                    input.runDir,
+                    IMPLEMENT_UNIT_SECTION_DIR,
+                    `${sanitizeArtifactId(unit.id)}__${sanitizeArtifactId(plannedSection.section.id)}__candidate.py`
+                  );
+                  await ensureDir(path.dirname(candidatePath));
+                  await fs.writeFile(candidatePath, candidateContent, "utf8");
+                  const syntaxObs = await this.deps.aci.runTests(
+                    `python3 -m py_compile ${JSON.stringify(candidatePath)}`,
+                    path.dirname(candidatePath),
+                    input.abortSignal
+                  );
+                  if (syntaxObs.status === "ok") {
+                    return detectPythonUndefinedUppercaseReferences(candidatePath);
+                  }
+                  return trimBlock(syntaxObs.stderr || syntaxObs.stdout || "unknown py_compile failure", 800);
+                }
+              : undefined
         });
         activeThreadId = chunkCompletion.threadId || activeThreadId;
         const sectionContent = chunkCompletion.content;
@@ -2487,6 +2677,7 @@ export class ImplementSessionManager {
     systemPrompt: string;
     completedSectionIds: string[];
     currentFileContent: string;
+    validateContent?: (content: string) => Promise<string | undefined>;
   }): Promise<{ content: string; threadId?: string }> {
     const chunkArtifactId = buildMaterializationChunkArtifactId(input);
     const chunkPrompt = this.buildStagedImplementFileChunkPrompt({
@@ -2540,8 +2731,42 @@ export class ImplementSessionManager {
       const chunkRawPath = path.join(input.runDir, IMPLEMENT_UNIT_CHUNK_RESPONSE_DIR, `${chunkArtifactId}.txt`);
       await ensureDir(path.dirname(chunkRawPath));
       await fs.writeFile(chunkRawPath, chunkCompletion.text, "utf8");
+      const content = normalizeStagedLlmChunkContent(
+        parseStructuredChunkResponse(chunkCompletion.text, input.chunk.id),
+        input.unit.target_path || ""
+      );
+      ensureMaterializedChunkHasSubstance(content, input.unit.target_path || "", input.chunk.id);
+      let materializedContent = content;
+      let validationContent = appendDraftSection(input.chunkDraftSoFar, materializedContent);
+      let validationError = await input.validateContent?.(validationContent);
+      const missingConstants = extractUndefinedUppercaseConstantNames(validationError);
+      if (validationError && missingConstants.length > 0) {
+        const repairResult = await this.completeStagedLlmMissingUppercaseConstantsRepair({
+          ...input,
+          chunkArtifactId,
+          content,
+          missingConstants,
+          validationError
+        });
+        const repairedContent = appendDraftSection(repairResult.content, content);
+        const repairedValidationContent = appendDraftSection(input.chunkDraftSoFar, repairedContent);
+        const repairedValidationError = await input.validateContent?.(repairedValidationContent);
+        if (!repairedValidationError) {
+          materializedContent = repairedContent;
+          validationContent = repairedValidationContent;
+          validationError = undefined;
+        } else {
+          validationContent = repairedValidationContent;
+          validationError = repairedValidationError;
+        }
+      }
+      if (validationError) {
+        throw new Error(
+          `staged_llm chunk response for ${input.chunk.id} failed candidate validation: ${validationError}`
+        );
+      }
       return {
-        content: parseStructuredChunkResponse(chunkCompletion.text, input.chunk.id),
+        content: materializedContent,
         threadId: chunkCompletion.threadId || input.threadId
       };
     } catch (error) {
@@ -2569,7 +2794,11 @@ export class ImplementSessionManager {
         throw error;
       }
 
-      const retryReason = isImplementStagedLlmTimeoutError(error) ? "timed out" : "was terminated";
+      const retryReason = isImplementStagedLlmTimeoutError(error)
+        ? "timed out"
+        : isCandidateValidationStagedLlmError(error)
+          ? "failed candidate validation"
+          : "was terminated";
       input.emitImplementObservation(
         "codex",
         `Chunk generation ${retryReason} for ${input.chunk.title}; asking staged_llm to re-subdivide it into smaller work units.`,
@@ -2597,7 +2826,8 @@ export class ImplementSessionManager {
         publicDir: input.publicDir,
         emitImplementObservation: input.emitImplementObservation,
         reasoningEffort: input.reasoningEffort,
-        forceSmallerSubdivision: true
+        forceSmallerSubdivision: true,
+        previousFailure: trimBlock(error instanceof Error ? error.message : String(error), 1200)
       });
       const retryChunks = retrySubdivisionPlan.plan.chunks;
       if (retryChunks.length < 2) {
@@ -2613,7 +2843,7 @@ export class ImplementSessionManager {
           parentChunk: input.chunk,
           chunkSubdivisionPlan: retrySubdivisionPlan.plan,
           draftSoFar: input.draftSoFar,
-          chunkDraftSoFar: subdividedDraft,
+          chunkDraftSoFar: appendDraftSection(input.chunkDraftSoFar, subdividedDraft),
           threadId: activeThreadId,
           chunkLabel: `${input.chunkLabel} resubchunk ${retryIndex + 1}/${retryChunks.length}`,
           subdivisionDepth: input.subdivisionDepth + 1,
@@ -2626,11 +2856,208 @@ export class ImplementSessionManager {
             ? `${subdividedDraft.trimEnd()}\n\n${retryResult.content.trimStart()}`
             : retryResult.content;
       }
+      const combinedValidationError = await input.validateContent?.(
+        appendDraftSection(input.chunkDraftSoFar, subdividedDraft)
+      );
+      if (combinedValidationError) {
+        throw new Error(
+          `staged_llm chunk response for ${input.chunk.id} failed candidate validation: ${combinedValidationError}`
+        );
+      }
       return {
         content: subdividedDraft,
         threadId: activeThreadId
       };
     }
+  }
+
+  private async completeStagedLlmMissingUppercaseConstantsRepair(input: {
+    runDir: string;
+    taskSpec: ImplementTaskSpec;
+    searchLocalization: LocalizationResult;
+    branchPlan: BranchPlan;
+    scaffold: StructuredImplementResponse;
+    decompositionPlan: DynamicDecompositionPlan;
+    unit: DynamicDecompositionUnit;
+    materializationPlan: DynamicMaterializationPlan;
+    chunk: DynamicMaterializationChunk;
+    parentChunk?: DynamicMaterializationChunk;
+    chunkSubdivisionPlan?: DynamicMaterializationPlan;
+    chunkIndex: number;
+    chunkTotal: number;
+    draftSoFar: string;
+    chunkDraftSoFar: string;
+    timeoutMs: number;
+    abortSignal?: AbortSignal;
+    attempt: number;
+    threadId?: string;
+    publicDir: string;
+    emitImplementObservation: (
+      stage: ImplementProgressStage,
+      message: string,
+      extras?: Partial<ImplementProgressStatus>
+    ) => void;
+    reasoningEffort?: string;
+    systemPrompt: string;
+    completedSectionIds: string[];
+    currentFileContent: string;
+    chunkLabel: string;
+    chunkArtifactId: string;
+    content: string;
+    missingConstants: string[];
+    validationError: string;
+  }): Promise<{ content: string; threadId?: string }> {
+    const repairPrompt = this.buildStagedImplementMissingUppercaseConstantsRepairPrompt(input);
+    const promptPath = path.join(
+      input.runDir,
+      IMPLEMENT_UNIT_CHUNK_PROMPT_DIR,
+      `${input.chunkArtifactId}_constant_repair.txt`
+    );
+    await ensureDir(path.dirname(promptPath));
+    await fs.writeFile(promptPath, repairPrompt, "utf8");
+    input.emitImplementObservation(
+      "codex",
+      `Repairing missing uppercase constants for ${input.chunk.title}: ${input.missingConstants.join(", ")}`,
+      {
+        attempt: input.attempt,
+        threadId: input.threadId,
+        publicDir: input.publicDir
+      }
+    );
+    const completion = await this.completeStagedLlmRequest({
+      runDir: input.runDir,
+      prompt: repairPrompt,
+      systemPrompt: appendStagedImplementChunkOverrideToPrompt(
+        input.systemPrompt,
+        input.unit.target_path || "",
+        input.chunk.id
+      ),
+      timeoutMs: input.timeoutMs,
+      abortSignal: input.abortSignal,
+      attempt: input.attempt,
+      threadId: input.threadId,
+      publicDir: input.publicDir,
+      emitImplementObservation: input.emitImplementObservation,
+      reasoningEffort: input.reasoningEffort
+    });
+    const rawPath = path.join(
+      input.runDir,
+      IMPLEMENT_UNIT_CHUNK_RESPONSE_DIR,
+      `${input.chunkArtifactId}_constant_repair.txt`
+    );
+    await ensureDir(path.dirname(rawPath));
+    await fs.writeFile(rawPath, completion.text, "utf8");
+    const content = normalizeStagedLlmChunkContent(
+      parseStructuredChunkResponse(completion.text, input.chunk.id),
+      input.unit.target_path || ""
+    );
+    ensureMaterializedChunkHasSubstance(content, input.unit.target_path || "", `${input.chunk.id}_constant_repair`);
+    return {
+      content,
+      threadId: completion.threadId || input.threadId
+    };
+  }
+
+  private buildStagedImplementMissingUppercaseConstantsRepairPrompt(params: {
+    taskSpec: ImplementTaskSpec;
+    searchLocalization: LocalizationResult;
+    branchPlan: BranchPlan;
+    scaffold: StructuredImplementResponse;
+    decompositionPlan: DynamicDecompositionPlan;
+    unit: DynamicDecompositionUnit;
+    materializationPlan: DynamicMaterializationPlan;
+    chunk: DynamicMaterializationChunk;
+    parentChunk?: DynamicMaterializationChunk;
+    chunkSubdivisionPlan?: DynamicMaterializationPlan;
+    chunkIndex: number;
+    chunkTotal: number;
+    draftSoFar: string;
+    chunkDraftSoFar: string;
+    completedSectionIds: string[];
+    currentFileContent: string;
+    content: string;
+    missingConstants: string[];
+    validationError: string;
+  }): string {
+    return [
+      `Staged implement missing uppercase constant repair for chunk ${params.chunkIndex}/${params.chunkTotal}.`,
+      `Target file: ${params.unit.target_path}`,
+      `Target chunk: ${params.chunk.id} — ${params.chunk.title}`,
+      "Return ONLY one JSON object with keys: chunk_id, content.",
+      `Set chunk_id exactly to ${JSON.stringify(params.chunk.id)}.`,
+      "Return only Python definitions that must be prepended before the attempted chunk content.",
+      "Do not repeat the attempted chunk content. Do not emit markdown fences.",
+      "Define every missing uppercase constant listed below before any code can reference it.",
+      "Use concrete, bounded values appropriate to the task, current file, and chunk purpose.",
+      "If a value should be configurable, define a safe default constant and let later config code override it explicitly.",
+      "Do not use globals() guards, placeholder strings, TODOs, or undefined names in the repair content.",
+      "The repair content must be syntactically valid Python by itself when inserted into the current section.",
+      "",
+      "Missing uppercase constants:",
+      JSON.stringify(params.missingConstants, null, 2),
+      "",
+      "Candidate validation failure:",
+      params.validationError,
+      "",
+      "Compact task spec:",
+      JSON.stringify(compactTaskSpecForChunkPrompt(params.taskSpec), null, 2),
+      "",
+      "Branch focus:",
+      JSON.stringify(compactBranchPlanForStagedLlmPrompt(params.branchPlan), null, 2),
+      "",
+      "Localization hints:",
+      JSON.stringify(compactLocalizationForStagedLlmPrompt(params.searchLocalization), null, 2),
+      "",
+      "Approved scaffold summary:",
+      JSON.stringify(
+        {
+          summary: params.scaffold.summary,
+          script_path: params.scaffold.script_path,
+          metrics_path: params.scaffold.metrics_path
+        },
+        null,
+        2
+      ),
+      "",
+      "Approved decomposition unit:",
+      JSON.stringify(compactDecompositionUnitForChunkPrompt(params.unit), null, 2),
+      "",
+      "Approved materialization chunk plan summary:",
+      JSON.stringify(compactMaterializationPlanForChunkPrompt(params.materializationPlan), null, 2),
+      "",
+      ...(params.chunkDraftSoFar.trim().length > 0
+        ? [
+            "Parent chunk draft so far:",
+            JSON.stringify(compactDraftForChunkPrompt(params.chunkDraftSoFar), null, 2),
+            ""
+          ]
+        : []),
+      ...(params.parentChunk
+        ? [
+            "Parent chunk being decomposed:",
+            JSON.stringify(compactMaterializationChunkForChunkPrompt(params.parentChunk), null, 2),
+            ""
+          ]
+        : []),
+      ...(params.chunkSubdivisionPlan
+        ? [
+            "Approved chunk subdivision plan summary:",
+            JSON.stringify(compactMaterializationPlanForChunkPrompt(params.chunkSubdivisionPlan), null, 2),
+            ""
+          ]
+        : []),
+      "Completed section ids:",
+      JSON.stringify(params.completedSectionIds, null, 2),
+      "",
+      "Requested chunk:",
+      JSON.stringify(compactMaterializationChunkForChunkPrompt(params.chunk), null, 2),
+      "",
+      "Attempted chunk content that failed validation:",
+      JSON.stringify(compactDraftForChunkPrompt(params.content), null, 2),
+      "",
+      "Current file excerpt:",
+      JSON.stringify(compactDraftForChunkPrompt(params.currentFileContent), null, 2)
+    ].join("\n");
   }
 
   private buildStagedImplementFilePrompt(params: {
@@ -2994,6 +3421,7 @@ export class ImplementSessionManager {
     ) => void;
     reasoningEffort?: string;
     forceSmallerSubdivision?: boolean;
+    previousFailure?: string;
   }): Promise<{ plan: DynamicMaterializationPlan; threadId?: string }> {
     input.emitImplementObservation(
       "codex",
@@ -3015,7 +3443,8 @@ export class ImplementSessionManager {
         unit: input.unit,
         materializationPlan: input.materializationPlan,
         chunk: input.chunk,
-        forceSmallerSubdivision: input.forceSmallerSubdivision
+        forceSmallerSubdivision: input.forceSmallerSubdivision,
+        previousFailure: input.previousFailure
       }),
       systemPrompt: appendStagedImplementMaterializationPlanOverrideToPrompt(input.unit.target_path || ""),
       timeoutMs: input.timeoutMs,
@@ -3053,6 +3482,7 @@ export class ImplementSessionManager {
     materializationPlan: DynamicMaterializationPlan;
     chunk: DynamicMaterializationChunk;
     forceSmallerSubdivision?: boolean;
+    previousFailure?: string;
   }): string {
     return [
       "Staged implement chunk subdivision plan.",
@@ -3066,7 +3496,10 @@ export class ImplementSessionManager {
       ...(params.forceSmallerSubdivision
         ? [
             "The previous attempt to materialize this parent chunk did not complete.",
-            "Return a strictly smaller ordered subdivision with at least 2 subchunks."
+            "Return a strictly smaller ordered subdivision with at least 2 subchunks.",
+            "Use the failure below to choose dependency-safe subchunk boundaries.",
+            "If the failure names undefined uppercase constants, the earliest subchunk must define those constants before any dataclass, config, or helper references them; otherwise replace them with literal values or explicit config lookups in the same subchunk.",
+            ...(params.previousFailure ? ["Previous materialization failure:", params.previousFailure] : [])
           ]
         : []),
       "",
@@ -3661,6 +4094,38 @@ export class ImplementSessionManager {
       verificationWorkspaceRoot
     );
 
+    const pythonUnfilledSections = await detectPythonUnfilledAutolabosSections(executionScriptPath);
+    if (pythonUnfilledSections) {
+      const report: VerifyReport = {
+        status: "fail",
+        command,
+        cwd: attempt.workingDir,
+        exit_code: 0,
+        failure_type: "implementation",
+        next_action: "retry_patch",
+        stderr_excerpt: pythonUnfilledSections,
+        summary: buildVerificationFailureSummary(command, "implementation", pythonUnfilledSections)
+      };
+      this.deps.eventStream.emit({
+        type: "TEST_FAILED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          command,
+          cwd: attempt.workingDir,
+          failure_type: report.failure_type,
+          stderr: report.stderr_excerpt || report.summary,
+          attempt: attemptNumber
+        }
+      });
+      onProgress?.(report.summary, {
+        verificationCommand: command,
+        verifyStatus: report.status
+      });
+      return report;
+    }
+
     const missingArtifacts = await collectMissingVerificationArtifacts({
       command: executionCommand,
       cwd: executionCwd,
@@ -3830,6 +4295,555 @@ export class ImplementSessionManager {
         next_action: "retry_patch",
         stderr_excerpt: pythonUnsupportedGenerateKwarg,
         summary: buildVerificationFailureSummary(command, "implementation", pythonUnsupportedGenerateKwarg)
+      };
+      this.deps.eventStream.emit({
+        type: "TEST_FAILED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          command,
+          cwd: attempt.workingDir,
+          failure_type: report.failure_type,
+          stderr: report.stderr_excerpt || report.summary,
+          attempt: attemptNumber
+        }
+      });
+      onProgress?.(report.summary, {
+        verificationCommand: command,
+        verifyStatus: report.status
+      });
+      return report;
+    }
+
+    const trainingArgumentsRepair = await repairPythonUnsupportedTrainingArgumentsKwargs(executionScriptPath);
+    if (trainingArgumentsRepair.repaired) {
+      onProgress?.(
+        trainingArgumentsRepair.message ||
+          "Removed unsupported TrainingArguments kwargs before local verification.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            trainingArgumentsRepair.message ||
+            "Removed unsupported TrainingArguments kwargs before local verification."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
+    const trainerTokenizerRepair = await repairPythonUnsupportedTrainerKwargs(executionScriptPath);
+    if (trainerTokenizerRepair.repaired) {
+      onProgress?.(
+        trainerTokenizerRepair.message ||
+          "Removed unsupported Trainer kwargs before local verification.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            trainerTokenizerRepair.message ||
+            "Removed unsupported Trainer kwargs before local verification."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
+    const jsonSafeAliasRepair = await repairPythonJsonSafeHelperAlias(executionScriptPath);
+    if (jsonSafeAliasRepair.repaired) {
+      onProgress?.(
+        jsonSafeAliasRepair.message ||
+          "Repaired JSON-safe helper alias before local verification.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            jsonSafeAliasRepair.message ||
+            "Repaired JSON-safe helper alias before local verification."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
+    const pythonUnsupportedTrainingArgumentsKwarg = await detectPythonUnsupportedTrainingArgumentsKwarg(executionScriptPath);
+    if (pythonUnsupportedTrainingArgumentsKwarg) {
+      const report: VerifyReport = {
+        status: "fail",
+        command,
+        cwd: attempt.workingDir,
+        exit_code: 0,
+        failure_type: "implementation",
+        next_action: "retry_patch",
+        stderr_excerpt: pythonUnsupportedTrainingArgumentsKwarg,
+        summary: buildVerificationFailureSummary(command, "implementation", pythonUnsupportedTrainingArgumentsKwarg)
+      };
+      this.deps.eventStream.emit({
+        type: "TEST_FAILED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          command,
+          cwd: attempt.workingDir,
+          failure_type: report.failure_type,
+          stderr: report.stderr_excerpt || report.summary,
+          attempt: attemptNumber
+        }
+      });
+      onProgress?.(report.summary, {
+        verificationCommand: command,
+        verifyStatus: report.status
+      });
+      return report;
+    }
+
+    const pythonUndefinedConstantReferences = await detectPythonUndefinedUppercaseReferences(executionScriptPath);
+    if (pythonUndefinedConstantReferences) {
+      const report: VerifyReport = {
+        status: "fail",
+        command,
+        cwd: attempt.workingDir,
+        exit_code: 0,
+        failure_type: "implementation",
+        next_action: "retry_patch",
+        stderr_excerpt: pythonUndefinedConstantReferences,
+        summary: buildVerificationFailureSummary(command, "implementation", pythonUndefinedConstantReferences)
+      };
+      this.deps.eventStream.emit({
+        type: "TEST_FAILED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          command,
+          cwd: attempt.workingDir,
+          failure_type: report.failure_type,
+          stderr: report.stderr_excerpt || report.summary,
+          attempt: attemptNumber
+        }
+      });
+      onProgress?.(report.summary, {
+        verificationCommand: command,
+        verifyStatus: report.status
+      });
+      return report;
+    }
+
+    const pythonUndefinedAnnotationReferences = await detectPythonUndefinedAnnotationReferences(executionScriptPath);
+    if (pythonUndefinedAnnotationReferences) {
+      const report: VerifyReport = {
+        status: "fail",
+        command,
+        cwd: attempt.workingDir,
+        exit_code: 0,
+        failure_type: "implementation",
+        next_action: "retry_patch",
+        stderr_excerpt: pythonUndefinedAnnotationReferences,
+        summary: buildVerificationFailureSummary(command, "implementation", pythonUndefinedAnnotationReferences)
+      };
+      this.deps.eventStream.emit({
+        type: "TEST_FAILED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          command,
+          cwd: attempt.workingDir,
+          failure_type: report.failure_type,
+          stderr: report.stderr_excerpt || report.summary,
+          attempt: attemptNumber
+        }
+      });
+      onProgress?.(report.summary, {
+        verificationCommand: command,
+        verifyStatus: report.status
+      });
+      return report;
+    }
+
+    const pythonUndefinedSlugifyReference = await detectPythonUndefinedSlugifyReference(executionScriptPath);
+    if (pythonUndefinedSlugifyReference) {
+      const report: VerifyReport = {
+        status: "fail",
+        command,
+        cwd: attempt.workingDir,
+        exit_code: 0,
+        failure_type: "implementation",
+        next_action: "retry_patch",
+        stderr_excerpt: pythonUndefinedSlugifyReference,
+        summary: buildVerificationFailureSummary(command, "implementation", pythonUndefinedSlugifyReference)
+      };
+      this.deps.eventStream.emit({
+        type: "TEST_FAILED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          command,
+          cwd: attempt.workingDir,
+          failure_type: report.failure_type,
+          stderr: report.stderr_excerpt || report.summary,
+          attempt: attemptNumber
+        }
+      });
+      onProgress?.(report.summary, {
+        verificationCommand: command,
+        verifyStatus: report.status
+      });
+      return report;
+    }
+
+    const pythonUndefinedRuntimeHelper = await detectPythonUndefinedRuntimeHelperReferences(executionScriptPath);
+    if (pythonUndefinedRuntimeHelper) {
+      const report: VerifyReport = {
+        status: "fail",
+        command,
+        cwd: attempt.workingDir,
+        exit_code: 0,
+        failure_type: "implementation",
+        next_action: "retry_patch",
+        stderr_excerpt: pythonUndefinedRuntimeHelper,
+        summary: buildVerificationFailureSummary(command, "implementation", pythonUndefinedRuntimeHelper)
+      };
+      this.deps.eventStream.emit({
+        type: "TEST_FAILED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          command,
+          cwd: attempt.workingDir,
+          failure_type: report.failure_type,
+          stderr: report.stderr_excerpt || report.summary,
+          attempt: attemptNumber
+        }
+      });
+      onProgress?.(report.summary, {
+        verificationCommand: command,
+        verifyStatus: report.status
+      });
+      return report;
+    }
+
+    const pythonMissingRecipeWorkflow = await detectPythonMissingRegisteredRecipeWorkflow(executionScriptPath);
+    if (pythonMissingRecipeWorkflow) {
+      const report: VerifyReport = {
+        status: "fail",
+        command,
+        cwd: attempt.workingDir,
+        exit_code: 0,
+        failure_type: "implementation",
+        next_action: "retry_patch",
+        stderr_excerpt: pythonMissingRecipeWorkflow,
+        summary: buildVerificationFailureSummary(command, "implementation", pythonMissingRecipeWorkflow)
+      };
+      this.deps.eventStream.emit({
+        type: "TEST_FAILED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          command,
+          cwd: attempt.workingDir,
+          failure_type: report.failure_type,
+          stderr: report.stderr_excerpt || report.summary,
+          attempt: attemptNumber
+        }
+      });
+      onProgress?.(report.summary, {
+        verificationCommand: command,
+        verifyStatus: report.status
+      });
+      return report;
+    }
+
+    const pythonEmptyPeftRecipeRegistry = await detectPythonEmptyPeftRecipeRegistry(executionScriptPath);
+    if (pythonEmptyPeftRecipeRegistry) {
+      const report: VerifyReport = {
+        status: "fail",
+        command,
+        cwd: attempt.workingDir,
+        exit_code: 0,
+        failure_type: "implementation",
+        next_action: "retry_patch",
+        stderr_excerpt: pythonEmptyPeftRecipeRegistry,
+        summary: buildVerificationFailureSummary(command, "implementation", pythonEmptyPeftRecipeRegistry)
+      };
+      this.deps.eventStream.emit({
+        type: "TEST_FAILED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          command,
+          cwd: attempt.workingDir,
+          failure_type: report.failure_type,
+          stderr: report.stderr_excerpt || report.summary,
+          attempt: attemptNumber
+        }
+      });
+      onProgress?.(report.summary, {
+        verificationCommand: command,
+        verifyStatus: report.status
+      });
+      return report;
+    }
+
+    const pythonUnguardedOptionalHelperCall = await detectPythonUnguardedOptionalHelperCall(executionScriptPath);
+    if (pythonUnguardedOptionalHelperCall) {
+      const report: VerifyReport = {
+        status: "fail",
+        command,
+        cwd: attempt.workingDir,
+        exit_code: 0,
+        failure_type: "implementation",
+        next_action: "retry_patch",
+        stderr_excerpt: pythonUnguardedOptionalHelperCall,
+        summary: buildVerificationFailureSummary(command, "implementation", pythonUnguardedOptionalHelperCall)
+      };
+      this.deps.eventStream.emit({
+        type: "TEST_FAILED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          command,
+          cwd: attempt.workingDir,
+          failure_type: report.failure_type,
+          stderr: report.stderr_excerpt || report.summary,
+          attempt: attemptNumber
+        }
+      });
+      onProgress?.(report.summary, {
+        verificationCommand: command,
+        verifyStatus: report.status
+      });
+      return report;
+    }
+
+    const pythonMissingBenchmarkEvaluator = await detectPythonMissingBenchmarkEvaluatorDispatch(executionScriptPath);
+    if (pythonMissingBenchmarkEvaluator) {
+      const report: VerifyReport = {
+        status: "fail",
+        command,
+        cwd: attempt.workingDir,
+        exit_code: 0,
+        failure_type: "implementation",
+        next_action: "retry_patch",
+        stderr_excerpt: pythonMissingBenchmarkEvaluator,
+        summary: buildVerificationFailureSummary(command, "implementation", pythonMissingBenchmarkEvaluator)
+      };
+      this.deps.eventStream.emit({
+        type: "TEST_FAILED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          command,
+          cwd: attempt.workingDir,
+          failure_type: report.failure_type,
+          stderr: report.stderr_excerpt || report.summary,
+          attempt: attemptNumber
+        }
+      });
+      onProgress?.(report.summary, {
+        verificationCommand: command,
+        verifyStatus: report.status
+      });
+      return report;
+    }
+
+    const pythonBenchmarkLoaderMismatch = await detectPythonBenchmarkLoaderDispatchMismatch(executionScriptPath);
+    if (pythonBenchmarkLoaderMismatch) {
+      const report: VerifyReport = {
+        status: "fail",
+        command,
+        cwd: attempt.workingDir,
+        exit_code: 0,
+        failure_type: "implementation",
+        next_action: "retry_patch",
+        stderr_excerpt: pythonBenchmarkLoaderMismatch,
+        summary: buildVerificationFailureSummary(command, "implementation", pythonBenchmarkLoaderMismatch)
+      };
+      this.deps.eventStream.emit({
+        type: "TEST_FAILED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          command,
+          cwd: attempt.workingDir,
+          failure_type: report.failure_type,
+          stderr: report.stderr_excerpt || report.summary,
+          attempt: attemptNumber
+        }
+      });
+      onProgress?.(report.summary, {
+        verificationCommand: command,
+        verifyStatus: report.status
+      });
+      return report;
+    }
+
+    const pythonMetricsWriterMismatch = await detectPythonMetricsWriterAdapterMismatch(executionScriptPath);
+    if (pythonMetricsWriterMismatch) {
+      const report: VerifyReport = {
+        status: "fail",
+        command,
+        cwd: attempt.workingDir,
+        exit_code: 0,
+        failure_type: "implementation",
+        next_action: "retry_patch",
+        stderr_excerpt: pythonMetricsWriterMismatch,
+        summary: buildVerificationFailureSummary(command, "implementation", pythonMetricsWriterMismatch)
+      };
+      this.deps.eventStream.emit({
+        type: "TEST_FAILED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          command,
+          cwd: attempt.workingDir,
+          failure_type: report.failure_type,
+          stderr: report.stderr_excerpt || report.summary,
+          attempt: attemptNumber
+        }
+      });
+      onProgress?.(report.summary, {
+        verificationCommand: command,
+        verifyStatus: report.status
+      });
+      return report;
+    }
+
+    const pythonDictRecipeAttributeAccess = await detectPythonDictRecipeAttributeAccess(executionScriptPath);
+    if (pythonDictRecipeAttributeAccess) {
+      const report: VerifyReport = {
+        status: "fail",
+        command,
+        cwd: attempt.workingDir,
+        exit_code: 0,
+        failure_type: "implementation",
+        next_action: "retry_patch",
+        stderr_excerpt: pythonDictRecipeAttributeAccess,
+        summary: buildVerificationFailureSummary(command, "implementation", pythonDictRecipeAttributeAccess)
+      };
+      this.deps.eventStream.emit({
+        type: "TEST_FAILED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          command,
+          cwd: attempt.workingDir,
+          failure_type: report.failure_type,
+          stderr: report.stderr_excerpt || report.summary,
+          attempt: attemptNumber
+        }
+      });
+      onProgress?.(report.summary, {
+        verificationCommand: command,
+        verifyStatus: report.status
+      });
+      return report;
+    }
+
+    const pythonRecipeSpecConstructorMismatch =
+      await detectPythonRecipeSpecConstructorKeywordMismatch(executionScriptPath);
+    if (pythonRecipeSpecConstructorMismatch) {
+      const report: VerifyReport = {
+        status: "fail",
+        command,
+        cwd: attempt.workingDir,
+        exit_code: 0,
+        failure_type: "implementation",
+        next_action: "retry_patch",
+        stderr_excerpt: pythonRecipeSpecConstructorMismatch,
+        summary: buildVerificationFailureSummary(command, "implementation", pythonRecipeSpecConstructorMismatch)
       };
       this.deps.eventStream.emit({
         type: "TEST_FAILED",
@@ -4036,6 +5050,346 @@ export class ImplementSessionManager {
           text:
             experimentConfigMetadataRepair.message ||
             "Repaired ExperimentConfig metadata compatibility before handoff."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
+    const recipeSpecPeftTypeRepair = await repairPythonRecipeSpecPeftTypeSurface(executionScriptPath);
+    if (recipeSpecPeftTypeRepair.repaired) {
+      onProgress?.(
+        recipeSpecPeftTypeRepair.message ||
+          "Repaired RecipeSpec peft_type compatibility before handoff.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            recipeSpecPeftTypeRepair.message ||
+            "Repaired RecipeSpec peft_type compatibility before handoff."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
+    const recipeSpecAdapterTypeRepair = await repairPythonRecipeSpecAdapterTypeSurface(executionScriptPath);
+    if (recipeSpecAdapterTypeRepair.repaired) {
+      onProgress?.(
+        recipeSpecAdapterTypeRepair.message ||
+          "Repaired RecipeSpec adapter_type compatibility before handoff.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            recipeSpecAdapterTypeRepair.message ||
+            "Repaired RecipeSpec adapter_type compatibility before handoff."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
+    const recipeSpecNameRepair = await repairPythonRecipeSpecNameSurface(executionScriptPath);
+    if (recipeSpecNameRepair.repaired) {
+      onProgress?.(
+        recipeSpecNameRepair.message ||
+          "Repaired RecipeSpec name compatibility before handoff.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            recipeSpecNameRepair.message ||
+            "Repaired RecipeSpec name compatibility before handoff."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
+    const orchestrationCandidateRepair = await repairPythonOrchestrationCandidateSurface(executionScriptPath);
+    if (orchestrationCandidateRepair.repaired) {
+      onProgress?.(
+        orchestrationCandidateRepair.message ||
+          "Aligned experiment orchestration entrypoint compatibility before handoff.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            orchestrationCandidateRepair.message ||
+            "Aligned experiment orchestration entrypoint compatibility before handoff."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
+    const baselineFirstRecipeOrderRepair = await repairPythonBaselineFirstRecipeOrderSurface(executionScriptPath);
+    if (baselineFirstRecipeOrderRepair.repaired) {
+      onProgress?.(
+        baselineFirstRecipeOrderRepair.message ||
+          "Aligned baseline-first recipe ordering compatibility before handoff.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            baselineFirstRecipeOrderRepair.message ||
+            "Aligned baseline-first recipe ordering compatibility before handoff."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
+    const baselineFirstTunedBaselineMismatch = await detectPythonBaselineFirstTunedBaselineMismatch(executionScriptPath);
+    if (baselineFirstTunedBaselineMismatch) {
+      const report: VerifyReport = {
+        status: "fail",
+        command,
+        cwd: attempt.workingDir,
+        exit_code: 0,
+        failure_type: "implementation",
+        next_action: "retry_patch",
+        stderr_excerpt: baselineFirstTunedBaselineMismatch,
+        summary: buildVerificationFailureSummary(command, "implementation", baselineFirstTunedBaselineMismatch)
+      };
+      this.deps.eventStream.emit({
+        type: "TEST_FAILED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          command,
+          cwd: attempt.workingDir,
+          failure_type: report.failure_type,
+          stderr: report.stderr_excerpt || report.summary,
+          attempt: attemptNumber
+        }
+      });
+      onProgress?.(report.summary, {
+        verificationCommand: command,
+        verifyStatus: report.status
+      });
+      return report;
+    }
+
+    const transformersSetSeedRepair = await repairPythonTransformersSetSeedAliasSurface(executionScriptPath);
+    if (transformersSetSeedRepair.repaired) {
+      onProgress?.(
+        transformersSetSeedRepair.message ||
+          "Aligned Transformers set_seed compatibility before handoff.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            transformersSetSeedRepair.message ||
+            "Aligned Transformers set_seed compatibility before handoff."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
+    const strictJsonMetricsRepair = await repairPythonStrictJsonMetricsSurface(executionScriptPath);
+    if (strictJsonMetricsRepair.repaired) {
+      onProgress?.(
+        strictJsonMetricsRepair.message ||
+          "Normalized metrics JSON serialization before handoff.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            strictJsonMetricsRepair.message ||
+            "Normalized metrics JSON serialization before handoff."
         }
       });
       const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
@@ -4359,6 +5713,17 @@ function parseStructuredChunkResponse(text: string, expectedChunkId: string): st
   return content;
 }
 
+function normalizeStagedLlmChunkContent(content: string, filePath: string): string {
+  if (!isPythonMaterializationPath(filePath)) {
+    return content;
+  }
+  const lines = content.split(/\r?\n/u);
+  const withoutFutureImports = lines.filter(
+    (line) => !/^\s*from\s+__future__\s+import\s+annotations\s*(?:#.*)?$/u.test(line)
+  );
+  return withoutFutureImports.join("\n");
+}
+
 function ensureMaterializedChunkHasSubstance(content: string, filePath: string, chunkId: string): void {
   if (hasSubstantiveMaterializedContent(content, filePath)) {
     return;
@@ -4388,6 +5753,575 @@ function hasSubstantiveMaterializedContent(content: string, filePath: string): b
     .map((line) => line.trim())
     .filter(Boolean)
     .some((line) => !line.startsWith("#"));
+}
+
+async function detectPythonUnfilledAutolabosSections(scriptPath?: string): Promise<string | undefined> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return undefined;
+  }
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+  if (!source.includes("AUTOLABOS SECTION")) {
+    return undefined;
+  }
+  const sectionIds = Array.from(source.matchAll(/^\s*#\s*BEGIN AUTOLABOS SECTION\s+([^\s:]+)/gmu))
+    .map((match) => match[1])
+    .filter(Boolean);
+  const uniqueIds = dedupeStrings(sectionIds);
+  const visible = uniqueIds.slice(0, 8).join(", ");
+  return [
+    "Generated Python runner still contains AUTOLABOS SECTION skeleton markers after staged materialization.",
+    "Final experiment scripts must contain executable code, not planning-only section placeholders.",
+    visible ? `Unfilled or unstripped section marker(s): ${visible}.` : "Unfilled section markers are present.",
+    "Regenerate the affected sections, including the CLI entrypoint and metrics writer, before handoff."
+  ].join(" ");
+}
+
+const RECIPE_WORKFLOW_ENTRYPOINT_NAMES = [
+  "run_baseline_first_peft_comparison",
+  "run_baseline_first_candidate_evaluation",
+  "run_baseline_first_recipe_comparison",
+  "run_peft_recipe_comparison",
+  "execute_recipe_comparison",
+  "run_recipe_comparison",
+  "run_recipe_execution_and_evaluation_loop",
+  "execute_recipe_execution_and_evaluation_loop",
+  "run_recipe_execution_evaluation_loop",
+  "run_baseline_first_peft_study",
+  "run_locked_peft_instruction_study",
+  "run_locked_peft_study",
+  "run_peft_study",
+  "run_experiment_rows",
+  "run_locked_recipe_rows",
+  "run_recipe_experiment_loop",
+  "run_locked_peft_experiment_rows",
+  "run_study_comparison",
+  "run_study_orchestration",
+  "run_orchestration_and_status_handling",
+  "run_study",
+  "run_study_execution",
+  "execute_study_with_status",
+  "run_study_with_status",
+  "run_full_study_with_status",
+  "execute_study_from_args",
+  "run_peft_instruction_study",
+  "execute_peft_instruction_study",
+  "orchestrate_experiment",
+  "orchestrate_study",
+  "execute_experiment",
+  "execute_baseline_first_study",
+  "run_experiment_with_status",
+  "run_experiment",
+  "run_baseline_first_experiment",
+  "run_baseline_first_study",
+  "build_and_write_metrics_payload",
+  "compare_peft_recipes",
+  "run_all_recipes"
+];
+
+async function detectPythonMissingRegisteredRecipeWorkflow(scriptPath?: string): Promise<string | undefined> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return undefined;
+  }
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  const referencedNames = RECIPE_WORKFLOW_ENTRYPOINT_NAMES.filter(
+    (name) => source.includes(`"${name}"`) || source.includes(`'${name}'`)
+  );
+  if (referencedNames.length === 0) {
+    return undefined;
+  }
+
+  const hasRegisteredWorkflowDispatcher =
+    source.includes("_call_registered_study_workflow") ||
+    source.includes("No recipe comparison workflow function was registered") ||
+    source.includes("No compatible experiment orchestration function was found") ||
+    source.includes("No experiment orchestration function was found") ||
+    source.includes("No study orchestration function was found") ||
+    source.includes("No baseline-first PEFT study execution helper was found") ||
+    source.includes("No executable study helper was found in completed sections") ||
+    source.includes("None of the required functions are available");
+  if (!hasRegisteredWorkflowDispatcher) {
+    return undefined;
+  }
+
+  const definedNames = referencedNames.filter((name) =>
+    new RegExp(`\\ndef\\s+${escapeRegex(name)}\\s*\\(`, "u").test(`\n${source}`)
+  );
+  if (definedNames.length > 0) {
+    return undefined;
+  }
+
+  const visible = referencedNames.slice(0, 8).join(", ");
+  return [
+    "Generated Python runner dispatches to recipe/study workflow function names that are never defined.",
+    visible ? `Undefined searched workflow function(s): ${visible}.` : undefined,
+    "Define one executable baseline-first recipe/study workflow function, or align the dispatcher with the generated workflow before handoff."
+  ].filter(Boolean).join(" ");
+}
+
+async function detectPythonEmptyPeftRecipeRegistry(scriptPath?: string): Promise<string | undefined> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return undefined;
+  }
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  if (
+    !source.includes("No PEFT recipes selected") ||
+    !source.includes("PEFT_RECIPES") ||
+    !source.includes("parse_args")
+  ) {
+    return undefined;
+  }
+
+  const peftRecipesAssignment = /^\s*PEFT_RECIPES\s*(?::[^\n=]+)?=\s*([^\n#]+)/mu.exec(source);
+  if (!peftRecipesAssignment) {
+    return [
+      "Generated Python runner can select no PEFT recipes by default.",
+      "CLI normalization raises 'No PEFT recipes selected' but no PEFT_RECIPES registry is defined.",
+      "Define a non-empty PEFT_RECIPES registry with the locked baseline-first trainable recipe before handoff."
+    ].join(" ");
+  }
+
+  const assignmentValue = peftRecipesAssignment[1]?.trim() || "";
+  if (/^(?:\[\s*\]|\(\s*\)|list\s*\(\s*\)|tuple\s*\(\s*\))$/u.test(assignmentValue)) {
+    return [
+      "Generated Python runner can select no PEFT recipes by default.",
+      "PEFT_RECIPES is defined as an empty registry while CLI normalization rejects empty recipe selections.",
+      "Populate PEFT_RECIPES with at least the locked standard LoRA baseline before handoff."
+    ].join(" ");
+  }
+
+  return undefined;
+}
+
+async function detectPythonUnguardedOptionalHelperCall(scriptPath?: string): Promise<string | undefined> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return undefined;
+  }
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  const optionalHelperNames = ["set_seed"];
+  for (const helperName of optionalHelperNames) {
+    const helperDefinitionPattern = new RegExp(`^\\s*def\\s+${escapeRegex(helperName)}\\s*\\(`, "mu");
+    if (helperDefinitionPattern.test(source)) {
+      continue;
+    }
+
+    const helperAvailabilityGuardPattern = new RegExp(
+      `["']${escapeRegex(helperName)}["']\\s+in\\s+globals\\s*\\(\\s*\\)|globals\\s*\\(\\s*\\)\\s*\\.\\s*get\\s*\\(\\s*["']${escapeRegex(helperName)}["']`,
+      "u"
+    );
+    if (!helperAvailabilityGuardPattern.test(source)) {
+      continue;
+    }
+
+    const callLines = source.split(/\r?\n/u)
+      .map((line, index) => ({ line, lineNumber: index + 1 }))
+      .filter(({ line }) => new RegExp(`\\b${escapeRegex(helperName)}\\s*\\(`, "u").test(line));
+    const unsafeCall = callLines.find(({ line }) => {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("def ")) {
+        return false;
+      }
+      return new RegExp(
+        `\\b${escapeRegex(helperName)}\\s*\\([^\\n]*\\bif\\s+["']${escapeRegex(helperName)}["']\\s+in\\s+globals\\s*\\(\\s*\\)\\s+else\\b`,
+        "u"
+      ).test(line);
+    });
+    if (!unsafeCall) {
+      continue;
+    }
+
+    return [
+      `Generated Python runner calls optional helper ${helperName} without defining it.`,
+      `Line ${unsafeCall.lineNumber} checks ${helperName} availability only inside the call argument, so the ${helperName}(...) call still raises NameError when the helper is absent.`,
+      `Define ${helperName}, import it, or guard the call itself before handoff.`
+    ].join(" ");
+  }
+
+  return undefined;
+}
+
+const BENCHMARK_EVALUATOR_ENTRYPOINT_NAMES = [
+  "evaluate_zero_shot_benchmarks",
+  "evaluate_model_on_benchmarks",
+  "evaluate_benchmarks",
+  "compute_benchmark_accuracies",
+  "run_zero_shot_benchmark_evaluation",
+  "evaluate_multiple_choice_benchmarks"
+];
+
+const KNOWN_GENERATED_BENCHMARK_EVALUATOR_NAMES = [
+  "evaluate_multiple_choice_accuracy",
+  "evaluate_candidate_model",
+  "evaluate_arc_challenge_and_hellaswag",
+  "evaluate_zero_shot_benchmarks",
+  "evaluate_benchmarks_for_candidate",
+  "run_benchmark_evaluation"
+];
+
+const BENCHMARK_LOADER_ENTRYPOINT_NAMES = [
+  "load_benchmark_eval_examples",
+  "load_benchmark_datasets",
+  "load_evaluation_benchmarks",
+  "load_evaluation_sets",
+  "load_benchmark_eval_sets",
+  "load_eval_subsets",
+  "prepare_evaluation_sets"
+];
+
+async function detectPythonMissingBenchmarkEvaluatorDispatch(scriptPath?: string): Promise<string | undefined> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return undefined;
+  }
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  const hasBaselineCandidateEvaluator =
+    source.includes("No benchmark evaluator was defined by the evaluation_metrics_logic section") ||
+    source.includes("No zero-shot benchmark evaluation function was defined in earlier sections") ||
+    source.includes("evaluation_metrics_logic section") ||
+    source.includes("_evaluate_candidate_for_run");
+  if (!hasBaselineCandidateEvaluator) {
+    return undefined;
+  }
+
+  const referencedEntrypoints = BENCHMARK_EVALUATOR_ENTRYPOINT_NAMES.filter(
+    (name) => source.includes(`"${name}"`) || source.includes(`'${name}'`)
+  );
+  if (referencedEntrypoints.length === 0) {
+    return undefined;
+  }
+
+  const definedEntrypoints = referencedEntrypoints.filter((name) =>
+    pythonSourceDefinesName(source, name)
+  );
+  if (definedEntrypoints.length > 0) {
+    return undefined;
+  }
+
+  const generatedEvaluatorNames = KNOWN_GENERATED_BENCHMARK_EVALUATOR_NAMES.filter((name) =>
+    pythonSourceDefinesName(source, name)
+  );
+  const explicitMissingEvaluatorRuntimeError = source.includes(
+    "No zero-shot benchmark evaluation function was defined in earlier sections"
+  );
+  if (generatedEvaluatorNames.length === 0 && !explicitMissingEvaluatorRuntimeError) {
+    return undefined;
+  }
+
+  const visibleReferenced = referencedEntrypoints.join(", ");
+  const visibleGenerated = generatedEvaluatorNames.slice(0, 6).join(", ") || "none";
+  return [
+    "Generated Python runner has a benchmark evaluator dispatch mismatch.",
+    `Baseline-first candidate evaluation searches for undefined evaluator entrypoint(s): ${visibleReferenced}.`,
+    `Generated evaluator function(s) exist under different name(s): ${visibleGenerated}.`,
+    "Define one searched evaluator entrypoint, or align the candidate evaluator lookup with the generated benchmark evaluator before handoff."
+  ].join(" ");
+}
+
+async function detectPythonBenchmarkLoaderDispatchMismatch(scriptPath?: string): Promise<string | undefined> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return undefined;
+  }
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  const hasExplicitMissingLoaderRuntimeError = source.includes(
+    "No benchmark examples were provided and no benchmark-loading helper is available"
+  );
+  if (!hasExplicitMissingLoaderRuntimeError) {
+    return undefined;
+  }
+
+  const referencedLoaderNames = BENCHMARK_LOADER_ENTRYPOINT_NAMES.filter(
+    (name) => source.includes(`"${name}"`) || source.includes(`'${name}'`)
+  );
+  if (referencedLoaderNames.length === 0) {
+    return undefined;
+  }
+
+  const definedReferencedLoaders = referencedLoaderNames.filter((name) =>
+    pythonSourceDefinesName(source, name)
+  );
+  if (definedReferencedLoaders.length > 0) {
+    return undefined;
+  }
+
+  const generatedLoaderNames = BENCHMARK_LOADER_ENTRYPOINT_NAMES.filter((name) =>
+    pythonSourceDefinesName(source, name)
+  );
+  if (generatedLoaderNames.length === 0) {
+    return undefined;
+  }
+
+  const visibleReferenced = referencedLoaderNames.join(", ");
+  const visibleGenerated = generatedLoaderNames.slice(0, 6).join(", ");
+  return [
+    "Generated Python runner has a benchmark loader dispatch mismatch.",
+    `Benchmark evaluation searches for undefined loader helper(s): ${visibleReferenced}.`,
+    `Generated loader helper(s) exist under different name(s): ${visibleGenerated}.`,
+    "Define one searched benchmark loader helper, or align the evaluator loader lookup with the generated loader before handoff."
+  ].join(" ");
+}
+
+async function detectPythonMetricsWriterAdapterMismatch(scriptPath?: string): Promise<string | undefined> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return undefined;
+  }
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  const hasMetricsWriterAdapter =
+    source.includes("def _entrypoint_write_metrics") ||
+    source.includes("def _write_metrics_payload");
+  const hasWriterInvoker =
+    source.includes("_entrypoint_invoke(writer,") ||
+    source.includes("_call_with_supported_kwargs(writer,");
+  if (!hasMetricsWriterAdapter || !hasWriterInvoker) {
+    return undefined;
+  }
+
+  const writerNames = ["write_metrics_json", "write_metrics", "persist_metrics_json", "save_metrics_json"];
+  const writerName = writerNames.find((name) => pythonSourceDefinesName(source, name));
+  if (!writerName) {
+    return undefined;
+  }
+
+  const signature = extractPythonFunctionSignature(source, writerName);
+  if (!signature) {
+    return undefined;
+  }
+
+  const writerParams = extractPythonParameterNames(signature);
+  if (writerParams.includes("kwargs")) {
+    return undefined;
+  }
+
+  const requiredParams = writerParams.filter((name) => !name.startsWith("*"));
+  const pathParamNames = ["metrics_path", "path", "output_path", "destination"];
+  const adapterPathNames = pathParamNames.filter((name) =>
+    new RegExp(`\\b${escapeRegex(name)}\\s*=\\s*metrics_path\\b`, "u").test(source)
+  );
+  const missingRequiredPathParam = requiredParams.find(
+    (name) => pathParamNames.includes(name) && !adapterPathNames.includes(name)
+  );
+  if (missingRequiredPathParam) {
+    return [
+      "Generated Python runner has a metrics writer adapter mismatch.",
+      `Entrypoint adapter does not pass required path argument '${missingRequiredPathParam}' to ${writerName}().`,
+      "Pass the writer's actual metrics path parameter name before handoff, or align the writer signature with the adapter."
+    ].join(" ");
+  }
+
+  const payloadParamNames = ["metrics", "payload", "metrics_payload"];
+  if (payloadParamNames.some((name) => writerParams.includes(name))) {
+    return undefined;
+  }
+
+  const adapterPassesPayloadKeywords = payloadParamNames.some((name) =>
+    new RegExp(`\\b${escapeRegex(name)}\\s*=\\s*payload\\b`, "u").test(source)
+  );
+  if (!adapterPassesPayloadKeywords) {
+    return undefined;
+  }
+
+  const firstParam = writerParams[0] || "unknown";
+  return [
+    "Generated Python runner has a metrics writer adapter mismatch.",
+    `Entrypoint adapter passes payload as metrics/payload/metrics_payload, but ${writerName}() requires '${firstParam}'.`,
+    "Rename the writer payload parameter to one accepted by the adapter, accept **kwargs, or call the writer with its actual required payload parameter before handoff."
+  ].join(" ");
+}
+
+async function detectPythonDictRecipeAttributeAccess(scriptPath?: string): Promise<string | undefined> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return undefined;
+  }
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  const dictBackedRecipeContainers = new Set<string>();
+  for (const match of source.matchAll(
+    /^\s*([A-Z][A-Z0-9_]*)\s*(?::\s*(?:List|list|Tuple|tuple)\s*\[[^\n=]*Dict[^\n=]*\])?\s*=\s*(?:\[\s*\{|\(\s*\{)/gmu
+  )) {
+    dictBackedRecipeContainers.add(match[1]);
+  }
+  if (dictBackedRecipeContainers.size === 0) {
+    return undefined;
+  }
+
+  const mismatches: string[] = [];
+  for (const container of dictBackedRecipeContainers) {
+    const accessPattern = new RegExp(`\\brecipe\\.(?:name|recipe_id|display_name)\\b[^\\n]*\\b${escapeRegex(container)}\\b`, "u");
+    const match = source.match(accessPattern);
+    if (match?.index !== undefined) {
+      const line = source.slice(0, match.index).split(/\r?\n/u).length;
+      mismatches.push(`${container} at ${path.basename(scriptPath)}:${line}`);
+    }
+  }
+  if (mismatches.length === 0) {
+    return undefined;
+  }
+
+  return [
+    "Generated Python runner treats dict-backed recipe config entries as objects.",
+    `Attribute-style recipe access over dict container(s): ${mismatches.slice(0, 6).join(", ")}.`,
+    "Use recipe['name'] / recipe.get('name') for dict configs, or keep the recipe container as dataclass/object instances before handoff."
+  ].join(" ");
+}
+
+async function detectPythonRecipeSpecConstructorKeywordMismatch(scriptPath?: string): Promise<string | undefined> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return undefined;
+  }
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  if (!source.includes("class RecipeSpec:") || !source.includes("RecipeSpec(")) {
+    return undefined;
+  }
+
+  const classStart = source.indexOf("class RecipeSpec:\n");
+  if (classStart < 0) {
+    return undefined;
+  }
+  const bodyStart = classStart + "class RecipeSpec:\n".length;
+  const bodyEnd = findPythonClassBodyEnd(source, bodyStart);
+  const classBody = source.slice(bodyStart, bodyEnd);
+  if (/\n\s+def\s+__init__\s*\(/u.test(`\n${classBody}`)) {
+    return undefined;
+  }
+
+  const fieldNames = new Set<string>();
+  for (const match of classBody.matchAll(/^\s+([A-Za-z_][A-Za-z0-9_]*)\s*:/gmu)) {
+    fieldNames.add(match[1]);
+  }
+  if (fieldNames.size === 0) {
+    return undefined;
+  }
+
+  const unexpectedKeywords = new Set<string>();
+  for (const call of source.matchAll(/\bRecipeSpec\s*\(([\s\S]*?)\)/gu)) {
+    const callBody = call[1] || "";
+    for (const keyword of callBody.matchAll(/(?:^|[,\n(])\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/gu)) {
+      const name = keyword[1];
+      if (!fieldNames.has(name)) {
+        unexpectedKeywords.add(name);
+      }
+    }
+  }
+
+  if (unexpectedKeywords.size === 0) {
+    return undefined;
+  }
+
+  const visibleUnexpected = Array.from(unexpectedKeywords).slice(0, 8).join(", ");
+  const visibleFields = Array.from(fieldNames).slice(0, 10).join(", ");
+  return [
+    "Generated Python runner has a RecipeSpec constructor keyword mismatch.",
+    `RecipeSpec(...) uses keyword field(s) not accepted by the generated dataclass: ${visibleUnexpected}.`,
+    visibleFields ? `Accepted RecipeSpec field(s) include: ${visibleFields}.` : undefined,
+    "Keep one consistent RecipeSpec schema, or translate recipe metadata through an explicit factory before handoff."
+  ].filter(Boolean).join(" ");
+}
+
+function pythonSourceDefinesName(source: string, name: string): boolean {
+  const escaped = escapeRegex(name);
+  return (
+    new RegExp(`\\ndef\\s+${escaped}\\s*\\(`, "u").test(`\n${source}`) ||
+    new RegExp(`\\n${escaped}\\s*=`, "u").test(`\n${source}`)
+  );
+}
+
+function pythonSourceDefinesOrImportsName(source: string, name: string): boolean {
+  const escaped = escapeRegex(name);
+  return (
+    pythonSourceDefinesName(source, name) ||
+    new RegExp(`\\n\\s*from\\s+[\\w.]+\\s+import\\s+[^\\n#]*\\b${escaped}\\b`, "u").test(`\n${source}`) ||
+    new RegExp(`\\n\\s*import\\s+${escaped}\\b`, "u").test(`\n${source}`)
+  );
+}
+
+function extractPythonFunctionSignature(source: string, name: string): string | undefined {
+  const escaped = escapeRegex(name);
+  const match = new RegExp(`\\ndef\\s+${escaped}\\s*\\(`, "u").exec(`\n${source}`);
+  if (!match || match.index < 0) {
+    return undefined;
+  }
+  const normalized = `\n${source}`;
+  const openIndex = match.index + match[0].length - 1;
+  let depth = 0;
+  let signature = "";
+  for (let index = openIndex; index < normalized.length; index += 1) {
+    const char = normalized[index];
+    if (char === "(") {
+      depth += 1;
+      if (depth === 1) {
+        continue;
+      }
+    } else if (char === ")") {
+      depth -= 1;
+      if (depth === 0) {
+        return signature;
+      }
+    }
+    if (depth >= 1) {
+      signature += char;
+    }
+  }
+  return undefined;
+}
+
+function extractPythonParameterNames(signature: string): string[] {
+  return signature
+    .split(",")
+    .map((rawParam) => rawParam.replace(/#.*/u, "").trim())
+    .filter((param) => param.length > 0 && param !== "/" && param !== "*")
+    .map((param) => param.split("=")[0]?.trim() || "")
+    .map((param) => param.split(":")[0]?.trim() || "")
+    .map((param) => param.replace(/^\*+/u, "").trim())
+    .filter((param) => /^[A-Za-z_][A-Za-z0-9_]*$/u.test(param));
 }
 
 function isImplementStagedLlmTimeoutError(error: unknown): boolean {
@@ -4424,7 +6358,44 @@ async function clearStagedLlmAttemptArtifacts(runDir: string): Promise<void> {
 }
 
 function isRetryableImplementStagedLlmMaterializationError(error: unknown): boolean {
-  return isImplementStagedLlmTimeoutError(error) || isProviderTerminatedStagedLlmError(error);
+  return (
+    isImplementStagedLlmTimeoutError(error) ||
+    isProviderTerminatedStagedLlmError(error) ||
+    isMalformedJsonStagedLlmChunkError(error) ||
+    isCandidateValidationStagedLlmError(error)
+  );
+}
+
+export function isMalformedJsonStagedLlmChunkError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (
+      error.message === "staged_llm chunk response did not contain a valid JSON object" ||
+      /staged_llm chunk response returned chunk_id=.+ but expected/u.test(error.message) ||
+      /staged_llm chunk response for .+ contained no content/u.test(error.message)
+    )
+  );
+}
+
+function isCandidateValidationStagedLlmError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    /staged_llm chunk response for .+ failed candidate validation:/u.test(error.message)
+  );
+}
+
+function extractUndefinedUppercaseConstantNames(validationError?: string): string[] {
+  if (!validationError || !validationError.includes("uppercase constant")) {
+    return [];
+  }
+
+  const names: string[] = [];
+  for (const match of validationError.matchAll(/\b([A-Z][A-Z0-9_]{2,})\b(?=\s+at\s+)/gu)) {
+    if (!names.includes(match[1])) {
+      names.push(match[1]);
+    }
+  }
+  return names;
 }
 
 function isProviderTerminatedStagedLlmError(error: unknown): boolean {
@@ -4433,6 +6404,47 @@ function isProviderTerminatedStagedLlmError(error: unknown): boolean {
   }
   const message = error.message.trim().toLowerCase();
   return message === "terminated" || message === "codex oauth backend returned an error: terminated";
+}
+
+export function isTransientStagedLlmProviderError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = error.message.toLowerCase();
+  return (
+    /\b(?:502|503|504|520|521|522|523|524)\b/u.test(message) ||
+    message.includes("our servers are currently overloaded") ||
+    message.includes("please try again later") ||
+    message.includes("you can retry your request") ||
+    message.includes("an error occurred while processing your request") ||
+    message.includes("upstream connect error") ||
+    message.includes("disconnect/reset before headers") ||
+    message.includes("connection termination") ||
+    message.includes("failed before receiving an http response") ||
+    message.includes("econnreset") ||
+    message.includes("socket hang up")
+  );
+}
+
+async function delay(ms: number, abortSignal?: AbortSignal): Promise<void> {
+  if (ms <= 0) {
+    return;
+  }
+  await new Promise<void>((resolve, reject) => {
+    if (abortSignal?.aborted) {
+      reject(new Error("aborted"));
+      return;
+    }
+    const timer = setTimeout(() => {
+      abortSignal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new Error("aborted"));
+    };
+    abortSignal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function normalizeDynamicDecompositionPlan(
@@ -5600,6 +7612,39 @@ async function recoverStructuredResultFromPublicBundle(params: {
   ) {
     return undefined;
   }
+  if (await detectPythonBaselineFirstTunedBaselineMismatch(scriptPath)) {
+    return undefined;
+  }
+  if (await detectPythonMissingRegisteredRecipeWorkflow(scriptPath)) {
+    return undefined;
+  }
+  if (await detectPythonEmptyPeftRecipeRegistry(scriptPath)) {
+    return undefined;
+  }
+  if (await detectPythonUnguardedOptionalHelperCall(scriptPath)) {
+    return undefined;
+  }
+  if (await detectPythonMissingBenchmarkEvaluatorDispatch(scriptPath)) {
+    return undefined;
+  }
+  if (await detectPythonBenchmarkLoaderDispatchMismatch(scriptPath)) {
+    return undefined;
+  }
+  if (await detectPythonMetricsWriterAdapterMismatch(scriptPath)) {
+    return undefined;
+  }
+  if (await detectPythonDictRecipeAttributeAccess(scriptPath)) {
+    return undefined;
+  }
+  if (await detectPythonRecipeSpecConstructorKeywordMismatch(scriptPath)) {
+    return undefined;
+  }
+  if (await detectPythonUndefinedSlugifyReference(scriptPath)) {
+    return undefined;
+  }
+  if (await detectPythonUndefinedRuntimeHelperReferences(scriptPath)) {
+    return undefined;
+  }
 
   return {
     finalText: JSON.stringify({
@@ -6076,12 +8121,7 @@ function isDeferredExecutionArtifactPath(filePath: string): boolean {
   const normalizedPath = path.normalize(filePath);
   const base = path.basename(filePath).toLowerCase();
   if (normalizedPath.includes(`${path.sep}.autolabos${path.sep}runs${path.sep}`)) {
-    return (
-      /^metrics(?:\.|$)/u.test(base) ||
-      /^results(?:\.|$)/u.test(base) ||
-      base === "objective_evaluation.json" ||
-      base === "recent_paper_reproducibility.json"
-    );
+    return isDeferredExecutionArtifactBaseName(base);
   }
   const segments = normalizedPath.split(path.sep).filter(Boolean);
   const outputsIndex = segments.indexOf("outputs");
@@ -6095,7 +8135,25 @@ function isDeferredExecutionArtifactPath(filePath: string): boolean {
   if (tail.length >= 3 && tail[0] === "experiment" && tail[1] === "results") {
     return true;
   }
+  if (tail.length >= 2 && tail[0] === "experiment" && isDeferredExecutionArtifactBaseName(base)) {
+    return true;
+  }
   return false;
+}
+
+function isDeferredExecutionArtifactBaseName(base: string): boolean {
+  return (
+    /^metrics(?:\.|$)/u.test(base) ||
+    /^results(?:\.|$)/u.test(base) ||
+    /^result(?:\.|$)/u.test(base) ||
+    /(?:^|[_-])metrics?\.json$/u.test(base) ||
+    /(?:^|[_-])results?\.json$/u.test(base) ||
+    base === "study_results.json" ||
+    base === "latest_results.json" ||
+    base === "run.log" ||
+    base === "objective_evaluation.json" ||
+    base === "recent_paper_reproducibility.json"
+  );
 }
 
 function shouldFallbackToStagedImplementLlm(finalText: string): boolean {
@@ -6118,6 +8176,7 @@ function appendStagedImplementScaffoldOverrideToPrompt(prompt: string): string {
     "Staged implement scaffold mode:",
     "- Return scaffold metadata first. Do NOT include file_edits or file contents in this response.",
     "- Return ONLY one JSON object with keys: summary, experiment_mode, run_command, test_command, working_dir, changed_files, artifacts, public_dir, public_artifacts, script_path, metrics_path, localization, assumptions.",
+    "- changed_files, artifacts, and public_artifacts must list only files materialized during implement_experiments, not deferred runtime outputs such as metrics_path, results*.json, *_results.json, study_results.json, latest_results.json, or run.log.",
     "- Do not include decomposition_plan or file_plan in this first scaffold response unless you can do so without delaying the runnable metadata surface.",
     "- Keep the scaffold minimal, concrete, and runnable."
   ].join("\n");
@@ -6167,7 +8226,9 @@ function appendStagedImplementChunkOverrideToPrompt(prompt: string, targetPath: 
     "- Return ONLY one JSON object with keys: chunk_id, content.",
     "- chunk_id must exactly match the requested chunk id.",
     "- Do not repeat content from earlier chunks.",
-    "- Emit only raw UTF-8 code/text for this chunk."
+    "- Emit only raw UTF-8 code/text for this chunk.",
+    "- For Python chunks, ensure the chunk can be inserted into the sectioned file without syntax errors; balance every bracket, parenthesis, quote, and indexing expression locally.",
+    "- For Python chunks, do not emit `from __future__ import annotations`; future imports are only valid at the beginning of a module and chunk insertion may place this content later."
   ].join("\n");
 }
 
@@ -7870,6 +9931,499 @@ async function detectPythonUnsupportedGenerateKwarg(scriptPath?: string): Promis
   return undefined;
 }
 
+async function detectPythonUnsupportedTrainingArgumentsKwarg(scriptPath?: string): Promise<string | undefined> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return undefined;
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  const lines = source.split(/\r?\n/u);
+  const unsupportedTrainingArgumentsKwargs = ["overwrite_output_dir"];
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!/\bTrainingArguments\s*\(/u.test(lines[index])) {
+      continue;
+    }
+    const call = extractPythonCallExpression(lines, index);
+    if (!call) {
+      continue;
+    }
+    const unsupported = unsupportedTrainingArgumentsKwargs.filter((name) => {
+      const pattern = new RegExp(`\\b${escapeRegex(name)}\\s*=`, "u");
+      return pattern.test(call.text);
+    });
+    if (unsupported.length > 0) {
+      return `Python source passes unsupported TrainingArguments kwarg(s) at ${path.basename(scriptPath)}:${call.startLine}: ${unsupported.join(", ")}. Remove these kwargs or guard them against the installed transformers signature before handoff.`;
+    }
+  }
+
+  return undefined;
+}
+
+async function repairPythonUnsupportedTrainingArgumentsKwargs(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (!/\bTrainingArguments\s*\(/u.test(source) || !/\boverwrite_output_dir\s*=/u.test(source)) {
+    return { repaired: false };
+  }
+
+  const lines = source.split(/\r?\n/u);
+  let nextSource = source;
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!/\bTrainingArguments\s*\(/u.test(lines[index])) {
+      continue;
+    }
+    const call = extractPythonCallExpression(lines, index);
+    if (!call || !/\boverwrite_output_dir\s*=/u.test(call.text)) {
+      continue;
+    }
+    const repairedCall = removeUnsupportedTrainingArgumentsKwargsFromCall(call.text);
+    if (repairedCall !== call.text) {
+      nextSource = nextSource.replace(call.text, repairedCall);
+    }
+  }
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Removed unsupported TrainingArguments kwarg(s) from ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+function removeUnsupportedTrainingArgumentsKwargsFromCall(callText: string): string {
+  let next = callText;
+  for (const name of ["overwrite_output_dir"]) {
+    const linePattern = new RegExp(`^\\s*${escapeRegex(name)}\\s*=.*?,?\\s*(?:#.*)?$`, "gmu");
+    next = next.replace(linePattern, "");
+    const leadingPattern = new RegExp(`${escapeRegex(name)}\\s*=\\s*[^,\\)\\n]+\\s*,\\s*`, "gu");
+    next = next.replace(leadingPattern, "");
+    const trailingPattern = new RegExp(`,\\s*${escapeRegex(name)}\\s*=\\s*[^,\\)\\n]+`, "gu");
+    next = next.replace(trailingPattern, "");
+  }
+  return next
+    .replace(/\n{3,}/gu, "\n\n")
+    .replace(/\(\s*,\s*/gu, "(")
+    .replace(/,\s*\)/gu, ")");
+}
+
+async function repairPythonUnsupportedTrainerKwargs(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (!/\bTrainer\s*\(/u.test(source) || !/\btokenizer\s*=/u.test(source)) {
+    return { repaired: false };
+  }
+
+  const lines = source.split(/\r?\n/u);
+  let nextSource = source;
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!/\bTrainer\s*\(/u.test(lines[index])) {
+      continue;
+    }
+    const call = extractPythonCallExpression(lines, index);
+    if (!call || !/\btokenizer\s*=/u.test(call.text)) {
+      continue;
+    }
+    const repairedCall = removeUnsupportedTrainerKwargsFromCall(call.text);
+    if (repairedCall !== call.text) {
+      nextSource = nextSource.replace(call.text, repairedCall);
+    }
+  }
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Removed unsupported Trainer kwarg(s) from ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+function removeUnsupportedTrainerKwargsFromCall(callText: string): string {
+  let next = callText;
+  for (const name of ["tokenizer"]) {
+    const linePattern = new RegExp(`^\\s*${escapeRegex(name)}\\s*=.*?,?\\s*(?:#.*)?$`, "gmu");
+    next = next.replace(linePattern, "");
+    const leadingPattern = new RegExp(`${escapeRegex(name)}\\s*=\\s*[^,\\)\\n]+\\s*,\\s*`, "gu");
+    next = next.replace(leadingPattern, "");
+    const trailingPattern = new RegExp(`,\\s*${escapeRegex(name)}\\s*=\\s*[^,\\)\\n]+`, "gu");
+    next = next.replace(trailingPattern, "");
+  }
+  return next
+    .replace(/\n{3,}/gu, "\n\n")
+    .replace(/\(\s*,\s*/gu, "(")
+    .replace(/,\s*\)/gu, ")");
+}
+
+async function repairPythonJsonSafeHelperAlias(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    !/\bmake_json_safe\s*\(/u.test(source) ||
+    pythonSourceDefinesOrImportsName(source, "make_json_safe")
+  ) {
+    return { repaired: false };
+  }
+
+  const fallbackName = pythonSourceDefinesName(source, "_autolabos_json_safe")
+    ? "_autolabos_json_safe"
+    : pythonSourceDefinesName(source, "json_safe")
+      ? "json_safe"
+      : undefined;
+  if (!fallbackName && !pythonSourceDefinesName(source, "dumps_json_safe")) {
+    return { repaired: false };
+  }
+
+  const alias = fallbackName
+    ? [
+        "",
+        "def make_json_safe(value):",
+        `    return ${fallbackName}(value)`,
+        ""
+      ].join("\n")
+    : [
+        "",
+        "def make_json_safe(value):",
+        "    return value",
+        ""
+      ].join("\n");
+
+  const lastImportMatch = Array.from(source.matchAll(/^(?:from\s+\S+\s+import\s+.+|import\s+.+)$/gmu)).pop();
+  let nextSource: string;
+  if (lastImportMatch && typeof lastImportMatch.index === "number") {
+    const insertAt = lastImportMatch.index + lastImportMatch[0].length;
+    nextSource = `${source.slice(0, insertAt)}${alias}${source.slice(insertAt)}`;
+  } else {
+    nextSource = `${alias}${source}`;
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added make_json_safe compatibility alias to ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+async function detectPythonUndefinedUppercaseReferences(scriptPath?: string): Promise<string | undefined> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return undefined;
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  const lines = source.split(/\r?\n/u);
+  const defined = new Set<string>([
+    "False",
+    "None",
+    "True",
+    "__name__",
+    "__file__"
+  ]);
+  const used = new Map<string, number>();
+  const stripState: PythonLineStripState = {};
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const code = stripPythonLineStringsAndComment(lines[index], stripState);
+
+    const assignment = code.match(/^\s*([A-Z][A-Z0-9_]{2,})\s*(?::[^=]+)?=/u);
+    if (assignment) {
+      defined.add(assignment[1]);
+    }
+
+    for (const importMatch of code.matchAll(/\bfrom\s+[\w.]+\s+import\s+(.+)$/gu)) {
+      for (const importedName of importMatch[1].split(",")) {
+        const name = importedName.trim().split(/\s+as\s+/u).pop()?.trim();
+        if (name && /^[A-Z][A-Z0-9_]{2,}$/u.test(name)) {
+          defined.add(name);
+        }
+      }
+    }
+
+    for (const nameMatch of code.matchAll(/\b[A-Z][A-Z0-9_]{2,}\b/gu)) {
+      const name = nameMatch[0];
+      const previous = code[nameMatch.index - 1];
+      if (previous === ".") {
+        continue;
+      }
+      if (isGlobalsGuardedUppercaseReference(lines[index], name)) {
+        continue;
+      }
+      if (!used.has(name)) {
+        used.set(name, index + 1);
+      }
+    }
+  }
+
+  const missing = [...used.entries()]
+    .filter(([name]) => !defined.has(name))
+    .slice(0, 8);
+  if (missing.length === 0) {
+    return undefined;
+  }
+
+  const rendered = missing.map(([name, line]) => `${name} at ${path.basename(scriptPath)}:${line}`).join(", ");
+  return `Python source references uppercase constant(s) that are never defined or imported: ${rendered}. Define these constants before module-level use or load them from config.`;
+}
+
+async function detectPythonUndefinedAnnotationReferences(scriptPath?: string): Promise<string | undefined> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return undefined;
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  const lines = source.split(/\r?\n/u);
+  const defined = new Set<string>([
+    "Any",
+    "Callable",
+    "Dict",
+    "Iterable",
+    "Iterator",
+    "List",
+    "Mapping",
+    "MutableMapping",
+    "Optional",
+    "Sequence",
+    "Set",
+    "Tuple",
+    "Union",
+    "None",
+    "bool",
+    "bytes",
+    "dict",
+    "float",
+    "frozenset",
+    "int",
+    "list",
+    "object",
+    "set",
+    "str",
+    "tuple",
+    "type"
+  ]);
+  const used = new Map<string, number>();
+  const stripState: PythonLineStripState = {};
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const code = stripPythonLineStringsAndComment(lines[index], stripState);
+
+    const classDefinition = code.match(/^\s*class\s+([A-Za-z_]\w*)\b/u);
+    if (classDefinition) {
+      defined.add(classDefinition[1]);
+    }
+
+    const functionDefinition = code.match(/^\s*def\s+([A-Za-z_]\w*)\b/u);
+    if (functionDefinition) {
+      defined.add(functionDefinition[1]);
+    }
+
+    const assignment = code.match(/^\s*([A-Za-z_]\w*)\s*(?::[^=]+)?=/u);
+    if (assignment) {
+      defined.add(assignment[1]);
+    }
+
+    for (const importMatch of code.matchAll(/\b(?:from\s+[\w.]+\s+)?import\s+(.+)$/gu)) {
+      for (const importedName of importMatch[1].split(",")) {
+        const name = importedName.trim().split(/\s+as\s+/u).pop()?.trim();
+        if (name && /^[A-Za-z_]\w*$/u.test(name)) {
+          defined.add(name);
+        }
+      }
+    }
+
+    for (const returnMatch of code.matchAll(/\)\s*->\s*([A-Za-z_]\w*)\b/gu)) {
+      const name = returnMatch[1];
+      if (!used.has(name)) {
+        used.set(name, index + 1);
+      }
+    }
+  }
+
+  const missing = [...used.entries()]
+    .filter(([name]) => !defined.has(name))
+    .slice(0, 8);
+  if (missing.length === 0) {
+    return undefined;
+  }
+
+  const rendered = missing.map(([name, line]) => `${name} at ${path.basename(scriptPath)}:${line}`).join(", ");
+  return `Python source uses undefined type annotation name(s) that can fail at module load time: ${rendered}. Define/import the annotation target before use or rename it to the actual dataclass.`;
+}
+
+async function detectPythonUndefinedSlugifyReference(scriptPath?: string): Promise<string | undefined> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return undefined;
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  if (!/\bslugify\s*\(/u.test(source) || pythonSourceDefinesOrImportsName(source, "slugify")) {
+    return undefined;
+  }
+
+  const line = source.slice(0, source.search(/\bslugify\s*\(/u)).split(/\r?\n/u).length;
+  return [
+    "Python source calls slugify() but never defines or imports it.",
+    `First unresolved slugify() call appears at ${path.basename(scriptPath)}:${line}.`,
+    "Define a local slugify helper before module-level recipe projections, import it explicitly, or avoid using it in RecipeSpec properties before handoff."
+  ].join(" ");
+}
+
+const CRITICAL_PYTHON_RUNTIME_HELPER_NAMES = [
+  "_json_safe",
+  "get_device",
+  "get_device_info",
+  "validate_runtime_dependencies",
+  "write_metrics_json"
+];
+
+async function detectPythonUndefinedRuntimeHelperReferences(scriptPath?: string): Promise<string | undefined> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return undefined;
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  const missing = CRITICAL_PYTHON_RUNTIME_HELPER_NAMES
+    .filter((name) => new RegExp(`\\b${escapeRegex(name)}\\s*\\(`, "u").test(source))
+    .filter((name) => !pythonSourceDefinesOrImportsName(source, name));
+  if (missing.length === 0) {
+    return undefined;
+  }
+
+  const rendered = missing.map((name) => {
+    const match = source.search(new RegExp(`\\b${escapeRegex(name)}\\s*\\(`, "u"));
+    const line = match >= 0 ? source.slice(0, match).split(/\r?\n/u).length : 1;
+    return `${name} at ${path.basename(scriptPath)}:${line}`;
+  }).join(", ");
+  return [
+    "Python source calls critical runtime helper(s) that are never defined or imported.",
+    `Undefined helper call(s): ${rendered}.`,
+    "Define each helper before main() invokes it, import it explicitly, or inline the runtime check before handoff."
+  ].join(" ");
+}
+
+function isGlobalsGuardedUppercaseReference(line: string, name: string): boolean {
+  const escapedName = escapeRegex(name);
+  return new RegExp(
+    `\\b${escapedName}\\b\\s+if\\s+["']${escapedName}["']\\s+in\\s+globals\\s*\\(\\s*\\)\\s+else\\b`,
+    "u"
+  ).test(line);
+}
+
+type PythonLineStripState = {
+  tripleQuote?: "'''" | "\"\"\"";
+};
+
+function stripPythonLineStringsAndComment(line: string, state: PythonLineStripState = {}): string {
+  let stripped = "";
+  let quote: "'" | "\"" | undefined;
+  let escaped = false;
+  for (let index = 0; index < line.length; index += 1) {
+    if (state.tripleQuote) {
+      if (line.startsWith(state.tripleQuote, index)) {
+        stripped += " ".repeat(state.tripleQuote.length);
+        index += state.tripleQuote.length - 1;
+        state.tripleQuote = undefined;
+        continue;
+      }
+      stripped += " ";
+      continue;
+    }
+
+    const char = line[index];
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === quote) {
+        quote = undefined;
+      }
+      stripped += " ";
+      continue;
+    }
+    if (char === "#") {
+      break;
+    }
+    if (line.startsWith("'''", index) || line.startsWith("\"\"\"", index)) {
+      const tripleQuote = line.slice(index, index + 3) as "'''" | "\"\"\"";
+      stripped += " ".repeat(tripleQuote.length);
+      index += tripleQuote.length - 1;
+      state.tripleQuote = tripleQuote;
+      continue;
+    }
+    if (char === "'" || char === "\"") {
+      quote = char;
+      stripped += " ";
+      continue;
+    }
+    stripped += char;
+  }
+  return stripped;
+}
+
 async function repairPythonMissingParseArgsSurface(scriptPath?: string): Promise<{
   repaired: boolean;
   message?: string;
@@ -8039,6 +10593,501 @@ async function repairPythonExperimentConfigMetadataSurface(scriptPath?: string):
   return {
     repaired: true,
     message: `Added an ExperimentConfig.metadata compatibility field to ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+async function repairPythonRecipeSpecPeftTypeSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (!source.includes("class RecipeSpec:") || !/\n\s+peft_type\s*:/u.test(source)) {
+    return { repaired: false };
+  }
+  if (!/\ndef\s+make_recipe_spec\s*\(/u.test(`\n${source}`)) {
+    return { repaired: false };
+  }
+  if (/\n\s+peft_type\s*=\s*peft_method\s*,/u.test(source)) {
+    return { repaired: false };
+  }
+
+  const adapterAliasPattern = /\n(\s+adapter_type\s*=\s*peft_method\s*,)/u;
+  const methodAliasPattern = /\n(\s+peft_method\s*=\s*peft_method\s*,)/u;
+  let nextSource: string;
+  if (adapterAliasPattern.test(source)) {
+    nextSource = source.replace(adapterAliasPattern, "\n$1\n        peft_type=peft_method,");
+  } else if (methodAliasPattern.test(source)) {
+    nextSource = source.replace(methodAliasPattern, "\n$1\n        peft_type=peft_method,");
+  } else {
+    return { repaired: false };
+  }
+
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added a RecipeSpec.peft_type compatibility alias to ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+async function repairPythonRecipeSpecAdapterTypeSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+  if (!source.includes("class RecipeSpec:") || !/\n\s+adapter_type\s*:/u.test(source)) {
+    return { repaired: false };
+  }
+  if (/\n\s+adapter_type\s*=\s*peft_method\s*,/u.test(source) || /["']adapter_type["']\s*:/u.test(source)) {
+    return { repaired: false };
+  }
+
+  let nextSource = source;
+  const methodAliasPattern = /\n(\s+peft_method\s*=\s*peft_method\s*,)/u;
+  if (methodAliasPattern.test(nextSource)) {
+    nextSource = nextSource.replace(methodAliasPattern, "\n$1\n        adapter_type=peft_method,");
+  } else {
+    const peftTypeAliasPattern = /\n(\s+peft_type\s*=\s*peft_method\s*,)/u;
+    if (peftTypeAliasPattern.test(nextSource)) {
+      nextSource = nextSource.replace(peftTypeAliasPattern, "\n$1\n        adapter_type=peft_method,");
+    }
+  }
+
+  if (nextSource === source) {
+    const aliasDictPattern = /\n(\s+["']task_type["']\s*:\s*PEFT_TASK_TYPE\s*,)/u;
+    if (aliasDictPattern.test(nextSource)) {
+      nextSource = nextSource.replace(aliasDictPattern, "\n        \"adapter_type\": \"lora\",\n$1");
+    }
+  }
+
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added a RecipeSpec.adapter_type compatibility alias to ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+async function repairPythonRecipeSpecNameSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (!source.includes("class RecipeSpec:") || !/\.name\b/u.test(source)) {
+    return { repaired: false };
+  }
+
+  const classStart = source.indexOf("class RecipeSpec:\n");
+  if (classStart < 0) {
+    return { repaired: false };
+  }
+  const bodyStart = classStart + "class RecipeSpec:\n".length;
+  const bodyEnd = findPythonClassBodyEnd(source, bodyStart);
+  const classBody = source.slice(bodyStart, bodyEnd);
+  if (/\n\s+name\s*:/u.test(`\n${classBody}`) || /\n\s+def\s+name\s*\(/u.test(`\n${classBody}`)) {
+    return { repaired: false };
+  }
+
+  const returnCandidates = ["recipe_id", "display_name", "recipe_type", "peft_type"];
+  const returnField = returnCandidates.find((field) => new RegExp(`\\n\\s+${escapeRegex(field)}\\s*:`, "u").test(`\n${classBody}`));
+  if (!returnField) {
+    return { repaired: false };
+  }
+
+  const propertyBlock = [
+    "",
+    "    @property",
+    "    def name(self) -> str:",
+    `        return str(self.${returnField})`,
+    ""
+  ].join("\n");
+  const nextSource = `${source.slice(0, bodyEnd)}${propertyBlock}${source.slice(bodyEnd)}`;
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added a RecipeSpec.name compatibility property to ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+function findPythonClassBodyEnd(source: string, bodyStart: number): number {
+  const tail = source.slice(bodyStart);
+  let offset = 0;
+  for (const line of tail.split(/(?<=\n)/u)) {
+    if (line.trim().length > 0 && !/^\s/u.test(line)) {
+      return bodyStart + offset;
+    }
+    offset += line.length;
+  }
+  return source.length;
+}
+
+async function repairPythonOrchestrationCandidateSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (!source.includes("def _invoke_experiment_orchestration(") || !source.includes("candidate_names")) {
+    return { repaired: false };
+  }
+
+  const safeDefinedEntrypoints = [
+    "execute_locked_recipe_plan",
+    "orchestrate_locked_recipe_plan",
+    "run_locked_recipe_plan"
+  ].filter((name) => new RegExp(`\\ndef\\s+${escapeRegex(name)}\\s*\\(`, "u").test(`\n${source}`));
+
+  const missingEntrypoints = safeDefinedEntrypoints.filter((name) => !source.includes(`"${name}"`) && !source.includes(`'${name}'`));
+  if (missingEntrypoints.length === 0) {
+    return { repaired: false };
+  }
+
+  const candidateListPattern = /(\bcandidate_names\s*=\s*\[\s*\n)/u;
+  if (!candidateListPattern.test(source)) {
+    return { repaired: false };
+  }
+
+  const insertedLines = missingEntrypoints.map((name) => `        "${name}",`).join("\n");
+  const nextSource = source.replace(candidateListPattern, `$1${insertedLines}\n`);
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added orchestration candidate(s) ${missingEntrypoints.join(", ")} to ${path.basename(
+      scriptPath
+    )} before handoff.`
+  };
+}
+
+async function repairPythonBaselineFirstRecipeOrderSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (!/COMPARISON_MODE\s*=\s*["']baseline_first_locked["']/u.test(source) && !/BASELINE_FIRST_REQUIRED\s*=\s*True/u.test(source)) {
+    return { repaired: false };
+  }
+  if (!source.includes("def _candidate_sort_key(") || !source.includes("def _get_locked_recipe_sequence(")) {
+    return { repaired: false };
+  }
+  if (!source.includes("Locked comparison contract requires the untuned reference candidate to run first.")) {
+    return { repaired: false };
+  }
+
+  const sortKeyPattern =
+    /def _candidate_sort_key\(recipe: Any\) -> Tuple\[int, str\]:\n(?:    .*\n)+?(?=\ndef _get_locked_recipe_sequence\()/u;
+  const nextSortKey = [
+    "def _candidate_sort_key(recipe: Any) -> Tuple[int, str]:",
+    "    recipe_id = _recipe_identifier(recipe)",
+    "    standard_id = _standard_lora_id().lower()",
+    "    recipe_id_lower = recipe_id.lower()",
+    "    if recipe_id_lower == standard_id or (\"standard\" in recipe_id_lower and \"lora\" in recipe_id_lower):",
+    "        return (0, recipe_id)",
+    "    if _recipe_is_reference(recipe):",
+    "        return (1, recipe_id)",
+    "    return (2, recipe_id)",
+    ""
+  ].join("\n");
+
+  const sequenceValidationPattern =
+    /    recipes = sorted\(recipes, key=_candidate_sort_key\)\n    if not _recipe_is_reference\(recipes\[0\]\):\n        raise RuntimeError\(\n            "Locked comparison contract requires the untuned reference candidate to run first\."\n        \)\n    if len\(recipes\) > 1:\n        second_id = _recipe_identifier\(recipes\[1\]\)\.lower\(\)\n        expected_lora = _standard_lora_id\(\)\.lower\(\)\n        if second_id != expected_lora and not \("standard" in second_id and "lora" in second_id\):\n            raise RuntimeError\(\n                "Locked comparison contract requires the standard LoRA tuned baseline to run immediately after the reference\."\n            \)\n    return recipes/u;
+  const nextSequenceValidation = [
+    "    recipes = sorted(recipes, key=_candidate_sort_key)",
+    "    first_id = _recipe_identifier(recipes[0]).lower()",
+    "    expected_lora = _standard_lora_id().lower()",
+    "    if first_id != expected_lora and not (\"standard\" in first_id and \"lora\" in first_id):",
+    "        raise RuntimeError(",
+    "            \"Locked baseline-first contract requires the standard LoRA tuned baseline to run first.\"",
+    "        )",
+    "    if len(recipes) > 1 and not any(_recipe_is_reference(recipe) for recipe in recipes):",
+    "        raise RuntimeError(",
+    "            \"Locked baseline-first contract requires the untuned reference candidate to remain in the comparison.\"",
+    "        )",
+    "    return recipes"
+  ].join("\n");
+
+  let nextSource = source.replace(sortKeyPattern, nextSortKey);
+  nextSource = nextSource.replace(sequenceValidationPattern, nextSequenceValidation);
+
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Aligned baseline-first PEFT recipe ordering in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+async function detectPythonBaselineFirstTunedBaselineMismatch(scriptPath?: string): Promise<string | undefined> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return undefined;
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  const lockedComparison =
+    /COMPARISON_MODE\s*=\s*["']baseline_first_locked["']/u.test(source) ||
+    /BASELINE_FIRST_REQUIRED\s*=\s*True/u.test(source) ||
+    /["']comparison_mode["']\s*:\s*["']baseline_first_locked["']/u.test(source) ||
+    /["']baseline_first_required["']\s*:\s*True/u.test(source);
+  if (!lockedComparison) {
+    return undefined;
+  }
+
+  const hasUntunedPrimaryBaseline =
+    /\bRecipe\s*\(\s*name\s*=\s*["']baseline_no_tuning["'][\s\S]{0,180}\bkind\s*=\s*["']baseline["']/u.test(source) ||
+    /\bbaseline\s*=\s*next\s*\([\s\S]{0,400}\.recipe\s*==\s*["']baseline_no_tuning["']/u.test(source) ||
+    /\bbaseline_mean_[A-Za-z0-9_]*\s*=\s*baseline\./u.test(source);
+  const hasTunedLoraCandidate = /\blora_r(?:8|16|32)\b/u.test(source) || /standard[_-]?lora/iu.test(source);
+  if (!hasUntunedPrimaryBaseline || !hasTunedLoraCandidate) {
+    return undefined;
+  }
+
+  return [
+    "Generated baseline_first_locked PEFT runner treats the untuned/no-tuning reference as the primary baseline.",
+    "The governed experiment contract requires the tuned standard LoRA baseline to be the primary comparator; untuned/no-tuning may be retained only as a reference row.",
+    "Revise the runner so baseline metrics and delta/objective comparisons are computed against the named tuned LoRA baseline, not baseline_no_tuning."
+  ].join(" ");
+}
+
+async function repairPythonTransformersSetSeedAliasSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  let nextSource: string | undefined;
+  const needsSetSeedAlias = /\bset_seed\s*\(/u.test(source) && !/\n\s*set_seed\s*=/u.test(source);
+  if (needsSetSeedAlias) {
+    if (/\btransformers_set_seed\b/u.test(source)) {
+      const aliasInsertionPattern = /(\n\s*transformers_set_seed\s*=\s*None[^\n]*\n[\s\S]*?_record_optional_dependency\(\s*\n\s*OPTIONAL_DEPENDENCIES,\s*\n\s*["']transformers["'],[\s\S]*?\n\s*\)\s*\n)(\ntry:)/u;
+      if (aliasInsertionPattern.test(source)) {
+        nextSource = source.replace(aliasInsertionPattern, "$1\nset_seed = transformers_set_seed  # compatibility alias for generated seed helpers\n$2");
+      } else {
+        const seedHelperMatch = source.match(/\ndef\s+seed_everything\s*\(/u);
+        if (seedHelperMatch?.index != null) {
+          nextSource = `${source.slice(0, seedHelperMatch.index)}\nset_seed = transformers_set_seed  # compatibility alias for generated seed helpers\n${source.slice(seedHelperMatch.index)}`;
+        }
+      }
+    } else {
+      const seedHelperMatch = source.match(/\ndef\s+seed_everything\s*\(/u);
+      if (seedHelperMatch?.index != null) {
+        const shim = [
+          "",
+          "try:",
+          "    from transformers import set_seed",
+          "except Exception:",
+          "    set_seed = None",
+          ""
+        ].join("\n");
+        nextSource = `${source.slice(0, seedHelperMatch.index)}${shim}${source.slice(seedHelperMatch.index)}`;
+      }
+    }
+  }
+
+  const sourceAfterSetSeedRepair = nextSource || source;
+  const needsSetGlobalSeedAlias =
+    /\bset_global_seed\s*\(/u.test(sourceAfterSetSeedRepair) &&
+    !/^\s*def\s+set_global_seed\s*\(/mu.test(sourceAfterSetSeedRepair) &&
+    !/^\s*set_global_seed\s*=/mu.test(sourceAfterSetSeedRepair);
+  if (needsSetGlobalSeedAlias) {
+    const hasSeedFallback =
+      /\bdef\s+seed_everything\s*\(/u.test(sourceAfterSetSeedRepair) ||
+      /\bdef\s+set_reproducibility_seed\s*\(/u.test(sourceAfterSetSeedRepair) ||
+      /\btransformers_set_seed\b/u.test(sourceAfterSetSeedRepair) ||
+      /\bhf_set_seed\b/u.test(sourceAfterSetSeedRepair) ||
+      /\bset_seed\s*=/u.test(sourceAfterSetSeedRepair);
+    if (hasSeedFallback) {
+      const shim = [
+        "",
+        "def set_global_seed(seed: int) -> None:",
+        "    seed_helper = globals().get(\"seed_everything\") or globals().get(\"set_reproducibility_seed\")",
+        "    if seed_helper is not None:",
+        "        seed_helper(seed)",
+        "        return",
+        "    transformers_seed = globals().get(\"transformers_set_seed\") or globals().get(\"hf_set_seed\") or globals().get(\"set_seed\")",
+        "    if transformers_seed is not None:",
+        "        transformers_seed(seed)",
+        ""
+      ].join("\n");
+      const insertionMatch =
+        sourceAfterSetSeedRepair.match(/\ndef\s+main\s*\(/u) ||
+        sourceAfterSetSeedRepair.match(/\ndef\s+run_and_write_metrics\s*\(/u) ||
+        sourceAfterSetSeedRepair.match(/\nif\s+__name__\s*==\s*["']__main__["']/u);
+      if (insertionMatch?.index != null) {
+        nextSource = `${sourceAfterSetSeedRepair.slice(0, insertionMatch.index)}${shim}${sourceAfterSetSeedRepair.slice(insertionMatch.index)}`;
+      }
+    }
+  }
+
+  if (!nextSource || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Aligned generated seed helper compatibility in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+async function repairPythonStrictJsonMetricsSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (!/\bjson\.dump\s*\(/u.test(source)) {
+    return { repaired: false };
+  }
+
+  let nextSource = source;
+  if (!/\ndef\s+_autolabos_json_safe\s*\(/u.test(nextSource)) {
+    const helper = [
+      "",
+      "def _autolabos_json_safe(value):",
+      "    if isinstance(value, dict):",
+      "        return {str(key): _autolabos_json_safe(item) for key, item in value.items()}",
+      "    if isinstance(value, (list, tuple)):",
+      "        return [_autolabos_json_safe(item) for item in value]",
+      "    module_name = value.__class__.__module__",
+      "    if isinstance(value, float) or module_name.startswith(('numpy', 'torch')):",
+      "        try:",
+      "            numeric = float(value)",
+      "        except (TypeError, ValueError):",
+      "            return None",
+      "        if numeric != numeric or numeric in (float('inf'), float('-inf')):",
+      "            return None",
+      "        return numeric if module_name.startswith(('numpy', 'torch')) else value",
+      "    return value",
+      ""
+    ].join("\n");
+    const writeJsonMatch = nextSource.match(/\ndef\s+write_json\s*\(/u);
+    const firstDumpIndex = nextSource.indexOf("json.dump(");
+    const precedingFunctionMatches =
+      firstDumpIndex >= 0
+        ? [...nextSource.slice(0, firstDumpIndex).matchAll(/\ndef\s+\w+\s*\(/gu)]
+        : [];
+    const enclosingFunctionIndex = precedingFunctionMatches.at(-1)?.index;
+    const insertionIndex = writeJsonMatch?.index ?? enclosingFunctionIndex ?? (firstDumpIndex >= 0 ? firstDumpIndex : -1);
+    if (insertionIndex < 0) {
+      return { repaired: false };
+    }
+    nextSource = `${nextSource.slice(0, insertionIndex)}${helper}${nextSource.slice(insertionIndex)}`;
+  }
+
+  const lines = nextSource.split(/\r?\n/u);
+  let changedDump = false;
+  const repairedLines = lines.map((line) => {
+    if (!/\bjson\.dump\s*\(/u.test(line)) {
+      return line;
+    }
+    let repaired = line;
+    if (!/_autolabos_json_safe\s*\(/u.test(repaired)) {
+      repaired = repaired.replace(/\bjson\.dump\s*\(\s*([^,]+?)\s*,/u, "json.dump(_autolabos_json_safe($1),");
+    }
+    if (!/\ballow_nan\s*=/u.test(repaired) && /\)\s*$/u.test(repaired)) {
+      repaired = repaired.replace(/\)\s*$/u, ", allow_nan=False)");
+    }
+    if (repaired !== line) {
+      changedDump = true;
+    }
+    return repaired;
+  });
+  nextSource = repairedLines.join("\n");
+
+  if (!changedDump || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Made metrics JSON serialization strict and non-finite-safe in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

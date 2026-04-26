@@ -13,7 +13,7 @@ export interface OpenAiResponsesReasoningOption {
 // Official docs basis:
 // - GPT-5 and GPT-4.1 / GPT-4o family are documented on developers.openai.com model pages.
 // - Responses API supports reasoning controls for supported GPT-5 models.
-export const DEFAULT_OPENAI_RESPONSES_MODEL = "gpt-5.4";
+export const DEFAULT_OPENAI_RESPONSES_MODEL = "gpt-5.5";
 export const DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT = "medium";
 
 export const OPENAI_RESPONSES_REASONING_OPTIONS: OpenAiResponsesReasoningOption[] = [
@@ -45,6 +45,11 @@ export const OPENAI_RESPONSES_REASONING_OPTIONS: OpenAiResponsesReasoningOption[
 ];
 
 export const OPENAI_RESPONSES_MODEL_OPTIONS: OpenAiResponsesModelOption[] = [
+  {
+    value: "gpt-5.5",
+    label: "gpt-5.5",
+    description: "Recommended default for highest-quality general reasoning and writing tasks."
+  },
   {
     value: "gpt-5.4",
     label: "gpt-5.4",

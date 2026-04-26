@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-04-24
+Last updated: 2026-04-26
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
@@ -14,6 +14,33 @@ Usage rules:
 ## Current active status
 
 - Active live-validation defects:
+  - `LV-153` generated PEFT runners can pass implement-stage verification while the final experiment entrypoint calls undefined helper `set_global_seed(...)`, even though generated seed helpers are available under different names such as `seed_everything` or `transformers_set_seed`.
+  - `LV-152` generated PEFT runners can pass implement-stage verification while the final study dispatcher searches only `run_study`, `execute_study`, `run_experiment`, and `execute_peft_instruction_study`, even though executable study helpers are generated under different names; the failure path can then call undefined `make_json_safe`.
+  - `LV-151` generated PEFT runners can pass implement-stage verification and reach real model loading/training setup, but fail under installed `transformers 5.3.0` because `Trainer(..., tokenizer=...)` is no longer accepted.
+  - `LV-150` generated PEFT runners can pass implement-stage verification while the metrics writer adapter passes `path=` but the selected writer requires `metrics_path`, causing final metrics writing to fail after real execution reaches payload assembly.
+  - `LV-149` generated PEFT runners can pass implement-stage `py_compile` while a compatibility factory filters kwargs against `RecipeSpec.__dataclass_fields__` but omits the required `adapter_type` field, causing module-load failure before experiment execution.
+  - `LV-148` generated PEFT runners can pass implement-stage verification and define executable row-loop helpers, but the final `_run_study_with_available_helper` resolver searches only different helper names and fails `run_experiments` with `No executable study helper was found in completed sections`.
+  - `LV-147` generated PEFT runners can pass implement-stage verification and define a valid baseline-first PEFT execution helper, but the final `_entrypoint_execute_study` resolver searches only different helper names and fails `run_experiments` with `No baseline-first PEFT study execution helper was found in the runner`.
+  - `LV-146` generated PEFT runners can pass implement-stage verification and define default PEFT recipes, but `run_experiments` still fails immediately because `set_seed(...) if "set_seed" in globals() else SEED` checks helper availability only for the argument expression, not for the function call itself, causing `NameError: set_seed is not defined`.
+  - `LV-145` generated PEFT runners can pass implement-stage verification while CLI normalization reads only `PEFT_RECIPES` for default recipe selection even though no non-empty `PEFT_RECIPES` registry is defined, causing `run_experiments` to fail before model loading with `No PEFT recipes selected`.
+  - `LV-144` generated PEFT runners can pass implement-stage verification and reach real CUDA/model execution while benchmark data loading and failure-metrics writer adapters search incompatible helper names/signatures, causing `run_experiments` to fail without producing current metrics.
+  - `LV-143` staged native-Codex materialization can fail attempt 1/3 outright when a deeply nested subchunk still fails Python candidate validation with `IndentationError`, instead of recording the failed attempt, restoring isolation, and continuing to the next implement attempt.
+  - `LV-142` generated PEFT runners can pass implement-stage verification and auto-handoff while the final study dispatcher searches only orchestration function names that were never generated, causing immediate `run_experiments` failure even though a baseline-first evaluation function exists under a different name.
+  - `LV-141` generated PEFT runners can pass implement-stage verification and auto-handoff while recipe configuration containers are dict-backed but CLI/final metadata paths access entries as objects with `recipe.name`, causing immediate `AttributeError` in `run_experiments`.
+  - `LV-140` generated PEFT runners can pass implement-stage verification and begin real `run_experiments` execution while the executable path still calls undefined failure-metrics helper `get_device_info()` and dispatches zero-shot evaluation through evaluator names that were never generated, causing runtime failure after model loading.
+  - `LV-139` generated PEFT runners can pass implement-stage verification and auto-handoff while the executable path calls undefined lowercase helpers such as `get_device()` and `_json_safe()`, causing `run_experiments` to fail after handoff.
+  - `LV-138` generated PEFT runners can pass implement-stage verification and begin executing before the entrypoint calls an undefined runtime helper `validate_runtime_dependencies`, causing `run_experiments` to fail before metrics are produced.
+  - `LV-137` generated PEFT runners can pass implement-stage `py_compile` and compatibility repairs while a module-level recipe-id projection calls a `RecipeSpec.recipe_id` property that depends on undefined helper `slugify`, causing `run_experiments` to fail at module load.
+  - `LV-136` generated PEFT runners can pass implement-stage verification after `RecipeSpec.name` property repair while a later duplicate `PEFT_RECIPES` block calls `RecipeSpec(name=..., recipe_type=..., rank=...)` against a dataclass constructor that only accepts `recipe_id`, `peft_type`, `config`, and related fields, causing `run_experiments` to fail at module load.
+  - `LV-135` generated PEFT runners can pass implement-stage verification and auto-handoff while their baseline-first orchestration searches for benchmark evaluator names that do not include the evaluator actually generated by the evaluation section, causing `run_experiments` to fail and leave `metrics.json` empty.
+  - `LV-134` staged native-Codex materialization can abort an entire `implement_experiments` attempt when one chunk response is not parseable JSON, instead of treating the malformed chunk as retryable and re-subdividing or regenerating it.
+  - `LV-133` native Codex OAuth staged implementation can abort before producing a runnable implementation when the backend returns transient server/request errors during chunk generation, leaving same-flow verifier fixes unvalidated until a retry succeeds.
+  - `LV-132` implement-stage verification now catches unsupported `TrainingArguments(overwrite_output_dir=...)`, but repeated native Codex retries still regenerate the same incompatible kwarg and exhaust all implement attempts before a runnable bundle is produced.
+  - `LV-131` generated PEFT runners can pass implement-stage verification while their CLI dispatch references recipe-comparison workflow names that were never defined, causing `run_experiments` to write failed metrics and exit 1.
+  - `LV-130` staged implementation can pass `py_compile` with unfilled `AUTOLABOS SECTION` skeleton blocks, causing `run_experiments` to exit 0 without writing metrics.
+  - `LV-127` generated `baseline_first_locked` PEFT runners can internally sort the untuned reference before the locked tuned baseline even though the experiment contract requires the standard LoRA tuned baseline to be first.
+  - `LV-119` implement-stage Python verification can pass `py_compile` while a generated runner still fails at module load on an undefined return-annotation type name.
+  - `LV-113` `run_experiments` can receive a Python runner that passes implement-stage verification but fails on an unsupported `TrainingArguments(overwrite_output_dir=...)` kwarg in the installed `transformers` version.
   - `LV-108` `run_experiments` can complete after writing failed private metrics while stale public study artifacts still show completed baseline/comparator rows.
   - `LV-098` IEEE staging `pdf_url` rows cache HTML instead of PDF, so `analyze_papers` cannot preserve supplemental page images on abstract fallback for those papers.
 - Active research/paper-readiness watchlist: see `Research and paper-readiness watchlist` below.
@@ -29,6 +56,2749 @@ Usage rules:
 ---
 
 ## Active live validation issues
+
+## Issue: LV-153
+
+- Status: active
+- Validation target: same-flow retry of `implement_experiments` with auto-handoff to `run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the `LV-152` dispatcher/helper repair
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - producing node: `implement_experiments`
+  - failing node: `run_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+  - TUI launched in detached session `autolabos-live-73050s` from rebuilt `dist/cli/main.js`
+
+- Reproduction steps:
+  1. Start a detached real TUI session in `.autolabos-validation` with the rebuilt CLI.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let staged native-Codex implementation complete materialization and local verification.
+  4. Let auto-handoff run the generated `run_peft_instruction_study.py`.
+  5. Inspect the TUI status, `run_experiments_verify_report.json`, and `metrics.json`.
+
+- Expected behavior:
+  - Implement-stage verification should repair or reject generated runners whose final entrypoint calls a seeding helper that is not defined.
+  - If compatible seed helpers are generated under names such as `seed_everything`, `set_reproducibility_seed`, or `transformers_set_seed`, the runner should bind a safe `set_global_seed(...)` compatibility alias before handoff.
+
+- Actual behavior:
+  - `implement_experiments` completed with `verifyStatus=pass`.
+  - Auto-handoff advanced beyond the previous dispatcher/helper mismatch, confirming the `LV-152` blocker was materially narrowed.
+  - `run_experiments` failed immediately in the final entrypoint with `NameError: name 'set_global_seed' is not defined`.
+  - The generated runner contained seed-related helpers and imports, including `transformers_set_seed` and `seed_everything`, but the final entrypoint still called `set_global_seed(int(getattr(args, "seed", SEED)))`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in detached TUI session `autolabos-live-73050s`.
+  - Existing session: earlier same-flow retries failed before this point on dispatcher, JSON-safe helper, Trainer constructor, metrics writer, recipe schema, optional-helper, runtime-helper, and benchmark-loader boundaries.
+  - Divergence: no session-state divergence observed; TUI status, `run_experiments_verify_report.json`, and `metrics.json` agree on the undefined `set_global_seed` failure.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation projected multiple seeding helper names across independent sections but did not reconcile the final entrypoint call with the helpers actually defined in the completed runner. Existing compatibility repair covered `set_seed` aliases, but not the semantically equivalent `set_global_seed` call surface.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - extends the existing seed-helper compatibility repair so generated runners that call `set_global_seed(...)` can bind that name to available generated seed helpers before handoff
+      - keeps the repair bounded to seed helper surfaces such as `seed_everything`, `set_reproducibility_seed`, `transformers_set_seed`, `hf_set_seed`, or a repaired `set_seed` alias
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds deterministic regression coverage for a generated runner that defines `seed_everything(...)` and `transformers_set_seed` but calls undefined `set_global_seed(...)` from `main(...)`
+
+- Regression status:
+  - Automated regression test linked: yes, `tests/implementSessionManager.test.ts`
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - Additional helper alias names may appear in generated runners; the repair should stay bounded to seeding helpers and avoid fabricating experiment outputs.
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-152
+
+- Status: active
+- Validation target: same-flow retry of `implement_experiments` with auto-handoff to `run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the `LV-151` `Trainer(tokenizer=...)` repair
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - producing node: `implement_experiments`
+  - failing node: `run_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+  - TUI launched in detached session `autolabos-live-73050r` from rebuilt `dist/cli/main.js`
+
+- Reproduction steps:
+  1. Start a detached real TUI session in `.autolabos-validation` with the rebuilt CLI.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let staged native-Codex implementation complete materialization and local verification.
+  4. Let auto-handoff run the generated `run_peft_instruction_study.py`.
+  5. Inspect the TUI status and generated runner.
+
+- Expected behavior:
+  - Implement-stage verification should reject final study dispatchers whose searched callable names are never defined.
+  - Failure-metrics paths should not call undefined JSON-safe helper names.
+
+- Actual behavior:
+  - `implement_experiments` completed with `verifyStatus=pass`.
+  - Auto-handoff advanced beyond the previous `Trainer(tokenizer=...)` compatibility failure, confirming the `LV-151` blocker was materially narrowed.
+  - `run_experiments` failed because `_call_first_available(...)` searched only `run_study`, `execute_study`, `run_experiment`, and `execute_peft_instruction_study`, while generated helpers existed under names such as `run_study_execution` and `execute_study_from_args`.
+  - During exception handling, `_dependency_report()` called `make_json_safe(...)`, but only `dumps_json_safe(...)` was defined, causing `NameError: name 'make_json_safe' is not defined`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in detached TUI session `autolabos-live-73050r`.
+  - Existing session: earlier same-flow retries failed before this point on Transformers Trainer compatibility, metrics writer adapter, recipe schema, study resolver, optional-helper, and benchmark-loader boundaries.
+  - Divergence: no session-state divergence observed; TUI status and generated runner agree on the dispatcher mismatch and failure-path helper omission.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced executable study helpers and final CLI dispatch independently, but the final dispatcher candidate list was not derived from the actual helper names. Separately, failure-metrics code referenced a JSON-safe helper alias that was never defined.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - extends recipe/study workflow dispatch verification to include `None of the required functions are available` final-dispatcher failures
+      - adds generated helper names such as `run_study_execution` and `execute_study_from_args` to the known study workflow entrypoint set
+      - adds a bounded `make_json_safe(...)` compatibility alias repair when generated code defines `_autolabos_json_safe(...)` or another JSON-safe fallback but calls `make_json_safe(...)`
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds deterministic regression coverage for a final `_call_first_available(...)` dispatcher that searches only missing required study functions
+      - adds deterministic regression coverage for adding a missing `make_json_safe(...)` alias before local verification passes
+
+- Regression status:
+  - Automated regression test linked: yes.
+  - Targeted test: pass on 2026-04-26 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "required-functions dispatcher|make_json_safe|Trainer tokenizer|registered recipe workflow|completed-sections study resolver"`
+  - Build: pass on 2026-04-26 with `npm run build`
+  - Harness: pass on 2026-04-26 with `npm run validate:harness`
+  - Same-flow live revalidation: pending.
+
+- Follow-up risks:
+  - More final-dispatcher name variants may appear; the verifier should continue checking concrete searched callable names rather than fabricating run outputs.
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-151
+
+- Status: active
+- Validation target: same-flow retry of `implement_experiments` with auto-handoff to `run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the `LV-150` metrics writer adapter guard
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - producing node: `implement_experiments`
+  - failing node: `run_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+  - TUI launched in detached session `autolabos-live-73050q` from rebuilt `dist/cli/main.js`
+
+- Reproduction steps:
+  1. Start a detached real TUI session in `.autolabos-validation` with the rebuilt CLI.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let staged native-Codex implementation complete materialization and local verification.
+  4. Let auto-handoff run the generated `run_peft_instruction_study.py`.
+  5. Inspect TUI output and generated failed metrics.
+
+- Expected behavior:
+  - Implement-stage verification should repair or reject generated `Trainer(...)` calls that pass kwargs unsupported by the installed `transformers` version.
+  - The generated runner should not auto-handoff with `Trainer(..., tokenizer=tokenizer)` when the installed Trainer constructor rejects `tokenizer`.
+
+- Actual behavior:
+  - `implement_experiments` completed with `verifyStatus=pass`.
+  - Auto-handoff advanced beyond the previous metrics writer adapter failure, confirming the `LV-150` blocker was materially narrowed.
+  - `run_experiments` reached real Hugging Face model loading, tokenized the instruction subset, and then failed at training setup with `TypeError("Trainer.__init__() got an unexpected keyword argument 'tokenizer'")`.
+  - The generated code passed `tokenizer=tokenizer` directly to `Trainer(...)`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in detached TUI session `autolabos-live-73050q`.
+  - Existing session: earlier same-flow retries failed before this point on recipe schema, study resolver, metrics writer, optional-helper, runtime-helper, and benchmark-loader boundaries.
+  - Divergence: no session-state divergence observed; TUI status and failed metrics agree on the `Trainer` constructor incompatibility.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation still emits older Transformers Trainer constructor surfaces while the validation environment has `transformers 5.3.0`, where `tokenizer` is no longer accepted. Existing compatibility repair covers `TrainingArguments(overwrite_output_dir=...)` but not `Trainer(tokenizer=...)`.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - adds a bounded compatibility repair that removes unsupported `Trainer(tokenizer=...)` kwargs before handoff
+      - places the repair next to existing installed-Transformers compatibility repairs for `TrainingArguments`
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds deterministic regression coverage for removing `tokenizer=tokenizer` from generated `Trainer(...)` calls before local verification passes
+
+- Regression status:
+  - Automated regression test linked: yes.
+  - Targeted test: pass on 2026-04-26 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "Trainer tokenizer|TrainingArguments|metrics writer adapter"`
+  - Build: pass on 2026-04-26 with `npm run build`
+  - Harness: pass on 2026-04-26 with `npm run validate:harness`
+  - Same-flow live revalidation: partial pass on 2026-04-26 in `autolabos-live-73050r`; the generated runner advanced beyond the `Trainer(tokenizer=...)` compatibility mismatch, then exposed the final dispatcher/helper mismatch and undefined `make_json_safe` failure path tracked as `LV-152`.
+
+- Follow-up risks:
+  - Additional Transformers v5 constructor-surface changes may appear after this repair; same-flow live validation remains required.
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-150
+
+- Status: active
+- Validation target: same-flow retry of `implement_experiments` with auto-handoff to `run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the `LV-149` `RecipeSpec.adapter_type` repair
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - producing node: `implement_experiments`
+  - failing node: `run_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+  - TUI launched in detached session `autolabos-live-73050p` from rebuilt `dist/cli/main.js`
+
+- Reproduction steps:
+  1. Start a detached real TUI session in `.autolabos-validation` with the rebuilt CLI.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let staged native-Codex implementation complete materialization and local verification.
+  4. Let auto-handoff run the generated `run_peft_instruction_study.py`.
+  5. Inspect the TUI status, `run_experiments_verify_report.json`, and the generated metrics writer adapter.
+
+- Expected behavior:
+  - Implement-stage verification should reject a runner whose metrics writer adapter does not pass all required writer arguments.
+  - If `write_metrics_json(metrics, metrics_path)` is the selected writer, the adapter should pass both the payload and `metrics_path=metrics_path`.
+
+- Actual behavior:
+  - `implement_experiments` completed with `verifyStatus=pass`.
+  - Auto-handoff advanced beyond the previous `RecipeSpec.adapter_type` module-load failure, confirming the `LV-149` blocker was materially narrowed.
+  - `run_experiments` then failed while writing metrics.
+  - `_write_metrics_payload(...)` called `_call_with_supported_kwargs(writer, path=metrics_path, metrics=payload, payload=payload, data=payload, obj=payload)`.
+  - The selected writer `write_metrics_json(metrics, metrics_path)` required `metrics_path`, but the adapter only supplied `path`, so `_call_with_supported_kwargs(...)` raised `Cannot call helper write_metrics_json; missing required arguments ['metrics_path']`.
+  - Fallback positional calls then inverted the payload/path order once and finally tried to validate a failure payload without expected result keys.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in detached TUI session `autolabos-live-73050p`.
+  - Existing session: earlier same-flow retries failed before this point on recipe schema, study resolver, optional-helper, runtime-helper, benchmark-loader, and metrics-writer payload-name boundaries.
+  - Divergence: no session-state divergence observed; TUI status and generated runner agree on the metrics writer adapter mismatch.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the existing metrics-writer verifier checked only payload keyword compatibility and missed required path-argument compatibility. Staged generation emitted a writer requiring `metrics_path` while the adapter passed `path` under a different semantic name.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - extends metrics writer adapter verification to inspect `_write_metrics_payload(...)` plus `_call_with_supported_kwargs(writer, ...)` variants
+      - rejects selected writer signatures that require `metrics_path` when the adapter only passes a semantic `path` alias
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds deterministic regression coverage for `write_metrics_json(metrics, metrics_path)` being called through an adapter that only passes `path=metrics_path`
+
+- Regression status:
+  - Automated regression test linked: yes.
+  - Targeted test: pass on 2026-04-26 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "metrics writer adapter|RecipeSpec adapter_type|completed-sections study resolver"`
+  - Build: pass on 2026-04-26 with `npm run build`
+  - Harness: pass on 2026-04-26 with `npm run validate:harness`
+  - Same-flow live revalidation: partial pass on 2026-04-26 in `autolabos-live-73050q`; the generated runner advanced beyond the metrics writer path-argument adapter mismatch and reached real model loading/training setup, then exposed the later `Trainer(tokenizer=...)` compatibility mismatch tracked as `LV-151`.
+
+- Follow-up risks:
+  - Additional writer signatures may use other required path aliases; verifier should remain focused on observed required-argument gaps without fabricating metrics artifacts.
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-149
+
+- Status: active
+- Validation target: same-flow retry of `implement_experiments` with auto-handoff to `run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the `LV-148` completed-sections resolver guard
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - producing node: `implement_experiments`
+  - failing node: `run_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+  - TUI launched in detached session `autolabos-live-73050o` from rebuilt `dist/cli/main.js`
+
+- Reproduction steps:
+  1. Start a detached real TUI session in `.autolabos-validation` with the rebuilt CLI.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let staged native-Codex implementation complete materialization and local `py_compile` verification.
+  4. Let auto-handoff run the generated `run_peft_instruction_study.py`.
+  5. Inspect the TUI status and `run_experiments_verify_report.json`.
+
+- Expected behavior:
+  - Implement-stage compatibility repair should supply required recipe schema aliases before handoff.
+  - If `RecipeSpec` requires `adapter_type`, any factory that filters kwargs against dataclass fields should include an `adapter_type` value before calling `RecipeSpec(**values)`.
+
+- Actual behavior:
+  - `implement_experiments` completed with `verifyStatus=pass`.
+  - Auto-handoff advanced beyond the previous `No executable study helper was found in completed sections` failure, confirming the `LV-148` blocker was materially narrowed.
+  - `run_experiments` then failed at module load with `TypeError: RecipeSpec.__init__() missing 1 required positional argument: 'adapter_type'`.
+  - The generated `_recipe_spec_from_defaults(...)` built an alias dictionary with recipe metadata and filtered aliases through `dataclasses.fields(RecipeSpec)`, but did not provide an `adapter_type` alias even though the dataclass requires it.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in detached TUI session `autolabos-live-73050o`.
+  - Existing session: earlier same-flow retries failed before this point on PEFT registry, TrainingArguments, benchmark loader, metrics writer, runtime-helper, optional-helper-call, and study resolver boundaries.
+  - Divergence: no session-state divergence observed; TUI status and `run_experiments_verify_report.json` agree on the module-load constructor failure.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation changed the `RecipeSpec` schema to require `adapter_type`, but the later factory compatibility alias map did not include that required field. Existing repairs handle missing `peft_type` and `.name` surfaces, but not the symmetric missing `adapter_type` alias.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - adds a bounded `RecipeSpec.adapter_type` alias repair before handoff
+      - preserves existing `peft_type` and `.name` repairs while adding the symmetric adapter-type schema surface
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds deterministic regression coverage for a runner whose `RecipeSpec` dataclass requires `adapter_type` while `_recipe_spec_from_defaults(...)` filters aliases that omit it
+
+- Regression status:
+  - Automated regression test linked: yes.
+  - Targeted test: pass on 2026-04-26 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "RecipeSpec adapter_type|RecipeSpec peft_type|RecipeSpec name|completed-sections study resolver|baseline-first PEFT entrypoint resolver"`
+  - Build: pass on 2026-04-26 with `npm run build`
+  - Harness: pass on 2026-04-26 with `npm run validate:harness`
+  - Same-flow live revalidation: partial pass on 2026-04-26 in `autolabos-live-73050p`; the generated runner advanced beyond the `RecipeSpec.adapter_type` module-load failure, then exposed the later metrics writer path-argument adapter mismatch tracked as `LV-150`.
+
+- Follow-up risks:
+  - Other required dataclass fields may need alias-surface repair if staged sections independently evolve recipe schemas and factory aliases.
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-148
+
+- Status: active
+- Validation target: same-flow retry of `implement_experiments` with auto-handoff to `run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the `LV-147` baseline-first PEFT entrypoint resolver guard
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - producing node: `implement_experiments`
+  - failing node: `run_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+  - TUI launched in detached session `autolabos-live-73050n` from rebuilt `dist/cli/main.js`
+
+- Reproduction steps:
+  1. Start a detached real TUI session in `.autolabos-validation` with the rebuilt CLI.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let staged native-Codex implementation complete materialization and local verification.
+  4. Let auto-handoff run the generated `run_peft_instruction_study.py`.
+  5. Inspect `run_experiments_verify_report.json`, `exec_logs/run_experiments.txt`, `metrics.json`, and the generated runner.
+
+- Expected behavior:
+  - Implement-stage verification should reject a generated runner whose final study resolver searches only helper names that are never defined.
+  - A generated runner should not auto-handoff when executable row-loop helpers are present under names that the final resolver never searches.
+
+- Actual behavior:
+  - `implement_experiments` completed with `verifyStatus=pass`.
+  - Auto-handoff advanced beyond the previous `No baseline-first PEFT study execution helper was found` variant, confirming the `LV-147` blocker was materially narrowed.
+  - `run_experiments` then failed with `RuntimeError: No executable study helper was found in completed sections.`
+  - The generated runner defined `run_locked_peft_experiment_rows(...)` and `run_recipe_execution_evaluation_loop(...)`, but `_run_study_with_available_helper(...)` searched only `run_locked_peft_instruction_study`, `run_peft_instruction_study`, `run_locked_peft_study`, `run_peft_study`, `run_experiment_rows`, `run_locked_recipe_rows`, `run_recipe_experiment_loop`, and `execute_experiment`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in detached TUI session `autolabos-live-73050n`.
+  - Existing session: earlier same-flow retries failed before this point on PEFT registry, TrainingArguments, benchmark loader, metrics writer, runtime-helper, optional-helper-call, and baseline-first entrypoint resolver boundaries.
+  - Divergence: no session-state divergence observed; TUI status, `run_experiments_verify_report.json`, `metrics.json`, and the generated runner agree on the final resolver/helper mismatch.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged implementation can generate executable row-loop helpers and a later final CLI resolver independently, but the resolver candidate names are not derived from the actually materialized helper names. Existing implement-stage verification recognized previous dispatcher failure strings but not this generic completed-sections study-helper failure string.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - extends recipe/study workflow dispatch verification to include the observed `No executable study helper was found in completed sections` failure string
+      - adds observed PEFT row-loop resolver candidate and generated helper names such as `run_locked_peft_instruction_study`, `run_locked_peft_experiment_rows`, and `run_recipe_execution_evaluation_loop` to the known study workflow entrypoint set
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds deterministic regression coverage for a runner that defines row-loop helpers while `_run_study_with_available_helper(...)` searches only different missing helper names
+
+- Regression status:
+  - Automated regression test linked: yes.
+  - Targeted test: pass on 2026-04-26 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "completed-sections study resolver|baseline-first PEFT entrypoint resolver|experiment orchestration resolver|registered recipe workflow|PEFT recipe registry|unguarded optional set_seed"`
+  - Build: pass on 2026-04-26 with `npm run build`
+  - Harness: pass on 2026-04-26 with `npm run validate:harness`
+  - Same-flow live revalidation: partial pass on 2026-04-26 in `autolabos-live-73050o`; the generated runner advanced beyond the `No executable study helper was found in completed sections` variant, then exposed the later `RecipeSpec.adapter_type` alias mismatch tracked as `LV-149`.
+
+- Follow-up risks:
+  - This is another adjacent dispatcher-name variant; broader structural checking should remain limited to real resolver failure strings and callable-name resolution, not manual artifact substitution.
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-147
+
+- Status: active
+- Validation target: same-flow retry of `implement_experiments` with auto-handoff to `run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the `LV-146` optional-helper call guard
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - producing node: `implement_experiments`
+  - failing node: `run_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+  - TUI launched in detached session `autolabos-live-73050m` from rebuilt `dist/cli/main.js`
+
+- Reproduction steps:
+  1. Start a detached real TUI session in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let staged native-Codex implementation complete materialization and local verification.
+  4. Let auto-handoff run the generated `run_peft_instruction_study.py`.
+  5. Inspect the TUI status, `run_experiments_verify_report.json`, and the generated runner.
+
+- Expected behavior:
+  - Implement-stage verification should reject a generated runner whose final study resolver searches only helper names that are never defined.
+  - A generated baseline-first PEFT runner should either define one of the resolver's searched helper names or include the actual generated helper name in the resolver.
+
+- Actual behavior:
+  - `implement_experiments` completed with `verifyStatus=pass`.
+  - Auto-handoff advanced beyond the previous `set_seed` `NameError`, confirming the `LV-146` blocker was materially narrowed.
+  - `run_experiments` then failed in `_entrypoint_execute_study` with `RuntimeError: No baseline-first PEFT study execution helper was found in the runner.`
+  - The generated runner defined `run_baseline_first_peft_study(...)` and aliases such as `orchestrate_baseline_first_recipe_runs = run_baseline_first_peft_study`, but `_entrypoint_execute_study(...)` searched only `execute_baseline_first_recipe_study`, `run_baseline_first_recipe_study`, `run_baseline_first_recipe_orchestration`, `run_baseline_first_recipe_comparison`, `execute_baseline_first_study`, `run_peft_instruction_study`, `run_study`, and `run_experiment`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in detached TUI session `autolabos-live-73050m`.
+  - Existing session: earlier same-flow retries failed before this point on PEFT registry, TrainingArguments, benchmark loader, metrics writer, runtime-helper, and optional-helper-call boundaries.
+  - Divergence: no session-state divergence observed; TUI status, `run_experiments_verify_report.json`, and the generated runner agree on the final resolver/helper mismatch.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged implementation can generate a valid baseline-first PEFT execution helper while the later CLI/main entrypoint independently emits a lookup table that omits the generated helper name. Existing implement-stage verification recognizes older dispatcher failure strings but not this baseline-first PEFT entrypoint failure string.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - extends recipe/study workflow dispatch verification to include the observed `No baseline-first PEFT study execution helper was found` failure string
+      - adds `run_baseline_first_peft_study` to the known baseline-first workflow entrypoint names so future resolvers that search the generated helper name can pass
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds deterministic regression coverage for a runner that defines `run_baseline_first_peft_study(...)` while `_entrypoint_execute_study(...)` searches only other missing PEFT study helper names
+
+- Regression status:
+  - Automated regression test linked: yes.
+  - Targeted test: pass on 2026-04-26 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "baseline-first PEFT entrypoint resolver|experiment orchestration resolver|registered recipe workflow|PEFT recipe registry|unguarded optional set_seed"`
+  - Build: pass on 2026-04-26 with `npm run build`
+  - Harness: pass on 2026-04-26 with `npm run validate:harness`
+  - Same-flow live revalidation: partial pass on 2026-04-26 in `autolabos-live-73050n`; the generated runner advanced beyond the `No baseline-first PEFT study execution helper was found` variant, then exposed the later generic study-helper resolver mismatch tracked as `LV-148`.
+
+- Follow-up risks:
+  - Adjacent resolver-name variants may continue to appear unless the verifier remains tied to observed executable failure strings and checks that searched callable names actually resolve before handoff.
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-146
+
+- Status: active
+- Validation target: same-flow retry of `implement_experiments` with auto-handoff to `run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the `LV-145` PEFT registry guard
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - producing node: `implement_experiments`
+  - failing node: `run_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+  - TUI launched in detached session `autolabos-live-73050m` from rebuilt `dist/cli/main.js`
+
+- Reproduction steps:
+  1. Start a detached real TUI session in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let staged native-Codex implementation complete materialization and local `py_compile` verification.
+  4. Let auto-handoff run the generated `run_peft_instruction_study.py`.
+  5. Inspect the TUI status, `run_experiments_verify_report.json`, and `metrics.json`.
+
+- Expected behavior:
+  - Implement-stage verification should reject generated runners that call optional runtime helpers without defining them or guarding the call itself.
+  - A missing `set_seed` helper should either be defined by the generated runner or replaced with a safe local seeding fallback before handoff.
+
+- Actual behavior:
+  - `implement_experiments` completed with `verifyStatus=pass`.
+  - Auto-handoff advanced beyond the previous `No PEFT recipes selected` failure, confirming the `LV-145` blocker was materially narrowed.
+  - `run_experiments` then failed immediately in `run_baseline_first_study` with `NameError: name 'set_seed' is not defined`.
+  - The generated code used `set_seed(int(getattr(args, "seed", SEED)) if "set_seed" in globals() else SEED)`, which protects only the argument expression and still always calls `set_seed`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in detached TUI session `autolabos-live-73050m`.
+  - Existing session: earlier retries failed before this point on PEFT registry, TrainingArguments, benchmark loader, metrics writer, and runtime-helper boundaries.
+  - Divergence: no session-state divergence observed; TUI status, `run_experiments_verify_report.json`, and `metrics.json` agree on the `set_seed` `NameError`.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged implementation generates optional-helper guards as conditional arguments instead of guarding the helper call or defining the helper, and implement-stage verification only checks syntax plus selected structural contracts.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - adds implement-stage verification for unsafe optional-helper call guards such as `set_seed(... if "set_seed" in globals() else ...)` when `set_seed` is not defined
+      - applies the same guard to recovered bundle acceptance
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds deterministic regression coverage for the unguarded optional `set_seed` call shape observed in live `run_experiments`
+
+- Regression status:
+  - Automated regression test linked: yes.
+  - Targeted test: pass on 2026-04-26 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "PEFT recipe registry|unguarded optional set_seed|TrainingArguments|benchmark loader dispatch|metrics writer adapter"`
+  - Build: pass on 2026-04-26 with `npm run build`
+  - Harness: pass on 2026-04-26 with `npm run validate:harness`
+  - Same-flow live revalidation: partial pass on 2026-04-26 in `autolabos-live-73050m`; the generated runner advanced beyond the `set_seed` `NameError`, then exposed the later resolver/helper mismatch tracked as `LV-147`.
+
+- Follow-up risks:
+  - Similar optional-helper call patterns can recur for other lowercase runtime helpers if the generated code uses expression-level guards instead of call-level guards.
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-145
+
+- Status: active
+- Validation target: same-flow retry of `implement_experiments` with auto-handoff to `run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the nested `LV-132` TrainingArguments repair
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - producing node: `implement_experiments`
+  - failing node: `run_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+  - TUI launched in detached session `autolabos-live-73050l` from rebuilt `dist/cli/main.js`
+
+- Reproduction steps:
+  1. Start a fresh detached TUI session in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let staged native-Codex implementation complete materialization, local verification, and auto-handoff.
+  4. Let `run_experiments` execute the generated `run_peft_instruction_study.py`.
+  5. Inspect `run_experiments_verify_report.json` and the generated runner.
+
+- Expected behavior:
+  - Implement-stage verification should reject a runner whose default CLI path can select no trainable PEFT recipe.
+  - A baseline-first PEFT run should define a non-empty recipe registry before `parse_args()`/`normalize_args()` can raise on an empty selection.
+
+- Actual behavior:
+  - `implement_experiments` completed with `verifyStatus=pass` on attempt 1/3.
+  - Auto-handoff started `run_experiments`.
+  - `run_experiments` failed before model loading with `ValueError: No PEFT recipes selected; check PEFT_RECIPES registry or --recipes.`
+  - The generated script's `_available_recipe_names()` read `globals().get("PEFT_RECIPES", [])`, but no non-empty `PEFT_RECIPES` registry was defined for the default path.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in detached TUI session `autolabos-live-73050l`.
+  - Existing session: earlier same-flow retries failed on benchmark-loader, metrics-writer, runtime-helper, and TrainingArguments compatibility boundaries before this parser/registry boundary.
+  - Divergence: no state divergence observed; TUI status and `run_experiments_verify_report.json` agree on the empty recipe selection failure.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged sections generated recipe dataclasses and workflow code but did not materialize the concrete `PEFT_RECIPES` registry used by the CLI normalization path. `py_compile` cannot catch this because the registry lookup is dynamic through `globals()`.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - adds implement-stage verification for PEFT recipe registry mismatches when CLI normalization can raise `No PEFT recipes selected` but no non-empty `PEFT_RECIPES` registry is defined
+      - applies the same guard to recovered bundle acceptance so late recovered artifacts cannot bypass the recipe-selection contract
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds deterministic regression coverage for a runner whose parser reads `PEFT_RECIPES` but no default registry exists
+
+- Regression status:
+  - Automated regression test linked: yes.
+  - Targeted test: pass on 2026-04-26 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "PEFT recipe registry|TrainingArguments|benchmark loader dispatch|metrics writer adapter"`
+  - Build: pass on 2026-04-26 with `npm run build`
+  - Harness: pass on 2026-04-26 with `npm run validate:harness`
+  - Same-flow live revalidation: pending.
+
+- Follow-up risks:
+  - The verifier should require a real non-empty recipe registry, not inject a deterministic fallback row or fabricate experiment outputs.
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-144
+
+- Status: active
+- Validation target: same-flow retry of `implement_experiments` with auto-handoff to `run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the `LV-143` retryable materialization fix
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - producing node: `implement_experiments`
+  - failing node: `run_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+  - TUI launched in detached session `autolabos-live-73050j` from rebuilt `dist/cli/main.js`
+
+- Reproduction steps:
+  1. Start a fresh detached TUI session in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let staged native-Codex implementation complete materialization, local verification, and auto-handoff.
+  4. Let `run_experiments` execute the generated `run_peft_instruction_study.py`.
+  5. Inspect `run_experiments_verify_report.json`, `metrics.json`, and the generated runner.
+
+- Expected behavior:
+  - Implement-stage verification should reject a runner whose benchmark evaluator can only load examples through helper names that do not exist in the generated script.
+  - Implement-stage verification should reject a runner whose canonical metrics writer has a required payload parameter name that the entrypoint adapter never passes.
+
+- Actual behavior:
+  - `implement_experiments` completed with `verifyStatus=pass` after `python3 -m py_compile`.
+  - `run_experiments` reached real execution on CUDA and loaded model weights on `NVIDIA GeForce RTX 4090`.
+  - The generated runner defined `load_evaluation_benchmarks()`, but `evaluate_zero_shot_benchmarks()` searched only `load_benchmark_eval_examples()` and `load_benchmark_datasets()` before raising `RuntimeError: No benchmark examples were provided and no benchmark-loading helper is available.`
+  - The failure path attempted to write failed metrics, but `_entrypoint_write_metrics()` invoked `write_metrics_json()` through keyword filtering with `metrics`, `payload`, and `metrics_payload` while the writer required `aggregated_metrics`, producing `write_metrics_json() missing 1 required positional argument: 'aggregated_metrics'`.
+  - Current `metrics.json` was not produced for this failed run.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in detached TUI session `autolabos-live-73050j`.
+  - Existing session: earlier same-flow retries failed before this point on orchestration dispatch and staged materialization errors.
+  - Divergence: no state divergence observed; TUI status artifacts, `run_experiments_verify_report.json`, and the generated runner agree on the executable failure.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: independently generated staged sections can use semantically compatible helper concepts with incompatible concrete names. `py_compile` cannot catch the mismatch because all referenced names are protected by `globals()` checks or reflection, so the implement verifier needs cross-section contract checks for benchmark loader dispatch and metrics writer adapter signatures before handoff.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - adds implement-stage verification for benchmark loader dispatch mismatches when generated loaders exist under names not searched by the evaluator
+      - adds implement-stage verification for metrics writer adapter mismatches when the entrypoint passes payload keywords that the writer signature does not accept
+      - applies the same guards to recovered bundle acceptance so late recovered artifacts cannot bypass the contract checks
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds deterministic regression coverage for `load_evaluation_benchmarks()` being generated while the evaluator searches only `load_benchmark_eval_examples()` and `load_benchmark_datasets()`
+      - adds deterministic regression coverage for `write_metrics_json(aggregated_metrics, metrics_path=...)` being called through an adapter that only passes `metrics`, `payload`, and `metrics_payload`
+
+- Regression status:
+  - Automated regression test linked: yes.
+  - Targeted test: pass on 2026-04-26 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "benchmark loader dispatch|metrics writer adapter|benchmark evaluator dispatch|experiment orchestration|study orchestration|retryable staged materialization"`
+  - Build: pass on 2026-04-26 with `npm run build`
+  - Harness: pass on 2026-04-26 with `npm run validate:harness`
+  - Same-flow live revalidation: partial pass on 2026-04-26 in detached session `autolabos-live-73050k`: the observed benchmark-loader and metrics-writer mismatches did not auto-handoff to `run_experiments`; the run stayed in `implement_experiments` and verifier-blocked all three native Codex attempts before handoff, ending on the pre-existing `LV-132` `TrainingArguments(overwrite_output_dir=...)` compatibility surface.
+
+- Follow-up risks:
+  - The verifier should catch incompatible generated contracts without hard-coding this one run's artifacts as a deterministic fallback; the next retry must still obtain a native Codex implementation response.
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/checkpoints/latest.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-143
+
+- Status: active
+- Validation target: same-flow retry of `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the expanded `LV-142` orchestration-dispatch guard
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - producing node: `implement_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+  - TUI launched in detached session `autolabos-live-73050i` from rebuilt `dist/cli/main.js`
+
+- Reproduction steps:
+  1. Start a fresh detached TUI session in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let staged native-Codex implementation dynamically plan materialization chunks and nested resubchunks.
+  4. Allow candidate validation to reject a nested Python chunk with an indentation error.
+  5. Inspect `implement_experiments/status.json`, `progress.jsonl`, and `checkpoints/latest.json`.
+
+- Expected behavior:
+  - A retryable staged materialization/candidate-validation failure should be recorded as attempt 1/3 failure.
+  - The node should restore the attempt isolation context and continue with attempt 2/3 unless max attempts are exhausted.
+
+- Actual behavior:
+  - Dynamic chunk validation and re-subdivision ran repeatedly for parser/model argument chunks.
+  - A deeply nested chunk failed candidate validation with `Sorry: IndentationError: unexpected indent (runner__chunk_1c__candidate.py, line 787)`.
+  - `implement_experiments` wrote `status=failed` at attempt 1 even though `maxAttempts=3`.
+  - No runnable implementation was produced and no next attempt was started.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in detached TUI session `autolabos-live-73050i`.
+  - Existing session: earlier same-flow retries either auto-handed off to `run_experiments` or exposed orchestration-dispatch mismatches; this retry stayed inside staged materialization and failed before a runnable bundle was produced.
+  - Divergence: no state divergence observed; TUI, status artifact, progress artifact, and checkpoint agree that `implement_experiments` stopped at attempt 1.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: chunk-level candidate validation errors are considered retryable inside the dynamic subdivision routine, but when a deeply nested validation failure bubbles out to the attempt-level LLM call catch, the attempt catch builds a stop-for-environment report and throws immediately instead of treating the materialization failure as a retryable implementation attempt.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - treats retryable staged materialization failures that bubble to the attempt-level LLM catch as bounded implementation failures
+      - records the failed attempt, restores the isolation context, cleans up the attempt workspace, and continues to the next attempt while attempts remain
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds deterministic regression coverage that a staged materialization candidate-validation error on attempt 1 is followed by attempt 2 instead of stopping the session
+
+- Regression status:
+  - Automated regression test linked: yes.
+  - Targeted test: pass on 2026-04-26 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "retryable staged materialization|experiment orchestration|study orchestration|registered recipe workflow"`
+  - Build: pass on 2026-04-26 with `npm run build`
+  - Harness: pass on 2026-04-26 with `npm run validate:harness`
+  - Same-flow live revalidation: pending.
+
+- Follow-up risks:
+  - This should not mask persistent bad generation forever; max attempt handling must remain bounded at 3 attempts and should still stop after exhaustion.
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/checkpoints/latest.json`
+
+## Issue: LV-142
+
+- Status: active
+- Validation target: same-flow retry of `implement_experiments` with auto-handoff to `run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - producing node: `implement_experiments`
+  - failing node: `run_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+  - TUI launched in detached session `autolabos-live-73050g` from rebuilt `dist/cli/main.js` after `LV-141` verifier changes
+
+- Reproduction steps:
+  1. Start a fresh detached TUI session in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let staged native-Codex implementation complete materialization, local verification, and auto-handoff.
+  4. Let `run_experiments` execute the generated `run_peft_instruction_study.py`.
+  5. Inspect `run_experiments_verify_report.json`, `metrics.json`, and the generated runner.
+
+- Expected behavior:
+  - Implement-stage verification should reject a runner whose final orchestration dispatcher searches study-entrypoint names that no generated function defines.
+  - A runner should not auto-handoff if the only generated workflow function is named differently from the dispatch table used by `main()`.
+
+- Actual behavior:
+  - `implement_experiments` completed with `verifyStatus=pass` after `python3 -m py_compile`.
+  - The new runner avoided the prior dict recipe attribute, `write_metrics_json`, `get_device_info`, and zero-shot evaluator failures.
+  - `run_experiments` failed immediately with `RuntimeError: No study orchestration function was found. Expected one of: run_study_orchestration, run_orchestration_and_status_handling, execute_study_with_status, run_study_with_status, run_full_study_with_status, run_peft_instruction_study, execute_peft_instruction_study, run_experiment_with_status, run_experiment`.
+  - The generated runner did define `run_baseline_first_candidate_evaluation()`, but `_execute_orchestration()` never searched that name.
+  - Same-flow revalidation with the first `LV-142` patch advanced to a related naming variant: the runner defined `execute_baseline_first_experiment(args, device)`, but `_select_experiment_orchestrator()` searched `run_experiment`, `run_study`, `run_peft_instruction_study`, `orchestrate_experiment`, `orchestrate_study`, `execute_experiment`, `execute_baseline_first_study`, `run_baseline_first_experiment`, `run_baseline_first_study`, and `build_and_write_metrics_payload`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in detached TUI session `autolabos-live-73050g` using rebuilt `dist/cli/main.js`.
+  - Existing session: earlier same-flow retries failed on helper omissions, evaluator mismatch, and dict recipe attribute access; this retry passed those boundaries and exposed a later final-dispatcher naming mismatch.
+  - Divergence: no state divergence observed for the runtime failure; `status.json`, `run_experiments_verify_report.json`, `metrics.json`, and the generated runner agree on the missing study orchestration entrypoint.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged sections can generate a valid baseline-first workflow function while the final CLI/main section independently emits a broader orchestration dispatch table. `py_compile` cannot catch the missing cross-section name contract, and the verifier only recognized older recipe-comparison dispatcher failure strings.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - extends recipe/study workflow dispatch verification to include final study orchestration failure strings such as `No study orchestration function was found`
+      - extends the same guard to observed experiment-orchestration resolver variants such as `No experiment orchestration function was found`
+      - rejects runners whose searched study orchestration entrypoint names are all undefined before auto-handoff
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds deterministic regression coverage for a runner that defines `run_baseline_first_candidate_evaluation()` while `_execute_orchestration()` searches only missing study orchestration names
+      - adds deterministic regression coverage for a runner that defines `execute_baseline_first_experiment()` while `_select_experiment_orchestrator()` searches only missing experiment orchestration names
+
+- Regression status:
+  - Automated regression test linked: yes.
+  - Targeted test: pass on 2026-04-26 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "registered recipe workflow|study orchestration|undefined execution helper|zero-shot workflow|dict recipe|benchmark evaluator dispatch"`
+  - Targeted test: pass on 2026-04-26 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "registered recipe workflow|study orchestration|experiment orchestration|undefined execution helper|zero-shot workflow|dict recipe|benchmark evaluator dispatch"`
+  - Build: pass on 2026-04-26 with `npm run build`
+  - Harness: pass on 2026-04-26 with `npm run validate:harness`
+  - Same-flow live revalidation: original `No study orchestration function` variant no longer reproduced in `autolabos-live-73050h`, but the retry exposed the adjacent `No experiment orchestration function` variant; revalidation with the expanded guard is pending.
+
+- Follow-up risks:
+  - Adjacent dispatcher-name variants may continue to appear as staged generation changes task framing; verifier coverage should stay tied to observed executable failure strings rather than papering over artifacts manually.
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/checkpoints/latest.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-141
+
+- Status: active
+- Validation target: same-flow retry of `implement_experiments` with auto-handoff to `run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - producing node: `implement_experiments`
+  - failing node: `run_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+  - TUI launched in detached session `autolabos-live-73050f` from rebuilt `dist/cli/main.js` after `LV-140` verifier changes
+
+- Reproduction steps:
+  1. Start a fresh detached TUI session in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let staged native-Codex implementation complete materialization, local verification, and auto-handoff.
+  4. Let `run_experiments` execute the generated `run_peft_instruction_study.py`.
+  5. Inspect `run_experiments_verify_report.json`, `metrics.json`, and the generated runner.
+
+- Expected behavior:
+  - Implement-stage verification should reject a runner whose recipe config container is a list/tuple of dicts but later code accesses entries as objects with `recipe.name`.
+  - A runner should not auto-handoff if the CLI parser will fail before experiments or even argument parsing complete.
+
+- Actual behavior:
+  - `implement_experiments` completed with `verifyStatus=pass` after `python3 -m py_compile`.
+  - The new runner avoided the prior undefined `get_device_info()` failure and zero-shot evaluator mismatch.
+  - `run_experiments` failed immediately in `build_arg_parser()` with `AttributeError: 'dict' object has no attribute 'name'`.
+  - Failure metrics were written, but metrics also recorded `metrics_helper_error: NameError: name 'write_metrics_json' is not defined`, showing another helper-name gap in the metrics path.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in detached TUI session `autolabos-live-73050f` using rebuilt `dist/cli/main.js`.
+  - Existing session: earlier handoffs failed on undefined helpers and evaluator-dispatch mismatch; this retry passed those boundaries and exposed a recipe config schema mismatch before argument parsing completed.
+  - Divergence: no state divergence observed for the runtime failure; status artifacts, verify report, and generated runner agree. The TUI still tends to retain prior error text while newer processes run, but process/artifact inspection disambiguates the current failure.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged sections can generate both dataclass/object-style recipe definitions and dict-backed recipe definitions in the same file. Later CLI/final-metadata code may assume object-style entries even when the active container is dict-backed, and `py_compile` cannot catch that schema mismatch.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - rejects dict-backed recipe config containers that are later accessed with object-style attributes such as `recipe.name`
+      - treats `write_metrics_json()` as a critical helper that must be defined or imported before handoff
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds deterministic regression coverage for `RECIPE_CONFIGS: List[Dict[str, Any]]` with `[recipe.name for recipe in RECIPE_CONFIGS]`
+      - extends undefined helper coverage to include `write_metrics_json()`
+
+- Regression status:
+  - Automated regression test linked: yes.
+  - Targeted test: pass on 2026-04-26 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "undefined execution helper|zero-shot workflow|dict recipe|benchmark evaluator dispatch"`
+  - Build: pass on 2026-04-26 with `npm run build`
+  - Harness: pass on 2026-04-26 with `npm run validate:harness`
+  - Same-flow live revalidation: pending rebuilt TUI retry.
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/checkpoints/latest.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-140
+
+- Status: active
+- Validation target: same-flow retry of `implement_experiments` with auto-handoff to `run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - producing node: `implement_experiments`
+  - failing node: `run_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+  - TUI launched in detached session `autolabos-live-73050e` from rebuilt `dist/cli/main.js` after `LV-139` verifier changes
+
+- Reproduction steps:
+  1. Start a fresh detached TUI session in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let staged native-Codex implementation complete materialization, local verification, and auto-handoff.
+  4. Let `run_experiments` execute the generated `run_peft_instruction_study.py`.
+  5. Inspect `run_experiments_verify_report.json`, `exec_logs/run_experiments.txt`, and the generated runner.
+
+- Expected behavior:
+  - Implement-stage verification should reject a runner whose executable path calls critical runtime helpers that are never defined or imported.
+  - Implement-stage verification should also reject a runner whose baseline-first zero-shot workflow searches only evaluator entrypoint names that no generated function defines.
+  - A runner should not reach real model loading before these static executable-path defects are caught.
+
+- Actual behavior:
+  - `implement_experiments` completed with `verifyStatus=pass` after `python3 -m py_compile`.
+  - The new runner avoided the prior `get_device()` and `_json_safe()` omissions.
+  - `run_experiments` loaded model weights and then failed with `RuntimeError: No zero-shot benchmark evaluation function was defined in earlier sections`.
+  - The failure-metrics path also reported `Failed to write failure metrics: name 'get_device_info' is not defined`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in detached TUI session `autolabos-live-73050e` using rebuilt `dist/cli/main.js`.
+  - Existing session: earlier handoffs failed on `RecipeSpec` constructor mismatch, undefined `slugify`, undefined `validate_runtime_dependencies`, and undefined `get_device`/`_json_safe`; this retry passed those boundaries and exposed a later evaluator-dispatch plus helper omission boundary.
+  - Divergence: TUI display temporarily retained the previous `run_experiments` error while the new Python process was actually running; process table and updated verify report confirmed the fresh runtime failure. Dominant root cause remains implement-stage verifier coverage rather than a pure display bug.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged implementation can assemble executable workflow sections with locally valid syntax but inconsistent function naming across generated sections. The verifier had named checks for older evaluator-dispatch patterns and selected helper names, but did not cover the newer zero-shot evaluator fallback string or `get_device_info()` helper calls in metrics/failure paths.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - treats `get_device_info()` as a critical Python runtime helper that must be defined or imported before handoff
+      - extends benchmark evaluator dispatch verification to cover zero-shot evaluator lookup names and the `No zero-shot benchmark evaluation function was defined in earlier sections` failure path
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - extends undefined execution-helper coverage to include `get_device_info()`
+      - adds deterministic regression coverage for a `py_compile`-valid runner whose zero-shot workflow searches only missing evaluator entrypoints
+
+- Regression status:
+  - Automated regression test linked: yes.
+  - Targeted test: pass on 2026-04-26 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "undefined execution helper|zero-shot workflow|benchmark evaluator dispatch"`
+  - Build: pass on 2026-04-26 with `npm run build`
+  - Harness: pass on 2026-04-26 with `npm run validate:harness`
+  - Same-flow live revalidation: pass for the original `get_device_info()` and zero-shot evaluator mismatch symptoms on 2026-04-26 in `autolabos-live-73050f`; the retry advanced to a new `LV-141` recipe config schema failure.
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-139
+
+- Status: active
+- Validation target: same-flow retry of `implement_experiments` with auto-handoff to `run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - producing node: `implement_experiments`
+  - failing node: `run_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+  - TUI launched in detached session `autolabos-live-73050c` from rebuilt `dist/cli/main.js` after `LV-138` verifier changes
+
+- Reproduction steps:
+  1. Start a fresh detached TUI session in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let staged native-Codex implementation complete materialization, local verification, and auto-handoff.
+  4. Inspect `implement_experiments/status.json`, `run_experiments_verify_report.json`, `checkpoints/latest.json`, `metrics.json`, and the generated `run_peft_instruction_study.py`.
+
+- Expected behavior:
+  - Implement-stage verification should reject a runner whose executable path calls critical runtime helpers that are never defined or imported.
+  - A runner should not auto-handoff to `run_experiments` if it will fail immediately on missing local helper functions before producing valid experiment metrics.
+
+- Actual behavior:
+  - `implement_experiments` completed with `verifyStatus=pass` after `python3 -m py_compile`.
+  - The generated runner avoided the prior undefined `validate_runtime_dependencies`, undefined `slugify`, and `RecipeSpec(name=...)` failures.
+  - Auto-handoff to `run_experiments` failed with `NameError: name 'get_device' is not defined`.
+  - The error-reporting path then failed again with `NameError: name '_json_safe' is not defined. Did you mean: 'json_safe'?`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in detached TUI session `autolabos-live-73050c` using rebuilt `dist/cli/main.js`.
+  - Existing session: earlier retries failed on `RecipeSpec` constructor mismatch, undefined `slugify`, undefined `validate_runtime_dependencies`, and unsupported `TrainingArguments` kwargs; this retry passed those boundaries and exposed a later executable-path helper mismatch.
+  - Divergence: no UI-only divergence observed; status, checkpoint, verify report, metrics, and generated runner agree on runtime helper failures after implement-stage pass.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: implement-stage verification still relies on `py_compile` plus targeted static checks. It now catches some named helper omissions, but the critical-helper coverage is too narrow, so executable lowercase helper calls such as `get_device()` and alias mismatches such as `_json_safe()` can escape to `run_experiments`.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - extends critical Python runtime-helper verification to reject runners that call `get_device()` or `_json_safe()` without defining/importing them
+      - applies the same check before reusing recovered public bundles
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds deterministic regression coverage for a `py_compile`-valid runner whose executable path calls undefined `get_device()` and `_json_safe()` helpers
+
+- Regression status:
+  - Automated regression test linked: yes.
+  - Targeted test: pass on 2026-04-26 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "undefined execution helper|undefined runtime helper|undefined slugify|undefined return annotation|RecipeSpec constructor|benchmark evaluator dispatch|TrainingArguments"`
+  - Build: pass on 2026-04-26 with `npm run build`
+  - Harness: pass on 2026-04-26 with `npm run validate:harness`
+  - Same-flow live revalidation: pending rebuilt TUI retry with extended runtime-helper verifier.
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/checkpoints/latest.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-138
+
+- Status: active
+- Validation target: same-flow retry of `implement_experiments` with auto-handoff to `run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - producing node: `implement_experiments`
+  - failing node: `run_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+  - TUI launched in detached session `autolabos-live-73050b` from rebuilt `dist/cli/main.js` after `LV-137` verifier changes
+
+- Reproduction steps:
+  1. Start a fresh detached TUI session in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let staged native-Codex implementation complete materialization, local verification, and auto-handoff.
+  4. Inspect `implement_experiments/status.json`, `run_experiments_verify_report.json`, `checkpoints/latest.json`, and the generated `run_peft_instruction_study.py`.
+
+- Expected behavior:
+  - Implement-stage verification should reject a runner whose executable entrypoint calls critical runtime helper names that are never defined or imported.
+  - A runner should not auto-handoff to `run_experiments` if it will fail before dependency checks, experiment execution, or metrics writing begins.
+
+- Actual behavior:
+  - `implement_experiments` completed with `verifyStatus=pass` after `python3 -m py_compile`.
+  - The generated runner avoided the prior `RecipeSpec(name=...)` and undefined `slugify()` failures.
+  - The entrypoint called `validate_runtime_dependencies(dry_run=...)`.
+  - No `validate_runtime_dependencies` function or import existed in the script.
+  - `run_experiments` failed with `[peft-study] ERROR: name 'validate_runtime_dependencies' is not defined`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in detached TUI session `autolabos-live-73050b` using rebuilt `dist/cli/main.js`.
+  - Existing session: earlier handoffs failed on constructor mismatch and undefined `slugify`; this retry passed those boundaries and exposed a later undefined runtime-helper boundary.
+  - Divergence: no UI-only divergence observed; status, checkpoint, verify report, and generated runner agree on a runtime helper failure after implement-stage pass.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: implement-stage verification catches several specific undefined surfaces, but it does not verify that critical runtime helper calls in the entrypoint are defined. A runner can pass syntax verification and earlier compatibility guards while still failing immediately when `main()` starts.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - rejects Python runners that call critical runtime helper names such as `validate_runtime_dependencies()` without defining or importing them
+      - prevents recovered public bundles with the same undefined runtime-helper reference from being reused
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds deterministic regression coverage for a `py_compile`-valid runner whose `main()` calls undefined `validate_runtime_dependencies()`
+
+- Regression status:
+  - Automated regression test linked: yes.
+  - Targeted test: pass on 2026-04-26 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "undefined runtime helper|undefined slugify|undefined return annotation|RecipeSpec constructor|benchmark evaluator dispatch|RecipeSpec name|malformed staged_llm chunk|Codex OAuth overload|TrainingArguments|registered recipe workflow|AUTOLABOS section skeleton|untuned primary comparator"`
+  - Build: pass on 2026-04-26 with `npm run build`
+  - Harness: pass on 2026-04-26 with `npm run validate:harness`
+  - Same-flow live revalidation: pending rebuilt TUI retry with undefined runtime-helper verifier.
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/checkpoints/latest.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-137
+
+- Status: active
+- Validation target: same-flow retry of `implement_experiments` with auto-handoff to `run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - producing node: `implement_experiments`
+  - failing node: `run_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+  - TUI launched in detached session `autolabos-live-73050` from rebuilt `dist/cli/main.js` after `LV-136` verifier changes
+
+- Reproduction steps:
+  1. Start a fresh detached TUI session in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let staged native-Codex implementation complete materialization, local verification, and auto-handoff.
+  4. Inspect `implement_experiments/status.json`, `run_experiments_verify_report.json`, `checkpoints/latest.json`, and the generated `run_peft_instruction_study.py`.
+
+- Expected behavior:
+  - Implement-stage verification should reject a runner that references a helper function such as `slugify()` before defining or importing it.
+  - A runner should not auto-handoff to `run_experiments` if a module-level recipe-id projection will fail before metrics can be produced.
+
+- Actual behavior:
+  - `implement_experiments` completed with `verifyStatus=pass` after `python3 -m py_compile`.
+  - The generated runner defined `RecipeSpec.recipe_id` as a property returning `slugify(self.name)`.
+  - The runner then computed `ORDERED_RECIPE_IDS` at module load by reading `recipe.recipe_id` for every `RECIPE_SPECS` entry.
+  - No `slugify` function or import existed before that property was evaluated.
+  - `run_experiments` failed at module load with `NameError: name 'slugify' is not defined`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in detached TUI session `autolabos-live-73050` using rebuilt `dist/cli/main.js`.
+  - Existing session: earlier handoffs failed on `RecipeSpec(name=...)` constructor mismatch; this retry passed that boundary and exposed a later undefined helper boundary.
+  - Divergence: no UI-only divergence observed; status, checkpoint, verify report, and generated runner agree on a runtime module-load failure after implement-stage pass.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: implement-stage verification catches uppercase constants and return-annotation names, but not lowercase helper calls that can be triggered by module-level projections through dataclass properties. A runner can therefore pass `py_compile` while still failing immediately on import-time property evaluation.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - rejects Python runners that call `slugify()` without defining or importing it before handoff
+      - prevents recovered public bundles with the same undefined helper reference from being reused
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds deterministic regression coverage for a `py_compile`-valid runner whose module-level recipe-id projection calls `RecipeSpec.recipe_id`, which depends on missing `slugify()`
+
+- Regression status:
+  - Automated regression test linked: yes.
+  - Targeted test: pass on 2026-04-26 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "undefined slugify|undefined return annotation|RecipeSpec constructor|benchmark evaluator dispatch|RecipeSpec name|malformed staged_llm chunk|Codex OAuth overload|TrainingArguments|registered recipe workflow|AUTOLABOS section skeleton|untuned primary comparator"`
+  - Build: pass on 2026-04-26 with `npm run build`
+  - Harness: pass on 2026-04-26 with `npm run validate:harness`
+  - Same-flow live revalidation: pending rebuilt TUI retry with undefined-`slugify` verifier.
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/checkpoints/latest.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-136
+
+- Status: active
+- Validation target: same-flow retry of `implement_experiments` with auto-handoff to `run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - producing node: `implement_experiments`
+  - failing node: `run_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+  - TUI launched from rebuilt `dist/cli/main.js` after `LV-133`, `LV-134`, and `LV-135` mitigations
+
+- Reproduction steps:
+  1. Relaunch the rebuilt TUI in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let staged native-Codex implementation complete materialization and local verification.
+  4. Allow the automatic handoff to `run_experiments`.
+  5. Inspect `implement_experiments/status.json`, `run_experiments_verify_report.json`, `checkpoints/latest.json`, and the generated `run_peft_instruction_study.py`.
+
+- Expected behavior:
+  - Implement-stage verification should reject a runner whose `RecipeSpec(...)` constructor calls use keyword fields not accepted by the generated `RecipeSpec` dataclass.
+  - A runner should not auto-handoff to `run_experiments` if module load will immediately fail before metrics can be produced.
+  - Compatibility repair for `.name` attribute access should not mask an incompatible constructor schema.
+
+- Actual behavior:
+  - `implement_experiments` completed with `verifyStatus=pass` and logged `Added a RecipeSpec.name compatibility property to run_peft_instruction_study.py before handoff`.
+  - The generated runner contained an earlier valid `RecipeSpec` dataclass with fields such as `recipe_id`, `display_name`, `role`, `train`, `peft_type`, `run_order`, `is_reference`, `is_locked_baseline`, `target_modules`, `config`, and `description`.
+  - A later duplicate `PEFT_RECIPES` block called `RecipeSpec(name="lora_r8", recipe_type="lora", rank=8, alpha=16, dropout=0.05, ...)`.
+  - `run_experiments` failed at module load with `TypeError: RecipeSpec.__init__() got an unexpected keyword argument 'name'`.
+  - `metrics.json` remained a stale zero-byte file from the failed handoff boundary.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced after killing the previous TUI process, relaunching from rebuilt `dist/cli/main.js`, and retrying the same persisted run.
+  - Existing session: earlier retries were blocked by transient provider failures, malformed staged chunk JSON, or evaluator-dispatch mismatch.
+  - Divergence: no UI-only divergence observed; status, checkpoint, verify report, and generated runner agree on a runtime module-load failure after implement-stage pass.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: implement-stage verification repairs missing `RecipeSpec.name` attribute access but does not validate that every generated `RecipeSpec(...)` keyword call is compatible with the dataclass constructor. Mixed generated schema fragments can therefore pass `py_compile` and local compatibility repairs while failing immediately when executed.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - rejects Python runners whose `RecipeSpec(...)` keyword calls include fields not accepted by the generated `RecipeSpec` dataclass constructor
+      - prevents recovered public bundles with the same constructor-keyword mismatch from being reused
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds deterministic regression coverage for a `py_compile`-valid runner that would fail at module load because `RecipeSpec(name=..., recipe_type=..., rank=...)` does not match the generated dataclass
+
+- Regression status:
+  - Automated regression test linked: yes.
+  - Targeted test: pass on 2026-04-26 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "RecipeSpec constructor|benchmark evaluator dispatch|RecipeSpec name|malformed staged_llm chunk|Codex OAuth overload|TrainingArguments|registered recipe workflow|AUTOLABOS section skeleton|untuned primary comparator"`
+  - Build: pass on 2026-04-26 with `npm run build`
+  - Harness: pass on 2026-04-26 with `npm run validate:harness`
+  - Same-flow live revalidation: pending rebuilt TUI retry with constructor-keyword verifier.
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/checkpoints/latest.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-135
+
+- Status: active
+- Validation target: same-flow retry of `implement_experiments` with auto-handoff to `run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - producing node: `implement_experiments`
+  - failing node: `run_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+  - TUI launched from rebuilt `dist/cli/main.js` after `LV-133` and `LV-134` mitigations
+
+- Reproduction steps:
+  1. Relaunch the rebuilt TUI in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let staged native-Codex implementation complete all `6/6` materialization chunks.
+  4. Allow the automatic handoff to `run_experiments`.
+  5. Inspect `implement_experiments/status.json`, `run_experiments_verify_report.json`, `metrics.json`, and the generated `run_peft_instruction_study.py`.
+
+- Expected behavior:
+  - Implement-stage verification should reject or repair a runner whose orchestration layer cannot discover the benchmark evaluator generated by the evaluation section.
+  - A runner should not auto-handoff to `run_experiments` if baseline evaluation will immediately fail on a missing evaluator dispatch surface.
+  - `run_experiments` should not leave a zero-byte `metrics.json` after an implement-stage-verifiable but runtime-invalid evaluator mismatch.
+
+- Actual behavior:
+  - `implement_experiments` completed with `verifyStatus=pass` after `python3 -m py_compile`.
+  - The generated runner contained evaluator-like functions such as `evaluate_arc_challenge_and_hellaswag` and `evaluate_zero_shot_benchmarks`.
+  - The baseline-first orchestration wrapper searched only for `evaluate_model_on_benchmarks`, `evaluate_benchmarks`, and `compute_benchmark_accuracies`.
+  - `run_experiments` failed during baseline evaluation with `RuntimeError: No benchmark evaluator was defined by the evaluation_metrics_logic section`.
+  - `metrics.json` was left as a zero-byte file after the command failure.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced after relaunching from rebuilt `dist/cli/main.js` and retrying the same persisted run.
+  - Existing session: earlier attempts were blocked by malformed chunk JSON and provider transient failures; this retry reached a later runtime boundary.
+  - Divergence: no UI-only divergence observed; status, progress, checkpoint, verify report, and generated runner agree on the missing evaluator dispatch path.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: implement-stage verification validates syntax and several dispatch surfaces, but it does not verify that a baseline-first candidate evaluator lookup can resolve to a generated benchmark evaluator. The generated evaluation section and orchestration section can therefore be individually valid but semantically disconnected.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - rejects Python runners whose baseline-first evaluator dispatch searches only undefined evaluator entrypoints while generated benchmark evaluator functions exist under different names
+      - prevents recovered public bundles with the same evaluator-dispatch mismatch from being reused
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds deterministic regression coverage for a py-compile-valid runner whose orchestration cannot resolve the generated benchmark evaluator
+
+- Regression status:
+  - Automated regression test linked: yes.
+  - Targeted test: pass on 2026-04-26 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "benchmark evaluator dispatch|malformed staged_llm chunk|Codex OAuth overload|TrainingArguments|registered recipe workflow|AUTOLABOS section skeleton|untuned primary comparator"`
+  - Build: pass on 2026-04-26 with `npm run build`
+  - Harness: pass on 2026-04-26 with `npm run validate:harness`
+  - Same-flow live revalidation: pending rebuilt TUI retry with evaluator-dispatch verifier.
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/checkpoints/latest.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-134
+
+- Status: active
+- Validation target: same-flow retry of `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - node: `implement_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+  - TUI launched from rebuilt `dist/cli/main.js` after the `LV-133` transient provider retry mitigation
+
+- Reproduction steps:
+  1. Rebuild and relaunch the TUI in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Allow staged native-Codex materialization to reach chunk `2/4 subchunk 4/4`.
+  4. Inspect `implement_experiments/status.json`, `implement_experiments/progress.jsonl`, and `checkpoints/latest.json`.
+
+- Expected behavior:
+  - If one staged chunk response is malformed or not parseable JSON, the materialization layer should treat that chunk as retryable.
+  - The node should ask for a smaller subdivision or regenerate the malformed chunk instead of aborting the entire attempt before verifier handoff.
+
+- Actual behavior:
+  - The rebuilt TUI retry progressed through scaffold generation, decomposition, materialization planning, and multiple generated subchunks.
+  - It reached `Generating staged_llm unit 1/1 chunk 2/4 subchunk 4/4: Zero-shot benchmark evaluation and accuracy aggregation helpers`.
+  - The node then failed before producing a runnable implementation with `staged_llm chunk response did not contain a valid JSON object`.
+  - The public script had grown to 51 KB, still contained `AUTOLABOS SECTION` skeleton markers, and did not reach local verifier or `run_experiments` handoff.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced after relaunching from rebuilt `dist/cli/main.js`.
+  - Existing session: earlier attempts were blocked by provider-side Codex OAuth errors tracked as `LV-133`.
+  - Divergence: no UI-only divergence observed; status, progress, and checkpoint artifacts agree on parse failure before runnable handoff.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: candidate validation and timeout failures are already routed into dynamic re-subdivision, but malformed JSON chunk responses are not considered retryable materialization failures. A single malformed chunk therefore escapes the chunk-local recovery loop and terminates the whole implement attempt.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - treats malformed staged chunk JSON, wrong/missing chunk id, and empty chunk content as chunk-local retryable materialization errors
+      - routes those failures through the existing dynamic re-subdivision path instead of aborting the whole implement attempt immediately
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds regression coverage for malformed staged chunk response classification
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted test: pass on 2026-04-26 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "malformed staged_llm chunk|Codex OAuth overload|TrainingArguments|registered recipe workflow|AUTOLABOS section skeleton|untuned primary comparator"`
+  - Build: pass on 2026-04-26 with `npm run build`
+  - Harness: pass on 2026-04-26 with `npm run validate:harness`
+  - Same-flow live revalidation: pending rebuilt TUI retry with malformed chunk responses routed to dynamic recovery
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/checkpoints/latest.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/unit_chunk_responses/runner_repair__zero_shot_evaluation_helpers__d0__chunk_2_4_subchunk_4_4_error.txt`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/unit_chunk_responses/runner_repair__zero_shot_evaluation_helpers__d0__chunk_2_4_subchunk_4_4_partial_on_error.txt`
+
+## Issue: LV-133
+
+- Status: active
+- Validation target: same-flow retry of `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - node: `implement_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+  - TUI launched from rebuilt `dist/cli/main.js`
+
+- Reproduction steps:
+  1. Rebuild the repo and relaunch the TUI in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Allow staged native-Codex implementation to generate dynamic materialization chunks.
+  4. Inspect `implement_experiments/status.json` and `implement_experiments/progress.jsonl`.
+
+- Expected behavior:
+  - A transient Codex OAuth backend/request failure during one staged chunk should not permanently block same-flow validation if a subsequent retry can continue the node-owned implementation path.
+  - Progress artifacts should distinguish provider-side failure from local verifier failure so `LV-132` and related implementation checks are not misclassified.
+
+- Actual behavior:
+  - A fresh rebuilt TUI retry started at `2026-04-25T16:24:32.423Z` and aborted before producing a runnable implementation with request error `8ae70323-e4a4-43a5-9fbb-2421866f6578`.
+  - A second fresh rebuilt TUI retry started at `2026-04-25T16:28:15.192Z`, reached dynamic materialization, re-subdivided a failing CLI chunk, and then aborted before producing a runnable implementation with `Our servers are currently overloaded. Please try again later.`
+  - The generated script snapshot at that point contained `TrainingArguments` references but did not contain `overwrite_output_dir`, so this run did not exercise the `LV-132` verifier-side repair boundary.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced after killing the stale pre-build TUI process and relaunching from rebuilt `dist/cli/main.js`.
+  - Existing session: an earlier retry in the same run had been aborted from the old TUI process and is not considered valid patched revalidation.
+  - Divergence: no UI-only divergence observed; persisted status/progress artifacts record provider-side failure before runnable implementation handoff.
+
+- Root cause hypothesis:
+  - Type: `race_timing_bug`
+  - Hypothesis: staged implementation now depends on multiple native Codex OAuth calls. Even with streaming progress and dynamic chunking working, a transient backend overload/request failure in any chunk can abort the whole attempt before local verifier repairs or run-experiment handoff can be observed.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - classifies native Codex OAuth `overloaded`, `try again later`, and `you can retry your request` failures as transient staged-LLM provider errors
+      - increases per-request transient retry budget from 3 to 5 attempts
+      - retries transient failures even after partial delta output by preserving then discarding the incomplete partial response before retrying the same staged request
+      - uses a small linear backoff between retry attempts
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds regression coverage that Codex OAuth overload and retry-later request failures are classified as transient, while auth-required failures are not
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted test: pass on 2026-04-26 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "Codex OAuth overload|TrainingArguments|registered recipe workflow|AUTOLABOS section skeleton|untuned primary comparator"`
+  - Build: pass on 2026-04-26 with `npm run build`
+  - Harness: pass on 2026-04-26 with `npm run validate:harness`
+  - Same-flow live revalidation: pending rebuilt TUI retry with transient provider retry mitigation
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-132
+
+- Status: active
+- Validation target: same-flow retry of `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - node: `implement_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Rebuild and relaunch the TUI in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Allow the staged native-Codex implementation to complete all three implement attempts.
+  4. Inspect `implement_experiments/status.json`, `implement_experiments/progress.jsonl`, and `checkpoints/latest.json`.
+
+- Expected behavior:
+  - Once implement-stage verification reports the installed-version-incompatible `TrainingArguments(overwrite_output_dir=...)` kwarg, subsequent retries should either remove the kwarg or materialize a version-compatible kwargs factory.
+  - The node should not exhaust all implement attempts on the same known compatibility surface.
+
+- Actual behavior:
+  - Attempt 1 failed local verification on `TrainingArguments(... overwrite_output_dir=...)`.
+  - Attempt 2 generated a `Version-compatible TrainingArguments factory`, but then failed on an undefined `TrainingArguments` annotation.
+  - Attempt 3 again failed local verification on `TrainingArguments(... overwrite_output_dir=...)` at `run_peft_instruction_study.py:272`.
+  - The node ended with `status: "failed"` and did not hand off a runnable bundle to `run_experiments`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not yet rerun from a clean validation workspace for this exact boundary.
+  - Existing session: reproduced in the active persisted run after the `LV-113` verifier mitigation was already present.
+  - Divergence: no UI-only divergence observed; persisted status/progress/checkpoint artifacts agree that all attempts failed in implement-stage local verification.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the verifier now identifies the incompatible `TrainingArguments` kwarg, but the retry feedback is not sufficient to force native Codex to remove the direct kwarg in every regenerated runner. A narrow verifier-side compatibility repair can remove the known unsupported kwarg without substituting experiment results or bypassing node-owned execution.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - attempts a narrow verifier-side compatibility repair that removes direct unsupported `TrainingArguments(overwrite_output_dir=...)` kwargs before local verification
+      - now extracts full `TrainingArguments(...)` calls by parenthesis depth before repair, so nested expressions such as `output_dir=str(recipe_output_dir)` do not hide a later unsupported kwarg from the repair pass
+      - leaves all experiment execution, metrics, and result rows node-owned; the repair only normalizes a known constructor compatibility surface
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - updates TrainingArguments regression coverage to require the unsupported kwarg to be removed before verification passes, including a nested `output_dir=str(...)` argument before `overwrite_output_dir`
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted test: pass on 2026-04-26 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "TrainingArguments|registered recipe workflow|AUTOLABOS section skeleton|untuned primary comparator"`
+  - Targeted nested-call repair test: pass on 2026-04-26 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "TrainingArguments|benchmark loader dispatch|metrics writer adapter"`
+  - Build: pass on 2026-04-26 with `npm run build`
+  - Harness: pass on 2026-04-26 with `npm run validate:harness`
+  - Same-flow live revalidation: latest rebuilt TUI retry in `autolabos-live-73050k` confirmed verifier-side blocking before handoff, but attempt 3 reproduced `TrainingArguments(overwrite_output_dir=...)` after `output_dir=str(...)`; nested-call repair has been strengthened and requires another same-flow retry.
+
+- Follow-up risks:
+  - This repair should remain limited to constructor-compatibility surface cleanup; it must not fabricate experiment metrics, result rows, or fallback outputs.
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/checkpoints/latest.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-131
+
+- Status: active
+- Validation target: same-flow retry of `implement_experiments` and auto-handoff to `run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - producing node: `implement_experiments`
+  - failing node: `run_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Relaunch the rebuilt TUI in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Allow `implement_experiments` to pass local `python3 -m py_compile`.
+  4. Let the auto-handoff execute `run_experiments`.
+  5. Inspect `run_experiments_verify_report.json`, `metrics.json`, and `exec_logs/run_experiments.txt`.
+
+- Expected behavior:
+  - A runner that exposes a CLI dispatch helper for the recipe-comparison workflow should define at least one of the workflow function names it searches for.
+  - If no searched recipe-comparison workflow function is defined, implement-stage verification should fail before auto-handoff to `run_experiments`.
+  - The failure should feed back to the LLM implementer as a missing executable workflow function, not consume runner retry budget.
+
+- Actual behavior:
+  - `implement_experiments` completed with `verifyStatus=pass`.
+  - `run_experiments` executed the generated runner and wrote failed metrics with no result rows.
+  - `metrics.json` recorded:
+    - `RuntimeError: No recipe comparison workflow function was registered by earlier sections`
+    - looked-for names included `run_baseline_first_peft_comparison`, `run_baseline_first_recipe_comparison`, `run_peft_recipe_comparison`, `execute_recipe_comparison`, `run_recipe_comparison`, `run_recipe_execution_and_evaluation_loop`, `execute_recipe_execution_and_evaluation_loop`, `run_study_comparison`, `compare_peft_recipes`, and `run_all_recipes`
+  - `run_experiments_verify_report.json` failed at stage `command` with exit code `1`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced after relaunching the rebuilt TUI and retrying the same persisted run.
+  - Existing session: the same persisted run had older implementation failures and runtime blockers; this is a later handoff boundary after `py_compile` and metrics-writer coverage improved.
+  - Divergence: no UI-only divergence; TUI replay, verifier report, metrics JSON, and exec log agree on the missing workflow registration.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: implement-stage verification still validates syntax and selected compatibility surfaces, but it does not check that generated dispatch tables are backed by at least one actually defined recipe-comparison workflow function. The runner can therefore be syntactically valid and still have no executable experiment loop.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - rejects Python runners whose recipe-comparison dispatcher searches only undefined workflow function names
+      - applies the same rejection to recovered public bundles before reuse
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds deterministic regression coverage for a py-compile-valid runner with no registered workflow function
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted test: pass on 2026-04-26 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "registered recipe workflow|orchestration candidate|AUTOLABOS section skeleton|untuned primary comparator"`
+  - Build: pass on 2026-04-26 with `npm run build`
+  - Harness: pass on 2026-04-26 with `npm run validate:harness`
+  - Same-flow live revalidation: pending rebuilt TUI retry after verifier repair
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-120
+
+- Status: resolved
+- Validation target: same-flow live revalidation for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` while retrying `implement_experiments` with native Codex OAuth staged implementation
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - node: `implement_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Relaunch the rebuilt TUI in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Allow staged implementation to reach `chunk 4/5 subchunk 1/4` and its nested resubchunks for benchmark scoring helpers.
+  4. Inspect `implement_experiments/status.json`, `implement_experiments/progress.jsonl`, and `checkpoints/latest.json`.
+
+- Expected behavior:
+  - If candidate validation identifies missing uppercase constants in a Python section, the node should ask the LLM for the minimal prepended constant definitions before exhausting deeper subdivision.
+  - The repair should remain LLM-owned and node-internal; it must not substitute a deterministic fallback runner or manually fabricate experiment artifacts.
+  - If the targeted repair cannot satisfy candidate validation, the existing dynamic re-subdivision path should remain available.
+
+- Actual behavior:
+  - Before the fix, native Codex OAuth streamed through chunk 4 and multiple nested resubchunks.
+  - Candidate validation repeatedly caught undefined benchmark constants.
+  - The node finally failed before producing a runnable implementation:
+    - `DEFAULT_BENCHMARK_EVAL_BATCH_SIZE`
+  - After the targeted repair, same-flow live revalidation reached `implement_experiments` completion at 2026-04-24T16:53:02.548Z with `verifyStatus=pass`.
+  - The same run now advances into `run_experiments`; the current blocker is a later generated orchestration entrypoint mismatch tracked separately as `LV-122`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced after rebuilding and relaunching the TUI, then running the same `/agent retry implement_experiments ...` flow.
+  - Existing session: prior attempts in the same run failed at earlier validator or runtime boundaries.
+  - Divergence: no UI-only divergence; status, progress, checkpoint, and error artifacts agree.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: dynamic re-subdivision correctly receives candidate-validation failures, but repeated nested splits are a poor repair mechanism for missing constants. The LLM needs a narrow, validation-triggered repair turn that asks only for the missing uppercase constant definitions to prepend before the failing chunk content.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts`
+  - Tests: `tests/implementSessionManager.test.ts`
+  - Change summary: when candidate validation reports undefined uppercase constants, staged materialization now performs a targeted LLM repair pass that returns only prepended Python constant definitions. The repaired content is immediately revalidated; if it still fails, the prior dynamic re-subdivision path remains the fallback.
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted test: pass on 2026-04-24 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "uppercase constants"`
+  - Focused regression suite: pass on 2026-04-24 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "candidate syntax|globals-guarded|undefined uppercase|undefined return annotation|uppercase constants|promotes synthetic reproducibility|replaces incompatible real_execution"`
+  - Build: pass on 2026-04-24 with `npm run build`
+  - Harness: pass on 2026-04-24 with `npm run validate:harness`
+  - Full tests: pass on 2026-04-24 with `npm test`
+  - Same-flow live revalidation: resolved on the same persisted run; observed targeted constant-repair progress entries include `DEFAULT_NUM_TRAIN_EPOCHS`, `DEFAULT_PER_DEVICE_EVAL_BATCH_SIZE`, `DEFAULT_LR_SCHEDULER_TYPE`, `DEFAULT_LORA_TARGET_MODULES`, and later `LOCKED_RECIPE_SPECS`
+  - Adjacent regression review: previous `None`/`tuple[...]` annotation false positives were corrected by extending the annotation detector's safe built-in names, and the full test suite now passes
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/checkpoints/latest.json`
+
+## Issue: LV-122
+
+- Status: resolved
+- Validation target: same-flow live revalidation for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after `implement_experiments` completed and handed off to `run_experiments`
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - producing node: `implement_experiments`
+  - failing node: `run_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Relaunch the rebuilt TUI in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Allow `implement_experiments` to complete and pass local `python3 -m py_compile`.
+  4. Let the run hand off to `run_experiments`.
+  5. Inspect `checkpoints/latest.json` and the generated public runner.
+
+- Expected behavior:
+  - The generated runner's main path should invoke the actual orchestration function generated by the staged implementation.
+  - If `_invoke_experiment_orchestration(...)` uses a `candidate_names` list, implement-stage verification should ensure safe generated entrypoints such as `execute_locked_recipe_plan` are included before handoff.
+  - `run_experiments` should not be the first place this entrypoint mismatch is discovered.
+
+- Actual behavior:
+  - `implement_experiments` completed and passed local `py_compile`.
+  - `run_experiments` immediately failed with:
+    - `RuntimeError: No compatible experiment orchestration function was found. Tried: none. Last error: None`
+  - The generated script defines `execute_locked_recipe_plan(...)`, but `_invoke_experiment_orchestration(...)` did not include that function name in its candidate list.
+  - After the orchestration-candidate repair and rebuilt retry, this failure did not recur.
+  - The same persisted run advanced to later runtime blockers tracked as `LV-123` and `LV-124`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced after relaunching the rebuilt TUI and retrying the same persisted run.
+  - Existing session: the same run crossed earlier constant and `peft_type` boundaries before failing at this new handoff boundary.
+  - Divergence: no UI-only divergence; checkpoint and generated script agree on the failing boundary.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: implement-stage verification still over-relies on `py_compile` for the final runner handoff surface. A syntactically valid runner can define the correct orchestration function but omit it from the dispatch list used by `main()`.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - adds a bounded Python runner compatibility repair that inserts safe, actually defined orchestration entrypoints into `_invoke_experiment_orchestration` candidate lists before handoff
+      - re-runs local verification after the repair is materialized
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds a regression that a runner defining `execute_locked_recipe_plan(...)` but omitting it from `candidate_names` is repaired before handoff
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted test: pass on 2026-04-24 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "RecipeSpec peft_type|orchestration candidate|uppercase constants|ExperimentConfig metadata"`
+  - Build: pass on 2026-04-25 with `npm run build`
+  - Harness: pending after newest issue-log update
+  - Same-flow live revalidation: resolved for the orchestration-candidate boundary; the same persisted run no longer fails with `No compatible experiment orchestration function was found`
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/checkpoints/latest.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-123
+
+- Status: resolved
+- Validation target: same-flow live revalidation for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the orchestration-candidate repair allowed `run_experiments` to start the generated PEFT runner
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - producing node: `implement_experiments`
+  - failing node: `run_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Relaunch the rebuilt TUI in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec` and allow handoff.
+  3. Let `run_experiments` execute the generated PEFT runner.
+  4. Inspect `checkpoints/latest.json` and `exec_logs/run_experiments.txt`.
+
+- Expected behavior:
+  - A generated runner that requires `trl` should either declare it in the bootstrap contract or fail during implement-stage preflight before consuming `run_experiments` retry budget.
+  - Runtime dependency checks should cover Python modules required by generated imports, not only file/path materialization.
+
+- Actual behavior:
+  - After the LV-122 repair, `run_experiments` reached runtime dependency validation and failed with:
+    - `RuntimeDependencyError: Missing required runtime dependencies for PEFT instruction study: trl`
+  - Local inspection showed `torch`, `transformers`, `datasets`, `peft`, and `accelerate` were present, but `trl` was missing.
+  - Installing `trl` resolved this blocker:
+    - `python3 -m pip install trl`
+    - verification output: `trl 1.2.0 SFTTrainer ok`
+  - A subsequent retry progressed past the missing-`trl` boundary and failed later on `set_seed`, tracked as `LV-124`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in the rebuilt TUI after the orchestration-candidate boundary was repaired.
+  - Existing session: prior attempts failed before dependency bootstrap reached the `trl` check.
+  - Divergence: no UI-only divergence; checkpoint, exec log, and generated runner agree on the missing dependency.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the generated bootstrap contract omitted `trl` even though the generated script required `SFTTrainer`, and implement-stage bootstrap evaluation currently does not enforce `python_module_available` checks. The handoff therefore relied on `py_compile`, which does not import runtime dependencies.
+
+- Code/test changes:
+  - Code: none for the local environment unblock; `trl` was installed into the validation Python environment.
+  - Follow-up needed: implement-stage bootstrap evaluation should enforce required Python module availability and should derive or validate required modules from generated imports before handoff.
+
+- Regression status:
+  - Automated regression test linked: no
+  - Environment verification: pass on 2026-04-25 with `python3 -c "import trl; from trl import SFTTrainer; print('trl', trl.__version__, 'SFTTrainer ok')"`
+  - Same-flow live revalidation: resolved for missing `trl`; the same persisted run advanced to the later `set_seed` runtime defect in `LV-124`
+  - Adjacent regression review: this is a dependency-coverage gap, not a recurrence of the orchestration-candidate bug
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/checkpoints/latest.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/bootstrap_contract.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-124
+
+- Status: resolved
+- Validation target: same-flow live revalidation for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after installing `trl` and retrying `run_experiments`
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - producing node: `implement_experiments`
+  - failing node: `run_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Install and verify `trl` in the validation environment.
+  2. In the real TUI, run `/agent retry run_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let the generated PEFT runner enter baseline execution.
+  4. Inspect `checkpoints/latest.json`, `run_experiments_verify_report.json`, and the generated script.
+
+- Expected behavior:
+  - If a generated runner imports `set_seed as transformers_set_seed`, any helper that calls `set_seed(...)` should bind a compatibility alias before handoff.
+  - Implement-stage verification should catch this simple runtime-name mismatch before `run_experiments` executes the baseline.
+
+- Actual behavior:
+  - The runner imported `set_seed` as `transformers_set_seed`.
+  - The generated `seed_everything(...)` helper called `set_seed(...)` directly.
+  - `py_compile` passed because undefined names inside function bodies are not resolved until execution.
+  - `run_experiments` failed with:
+    - `NameError: name 'set_seed' is not defined`
+  - Latest observed checkpoint:
+    - sequence: `327`
+    - node: `run_experiments`
+    - phase: `fail`
+    - createdAt: `2026-04-25T04:41:27.591Z`
+  - After rebuilt same-flow retry through `implement_experiments`, the regenerated runner defined a concrete `set_seed(...)` wrapper around `hf_set_seed`.
+  - The same persisted run advanced past the `set_seed` failure and executed into a later metrics serialization failure tracked as `LV-125`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: resolved after rebuilt TUI retry through `implement_experiments`.
+  - Existing session: reproduced in the active persisted run after the missing-`trl` blocker was resolved.
+  - Divergence: no UI-only divergence; generated source, checkpoint, and verifier report agreed on the runtime-name mismatch before the fix, and the post-fix run crossed that boundary.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: implement-stage handoff verification still treats `py_compile` as enough for function-body name safety. The generated source had a recoverable import alias mismatch, but no compatibility pass bound `set_seed = transformers_set_seed` before runtime.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - adds a bounded Python runner compatibility repair that inserts a `set_seed` alias when a runner imports `transformers.set_seed` as `transformers_set_seed` but later calls `set_seed(...)`
+      - re-runs local verification after the repair is materialized
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds a regression for the missing Transformers `set_seed` alias before auto-handoff to `run_experiments`
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted test: pass on 2026-04-25 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "set_seed|orchestration candidate|RecipeSpec peft_type|uppercase constants|ExperimentConfig metadata"`
+  - Build: pass on 2026-04-25 with `npm run build`
+  - Diff whitespace check: pass on 2026-04-25 with `git diff --check`
+  - Harness: pass on 2026-04-25 with `npm run validate:harness`
+  - Same-flow live revalidation: resolved for the `set_seed` boundary; the same persisted run progressed into `run_experiments` and failed later on invalid `NaN` metrics JSON
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/checkpoints/latest.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-125
+
+- Status: resolved
+- Validation target: same-flow live revalidation for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the rebuilt `implement_experiments` retry crossed the `set_seed` runtime boundary
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - producing node: `implement_experiments`
+  - failing node: `run_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Relaunch the rebuilt TUI in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Allow the generated runner to pass local `py_compile` and auto-handoff to `run_experiments`.
+  4. Let the PEFT runner execute the tiny GPT-2 baseline/comparator path.
+  5. Inspect `metrics.json`, `checkpoints/latest.json`, and `run_experiments_verify_report.json`.
+
+- Expected behavior:
+  - `metrics.json` should always be strict JSON parseable by Node and downstream analysis.
+  - If a metric is non-finite, the generated runner should serialize it as a JSON-safe missing value and preserve the surrounding execution evidence rather than writing invalid JSON.
+  - Implement-stage handoff verification should normalize Python `json.dump(...)` calls used for metrics so non-standard `NaN` literals cannot leak into persisted artifacts.
+
+- Actual behavior:
+  - The generated runner executed far enough to write metrics.
+  - Python `json.dump(...)` emitted `NaN` for `train_loss`.
+  - Node-side metrics parsing rejected the file:
+    - `Experiment produced invalid metrics JSON at .../metrics.json: Unexpected token 'N', ..."in_loss": NaN, "... is not valid JSON`
+  - Latest observed checkpoint:
+    - sequence: `333`
+    - node: `run_experiments`
+    - phase: `fail`
+    - createdAt: `2026-04-25T04:49:18.131Z`
+  - After the strict metrics JSON repair, implement-stage verification emitted:
+    - `Made metrics JSON serialization strict and non-finite-safe in run_peft_instruction_study.py before handoff.`
+  - The same persisted run crossed the invalid-`NaN` metrics boundary and failed later on `RecipeSpec.name`, tracked as `LV-126`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: resolved after rebuilt TUI retry through `implement_experiments`.
+  - Existing session: reproduced in the active persisted run after `set_seed` was resolved.
+  - Divergence: no UI-only divergence; checkpoint, verifier report, and the raw `metrics.json` agreed on invalid JSON before the fix, and the post-fix run crossed that boundary.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: generated Python runners may use `json.dump` with its default `allow_nan=True`, which writes JavaScript-style non-finite literals that are not valid JSON. The current implement-stage verifier catches syntax and selected runner-surface issues but does not enforce metrics serialization strictness before handoff.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - adds a bounded Python runner compatibility repair that inserts `_autolabos_json_safe(...)` and rewrites `json.dump(...)` calls to serialize strict JSON with `allow_nan=False`
+      - maps non-finite floats and numpy/torch scalar non-finite values to `null` before persisted metrics are written
+      - re-runs local verification after the repair is materialized
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds a regression that a Python runner writing `float('nan')` through `json.dump(payload, ...)` is repaired before auto-handoff
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted test: pass on 2026-04-25 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "strict|set_seed|orchestration candidate|RecipeSpec peft_type|uppercase constants|ExperimentConfig metadata"`
+  - Build: pass on 2026-04-25 with `npm run build`
+  - Harness: pass on 2026-04-25 with `npm run validate:harness`
+  - Diff whitespace check: pass on 2026-04-25 with `git diff --check`
+  - Same-flow live revalidation: resolved for invalid `NaN` metrics JSON; the same persisted run advanced to the later `RecipeSpec.name` runtime defect in `LV-126`
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/checkpoints/latest.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-126
+
+- Status: resolved
+- Validation target: same-flow live revalidation for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the strict metrics JSON repair allowed `run_experiments` to execute the regenerated runner
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - producing node: `implement_experiments`
+  - failing node: `run_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Relaunch the rebuilt TUI in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Allow `implement_experiments` to complete and hand off to `run_experiments`.
+  4. Inspect `checkpoints/latest.json` and the generated runner traceback.
+
+- Expected behavior:
+  - If generated code constructs argparse choices with `[recipe.name for recipe in PEFT_RECIPES]`, each `RecipeSpec` object should expose a compatible `.name` value before handoff.
+  - Implement-stage verification should catch or repair this dataclass surface mismatch before `run_experiments` executes the command.
+
+- Actual behavior:
+  - `implement_experiments` completed with `verifyStatus=pass`.
+  - `run_experiments` failed during argument parser construction:
+    - `AttributeError: 'RecipeSpec' object has no attribute 'name'`
+  - Latest observed checkpoint:
+    - sequence: `339`
+    - node: `run_experiments`
+    - phase: `fail`
+    - createdAt: `2026-04-25T05:01:24.237Z`
+  - After the `RecipeSpec.name` repair, the same persisted run no longer failed during parser construction.
+  - Same-flow revalidation advanced into candidate orchestration and exposed a later locked recipe-order contradiction tracked as `LV-127`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: resolved after rebuilt TUI retry through `implement_experiments`.
+  - Existing session: reproduced in the active persisted run after `LV-125` was resolved.
+  - Divergence: no UI-only divergence; generated source and checkpoint agreed on the dataclass surface mismatch before the fix, and the post-fix same-flow retry crossed that boundary.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: generated recipe code changed the `RecipeSpec` schema to fields such as `recipe_id` and `display_name`, but later parser code still projected the older `.name` surface. `py_compile` cannot evaluate list comprehensions inside parser construction, so the mismatch escaped to `run_experiments`.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - adds a bounded Python runner compatibility repair that inserts a `RecipeSpec.name` property when generated code references `.name` but the dataclass does not expose that field
+      - re-runs local verification after the repair is materialized
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds a regression for a generated `PEFT_RECIPES` list used by argparse choices through `recipe.name`
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted test: pass on 2026-04-25 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "RecipeSpec name|strict|set_seed|orchestration candidate|RecipeSpec peft_type|uppercase constants|ExperimentConfig metadata"`
+  - Build: pass on 2026-04-25 with `npm run build`
+  - Harness: pass on 2026-04-25 with `npm run validate:harness`
+  - Diff whitespace check: pass on 2026-04-25 with `git diff --check`
+  - Same-flow live revalidation: resolved for `RecipeSpec.name`; the same persisted run advanced to the later baseline-first recipe-order defect in `LV-127`
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/checkpoints/latest.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-127
+
+- Status: active
+- Validation target: same-flow live revalidation for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the `RecipeSpec.name` repair allowed `run_experiments` to reach candidate orchestration
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - producing node: `implement_experiments`
+  - failing node: `run_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Relaunch the rebuilt TUI in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Allow `implement_experiments` to complete and hand off to `run_experiments`.
+  4. Let the generated runner enter `_get_locked_recipe_sequence(...)`.
+  5. Inspect `checkpoints/latest.json`, `exec_logs/run_experiments.txt`, and the generated runner.
+
+- Expected behavior:
+  - For `COMPARISON_MODE = "baseline_first_locked"`, the generated PEFT runner should execute the locked standard LoRA tuned baseline first.
+  - The untuned reference can remain in the comparison for context, but it should not displace the primary tuned baseline when the experiment contract says baseline-first.
+  - Implement-stage verification should catch a generated runner that contains contradictory standard-first and reference-first recipe-order checks before handoff.
+
+- Actual behavior:
+  - First reproduction:
+    - `implement_experiments` completed with `verifyStatus=pass`.
+    - `run_experiments` failed before candidate execution with:
+      - `RuntimeError: Locked comparison contract requires the untuned reference candidate to run first.`
+    - The generated runner's earlier `validate_locked_peft_recipe_order(...)` requires `LOCKED_STANDARD_LORA_RECIPE_ID` first.
+    - A later helper `_candidate_sort_key(...)` sorted `_recipe_is_reference(recipe)` to rank `0`, and `_get_locked_recipe_sequence(...)` then required reference first.
+    - This internal contradiction escaped `py_compile` because the failing order check only executes at runtime.
+  - Same-flow revalidation after the first compatibility repair:
+    - `implement_experiments` and `run_experiments` reached `verifyStatus=pass`.
+    - `metrics.json` still used `recipe_order: ["baseline_no_tuning", "lora_r8", "lora_r16"]`.
+    - `best_recipe` was `baseline_no_tuning`, `baseline_mean_zero_shot_accuracy` was `0.36458333333333337`, and both tuned LoRA variants were lower at `0.34375`.
+    - The experiment contract requires the named tuned standard LoRA baseline (`rank=16`, `dropout=0.0`, full subset, fixed seed) as the primary comparator, not an untuned/no-tuning row as the primary baseline.
+
+- Fresh vs existing session comparison:
+  - Fresh session: pending rebuilt TUI retry after the baseline-first recipe-order repair.
+  - Existing session: reproduced in the active persisted run after `LV-126` was resolved.
+  - Divergence: no UI-only divergence; checkpoint, exec log, and generated source agree on the runtime recipe-order contradiction.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged implementation combined two incompatible projections of the comparison contract: a standard-LoRA-first validator and a reference-first orchestrator helper. Implement-stage verification does not execute the candidate sequence helper, so the self-contradiction survived until `run_experiments`.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - adds a bounded Python runner compatibility repair that detects `baseline_first_locked` runners whose `_get_locked_recipe_sequence(...)` enforces untuned-reference-first ordering
+      - rewrites `_candidate_sort_key(...)` and the sequence validation to keep the standard LoRA tuned baseline first while retaining the untuned reference in the comparison
+      - re-runs local verification after the repair is materialized
+      - adds a verification blocker for generated baseline-first PEFT runners that treat `baseline_no_tuning` as the primary baseline while tuned LoRA candidates exist
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds a regression for generated baseline-first PEFT runners that sort the untuned reference before the locked tuned baseline
+      - adds a regression that rejects generated baseline-first PEFT runners using an untuned/no-tuning row as the primary comparator
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted test: pass on 2026-04-25 with `npx vitest run tests/objectiveMetric.test.ts tests/implementSessionManager.test.ts --testNamePattern "PEFT recipe result rows|delta objective|untuned row as the primary comparator|baseline-first PEFT"`
+  - Build: pass on 2026-04-25 with `npm run build`.
+  - Harness: pass on 2026-04-25 with `npm run validate:harness`.
+  - Same-flow live revalidation: narrowed before this follow-up. Pending rebuilt TUI retry to verify the semantic tuned-baseline blocker is now enforced in the live flow.
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/checkpoints/latest.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-128
+
+- Status: resolved
+- Validation target: same-flow `analyze_results` evaluation for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after `run_experiments` produced a technically valid metrics bundle
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - producing node: `run_experiments`
+  - failing node: `analyze_results`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Continue the same persisted run after `run_experiments` writes `metrics.json`.
+  2. Allow `analyze_results` to evaluate the objective metric.
+  3. Inspect `run_experiments_verify_report.json`, `metrics.json`, `result_analysis.json`, and `result_table.json`.
+
+- Expected behavior:
+  - A target such as at least `+1.0` percentage point over baseline must evaluate a numeric delta or improvement-over-baseline metric.
+  - If only absolute baseline accuracy is available, `analyze_results` should report the objective metric as missing or not met, not met.
+  - If tuned alternatives underperform the baseline, the objective should be `not_met`.
+
+- Actual behavior:
+  - `metrics.json` had `baseline_mean_zero_shot_accuracy=0.36458333333333337`.
+  - Tuned LoRA alternatives had lower mean zero-shot accuracy (`0.34375`).
+  - `analyze_results` matched `baseline_mean_zero_shot_accuracy` for primary metric `accuracy_delta_vs_baseline`.
+  - The result was incorrectly marked `met` because `0.36458333333333337 >= 0.01`.
+  - `result_table.json` had no comparison rows, so the public analysis surface did not expose the required delta comparison.
+
+- Fresh vs existing session comparison:
+  - Fresh session: pending rebuilt TUI retry after the objective-metric repair.
+  - Existing session: reproduced in the active persisted run after `LV-127` was narrowed.
+  - Divergence: no UI-only divergence observed; stored metrics and analysis artifacts agree on the false-positive objective evaluation.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: objective metric matching treats token overlap between `accuracy_delta_vs_baseline` and `baseline_mean_zero_shot_accuracy` as enough for best-effort matching, and relative metric synthesis does not currently derive a delta from `results[]` rows shaped like PEFT recipe outputs.
+
+- Code/test changes:
+  - Code:
+    - `src/core/objectiveMetric.ts`
+      - synthesizes delta/improvement metrics from `metrics.results[]` when baseline and non-baseline recipe rows exist
+      - adds PEFT-style accuracy keys such as `mean_zero_shot_accuracy`, `zero_shot_accuracy`, `arc_challenge_accuracy`, and `hellaswag_accuracy`
+      - prevents best-effort matching from selecting absolute baseline metrics for relative/delta objectives
+  - Tests:
+    - `tests/objectiveMetric.test.ts`
+      - adds regressions for PEFT recipe-row delta synthesis and for rejecting false-positive absolute baseline matches
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted test: pass on 2026-04-25 with `npx vitest run tests/objectiveMetric.test.ts tests/implementSessionManager.test.ts --testNamePattern "PEFT recipe result rows|delta objective|untuned row as the primary comparator|baseline-first PEFT"`
+  - Build: pass on 2026-04-25 with `npm run build`.
+  - Harness: pass on 2026-04-25 with `npm run validate:harness`.
+  - Same-flow live revalidation: resolved on 2026-04-25 after relaunching the rebuilt TUI; replayed `analyze_results` reported `Objective metric not met: accuracy_delta_vs_baseline=-0.02083333333333337 does not satisfy >= 0.01` instead of matching `baseline_mean_zero_shot_accuracy`.
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/result_analysis.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/result_table.json`
+
+## Issue: LV-129
+
+- Status: resolved
+- Validation target: same-flow retry of `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after adding the tuned-baseline semantic validator
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - node: `implement_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Rebuild the project after adding the tuned-baseline semantic validator.
+  2. Relaunch the TUI in `.autolabos-validation`.
+  3. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Inspect `implement_experiments/status.json` and `implement_experiments/progress.jsonl`.
+
+- Expected behavior:
+  - The recovered-bundle path should apply the same semantic validation as the normal local-verification path.
+  - A stale public runner that treats `baseline_no_tuning` as the primary comparator should not be reused only because it has prior execution evidence and passes `py_compile`.
+  - The node should either re-enter Codex or fail with actionable feedback rather than silently accepting the stale bundle.
+
+- Actual behavior:
+  - The rebuilt TUI retried `implement_experiments`.
+  - The node reused the existing governed experiment bundle and execution evidence instead of re-entering Codex.
+  - `implement_experiments/status.json` reported `verifyStatus=pass` after only `python3 -m py_compile`.
+  - The stale `run_peft_instruction_study.py` still contained the untuned-primary-baseline structure observed in `LV-127`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced after relaunching the rebuilt TUI.
+  - Existing session: the stale public bundle was accepted from the persisted run directory.
+  - Divergence: no UI-only divergence; progress and status artifacts show the recovered-bundle path bypassing the new semantic validator.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: `recoverStructuredResultFromPublicBundle(...)` can return a structured implement result before the normal verification path inspects semantic runner contracts, so stale persisted public artifacts can remain authoritative after the code-level validator changes.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - rejects recovered public bundles when `detectPythonBaselineFirstTunedBaselineMismatch(...)` identifies an untuned/no-tuning primary baseline in a baseline-first PEFT runner
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds a regression that a bad baseline-first PEFT public bundle with execution evidence is not reused and Codex is re-entered
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted test: pass on 2026-04-25 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "untuned primary comparator|baseline-first PEFT runner uses an untuned primary comparator|existing public bundle with execution evidence"`
+  - Build: pass on 2026-04-25 with `npm run build`.
+  - Harness: pass on 2026-04-25 with `npm run validate:harness`.
+  - Same-flow live revalidation: resolved for the recovered-bundle reuse boundary on 2026-04-25. After relaunching the rebuilt TUI and running `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`, progress entered `Planning staged_llm implementation scaffold before generating file contents` and subsequent Codex OAuth generation instead of `Reused the existing governed experiment bundle and execution evidence`.
+  - Remaining downstream status: `implement_experiments` is still running through dynamic staged generation; this is tracked under the broader `LV-127` semantic tuned-baseline contract issue rather than `LV-129`.
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-130
+
+- Status: active
+- Validation target: same-flow retry of `run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after `implement_experiments` generated a new tuned-baseline runner
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - producing node: `implement_experiments`
+  - failing node: `run_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Relaunch the rebuilt TUI in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. After implement reports `verifyStatus=pass`, run `/agent retry run_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Inspect `run_experiments_verify_report.json`, `exec_logs/run_experiments.txt`, `metrics.json`, and the generated runner tail.
+
+- Expected behavior:
+  - Final generated Python runners must contain executable code for all materialized sections.
+  - Planning-only `AUTOLABOS SECTION` skeleton markers must not survive into the final script.
+  - Implement-stage verification should reject an incomplete sectioned skeleton before handoff, because `py_compile` cannot prove that the script writes metrics.
+
+- Actual behavior:
+  - `implement_experiments` completed with `verifyStatus=pass`.
+  - `run_experiments` archived the prior metrics and ran the new script.
+  - The script exited with code `0` after logging only device detection.
+  - `metrics.json` was missing, and `run_experiments_verify_report.json` failed with:
+    - `Experiment finished without metrics output at .../metrics.json`
+  - The generated script tail still contained empty final sections:
+    - `orchestration_row_runner`
+    - `orchestration_baseline_first_workflow`
+    - `orchestration_result_aggregation`
+    - `cli_metrics_writer`
+    - `cli_parser_and_main`
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced after relaunching the rebuilt TUI and retrying the same persisted run.
+  - Existing session: the same persisted run had older metrics from the previous runner; these were archived before the failed new execution.
+  - Divergence: no UI-only divergence; status, verifier report, exec log, and generated source agree on an incomplete final runner.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged materialization can recover a partially materialized sectioned skeleton after Codex stream failure. Local verification only runs `py_compile`, so skeleton markers and missing executable entrypoint/metrics writer code can pass implement-stage verification.
+
+- Code/test changes:
+  - Code:
+      - `src/core/agents/implementSessionManager.ts`
+      - rejects final Python runners that still contain `AUTOLABOS SECTION` skeleton markers after staged materialization
+      - runs the unfilled-section check before local `py_compile`, so incomplete sectioned runners receive targeted implementation feedback instead of first surfacing syntax/compatibility-shim failures
+      - reports the failure as a runnable-entrypoint/metrics-writer completion issue before auto-handoff to `run_experiments`
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds a regression that a final Python runner with unfilled section skeleton markers fails implement-stage verification instead of reaching `run_experiments`
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted test: pass on 2026-04-25 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "AUTOLABOS section skeleton|comment scaffolding|untuned primary comparator"`
+  - Build: pass on 2026-04-25 with `npm run build`
+  - Harness: pass on 2026-04-25 with `npm run validate:harness`
+  - Same-flow live revalidation: pending rebuilt TUI retry through `implement_experiments`; an initial rebuilt retry blocked before handoff on local `py_compile` after compatibility repairs, so the check was moved earlier and must be re-run from the rebuilt TUI
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_experiments_verify_report.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/checkpoints/latest.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-121
+
+- Status: resolved
+- Validation target: same-flow live revalidation for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after `implement_experiments` generated a `RecipeSpec` constructor surface used by `run_experiments`
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - producing node: `implement_experiments`
+  - failing node: `run_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Relaunch the rebuilt TUI in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let the run hand off to `run_experiments`.
+  4. Inspect the generated runner traceback.
+
+- Expected behavior:
+  - Generated recipe factories should pass the required fields expected by `RecipeSpec`.
+  - Implement-stage verification should repair or reject a constructor-surface mismatch before handoff.
+
+- Actual behavior:
+  - Before the fix, `run_experiments` failed with:
+    - `TypeError: RecipeSpec.__init__() missing 1 required positional argument: 'peft_type'`
+  - After the compatibility repair and same-flow retry, this `peft_type` failure did not recur.
+  - The same run progressed to a later orchestration candidate mismatch tracked as `LV-122`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced after relaunching the TUI and retrying the same persisted run.
+  - Existing session: prior attempts failed at earlier implement-stage boundaries before reaching this constructor mismatch.
+  - Divergence: no UI-only divergence; the generated runner traceback matched the checkpoint failure.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: generated recipe compatibility helpers filtered candidate kwargs against `RecipeSpec.__dataclass_fields__`, but only supplied aliases such as `adapter_type` or `peft_method`; when `RecipeSpec` required `peft_type`, the handoff passed `py_compile` and failed only at runtime.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - adds a bounded `RecipeSpec.peft_type` alias repair before handoff
+      - re-runs local verification after the repair
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds a regression for the missing `RecipeSpec.peft_type` alias repair
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted test: pass on 2026-04-24 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "RecipeSpec peft_type|orchestration candidate|uppercase constants|ExperimentConfig metadata"`
+  - Same-flow live revalidation: resolved for the `peft_type` boundary; the next observed failure is `LV-122`
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/checkpoints/latest.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-119
+
+- Status: active
+- Validation target: same-flow live revalidation for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after retrying `implement_experiments` and handing off to `run_experiments`
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - failing node: `run_experiments`
+  - producing node: `implement_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Relaunch the rebuilt TUI in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Allow native Codex staged implementation to complete and pass local `py_compile`.
+  4. Let the TUI hand off to `run_experiments`.
+  5. Inspect `checkpoints/latest.json`.
+
+- Expected behavior:
+  - Implement-stage verification should reject a Python runner that will fail immediately at module load.
+  - If generated code defines `PeftRecipeSpec`, subsequent return annotations should use `PeftRecipeSpec` or define/import `RecipeSpec` before use.
+  - `run_experiments` should not be the first place this trivial module-load defect is discovered.
+
+- Actual behavior:
+  - `implement_experiments` completed and reported local verification passed via:
+    - `python3 -m py_compile "/home/hanyong/.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py"`
+  - Immediate `run_experiments` execution failed while importing/evaluating function annotations:
+    - `NameError: name 'RecipeSpec' is not defined. Did you mean: 'PeftRecipeSpec'?`
+  - Latest checkpoint:
+    - `0301-run_experiments-fail.json`
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in the active rebuilt TUI process after the LV-116/LV-117/LV-118 patches.
+  - Existing session: earlier attempts failed before implement-stage completion.
+  - Divergence: no UI-only divergence; persisted checkpoint and `run_status.json` show the failure.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: local implementation verification relied on `py_compile`, which validates syntax but does not execute module-level annotation evaluation. The generated runner defined `PeftRecipeSpec` but used `RecipeSpec` in return annotations, so the module failed at runtime before the experiment logic started.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts`
+  - Tests: `tests/implementSessionManager.test.ts`
+  - Change summary: implement verification now performs an additional Python static pass for undefined return-annotation names after `py_compile` succeeds. A new regression test confirms that a runner with `def build_recipe() -> RecipeSpec:` retries before handoff when only `PeftRecipeSpec` is defined.
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted tests: pass on 2026-04-24 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "undefined return annotation"`
+  - Build: pending after LV-119 patch
+  - Harness: pending after LV-119 patch
+  - Same-flow live revalidation: pending rebuilt TUI retry after undefined-annotation detector patch
+  - Adjacent regression review: detector is limited to Python return annotations and common built-in/typing names to avoid substituting runtime execution for full experiments
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/checkpoints/latest.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/run_status.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-118
+
+- Status: mitigated
+- Validation target: same-flow live revalidation for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` while retrying `implement_experiments` with native Codex OAuth staged implementation
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - node: `implement_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Relaunch the rebuilt TUI in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Allow staged implementation to dynamically re-subdivide the configuration/defaults chunk.
+  4. Inspect `implement_experiments/status.json`.
+
+- Expected behavior:
+  - Python chunks inserted below the module header should not include `from __future__ import annotations`.
+  - Candidate validation should continue to catch real syntax errors without falling back to deterministic implementation.
+
+- Actual behavior:
+  - The run progressed through nested dynamic subdivision and continued receiving Codex output.
+  - A later subchunk emitted `from __future__ import annotations` inside an already materialized module section.
+  - Candidate validation failed with:
+    - `SyntaxError: from __future__ imports must occur at the beginning of the file`
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced after restarting the TUI with the transient-provider retry patch and rerunning the same live retry.
+  - Existing session: earlier attempts stopped at candidate-validation and transient-provider boundaries.
+  - Divergence: no UI-only divergence; the failure is persisted in node status/progress artifacts.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: chunk prompts required syntactically insertable Python content but did not explicitly forbid future imports in later chunks. Since the chunk is inserted into an existing sectioned module, future imports below the header violate Python syntax.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts`
+  - Tests: `tests/implementSessionManager.test.ts`
+  - Change summary: Python chunk prompt now forbids `from __future__ import annotations`; staged Python chunk normalization removes that future-import line if emitted anyway before candidate validation/materialization.
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted tests: pass on 2026-04-24 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "candidate syntax|transient Codex 503|globals-guarded|undefined uppercase"`
+  - Build: pass on 2026-04-24 with `npm run build`
+  - Harness: pass on 2026-04-24 with `npm run validate:harness`
+  - Same-flow live revalidation: pass for the original symptom on 2026-04-24; the same live retry completed `implement_experiments` and then exposed LV-119 in `run_experiments`
+  - Adjacent regression review: normalization removes only `from __future__ import annotations` lines in Python materialization chunks and leaves candidate syntax validation active
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+
+## Issue: LV-117
+
+- Status: mitigated
+- Validation target: same-flow live revalidation for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` while retrying `implement_experiments` with native Codex OAuth staged implementation
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - node: `implement_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Relaunch the rebuilt TUI in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Allow staged implementation to reach chunk materialization.
+  4. Observe `implement_experiments/status.json` after the provider returns a transient upstream `503`.
+
+- Expected behavior:
+  - A transient provider transport failure before any text delta is observed should retry the same LLM request a small bounded number of times.
+  - The node should not switch to deterministic fallback or substitute a runner.
+  - The retry should remain visible in progress artifacts.
+
+- Actual behavior:
+  - A fresh same-flow retry reached actual staged file chunk generation.
+  - The previous `BASELINE_COMPARATOR_ROLE` candidate-validation blocker did not recur before the new failure.
+  - The node failed terminally on the first transient provider failure:
+    - `Codex OAuth backend request failed: 503 upstream connect error or disconnect/reset before headers. reset reason: connection termination`
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced after restarting the TUI with the latest build and rerunning the same live retry.
+  - Existing session: earlier attempts stopped at candidate-validation boundaries.
+  - Divergence: no UI-only divergence; the failure is persisted in node status/progress artifacts.
+
+- Root cause hypothesis:
+  - Type: `race_timing_bug`
+  - Hypothesis: staged LLM request handling treated transient Codex OAuth transport failures as terminal when no partial output had been observed. This made a short upstream connection reset abort the whole node instead of retrying the same provider request.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts`
+  - Tests: `tests/implementSessionManager.test.ts`
+  - Change summary: staged LLM requests now retry narrowly classified transient provider errors (`503`, upstream connect/reset, connection termination, pre-response fetch failures) up to a bounded limit when no text delta has been received.
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted tests: pass on 2026-04-24 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "transient Codex 503|candidate syntax|globals-guarded|undefined uppercase"`
+  - Build: pass on 2026-04-24 with `npm run build`
+  - Harness: pass on 2026-04-24 with `npm run validate:harness`
+  - Same-flow live revalidation: pass for the original symptom on 2026-04-24; the same live retry completed `implement_experiments` without a terminal transient-provider abort and then exposed LV-119 in `run_experiments`
+  - Adjacent regression review: retry is bounded, requires no partial text, and does not invoke deterministic fallback
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+
+## Issue: LV-116
+
+- Status: mitigated
+- Validation target: same-flow live revalidation for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` while retrying `implement_experiments` with native Codex OAuth staged implementation
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - node: `implement_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Relaunch the rebuilt TUI in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Allow staged implementation to reach `chunk 1/5 subchunk 3/3` and its dynamically nested resubchunks.
+  4. Inspect `implement_experiments/status.json` and `unit_chunk_responses/*_error.txt`.
+
+- Expected behavior:
+  - When candidate validation fails, the dynamic re-subdivision planner should receive the concrete failure details.
+  - If the failure names undefined uppercase constants, the next subdivision should put those constant definitions before any dataclass/config/helper references them, or replace them with same-subchunk literals/config lookups.
+  - The node should preserve LLM-owned implementation generation without deterministic runner substitution.
+
+- Actual behavior:
+  - Candidate validation correctly caught undefined uppercase constants before final materialization.
+  - The planner repeatedly subdivided recipe/dataclass chunks, but because the prompt only said the previous attempt did not complete, Codex kept producing subchunks that referenced `PEFT_METHOD_UNTOUCHED`, `PEFT_METHOD_LORA`, `PEFT_METHOD_ADALORA`, and `PEFT_METHOD_IA3` before defining them.
+  - Attempt 1 failed before any runnable implementation was produced:
+    - `staged_llm chunk response for peft_recipe_tuning_fields failed candidate validation: Python source references uppercase constant(s) that are never defined or imported: PEFT_METHOD_UNTOUCHED ...`
+  - After passing the concrete failure into the subdivision prompt, a fresh same-flow retry progressed past the earlier `PEFT_METHOD_*` blocker, but failed on a deeper nested candidate:
+    - `staged_llm chunk response for locked_baseline_candidate_id_literal failed candidate validation: Python source references uppercase constant(s) that are never defined or imported: BASELINE_COMPARATOR_ROLE ...`
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced after restarting the TUI with the latest build and rerunning the same live retry.
+  - Existing session: prior attempts stopped on earlier verifier/materialization boundaries.
+  - Divergence: no UI-only divergence; the failure is persisted in node status/progress artifacts.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: candidate-validation failures were retryable, but the concrete validation error was initially not included in the re-subdivision planning prompt. After that was fixed, the remaining blocker was that nested subchunk candidate validation checked only the current subchunk content rather than the prior sibling subchunks plus the current subchunk. This made valid earlier constant definitions invisible to later candidate checks.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts`
+  - Tests: `tests/implementSessionManager.test.ts`
+  - Change summary: retry subdivision planning now receives a trimmed previous failure message; the prompt instructs Codex to place undefined uppercase constant definitions in the earliest relevant subchunk or use same-subchunk literals/config lookups. Candidate validation now checks the cumulative parent-section draft (`prior sibling subchunks + current subchunk`) so later subchunks can safely reference constants defined by earlier sibling subchunks.
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted tests: pass on 2026-04-24 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "candidate syntax|globals-guarded|undefined uppercase"`
+  - Build: pass on 2026-04-24 with `npm run build`
+  - Harness: pass on 2026-04-24 with `npm run validate:harness`
+  - Same-flow live revalidation: pass for the original symptom on 2026-04-24; the same live retry completed `implement_experiments` without repeated undefined uppercase subchunk failures and then exposed LV-119 in `run_experiments`
+  - Adjacent regression review: candidate syntax re-subdivision, globals-guarded fallback constants, and true-positive undefined uppercase constants remain covered by targeted tests
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/unit_chunk_responses/runner_repair__peft_recipe_tuning_fields__d3__chunk_1_5_subchunk_3_3_resubchunk_2_3_resubchunk_2_4_resubchunk_2_2_error.txt`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/unit_chunk_responses/runner_repair__locked_baseline_candidate_id_literal__d4__chunk_1_6_subchunk_3_4_resubchunk_2_3_resubchunk_2_3_resubchunk_2_3_error.txt`
+
+---
+
+## Issue: LV-115
+
+- Status: mitigated
+- Validation target: same-flow live revalidation for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` while retrying `implement_experiments` with native Codex OAuth staged implementation
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - node: `implement_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Relaunch the rebuilt TUI in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Allow native Codex staged implementation to complete all chunk/subchunk generation.
+  4. Inspect `implement_experiments/status.json`.
+
+- Expected behavior:
+  - A Python expression such as `DEFAULT_MAX_TRAIN_EXAMPLES if "DEFAULT_MAX_TRAIN_EXAMPLES" in globals() else 5000` should not fail static undefined-uppercase validation because Python will evaluate the fallback branch when the constant is absent.
+  - Truly unguarded undefined uppercase constants should still fail before handoff.
+  - Candidate-stage validation should catch real static constant defects as early as possible instead of waiting until full staged generation completes.
+
+- Actual behavior:
+  - Attempt 3 completed staged Codex implementation and passed the prior HellaSwag syntax boundary.
+  - Final local verification failed with:
+    - `Python source references uppercase constant(s) that are never defined or imported: DEFAULT_MAX_TRAIN_EXAMPLES at run_peft_instruction_study.py:2717`
+  - The flagged generated expression was guarded by `"DEFAULT_MAX_TRAIN_EXAMPLES" in globals()` with a concrete fallback value.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced after relaunching the TUI with rebuilt `dist` and rerunning the same live retry.
+  - Existing session: previous attempts in the same persisted run stopped on earlier implementation/verifier boundaries.
+  - Divergence: no UI-only divergence; the false-positive verifier failure is persisted in node status/progress artifacts.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: the static uppercase-reference verifier strips strings before identifier scanning and does not model same-line `NAME if "NAME" in globals() else fallback` optional-reference semantics. As a result, safe guarded fallback references are treated like unguarded missing constants.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts`
+  - Tests: `tests/implementSessionManager.test.ts`
+  - Change summary: globals-guarded fallback constants are exempted from undefined-uppercase failure, while candidate Python section validation now also runs the same static undefined-uppercase check after `py_compile` so real defects surface at the retryable chunk boundary.
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted tests: pass on 2026-04-24 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "undefined uppercase|uppercase words|globals-guarded|candidate syntax"`
+  - Build: pass on 2026-04-24 with `npm run build`
+  - Harness: pass on 2026-04-24 with `npm run validate:harness`
+  - Same-flow live revalidation: partial pass on 2026-04-24. After rebuilt TUI retry, the previous `DEFAULT_MAX_TRAIN_EXAMPLES if "DEFAULT_MAX_TRAIN_EXAMPLES" in globals() else 5000` false positive did not recur. The same run is now blocked by `LV-116`, a later dependency-ordering failure in dynamically re-subdivided recipe/dataclass chunks.
+  - Adjacent regression review: true-positive undefined uppercase constants, docstring uppercase words, attribute names, and candidate syntax re-subdivision remain covered by targeted tests
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`
+
+---
+
+## Issue: LV-114
+
+- Status: mitigated
+- Validation target: same-flow live revalidation for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` while retrying `implement_experiments` with native Codex OAuth staged implementation
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - node: `implement_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Relaunch the rebuilt TUI in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Allow native Codex staged implementation to reach the Python section for HellaSwag validation subset evaluation.
+  4. Inspect `implement_experiments/status.json` and `implement_experiments/progress.jsonl`.
+
+- Expected behavior:
+  - Candidate Python section content should be locally syntax-checked before it is committed into the canonical sectioned runner.
+  - A candidate syntax failure should be treated like a retryable materialization failure and routed back through dynamic subchunk subdivision.
+  - The node should preserve LLM-owned implementation generation without falling back to deterministic runner substitution.
+
+- Actual behavior:
+  - Attempt 2 streamed native Codex output through staged chunks and reached `chunk 3/5 subchunk 3/4: HellaSwag validation subset evaluation`.
+  - The generated section introduced a Python syntax error:
+    - `SyntaxError: unmatched ')'`
+  - `implement_experiments` failed before any runnable implementation was produced because the syntax check happened after section materialization instead of inside the retryable dynamic-subdivision boundary.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced after relaunching the TUI with rebuilt `dist`.
+  - Existing session: the persisted run had prior verifier failures, but this symptom is a new implementation materialization boundary in the same live run.
+  - Divergence: no UI-only divergence; the failure is persisted in node status/progress artifacts.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: Python section syntax validation ran only after mutating the canonical sectioned skeleton on disk. That put syntax errors outside `materializeStagedLlmChunkWithDynamicSubdivision`, so the existing retry/re-subdivision machinery could not repair the malformed section.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts`
+  - Tests: `tests/implementSessionManager.test.ts`
+  - Change summary: candidate Python section content is inserted into a temporary skeleton and `py_compile` checked before final materialization; candidate-validation failures are retryable and can trigger smaller dynamic subchunks.
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted tests: pass on 2026-04-24 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "candidate syntax|provider-terminated|canonical skeleton|comment scaffolding|TrainingArguments|undefined uppercase|uppercase words|partial staged_llm|deferred root"`
+  - Build: pass on 2026-04-24 with `npm run build`
+  - Harness: pass on 2026-04-24 with `npm run validate:harness`
+  - Same-flow live revalidation: partial pass on 2026-04-24. Attempt 3 reached and passed `chunk 3/4 subchunk 3/5: ARC-Challenge and HellaSwag zero-shot evaluation harness`, then completed all staged LLM chunks. The same run is now blocked by `LV-115`, a later static verifier false positive rather than the original HellaSwag syntax/materialization boundary.
+  - Adjacent regression review: provider-terminated re-subdivision, canonical skeleton materialization, and comment-only chunk guard remain covered by targeted tests
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/status.json`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`
+
+---
+
+## Issue: LV-113
+
+- Status: mitigated
+- Validation target: same-flow live revalidation for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after `implement_experiments` passed with native Codex OAuth
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - node boundary: `implement_experiments -> run_experiments`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Relaunch the rebuilt TUI in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Allow `implement_experiments` to pass local verification and hand off to `run_experiments`.
+  4. Let `run_experiments` execute the generated public runner.
+
+- Expected behavior:
+  - `implement_experiments` should catch known runtime-incompatible `TrainingArguments` kwargs before handoff when the generated script contains them.
+  - A runner that passes implement-stage verification should not fail immediately in `run_experiments` on a constructor signature mismatch.
+
+- Actual behavior:
+  - `implement_experiments` completed with `verifyStatus=pass` at `2026-04-24T04:55:22Z`.
+  - `run_experiments` then loaded datasets and model weights, evaluated the baseline, and failed while entering training:
+    - `TypeError: TrainingArguments.__init__() got an unexpected keyword argument 'overwrite_output_dir'`
+  - The failure wrote failed private metrics with a completed baseline row but no tuned comparator rows.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced after restarting the TUI with the latest build.
+  - Existing session: previous attempts in the same persisted run showed earlier implementation verifier failures.
+  - Divergence: no UI-only divergence; the failure is in the generated Python runner and persisted run artifacts.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: implement-stage local verification still relies mostly on `py_compile` plus targeted static checks. `py_compile` cannot validate runtime constructor signatures, so an installed-version-incompatible `TrainingArguments` kwarg escaped to `run_experiments`.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts`
+  - Tests: `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted tests: pass on 2026-04-24 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "candidate syntax|provider-terminated|canonical skeleton|comment scaffolding|TrainingArguments|undefined uppercase|uppercase words|partial staged_llm|deferred root"`
+  - Build: pass on 2026-04-24 with `npm run build`
+  - Harness: pass on 2026-04-24 with `npm run validate:harness`
+  - Same-flow live revalidation: pending restart/retry with patched verifier
+  - Adjacent regression review: `LV-110` true-positive undefined-constant class remains separately covered
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+
+---
+
+## Issue: LV-112
+
+- Status: mitigated
+- Validation target: real persisted external-workspace run `73050f85-6b56-4385-8c31-2ec69a5b7dec` while retrying `implement_experiments` with the new undefined-uppercase verifier
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - node: `implement_experiments`
+  - backend: native Codex OAuth backend with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Relaunch the rebuilt TUI in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Allow staged native Codex implementation to generate a Python runner.
+  4. Inspect `implement_experiments/progress.jsonl` after local verification.
+
+- Expected behavior:
+  - The verifier should reject real undefined module-level constants such as `DEFAULT_NUM_TRAIN_EPOCHS`.
+  - It should not treat uppercase words inside Python docstrings, comments, strings, or attribute access such as `TaskType.CAUSAL_LM` as missing free names.
+  - Valid generated runners should not spend retry budget solely because documentation mentions `PEFT`, `JSON`, or `CAUSAL_LM`.
+
+- Actual behavior:
+  - Attempt 1 failed local verification after generating a runner with:
+    - `Python source references uppercase constant(s) that are never defined or imported: CAUSAL_LM ..., PEFT ..., DEFAULT_SAVE_TOTAL_LIMIT ...`
+  - Attempt 2 failed local verification with:
+    - `PEFT at run_peft_instruction_study.py:5`
+    - `JSON at run_peft_instruction_study.py:6`
+    - `CAUSAL_LM at run_peft_instruction_study.py:323`
+  - Inspection showed at least some flagged terms were documentation words or attribute names, not missing runtime names.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced after relaunching the TUI with rebuilt `dist`.
+  - Existing session: the same persisted run had already consumed retries on related implementation verifier failures.
+  - Divergence: no UI-only divergence; the failure is persisted in implement progress and retry state.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: the TypeScript regex verifier strips single-line strings and comments but does not track triple-quoted Python strings across lines, and it also counts uppercase tokens after a dot as free identifiers. This creates false positives for docstrings and enum/library attribute names.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts`
+  - Tests: `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted tests: pass on 2026-04-24 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "undefined uppercase|uppercase words"`
+  - Build: pass on 2026-04-24 with `npm run build`
+  - Harness: pass on 2026-04-24 with `npm run validate:harness`
+  - Same-flow live revalidation: pass on 2026-04-24; the rebuilt TUI retried `implement_experiments`, local verification passed, and the run advanced to `run_experiments`
+  - Adjacent regression review: `LV-110` remains the intended true-positive class; this issue only narrows false positives
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+---
+
+## Issue: LV-111
+
+- Status: mitigated
+- Validation target: real persisted external-workspace run `73050f85-6b56-4385-8c31-2ec69a5b7dec` while retrying `implement_experiments` with native Codex OAuth staged implementation
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - node: `implement_experiments`
+  - backend: native Codex OAuth backend with streamed delta events
+
+- Reproduction steps:
+  1. Relaunch the rebuilt TUI in `.autolabos-validation`.
+  2. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let staged native Codex implementation generate a long Python runner.
+  4. Inspect the live TUI and `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`.
+
+- Expected behavior:
+  - Long Codex generations should remain observable through periodic progress summaries and persisted partial snapshots.
+  - The event stream should not persist nearly every provider token as a separate `OBS_RECEIVED` item.
+  - The progress count should reflect meaningful operator-visible milestones, not token count.
+
+- Actual behavior:
+  - The TUI repeatedly showed token fragments such as `LLM> _available`, `LLM> ()`, and path fragments.
+  - The persisted progress count rose into tens of thousands during a single implementation attempt.
+  - `events.jsonl` became dominated by token-level `OBS_RECEIVED` records, making actual verifier transitions and retry causes hard to locate.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced after relaunching the TUI with rebuilt `dist`.
+  - Existing session: earlier attempts in the same run already showed the same token-level progress flood.
+  - Divergence: no evidence of UI-only divergence; the flood is persisted in run artifacts.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: `completeStagedLlmRequest` forwards every streamed delta from the LLM provider to `emitImplementObservation`, which writes both `OBS_RECEIVED` and progress history. Partial snapshots already preserve detailed text, so persisted observations only need bounded summaries.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts`
+  - Tests: covered by build and existing implement/session regressions; a focused progress-throttle test remains desirable.
+
+- Regression status:
+  - Automated regression test linked: partial
+  - Targeted tests: pass on 2026-04-24 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "partial staged_llm|undefined uppercase|deferred|materialized|staged_llm|materialization"`
+  - Build: pass on 2026-04-24 with `npm run build`
+  - Harness: pass on 2026-04-24 with `npm run validate:harness`
+  - Full test suite: pass on 2026-04-24 with `npm test`
+  - Same-flow live revalidation: pending until the active long implementation retry finishes or is restarted with the latest build
+  - Adjacent regression review: current active TUI still emits token-level progress because it was launched before this patch; next rebuilt TUI launch should emit coalesced summaries
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/progress.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/implement_experiments/partial_response_attempt_2.txt`
+
+---
+
+## Issue: LV-110
+
+- Status: mitigated
+- Validation target: real persisted external-workspace run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after `implement_experiments` advanced to `run_experiments`
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - node: `run_experiments`
+  - backend: native Codex OAuth backend for implementation, with `gpt-5.5` and `medium` shown in the TUI footer
+
+- Reproduction steps:
+  1. From the real TUI session in `.autolabos-validation`, retry `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  2. Allow the node to recover or reuse the governed public experiment bundle and pass local `py_compile` verification.
+  3. Let the workflow hand off to `run_experiments`.
+  4. Observe the Python runner fail immediately during module-level evaluation.
+
+- Expected behavior:
+  - `implement_experiments` should not hand off a Python runner that only passes syntax compilation but fails immediately when module-level constants are evaluated.
+  - Lightweight local verification should catch undefined module-level configuration constants before `run_experiments` consumes retry budget.
+  - The repair feedback should point the implementer to define constants or load them from config, not rely on `run_experiments` to discover the problem.
+
+- Actual behavior:
+  - `implement_experiments` completed after local verification with:
+    - `python3 -m py_compile ".../run_peft_instruction_study.py"`
+  - `run_experiments` then failed with:
+    - `NameError: name 'DEFAULT_NUM_TRAIN_EPOCHS' is not defined`
+  - The failing source constructs `COMMON_TRAINING_HYPERPARAMETERS` at module scope using undefined constants including:
+    - `DEFAULT_NUM_TRAIN_EPOCHS`
+    - `DEFAULT_LEARNING_RATE`
+    - `DEFAULT_PER_DEVICE_TRAIN_BATCH_SIZE`
+    - `DEFAULT_GRADIENT_ACCUMULATION_STEPS`
+    - `DEFAULT_MAX_SEQUENCE_LENGTH`
+    - `DEFAULT_WARMUP_RATIO`
+    - `DEFAULT_WEIGHT_DECAY`
+    - `DEFAULT_LR_SCHEDULER_TYPE`
+    - `DEFAULT_OPTIMIZER`
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced before the code-level verification patch.
+  - Existing session: reproduced in the active persisted run after `implement_experiments` handed off to `run_experiments`.
+  - Divergence: no evidence of a UI-only issue; the failure is in the generated Python runner and persisted run state.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: implement-stage verification treated `py_compile` as sufficient for runnable handoff, but Python compilation does not resolve free names used in module-level dictionaries. Undefined training defaults therefore escaped into the persisted public runner and consumed `run_experiments` retries.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts`
+  - Tests: `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted tests: pass on 2026-04-24 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "partial staged_llm|undefined uppercase|deferred|materialized|staged_llm|materialization"`
+  - Build: pass on 2026-04-24 with `npm run build`
+  - Harness: pass on 2026-04-24 with `npm run validate:harness`
+  - Full test suite: pass on 2026-04-24 with `npm test`
+  - Same-flow live revalidation: pass for this boundary on 2026-04-24; the retried `implement_experiments` loaded the `DEFAULT_NUM_TRAIN_EPOCHS` runner feedback and later failures no longer handed off that undefined-constant class to `run_experiments`
+  - Adjacent regression review: token-level progress flood found during the same live retry is tracked as `LV-111`
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/preexisting_metrics_1777003561140.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+---
+
+## Issue: LV-109
+
+- Status: mitigated
+- Validation target: real backtrack flow for persisted external-workspace run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after switching API and native Codex defaults/current runtime to `gpt-5.5` with `medium` reasoning
+- Environment/session context:
+  - real TUI workspace: `.autolabos-validation`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - node: `implement_experiments`
+  - backend: native Codex OAuth backend, not CLI subprocess fallback
+  - TUI footer after relaunch: `chat gpt-5.5 + medium | backend gpt-5.5 + medium`
+
+- Reproduction steps:
+  1. Rebuild the project and relaunch the real TUI in `.autolabos-validation`.
+  2. Confirm the TUI footer shows `gpt-5.5 + medium` for chat and backend.
+  3. Run `/agent retry implement_experiments 73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  4. Allow native Codex OAuth `staged_llm` implementation to run through all three retry attempts.
+  5. Inspect `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`.
+
+- Expected behavior:
+  - `implement_experiments` should distinguish implementation-time artifacts from runtime outputs that will only be created by `run_experiments`.
+  - Generated READMEs, manifests, and implementation metadata may document future runtime outputs, but they should not claim those outputs as already materialized implementation artifacts.
+  - If a candidate references a runtime-only output as materialized, the next retry should receive explicit corrective feedback and avoid repeating the same contract error.
+  - The node should preserve observable Codex progress without flooding persisted progress with token-level `LLM>` fragments.
+
+- Actual behavior:
+  - The node used native Codex OAuth and received streamed output throughout the run, so this was not a silent Codex non-response.
+  - Retry attempt 1 generated the runner and README in many purpose-aligned chunks, then restored 60 paths before the next branch.
+  - Retry attempt 2 generated a more compact runner and README, then restored 59 paths before the next branch.
+  - Retry attempt 3 generated a runner and README, including an explicit measured fallback path, then failed final verification.
+  - Final failure:
+    - `Implementer referenced artifact(s) that were not materialized: outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/peft_instruction_study_results.json`
+  - Earlier retry history for the same run showed the same class of defect with:
+    - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/results.json`
+    - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run.log`
+  - The TUI also showed very high persisted progress update counts while streaming token fragments, making the long-running implementation harder to inspect.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced after relaunching the TUI with rebuilt `dist` and updated external validation config.
+  - Existing session: the same persisted run already contained earlier runtime-artifact materialization failures.
+  - Divergence: no UI-only divergence; this is a persisted implementation contract and retry-feedback issue.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: the implementation verifier correctly blocks non-materialized artifact references, but the staged implementation planner/README/manifest prompts do not sufficiently separate `implementation_artifacts` from `runtime_outputs`. Retry feedback is too generic, so later branches can still document or register runtime outputs as if they already exist during `implement_experiments`.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts`
+  - Tests: `tests/implementSessionManager.test.ts`
+
+- Regression status:
+  - Automated regression test linked: yes
+  - Targeted tests: pass on 2026-04-24 with `npx vitest run tests/implementSessionManager.test.ts --testNamePattern "deferred|materialized"`
+  - Build: pass on 2026-04-24 with `npm run build`
+  - Harness: pass on 2026-04-24 with `npm run validate:harness`
+  - Full test suite: pass on 2026-04-24 with `npm test`
+  - Same-flow live revalidation: `implement_experiments` advanced to `run_experiments`, but the active TUI process was not relaunched after the code patch and reused an existing public bundle; rebuilt same-flow confirmation remains pending
+  - Adjacent regression review: a downstream runtime constant failure is tracked as `LV-110`
+
+- Most likely failing boundary:
+  - `src/core/agents/implementSessionManager.ts` implementation artifact reference verification and corrective retry feedback
+  - staged implementation prompts that ask for output artifact documentation without enforcing runtime-output vs implementation-artifact separation
+  - progress persistence/rendering around streamed `LLM>` token fragments during long native Codex OAuth generations
+
+- Evidence/artifacts:
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/events.jsonl`
+  - `.autolabos-validation/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/experiment_governance/implementation_context.json`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+  - `.autolabos-validation/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/README.md`
+
+---
 
 ## Issue: LV-108
 

@@ -62,9 +62,9 @@ import {
 
 export const DEFAULT_PRIMARY_LLM_MODE = "openai_api" as const;
 export const DEFAULT_PDF_ANALYSIS_MODE = "codex_text_image_hybrid" as const;
-export const DEFAULT_CODEX_CHAT_SETUP_MODEL = "gpt-5.4" as const;
-export const DEFAULT_CODEX_CHAT_SETUP_REASONING_EFFORT = "low" as const;
-export const DEFAULT_BACKEND_REASONING_EFFORT = "high" as const;
+export const DEFAULT_CODEX_CHAT_SETUP_MODEL = "gpt-5.5" as const;
+export const DEFAULT_CODEX_CHAT_SETUP_REASONING_EFFORT = "medium" as const;
+export const DEFAULT_BACKEND_REASONING_EFFORT = "medium" as const;
 export const DEFAULT_RESEARCH_TOPIC = "Multi-agent collaboration" as const;
 export const DEFAULT_RESEARCH_CONSTRAINTS = ["recent papers", "last 5 years"] as const;
 export const DEFAULT_RESEARCH_OBJECTIVE_METRIC = "state-of-the-art reproducibility" as const;
@@ -364,11 +364,11 @@ export async function runSetupWizard(
       ? await askOpenAiResponsesReasoningEffort(
           GENERAL_CHAT_REASONING_PROMPT,
           openAiChatModel,
-          "low",
-          "low",
+          DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT,
+          DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT,
           promptReader
         )
-      : ("low" as AppConfig["providers"]["openai"]["reasoning_effort"]);
+      : (DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT as AppConfig["providers"]["openai"]["reasoning_effort"]);
   const researchBackendModelChoice =
     isCodexLlmMode(llmMode)
       ? await askCodexModel(
@@ -474,7 +474,9 @@ export async function runNonInteractiveSetup(
       input.codexResearchBackendReasoningEffort ||
       DEFAULT_BACKEND_REASONING_EFFORT,
     openAiChatModel: input.openAiChatModel || DEFAULT_OPENAI_RESPONSES_MODEL,
-    openAiChatReasoningEffort: input.openAiChatReasoningEffort || "low",
+    openAiChatReasoningEffort:
+      input.openAiChatReasoningEffort ||
+      (DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT as AppConfig["providers"]["openai"]["reasoning_effort"]),
     openAiResearchBackendModel: input.openAiResearchBackendModel || DEFAULT_OPENAI_RESPONSES_MODEL,
     openAiResearchBackendReasoningEffort:
       input.openAiResearchBackendReasoningEffort ||
@@ -567,10 +569,10 @@ function normalizeLoadedConfig(config: PersistedAppConfig): AppConfig {
       chat_model: DEFAULT_OPENAI_RESPONSES_MODEL,
       experiment_model: DEFAULT_OPENAI_RESPONSES_MODEL,
       reasoning_effort: DEFAULT_BACKEND_REASONING_EFFORT as AppConfig["providers"]["openai"]["reasoning_effort"],
-      chat_reasoning_effort: "low",
+      chat_reasoning_effort: DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT,
       experiment_reasoning_effort:
         DEFAULT_BACKEND_REASONING_EFFORT as AppConfig["providers"]["openai"]["reasoning_effort"],
-      command_reasoning_effort: "low",
+      command_reasoning_effort: DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT,
       api_key_required: true
     };
   }
@@ -629,12 +631,12 @@ function normalizeLoadedConfig(config: PersistedAppConfig): AppConfig {
   codex.experiment_model = codex.experiment_model?.trim() || codex.model;
   codex.text_transport = "oauth_responses";
   if (!codex.reasoning_effort) {
-    codex.reasoning_effort = "xhigh";
+    codex.reasoning_effort = DEFAULT_BACKEND_REASONING_EFFORT;
   }
   codex.chat_reasoning_effort =
     normalizeReasoningEffortForModel(
       codex.chat_model,
-      codex.chat_reasoning_effort || codex.command_reasoning_effort || "low"
+      codex.chat_reasoning_effort || codex.command_reasoning_effort || DEFAULT_CODEX_CHAT_SETUP_REASONING_EFFORT
     );
   codex.experiment_reasoning_effort =
     normalizeReasoningEffortForModel(
@@ -642,7 +644,7 @@ function normalizeLoadedConfig(config: PersistedAppConfig): AppConfig {
       codex.experiment_reasoning_effort || codex.reasoning_effort
     );
   if (!codex.command_reasoning_effort) {
-    codex.command_reasoning_effort = "low";
+    codex.command_reasoning_effort = DEFAULT_CODEX_CHAT_SETUP_REASONING_EFFORT;
   }
   if (typeof codex.fast_mode !== "boolean") {
     codex.fast_mode = false;
@@ -679,7 +681,7 @@ function normalizeLoadedConfig(config: PersistedAppConfig): AppConfig {
   ) as AppConfig["providers"]["openai"]["reasoning_effort"];
   openai.chat_reasoning_effort = normalizeOpenAiResponsesReasoningEffort(
     openai.chat_model,
-    openai.chat_reasoning_effort || openai.command_reasoning_effort || "low"
+    openai.chat_reasoning_effort || openai.command_reasoning_effort || DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT
   ) as AppConfig["providers"]["openai"]["reasoning_effort"];
   openai.experiment_reasoning_effort = normalizeOpenAiResponsesReasoningEffort(
     openai.experiment_model,
@@ -687,7 +689,7 @@ function normalizeLoadedConfig(config: PersistedAppConfig): AppConfig {
   ) as AppConfig["providers"]["openai"]["reasoning_effort"];
   openai.command_reasoning_effort = normalizeOpenAiResponsesReasoningEffort(
     openai.chat_model,
-    openai.command_reasoning_effort || openai.chat_reasoning_effort || "low"
+    openai.command_reasoning_effort || openai.chat_reasoning_effort || DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT
   ) as AppConfig["providers"]["openai"]["reasoning_effort"];
   openai.command_reasoning_effort = openai.chat_reasoning_effort;
   openai.api_key_required = true;
@@ -1041,8 +1043,10 @@ async function askOpenAiResponsesModel(
         label: option.label,
         value: option.value,
         description:
-          option.value === "gpt-5.4"
+          option.value === DEFAULT_OPENAI_RESPONSES_MODEL
             ? "(highest quality)"
+            : option.value === "gpt-5.4"
+              ? "(previous default)"
             : option.value === "gpt-5"
               ? "(balanced)"
               : option.value === "gpt-5-mini"
