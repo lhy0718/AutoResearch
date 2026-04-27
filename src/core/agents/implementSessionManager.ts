@@ -5385,6 +5385,95 @@ export class ImplementSessionManager {
       }
     }
 
+    const modelNameArgparseRepair = await repairPythonModelNameArgparseDestAlias(executionScriptPath);
+    if (modelNameArgparseRepair.repaired) {
+      onProgress?.(
+        modelNameArgparseRepair.message ||
+          "Repaired runner model-name argparse destination before handoff.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            modelNameArgparseRepair.message ||
+            "Repaired runner model-name argparse destination before handoff."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
+    const duplicateFlexibleCallArgsRepair =
+      await repairPythonCallFlexiblyDuplicateArgsKeywords(executionScriptPath);
+    if (duplicateFlexibleCallArgsRepair.repaired) {
+      onProgress?.(
+        duplicateFlexibleCallArgsRepair.message ||
+          "Repaired duplicate flexible-call args before handoff.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            duplicateFlexibleCallArgsRepair.message ||
+            "Repaired duplicate flexible-call args before handoff."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
     const runCommandArgparseMismatch = await detectPythonRunCommandArgparseMismatch(
       executionScriptPath,
       attempt.runCommand
@@ -10920,7 +11009,7 @@ async function detectPythonUnsupportedTrainingArgumentsKwarg(scriptPath?: string
   const lines = source.split(/\r?\n/u);
   const unsupportedTrainingArgumentsKwargs = ["overwrite_output_dir"];
   for (let index = 0; index < lines.length; index += 1) {
-    if (!/\bTrainingArguments\s*\(/u.test(lines[index])) {
+    if (!isPythonTrainingArgumentsCallStart(lines[index])) {
       continue;
     }
     const call = extractPythonCallExpression(lines, index);
@@ -10963,7 +11052,7 @@ async function repairPythonUnsupportedTrainingArgumentsKwargs(
   }
 
   if (
-    !/\bTrainingArguments\s*\(/u.test(source) ||
+    !hasPythonTrainingArgumentsCall(source) ||
     (!/\boverwrite_output_dir\s*=/u.test(source) && !/["']overwrite_output_dir["']\s*:/u.test(source))
   ) {
     return { repaired: false };
@@ -10972,7 +11061,7 @@ async function repairPythonUnsupportedTrainingArgumentsKwargs(
   const lines = source.split(/\r?\n/u);
   let nextSource = source;
   for (let index = 0; index < lines.length; index += 1) {
-    if (!/\bTrainingArguments\s*\(/u.test(lines[index])) {
+    if (!isPythonTrainingArgumentsCallStart(lines[index])) {
       continue;
     }
     const call = extractPythonCallExpression(lines, index);
@@ -11012,13 +11101,21 @@ function removeUnsupportedTrainingArgumentsKwargsFromCall(callText: string): str
     .replace(/,\s*\)/gu, ")");
 }
 
+function hasPythonTrainingArgumentsCall(source: string): boolean {
+  return /\bTrainingArguments\s*\(/u.test(source) || /\[\s*["']TrainingArguments["']\s*\]\s*\(/u.test(source);
+}
+
+function isPythonTrainingArgumentsCallStart(line: string): boolean {
+  return /\bTrainingArguments\s*\(/u.test(line) || /\[\s*["']TrainingArguments["']\s*\]\s*\(/u.test(line);
+}
+
 function removeUnsupportedTrainingArgumentsKwargsFromExpandedDicts(source: string): string {
   const lines = source.split(/\r?\n/u);
   const unsupportedNames = ["overwrite_output_dir"];
   let changed = false;
 
   for (let index = 0; index < lines.length; index += 1) {
-    if (!/\bTrainingArguments\s*\(/u.test(lines[index])) {
+    if (!isPythonTrainingArgumentsCallStart(lines[index])) {
       continue;
     }
     const call = extractPythonCallExpression(lines, index);
@@ -11047,14 +11144,14 @@ async function repairPythonUnsupportedTrainerKwargs(
     return { repaired: false };
   }
 
-  if (!/\bTrainer\s*\(/u.test(source) || !/\btokenizer\s*=/u.test(source)) {
+  if (!hasPythonTrainerCall(source) || !/\btokenizer\s*=/u.test(source)) {
     return { repaired: false };
   }
 
   const lines = source.split(/\r?\n/u);
   let nextSource = source;
   for (let index = 0; index < lines.length; index += 1) {
-    if (!/\bTrainer\s*\(/u.test(lines[index])) {
+    if (!isPythonTrainerCallStart(lines[index])) {
       continue;
     }
     const call = extractPythonCallExpression(lines, index);
@@ -11075,6 +11172,14 @@ async function repairPythonUnsupportedTrainerKwargs(
     repaired: true,
     message: `Removed unsupported Trainer kwarg(s) from ${path.basename(scriptPath)} before handoff.`
   };
+}
+
+function hasPythonTrainerCall(source: string): boolean {
+  return /\bTrainer\s*\(/u.test(source) || /\[\s*["']Trainer["']\s*\]\s*\(/u.test(source);
+}
+
+function isPythonTrainerCallStart(line: string): boolean {
+  return /\bTrainer\s*\(/u.test(line) || /\[\s*["']Trainer["']\s*\]\s*\(/u.test(line);
 }
 
 function removeUnsupportedTrainerKwargsFromCall(callText: string): string {
@@ -12235,6 +12340,99 @@ async function repairPythonOutputDirArgparseAlias(
   return {
     repaired: true,
     message: `Added --output-dir argparse alias to ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+async function repairPythonModelNameArgparseDestAlias(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    !/\bargparse\b/u.test(source) ||
+    !/\badd_argument\s*\(/u.test(source) ||
+    !/["']--model-name-or-path["']/u.test(source)
+  ) {
+    return { repaired: false };
+  }
+
+  const readsModelName =
+    /\bargs\.model_name\b/u.test(source) || /_arg_value\s*\(\s*args\s*,\s*["']model_name["']/u.test(source);
+  if (!readsModelName) {
+    return { repaired: false };
+  }
+
+  const lines = source.split(/\r?\n/u);
+  let nextSource = source;
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!/\badd_argument\s*\(/u.test(lines[index])) {
+      continue;
+    }
+    const call = extractPythonCallExpression(lines, index);
+    if (!call || !/["']--model-name-or-path["']/u.test(call.text) || /\bdest\s*=/u.test(call.text)) {
+      continue;
+    }
+
+    const repairedCall = call.text.replace(
+      /(["']--model-name-or-path["']\s*,?)/u,
+      "$1\n        dest=\"model_name\","
+    );
+    if (repairedCall !== call.text) {
+      nextSource = nextSource.replace(call.text, repairedCall);
+    }
+    break;
+  }
+
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Aligned --model-name-or-path argparse destination with args.model_name in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+async function repairPythonCallFlexiblyDuplicateArgsKeywords(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (!/\b_call_flexibly\s*\(/u.test(source)) {
+    return { repaired: false };
+  }
+
+  const nextSource = source.replace(
+    /_call_flexibly\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*,\s*args\s*,\s*parser\s*,\s*args\s*=\s*args\s*,\s*parser\s*=\s*parser\s*\)/gu,
+    "_call_flexibly($1, args, parser)"
+  );
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Removed duplicate positional/keyword args from _call_flexibly in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

@@ -70,6 +70,286 @@ Usage rules:
 
 ## Research and paper-readiness watchlist
 
+## Issue: LV-184
+
+- Status: resolved by same-flow live revalidation
+- Validation target: same-flow `run_experiments -> analyze_results` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after real PEFT execution completed all baseline/comparator conditions.
+- Environment/session context:
+  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - Web API: `127.0.0.1:4317`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Restart the Web API from rebuilt `dist/cli/main.js`.
+  2. Run the existing persisted run through `implement_experiments` and `run_experiments`.
+  3. Confirm `run_experiments_verify_report.json` reports `status: "pass"`.
+  4. Inspect `metrics.json` and `outputs/.../analysis/result_analysis.json`.
+
+- Expected behavior:
+  - `analyze_results` should populate `condition_comparisons` and `results_table` when `metrics.conditions` contains one baseline condition and completed comparator conditions with numeric `eval_metrics`.
+  - If the objective is not met, the pause/backtrack reason should reflect the objective gap, not a missing result table.
+
+- Actual behavior:
+  - `run_experiments` completed with baseline plus three completed comparator conditions:
+    - `baseline_pretrained_zero_shot`: mean accuracy `0.390625`
+    - `lora_r8`: mean accuracy `0.359375`
+    - `lora_r16`: mean accuracy `0.375`
+    - `prompt_tuning_16`: mean accuracy `0.2109375`
+  - `analyze_results` wrote `condition_comparisons: []`.
+  - `results_table` rows had `baseline: null`, `comparator: null`, and `delta: null`.
+  - The node paused with `transition_recommendation.reason: "incomplete_results_table"` even though the underlying metrics contained usable baseline/comparator evidence.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately re-run from `/new`; this boundary was reproduced in a freshly relaunched rebuilt Web API attached to the existing persisted run.
+  - Existing session: reproduced after `LV-183` was repaired enough for real PEFT execution to complete.
+  - Divergence: no fresh/existing divergence established.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: result analysis currently derives comparisons from `metrics.comparison`, `metrics.condition_metrics`, `metrics.results`, `metrics.result_rows`, and `metrics.recipes`, but not from the `metrics.conditions` array shape emitted by the successful PEFT runner.
+
+- Code/test changes:
+  - Code:
+    - `src/core/resultAnalysis.ts`
+      - adds `metrics.conditions` comparison extraction for completed baseline/comparator condition rows
+      - selects the best completed non-baseline comparator by objective direction when the top-level best condition is the baseline
+      - emits `hypothesis_supported=false` when the selected comparator trails the baseline on the headline metric
+  - Tests:
+    - `tests/objectiveMetricPropagation.test.ts`
+      - adds regression coverage for completed `metrics.conditions` payloads with `eval_metrics.mean_accuracy`
+
+- Regression status:
+  - Automated regression test linked: yes; targeted `metrics.conditions` analysis projection test passed.
+  - Build: `npm run build` passed after the patch.
+  - Same-flow live revalidation: passed. Rebuilt Web API reran `analyze_results` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`; `condition_comparisons[0].source` is now `metrics.conditions`, `results_table` has populated baseline/comparator/delta values, and the transition reason is no longer `incomplete_results_table`.
+
+- Follow-up risks:
+  - The corrected analysis should still preserve the honest negative result: the baseline remains best, so the research objective is not met even after the result table is populated.
+
+## Issue: LV-183
+
+- Status: resolved by same-flow retry; real PEFT execution completed after the repair, exposing `LV-184`
+- Validation target: same-flow `implement_experiments -> run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after `LV-182` failed-recipe metrics gating and indirect `TrainingArguments` repair
+- Environment/session context:
+  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - Web API: `127.0.0.1:4317`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Restart the Web API from rebuilt `dist/cli/main.js`.
+  2. Run `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let implement-stage verification repair unsupported `TrainingArguments(overwrite_output_dir=...)`.
+  4. Let second-stage `run_experiments` execute the generated runner.
+  5. Inspect the API response and latest `metrics.json`.
+
+- Expected behavior:
+  - Implement-stage repair should remove unsupported `Trainer(tokenizer=...)` kwargs even when `Trainer` is invoked through a dependency mapping such as `deps["Trainer"](...)`.
+  - If tuned recipes fail internally, `run_experiments` should fail and feed the actual recipe failure back to implementation.
+
+- Actual behavior:
+  - The rebuilt retry removed `overwrite_output_dir` before handoff.
+  - The generated tuned recipes then failed with:
+    - `Trainer.__init__() got an unexpected keyword argument 'tokenizer'`
+  - Because `LV-182` gating was active, `run_experiments` correctly failed instead of advancing to analysis:
+    - `Experiment metrics payload reports failed recipe(s): lora_r4 ...; lora_r8 ...`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately re-run from `/new`; this boundary was reproduced in a freshly relaunched rebuilt Web API attached to the existing persisted run.
+  - Existing session: reproduced after `LV-182` repair narrowed the previous failed-comparator pass-through into a correct run-experiments failure.
+  - Divergence: no fresh/existing divergence established.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: existing unsupported Trainer kwarg repair detects direct `Trainer(...)` calls but misses dependency-mapping call sites such as `deps["Trainer"](...)`.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - extends unsupported `Trainer(tokenizer=...)` kwarg repair to dependency-mapping calls such as `deps["Trainer"](...)`
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds deterministic regression coverage for `deps["Trainer"](... tokenizer=tokenizer)`
+
+- Regression status:
+  - Automated regression test linked: yes; targeted test passed before same-flow retry.
+  - Build: `npm run build` passed before same-flow retry.
+  - Same-flow live revalidation: pass for this boundary; the rebuilt retry completed `run_experiments` with baseline plus three completed comparator conditions and no `Trainer(tokenizer=...)` failure.
+
+- Follow-up risks:
+  - The next boundary is analysis projection from the successful `metrics.conditions` payload, now tracked as `LV-184`.
+
+## Issue: LV-182
+
+- Status: resolved for failed-comparator pass-through; same-flow retries narrowed through `LV-183` and then completed real PEFT execution
+- Validation target: same-flow `run_experiments -> analyze_results` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after the `LV-181` duplicate-argument boundary was repaired
+- Environment/session context:
+  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - Web API: `127.0.0.1:4317`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Restart the Web API from rebuilt `dist/cli/main.js`.
+  2. Run `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let the generated runner execute under `run_experiments`.
+  4. Inspect `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json` and `run_experiments_verify_report.json`.
+
+- Expected behavior:
+  - If tuned comparator recipes fail internally, `run_experiments` should fail or route feedback back to `implement_experiments` instead of treating baseline-only metrics as a completed comparison.
+  - Implement-stage repair should remove unsupported `TrainingArguments(overwrite_output_dir=...)` even when `TrainingArguments` is invoked through a dependency mapping such as `deps["TrainingArguments"](...)`.
+  - `analyze_results` should not receive metrics where the comparator rows are structurally failed.
+
+- Actual behavior:
+  - `run_experiments_verify_report.json` reported `status: "pass"` and `stage: "success"`.
+  - `metrics.json` reported top-level `status: "ok"` and `baseline_first_executed: true`.
+  - The baseline recipe completed, but both tuned recipes failed with:
+    - `TrainingArguments.__init__() got an unexpected keyword argument 'overwrite_output_dir'`
+  - The workflow advanced to `analyze_results`, which then paused on objective-not-met and incomplete result-table evidence rather than sending the real comparator execution failure back to implementation.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately re-run from `/new`; this boundary was reproduced in a freshly relaunched rebuilt Web API attached to the existing persisted run.
+  - Existing session: reproduced after `LV-181` was repaired enough for execution to advance past CLI normalization.
+  - Divergence: no fresh/existing divergence established.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: `run_experiments` rejects top-level failed metrics but does not reject nested recipe-level failed statuses when the runner exits 0 and writes top-level `status: "ok"`.
+  - Secondary hypothesis: implement-stage `TrainingArguments` repair detects direct `TrainingArguments(...)` calls, but misses dependency-mapping call sites such as `deps["TrainingArguments"](...)`.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - extends unsupported `TrainingArguments` kwarg repair/detection to dependency-mapping calls such as `deps["TrainingArguments"](...)`
+    - `src/core/nodes/runExperiments.ts`
+      - rejects metrics payloads containing nested recipe entries with failed/error statuses
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds regression coverage for `deps["TrainingArguments"](... overwrite_output_dir=...)`
+    - `tests/runExperimentsExecutionProfile.test.ts`
+      - adds regression coverage for top-level ok metrics that contain failed comparator recipe entries
+
+- Regression status:
+  - Automated regression test linked: yes; targeted test passed before same-flow retry.
+  - Build: `npm run build` passed before same-flow retry.
+  - Same-flow live revalidation: pass for this boundary; rebuilt retry no longer advanced failed comparator recipe metrics into `analyze_results`. `run_experiments` correctly failed, fed the nested `Trainer(tokenizer=...)` recipe failures back to implementation, and later completed real PEFT execution after `LV-183` repair.
+
+- Follow-up risks:
+  - Some experiments may intentionally record failed ablation arms; for governed baseline/comparator runs, such rows should be explicit failures unless the run contract declares them optional.
+
+## Issue: LV-181
+
+- Status: resolved for duplicate-argument boundary; same-flow retries narrowed through `LV-182` and later completed real PEFT execution
+- Validation target: same-flow `implement_experiments -> run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after source-side repair for `LV-180`
+- Environment/session context:
+  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - Web API: `127.0.0.1:4317`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Restart the Web API from rebuilt `dist/cli/main.js`.
+  2. Run `implement_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  3. Let staged native-Codex implementation complete and pass `python3 -m py_compile`.
+  4. Let the same request proceed into second-stage execution of the generated `run_peft_instruction_study.py`.
+  5. Inspect the API response and `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`.
+
+- Expected behavior:
+  - Generated flexible-call adapters should not pass the same semantic argument both positionally and by keyword.
+  - CLI normalization should call the selected normalizer with either positional `(args, parser)` or keyword `args=args, parser=parser`, but not both.
+  - Implement-stage verification should repair or reject this duplicate-argument surface before second-stage handoff.
+
+- Actual behavior:
+  - The rebuilt same-flow retry completed all 6 staged implementation chunks and passed local `py_compile`.
+  - The generated `_normalise_cli_for_main(...)` called:
+    - `_call_flexibly(normalizer, args, parser, args=args, parser=parser)`
+  - The selected `normalize_cli_options(args, parser)` function therefore received `args` twice.
+  - Second-stage execution failed with:
+    - `TypeError: normalize_cli_options() got multiple values for argument 'args'`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately re-run from `/new`; this boundary was reproduced in a freshly relaunched rebuilt Web API attached to the existing persisted run.
+  - Existing session: reproduced after the source-side `LV-180` repair and rebuilt same-flow `implement_experiments` retry.
+  - Divergence: the previous `model_id=None` failure did not recur in this retry; execution advanced to the next generated CLI-normalization boundary.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced a generic `_call_flexibly(...)` helper and final CLI-normalization wrapper independently. The wrapper attempted to maximize compatibility by providing both positional and keyword variants, but the helper does not remove keywords already represented positionally before invoking the concrete normalizer.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - repairs generated `_call_flexibly(normalizer, args, parser, args=args, parser=parser)` calls to pass `args` and `parser` only once before handoff
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds deterministic regression coverage for duplicate positional/keyword args in generated flexible CLI normalization calls
+
+- Regression status:
+  - Automated regression test linked: yes; targeted test passed before same-flow retry.
+  - Build: `npm run build` passed before same-flow retry.
+  - Same-flow live revalidation: pass for this boundary; rebuilt retry no longer failed with `normalize_cli_options() got multiple values for argument 'args'`, advanced into the next metrics/verifier boundary tracked as `LV-182`, and later completed real PEFT execution after subsequent repairs.
+
+- Follow-up risks:
+  - Similar duplicate positional/keyword flexible-call surfaces may exist for metrics writers, orchestrators, or recipe helpers under different parameter names; add targeted repairs only when observed in live validation.
+
+## Issue: LV-180
+
+- Status: resolved for `model_id=None` boundary; same-flow retries narrowed through `LV-181`/`LV-182`/`LV-183` and later completed real PEFT execution
+- Validation target: same-flow `design_experiments -> implement_experiments -> run_experiments` for run `73050f85-6b56-4385-8c31-2ec69a5b7dec` after backtracking from `analyze_results`
+- Environment/session context:
+  - validation workspace: `/home/hanyong/.autolabos-validation`
+  - Web API: `127.0.0.1:4317`
+  - run: `73050f85-6b56-4385-8c31-2ec69a5b7dec`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+
+- Reproduction steps:
+  1. Apply `backtrack_to_design` to run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
+  2. Run `design_experiments`.
+  3. Let the auto-approved `implement_experiments` node materialize `run_peft_instruction_study.py`.
+  4. Let `run_experiments` auto-handoff execute the generated runner.
+  5. Inspect `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json` and `exec_logs/run_experiments.txt`.
+
+- Expected behavior:
+  - The generated runner should preserve a concrete compact open model id through argparse and runtime loading helpers.
+  - If the runner accepts `--model-name-or-path`, any executable path that reads `args.model_name` should receive the same value or fail implement-stage verification before handoff.
+  - `run_experiments` should not reach Hugging Face with `None` as the repository/model identifier.
+
+- Actual behavior:
+  - `implement_experiments` completed staged native-Codex materialization and passed `python3 -m py_compile`.
+  - The generated parser defined `--model-name-or-path` without `dest="model_name"`.
+  - The executable tokenizer/model loading path read `_arg_value(args, "model_name", ...)`, which resolved to `None`.
+  - `run_experiments` failed with Hugging Face attempting `https://huggingface.co/None/resolve/main/config.json`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not yet rerun after source-side repair.
+  - Existing session: reproduced in the existing localhost Web API session after same-flow backtracking and rerunning `design_experiments`.
+  - Divergence: not yet checked.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged sections independently generated a CLI flag name and executable runtime access pattern. `py_compile` and existing argparse flag checks validated accepted run-command flags but did not validate that the parser's destination attributes match runtime field reads such as `args.model_name`.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - adds implement-stage verifier repair for the `--model-name-or-path` / `args.model_name` alias mismatch
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds deterministic regression coverage for a py_compile-valid runner that would otherwise resolve the model id as `None`
+
+- Regression status:
+  - Automated regression test linked: yes; targeted test passed before same-flow retry.
+  - Build: `npm run build` passed before same-flow retry.
+  - Same-flow live revalidation: pass for this boundary; rebuilt retry no longer failed with Hugging Face model id `None`, advanced to the next CLI-normalization duplicate-argument boundary tracked as `LV-181`, and later completed real PEFT execution after subsequent repairs.
+
+- Follow-up risks:
+  - Generated runners may have adjacent aliases such as `--base-model` or `--base-model-id` that need the same semantic model-id consistency check if observed in live validation.
+  - Evidence/artifacts:
+    - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
+    - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
+    - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
 ## Issue: LV-179
 
 - Status: resolved

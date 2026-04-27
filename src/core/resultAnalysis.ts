@@ -21,7 +21,13 @@ export interface AnalysisComparisonMetric {
 export interface AnalysisConditionComparison {
   id: string;
   label: string;
-  source: "metrics.comparison" | "metrics.condition_metrics" | "metrics.results" | "metrics.result_rows" | "metrics.recipes";
+  source:
+    | "metrics.comparison"
+    | "metrics.condition_metrics"
+    | "metrics.results"
+    | "metrics.result_rows"
+    | "metrics.recipes"
+    | "metrics.conditions";
   metrics: AnalysisComparisonMetric[];
   hypothesis_supported?: boolean;
   summary: string;
@@ -672,6 +678,17 @@ function buildConditionComparisons(
     });
     if (recipesComparison) {
       comparisons.push(recipesComparison);
+    }
+  }
+
+  if (comparisons.length === 0) {
+    const conditionsComparison = buildConditionsArrayConditionComparison({
+      metrics,
+      objectiveEvaluation,
+      objectiveProfile
+    });
+    if (conditionsComparison) {
+      comparisons.push(conditionsComparison);
     }
   }
 
@@ -1748,6 +1765,155 @@ function buildRecipesConditionComparison(args: {
     metrics: shared,
     summary: `${humanizeConditionLabel(comparatorName)} vs ${humanizeConditionLabel(baselineName)}: ${sharedSummary}.`
   };
+}
+
+function buildConditionsArrayConditionComparison(args: {
+  metrics: Record<string, unknown>;
+  objectiveEvaluation: ObjectiveMetricEvaluation;
+  objectiveProfile: ObjectiveMetricProfile;
+}): AnalysisConditionComparison | undefined {
+  const conditionRows = asArray(args.metrics.conditions)
+    .map((item) => asRecord(item))
+    .filter((row) => Object.keys(row).length > 0)
+    .filter((row) => isCompletedConditionRow(row));
+  if (conditionRows.length < 2) {
+    return undefined;
+  }
+
+  const baselineRow =
+    conditionRows.find((row) => row.is_baseline === true) ||
+    conditionRows.find((row) => isLikelyBaselineCondition(readConditionName(row)));
+  if (!baselineRow) {
+    return undefined;
+  }
+
+  const candidates = conditionRows.filter((row) => row !== baselineRow);
+  if (candidates.length === 0) {
+    return undefined;
+  }
+
+  const preferredKeys = buildResultArrayPreferredKeys(args.objectiveEvaluation, args.objectiveProfile);
+  const explicitBestCondition = readBestConditionName(args.metrics);
+  const explicitComparator = explicitBestCondition
+    ? candidates.find((row) => readConditionName(row) === explicitBestCondition)
+    : undefined;
+  const comparatorRow =
+    explicitComparator ||
+    selectConditionRowByMetric({
+      rows: candidates,
+      preferredKeys,
+      direction: args.objectiveProfile.direction
+    });
+  if (!comparatorRow) {
+    return undefined;
+  }
+
+  const baselineMetrics = new Map(
+    flattenNumericMetrics(baselineRow).map((item) => [item.key, item.value])
+  );
+  const shared = flattenNumericMetrics(comparatorRow)
+    .filter((item) => baselineMetrics.has(item.key))
+    .filter((item) => isUsefulResultArrayMetric(item.key, preferredKeys))
+    .map((item) => {
+      const baselineValue = baselineMetrics.get(item.key) as number;
+      return {
+        key: item.key,
+        primary_value: item.value,
+        baseline_value: baselineValue,
+        value: Number((item.value - baselineValue).toFixed(4))
+      };
+    })
+    .sort((left, right) => {
+      const leftRank = metricPreferenceRank(left.key, preferredKeys);
+      const rightRank = metricPreferenceRank(right.key, preferredKeys);
+      if (leftRank !== rightRank) {
+        return leftRank - rightRank;
+      }
+      return Math.abs(right.value) - Math.abs(left.value);
+    })
+    .slice(0, 6);
+
+  if (shared.length === 0) {
+    return undefined;
+  }
+
+  const baselineName = readConditionName(baselineRow) || "baseline";
+  const comparatorName = readConditionName(comparatorRow) || "comparator";
+  const headlineMetric = shared[0];
+  const hypothesisSupported = headlineMetric
+    ? args.objectiveProfile.direction === "minimize"
+      ? headlineMetric.value < 0
+      : headlineMetric.value > 0
+    : undefined;
+  const sharedSummary = shared
+    .slice(0, 4)
+    .map((item) => `${item.key}: ${formatMetricValue(item.primary_value)} vs ${formatMetricValue(item.baseline_value)} (delta ${formatMetricValue(item.value)})`)
+    .join(", ");
+
+  return {
+    id: `${comparatorName}_vs_${baselineName}`,
+    label: `${humanizeConditionLabel(comparatorName)} vs ${humanizeConditionLabel(baselineName)}`,
+    source: "metrics.conditions",
+    metrics: shared,
+    hypothesis_supported: hypothesisSupported,
+    summary: `${humanizeConditionLabel(comparatorName)} vs ${humanizeConditionLabel(baselineName)}: ${sharedSummary}.`
+  };
+}
+
+function isCompletedConditionRow(row: Record<string, unknown>): boolean {
+  const status = asString(row.status)?.toLowerCase();
+  if (!status) {
+    return true;
+  }
+  return /^(completed|complete|success|succeeded|ok|pass|passed)$/u.test(status);
+}
+
+function readConditionName(row: Record<string, unknown>): string {
+  return (
+    asString(row.name) ||
+    asString(row.condition_id) ||
+    asString(row.id) ||
+    asString(row.recipe) ||
+    asString(row.recipe_id) ||
+    ""
+  );
+}
+
+function readBestConditionName(metrics: Record<string, unknown>): string | undefined {
+  const primaryMetric = asRecord(metrics.primary_metric);
+  return (
+    asString(primaryMetric.best_condition) ||
+    asString(primaryMetric.best_condition_id) ||
+    asString(metrics.best_condition) ||
+    asString(metrics.best_condition_id) ||
+    asString(metrics.best_tuned_condition_id) ||
+    asString(metrics.best_recipe)
+  );
+}
+
+function selectConditionRowByMetric(args: {
+  rows: Array<Record<string, unknown>>;
+  preferredKeys: string[];
+  direction?: ObjectiveMetricProfile["direction"];
+}): Record<string, unknown> | undefined {
+  const scored = args.rows
+    .map((row) => {
+      const metric = selectPreferredNumericMetric(flattenNumericMetrics(row), args.preferredKeys);
+      return metric ? { row, value: metric.value } : undefined;
+    })
+    .filter((item): item is { row: Record<string, unknown>; value: number } => item !== undefined);
+  if (scored.length === 0) {
+    return args.rows[0];
+  }
+
+  const direction = args.direction || "maximize";
+  const sorted = [...scored].sort((left, right) => {
+    if (direction === "minimize") {
+      return left.value - right.value;
+    }
+    return right.value - left.value;
+  });
+  return sorted[0]?.row;
 }
 
 function selectRecipeConditionByMetric(args: {

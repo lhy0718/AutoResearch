@@ -1320,6 +1320,23 @@ function detectFailedMetricsPayload(metrics: Record<string, unknown>): string | 
   if (success === false) {
     return `Experiment metrics payload reports success=false${failureMessage ? `: ${failureMessage}` : "."}`;
   }
+  const recipes = asRecord(metrics.recipes);
+  const failedRecipeSummaries = Object.entries(recipes)
+    .filter(([, recipe]) => {
+      const recipeRecord = asRecord(recipe);
+      const recipeStatus = typeof recipeRecord.status === "string" ? recipeRecord.status.trim().toLowerCase() : "";
+      return ["failed", "failure", "error", "errored"].includes(recipeStatus);
+    })
+    .map(([name, recipe]) => {
+      const recipeRecord = asRecord(recipe);
+      const recipeError = typeof recipeRecord.error === "string" && recipeRecord.error.trim()
+        ? recipeRecord.error.trim()
+        : undefined;
+      return recipeError ? `${name}: ${recipeError}` : name;
+    });
+  if (failedRecipeSummaries.length > 0) {
+    return `Experiment metrics payload reports failed recipe(s): ${failedRecipeSummaries.join("; ")}.`;
+  }
   return null;
 }
 

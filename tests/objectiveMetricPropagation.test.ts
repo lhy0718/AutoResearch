@@ -2408,6 +2408,146 @@ describe("objective metric propagation", () => {
     );
   });
 
+  it("does not pause for an incomplete table when metrics.conditions has completed baseline and comparator rows", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-conditions-table-"));
+    process.chdir(root);
+
+    const runId = "run-analyze-results-conditions-table";
+    const run = {
+      ...makeRun(runId),
+      currentNode: "analyze_results" as const,
+      objectiveMetric: "mean accuracy improves over baseline by at least 0.01"
+    };
+    run.graph.currentNode = "analyze_results";
+
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          status: "completed",
+          primary_metric: {
+            name: "mean_accuracy",
+            baseline: 0.390625,
+            best_condition: "baseline_pretrained_zero_shot",
+            best_value: 0.390625,
+            absolute_improvement_vs_baseline: 0
+          },
+          conditions: [
+            {
+              name: "baseline_pretrained_zero_shot",
+              status: "completed",
+              is_baseline: true,
+              eval_metrics: {
+                mean_accuracy: 0.390625,
+                benchmarks: {
+                  arc_challenge: { accuracy: 0.3125 },
+                  hellaswag: { accuracy: 0.46875 }
+                }
+              }
+            },
+            {
+              name: "lora_r8",
+              status: "completed",
+              is_baseline: false,
+              eval_metrics: {
+                mean_accuracy: 0.359375,
+                benchmarks: {
+                  arc_challenge: { accuracy: 0.265625 },
+                  hellaswag: { accuracy: 0.453125 }
+                }
+              },
+              train_metrics: { train_loss: 1.9787727832794189 }
+            },
+            {
+              name: "lora_r16",
+              status: "completed",
+              is_baseline: false,
+              eval_metrics: {
+                mean_accuracy: 0.375,
+                benchmarks: {
+                  arc_challenge: { accuracy: 0.28125 },
+                  hellaswag: { accuracy: 0.46875 }
+                }
+              },
+              train_metrics: { train_loss: 1.9052058219909669 }
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "experiment_contract.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          run_id: runId,
+          created_at: new Date().toISOString(),
+          hypothesis: "PEFT should improve mean accuracy",
+          causal_mechanism: "Adapter training should improve downstream accuracy",
+          single_change: "PEFT method",
+          confounded: false,
+          expected_metric_effect: "Higher mean accuracy than baseline",
+          abort_condition: "Abort if accuracy regresses",
+          keep_or_discard_rule: "Keep if improved",
+          baselines: ["baseline_pretrained_zero_shot"],
+          metrics: ["eval_metrics.mean_accuracy"],
+          results_table_schema: [
+            {
+              metric: "eval_metrics.mean_accuracy",
+              baseline: null,
+              comparator: null,
+              delta: null,
+              direction: "higher_better"
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const analyzeNode = createAnalyzeResultsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await analyzeNode.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(result.transitionRecommendation?.reason).not.toBe("incomplete_results_table");
+
+    const analysisRaw = JSON.parse(
+      await readFile(path.join(runDir, "result_analysis.json"), "utf8")
+    ) as {
+      condition_comparisons: Array<{ source: string; hypothesis_supported?: boolean }>;
+      results_table: Array<{ metric: string; baseline: number | null; comparator: number | null; delta: number | null }>;
+    };
+    expect(analysisRaw.condition_comparisons[0]?.source).toBe("metrics.conditions");
+    expect(analysisRaw.condition_comparisons[0]?.hypothesis_supported).toBe(false);
+    expect(analysisRaw.results_table).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metric: "eval_metrics.mean_accuracy",
+          baseline: 0.390625,
+          comparator: 0.375,
+          delta: -0.0156
+        })
+      ])
+    );
+  });
+
   it("records critical risk signals and pauses for human review when metrics are statistically inconsistent", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-risk-signals-"));
     process.chdir(root);

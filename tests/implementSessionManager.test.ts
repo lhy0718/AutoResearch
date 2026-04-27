@@ -3496,6 +3496,81 @@ describe("ImplementSessionManager", () => {
     expect(readFileSync(scriptPath, "utf8")).not.toContain("overwrite_output_dir");
   });
 
+  it("repairs unsupported TrainingArguments kwargs when called through a dependency mapping", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-training-args-deps-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Unsupported TrainingArguments Dependency Mapping",
+      topic: "runtime argument validation",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const scriptPath = path.join(runDir, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "def main(deps):",
+        "    training_args = deps['TrainingArguments'](",
+        '        output_dir=str("outputs"),',
+        "        overwrite_output_dir=True,",
+        "        per_device_train_batch_size=1,",
+        "    )",
+        "    return training_args",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexNativeClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        workingDir: runDir,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(report.status, report.summary).toBe("pass");
+    expect(repairedSource).not.toContain("overwrite_output_dir");
+    expect(repairedSource).toContain("deps['TrainingArguments'](");
+    expect(repairedSource).toContain("per_device_train_batch_size=1");
+  });
+
   it("repairs unsupported TrainingArguments kwargs passed through an expanded kwargs dictionary", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-training-args-dict-"));
     tempDirs.push(workspace);
@@ -3730,6 +3805,82 @@ describe("ImplementSessionManager", () => {
 
     expect(report.status, report.summary).toBe("pass");
     expect(readFileSync(scriptPath, "utf8")).not.toContain("tokenizer=tokenizer");
+  });
+
+  it("repairs unsupported Trainer tokenizer kwarg when called through a dependency mapping", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-trainer-tokenizer-deps-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Unsupported Trainer Dependency Mapping",
+      topic: "runtime argument validation",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const scriptPath = path.join(runDir, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "def main(deps):",
+        "    trainer = deps['Trainer'](",
+        "        model=model,",
+        "        args=training_args,",
+        "        train_dataset=train_dataset,",
+        "        data_collator=data_collator,",
+        "        tokenizer=tokenizer,",
+        "    )",
+        "    return trainer",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexNativeClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        workingDir: runDir,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(report.status, report.summary).toBe("pass");
+    expect(repairedSource).not.toContain("tokenizer=tokenizer");
+    expect(repairedSource).toContain("deps['Trainer'](");
   });
 
   it("repairs Trainer collators that pass ragged labels through tokenizer.pad before local verification", async () => {
@@ -10029,6 +10180,204 @@ describe("ImplementSessionManager", () => {
     const repairedSource = readFileSync(scriptPath, "utf8");
     expect(report.status).toBe("pass");
     expect(repairedSource).toContain("parser.add_argument('--output-dir'");
+  });
+
+  it("repairs --model-name-or-path argparse destination when runtime reads args.model_name", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-model-name-dest-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Model Name Argparse Destination",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "mean zero-shot accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "",
+        "def _arg_value(args, name, fallback=None):",
+        "    return getattr(args, name, fallback)",
+        "",
+        "def build_arg_parser():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path')",
+        "    parser.add_argument('--output-dir')",
+        "    parser.add_argument(",
+        "        '--model-name-or-path',",
+        "        default='TinyLlama/TinyLlama-1.1B-Chat-v1.0',",
+        "        help='Compact open base model checkpoint used for every condition.',",
+        "    )",
+        "    return parser",
+        "",
+        "def parse_args(argv=None):",
+        "    return build_arg_parser().parse_args(argv)",
+        "",
+        "def _load_tokenizer_for_run(args):",
+        "    model_name = _arg_value(args, 'model_name')",
+        "    if model_name is None:",
+        "        raise RuntimeError('model_name should not be None')",
+        "    return model_name",
+        "",
+        "def main(argv=None):",
+        "    args = parse_args(argv)",
+        "    _load_tokenizer_for_run(args)",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexNativeClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`,
+        scriptPath,
+        workingDir: publicDir,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(report.status).toBe("pass");
+    expect(repairedSource).toContain("dest=\"model_name\"");
+  });
+
+  it("repairs duplicate positional and keyword args in flexible CLI normalization calls", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-flex-duplicate-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Flexible Duplicate Args",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "mean zero-shot accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "",
+        "def _call_flexibly(func, *positional, **keyword):",
+        "    return func(*positional, **keyword)",
+        "",
+        "def normalize_cli_options(args, parser):",
+        "    return {'metrics_path': args.metrics_path}, {'run_command': 'python experiment.py'}",
+        "",
+        "def build_argument_parser():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path')",
+        "    return parser",
+        "",
+        "def _normalise_cli_for_main(args, parser):",
+        "    normalizer = normalize_cli_options",
+        "    return _call_flexibly(normalizer, args, parser, args=args, parser=parser)",
+        "",
+        "def main(argv=None):",
+        "    parser = build_argument_parser()",
+        "    args = parser.parse_args(argv)",
+        "    _normalise_cli_for_main(args, parser)",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexNativeClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+        scriptPath,
+        workingDir: publicDir,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(report.status).toBe("pass");
+    expect(repairedSource).toContain("return _call_flexibly(normalizer, args, parser)");
+    expect(repairedSource).not.toContain("args=args, parser=parser");
   });
 
   it("blocks auto-handoff when a python run_command uses flags missing from argparse", async () => {
