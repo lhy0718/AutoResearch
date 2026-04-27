@@ -86,6 +86,81 @@ describe("resultAnalysis", () => {
     );
   });
 
+  it("projects node-owned metrics.result_rows rows into locked-baseline comparisons", () => {
+    const report = buildAnalysisReport({
+      run: {
+        objectiveMetric: "Improve mean zero-shot accuracy over the locked LoRA baseline."
+      },
+      metrics: {
+        best_tuned_condition_id: "lora_r16_attention_mlp",
+        result_rows: [
+          {
+            condition_id: "reference_base_model",
+            recipe_type: "reference",
+            is_baseline_reference: true,
+            mean_zero_shot_accuracy_arc_challenge_hellaswag: 0.27919,
+            hellaswag_accuracy: 0.312286,
+            arc_challenge_accuracy: 0.246094
+          },
+          {
+            condition_id: "locked_lora_baseline_r8",
+            recipe_type: "locked_baseline",
+            is_locked_lora_baseline: true,
+            mean_zero_shot_accuracy_arc_challenge_hellaswag: 0.304353,
+            hellaswag_accuracy: 0.332559,
+            arc_challenge_accuracy: 0.276147
+          },
+          {
+            condition_id: "lora_r16_attention_mlp",
+            recipe_type: "candidate",
+            mean_zero_shot_accuracy_arc_challenge_hellaswag: 0.313533,
+            hellaswag_accuracy: 0.342223,
+            arc_challenge_accuracy: 0.284843
+          }
+        ]
+      },
+      objectiveProfile: {
+        source: "llm",
+        raw: "Improve mean zero-shot accuracy over the locked LoRA baseline.",
+        primaryMetric: "mean_zero_shot_accuracy_arc_challenge_hellaswag",
+        preferredMetricKeys: ["mean_zero_shot_accuracy_arc_challenge_hellaswag"],
+        comparator: ">=",
+        targetValue: 0.01,
+        targetDescription: "Accuracy should improve by at least one point.",
+        analysisFocus: [],
+        paperEmphasis: [],
+        assumptions: []
+      },
+      objectiveEvaluation: {
+        rawObjectiveMetric: "Improve mean zero-shot accuracy over the locked LoRA baseline.",
+        profileSource: "llm",
+        primaryMetric: "mean_zero_shot_accuracy_arc_challenge_hellaswag",
+        preferredMetricKeys: ["mean_zero_shot_accuracy_arc_challenge_hellaswag"],
+        matchedMetricKey: "mean_zero_shot_accuracy_arc_challenge_hellaswag",
+        comparator: ">=",
+        targetValue: 0.01,
+        observedValue: 0.313533,
+        status: "met",
+        summary: "Objective metric met."
+      }
+    });
+
+    expect(report.condition_comparisons[0]).toMatchObject({
+      id: "lora_r16_attention_mlp_vs_locked_lora_baseline_r8",
+      source: "metrics.result_rows"
+    });
+    expect(report.condition_comparisons[0]?.metrics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: "mean_zero_shot_accuracy_arc_challenge_hellaswag",
+          baseline_value: 0.304353,
+          primary_value: 0.313533,
+          value: 0.0092
+        })
+      ])
+    );
+  });
+
   it("extracts a preset runtime guardrail from the experiment plan and removes the stale threshold warning", () => {
     const report = buildAnalysisReport({
       run: {

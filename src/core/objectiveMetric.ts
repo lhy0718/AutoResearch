@@ -721,11 +721,17 @@ function inferBestEffortMetricMatch(
   const candidateMetrics = relativeObjective
     ? metrics.filter((metric) => isRelativeMetricKey(metric.key))
     : metrics;
+  const objectiveTokens = tokenizeMetricText(rawObjectiveMetric).filter((token) => !GENERIC_OBJECTIVE_TOKENS.has(token));
   if (candidateMetrics.length === 0) {
+    if (preferredKeys.length === 0 && metrics.length === 1 && objectiveTokens.length === 0) {
+      return {
+        metric: metrics[0],
+        summaryPrefix: `Best-effort objective match inferred from the sole numeric metric "${metrics[0].key}".`
+      };
+    }
     return undefined;
   }
 
-  const objectiveTokens = tokenizeMetricText(rawObjectiveMetric).filter((token) => !GENERIC_OBJECTIVE_TOKENS.has(token));
   const scored = candidateMetrics
     .map((metric) => {
       const metricTokens = tokenizeMetricText(metric.key);

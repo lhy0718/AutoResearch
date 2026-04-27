@@ -744,6 +744,81 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           }
           parsedMetrics = parsed as Record<string, unknown>;
           watchdog = setMetricsState(watchdog, "valid", logFile);
+          const failedMetricsMessage = detectFailedMetricsPayload(parsedMetrics);
+          if (failedMetricsMessage) {
+            const triage = classifyRunExperimentsFailure({
+              attempt: attemptNumber,
+              stage: "metrics",
+              summary: failedMetricsMessage,
+              command: primaryCommand,
+              cwd: resolved.cwd,
+              exitCode: obs.exit_code ?? 0,
+              logFile,
+              metricsPath: resolved.metricsPath
+            });
+            triageAttempts.push(triage);
+            rerunDecision = decideRunExperimentsRerun({
+              triage,
+              automaticRerunsUsed
+            });
+            await persistPanelState();
+            const report = buildRunVerifierReport({
+              status: "fail",
+              trigger,
+              stage: "metrics",
+              summary: failedMetricsMessage,
+              command: primaryCommand,
+              cwd: resolved.cwd,
+              metricsPath: resolved.metricsPath,
+              exitCode: obs.exit_code ?? 0,
+              stdout: obs.stdout,
+              stderr: failedMetricsMessage,
+              logFile,
+              suggestedNextAction:
+                "Repair the experiment implementation so metrics.json records completed baseline/comparator execution instead of a top-level failed status."
+            });
+            deps.eventStream.emit({
+              type: "TEST_FAILED",
+              runId: run.id,
+              node: "run_experiments",
+              agentRole: "runner",
+              payload: {
+                command: primaryCommand,
+                metrics_path: resolved.metricsPath,
+                stderr: failedMetricsMessage
+              }
+            });
+            await persistRunVerifierReport(run, runContext, report);
+            await persistRunFailureState(runContext, {
+              command: primaryCommand,
+              cwd: resolved.cwd,
+              logFile,
+              exitCode: obs.exit_code ?? 0,
+              error: failedMetricsMessage
+            });
+            await persistGovernanceCrash({
+              run,
+              runContext,
+              comparisonContract,
+              implementationContext,
+              objectiveMetricName: run.objectiveMetric,
+              rationale: report.summary,
+              resourceUsage: {
+                stage: "metrics",
+                command: primaryCommand,
+                cwd: resolved.cwd,
+                exit_code: obs.exit_code ?? 0,
+                log_file: logFile,
+                metrics_path: resolved.metricsPath
+              }
+            });
+            await recordRunFailure(failedMetricsMessage, "structural");
+            return {
+              status: "failure",
+              error: failedMetricsMessage,
+              toolCallsUsed: preflightToolCallsUsed + primaryAttemptsUsed
+            };
+          }
           const sentinelFindings = detectSentinelWatchdogFindings(parsedMetrics);
           watchdog = setSentinelFindings(watchdog, sentinelFindings);
           if (sentinelFindings.some((finding) => finding.severity === "fail")) {
@@ -1224,6 +1299,28 @@ function detectSentinelWatchdogFindings(
   }
 
   return findings;
+}
+
+function detectFailedMetricsPayload(metrics: Record<string, unknown>): string | null {
+  const status = typeof metrics.status === "string" ? metrics.status.trim().toLowerCase() : "";
+  const success = metrics.success;
+  const failure = metrics.failure && typeof metrics.failure === "object" && !Array.isArray(metrics.failure)
+    ? metrics.failure as Record<string, unknown>
+    : undefined;
+  const failureMessage =
+    typeof failure?.message === "string" && failure.message.trim()
+      ? failure.message.trim()
+      : typeof metrics.error_message === "string" && metrics.error_message.trim()
+        ? metrics.error_message.trim()
+        : undefined;
+
+  if (["failed", "failure", "error", "errored"].includes(status)) {
+    return `Experiment metrics payload reports failed status${failureMessage ? `: ${failureMessage}` : "."}`;
+  }
+  if (success === false) {
+    return `Experiment metrics payload reports success=false${failureMessage ? `: ${failureMessage}` : "."}`;
+  }
+  return null;
 }
 
 function flattenMetricValues(

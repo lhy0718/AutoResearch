@@ -21,7 +21,7 @@ export interface AnalysisComparisonMetric {
 export interface AnalysisConditionComparison {
   id: string;
   label: string;
-  source: "metrics.comparison" | "metrics.condition_metrics" | "metrics.results";
+  source: "metrics.comparison" | "metrics.condition_metrics" | "metrics.results" | "metrics.result_rows";
   metrics: AnalysisComparisonMetric[];
   hypothesis_supported?: boolean;
   summary: string;
@@ -1568,19 +1568,30 @@ function buildResultsArrayConditionComparison(args: {
   objectiveEvaluation: ObjectiveMetricEvaluation;
   objectiveProfile: ObjectiveMetricProfile;
 }): AnalysisConditionComparison | undefined {
-  const resultRows = asArray(args.metrics.results).map((item) => asRecord(item));
+  const resultRowsSource = asArray(args.metrics.results).length > 0 ? "metrics.results" : "metrics.result_rows";
+  const resultRows = asArray(
+    resultRowsSource === "metrics.results" ? args.metrics.results : args.metrics.result_rows
+  ).map((item) => asRecord(item));
   if (resultRows.length < 2) {
     return undefined;
   }
 
-  const baselineRow = resultRows.find((row) => {
-    const recipe = asString(row.recipe)?.toLowerCase();
-    const peftType = asString(row.peft_type)?.toLowerCase();
-    return recipe === "baseline" || peftType === "none";
-  });
-  const bestRecipe = asString(args.metrics.best_recipe);
+  const baselineRow =
+    resultRows.find((row) => row.is_locked_lora_baseline === true || asString(row.recipe_type)?.toLowerCase() === "locked_baseline") ||
+    resultRows.find((row) => {
+      const recipe = asString(row.recipe)?.toLowerCase();
+      const peftType = asString(row.peft_type)?.toLowerCase();
+      const conditionId = asString(row.condition_id)?.toLowerCase();
+      return (
+        recipe === "baseline" ||
+        peftType === "none" ||
+        conditionId === "baseline" ||
+        row.is_baseline_reference === true
+      );
+    });
+  const bestRecipe = asString(args.metrics.best_recipe) || asString(args.metrics.best_tuned_condition_id) || asString(args.metrics.best_condition_id);
   const comparatorRow = bestRecipe
-    ? resultRows.find((row) => asString(row.recipe) === bestRecipe && row !== baselineRow)
+    ? resultRows.find((row) => (asString(row.recipe) === bestRecipe || asString(row.condition_id) === bestRecipe) && row !== baselineRow)
     : undefined;
 
   if (!baselineRow || !comparatorRow) {
@@ -1617,8 +1628,8 @@ function buildResultsArrayConditionComparison(args: {
     return undefined;
   }
 
-  const baselineName = asString(baselineRow.recipe) || "baseline";
-  const comparatorName = asString(comparatorRow.recipe) || bestRecipe || "comparator";
+  const baselineName = asString(baselineRow.recipe) || asString(baselineRow.condition_id) || "baseline";
+  const comparatorName = asString(comparatorRow.recipe) || asString(comparatorRow.condition_id) || bestRecipe || "comparator";
   const sharedSummary = shared
     .slice(0, 4)
     .map((item) => `${item.key}: ${formatMetricValue(item.primary_value)} vs ${formatMetricValue(item.baseline_value)} (delta ${formatMetricValue(item.value)})`)
@@ -1627,7 +1638,7 @@ function buildResultsArrayConditionComparison(args: {
   return {
     id: `${comparatorName}_vs_${baselineName}`,
     label: `${humanizeConditionLabel(comparatorName)} vs ${humanizeConditionLabel(baselineName)}`,
-    source: "metrics.results",
+    source: resultRowsSource,
     metrics: shared,
     summary: `${humanizeConditionLabel(comparatorName)} vs ${humanizeConditionLabel(baselineName)}: ${sharedSummary}.`
   };

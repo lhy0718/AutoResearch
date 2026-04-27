@@ -23,7 +23,9 @@ import {
   isMalformedJsonStagedLlmChunkError,
   isTransientStagedLlmProviderError,
   normalizeLockedPeftStudyConfigPayloadForCompatibility,
+  repairPythonOrchestrationArgumentSurface,
   repairPythonConditionHelperSurface,
+  repairPythonLockedStandardLoraBaselineIdSurface,
   repairLockedPeftStudyConfigSurface,
   repairPythonLockedConditionCountSurface
 } from "../src/core/agents/implementSessionManager.js";
@@ -128,6 +130,41 @@ function createTestConfig(candidateIsolation: "attempt_snapshot_restore" | "atte
     paths: { runs_dir: ".autolabos/runs", logs_dir: ".autolabos/logs" }
   };
 }
+
+const MINIMAL_METRICS_RUNNER_SOURCE = [
+  "import argparse",
+  "",
+  "def write_metrics(metrics_path):",
+  "    with open(metrics_path, 'w', encoding='utf-8') as handle:",
+  "        handle.write('{\"status\":\"completed\",\"accuracy\":1.0}')",
+  "",
+  "def main():",
+  "    parser = argparse.ArgumentParser()",
+  "    parser.add_argument('--metrics-path')",
+  "    parser.add_argument('--metrics-out', dest='metrics_path')",
+  "    parser.add_argument('--dry-run', action='store_true')",
+  "    args, _ = parser.parse_known_args()",
+  "    if args.metrics_path and not args.dry_run:",
+  "        write_metrics(args.metrics_path)",
+  "",
+  "if __name__ == '__main__':",
+  "    main()",
+  ""
+].join("\n");
+
+const MINIMAL_METRICS_RUNNER_FOOTER = [
+  "",
+  "def write_metrics(metrics_path):",
+  "    with open(metrics_path, 'w', encoding='utf-8') as handle:",
+  "        handle.write('{\"status\":\"completed\",\"accuracy\":1.0}')",
+  "",
+  "def main():",
+  "    write_metrics('metrics.json')",
+  "",
+  "if __name__ == '__main__':",
+  "    main()",
+  ""
+].join("\n");
 
 function initGitWorkspace(workspace: string, trackedFiles: string[]): void {
   execFileSync("git", ["init"], { cwd: workspace, stdio: "ignore" });
@@ -301,7 +338,7 @@ describe("ImplementSessionManager", () => {
     tempDirs.push(workspace);
     const scriptPath = path.join(workspace, "outputs", "experiment", "experiment.py");
     mkdirSync(path.dirname(scriptPath), { recursive: true });
-    writeFileSync(scriptPath, "print('ok')\n", "utf8");
+    writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
 
     const paths = extractWorkspacePathsFromCommand(
       [
@@ -341,7 +378,7 @@ describe("ImplementSessionManager", () => {
     const publicDir = buildPublicExperimentDir(workspace, run);
     const codex = {
       runTurnStream: async ({ onEvent }: { onEvent?: (event: Record<string, unknown>) => void }) => {
-        writeFileSync(scriptPath, "print('ok')\n", "utf8");
+        writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         onEvent?.({ type: "file.changed", path: scriptPath });
         return {
           threadId: "thread-impl-1",
@@ -515,7 +552,7 @@ describe("ImplementSessionManager", () => {
       runTurnStream: async ({ onEvent }: { onEvent?: (event: Record<string, unknown>) => void }) => {
         onEvent?.({ type: "response.output_text.delta", delta: "Inspecting experiment plan." });
         await codexTurnGate;
-        writeFileSync(scriptPath, "print('ok')\n", "utf8");
+        writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         onEvent?.({ type: "file.changed", path: scriptPath });
         return {
           threadId: "thread-impl-progress",
@@ -587,7 +624,7 @@ describe("ImplementSessionManager", () => {
     const publicDir = buildPublicExperimentDir(workspace, run);
     const codex = {
       runTurnStream: async () => {
-        writeFileSync(scriptPath, "print('ok')\n", "utf8");
+        writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         writeFileSync(workspaceModulePath, "DEFAULT_THRESHOLD = 0.9\n", "utf8");
         return {
           threadId: "thread-impl-workspace-manifest",
@@ -707,7 +744,7 @@ describe("ImplementSessionManager", () => {
     const publicScriptPath = path.join(publicDir, "run_tabular_baselines.py");
     const codex = {
       runTurnStream: async ({ onEvent }: { onEvent?: (event: Record<string, unknown>) => void }) => {
-        writeFileSync(privateScriptPath, "print('ok')\n", "utf8");
+        writeFileSync(privateScriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         onEvent?.({ type: "file.changed", path: privateScriptPath });
         return {
           threadId: "thread-impl-materialize",
@@ -850,7 +887,7 @@ describe("ImplementSessionManager", () => {
     const eventStream = new InMemoryEventStream();
     const codex = {
       runTurnStream: async ({ onEvent }: { onEvent?: (event: Record<string, unknown>) => void }) => {
-        writeFileSync(privateScriptPath, "print('ok')\n", "utf8");
+        writeFileSync(privateScriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         onEvent?.({ type: "file.changed", path: privateScriptPath });
         return {
           threadId: "thread-impl-missing-supplemental",
@@ -928,7 +965,7 @@ describe("ImplementSessionManager", () => {
     const publicScriptPath = path.join(publicDir, "run_tabular_baselines.py");
     const codex = {
       runTurnStream: async ({ onEvent }: { onEvent?: (event: Record<string, unknown>) => void }) => {
-        writeFileSync(privateScriptPath, "print('ok')\n", "utf8");
+        writeFileSync(privateScriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         onEvent?.({ type: "file.changed", path: privateScriptPath });
         return {
           threadId: "thread-impl-deferred-metrics",
@@ -999,7 +1036,7 @@ describe("ImplementSessionManager", () => {
     const deferredReportPath = path.join(publicDir, "results", "report.md");
     const codex = {
       runTurnStream: async ({ onEvent }: { onEvent?: (event: Record<string, unknown>) => void }) => {
-        writeFileSync(privateScriptPath, "print('ok')\n", "utf8");
+        writeFileSync(privateScriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         onEvent?.({ type: "file.changed", path: privateScriptPath });
         return {
           threadId: "thread-impl-deferred-public-results",
@@ -1078,7 +1115,7 @@ describe("ImplementSessionManager", () => {
     const deferredRootResultPath = path.join(publicDir, "peft_instruction_study_results.json");
     const codex = {
       runTurnStream: async ({ onEvent }: { onEvent?: (event: Record<string, unknown>) => void }) => {
-        writeFileSync(privateScriptPath, "print('ok')\n", "utf8");
+        writeFileSync(privateScriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         onEvent?.({ type: "file.changed", path: privateScriptPath });
         return {
           threadId: "thread-impl-deferred-root-public-result",
@@ -1146,7 +1183,7 @@ describe("ImplementSessionManager", () => {
 
     const codex = {
       runTurnStream: async ({ onEvent }: { onEvent?: (event: Record<string, unknown>) => void }) => {
-        writeFileSync(privateScriptPath, "print('ok')\n", "utf8");
+        writeFileSync(privateScriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         onEvent?.({ type: "file.changed", path: privateScriptPath });
         return {
           threadId: "thread-impl-verify-deferred-metrics",
@@ -1423,7 +1460,7 @@ describe("ImplementSessionManager", () => {
         capturedSystemPrompt = systemPrompt || "";
         onEvent?.({ type: "response.output_text.delta", delta: "Writing experiment " });
         onEvent?.({ type: "response.output_text.delta", delta: "script now." });
-        writeFileSync(scriptPath, "print('ok')\n", "utf8");
+        writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         return {
           threadId: "thread-impl-2",
           finalText: JSON.stringify({
@@ -1545,7 +1582,7 @@ describe("ImplementSessionManager", () => {
     const codex = {
       runTurnStream: async ({ systemPrompt }: { systemPrompt?: string }) => {
         capturedSystemPrompt = systemPrompt || "";
-        writeFileSync(scriptPath, "print('ok')\n", "utf8");
+        writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         return {
           threadId: "thread-impl-env",
           finalText: JSON.stringify({
@@ -1615,7 +1652,7 @@ describe("ImplementSessionManager", () => {
     const publicDir = buildPublicExperimentDir(workspace, run);
     mkdirSync(publicDir, { recursive: true });
     const publicScriptPath = path.join(publicDir, "run_gsm8k_budget_reasoning.py");
-    writeFileSync(publicScriptPath, "print('ok')\n", "utf8");
+    writeFileSync(publicScriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
 
     let capturedPrompt = "";
     const codex = {
@@ -1691,7 +1728,7 @@ describe("ImplementSessionManager", () => {
     const codex = {
       runTurnStream: async ({ prompt }: { prompt?: string }) => {
         capturedPrompt = prompt || "";
-        writeFileSync(scriptPath, "print('ok')\n", "utf8");
+        writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         return {
           threadId: "thread-impl-long-term",
           finalText: JSON.stringify({
@@ -2329,7 +2366,7 @@ describe("ImplementSessionManager", () => {
           };
         }
 
-        writeFileSync(secondScriptPath, "print('fixed')\n", "utf8");
+        writeFileSync(secondScriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         return {
           threadId: "thread-impl-retry",
           finalText: JSON.stringify({
@@ -2462,7 +2499,7 @@ describe("ImplementSessionManager", () => {
     const alternateCandidate = path.join(workspace, "src", "accuracy_alternate.py");
     mkdirSync(path.dirname(primaryCandidate), { recursive: true });
     writeFileSync(primaryCandidate, "def accuracy_primary():\n    return 0\n", "utf8");
-    writeFileSync(alternateCandidate, "def accuracy_alternate():\n    return 1\n", "utf8");
+    writeFileSync(alternateCandidate, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
 
     const prompts: string[] = [];
     let callCount = 0;
@@ -2639,7 +2676,7 @@ describe("ImplementSessionManager", () => {
           };
         }
 
-        writeFileSync(candidatePath, "def run_trial():\n    return 2\n", "utf8");
+        writeFileSync(candidatePath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         return {
           threadId: "thread-impl-worktree",
           finalText: JSON.stringify({
@@ -2693,7 +2730,7 @@ describe("ImplementSessionManager", () => {
     expect(workingDirectories[0]).not.toBe(workspace);
     expect(workingDirectories[0]).toBe(path.join(runDir, "implement_experiments", "attempt_worktrees", "attempt_1"));
     expect(result.scriptPath).toBe(trackedRunner);
-    expect(readFileSync(trackedRunner, "utf8")).toBe("def run_trial():\n    return 2\n");
+    expect(readFileSync(trackedRunner, "utf8")).toBe(MINIMAL_METRICS_RUNNER_SOURCE);
     expect(isolationReport.final_strategy).toBe("attempt_worktree");
     expect(isolationReport.fallback_occurred).toBe(false);
     expect(isolationReport.attempts[0]?.effective_strategy).toBe("attempt_worktree");
@@ -2745,7 +2782,7 @@ describe("ImplementSessionManager", () => {
             events: []
           };
         }
-        writeFileSync(secondScriptPath, "print('fixed')\n", "utf8");
+        writeFileSync(secondScriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         return {
           threadId: "thread-impl-worktree-fallback",
           finalText: JSON.stringify({
@@ -2793,7 +2830,7 @@ describe("ImplementSessionManager", () => {
     expect(isolationReport.attempts[0]?.snapshot_root).toContain(path.join(run.id, "implement_experiments", "attempt_snapshots"));
     expect(isolationReport.attempts[0]?.cleanup_status).toBe("completed");
     expect(existsSync(firstScriptPath)).toBe(false);
-    expect(readFileSync(secondScriptPath, "utf8")).toContain("fixed");
+    expect(readFileSync(secondScriptPath, "utf8")).toBe(MINIMAL_METRICS_RUNNER_SOURCE);
   }, 15000);
 
   it("falls back to snapshot restore when git worktree isolation is blocked by dirty tracked files", async () => {
@@ -2826,7 +2863,7 @@ describe("ImplementSessionManager", () => {
     const codex = {
       runTurnStream: async ({ workingDirectory }: { workingDirectory?: string }) => {
         workingDirectories.push(workingDirectory || "");
-        writeFileSync(generatedScript, "print('dirty fallback')\n", "utf8");
+        writeFileSync(generatedScript, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         return {
           threadId: "thread-impl-worktree-dirty",
           finalText: JSON.stringify({
@@ -3262,7 +3299,8 @@ describe("ImplementSessionManager", () => {
         "    if do_sample:",
         '        generation_kwargs["generator"] = make_generator(13)',
         "    return model.generate(**inputs, **generation_kwargs)",
-        ""
+        "",
+        MINIMAL_METRICS_RUNNER_FOOTER
       ].join("\n"),
       "utf8"
     );
@@ -3454,7 +3492,7 @@ describe("ImplementSessionManager", () => {
       1
     );
 
-    expect(report.status).toBe("pass");
+    expect(report.status, report.summary).toBe("pass");
     expect(readFileSync(scriptPath, "utf8")).not.toContain("overwrite_output_dir");
   });
 
@@ -3528,8 +3566,409 @@ describe("ImplementSessionManager", () => {
       1
     );
 
-    expect(report.status).toBe("pass");
+    expect(report.status, report.summary).toBe("pass");
     expect(readFileSync(scriptPath, "utf8")).not.toContain("tokenizer=tokenizer");
+  });
+
+  it("repairs Trainer collators that pass ragged labels through tokenizer.pad before local verification", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-trainer-label-padding-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Trainer Label Padding Runtime Failure",
+      topic: "runtime data collator validation",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const scriptPath = path.join(runDir, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "import json",
+        "from pathlib import Path",
+        "",
+        "from typing import Any",
+        "",
+        "class torch:",
+        "    class Tensor:",
+        "        pass",
+        "    long = 'long'",
+        "    @staticmethod",
+        "    def tensor(value, dtype=None):",
+        "        return value",
+        "",
+        "def train_recipe(tokenizer, Trainer, model, training_args, train_dataset):",
+        "    def collate(features: list[dict[str, Any]]) -> dict[str, torch.Tensor]:",
+        "        batch = tokenizer.pad(features, padding=True, return_tensors=\"pt\")",
+        "        labels = batch[\"labels\"].clone()",
+        "        labels[batch[\"attention_mask\"] == 0] = -100",
+        "        batch[\"labels\"] = labels",
+        "        return batch",
+        "",
+        "    trainer = Trainer(",
+        "        model=model,",
+        "        args=training_args,",
+        "        train_dataset=train_dataset,",
+        "        data_collator=collate,",
+        "    )",
+        "    return trainer",
+        "",
+        "def main():",
+        "    Path('metrics.json').write_text(json.dumps({'status': 'completed'}), encoding='utf-8')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexNativeClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        workingDir: runDir,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(report.status, report.summary).toBe("pass");
+    expect(repairedSource).toContain("model_features = []");
+    expect(repairedSource).toContain("labels_tensor = torch.tensor(padded_labels, dtype=torch.long)");
+    expect(repairedSource).not.toContain("batch = tokenizer.pad(features, padding=True, return_tensors=\"pt\")");
+  });
+
+  it("repairs DataCollatorForLanguageModeling inputs that precompute ragged labels", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-data-collator-labels-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Trainer DataCollator Label Runtime Failure",
+      topic: "runtime data collator validation",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const scriptPath = path.join(runDir, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "import json",
+        "from pathlib import Path",
+        "",
+        "def load_training_dataset(tokenizer):",
+        "    def tokenize_batch(batch):",
+        "        tokens = tokenizer(batch['text'], truncation=True, max_length=256, padding=False)",
+        "        tokens[\"labels\"] = [list(ids) for ids in tokens[\"input_ids\"]]",
+        "        return tokens",
+        "    return tokenize_batch",
+        "",
+        "def train_recipe(DataCollatorForLanguageModeling, tokenizer, Trainer, model, training_args, train_dataset):",
+        "    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)",
+        "    trainer = Trainer(",
+        "        model=model,",
+        "        args=training_args,",
+        "        train_dataset=train_dataset,",
+        "        data_collator=data_collator,",
+        "    )",
+        "    return trainer",
+        "",
+        "def main():",
+        "    Path('metrics.json').write_text(json.dumps({'status': 'completed'}), encoding='utf-8')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexNativeClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        workingDir: runDir,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(report.status, report.summary).toBe("pass");
+    expect(repairedSource).toContain("DataCollatorForLanguageModeling creates padded causal-LM labels");
+    expect(repairedSource).not.toContain("tokens[\"labels\"] = [list(ids) for ids in tokens[\"input_ids\"]]");
+  });
+
+  it("repairs broad compatible-call adapters that reintroduce filtered kwargs and duplicate metrics args", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-compatible-adapter-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Compatible Adapter Runtime Failure",
+      topic: "runtime helper adapter validation",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const scriptPath = path.join(runDir, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "import inspect",
+        "from typing import Any, Callable, Mapping",
+        "",
+        "def _call_compatible(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:",
+        "    \"\"\"Call a helper while filtering keyword arguments it does not accept.\"\"\"",
+        "    try:",
+        "        signature = inspect.signature(fn)",
+        "        parameters = signature.parameters",
+        "        accepts_var_kwargs = any(",
+        "            parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()",
+        "        )",
+        "        if accepts_var_kwargs:",
+        "            return fn(*args, **kwargs)",
+        "        filtered_kwargs = {key: value for key, value in kwargs.items() if key in parameters}",
+        "        return fn(*args, **filtered_kwargs)",
+        "    except (TypeError, ValueError):",
+        "        return fn(*args, **kwargs)",
+        "",
+        "def write_metrics_json(metrics: Mapping[str, Any], metrics_path: str) -> None:",
+        "    pass",
+        "",
+        "def _autolabos_write_metrics(metrics: Mapping[str, Any], metrics_path: str) -> None:",
+        "    writer = write_metrics_json",
+        "    _call_compatible(writer, metrics, metrics_path, metrics=metrics, path=metrics_path, output_path=metrics_path)",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexNativeClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        workingDir: runDir,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(report.status).toBe("pass");
+    expect(repairedSource).toContain("filtered_kwargs = {key: value for key, value in kwargs.items() if key in parameters}");
+    expect(repairedSource).not.toContain(
+      "return fn(*args, **filtered_kwargs)\n    except (TypeError, ValueError):\n        return fn(*args, **kwargs)"
+    );
+    expect(repairedSource).not.toContain("_call_compatible(writer, metrics, metrics_path, metrics=metrics");
+    expect(repairedSource).toContain("_call_compatible(writer, metrics=metrics, metrics_path=metrics_path");
+  });
+
+  it("repairs orchestration wrappers that reparse Namespace args and omit workflow datasets", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-orchestration-args-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "import argparse",
+        "import inspect",
+        "from typing import Any, Dict, Mapping, Optional, Sequence",
+        "",
+        "DEFAULT_METRICS_PATH = 'metrics.json'",
+        "DEFAULT_RESULTS_PATH = 'results.json'",
+        "DEFAULT_BASE_MODEL = 'tiny-model'",
+        "DEFAULT_SEED = 42",
+        "DEFAULT_MAX_TRAIN_EXAMPLES = 2",
+        "DEFAULT_MAX_EVAL_EXAMPLES_PER_BENCHMARK = 1",
+        "DEFAULT_MAX_NEW_TOKENS = 4",
+        "MAX_ALLOWED_TRAIN_EXAMPLES = 4",
+        "MAX_ALLOWED_EVAL_EXAMPLES_PER_BENCHMARK = 2",
+        "LOCKED_RECIPE_ORDER = ['lora']",
+        "PEFT_RECIPES = [{'id': 'lora'}]",
+        "",
+        "def build_arg_parser():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path', default=DEFAULT_METRICS_PATH)",
+        "    parser.add_argument('--model-name', default=DEFAULT_BASE_MODEL)",
+        "    return parser",
+        "",
+        "def _get_arg(args, name, default=None):",
+        "    return getattr(args, name, default)",
+        "",
+        "def _parse_orchestration_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:",
+        "    parser = build_arg_parser()",
+        "    parsed = parser.parse_args(argv)",
+        "    if not hasattr(parsed, 'seed'):",
+        "        setattr(parsed, 'seed', DEFAULT_SEED)",
+        "    if not hasattr(parsed, 'max_train_examples'):",
+        "        setattr(parsed, 'max_train_examples', DEFAULT_MAX_TRAIN_EXAMPLES)",
+        "    if not hasattr(parsed, 'max_eval_examples_per_benchmark'):",
+        "        setattr(parsed, 'max_eval_examples_per_benchmark', DEFAULT_MAX_EVAL_EXAMPLES_PER_BENCHMARK)",
+        "    if not hasattr(parsed, 'max_new_tokens'):",
+        "        setattr(parsed, 'max_new_tokens', DEFAULT_MAX_NEW_TOKENS)",
+        "    return parsed",
+        "",
+        "def _initialize_orchestration_runtime(args: argparse.Namespace) -> Dict[str, Any]:",
+        "    return {'device': 'cpu', 'cache_dir': '.', 'output_dir': '.'}",
+        "",
+        "def _call_with_compatible_signature(func: Any, **kwargs: Any) -> Any:",
+        "    signature = inspect.signature(func)",
+        "    parameters = signature.parameters",
+        "    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):",
+        "        return func(**kwargs)",
+        "    filtered_kwargs = {key: value for key, value in kwargs.items() if key in parameters}",
+        "    return func(**filtered_kwargs)",
+        "",
+        "def load_shared_instruction_subset(args: argparse.Namespace) -> list[str]:",
+        "    return ['train-row']",
+        "",
+        "def load_benchmark_examples(args: argparse.Namespace) -> Dict[str, list[dict[str, str]]]:",
+        "    return {'arc_challenge': [{'answer': 'A'}]}",
+        "",
+        "def run_baseline_first_recipe_loop(args, device, train_dataset, eval_examples):",
+        "    return [{'recipe_id': 'lora', 'train_dataset': train_dataset, 'eval_examples': eval_examples}]",
+        "",
+        "def _execute_baseline_first_workflow(args: argparse.Namespace, runtime_context: Mapping[str, Any]) -> list[dict[str, Any]]:",
+        "    workflow = run_baseline_first_recipe_loop",
+        "    device = runtime_context['device']",
+        "    model_name = _get_arg(args, \"model_name\", _get_arg(args, \"base_model\", DEFAULT_BASE_MODEL))",
+        "    common_kwargs = {",
+        "        \"args\": args,",
+        "        \"runtime_context\": runtime_context,",
+        "        \"device\": device,",
+        "        \"model_name\": model_name,",
+        "        \"recipes\": globals().get(\"PEFT_RECIPES\", globals().get(\"RECIPE_CONFIGS\", None)),",
+        "    }",
+        "    workflow_output = _call_with_compatible_signature(workflow, **common_kwargs)",
+        "    return list(workflow_output)",
+        "",
+        "def assemble_experiment_metrics(argv: Optional[Sequence[str]] = None) -> list[dict[str, Any]]:",
+        "    args = _parse_orchestration_args(argv)",
+        "    runtime_context = _initialize_orchestration_runtime(args)",
+        "    return _execute_baseline_first_workflow(args, runtime_context)",
+        "",
+        "if __name__ == '__main__':",
+        "    payload = assemble_experiment_metrics(argparse.Namespace(metrics_path='metrics.json'))",
+        "    assert payload[0]['train_dataset'] == ['train-row']",
+        "    assert payload[0]['eval_examples']['arc_challenge'][0]['answer'] == 'A'",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const repair = await repairPythonOrchestrationArgumentSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("if isinstance(argv, argparse.Namespace):");
+    expect(repairedSource).toContain("def _autolabos_prepare_workflow_train_dataset");
+    expect(repairedSource).toContain("\"train_dataset\": train_dataset");
+    execFileSync("python3", [scriptPath]);
   });
 
   it("repairs a missing make_json_safe alias before local verification", async () => {
@@ -3561,7 +4000,8 @@ describe("ImplementSessionManager", () => {
         "",
         "def _dependency_report():",
         "    return [make_json_safe({'torch': True})]",
-        ""
+        "",
+        MINIMAL_METRICS_RUNNER_FOOTER
       ].join("\n"),
       "utf8"
     );
@@ -3783,7 +4223,7 @@ describe("ImplementSessionManager", () => {
     const codex = {
       runTurnStream: async () => {
         mkdirSync(publicDir, { recursive: true });
-        writeFileSync(scriptPath, "print('ok')\n", "utf8");
+        writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         writeFileSync(configPath, "{\"pilot_size\": 8}\n", "utf8");
         writeFileSync(baselinePath, "{\"baseline\":\"greedy\"}\n", "utf8");
     writeFileSync(
@@ -3857,7 +4297,7 @@ describe("ImplementSessionManager", () => {
 
     mkdirSync(path.dirname(artifactPath), { recursive: true });
     mkdirSync(publicDir, { recursive: true });
-    writeFileSync(scriptPath, "print('ok')\n", "utf8");
+    writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
     writeFileSync(configPath, "{\"pilot_size\": 8}\n", "utf8");
     writeFileSync(baselinePath, "{\"baseline\":\"greedy\"}\n", "utf8");
     writeFileSync(metricsPath, "{\"status\":\"ok\"}\n", "utf8");
@@ -4004,6 +4444,7 @@ describe("ImplementSessionManager", () => {
                   "    recipes.append(Recipe(name='untuned_reference', kind='reference'))",
                   "    recipes.append(Recipe(name='lora_r8', kind='lora'))",
                   "    return recipes",
+                  MINIMAL_METRICS_RUNNER_FOOTER,
                   ""
                 ].join("\n")
               }
@@ -4061,7 +4502,7 @@ describe("ImplementSessionManager", () => {
 
     mkdirSync(path.dirname(artifactPath), { recursive: true });
     mkdirSync(publicDir, { recursive: true });
-    writeFileSync(scriptPath, "print('stale bounded retry')\n", "utf8");
+    writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
     writeFileSync(
       configPath,
       JSON.stringify(
@@ -4111,7 +4552,7 @@ describe("ImplementSessionManager", () => {
     const codex = {
       runTurnStream: async () => {
         callCount += 1;
-        writeFileSync(scriptPath, "print('fresh bounded retry')\n", "utf8");
+        writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         writeFileSync(
           configPath,
           JSON.stringify(
@@ -4201,7 +4642,7 @@ describe("ImplementSessionManager", () => {
     const baselinePath = path.join(publicDir, "baseline_summary.json");
 
     mkdirSync(publicDir, { recursive: true });
-    writeFileSync(scriptPath, "print('stale dry run bundle')\n", "utf8");
+    writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
     writeFileSync(
       configPath,
       JSON.stringify(
@@ -4237,7 +4678,7 @@ describe("ImplementSessionManager", () => {
     const codex = {
       runTurnStream: async () => {
         callCount += 1;
-        writeFileSync(scriptPath, "print('fresh real execution bundle')\n", "utf8");
+        writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         return {
           threadId: "thread-dry-run-refresh",
           finalText: JSON.stringify({
@@ -4305,7 +4746,7 @@ describe("ImplementSessionManager", () => {
 
     mkdirSync(path.dirname(artifactPath), { recursive: true });
     mkdirSync(publicDir, { recursive: true });
-    writeFileSync(scriptPath, "print('existing real bundle runner')\n", "utf8");
+    writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
     writeFileSync(
       configPath,
       JSON.stringify(
@@ -4434,7 +4875,7 @@ describe("ImplementSessionManager", () => {
 
     mkdirSync(path.dirname(artifactPath), { recursive: true });
     mkdirSync(publicDir, { recursive: true });
-    writeFileSync(scriptPath, "print('stale reused bundle')\n", "utf8");
+    writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
     writeFileSync(configPath, "{\"pilot_size\": 16}\n", "utf8");
     writeFileSync(baselinePath, "{\"baseline\":\"greedy\"}\n", "utf8");
     writeFileSync(metricsPath, "{\"status\":\"ok\"}\n", "utf8");
@@ -4472,7 +4913,7 @@ describe("ImplementSessionManager", () => {
     const codex = {
       runTurnStream: async () => {
         callCount += 1;
-        writeFileSync(scriptPath, "print(False)\n", "utf8");
+        writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         return {
           threadId: "thread-fresh-after-runner-feedback",
           finalText: JSON.stringify({
@@ -4537,7 +4978,7 @@ describe("ImplementSessionManager", () => {
 
     mkdirSync(path.dirname(artifactPath), { recursive: true });
     mkdirSync(publicDir, { recursive: true });
-    writeFileSync(scriptPath, "print('stale reused bundle')\n", "utf8");
+    writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
     writeFileSync(configPath, "{\"pilot_size\": 16}\n", "utf8");
     writeFileSync(baselinePath, "{\"baseline\":\"greedy\"}\n", "utf8");
     writeFileSync(metricsPath, "{\"status\":\"ok\"}\n", "utf8");
@@ -4583,7 +5024,7 @@ describe("ImplementSessionManager", () => {
       runTurnStream: async ({ threadId }: { threadId?: string }) => {
         callCount += 1;
         seenThreadId = threadId;
-        writeFileSync(scriptPath, "print(False)\n", "utf8");
+        writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         return {
           threadId: "thread-fresh-after-command-runtime",
           finalText: JSON.stringify({
@@ -4654,7 +5095,7 @@ describe("ImplementSessionManager", () => {
 
     mkdirSync(path.dirname(artifactPath), { recursive: true });
     mkdirSync(publicDir, { recursive: true });
-    writeFileSync(scriptPath, "print('stale reused bundle')\n", "utf8");
+    writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
     writeFileSync(configPath, "{\"pilot_size\": 16, \"repeats\": 1}\n", "utf8");
     writeFileSync(baselinePath, "{\"baseline\":\"greedy\"}\n", "utf8");
     writeFileSync(metricsPath, "{\"status\":\"ok\"}\n", "utf8");
@@ -4693,7 +5134,7 @@ describe("ImplementSessionManager", () => {
     const codex = {
       runTurnStream: async () => {
         callCount += 1;
-        writeFileSync(scriptPath, "print('fresh after paper critique')\n", "utf8");
+        writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         return {
           threadId: "thread-fresh-after-paper-critique",
           finalText: JSON.stringify({
@@ -5050,7 +5491,7 @@ describe("ImplementSessionManager", () => {
           file_edits: [
             {
               path: publicScriptPath,
-              content: "print('ok')"
+              content: MINIMAL_METRICS_RUNNER_SOURCE
             }
           ]
         })
@@ -5079,7 +5520,7 @@ describe("ImplementSessionManager", () => {
     expect(result.verifyReport).toMatchObject({ status: "pass" });
     expect(result.scriptPath).toBe(publicScriptPath);
     expect(result.publicArtifacts).toContain(publicScriptPath);
-    expect(readFileSync(publicScriptPath, "utf8")).toBe("print('ok')");
+    expect(readFileSync(publicScriptPath, "utf8")).toBe(MINIMAL_METRICS_RUNNER_SOURCE);
     expect(status).toMatchObject({
       status: "completed",
       stage: "completed"
@@ -5133,7 +5574,7 @@ describe("ImplementSessionManager", () => {
             file_edits: [
               {
                 path: publicScriptPath,
-                content: "print('ok')"
+                content: MINIMAL_METRICS_RUNNER_SOURCE
               }
             ]
           })
@@ -5281,7 +5722,7 @@ describe("ImplementSessionManager", () => {
           return {
             text: JSON.stringify({
               chunk_id: "runner_full",
-              content: "print('ok')"
+              content: MINIMAL_METRICS_RUNNER_SOURCE
             }),
             threadId: "thread-staged-fallback-script"
           };
@@ -5331,7 +5772,7 @@ describe("ImplementSessionManager", () => {
     expect(result.scriptPath).toBe(publicScriptPath);
     expect(result.publicArtifacts).toContain(publicScriptPath);
     expect(result.publicArtifacts).toContain(publicConfigPath);
-    expect(readFileSync(publicScriptPath, "utf8")).toBe("print('ok')");
+    expect(readFileSync(publicScriptPath, "utf8")).toBe(MINIMAL_METRICS_RUNNER_SOURCE);
     expect(readFileSync(publicConfigPath, "utf8")).toContain("\"pilot_size\": 4");
     const decompositionPlan = JSON.parse(
       readFileSync(path.join(runDir, "implement_experiments", "decomposition_plan.json"), "utf8")
@@ -5442,7 +5883,7 @@ describe("ImplementSessionManager", () => {
         return {
           text: JSON.stringify({
             chunk_id: "runner_full",
-            content: "print('rerun ok')\n"
+            content: MINIMAL_METRICS_RUNNER_SOURCE
           }),
           threadId: "thread-known-fallback"
         };
@@ -5465,7 +5906,7 @@ describe("ImplementSessionManager", () => {
     expect(llmCalls).toBe(3);
     expect(result.verifyReport).toMatchObject({ status: "pass" });
     expect(result.scriptPath).toBe(publicScriptPath);
-    expect(readFileSync(publicScriptPath, "utf8")).toBe("print('rerun ok')\n");
+    expect(readFileSync(publicScriptPath, "utf8")).toBe(MINIMAL_METRICS_RUNNER_SOURCE);
   });
 
   it("synthesizes a decomposition plan when the staged scaffold omits it", async () => {
@@ -5577,7 +6018,7 @@ describe("ImplementSessionManager", () => {
           return {
             text: JSON.stringify({
               chunk_id: "runner_full",
-              content: "print('plan repaired')\n"
+              content: MINIMAL_METRICS_RUNNER_SOURCE
             }),
             threadId: "thread-file"
           };
@@ -5607,7 +6048,7 @@ describe("ImplementSessionManager", () => {
       )
     ).toContain("\"decomposition_plan\"");
     expect(result.scriptPath).toBe(publicScriptPath);
-    expect(readFileSync(publicScriptPath, "utf8")).toBe("print('plan repaired')\n");
+    expect(readFileSync(publicScriptPath, "utf8")).toBe(MINIMAL_METRICS_RUNNER_SOURCE);
   });
 
   it("fails loudly when the staged scaffold omits decomposition_plan and the repair turn still does not return one", async () => {
@@ -5807,7 +6248,7 @@ describe("ImplementSessionManager", () => {
           return {
             text: JSON.stringify({
               chunk_id: "runner_full",
-              content: "print('materialized after narrow repair')\n"
+              content: MINIMAL_METRICS_RUNNER_SOURCE
             }),
             threadId: "thread-materialized-file"
           };
@@ -5828,7 +6269,7 @@ describe("ImplementSessionManager", () => {
     expect(decompositionPlan.strategy).toBe("materialize_runner_now");
     expect(decompositionPlan.units.map((unit) => unit.target_path)).toEqual([publicScriptPath]);
     expect(result.scriptPath).toBe(publicScriptPath);
-    expect(readFileSync(publicScriptPath, "utf8")).toBe("print('materialized after narrow repair')\n");
+    expect(readFileSync(publicScriptPath, "utf8")).toBe(MINIMAL_METRICS_RUNNER_SOURCE);
   });
 
   it("fails loudly when materialization planning does not return a parseable dynamic plan", async () => {
@@ -5999,6 +6440,8 @@ describe("ImplementSessionManager", () => {
               summary: "The planned PEFT baseline requires a Hugging Face model and tokenizer bootstrap.",
               requires_network: true,
               requires_warm_cache: true,
+              blocking_reason:
+                "None known except missing Python/system prerequisites or missing existing script path. If torch, transformers, datasets, peft, accelerate, or evaluate are not installed, execution will fail even if network access is available for Hugging Face assets.",
               remediation: ["Prewarm the Hugging Face cache or allow network access for bootstrap."],
               requirements: [
                 {
@@ -6048,6 +6491,9 @@ describe("ImplementSessionManager", () => {
       )
     ).toContain("\"requires_network\":true");
     expect(bootstrapContract.requires_network).toBe(true);
+    expect(bootstrapContract).toMatchObject({
+      blocking_reason: expect.stringContaining("None known except")
+    });
     expect(bootstrapContract.summary).toContain("Hugging Face model and tokenizer bootstrap");
   });
 
@@ -6829,8 +7275,13 @@ describe("ImplementSessionManager", () => {
               text: JSON.stringify({
                 chunk_id: "chunk_entrypoint",
                 content: [
+                  "def write_metrics(metrics_path):",
+                  "    with open(metrics_path, 'w', encoding='utf-8') as handle:",
+                  "        handle.write('{\"status\":\"completed\",\"accuracy\":1.0}')",
+                  "",
                   "def main():",
                   "    load_config()",
+                  "    write_metrics('metrics.json')",
                   "",
                   "if __name__ == '__main__':",
                   "    main()"
@@ -6914,6 +7365,17 @@ describe("ImplementSessionManager", () => {
 
     const publicDir = buildPublicExperimentDir(workspace, run);
     const publicScriptPath = path.join(publicDir, "experiment.py");
+    const requestedParentChunkIs = (prompt: string, chunkId: string): boolean => {
+      const marker = "Requested parent chunk to subdivide:";
+      const markerIndex = prompt.indexOf(marker);
+      if (markerIndex < 0) {
+        return false;
+      }
+      const requestedParent = prompt.slice(markerIndex + marker.length);
+      return requestedParent.includes(`"id": "${chunkId}"`);
+    };
+    const targetChunkIs = (prompt: string, chunkId: string): boolean =>
+      prompt.split(/\r?\n/).some((line) => line.startsWith(`Target chunk: ${chunkId} `));
     let llmCalls = 0;
     const manager = new ImplementSessionManager({
       config: createTestConfig(),
@@ -6983,7 +7445,7 @@ describe("ImplementSessionManager", () => {
               threadId: "thread-skeleton-plan"
             };
           }
-          if (prompt.includes("Requested parent chunk to subdivide:") && prompt.includes("chunk_setup")) {
+          if (requestedParentChunkIs(prompt, "chunk_setup")) {
             return {
               text: JSON.stringify({
                 strategy: "single_setup_subchunk",
@@ -7001,7 +7463,7 @@ describe("ImplementSessionManager", () => {
               threadId: "thread-skeleton-setup-plan"
             };
           }
-          if (prompt.includes("Target chunk: chunk_setup")) {
+          if (targetChunkIs(prompt, "chunk_setup")) {
             return {
               text: JSON.stringify({
                 chunk_id: "chunk_setup",
@@ -7019,7 +7481,7 @@ describe("ImplementSessionManager", () => {
               threadId: "thread-skeleton-setup"
             };
           }
-          if (prompt.includes("Requested parent chunk to subdivide:") && prompt.includes("chunk_entrypoint")) {
+          if (requestedParentChunkIs(prompt, "chunk_entrypoint")) {
             return {
               text: JSON.stringify({
                 strategy: "single_entrypoint_subchunk",
@@ -7037,13 +7499,18 @@ describe("ImplementSessionManager", () => {
               threadId: "thread-skeleton-entrypoint-plan"
             };
           }
-          if (prompt.includes("Target chunk: chunk_entrypoint")) {
+          if (targetChunkIs(prompt, "chunk_entrypoint")) {
             return {
               text: JSON.stringify({
                 chunk_id: "chunk_entrypoint",
                 content: [
+                  "def write_metrics(metrics_path):",
+                  "    with open(metrics_path, 'w', encoding='utf-8') as handle:",
+                  "        handle.write('{\"status\":\"completed\",\"accuracy\":1.0}')",
+                  "",
                   "def main():",
                   "    load_config()",
+                  "    write_metrics('metrics.json')",
                   "",
                   "if __name__ == '__main__':",
                   "    main()"
@@ -7304,7 +7771,18 @@ describe("ImplementSessionManager", () => {
                   "def select_prediction(score_rows):",
                   "    role = BASELINE_COMPARATOR_ROLE",
                   "    best = max(score_rows, key=lambda row: (normalize_score(row['score']), -int(row['index'])))",
-                  "    return {'role': role, 'index': int(best['index'])}"
+                  "    return {'role': role, 'index': int(best['index'])}",
+                  "",
+                  "def write_metrics(metrics_path):",
+                  "    prediction = select_prediction(build_score_rows([0.4, 0.9]))",
+                  "    with open(metrics_path, 'w', encoding='utf-8') as handle:",
+                  "        handle.write('{\"status\":\"completed\",\"accuracy\":1.0,\"prediction_index\":%d}' % prediction['index'])",
+                  "",
+                  "def main():",
+                  "    write_metrics('metrics.json')",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    main()"
                 ].join("\n")
               }),
               threadId: "thread-syntax-eval-selection"
@@ -7867,7 +8345,7 @@ describe("ImplementSessionManager", () => {
             file_edits: [
               {
                 path: fixedScriptPath,
-                content: "print('ok')\n"
+                content: MINIMAL_METRICS_RUNNER_SOURCE
               }
             ]
           })
@@ -7897,7 +8375,7 @@ describe("ImplementSessionManager", () => {
     expect(result.verifyReport).toMatchObject({ status: "pass" });
     expect(result.threadId).toBe("response-2");
     expect(result.scriptPath).toBe(fixedScriptPath);
-    expect(readFileSync(fixedScriptPath, "utf8")).toBe("print('ok')\n");
+    expect(readFileSync(fixedScriptPath, "utf8")).toBe(MINIMAL_METRICS_RUNNER_SOURCE);
     expect(updatedRun?.nodeThreads.implement_experiments).toBe("response-2");
     expect(await memory.get("implement_experiments.thread_id")).toBe("response-2");
   });
@@ -7929,7 +8407,7 @@ describe("ImplementSessionManager", () => {
 
     mkdirSync(path.dirname(artifactPath), { recursive: true });
     mkdirSync(publicDir, { recursive: true });
-    writeFileSync(scriptPath, "print('old bundle')\n", "utf8");
+    writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
     writeFileSync(configPath, "{\"pilot_size\":8,\"repeats\":1}\n", "utf8");
     writeFileSync(baselinePath, "{\"baseline\":\"fixed_cot_256\"}\n", "utf8");
     writeFileSync(metricsPath, "{\"status\":\"ok\"}\n", "utf8");
@@ -7978,7 +8456,7 @@ describe("ImplementSessionManager", () => {
     const codex = {
       runTurnStream: async () => {
         callCount += 1;
-        writeFileSync(scriptPath, "print('new bundle')\n", "utf8");
+        writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         writeFileSync(configPath, "{\"pilot_size\":16,\"repeats\":2}\n", "utf8");
         return {
           threadId: "thread-stale-bundle-refresh",
@@ -8516,6 +8994,179 @@ describe("ImplementSessionManager", () => {
     expect(callCount).toBe(2);
     expect(repairedSource).toContain("def validate_runtime_dependencies");
     expect(await new RunContextMemory(run.memoryRefs.runContextPath).get("implement_experiments.auto_handoff_to_run_experiments")).toBe(true);
+  });
+
+  it("repairs a python runner that calls undefined ensure_dir before handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-ensure-dir-helper-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Repair Ensure Dir Helper",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    let callCount = 0;
+
+    const codex = {
+      runTurnStream: async () => {
+        callCount += 1;
+        return {
+          threadId: `thread-ensure-dir-helper-${callCount}`,
+          finalText: JSON.stringify({
+            summary: "Implemented the experiment runner.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            experiment_mode: "real_execution",
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Localized the runner script.",
+              selected_files: [scriptPath],
+              candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+            },
+            file_edits: [
+              {
+                path: scriptPath,
+                content: [
+                  "from __future__ import annotations",
+                  "",
+                  "import json",
+                  "",
+                  "def main(argv=None):",
+                  "    output_dir = ensure_dir('results')",
+                  "    with open(output_dir / 'metrics.json', 'w', encoding='utf-8') as handle:",
+                  "        json.dump({'status': 'ok'}, handle)",
+                  "    return 0",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    raise SystemExit(main())",
+                  ""
+                ].join("\n")
+              }
+            ],
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const repairedSource = readFileSync(result.scriptPath!, "utf8");
+
+    expect(callCount).toBe(1);
+    expect(repairedSource).toContain("def ensure_dir(path):");
+    expect(repairedSource).toContain("directory.mkdir(parents=True, exist_ok=True)");
+    expect(await new RunContextMemory(run.memoryRefs.runContextPath).get("implement_experiments.auto_handoff_to_run_experiments")).toBe(true);
+  });
+
+  it("rejects helper-only python runners that would exit without writing metrics", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-helper-only-runner-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Reject Helper Only Runner",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    let callCount = 0;
+
+    const codex = {
+      runTurnStream: async () => {
+        callCount += 1;
+        return {
+          threadId: `thread-helper-only-runner-${callCount}`,
+          finalText: JSON.stringify({
+            summary: "Added the missing ensure_dir helper.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            experiment_mode: "real_execution",
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Localized the runner script.",
+              selected_files: [scriptPath],
+              candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+            },
+            file_edits: [
+              {
+                path: scriptPath,
+                content: [
+                  "from pathlib import Path",
+                  "",
+                  "def ensure_dir(path):",
+                  "    directory = Path(path)",
+                  "    directory.mkdir(parents=True, exist_ok=True)",
+                  "    return directory",
+                  ""
+                ].join("\n")
+              }
+            ],
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow(/truncated or non-executable|helper-only Python/i);
+    expect(callCount).toBe(3);
   });
 
   it("retries when a python runner calls undefined execution helper aliases", async () => {
@@ -9154,6 +9805,124 @@ describe("ImplementSessionManager", () => {
     const repairedSource = readFileSync(result.scriptPath!, "utf8");
     expect(repairedSource).toContain("def name(self) -> str:");
     expect(repairedSource).toContain("return str(self.recipe_id)");
+    expect(result.testCommand).toContain("py_compile");
+  });
+
+  it("repairs object-backed recipe subscript access and broad TypeError entrypoint fallback before handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-object-recipe-subscript-repair-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Repair Object Recipe Subscript",
+      topic: "parameter efficient tuning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+
+    const codex = {
+      runTurnStream: async () => ({
+        threadId: "thread-object-recipe-subscript-repair",
+        finalText: JSON.stringify({
+          summary: "Implemented the experiment runner.",
+          run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`,
+          test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+          working_dir: publicDir,
+          experiment_mode: "staged_llm",
+          changed_files: [scriptPath],
+          artifacts: [scriptPath],
+          public_dir: publicDir,
+          public_artifacts: [scriptPath],
+          script_path: scriptPath,
+          metrics_path: metricsPath,
+          localization: {
+            summary: "Localized the runner script.",
+            selected_files: [scriptPath],
+            candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+          },
+          file_edits: [
+            {
+              path: scriptPath,
+              content: [
+                "from __future__ import annotations",
+                "",
+                "import argparse",
+                "from dataclasses import dataclass",
+                "from typing import Tuple",
+                "",
+                "@dataclass(frozen=True)",
+                "class PeftRecipe:",
+                "    name: str",
+                "    rank: int",
+                "",
+                "PEFT_RECIPES: Tuple[PeftRecipe, ...] = (",
+                "    PeftRecipe(name='lora_r8_baseline', rank=8),",
+                ")",
+                "",
+                "def parse_args(argv=None):",
+                "    parser = argparse.ArgumentParser()",
+                "    parser.add_argument('--metrics-path')",
+                "    parser.add_argument('--output-dir')",
+                "    return parser.parse_args(argv)",
+                "",
+                "def _resolve_recipe_selection(args):",
+                "    requested_names = [str(recipe['name']) for recipe in PEFT_RECIPES]",
+                "    return requested_names",
+                "",
+                "def run_experiment(args):",
+                "    return {'status': 'completed', 'success': True, 'recipes': _resolve_recipe_selection(args)}",
+                "",
+                "def _find_success_orchestrator():",
+                "    return run_experiment",
+                "",
+                "def main(argv=None):",
+                "    args = parse_args(argv)",
+                "    orchestrator = _find_success_orchestrator()",
+                "    try:",
+                "        payload = orchestrator(args)",
+                "    except TypeError:",
+                "        payload = orchestrator()",
+                "    return 0 if payload else 1",
+                "",
+                "if __name__ == '__main__':",
+                "    raise SystemExit(main())",
+                ""
+              ].join("\n")
+            }
+          ],
+          assumptions: []
+        }),
+        events: []
+      })
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const repairedSource = readFileSync(result.scriptPath!, "utf8");
+    expect(repairedSource).toContain("def __getitem__(self, key):");
+    expect(repairedSource).toContain("return getattr(self, key)");
+    expect(repairedSource).toContain("inspect as _autolabos_entrypoint_inspect");
+    expect(repairedSource).not.toContain("except TypeError:\n        payload = orchestrator()");
     expect(result.testCommand).toContain("py_compile");
   });
 
@@ -10828,6 +11597,7 @@ describe("ImplementSessionManager", () => {
                   "        is_locked_baseline=True,",
                   "    ),",
                   ")",
+                  MINIMAL_METRICS_RUNNER_FOOTER,
                   ""
                 ].join("\n")
               }
@@ -11006,6 +11776,59 @@ describe("ImplementSessionManager", () => {
     expect(result.testCommand).toContain("py_compile");
   });
 
+  it("repairs baseline-first PEFT runners whose locked standard LoRA id drifts from the recipe registry", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-locked-lora-id-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_peft_instruction_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import dataclass",
+        "from typing import Any, Dict, List, Optional, Sequence",
+        "",
+        "COMPARISON_MODE = 'baseline_first_locked'",
+        "STANDARD_LORA_BASELINE_ID = 'standard_lora_r8_all_linear'",
+        "",
+        "@dataclass(frozen=True)",
+        "class PeftRecipe:",
+        "    recipe_id: str",
+        "",
+        "STANDARD_LORA_BASELINE_RECIPE = PeftRecipe(recipe_id=STANDARD_LORA_BASELINE_ID)",
+        "PEFT_CANDIDATE_RECIPES = (",
+        "    STANDARD_LORA_BASELINE_RECIPE,",
+        "    PeftRecipe(recipe_id='attention_only_lora_r8'),",
+        ")",
+        "",
+        "LOCKED_STANDARD_LORA_BASELINE_ID = 'standard_lora'",
+        "",
+        "def _recipe_identifier(recipe: Any) -> str:",
+        "    return str(recipe.recipe_id)",
+        "",
+        "def _candidate_recipe_sequence() -> List[Any]:",
+        "    return list(PEFT_CANDIDATE_RECIPES)",
+        "",
+        "def build_locked_candidate_order(candidates: Optional[Sequence[Any]] = None) -> List[Any]:",
+        "    ordered_candidates = list(_candidate_recipe_sequence() if candidates is None else candidates)",
+        "    by_id: Dict[str, Any] = {_recipe_identifier(recipe): recipe for recipe in ordered_candidates}",
+        "    if LOCKED_STANDARD_LORA_BASELINE_ID not in by_id:",
+        "        raise ValueError('missing locked standard LoRA baseline')",
+        "    return [by_id[LOCKED_STANDARD_LORA_BASELINE_ID]]",
+        "",
+        "LOCKED_TUNED_CANDIDATE_ORDER = build_locked_candidate_order()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const repair = await repairPythonLockedStandardLoraBaselineIdSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("LOCKED_STANDARD_LORA_BASELINE_ID = STANDARD_LORA_BASELINE_ID");
+    expect(repairedSource).toContain("STANDARD_LORA_BASELINE_ID = 'standard_lora_r8_all_linear'");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
   it("rejects baseline-first PEFT runners that use an untuned row as the primary comparator", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-baseline-first-primary-baseline-"));
     tempDirs.push(workspace);
@@ -11052,6 +11875,7 @@ describe("ImplementSessionManager", () => {
       "    baseline = next(res for res in results if res.recipe == 'baseline_no_tuning')",
       "    baseline_mean_zero_shot_accuracy = baseline.mean_zero_shot_accuracy",
       "    return baseline_mean_zero_shot_accuracy",
+      MINIMAL_METRICS_RUNNER_FOOTER,
       ""
     ].join("\n");
     const codex = {
@@ -11371,6 +12195,98 @@ describe("ImplementSessionManager", () => {
     expect(result.testCommand).toContain("py_compile");
   });
 
+  it("repairs Python metrics json.dumps serialization for PathLike values", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-json-dumps-pathlike-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Repair JSON Dumps PathLike Metrics",
+      topic: "agent reasoning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+
+    const codex = {
+      runTurnStream: async () => ({
+        threadId: "thread-json-dumps-pathlike-repair",
+        finalText: JSON.stringify({
+          summary: "Implemented the experiment runner.",
+          run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+          test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+          working_dir: publicDir,
+          experiment_mode: "staged_llm",
+          changed_files: [scriptPath],
+          artifacts: [scriptPath],
+          public_dir: publicDir,
+          public_artifacts: [scriptPath],
+          script_path: scriptPath,
+          metrics_path: metricsPath,
+          localization: {
+            summary: "Localized the runner script.",
+            selected_files: [scriptPath],
+            candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+          },
+          file_edits: [
+            {
+              path: scriptPath,
+              content: [
+                "from __future__ import annotations",
+                "",
+                "import json",
+                "from pathlib import Path",
+                "",
+                "def write_json(path, payload):",
+                "    Path(path).parent.mkdir(parents=True, exist_ok=True)",
+                "    tmp = Path(path).with_suffix('.tmp')",
+                "    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding='utf-8')",
+                "    tmp.replace(path)",
+                "",
+                "def main(argv=None):",
+                "    write_json(Path('metrics.json'), {'status': 'completed', 'public_dir': Path('outputs')})",
+                "    return 0",
+                "",
+                "if __name__ == '__main__':",
+                "    raise SystemExit(main())",
+                ""
+              ].join("\n")
+            }
+          ],
+          assumptions: []
+        }),
+        events: []
+      })
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const repairedSource = readFileSync(result.scriptPath!, "utf8");
+
+    expect(repairedSource).toContain("if hasattr(value, '__fspath__'):");
+    expect(repairedSource).toContain("json.dumps(_autolabos_json_safe(payload), indent=2, sort_keys=True)");
+    expect(result.testCommand).toContain("py_compile");
+  });
+
   it("ignores model-supplied paths that escape the workspace", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-path-guard-"));
     tempDirs.push(workspace);
@@ -11402,7 +12318,7 @@ describe("ImplementSessionManager", () => {
 
     const codex = {
       runTurnStream: async () => {
-        writeFileSync(insideScriptPath, "print('ok')\n", "utf8");
+        writeFileSync(insideScriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         return {
           threadId: "thread-impl-path-guard",
           finalText: JSON.stringify({
@@ -11537,7 +12453,7 @@ describe("ImplementSessionManager", () => {
         capturedSystemPrompt = systemPrompt || "";
         capturedWorkingDirectory = workingDirectory || "";
         mkdirSync(path.dirname(sandboxScriptPath), { recursive: true });
-        writeFileSync(sandboxScriptPath, "print('ok')\n", "utf8");
+        writeFileSync(sandboxScriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         return {
           threadId: "thread-impl-tmp-alias",
           finalText: JSON.stringify({
@@ -11607,7 +12523,7 @@ describe("ImplementSessionManager", () => {
     const codex = {
       runTurnStream: async () => {
         callCount += 1;
-        writeFileSync(scriptPath, "print('ok')\n", "utf8");
+        writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         return {
           threadId: "thread-impl-policy",
           finalText: JSON.stringify({
@@ -11720,7 +12636,7 @@ describe("ImplementSessionManager", () => {
     // Codex returns no changed files (reuses old script)
     const codex = {
       runTurnStream: async ({ onEvent }: { onEvent?: (event: Record<string, unknown>) => void }) => {
-        writeFileSync(scriptPath, "print('old script')\n", "utf8");
+        writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         // Note: no file.changed event — script was not modified
         return {
           threadId: "thread-drift-1",
@@ -11819,7 +12735,7 @@ describe("ImplementSessionManager", () => {
     const codex = {
       runTurnStream: async ({ threadId }: { threadId?: string }) => {
         seenThreadId = threadId;
-        writeFileSync(scriptPath, "print('fresh turn')\n", "utf8");
+        writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         return {
           threadId: "thread-fresh-impl",
           finalText: JSON.stringify({
@@ -11912,7 +12828,7 @@ describe("ImplementSessionManager", () => {
     const codex = {
       runTurnStream: async ({ threadId }: { threadId?: string }) => {
         seenThreadId = threadId;
-        writeFileSync(scriptPath, "print(False)\n", "utf8");
+        writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
         return {
           threadId: "thread-fresh-after-feedback",
           finalText: JSON.stringify({

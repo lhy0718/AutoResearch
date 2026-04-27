@@ -282,4 +282,91 @@ describe("run_experiments execution profile behavior", () => {
       stage: "metrics"
     });
   });
+
+  it("fails verification when a successful command writes top-level failed metrics", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-failed-metrics-"));
+    process.chdir(root);
+    const run = makeRun("run-failed-metrics");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "failed",
+                success: true,
+                candidate_results: [],
+                failure: {
+                  type: "RuntimeError",
+                  message: "No per-candidate execution/evaluation helper was materialized."
+                }
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "runner wrote failed metrics",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("Experiment metrics payload reports failed status");
+    expect(result.error).toContain("No per-candidate execution/evaluation helper was materialized");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string };
+    expect(verifierReport).toMatchObject({
+      status: "fail",
+      stage: "metrics"
+    });
+    expect(verifierReport.summary).toContain("Experiment metrics payload reports failed status");
+
+    const feedback = await runContext.get<{ status: string; stage: string; summary: string }>(
+      "implement_experiments.runner_feedback"
+    );
+    expect(feedback).toMatchObject({
+      status: "fail",
+      stage: "metrics"
+    });
+  });
 });

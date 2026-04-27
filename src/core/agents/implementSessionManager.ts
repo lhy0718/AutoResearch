@@ -4284,6 +4284,38 @@ export class ImplementSessionManager {
       return report;
     }
 
+    const pythonNonExecutableRunner = await detectPythonNonExecutableRunnerSurface(executionScriptPath);
+    if (pythonNonExecutableRunner) {
+      const report: VerifyReport = {
+        status: "fail",
+        command,
+        cwd: attempt.workingDir,
+        exit_code: 0,
+        failure_type: "implementation",
+        next_action: "retry_patch",
+        stderr_excerpt: pythonNonExecutableRunner,
+        summary: buildVerificationFailureSummary(command, "implementation", pythonNonExecutableRunner)
+      };
+      this.deps.eventStream.emit({
+        type: "TEST_FAILED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          command,
+          cwd: attempt.workingDir,
+          failure_type: report.failure_type,
+          stderr: report.stderr_excerpt || report.summary,
+          attempt: attemptNumber
+        }
+      });
+      onProgress?.(report.summary, {
+        verificationCommand: command,
+        verifyStatus: report.status
+      });
+      return report;
+    }
+
     const pythonUnsupportedGenerateKwarg = await detectPythonUnsupportedGenerateKwarg(executionScriptPath);
     if (pythonUnsupportedGenerateKwarg) {
       const report: VerifyReport = {
@@ -4404,6 +4436,138 @@ export class ImplementSessionManager {
       }
     }
 
+    const trainerLabelPaddingRepair = await repairPythonTrainerLabelPaddingCollatorSurface(executionScriptPath);
+    if (trainerLabelPaddingRepair.repaired) {
+      onProgress?.(
+        trainerLabelPaddingRepair.message ||
+          "Repaired Trainer collator label padding before local verification.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            trainerLabelPaddingRepair.message ||
+            "Repaired Trainer collator label padding before local verification."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
+    const helperAdapterRepair = await repairPythonBroadCompatibleCallAdapterSurface(executionScriptPath);
+    if (helperAdapterRepair.repaired) {
+      onProgress?.(
+        helperAdapterRepair.message ||
+          "Repaired broad helper compatibility adapter before local verification.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            helperAdapterRepair.message ||
+            "Repaired broad helper compatibility adapter before local verification."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
+    const orchestrationArgumentRepair = await repairPythonOrchestrationArgumentSurface(executionScriptPath);
+    if (orchestrationArgumentRepair.repaired) {
+      onProgress?.(
+        orchestrationArgumentRepair.message ||
+          "Repaired orchestration argument preparation before local verification.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            orchestrationArgumentRepair.message ||
+            "Repaired orchestration argument preparation before local verification."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
     const jsonSafeAliasRepair = await repairPythonJsonSafeHelperAlias(executionScriptPath);
     if (jsonSafeAliasRepair.repaired) {
       onProgress?.(
@@ -4422,6 +4586,50 @@ export class ImplementSessionManager {
           text:
             jsonSafeAliasRepair.message ||
             "Repaired JSON-safe helper alias before local verification."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
+    const ensureDirRepair = await repairPythonEnsureDirHelperSurface(executionScriptPath);
+    if (ensureDirRepair.repaired) {
+      onProgress?.(
+        ensureDirRepair.message ||
+          "Added missing ensure_dir directory helper before local verification.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            ensureDirRepair.message ||
+            "Added missing ensure_dir directory helper before local verification."
         }
       });
       const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
@@ -5208,6 +5416,50 @@ export class ImplementSessionManager {
       }
     }
 
+    const objectRecipeSubscriptRepair = await repairPythonObjectRecipeSubscriptSurface(executionScriptPath);
+    if (objectRecipeSubscriptRepair.repaired) {
+      onProgress?.(
+        objectRecipeSubscriptRepair.message ||
+          "Repaired object-backed recipe subscript compatibility before handoff.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            objectRecipeSubscriptRepair.message ||
+            "Repaired object-backed recipe subscript compatibility before handoff."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
     const orchestrationCandidateRepair = await repairPythonOrchestrationCandidateSurface(executionScriptPath);
     if (orchestrationCandidateRepair.repaired) {
       onProgress?.(
@@ -5226,6 +5478,95 @@ export class ImplementSessionManager {
           text:
             orchestrationCandidateRepair.message ||
             "Aligned experiment orchestration entrypoint compatibility before handoff."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
+    const entrypointTypeErrorFallbackRepair = await repairPythonEntrypointTypeErrorFallbackSurface(executionScriptPath);
+    if (entrypointTypeErrorFallbackRepair.repaired) {
+      onProgress?.(
+        entrypointTypeErrorFallbackRepair.message ||
+          "Repaired entrypoint TypeError fallback compatibility before handoff.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            entrypointTypeErrorFallbackRepair.message ||
+            "Repaired entrypoint TypeError fallback compatibility before handoff."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
+    const lockedStandardLoraBaselineIdRepair =
+      await repairPythonLockedStandardLoraBaselineIdSurface(executionScriptPath);
+    if (lockedStandardLoraBaselineIdRepair.repaired) {
+      onProgress?.(
+        lockedStandardLoraBaselineIdRepair.message ||
+          "Aligned locked standard LoRA baseline recipe id before handoff.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            lockedStandardLoraBaselineIdRepair.message ||
+            "Aligned locked standard LoRA baseline recipe id before handoff."
         }
       });
       const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
@@ -5858,6 +6199,19 @@ async function detectPythonMissingRegisteredRecipeWorkflow(scriptPath?: string):
     new RegExp(`\\ndef\\s+${escapeRegex(name)}\\s*\\(`, "u").test(`\n${source}`)
   );
   if (definedNames.length > 0) {
+    return undefined;
+  }
+
+  const repairableOrchestrationCandidates = [
+    "execute_locked_recipe_plan",
+    "orchestrate_locked_recipe_plan",
+    "run_locked_recipe_plan"
+  ].filter((name) => new RegExp(`\\ndef\\s+${escapeRegex(name)}\\s*\\(`, "u").test(`\n${source}`));
+  if (
+    repairableOrchestrationCandidates.length > 0 &&
+    source.includes("def _invoke_experiment_orchestration(") &&
+    source.includes("candidate_names")
+  ) {
     return undefined;
   }
 
@@ -6733,11 +7087,12 @@ async function evaluateImplementBootstrapContract(params: {
     }
   }
 
-  if (params.contract.blocking_reason || missing.length > 0) {
+  const blockingReason = normalizeActionableBootstrapBlockingReason(params.contract.blocking_reason);
+  if (blockingReason || missing.length > 0) {
     return {
       status: "block",
       summary:
-        params.contract.blocking_reason ||
+        blockingReason ||
         `Bootstrap contract failed under the current execution policy: ${missing.join("; ")}`,
       missing
     };
@@ -6756,6 +7111,42 @@ async function evaluateImplementBootstrapContract(params: {
     summary: params.contract.summary || "Bootstrap contract is compatible with the current execution policy.",
     missing
   };
+}
+
+function normalizeActionableBootstrapBlockingReason(reason: string | undefined): string | undefined {
+  if (!reason) {
+    return undefined;
+  }
+  const normalized = reason.trim();
+  const lower = normalized.toLowerCase();
+  const uncertaintySignals = [
+    "none known except",
+    "if ",
+    "if torch",
+    "if the",
+    "unless",
+    "may fail",
+    "might fail",
+    "could fail",
+    "availability is unknown",
+    "unknown"
+  ];
+  const concreteBlockSignals = [
+    "is missing",
+    "not found",
+    "does not exist",
+    "unavailable",
+    "cannot execute",
+    "permission denied",
+    "requires manual",
+    "blocked by policy"
+  ];
+  const describesUncertainty = uncertaintySignals.some((signal) => lower.includes(signal));
+  const describesConcreteBlock = concreteBlockSignals.some((signal) => lower.includes(signal));
+  if (describesUncertainty && !describesConcreteBlock) {
+    return undefined;
+  }
+  return normalized;
 }
 
 function shouldUseSectionedSkeletonForTarget(filePath: string): boolean {
@@ -7643,6 +8034,9 @@ async function recoverStructuredResultFromPublicBundle(params: {
     return undefined;
   }
   if (await detectPythonUndefinedRuntimeHelperReferences(scriptPath)) {
+    return undefined;
+  }
+  if (await detectPythonNonExecutableRunnerSurface(scriptPath)) {
     return undefined;
   }
 
@@ -10085,6 +10479,284 @@ function removeUnsupportedTrainerKwargsFromCall(callText: string): string {
     .replace(/,\s*\)/gu, ")");
 }
 
+async function repairPythonTrainerLabelPaddingCollatorSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    !source.includes("Trainer(") ||
+    !source.includes("data_collator=")
+  ) {
+    return { repaired: false };
+  }
+
+  if (
+    source.includes("DataCollatorForLanguageModeling") &&
+    /tokens\[\s*["']labels["']\s*\]\s*=\s*\[\s*list\s*\(\s*ids\s*\)\s+for\s+ids\s+in\s+tokens\[\s*["']input_ids["']\s*\]\s*\]/u.test(source)
+  ) {
+    const nextSource = source.replace(
+      /^(\s*)tokens\[\s*["']labels["']\s*\]\s*=\s*\[\s*list\s*\(\s*ids\s*\)\s+for\s+ids\s+in\s+tokens\[\s*["']input_ids["']\s*\]\s*\]\s*$/mu,
+      "$1# DataCollatorForLanguageModeling creates padded causal-LM labels after input padding."
+    );
+    if (nextSource !== source) {
+      await fs.writeFile(scriptPath, nextSource, "utf8");
+      return {
+        repaired: true,
+        message: `Removed ragged precomputed labels before DataCollatorForLanguageModeling in ${path.basename(scriptPath)} before handoff.`
+      };
+    }
+  }
+
+  if (
+    !source.includes('tokenizer.pad(features, padding=True, return_tensors="pt")') ||
+    !source.includes('batch["labels"].clone()')
+  ) {
+    return { repaired: false };
+  }
+
+  const collatorPattern =
+    /(\n\s*def\s+collate\s*\(\s*features\s*:\s*list\s*\[dict\s*\[\s*str\s*,\s*Any\s*\]\]\s*\)\s*->\s*dict\s*\[\s*str\s*,\s*torch\.Tensor\s*\]\s*:\n)\s*batch\s*=\s*tokenizer\.pad\(features,\s*padding=True,\s*return_tensors=["']pt["']\)\n\s*labels\s*=\s*batch\["labels"\]\.clone\(\)\n\s*labels\[batch\["attention_mask"\]\s*==\s*0\]\s*=\s*-100\n\s*batch\["labels"\]\s*=\s*labels\n\s*return\s+batch/u;
+  if (!collatorPattern.test(source)) {
+    return { repaired: false };
+  }
+
+  const nextSource = source.replace(collatorPattern, (_match, signatureLine: string) => {
+    const indentMatch = signatureLine.match(/\n(\s*)def\s+collate/u);
+    const indent = indentMatch?.[1] || "";
+    const body = `${indent}    `;
+    return [
+      signatureLine.trimEnd(),
+      `${body}model_features = []`,
+      `${body}label_features = []`,
+      `${body}for feature in features:`,
+      `${body}    copied = dict(feature)`,
+      `${body}    raw_labels = copied.pop("labels", copied.get("input_ids", []))`,
+      `${body}    label_features.append(list(raw_labels))`,
+      `${body}    model_features.append(copied)`,
+      `${body}batch = tokenizer.pad(model_features, padding=True, return_tensors="pt")`,
+      `${body}max_length = int(batch["input_ids"].shape[1])`,
+      `${body}padded_labels = []`,
+      `${body}for labels in label_features:`,
+      `${body}    labels = labels[:max_length]`,
+      `${body}    labels = labels + [-100] * max(0, max_length - len(labels))`,
+      `${body}    padded_labels.append(labels)`,
+      `${body}labels_tensor = torch.tensor(padded_labels, dtype=torch.long)`,
+      `${body}labels_tensor[batch["attention_mask"] == 0] = -100`,
+      `${body}batch["labels"] = labels_tensor`,
+      `${body}return batch`
+    ].join("\n");
+  });
+
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Padded Trainer collator labels separately from tokenizer.pad(...) in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+async function repairPythonBroadCompatibleCallAdapterSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  let nextSource = source;
+  const broadFallbackPattern =
+    /def _call_compatible\(fn: Callable\[\.\.\., Any\], \*args: Any, \*\*kwargs: Any\) -> Any:\n    """Call a helper while filtering keyword arguments it does not accept\."""\n    try:\n        signature = inspect\.signature\(fn\)\n        parameters = signature\.parameters\n        accepts_var_kwargs = any\(\n            parameter\.kind == inspect\.Parameter\.VAR_KEYWORD for parameter in parameters\.values\(\)\n        \)\n        if accepts_var_kwargs:\n            return fn\(\*args, \*\*kwargs\)\n        filtered_kwargs = \{key: value for key, value in kwargs\.items\(\) if key in parameters\}\n        return fn\(\*args, \*\*filtered_kwargs\)\n    except \(TypeError, ValueError\):\n        return fn\(\*args, \*\*kwargs\)/u;
+  if (broadFallbackPattern.test(nextSource)) {
+    nextSource = nextSource.replace(
+      broadFallbackPattern,
+      [
+        "def _call_compatible(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:",
+        "    \"\"\"Call a helper while filtering keyword arguments it does not accept.\"\"\"",
+        "    try:",
+        "        signature = inspect.signature(fn)",
+        "    except (TypeError, ValueError):",
+        "        return fn(*args, **kwargs)",
+        "    parameters = signature.parameters",
+        "    accepts_var_kwargs = any(",
+        "        parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()",
+        "    )",
+        "    if accepts_var_kwargs:",
+        "        return fn(*args, **kwargs)",
+        "    filtered_kwargs = {key: value for key, value in kwargs.items() if key in parameters}",
+        "    return fn(*args, **filtered_kwargs)"
+      ].join("\n")
+    );
+  }
+
+  const duplicateMetricsWriterPattern =
+    /_call_compatible\(writer,\s*metrics,\s*metrics_path,\s*metrics=metrics,\s*path=metrics_path,\s*output_path=metrics_path\)/u;
+  if (duplicateMetricsWriterPattern.test(nextSource)) {
+    nextSource = nextSource.replace(
+      duplicateMetricsWriterPattern,
+      "_call_compatible(writer, metrics=metrics, metrics_path=metrics_path, path=metrics_path, output_path=metrics_path)"
+    );
+  }
+
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Repaired broad helper adapter fallback and duplicate metrics-writer arguments in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonOrchestrationArgumentSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  let nextSource = source;
+  const namespaceParsePattern = /^(\s*)parsed\s*=\s*parser\.parse_args\(argv\)\s*$/mu;
+  if (
+    namespaceParsePattern.test(nextSource) &&
+    /\bargparse\.Namespace\b/u.test(nextSource) &&
+    !/isinstance\(argv,\s*argparse\.Namespace\)/u.test(nextSource)
+  ) {
+    nextSource = nextSource.replace(
+      namespaceParsePattern,
+      (_match, indent: string) => [
+        `${indent}if isinstance(argv, argparse.Namespace):`,
+        `${indent}    parsed = argv`,
+        `${indent}else:`,
+        `${indent}    parsed = parser.parse_args(argv)`
+      ].join("\n")
+    );
+  }
+
+  const needsWorkflowDatasetRepair =
+    /def\s+_execute_baseline_first_workflow\s*\(/u.test(nextSource) &&
+    /\btrain_dataset\b/u.test(nextSource) &&
+    /\beval_examples\b/u.test(nextSource) &&
+    /"recipes":\s*globals\(\)\.get\("PEFT_RECIPES"/u.test(nextSource) &&
+    !/"train_dataset":\s*train_dataset/u.test(nextSource) &&
+    !/def\s+_autolabos_prepare_workflow_train_dataset\s*\(/u.test(nextSource);
+
+  if (needsWorkflowDatasetRepair) {
+    const workflowMatch = nextSource.match(/\ndef\s+_execute_baseline_first_workflow\s*\(/u);
+    if (workflowMatch?.index != null) {
+      const helperBlock = [
+        "",
+        "def _autolabos_prepare_workflow_train_dataset(args: argparse.Namespace, runtime_context: Mapping[str, Any]) -> Any:",
+        "    for helper_name in (",
+        "        \"load_shared_instruction_subset\",",
+        "        \"load_instruction_dataset\",",
+        "        \"load_training_dataset\",",
+        "        \"prepare_train_dataset\",",
+        "        \"prepare_training_dataset\",",
+        "    ):",
+        "        helper = globals().get(helper_name)",
+        "        if callable(helper):",
+        "            return _call_with_compatible_signature(",
+        "                helper,",
+        "                args=args,",
+        "                runtime_context=runtime_context,",
+        "                cache_dir=runtime_context.get(\"cache_dir\"),",
+        "                output_dir=runtime_context.get(\"output_dir\"),",
+        "            )",
+        "    raise RuntimeError(\"No train dataset preparation helper was available for the selected workflow.\")",
+        "",
+        "def _autolabos_prepare_workflow_eval_examples(args: argparse.Namespace, runtime_context: Mapping[str, Any]) -> Mapping[str, Sequence[Mapping[str, Any]]]:",
+        "    for helper_name in (",
+        "        \"load_benchmark_examples\",",
+        "        \"load_benchmark_eval_examples\",",
+        "        \"load_eval_examples\",",
+        "        \"prepare_eval_examples\",",
+        "        \"prepare_benchmark_examples\",",
+        "    ):",
+        "        helper = globals().get(helper_name)",
+        "        if callable(helper):",
+        "            value = _call_with_compatible_signature(",
+        "                helper,",
+        "                args=args,",
+        "                runtime_context=runtime_context,",
+        "                cache_dir=runtime_context.get(\"cache_dir\"),",
+        "                max_eval_examples_per_benchmark=getattr(args, \"max_eval_examples_per_benchmark\", None),",
+        "            )",
+        "            if isinstance(value, Mapping):",
+        "                return value",
+        "            raise TypeError(f\"Benchmark helper {helper_name} returned {type(value).__name__}, expected mapping.\")",
+        "    raise RuntimeError(\"No benchmark example preparation helper was available for the selected workflow.\")",
+        ""
+      ].join("\n");
+      nextSource = `${nextSource.slice(0, workflowMatch.index)}${helperBlock}${nextSource.slice(workflowMatch.index)}`;
+    }
+
+    const commonKwargsPattern = /(\n\s*model_name\s*=\s*_get_arg\(args,\s*"model_name"[\s\S]*?\n)(\s*common_kwargs\s*=\s*\{)/u;
+    if (commonKwargsPattern.test(nextSource)) {
+      nextSource = nextSource.replace(
+        commonKwargsPattern,
+        (_match, prefix: string, commonKwargsLine: string) => [
+          prefix.trimEnd(),
+          "    train_dataset = _autolabos_prepare_workflow_train_dataset(args, runtime_context)",
+          "    eval_examples = _autolabos_prepare_workflow_eval_examples(args, runtime_context)",
+          commonKwargsLine
+        ].join("\n")
+      );
+    }
+
+    const recipesLinePattern =
+      /(\n\s*"recipes":\s*globals\(\)\.get\("PEFT_RECIPES",\s*globals\(\)\.get\("RECIPE_CONFIGS",\s*None\)\),)/u;
+    if (recipesLinePattern.test(nextSource)) {
+      nextSource = nextSource.replace(
+        recipesLinePattern,
+        [
+          "$1",
+          "        \"train_dataset\": train_dataset,",
+          "        \"eval_examples\": eval_examples,",
+          "        \"benchmarks\": eval_examples,",
+          "        \"benchmark_examples\": eval_examples,"
+        ].join("\n")
+      );
+    }
+  }
+
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Repaired orchestration Namespace parsing and workflow dataset argument preparation in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
 async function repairPythonJsonSafeHelperAlias(
   scriptPath?: string
 ): Promise<{ repaired: boolean; message?: string }> {
@@ -10142,6 +10814,51 @@ async function repairPythonJsonSafeHelperAlias(
   return {
     repaired: true,
     message: `Added make_json_safe compatibility alias to ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+async function repairPythonEnsureDirHelperSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (!/\bensure_dir\s*\(/u.test(source) || pythonSourceDefinesOrImportsName(source, "ensure_dir")) {
+    return { repaired: false };
+  }
+
+  const helper = [
+    "",
+    "def ensure_dir(path):",
+    "    from pathlib import Path as _AutoLabOSPath",
+    "    directory = _AutoLabOSPath(path)",
+    "    directory.mkdir(parents=True, exist_ok=True)",
+    "    return directory",
+    ""
+  ].join("\n");
+
+  const insertionMatch =
+    source.match(/\ndef\s+main\s*\(/u) ||
+    source.match(/\ndef\s+run_and_write_metrics\s*\(/u) ||
+    source.match(/\nif\s+__name__\s*==\s*["']__main__["']/u);
+  const insertionIndex = insertionMatch?.index ?? source.length;
+  const nextSource = `${source.slice(0, insertionIndex)}${helper}${source.slice(insertionIndex)}`;
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added ensure_dir directory helper to ${path.basename(scriptPath)} before handoff.`
   };
 }
 
@@ -10325,8 +11042,53 @@ async function detectPythonUndefinedSlugifyReference(scriptPath?: string): Promi
   ].join(" ");
 }
 
+async function detectPythonNonExecutableRunnerSurface(scriptPath?: string): Promise<string | undefined> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return undefined;
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  const lineCount = source.split(/\r?\n/u).filter((line) => line.trim().length > 0).length;
+  const hasEntrypoint =
+    /\n\s*if\s+__name__\s*==\s*["']__main__["']\s*:/u.test(`\n${source}`) ||
+    /\n\s*def\s+main\s*\(/u.test(`\n${source}`) ||
+    /\n\s*def\s+run_and_write_metrics\s*\(/u.test(`\n${source}`) ||
+    /\n\s*def\s+(?:run|execute|orchestrate)_[A-Za-z0-9_]*(?:experiment|study)[A-Za-z0-9_]*\s*\(/u.test(`\n${source}`);
+  const hasMetricsPathSurface =
+    /\bmetrics_path\b/u.test(source) ||
+    /--metrics-path/u.test(source) ||
+    /\bmetrics[_-](?:out|output|file|path)\b/iu.test(source);
+  const hasMetricsWriterSurface =
+    /\n\s*def\s+[A-Za-z0-9_]*(?:write|persist|save)[A-Za-z0-9_]*metrics[A-Za-z0-9_]*\s*\(/iu.test(`\n${source}`) ||
+    /\bjson\.dump\s*\(/u.test(source) ||
+    /\.write_text\s*\(/u.test(source);
+
+  if (lineCount <= 40 && !hasEntrypoint && !(hasMetricsPathSurface && hasMetricsWriterSurface)) {
+    return [
+      "Python experiment runner appears truncated or non-executable after materialization.",
+      `${path.basename(scriptPath)} has only ${lineCount} non-empty line(s), no executable entrypoint, and no required metrics-path writing surface.`,
+      "Preserve the full runner while applying targeted repairs; do not hand off helper-only Python files that can exit without writing metrics."
+    ].join(" ");
+  }
+  if (!hasEntrypoint && !hasMetricsWriterSurface) {
+    return [
+      "Python experiment runner has no executable entrypoint or metrics writer surface.",
+      "Define a main/__main__ entrypoint that writes JSON metrics to the required metrics path before handoff."
+    ].join(" ");
+  }
+
+  return undefined;
+}
+
 const CRITICAL_PYTHON_RUNTIME_HELPER_NAMES = [
   "_json_safe",
+  "ensure_dir",
   "get_device",
   "get_device_info",
   "validate_runtime_dependencies",
@@ -10746,6 +11508,118 @@ async function repairPythonRecipeSpecNameSurface(scriptPath?: string): Promise<{
   };
 }
 
+async function repairPythonObjectRecipeSubscriptSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (!/\bPEFT_RECIPES\b/u.test(source) || !/\brecipe\s*\[\s*["'][A-Za-z_][A-Za-z0-9_]*["']\s*\]/u.test(source)) {
+    return { repaired: false };
+  }
+
+  const registryMatch = source.match(
+    /\bPEFT_RECIPES\b\s*(?::[^\n=]+)?=\s*(?:\(|\[)\s*([A-Z][A-Za-z0-9_]*(?:Recipe|Spec))\s*\(/u
+  );
+  const className = registryMatch?.[1];
+  if (!className || !source.includes(`class ${className}:`)) {
+    return { repaired: false };
+  }
+
+  const classStart = source.indexOf(`class ${className}:\n`);
+  if (classStart < 0) {
+    return { repaired: false };
+  }
+  const bodyStart = classStart + `class ${className}:\n`.length;
+  const bodyEnd = findPythonClassBodyEnd(source, bodyStart);
+  const classBody = source.slice(bodyStart, bodyEnd);
+  if (/\n\s+def\s+__getitem__\s*\(/u.test(`\n${classBody}`)) {
+    return { repaired: false };
+  }
+
+  const helper = [
+    "",
+    "    def __getitem__(self, key):",
+    "        return getattr(self, key)",
+    ""
+  ].join("\n");
+  const nextSource = `${source.slice(0, bodyEnd)}${helper}${source.slice(bodyEnd)}`;
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added ${className}.__getitem__ compatibility for dict-style recipe access in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+async function repairPythonEntrypointTypeErrorFallbackSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const unsafeFallbackPattern = /(\n[ \t]*)try:\n([ \t]*)payload\s*=\s*orchestrator\(args\)\n[ \t]*except\s+TypeError:\n[ \t]*payload\s*=\s*orchestrator\(\)[ \t]*(?:#.*)?/u;
+  if (!unsafeFallbackPattern.test(source)) {
+    return { repaired: false };
+  }
+
+  const nextSource = source.replace(
+    unsafeFallbackPattern,
+    (_match, outerIndentWithNewline: string) => {
+      const outerIndent = outerIndentWithNewline.replace(/^\n/u, "");
+      return [
+      "",
+      `${outerIndent}import inspect as _autolabos_entrypoint_inspect`,
+      `${outerIndent}_signature = _autolabos_entrypoint_inspect.signature(orchestrator)`,
+      `${outerIndent}_required_positional = [`,
+      `${outerIndent}    parameter`,
+      `${outerIndent}    for parameter in _signature.parameters.values()`,
+      `${outerIndent}    if parameter.default is _autolabos_entrypoint_inspect.Parameter.empty`,
+      `${outerIndent}    and parameter.kind in (`,
+      `${outerIndent}        _autolabos_entrypoint_inspect.Parameter.POSITIONAL_ONLY,`,
+      `${outerIndent}        _autolabos_entrypoint_inspect.Parameter.POSITIONAL_OR_KEYWORD,`,
+      `${outerIndent}    )`,
+      `${outerIndent}]`,
+      `${outerIndent}if len(_required_positional) == 0:`,
+      `${outerIndent}    payload = orchestrator()`,
+      `${outerIndent}else:`,
+      `${outerIndent}    payload = orchestrator(args)`,
+      ""
+      ].join("\n");
+    }
+  );
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Replaced broad entrypoint TypeError fallback in ${path.basename(scriptPath)} with signature-aware orchestration dispatch before handoff.`
+  };
+}
+
 function findPythonClassBodyEnd(source: string, bodyStart: number): number {
   const tail = source.slice(bodyStart);
   let offset = 0;
@@ -10876,6 +11750,67 @@ async function repairPythonBaselineFirstRecipeOrderSurface(scriptPath?: string):
   return {
     repaired: true,
     message: `Aligned baseline-first PEFT recipe ordering in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonLockedStandardLoraBaselineIdSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const lockedComparison =
+    /COMPARISON_MODE\s*=\s*["']baseline_first_locked["']/u.test(source) ||
+    /BASELINE_FIRST_REQUIRED\s*=\s*True/u.test(source) ||
+    /LOCKED_COMPARISON_CONTRACT/u.test(source);
+  if (!lockedComparison) {
+    return { repaired: false };
+  }
+
+  const standardIdMatch = source.match(/\bSTANDARD_LORA_BASELINE_ID\s*=\s*["']([^"']+)["']/u);
+  const lockedIdMatch = source.match(/\bLOCKED_STANDARD_LORA_BASELINE_ID\s*=\s*["']([^"']+)["']/u);
+  if (!standardIdMatch || !lockedIdMatch) {
+    return { repaired: false };
+  }
+
+  const standardId = standardIdMatch[1];
+  const lockedId = lockedIdMatch[1];
+  if (!standardId || !lockedId || standardId === lockedId) {
+    return { repaired: false };
+  }
+
+  const standardIdAppearsAsRecipe =
+    new RegExp(`\\b(recipe_id|id|name)\\s*=\\s*["']${escapeRegex(standardId)}["']`, "u").test(source) ||
+    new RegExp(`["']${escapeRegex(standardId)}["']`, "u").test(source);
+  if (!standardIdAppearsAsRecipe || !/standard[_-]?lora/iu.test(standardId)) {
+    return { repaired: false };
+  }
+
+  const lockedAssignmentPattern =
+    /\bLOCKED_STANDARD_LORA_BASELINE_ID\s*=\s*["'][^"']+["']/u;
+  const nextSource = source.replace(
+    lockedAssignmentPattern,
+    "LOCKED_STANDARD_LORA_BASELINE_ID = STANDARD_LORA_BASELINE_ID"
+  );
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Aligned locked standard LoRA baseline id from ${lockedId} to ${standardId} in ${path.basename(
+      scriptPath
+    )} before handoff.`
   };
 }
 
@@ -11021,7 +11956,7 @@ async function repairPythonStrictJsonMetricsSurface(scriptPath?: string): Promis
     return { repaired: false };
   }
 
-  if (!/\bjson\.dump\s*\(/u.test(source)) {
+  if (!/\bjson\.dumps?\s*\(/u.test(source)) {
     return { repaired: false };
   }
 
@@ -11034,6 +11969,8 @@ async function repairPythonStrictJsonMetricsSurface(scriptPath?: string): Promis
       "        return {str(key): _autolabos_json_safe(item) for key, item in value.items()}",
       "    if isinstance(value, (list, tuple)):",
       "        return [_autolabos_json_safe(item) for item in value]",
+      "    if hasattr(value, '__fspath__'):",
+      "        return str(value)",
       "    module_name = value.__class__.__module__",
       "    if isinstance(value, float) or module_name.startswith(('numpy', 'torch')):",
       "        try:",
@@ -11047,7 +11984,8 @@ async function repairPythonStrictJsonMetricsSurface(scriptPath?: string): Promis
       ""
     ].join("\n");
     const writeJsonMatch = nextSource.match(/\ndef\s+write_json\s*\(/u);
-    const firstDumpIndex = nextSource.indexOf("json.dump(");
+    const dumpMatch = nextSource.match(/\bjson\.dumps?\s*\(/u);
+    const firstDumpIndex = dumpMatch?.index ?? -1;
     const precedingFunctionMatches =
       firstDumpIndex >= 0
         ? [...nextSource.slice(0, firstDumpIndex).matchAll(/\ndef\s+\w+\s*\(/gu)]
@@ -11063,14 +12001,17 @@ async function repairPythonStrictJsonMetricsSurface(scriptPath?: string): Promis
   const lines = nextSource.split(/\r?\n/u);
   let changedDump = false;
   const repairedLines = lines.map((line) => {
-    if (!/\bjson\.dump\s*\(/u.test(line)) {
+    if (!/\bjson\.dumps?\s*\(/u.test(line)) {
       return line;
     }
     let repaired = line;
-    if (!/_autolabos_json_safe\s*\(/u.test(repaired)) {
+    if (!/_autolabos_json_safe\s*\(/u.test(repaired) && /\bjson\.dump\s*\(/u.test(repaired)) {
       repaired = repaired.replace(/\bjson\.dump\s*\(\s*([^,]+?)\s*,/u, "json.dump(_autolabos_json_safe($1),");
     }
-    if (!/\ballow_nan\s*=/u.test(repaired) && /\)\s*$/u.test(repaired)) {
+    if (!/_autolabos_json_safe\s*\(/u.test(repaired) && /\bjson\.dumps\s*\(/u.test(repaired)) {
+      repaired = repaired.replace(/\bjson\.dumps\s*\(\s*([^,]+?)\s*,/u, "json.dumps(_autolabos_json_safe($1),");
+    }
+    if (!/\ballow_nan\s*=/u.test(repaired) && /\bjson\.dump\s*\(/u.test(repaired) && /\)\s*$/u.test(repaired)) {
       repaired = repaired.replace(/\)\s*$/u, ", allow_nan=False)");
     }
     if (repaired !== line) {
