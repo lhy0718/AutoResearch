@@ -21,7 +21,7 @@ export interface AnalysisComparisonMetric {
 export interface AnalysisConditionComparison {
   id: string;
   label: string;
-  source: "metrics.comparison" | "metrics.condition_metrics" | "metrics.results" | "metrics.result_rows";
+  source: "metrics.comparison" | "metrics.condition_metrics" | "metrics.results" | "metrics.result_rows" | "metrics.recipes";
   metrics: AnalysisComparisonMetric[];
   hypothesis_supported?: boolean;
   summary: string;
@@ -661,6 +661,17 @@ function buildConditionComparisons(
     });
     if (resultsComparison) {
       comparisons.push(resultsComparison);
+    }
+  }
+
+  if (comparisons.length === 0) {
+    const recipesComparison = buildRecipesConditionComparison({
+      metrics,
+      objectiveEvaluation,
+      objectiveProfile
+    });
+    if (recipesComparison) {
+      comparisons.push(recipesComparison);
     }
   }
 
@@ -1659,6 +1670,127 @@ function buildResultArrayPreferredKeys(
     "peak_gpu_memory_allocated_bytes",
     "max_gpu_memory_allocated_bytes"
   ]);
+}
+
+function buildRecipesConditionComparison(args: {
+  metrics: Record<string, unknown>;
+  objectiveEvaluation: ObjectiveMetricEvaluation;
+  objectiveProfile: ObjectiveMetricProfile;
+}): AnalysisConditionComparison | undefined {
+  const recipes = asRecord(args.metrics.recipes);
+  const recipeNames = Object.keys(recipes).filter((name) => Object.keys(asRecord(recipes[name])).length > 0);
+  if (recipeNames.length < 2) {
+    return undefined;
+  }
+
+  const baselineName =
+    recipeNames.find((name) => isLikelyBaselineCondition(name)) ||
+    recipeNames.find((name) => asString(asRecord(recipes[name]).recipe)?.toLowerCase() === "baseline");
+  if (!baselineName) {
+    return undefined;
+  }
+
+  const preferredKeys = buildResultArrayPreferredKeys(args.objectiveEvaluation, args.objectiveProfile);
+  const candidateNames = recipeNames.filter((name) => name !== baselineName);
+  const bestRecipe = asString(args.metrics.best_recipe);
+  const explicitBest =
+    bestRecipe && bestRecipe !== baselineName && candidateNames.includes(bestRecipe) ? bestRecipe : undefined;
+  const comparatorName =
+    explicitBest ||
+    selectRecipeConditionByMetric({
+      recipes,
+      recipeNames: candidateNames,
+      preferredKeys,
+      direction: args.objectiveProfile.direction
+    });
+  if (!comparatorName) {
+    return undefined;
+  }
+
+  const baselineMetrics = new Map(
+    flattenNumericMetrics(asRecord(recipes[baselineName])).map((item) => [item.key, item.value])
+  );
+  const shared = flattenNumericMetrics(asRecord(recipes[comparatorName]))
+    .filter((item) => baselineMetrics.has(item.key))
+    .filter((item) => isUsefulResultArrayMetric(item.key, preferredKeys))
+    .map((item) => {
+      const baselineValue = baselineMetrics.get(item.key) as number;
+      return {
+        key: item.key,
+        primary_value: item.value,
+        baseline_value: baselineValue,
+        value: Number((item.value - baselineValue).toFixed(4))
+      };
+    })
+    .sort((left, right) => {
+      const leftRank = metricPreferenceRank(left.key, preferredKeys);
+      const rightRank = metricPreferenceRank(right.key, preferredKeys);
+      if (leftRank !== rightRank) {
+        return leftRank - rightRank;
+      }
+      return Math.abs(right.value) - Math.abs(left.value);
+    })
+    .slice(0, 6);
+
+  if (shared.length === 0) {
+    return undefined;
+  }
+
+  const sharedSummary = shared
+    .slice(0, 4)
+    .map((item) => `${item.key}: ${formatMetricValue(item.primary_value)} vs ${formatMetricValue(item.baseline_value)} (delta ${formatMetricValue(item.value)})`)
+    .join(", ");
+
+  return {
+    id: `${comparatorName}_vs_${baselineName}`,
+    label: `${humanizeConditionLabel(comparatorName)} vs ${humanizeConditionLabel(baselineName)}`,
+    source: "metrics.recipes",
+    metrics: shared,
+    summary: `${humanizeConditionLabel(comparatorName)} vs ${humanizeConditionLabel(baselineName)}: ${sharedSummary}.`
+  };
+}
+
+function selectRecipeConditionByMetric(args: {
+  recipes: Record<string, unknown>;
+  recipeNames: string[];
+  preferredKeys: string[];
+  direction?: ObjectiveMetricProfile["direction"];
+}): string | undefined {
+  const scored = args.recipeNames
+    .map((name) => {
+      const metric = selectPreferredNumericMetric(flattenNumericMetrics(asRecord(args.recipes[name])), args.preferredKeys);
+      return metric ? { name, value: metric.value } : undefined;
+    })
+    .filter((item): item is { name: string; value: number } => item !== undefined);
+  if (scored.length === 0) {
+    return args.recipeNames[0];
+  }
+
+  const direction = args.direction || "maximize";
+  const sorted = [...scored].sort((left, right) => {
+    if (direction === "minimize") {
+      return left.value - right.value;
+    }
+    return right.value - left.value;
+  });
+  return sorted[0]?.name;
+}
+
+function selectPreferredNumericMetric(
+  metrics: Array<{ key: string; value: number }>,
+  preferredKeys: string[]
+): { key: string; value: number } | undefined {
+  if (metrics.length === 0) {
+    return undefined;
+  }
+  return [...metrics].sort((left, right) => {
+    const leftRank = metricPreferenceRank(left.key, preferredKeys);
+    const rightRank = metricPreferenceRank(right.key, preferredKeys);
+    if (leftRank !== rightRank) {
+      return leftRank - rightRank;
+    }
+    return left.key.localeCompare(right.key);
+  })[0];
 }
 
 function metricPreferenceRank(key: string, preferredKeys: string[]): number {

@@ -2284,6 +2284,130 @@ describe("objective metric propagation", () => {
     );
   });
 
+  it("does not pause for an incomplete table when metrics.recipes has baseline and tuned recipe results", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-recipes-table-"));
+    process.chdir(root);
+
+    const runId = "run-analyze-results-recipes-table";
+    const run = {
+      ...makeRun(runId),
+      currentNode: "analyze_results" as const,
+      objectiveMetric: "accuracy_delta_vs_baseline >= 0.01"
+    };
+    run.graph.currentNode = "analyze_results";
+
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          best_recipe: "baseline",
+          best_improvement_over_baseline: 0,
+          recipes: {
+            baseline: {
+              recipe: "baseline",
+              evaluation: {
+                mean_zero_shot_accuracy: 0.53125,
+                per_benchmark_accuracy: {
+                  arc_challenge: 0.375,
+                  hellaswag: 0.6875
+                }
+              }
+            },
+            lora_r4: {
+              recipe: "lora_r4",
+              evaluation: {
+                mean_zero_shot_accuracy: 0.53125,
+                per_benchmark_accuracy: {
+                  arc_challenge: 0.375,
+                  hellaswag: 0.6875
+                }
+              }
+            },
+            lora_r8: {
+              recipe: "lora_r8",
+              evaluation: {
+                mean_zero_shot_accuracy: 0.5,
+                per_benchmark_accuracy: {
+                  arc_challenge: 0.3125,
+                  hellaswag: 0.6875
+                }
+              }
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "experiment_contract.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          run_id: runId,
+          created_at: new Date().toISOString(),
+          hypothesis: "LoRA should improve zero-shot accuracy",
+          causal_mechanism: "A tuned adapter should improve task accuracy",
+          single_change: "LoRA rank",
+          confounded: false,
+          expected_metric_effect: "Higher mean accuracy than baseline",
+          abort_condition: "Abort if accuracy regresses",
+          keep_or_discard_rule: "Keep if improved",
+          baselines: ["baseline"],
+          metrics: ["evaluation.mean_zero_shot_accuracy"],
+          results_table_schema: [
+            {
+              metric: "evaluation.mean_zero_shot_accuracy",
+              baseline: null,
+              comparator: null,
+              delta: null,
+              direction: "higher_better"
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const analyzeNode = createAnalyzeResultsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await analyzeNode.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(result.transitionRecommendation?.reason).not.toBe("incomplete_results_table");
+
+    const analysisRaw = JSON.parse(
+      await readFile(path.join(runDir, "result_analysis.json"), "utf8")
+    ) as {
+      condition_comparisons: Array<{ source: string }>;
+      results_table: Array<{ metric: string; baseline: number | null; comparator: number | null }>;
+    };
+    expect(analysisRaw.condition_comparisons[0]?.source).toBe("metrics.recipes");
+    expect(analysisRaw.results_table).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metric: "evaluation.mean_zero_shot_accuracy",
+          baseline: 0.53125,
+          comparator: 0.53125
+        })
+      ])
+    );
+  });
+
   it("records critical risk signals and pauses for human review when metrics are statistically inconsistent", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-risk-signals-"));
     process.chdir(root);

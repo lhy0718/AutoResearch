@@ -3496,6 +3496,168 @@ describe("ImplementSessionManager", () => {
     expect(readFileSync(scriptPath, "utf8")).not.toContain("overwrite_output_dir");
   });
 
+  it("repairs unsupported TrainingArguments kwargs passed through an expanded kwargs dictionary", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-training-args-dict-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Unsupported TrainingArguments Kwargs Dict Runtime Failure",
+      topic: "runtime argument validation",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const scriptPath = path.join(runDir, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from typing import Any",
+        "",
+        "def main(TrainingArguments):",
+        "    kwargs: dict[str, Any] = {",
+        '        "output_dir": "outputs",',
+        '        "overwrite_output_dir": True,',
+        '        "per_device_train_batch_size": 1,',
+        "    }",
+        "    return TrainingArguments(**kwargs)",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexNativeClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        workingDir: runDir,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(report.status, report.summary).toBe("pass");
+    expect(repairedSource).not.toContain('"overwrite_output_dir"');
+    expect(repairedSource).toContain('"per_device_train_batch_size": 1');
+    expect(repairedSource).toContain("TrainingArguments(**kwargs)");
+  });
+
+  it("postpones Python annotation evaluation for undefined transformer type-only annotations", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-transformer-annotations-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Transformer Annotation Runtime Failure",
+      topic: "runtime annotation validation",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const scriptPath = path.join(runDir, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        '"""Generated PEFT runner."""',
+        "",
+        "import argparse",
+        "import json",
+        "",
+        "def score_model(model: PreTrainedModel, tokenizer: PreTrainedTokenizerBase) -> float:",
+        "    return 1.0",
+        "",
+        "def main() -> None:",
+        "    parser = argparse.ArgumentParser()",
+        '    parser.add_argument("--metrics-path", default="metrics.json")',
+        "    args = parser.parse_args([])",
+        '    with open(args.metrics_path, "w", encoding="utf8") as handle:',
+        '        json.dump({"status": "completed", "score": score_model(None, None)}, handle)',
+        "",
+        'if __name__ == "__main__":',
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexNativeClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        workingDir: runDir,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(report.status, report.summary).toBe("pass");
+    expect(repairedSource).toMatch(/"""Generated PEFT runner\."""\n\s*from __future__ import annotations/u);
+    expect(repairedSource).toContain("model: PreTrainedModel");
+    expect(repairedSource).toContain("tokenizer: PreTrainedTokenizerBase");
+  });
+
   it("repairs unsupported Trainer tokenizer kwarg before local verification", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-trainer-tokenizer-"));
     tempDirs.push(workspace);
@@ -3971,6 +4133,134 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath]);
   });
 
+  it("repairs baseline-first recipe study workflow inputs and raw_results metrics payload alias", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-baseline-recipe-inputs-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "import argparse",
+        "from pathlib import Path",
+        "from typing import Any, Dict, Mapping, Optional, Sequence",
+        "",
+        "DEFAULT_MAX_TRAIN_EXAMPLES = 2",
+        "DEFAULT_MAX_EVAL_EXAMPLES = 1",
+        "DEFAULT_MAX_SEQ_LENGTH = 16",
+        "DEFAULT_LEARNING_RATE = 1e-4",
+        "DEFAULT_NUM_BOOTSTRAP_SAMPLES = 0",
+        "MAX_ALLOWED_TRAIN_EXAMPLES = 8",
+        "SEED = 42",
+        "",
+        "def _get_arg(args, name, default=None):",
+        "    return getattr(args, name, default)",
+        "",
+        "def _bounded_positive_int(value, default, cap=None):",
+        "    parsed = int(value if value is not None else default)",
+        "    if cap is not None:",
+        "        parsed = min(parsed, int(cap))",
+        "    return max(1, parsed)",
+        "",
+        "def detect_device():",
+        "    return 'cpu'",
+        "",
+        "def load_tokenizer(model_name, args=None):",
+        "    return {'tokenizer_for': model_name}",
+        "",
+        "def build_instruction_training_dataset(tokenizer, max_train_examples, max_seq_length, seed, **kwargs):",
+        "    return ([{'text': 'train', 'tokenizer': tokenizer, 'limit': max_train_examples}], {'seed': seed})",
+        "",
+        "def load_evaluation_examples(max_eval_examples, seed, **kwargs):",
+        "    return {'arc_challenge': [{'answer': 'A', 'limit': max_eval_examples, 'seed': seed}]}",
+        "",
+        "def _call_with_supported_kwargs(function, **kwargs):",
+        "    import inspect",
+        "    signature = inspect.signature(function)",
+        "    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()):",
+        "        return function(**kwargs)",
+        "    accepted = {name: value for name, value in kwargs.items() if name in signature.parameters}",
+        "    return function(**accepted)",
+        "",
+        "def execute_baseline_first_recipe_study(",
+        "    args: argparse.Namespace,",
+        "    train_dataset: Optional[Any],",
+        "    eval_datasets: Mapping[str, Sequence[Mapping[str, Any]]],",
+        "    device: Any,",
+        ") -> Dict[str, Any]:",
+        "    return {'train_dataset': train_dataset, 'eval_datasets': eval_datasets, 'device': device}",
+        "",
+        "run_recipe_comparison = execute_baseline_first_recipe_study",
+        "",
+        "def assemble_metrics_payload(args, raw_results, **kwargs):",
+        "    return {'status': 'completed', 'raw_results': raw_results}",
+        "",
+        "def _execute_study_from_args(args: argparse.Namespace, output_dir: Path) -> Dict[str, Any]:",
+        "    seed = _bounded_positive_int(_get_arg(args, 'seed', SEED), SEED)",
+        "    max_train_examples = _bounded_positive_int(_get_arg(args, 'max_train_examples', DEFAULT_MAX_TRAIN_EXAMPLES), DEFAULT_MAX_TRAIN_EXAMPLES, MAX_ALLOWED_TRAIN_EXAMPLES)",
+        "    max_eval_examples = _bounded_positive_int(_get_arg(args, 'max_eval_examples', DEFAULT_MAX_EVAL_EXAMPLES), DEFAULT_MAX_EVAL_EXAMPLES)",
+        "    eval_batch_size = _bounded_positive_int(_get_arg(args, 'eval_batch_size', 1), 1)",
+        "    train_batch_size = _bounded_positive_int(_get_arg(args, 'train_batch_size', 1), 1)",
+        "    max_steps = _bounded_positive_int(_get_arg(args, 'max_steps', 1), 1)",
+        "    max_seq_length = _bounded_positive_int(_get_arg(args, 'max_seq_length', DEFAULT_MAX_SEQ_LENGTH), DEFAULT_MAX_SEQ_LENGTH)",
+        "    gradient_accumulation_steps = _bounded_positive_int(_get_arg(args, 'gradient_accumulation_steps', 1), 1)",
+        "    num_bootstrap_samples = int(_get_arg(args, 'num_bootstrap_samples', DEFAULT_NUM_BOOTSTRAP_SAMPLES))",
+        "    learning_rate = float(_get_arg(args, 'learning_rate', DEFAULT_LEARNING_RATE))",
+        "    model_name = str(_get_arg(args, 'model_name', 'tiny-model'))",
+        "    workflow_kwargs: Dict[str, Any] = {",
+        "        \"args\": args,",
+        "        \"output_dir\": output_dir,",
+        "        \"model_name\": model_name,",
+        "        \"max_train_examples\": max_train_examples,",
+        "        \"max_eval_examples\": max_eval_examples,",
+        "        \"eval_batch_size\": eval_batch_size,",
+        "        \"train_batch_size\": train_batch_size,",
+        "        \"gradient_accumulation_steps\": gradient_accumulation_steps,",
+        "        \"max_steps\": max_steps,",
+        "        \"max_seq_length\": max_seq_length,",
+        "        \"learning_rate\": learning_rate,",
+        "        \"num_bootstrap_samples\": num_bootstrap_samples,",
+        "        \"seed\": seed,",
+        "    }",
+        "    workflow = run_recipe_comparison",
+        "    workflow_result = _call_with_supported_kwargs(workflow, **workflow_kwargs)",
+        "    return dict(workflow_result)",
+        "",
+        "def _write_metrics_from_result(args, workflow_result, metrics_path, output_dir):",
+        "    payload_builder = assemble_metrics_payload",
+        "    payload = _call_with_supported_kwargs(",
+        "        payload_builder,",
+        "        args=args,",
+        "        workflow_result=workflow_result,",
+        "        results=workflow_result,",
+        "        output_dir=output_dir,",
+        "        metrics_path=metrics_path,",
+        "    )",
+        "    return payload",
+        "",
+        "if __name__ == '__main__':",
+        "    ns = argparse.Namespace(seed=7, max_train_examples=2, max_eval_examples=1)",
+        "    result = _execute_study_from_args(ns, Path('.'))",
+        "    payload = _write_metrics_from_result(ns, result, Path('metrics.json'), Path('.'))",
+        "    assert result['train_dataset'][0]['text'] == 'train'",
+        "    assert result['eval_datasets']['arc_challenge'][0]['answer'] == 'A'",
+        "    assert result['device'] == 'cpu'",
+        "    assert payload['raw_results']['device'] == 'cpu'",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const repair = await repairPythonOrchestrationArgumentSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def _autolabos_prepare_baseline_recipe_study_inputs");
+    expect(repairedSource).toContain("\"train_dataset\": train_dataset");
+    expect(repairedSource).toContain("raw_results=workflow_result");
+    execFileSync("python3", [scriptPath]);
+  });
+
   it("repairs a missing make_json_safe alias before local verification", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-json-safe-alias-"));
     tempDirs.push(workspace);
@@ -4045,6 +4335,79 @@ describe("ImplementSessionManager", () => {
     expect(report.status).toBe("pass");
     expect(repairedSource).toContain("def make_json_safe(value):");
     expect(repairedSource).toContain("return _autolabos_json_safe(value)");
+  });
+
+  it("repairs a missing _json_safe alias before local verification", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-private-json-safe-alias-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Missing Private JSON Safe Alias",
+      topic: "runtime helper validation",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const scriptPath = path.join(runDir, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "def json_safe(value):",
+        "    return value",
+        "",
+        "def _dependency_report():",
+        "    return [_json_safe({'torch': True})]",
+        "",
+        MINIMAL_METRICS_RUNNER_FOOTER
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexNativeClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        workingDir: runDir,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(report.status).toBe("pass");
+    expect(repairedSource).toContain("def _json_safe(value):");
+    expect(repairedSource).toContain("return json_safe(value)");
   });
 
   it("ignores uppercase words in Python docstrings and attribute names during undefined constant validation", async () => {
@@ -4944,6 +5307,93 @@ describe("ImplementSessionManager", () => {
     expect(callCount).toBe(1);
     expect(result.threadId).toBe("thread-fresh-after-runner-feedback");
     expect(result.rawResponse).toContain("Fresh repair turn after runner feedback");
+  });
+
+  it("recovers current-attempt public artifacts after terminated staged materialization despite runner feedback", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-current-attempt-terminated-recovery-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Current Attempt Terminated Recovery",
+      topic: "repair runtime failure after command handoff",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    run.graph.nodeStates.run_experiments.status = "failed";
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - repair_runtime_dispatch\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const scriptPath = path.join(publicDir, "run_gsm8k_budget_reasoning.py");
+    const configPath = path.join(publicDir, "frozen_config.json");
+    const readmePath = path.join(publicDir, "README.md");
+    const metricsPath = path.join(runDir, "metrics.json");
+    const publicDirRelative = toWorkspaceRelative(workspace, publicDir);
+    const scriptRelativePath = toWorkspaceRelative(workspace, scriptPath);
+    const configRelativePath = toWorkspaceRelative(workspace, configPath);
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put("implement_experiments.runner_feedback", {
+      source: "run_experiments",
+      status: "fail",
+      trigger: "auto_handoff",
+      stage: "runtime",
+      summary: "RuntimeError: No baseline-first execution helper was found in the script.",
+      command: `python3 ${JSON.stringify(scriptPath)}`,
+      metrics_path: metricsPath,
+      suggested_next_action: "Align the generated baseline-first helper resolver with the helper that exists.",
+      recorded_at: "2026-04-28T01:00:00.000Z"
+    });
+
+    let callCount = 0;
+    const codex = {
+      runTurnStream: async () => {
+        callCount += 1;
+        mkdirSync(publicDir, { recursive: true });
+        writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
+        writeFileSync(configPath, "{\"pilot_size\": 8}\n", "utf8");
+        writeFileSync(
+          readmePath,
+          [
+            "# Current Attempt Bundle",
+            "",
+            "```bash",
+            `python ${scriptRelativePath} \\`,
+            `  --config ${configRelativePath} \\`,
+            `  --public-dir ${publicDirRelative} \\`,
+            `  --run-dir .autolabos/runs/${run.id} \\`,
+            `  --metrics-path .autolabos/runs/${run.id}/metrics.json`,
+            "```"
+          ].join("\n"),
+          "utf8"
+        );
+        throw new Error("terminated");
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+
+    expect(callCount).toBe(1);
+    expect(result.scriptPath).toBe(scriptPath);
+    expect(result.rawResponse).toContain("Recovered implement result from a materialized public experiment bundle");
+    expect(result.verifyReport).toMatchObject({ status: "pass" });
   });
 
   it("does not reuse an existing public bundle when command-stage runner feedback contains a runtime traceback", async () => {
@@ -8696,7 +9146,117 @@ describe("ImplementSessionManager", () => {
     expect(result.testCommand).toContain("py_compile");
   });
 
-  it("retries when a python runner has an undefined return annotation that py_compile misses", async () => {
+  it("repairs a baseline-first execution resolver that misses the generated helper", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-baseline-execution-candidate-repair-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Repair Baseline Execution Candidate",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "mean zero-shot accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+
+    const codex = {
+      runTurnStream: async () => ({
+        threadId: "thread-baseline-execution-candidate-repair",
+        finalText: JSON.stringify({
+          summary: "Implemented a baseline-first runner with a narrow resolver.",
+          run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`,
+          test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+          working_dir: publicDir,
+          experiment_mode: "staged_llm",
+          changed_files: [scriptPath],
+          artifacts: [scriptPath],
+          public_dir: publicDir,
+          public_artifacts: [scriptPath],
+          script_path: scriptPath,
+          metrics_path: metricsPath,
+          localization: {
+            summary: "Localized the runner script.",
+            selected_files: [scriptPath],
+            candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+          },
+          file_edits: [
+            {
+              path: scriptPath,
+              content: [
+                "from __future__ import annotations",
+                "",
+                "import argparse",
+                "import json",
+                "from pathlib import Path",
+                "",
+                "def run_baseline_first_execution(args):",
+                "    return {",
+                "        'schema_version': '1.0',",
+                "        'status': 'completed',",
+                "        'comparison_mode': 'baseline_first_locked',",
+                "        'baseline_first_required': True,",
+                "        'ordered_results': [{'recipe_id': 'zero_shot_base', 'mean_zero_shot_accuracy': 0.25}],",
+                "    }",
+                "",
+                "def _invoke_baseline_first_execution(args):",
+                "    candidate_names = (",
+                "        'run_baseline_first_comparison',",
+                "        'execute_baseline_first_sequence',",
+                "    )",
+                "    for name in candidate_names:",
+                "        func = globals().get(name)",
+                "        if callable(func):",
+                "            return func(args)",
+                "    raise RuntimeError('No baseline-first execution helper was found in the script.')",
+                "",
+                "def main(argv=None):",
+                "    parser = argparse.ArgumentParser()",
+                "    parser.add_argument('--metrics-path', required=True)",
+                "    parser.add_argument('--output-dir')",
+                "    args = parser.parse_args(argv)",
+                "    payload = _invoke_baseline_first_execution(args)",
+                "    Path(args.metrics_path).write_text(json.dumps(payload), encoding='utf8')",
+                "    return 0",
+                "",
+                "if __name__ == '__main__':",
+                "    raise SystemExit(main())",
+                ""
+              ].join("\n")
+            }
+          ],
+          assumptions: []
+        }),
+        events: []
+      })
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const repairedSource = readFileSync(result.scriptPath!, "utf8");
+    expect(repairedSource).toContain('"run_baseline_first_execution",');
+    expect(result.testCommand).toContain("py_compile");
+  });
+
+  it("repairs when a python runner has an undefined return annotation that py_compile misses", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-undefined-annotation-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
@@ -8786,8 +9346,108 @@ describe("ImplementSessionManager", () => {
     const result = await manager.run(run);
     const repairedSource = readFileSync(result.scriptPath!, "utf8");
 
-    expect(callCount).toBe(2);
-    expect(repairedSource).toContain("def build_recipe() -> PeftRecipeSpec:");
+    expect(callCount).toBe(1);
+    expect(repairedSource).toContain("from __future__ import annotations");
+    expect(repairedSource).toContain("def build_recipe() -> RecipeSpec:");
+    expect(await new RunContextMemory(run.memoryRefs.runContextPath).get("implement_experiments.auto_handoff_to_run_experiments")).toBe(true);
+  });
+
+  it("repairs when a python runner has an undefined parameter annotation that py_compile misses", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-undefined-param-annotation-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Repair Undefined Parameter Annotation",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    let callCount = 0;
+
+    const codex = {
+      runTurnStream: async () => {
+        callCount += 1;
+        const configClassLines =
+          callCount === 1
+            ? []
+            : [
+                "class ExperimentConfig:",
+                "    pass",
+                ""
+              ];
+        return {
+          threadId: `thread-undefined-param-annotation-${callCount}`,
+          finalText: JSON.stringify({
+            summary: "Implemented the experiment runner.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            experiment_mode: "real_execution",
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Localized the runner script.",
+              selected_files: [scriptPath],
+              candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+            },
+            file_edits: [
+              {
+                path: scriptPath,
+                content: [
+                  "from typing import Any, Tuple",
+                  "",
+                  ...configClassLines,
+                  "def _load_candidate_base_model(config: ExperimentConfig, device: Any) -> Tuple[Any, Any]:",
+                  "    return config, device",
+                  "",
+                  "def main(argv=None):",
+                  "    return 0",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    raise SystemExit(main())",
+                  ""
+                ].join("\n")
+              }
+            ],
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const repairedSource = readFileSync(result.scriptPath!, "utf8");
+
+    expect(callCount).toBe(1);
+    expect(repairedSource).toContain("from __future__ import annotations");
+    expect(repairedSource).toContain("def _load_candidate_base_model(config: ExperimentConfig, device: Any) -> Tuple[Any, Any]:");
     expect(await new RunContextMemory(run.memoryRefs.runContextPath).get("implement_experiments.auto_handoff_to_run_experiments")).toBe(true);
   });
 
@@ -9288,6 +9948,89 @@ describe("ImplementSessionManager", () => {
     expect(await new RunContextMemory(run.memoryRefs.runContextPath).get("implement_experiments.auto_handoff_to_run_experiments")).toBe(true);
   });
 
+  it("repairs a missing --output-dir argparse alias before mismatch validation", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-output-dir-alias-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Output Dir Argparse Alias",
+      topic: "runtime helper validation",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "",
+        "def build_arg_parser():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path')",
+        "    return parser",
+        "",
+        "def main(argv=None):",
+        "    build_arg_parser().parse_args(argv)",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexNativeClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`,
+        scriptPath,
+        workingDir: publicDir,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(report.status).toBe("pass");
+    expect(repairedSource).toContain("parser.add_argument('--output-dir'");
+  });
+
   it("blocks auto-handoff when a python run_command uses flags missing from argparse", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-argparse-mismatch-"));
     tempDirs.push(workspace);
@@ -9393,6 +10136,114 @@ describe("ImplementSessionManager", () => {
     expect(await memory.get("implement_experiments.auto_handoff_to_run_experiments")).toBe(false);
   });
 
+  it("blocks auto-handoff when a python run_command passes a value to a boolean argparse flag", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-argparse-boolean-value-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Block Argparse Boolean Value",
+      topic: "agent reasoning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const planPath = path.join(runDir, "analysis", "result_analysis.json");
+    mkdirSync(path.dirname(planPath), { recursive: true });
+    writeFileSync(planPath, "{}\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    let callCount = 0;
+
+    const codex = {
+      runTurnStream: async () => {
+        callCount += 1;
+        return {
+          threadId: `thread-argparse-boolean-value-${callCount}`,
+          finalText: JSON.stringify({
+            summary: "Implemented the experiment runner.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --plan ${JSON.stringify(planPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            experiment_mode: "real_execution",
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Localized the runner script.",
+              selected_files: [scriptPath],
+              candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+            },
+            file_edits: [
+              {
+                path: scriptPath,
+                content: [
+                  "from __future__ import annotations",
+                  "",
+                  "import argparse",
+                  "import json",
+                  "",
+                  "def build_arg_parser():",
+                  "    parser = argparse.ArgumentParser()",
+                  "    parser.add_argument('--plan', action='store_true')",
+                  "    parser.add_argument('--metrics-path')",
+                  "    return parser",
+                  "",
+                  "def parse_args(argv=None):",
+                  "    return build_arg_parser().parse_args(argv)",
+                  "",
+                  "def main(argv=None):",
+                  "    args = parse_args(argv)",
+                  "    with open(args.metrics_path, 'w', encoding='utf-8') as handle:",
+                  "        json.dump({'status': 'completed'}, handle)",
+                  "    return 0",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    raise SystemExit(main())",
+                  ""
+                ].join("\n")
+              }
+            ],
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await expect(manager.run(run)).rejects.toThrow("do not accept values");
+
+    expect(callCount).toBe(3);
+    expect(await memory.get<{ status: string; failure_type: string; next_action: string; stderr_excerpt: string }>("implement_experiments.verify_report")).toMatchObject({
+      status: "fail",
+      failure_type: "implementation",
+      next_action: "retry_patch",
+      stderr_excerpt: expect.stringContaining("--plan")
+    });
+    expect(await memory.get("implement_experiments.auto_handoff_to_run_experiments")).toBe(false);
+  });
+
   it("repairs a missing ExperimentConfig metadata field before handing a python runner off to run_experiments", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-metadata-repair-"));
     tempDirs.push(workspace);
@@ -9485,6 +10336,135 @@ describe("ImplementSessionManager", () => {
     const result = await manager.run(run);
     const repairedSource = readFileSync(result.scriptPath!, "utf8");
     expect(repairedSource).toContain("metadata: Dict[str, Any] = field(default_factory=dict)");
+    expect(result.testCommand).toContain("py_compile");
+  });
+
+  it("repairs a missing PEFTRecipe compatibility dataclass before handing a python runner off to run_experiments", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-peft-recipe-alias-repair-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Repair PEFTRecipe Compatibility",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+
+    const codex = {
+      runTurnStream: async () => ({
+        threadId: "thread-peft-recipe-alias-repair",
+        finalText: JSON.stringify({
+          summary: "Implemented a PEFT runner with a missing PEFTRecipe schema.",
+          run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+          test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+          working_dir: publicDir,
+          experiment_mode: "staged_llm",
+          changed_files: [scriptPath],
+          artifacts: [scriptPath],
+          public_dir: publicDir,
+          public_artifacts: [scriptPath],
+          script_path: scriptPath,
+          metrics_path: metricsPath,
+          localization: {
+            summary: "Localized the runner script.",
+            selected_files: [scriptPath],
+            candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+          },
+          file_edits: [
+            {
+              path: scriptPath,
+              content: [
+                "from __future__ import annotations",
+                "",
+                "import dataclasses",
+                "from dataclasses import dataclass, field",
+                "from typing import Any, Dict, Mapping, Optional, Sequence, Tuple",
+                "",
+                "@dataclass(frozen=True)",
+                "class RecipeConfig:",
+                "    name: str",
+                "    display_name: str",
+                "    method: str",
+                "    description: str",
+                "    r: Optional[int] = None",
+                "    lora_alpha: Optional[int] = None",
+                "    lora_dropout: float = 0.05",
+                "    target_modules: Tuple[str, ...] = field(default_factory=tuple)",
+                "",
+                "def _make_recipe(",
+                "    recipe_id: str,",
+                "    display_name: str,",
+                "    peft_type: str,",
+                "    rank: Optional[int],",
+                "    alpha: Optional[int],",
+                "    dropout: float,",
+                "    target_modules: Sequence[str],",
+                "    train_steps: int,",
+                "    learning_rate: float,",
+                "    batch_size: int,",
+                "    gradient_accumulation_steps: int,",
+                "    extra: Optional[Mapping[str, Any]] = None,",
+                ") -> PEFTRecipe:",
+                "    kwargs = {",
+                "        'recipe_id': recipe_id,",
+                "        'display_name': display_name,",
+                "        'peft_type': peft_type,",
+                "        'rank': rank,",
+                "        'alpha': alpha,",
+                "        'dropout': dropout,",
+                "        'target_modules': tuple(target_modules),",
+                "        'train_steps': int(train_steps),",
+                "        'learning_rate': float(learning_rate),",
+                "        'batch_size': int(batch_size),",
+                "        'gradient_accumulation_steps': int(gradient_accumulation_steps),",
+                "        'extra': dict(extra or {}),",
+                "    }",
+                "    field_names = {field.name for field in dataclasses.fields(PEFTRecipe)}",
+                "    init_kwargs = {name: value for name, value in kwargs.items() if name in field_names}",
+                "    return PEFTRecipe(**init_kwargs)",
+                "",
+                "def main():",
+                "    _make_recipe('standard_lora', 'Standard LoRA', 'lora', 8, 16, 0.05, ('q_proj',), 1, 1e-4, 1, 1)",
+                "    return 0",
+                "",
+                "if __name__ == '__main__':",
+                "    raise SystemExit(main())",
+                ""
+              ].join("\n")
+            }
+          ],
+          assumptions: []
+        }),
+        events: []
+      })
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const repairedSource = readFileSync(result.scriptPath!, "utf8");
+    expect(repairedSource).toContain("class PEFTRecipe:");
+    expect(repairedSource).toContain("def peft_kwargs(self) -> Dict[str, Any]:");
     expect(result.testCommand).toContain("py_compile");
   });
 
@@ -10295,6 +11275,108 @@ describe("ImplementSessionManager", () => {
                   "",
                   "def main(argv=None):",
                   "    return _select_experiment_orchestrator()(argv)",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    raise SystemExit(main())",
+                  ""
+                ].join("\n")
+              }
+            ],
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow(/recipe\/study workflow function names that are never defined/i);
+    expect(calls).toBe(3);
+  });
+
+  it("rejects python runners whose autolabos orchestration invoker has no defined helper", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-missing-autolabos-orchestration-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Reject Missing AutoLabOS Orchestration",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "mean zero-shot accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    let calls = 0;
+
+    const codex = {
+      runTurnStream: async () => {
+        calls += 1;
+        return {
+          threadId: "thread-missing-autolabos-orchestration",
+          finalText: JSON.stringify({
+            summary: "Implemented a runner whose AutoLabOS invoker searches only missing orchestration helpers.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            experiment_mode: "staged_llm",
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Localized the runner script.",
+              selected_files: [scriptPath],
+              candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+            },
+            file_edits: [
+              {
+                path: scriptPath,
+                content: [
+                  "from __future__ import annotations",
+                  "",
+                  "def _autolabos_find_callable(*names):",
+                  "    for name in names:",
+                  "        candidate = globals().get(name)",
+                  "        if callable(candidate):",
+                  "            return candidate",
+                  "    return None",
+                  "",
+                  "def _autolabos_invoke_orchestration(args):",
+                  "    orchestrator = _autolabos_find_callable(",
+                  "        'run_experiment',",
+                  "        'run_peft_instruction_study',",
+                  "        'execute_experiment',",
+                  "        'execute_study',",
+                  "        'orchestrate_experiment',",
+                  "        'orchestrate_study',",
+                  "    )",
+                  "    if orchestrator is None:",
+                  "        raise RuntimeError('No experiment orchestration helper is available from earlier sections.')",
+                  "    return orchestrator(args)",
+                  "",
+                  "def main(argv=None):",
+                  "    return _autolabos_invoke_orchestration(argv)",
                   "",
                   "if __name__ == '__main__':",
                   "    raise SystemExit(main())",
@@ -11423,6 +12505,586 @@ describe("ImplementSessionManager", () => {
     expect(calls).toBe(3);
   });
 
+  it("rejects python runners whose metrics writer adapter directly calls a RuntimeConfig writer with metrics and path", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-metrics-writer-runtime-config-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Reject RuntimeConfig Metrics Writer Adapter Mismatch",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "mean zero-shot accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    let calls = 0;
+
+    const codex = {
+      runTurnStream: async () => {
+        calls += 1;
+        return {
+          threadId: "thread-metrics-writer-runtime-config-adapter",
+          finalText: JSON.stringify({
+            summary: "Implemented a runner whose direct metrics adapter cannot call the RuntimeConfig writer.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            experiment_mode: "staged_llm",
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Localized the runner script.",
+              selected_files: [scriptPath],
+              candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+            },
+            file_edits: [
+              {
+                path: scriptPath,
+                content: [
+                  "from __future__ import annotations",
+                  "from dataclasses import dataclass",
+                  "from pathlib import Path",
+                  "from typing import Any, Mapping",
+                  "",
+                  "@dataclass",
+                  "class RuntimeConfig:",
+                  "    metrics_path: Path",
+                  "",
+                  "def write_metrics_json(config: RuntimeConfig, metrics: Mapping[str, Any]) -> Path:",
+                  "    return config.metrics_path",
+                  "",
+                  "def _entrypoint_write_metrics(metrics: Mapping[str, Any], metrics_path: Path) -> None:",
+                  "    writer = globals().get('write_metrics_json')",
+                  "    if callable(writer):",
+                  "        try:",
+                  "            writer(metrics, metrics_path)",
+                  "            return",
+                  "        except TypeError:",
+                  "            try:",
+                  "                writer(metrics_path, metrics)",
+                  "                return",
+                  "            except TypeError:",
+                  "                pass",
+                  "",
+                  "def main():",
+                  "    _entrypoint_write_metrics({'status': 'completed'}, Path('metrics.json'))",
+                  "    return 0",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    raise SystemExit(main())",
+                  ""
+                ].join("\n")
+              }
+            ],
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow(/metrics writer adapter mismatch/i);
+    expect(calls).toBe(3);
+  });
+
+  it("rejects python runners whose evaluation loader returns EvaluationSample objects but evaluator uses sample.get", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-evaluation-sample-access-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Reject EvaluationSample Dict Access",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "mean zero-shot accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    let calls = 0;
+
+    const codex = {
+      runTurnStream: async () => {
+        calls += 1;
+        return {
+          threadId: "thread-evaluation-sample-access",
+          finalText: JSON.stringify({
+            summary: "Implemented a runner whose evaluator treats EvaluationSample objects as dicts.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            experiment_mode: "staged_llm",
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Localized the runner script.",
+              selected_files: [scriptPath],
+              candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+            },
+            file_edits: [
+              {
+                path: scriptPath,
+                content: [
+                  "from __future__ import annotations",
+                  "from dataclasses import dataclass",
+                  "from typing import Any, Dict, List, Mapping, Sequence, Tuple",
+                  "",
+                  "@dataclass(frozen=True)",
+                  "class EvaluationSample:",
+                  "    prompt: str",
+                  "    choices: Tuple[str, ...]",
+                  "    correct_index: int",
+                  "",
+                  "def load_evaluation_samples(max_examples_per_benchmark=2, seed=42) -> Dict[str, List[EvaluationSample]]:",
+                  "    return {'arc_challenge': [EvaluationSample('prompt', ('A', 'B'), 0)]}",
+                  "",
+                  "def _entrypoint_evaluate_model(model: Any, tokenizer: Any, eval_samples: Mapping[str, Sequence[Mapping[str, Any]]], device: Any) -> Dict[str, Any]:",
+                  "    for benchmark, samples in eval_samples.items():",
+                  "        for sample in samples:",
+                  "            choices = list(sample.get('choices', []))",
+                  "            answer_index = int(sample.get('answer_index', -1))",
+                  "            _ = (benchmark, choices, answer_index)",
+                  "    return {'mean_accuracy': 0.0}",
+                  "",
+                  "def run_experiment():",
+                  "    return _entrypoint_evaluate_model(None, None, load_evaluation_samples(), None)",
+                  "",
+                  "def main():",
+                  "    run_experiment()",
+                  "    return 0",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    raise SystemExit(main())",
+                  ""
+                ].join("\n")
+              }
+            ],
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow(/evaluation sample access mismatch/i);
+    expect(calls).toBe(3);
+  });
+
+  it("rejects python runners whose generic helper resolver searches only missing instruction dataset helpers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-invoke-helper-mismatch-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Reject Invoke Helper Dispatch Mismatch",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "mean zero-shot accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    let calls = 0;
+
+    const codex = {
+      runTurnStream: async () => {
+        calls += 1;
+        return {
+          threadId: "thread-invoke-helper-mismatch",
+          finalText: JSON.stringify({
+            summary: "Implemented a runner whose generic helper resolver cannot find generated dataset helpers.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            experiment_mode: "staged_llm",
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Localized the runner script.",
+              selected_files: [scriptPath],
+              candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+            },
+            file_edits: [
+              {
+                path: scriptPath,
+                content: [
+                  "from __future__ import annotations",
+                  "from typing import Any",
+                  "",
+                  "def _invoke_helper(names, **kwargs):",
+                  "    for name in names:",
+                  "        fn = globals().get(name)",
+                  "        if callable(fn):",
+                  "            return fn(**kwargs)",
+                  "    raise RuntimeError(f'None of the required helper functions is available: {list(names)}')",
+                  "",
+                  "def _load_study_datasets(config: Any):",
+                  "    return _invoke_helper((",
+                  "        'load_instruction_dataset_subset',",
+                  "        'load_instruction_dataset',",
+                  "        'prepare_instruction_dataset',",
+                  "    ), seed=42)",
+                  "",
+                  "def main():",
+                  "    _load_study_datasets(None)",
+                  "    return 0",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    raise SystemExit(main())",
+                  ""
+                ].join("\n")
+              }
+            ],
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow(/unresolved helper dispatch mismatch/i);
+    expect(calls).toBe(3);
+  });
+
+  it("rejects python runners whose atomic JSON writer is payload-first but called with a path first", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-atomic-json-order-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Reject Atomic JSON Call Order",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "mean zero-shot accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    let calls = 0;
+
+    const codex = {
+      runTurnStream: async () => {
+        calls += 1;
+        return {
+          threadId: "thread-atomic-json-order",
+          finalText: JSON.stringify({
+            summary: "Implemented a runner whose atomic JSON writer call order is inconsistent.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            experiment_mode: "staged_llm",
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Localized the runner script.",
+              selected_files: [scriptPath],
+              candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+            },
+            file_edits: [
+              {
+                path: scriptPath,
+                content: [
+                  "from __future__ import annotations",
+                  "from dataclasses import dataclass",
+                  "from pathlib import Path",
+                  "from typing import Any, Mapping",
+                  "",
+                  "@dataclass",
+                  "class RuntimeConfig:",
+                  "    metrics_path: Path",
+                  "",
+                  "def atomic_write_json(payload: Mapping[str, Any], path: Any) -> Path:",
+                  "    destination = Path(path)",
+                  "    destination.write_text('{}', encoding='utf-8')",
+                  "    return destination",
+                  "",
+                  "def main():",
+                  "    config = RuntimeConfig(Path('metrics.json'))",
+                  "    atomic_write_json(config.metrics_path, {'status': 'failed'})",
+                  "    return 0",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    raise SystemExit(main())",
+                  ""
+                ].join("\n")
+              }
+            ],
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow(/atomic JSON writer call-order mismatch/i);
+    expect(calls).toBe(3);
+  });
+
+  it("rejects python runners whose globals helper call omits required helper arguments", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-globals-helper-arity-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Reject Globals Helper Arity",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "mean zero-shot accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    let calls = 0;
+
+    const codex = {
+      runTurnStream: async () => {
+        calls += 1;
+        return {
+          threadId: "thread-globals-helper-arity",
+          finalText: JSON.stringify({
+            summary: "Implemented a runner whose globals helper call omits a required device argument.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            experiment_mode: "staged_llm",
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Localized the runner script.",
+              selected_files: [scriptPath],
+              candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+            },
+            file_edits: [
+              {
+                path: scriptPath,
+                content: [
+                  "from __future__ import annotations",
+                  "from typing import Any, Dict",
+                  "",
+                  "def get_runtime_device_info(device: Any, seed: int = 42) -> Dict[str, Any]:",
+                  "    return {'device': str(device), 'seed': seed}",
+                  "",
+                  "def main():",
+                  "    if 'get_runtime_device_info' in globals() and callable(globals()['get_runtime_device_info']):",
+                  "        globals()['get_runtime_device_info']()",
+                  "    return 0",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    raise SystemExit(main())",
+                  ""
+                ].join("\n")
+              }
+            ],
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow(/globals helper call arity mismatch/i);
+    expect(calls).toBe(3);
+  });
+
+  it("rejects python runners whose exception serializer calls undefined normalize_for_json", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-undefined-normalize-json-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Reject Undefined Normalize Helper",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "mean zero-shot accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    let calls = 0;
+
+    const codex = {
+      runTurnStream: async () => {
+        calls += 1;
+        return {
+          threadId: "thread-undefined-normalize-json",
+          finalText: JSON.stringify({
+            summary: "Implemented a runner whose exception serializer calls an undefined JSON normalizer.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            working_dir: publicDir,
+            experiment_mode: "staged_llm",
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Localized the runner script.",
+              selected_files: [scriptPath],
+              candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+            },
+            file_edits: [
+              {
+                path: scriptPath,
+                content: [
+                  "from __future__ import annotations",
+                  "from typing import Any, Dict",
+                  "",
+                  "def serialize_exception(exc: BaseException) -> Dict[str, Any]:",
+                  "    payload = {'type': type(exc).__name__, 'message': str(exc)}",
+                  "    return normalize_for_json(payload)",
+                  "",
+                  "def main():",
+                  "    return 0",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    raise SystemExit(main())",
+                  ""
+                ].join("\n")
+              }
+            ],
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow(/normalize_for_json/i);
+    expect(calls).toBe(3);
+  });
+
   it("rejects python runners that access dict recipe configs with object attributes", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-dict-recipe-attribute-"));
     tempDirs.push(workspace);
@@ -12104,6 +13766,94 @@ describe("ImplementSessionManager", () => {
     expect(result.testCommand).toContain("py_compile");
   });
 
+  it("repairs a missing set_all_seeds alias before handing a python runner off to run_experiments", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-set-all-seeds-repair-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Repair All Seeds Alias",
+      topic: "PEFT instruction tuning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+
+    const codex = {
+      runTurnStream: async () => ({
+        threadId: "thread-set-all-seeds-repair",
+        finalText: JSON.stringify({
+          summary: "Implemented the experiment runner.",
+          run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`,
+          test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+          working_dir: publicDir,
+          experiment_mode: "staged_llm",
+          changed_files: [scriptPath],
+          artifacts: [scriptPath],
+          public_dir: publicDir,
+          public_artifacts: [scriptPath],
+          script_path: scriptPath,
+          metrics_path: metricsPath,
+          localization: {
+            summary: "Localized the runner script.",
+            selected_files: [scriptPath],
+            candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+          },
+          file_edits: [
+            {
+              path: scriptPath,
+              content: [
+                "from __future__ import annotations",
+                "",
+                "def set_global_seed(seed: int) -> None:",
+                "    return None",
+                "",
+                "def run_recipe_loop():",
+                "    set_all_seeds(42)",
+                "    return 0",
+                "",
+                "def main(argv=None):",
+                "    return run_recipe_loop()",
+                "",
+                "if __name__ == '__main__':",
+                "    raise SystemExit(main())",
+                ""
+              ].join("\n")
+            }
+          ],
+          assumptions: []
+        }),
+        events: []
+      })
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const repairedSource = readFileSync(result.scriptPath!, "utf8");
+    expect(repairedSource).toContain("def set_all_seeds(seed: int) -> None:");
+    expect(repairedSource).toContain("globals().get(\"set_global_seed\")");
+    expect(result.testCommand).toContain("py_compile");
+  });
+
   it("repairs Python metrics JSON serialization so non-finite floats cannot leak as NaN", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-strict-json-repair-"));
     tempDirs.push(workspace);
@@ -12284,6 +14034,100 @@ describe("ImplementSessionManager", () => {
 
     expect(repairedSource).toContain("if hasattr(value, '__fspath__'):");
     expect(repairedSource).toContain("json.dumps(_autolabos_json_safe(payload), indent=2, sort_keys=True)");
+    expect(result.testCommand).toContain("py_compile");
+  });
+
+  it("repairs Python metrics json.dumps dict literals without splitting on inner commas", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-json-dumps-dict-literal-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Repair JSON Dumps Dict Literal Metrics",
+      topic: "agent reasoning",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+
+    const codex = {
+      runTurnStream: async () => ({
+        threadId: "thread-json-dumps-dict-literal-repair",
+        finalText: JSON.stringify({
+          summary: "Implemented the experiment runner.",
+          run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+          test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+          working_dir: publicDir,
+          experiment_mode: "staged_llm",
+          changed_files: [scriptPath],
+          artifacts: [scriptPath],
+          public_dir: publicDir,
+          public_artifacts: [scriptPath],
+          script_path: scriptPath,
+          metrics_path: metricsPath,
+          localization: {
+            summary: "Localized the runner script.",
+            selected_files: [scriptPath],
+            candidate_files: [{ path: scriptPath, reason: "Primary runner.", confidence: 0.9 }]
+          },
+          file_edits: [
+            {
+              path: scriptPath,
+              content: [
+                "from __future__ import annotations",
+                "",
+                "import argparse",
+                "import json",
+                "",
+                "def parse_args(argv=None):",
+                "    parser = argparse.ArgumentParser()",
+                "    parser.add_argument('--metrics-path', required=True)",
+                "    return parser.parse_args(argv)",
+                "",
+                "def main(argv=None):",
+                "    args = parse_args(argv)",
+                "    metrics = {'status': 'completed'}",
+                "    print(json.dumps({'metrics_path': args.metrics_path, 'status': metrics.get('status')}, indent=2))",
+                "    return 0",
+                "",
+                "if __name__ == '__main__':",
+                "    raise SystemExit(main())",
+                ""
+              ].join("\n")
+            }
+          ],
+          assumptions: []
+        }),
+        events: []
+      })
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const repairedSource = readFileSync(result.scriptPath!, "utf8");
+
+    expect(repairedSource).toContain(
+      "json.dumps(_autolabos_json_safe({'metrics_path': args.metrics_path, 'status': metrics.get('status')}), indent=2)"
+    );
     expect(result.testCommand).toContain("py_compile");
   });
 

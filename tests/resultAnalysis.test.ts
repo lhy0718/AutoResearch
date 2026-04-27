@@ -161,6 +161,92 @@ describe("resultAnalysis", () => {
     );
   });
 
+  it("projects node-owned metrics.recipes rows into baseline/comparator condition comparisons", () => {
+    const report = buildAnalysisReport({
+      run: {
+        objectiveMetric: "Improve mean zero-shot accuracy over the LoRA baseline."
+      },
+      metrics: {
+        best_recipe: "baseline",
+        best_improvement_over_baseline: 0,
+        recipes: {
+          baseline: {
+            recipe: "baseline",
+            evaluation: {
+              mean_zero_shot_accuracy: 0.53125,
+              per_benchmark_accuracy: {
+                arc_challenge: 0.375,
+                hellaswag: 0.6875
+              }
+            },
+            wall_time_sec: 1.4
+          },
+          lora_r4: {
+            recipe: "lora_r4",
+            evaluation: {
+              mean_zero_shot_accuracy: 0.53125,
+              per_benchmark_accuracy: {
+                arc_challenge: 0.375,
+                hellaswag: 0.6875
+              }
+            },
+            wall_time_sec: 8.6
+          },
+          lora_r8: {
+            recipe: "lora_r8",
+            evaluation: {
+              mean_zero_shot_accuracy: 0.5,
+              per_benchmark_accuracy: {
+                arc_challenge: 0.3125,
+                hellaswag: 0.6875
+              }
+            },
+            wall_time_sec: 17.4
+          }
+        }
+      },
+      objectiveProfile: {
+        source: "llm",
+        raw: "Improve mean zero-shot accuracy over the LoRA baseline.",
+        primaryMetric: "accuracy_delta_vs_baseline",
+        preferredMetricKeys: ["accuracy_delta_vs_baseline", "mean_zero_shot_accuracy_arc_challenge_hellaswag", "accuracy"],
+        comparator: ">=",
+        targetValue: 0.01,
+        targetDescription: "Accuracy should improve by at least one point.",
+        analysisFocus: [],
+        paperEmphasis: [],
+        assumptions: []
+      },
+      objectiveEvaluation: {
+        rawObjectiveMetric: "Improve mean zero-shot accuracy over the LoRA baseline.",
+        profileSource: "llm",
+        primaryMetric: "accuracy_delta_vs_baseline",
+        preferredMetricKeys: ["accuracy_delta_vs_baseline", "mean_zero_shot_accuracy_arc_challenge_hellaswag", "accuracy"],
+        matchedMetricKey: "best_improvement_over_baseline",
+        comparator: ">=",
+        targetValue: 0.01,
+        observedValue: 0,
+        status: "not_met",
+        summary: "Objective metric not met: best_improvement_over_baseline=0 does not satisfy >= 0.01."
+      }
+    });
+
+    expect(report.condition_comparisons[0]).toMatchObject({
+      id: "lora_r4_vs_baseline",
+      source: "metrics.recipes"
+    });
+    expect(report.condition_comparisons[0]?.metrics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: "evaluation.mean_zero_shot_accuracy",
+          baseline_value: 0.53125,
+          primary_value: 0.53125,
+          value: 0
+        })
+      ])
+    );
+  });
+
   it("extracts a preset runtime guardrail from the experiment plan and removes the stale threshold warning", () => {
     const report = buildAnalysisReport({
       run: {
