@@ -18,6 +18,7 @@ Path placeholders:
 ## Current active status
 
 - Live-validation status and tracked defects:
+  - `LV-323` repair implemented; same-flow live revalidation pending. P0-8 AGB-001 same-flow TUI revalidation after the LV-322 repair advanced past rollback artifact loss, then exposed a generated runner whose final dataset dispatcher could not invoke `load_dataset(config)` and did not search generated `fallback_dataset()`.
   - `LV-322` repair implemented; same-flow live revalidation pending. P0-8 AGB-001 same-flow TUI revalidation after the LV-320 repair rolled back from `run_experiments` to `implement_experiments`, then failed because the public experiment runner path no longer existed.
   - `LV-321` repair implemented; same-flow live revalidation pending. The P0-8 rerun advanced past the LV-320 `records` TypeError, then exposed a generated numeric-helper alias mismatch where `_coerce_float(...)` was called while only `coerce_float(...)` existed.
   - `LV-320` repair implemented; same-flow live revalidation advanced to LV-321 and LV-322 on 2026-05-02. The repair wraps generated `compute_classification_metrics(...)` helpers that require `records` when generated call sites omit that argument. Resume/reload still needs UI projection review for `interaction: busy`.
@@ -1104,6 +1105,72 @@ Path placeholders:
 ---
 
 ## Active live validation issues
+
+## Issue: LV-323
+
+- Status: repair implemented; same-flow live revalidation pending after P0-8 AGB-001 same-flow TUI reproduction on 2026-05-02
+- Validation target: `implement_experiments` local handoff verification should reconcile generated dataset loader/fallback helper names before `run_experiments`.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>`
+  - TUI command: built AutoLabOS CLI with `--benchmark-condition gated`
+  - run: `921c29f4-6d94-4929-a4b5-a32b968334ea`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+  - input brief: external AGB-001 brief path, not copied into committed docs
+
+- Reproduction steps:
+  1. Build AutoLabOS with the LV-322 repair.
+  2. Start the built TUI from `<validation-workspace>` with `--benchmark-condition gated`.
+  3. Run `/doctor`.
+  4. Start the external AGB-001 brief with `/brief start <path-to-AGB-001-brief.md>`.
+  5. Let the run advance through `implement_experiments` and into `run_experiments` after rollback repair.
+
+- Expected behavior:
+  - A generated runner whose final entrypoint searches dataset loader/fallback helpers should be executable after local handoff verification.
+  - If earlier sections define `load_dataset(config)` or `fallback_dataset()`, final entrypoint dispatch should be bridged before `run_experiments`.
+
+- Actual behavior:
+  - The rebuilt same-flow run advanced past LV-320, LV-321, and LV-322.
+  - `implement_experiments` passed local `py_compile` handoff verification.
+  - `run_experiments` failed three times with:
+    - `RuntimeError: No dataset loader or fallback dataset builder is available in this runner.`
+  - The public runner defined generated helpers including `load_dataset(config)` and `fallback_dataset()`, while `_entrypoint_load_dataset(...)` searched `load_or_create_dataset`, `load_dataset` through incompatible call patterns, and fallback names `build_fallback_dataset`/`make_fallback_dataset`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in a fresh TUI validation workspace for P0-8 AGB-001.
+  - Existing session: the same persisted run recorded the failed `run_experiments` attempts and auto-rolled back to `implement_experiments`.
+  - Divergence: no fresh/resumed projection divergence established; this is a generated-runner handoff compatibility gap visible in node-owned execution.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: staged materialization can persist a syntactically valid runner whose final entrypoint dataset resolver is inconsistent with earlier generated dataset helper names/signatures. `py_compile` cannot catch the dynamic dispatcher mismatch, so implement-stage verification needs a deterministic alias repair before handoff.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - adds `repairPythonEntrypointDatasetLoaderAliasSurface(...)`
+      - bridges final entrypoint dataset dispatch to generated `load_dataset(config)` through `load_or_create_dataset(...)`
+      - bridges generated `fallback_dataset()` through `build_fallback_dataset(...)` and `make_fallback_dataset(...)`
+      - runs the repair before instruction/evaluation dataset alias repairs and reruns local verification after repair
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - adds deterministic regression coverage for a `py_compile`-valid retrieval-feature runner whose entrypoint cannot invoke a config-style `load_dataset(...)` or generated `fallback_dataset()`
+
+- Regression status:
+  - Reproduced in real TUI same-flow revalidation on 2026-05-02.
+  - Targeted regression: pass on 2026-05-02 with `npm test -- tests/implementSessionManager.test.ts -t "entrypoint dataset loader aliases"`.
+  - Full automated regression: pass on 2026-05-02 with `npm test`.
+  - Build: pass on 2026-05-02 with `npm run build`.
+  - Harness validation: pass on 2026-05-02 with `npm run validate:harness`.
+  - Same-flow revalidation: pending rebuilt TUI run after this repair.
+
+- Follow-up risks:
+  - After this repair, execution may advance into baseline detection, claim-ceiling review, figure audit, paper-readiness gating, or another generated-runner compatibility boundary.
+
+- Evidence/artifacts:
+  - `.autolabos/runs/921c29f4-6d94-4929-a4b5-a32b968334ea/run_record.json`
+  - `.autolabos/runs/921c29f4-6d94-4929-a4b5-a32b968334ea/exec_logs/run_experiments.txt`
+  - `.autolabos/runs/921c29f4-6d94-4929-a4b5-a32b968334ea/metrics.json`
+  - `outputs/study-whether-adding-a-retrieval-augmented-featu-921c29f4/experiment/run_retrieval_feature_study.py`
 
 ## Issue: LV-178
 

@@ -51,7 +51,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 - [x] P0-5. Required artifact contract validation.
 - [x] P0-6. Governance rubric and scoring output.
 - [x] P0-7. AGB-001 dry-run contract lock.
-- [ ] P0-8. AGB-001 live full-run validation. Live TUI run attempted on 2026-05-02; `LV-320`, `LV-321`, and `LV-322` repairs are implemented, but P0-8 remains blocked pending rebuilt same-flow live revalidation.
+- [ ] P0-8. AGB-001 live full-run validation. Live TUI run attempted on 2026-05-02; `LV-320`, `LV-321`, `LV-322`, and `LV-323` repairs are implemented, but P0-8 remains blocked pending rebuilt same-flow live revalidation.
 
 ### P1 — Next Release Cycle
 
@@ -258,7 +258,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 
 ### P0-8. AGB-001 Live Full-Run Validation
 
-- [ ] Status: attempted on 2026-05-02; `LV-320`, `LV-321`, and `LV-322` repairs implemented; still blocked pending rebuilt same-flow live revalidation
+- [ ] Status: attempted on 2026-05-02; `LV-320`, `LV-321`, `LV-322`, and `LV-323` repairs implemented; still blocked pending rebuilt same-flow live revalidation
 - Related repo files:
   - Existing: `src/cli/args.ts`
   - Existing: `src/cli/main.ts`
@@ -271,7 +271,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - Existing: `src/core/benchmark/governanceCondition.ts`
   - Existing: `src/core/benchmark/governanceArtifactContract.ts`
 - Planned files if needed:
-  - Same-flow revalidation notes after `LV-321` and `LV-322` repairs
+  - Same-flow revalidation notes after `LV-321`, `LV-322`, and `LV-323` repairs
 - Validation commands:
   - `npm run build`
   - `npm test`
@@ -286,7 +286,8 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - A restarted TUI session reloaded the same run as `status: failed`, `node: run_experiments`; the UI also showed `interaction: busy`, which is recorded in `LV-320`.
   - After the `LV-320` repair, a rebuilt real TUI revalidation under the `gated` benchmark condition no longer reproduced the missing `records` TypeError and advanced to a generated numeric-helper alias mismatch (`LV-321`).
   - The same revalidation then auto-rolled back and exposed rollback artifact loss: the public experiment runner path no longer existed when `implement_experiments` retried (`LV-322`).
-  - `LV-321` and `LV-322` repairs now pass targeted regressions, full build, full test suite, and harness validation; same-flow live TUI revalidation is still required before checking P0-8.
+  - After the `LV-322` repair, the rebuilt same-flow live run advanced past rollback artifact loss, then exposed a generated dataset-dispatch mismatch where the final entrypoint could not invoke generated `load_dataset(config)` or generated `fallback_dataset()` (`LV-323`).
+  - `LV-321`, `LV-322`, and `LV-323` repairs pass targeted regressions, full build, full test suite, and harness validation. Same-flow live TUI revalidation is still required before checking P0-8.
 - Completion criteria:
   - [x] Live TUI run starts from the external AGB-001 brief path without copying private source paths into committed docs.
   - [x] `/doctor` output is checked before the live run.

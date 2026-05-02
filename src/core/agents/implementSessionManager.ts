@@ -7856,6 +7856,51 @@ export class ImplementSessionManager {
       }
     }
 
+    const entrypointDatasetLoaderAliasRepair =
+      await repairPythonEntrypointDatasetLoaderAliasSurface(executionScriptPath);
+    if (entrypointDatasetLoaderAliasRepair.repaired) {
+      onProgress?.(
+        entrypointDatasetLoaderAliasRepair.message ||
+          "Aligned entrypoint dataset loader aliases before handoff.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            entrypointDatasetLoaderAliasRepair.message ||
+            "Aligned entrypoint dataset loader aliases before handoff."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
     const instructionDatasetHelperAliasRepair =
       await repairPythonInstructionDatasetHelperAliasSurface(executionScriptPath);
     if (instructionDatasetHelperAliasRepair.repaired) {
@@ -17031,6 +17076,124 @@ export async function repairPythonInstructionDatasetHelperAliasSurface(
   return {
     repaired: true,
     message: `Added instruction dataset loader alias to ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonEntrypointDatasetLoaderAliasSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    !source.includes("def _entrypoint_load_dataset(") ||
+    !source.includes("No dataset loader or fallback dataset builder is available in this runner.")
+  ) {
+    return { repaired: false };
+  }
+
+  const hasCanonicalLoadDataset = pythonSourceDefinesOrImportsName(source, "load_dataset");
+  const hasEntrypointLoadDataset = pythonSourceDefinesOrImportsName(source, "load_or_create_dataset");
+  const hasFallbackDataset = pythonSourceDefinesOrImportsName(source, "fallback_dataset");
+  const hasEntrypointFallbackDataset =
+    pythonSourceDefinesOrImportsName(source, "build_fallback_dataset") ||
+    pythonSourceDefinesOrImportsName(source, "make_fallback_dataset");
+  if ((!hasCanonicalLoadDataset || hasEntrypointLoadDataset) && (!hasFallbackDataset || hasEntrypointFallbackDataset)) {
+    return { repaired: false };
+  }
+
+  const alias: string[] = [""];
+  if (hasCanonicalLoadDataset && !hasEntrypointLoadDataset) {
+    alias.push(
+      "def load_or_create_dataset(*positional, public_dir=None, dataset_path=None, seed=None, **keyword):",
+      "    \"\"\"AutoLabOS alias from entrypoint dataset dispatch to the generated canonical loader.\"\"\"",
+      "    _autolabos_loader = globals().get(\"load_dataset\")",
+      "    if not callable(_autolabos_loader):",
+      "        raise RuntimeError(\"No generated load_dataset helper is available for load_or_create_dataset.\")",
+      "    _autolabos_config = keyword.get(\"config\") or keyword.get(\"run_config\")",
+      "    _autolabos_args = keyword.get(\"args\")",
+      "    _autolabos_seed = seed if seed is not None else keyword.get(\"seed\", globals().get(\"RANDOM_SEED\", 42))",
+      "    if _autolabos_args is None:",
+      "        import argparse as _autolabos_argparse",
+      "        _autolabos_args = _autolabos_argparse.Namespace(",
+      "            public_dir=str(public_dir) if public_dir is not None else None,",
+      "            dataset_path=str(dataset_path) if dataset_path is not None else None,",
+      "            output_dir=str(public_dir) if public_dir is not None else None,",
+      "            metrics_path=str(keyword.get(\"metrics_path\")) if keyword.get(\"metrics_path\") is not None else None,",
+      "            seed=_autolabos_seed,",
+      "        )",
+      "    if _autolabos_config is None:",
+      "        _autolabos_make_config = globals().get(\"make_run_config\")",
+      "        if callable(_autolabos_make_config):",
+      "            try:",
+      "                _autolabos_config = _autolabos_make_config(_autolabos_args)",
+      "            except TypeError:",
+      "                _autolabos_config = None",
+      "    if _autolabos_config is None:",
+      "        _autolabos_config_cls = globals().get(\"RunConfig\")",
+      "        if callable(_autolabos_config_cls):",
+      "            try:",
+      "                _autolabos_config = _autolabos_config_cls()",
+      "            except TypeError:",
+      "                _autolabos_config = None",
+      "    _autolabos_last_error = None",
+      "    _autolabos_calls = []",
+      "    if _autolabos_config is not None:",
+      "        _autolabos_calls.append(lambda: _autolabos_loader(_autolabos_config))",
+      "    _autolabos_calls.extend((",
+      "        lambda: _autolabos_loader(*positional, public_dir=public_dir, dataset_path=dataset_path, seed=_autolabos_seed, **keyword),",
+      "        lambda: _autolabos_loader(*positional, **keyword),",
+      "        lambda: _autolabos_loader(),",
+      "    ))",
+      "    for _autolabos_call in _autolabos_calls:",
+      "        try:",
+      "            return _autolabos_call()",
+      "        except TypeError as exc:",
+      "            _autolabos_last_error = exc",
+      "            continue",
+      "    raise RuntimeError(f\"Generated load_dataset helper could not be invoked from entrypoint: {_autolabos_last_error!r}\")",
+      ""
+    );
+  }
+  if (hasFallbackDataset && !hasEntrypointFallbackDataset) {
+    alias.push(
+      "def build_fallback_dataset(*positional, **keyword):",
+      "    \"\"\"AutoLabOS alias from entrypoint fallback dispatch to the generated fallback dataset.\"\"\"",
+      "    _autolabos_fallback = globals().get(\"fallback_dataset\")",
+      "    if not callable(_autolabos_fallback):",
+      "        raise RuntimeError(\"No generated fallback_dataset helper is available.\")",
+      "    try:",
+      "        return _autolabos_fallback(*positional, **keyword)",
+      "    except TypeError:",
+      "        return _autolabos_fallback()",
+      "",
+      "def make_fallback_dataset(*positional, **keyword):",
+      "    return build_fallback_dataset(*positional, **keyword)",
+      ""
+    );
+  }
+
+  const insertionMatch =
+    source.match(/\ndef\s+_entrypoint_load_dataset\s*\(/u) ||
+    source.match(/\ndef\s+main\s*\(/u);
+  const insertionIndex = insertionMatch?.index ?? source.length;
+  const nextSource = `${source.slice(0, insertionIndex)}${alias.join("\n")}${source.slice(insertionIndex)}`;
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added entrypoint dataset loader aliases to ${path.basename(scriptPath)} before handoff.`
   };
 }
 

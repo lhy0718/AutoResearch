@@ -78,6 +78,7 @@ import {
   repairPythonFinalMetricsSchemaCompatibilitySurface,
   repairPythonPeftRecipeConfigMetadataAliasSurface,
   repairPythonJsonSafeHelperAlias,
+  repairPythonEntrypointDatasetLoaderAliasSurface,
   repairPythonInstructionDatasetHelperAliasSurface,
   repairPythonModelLoaderAliasSurface,
   repairPythonEvaluationDatasetHelperAliasSurface,
@@ -23112,6 +23113,81 @@ describe("ImplementSessionManager", () => {
     expect(repair.repaired).toBe(true);
     expect(repairedSource).toContain("def load_instruction_dataset_subset(config=None, tokenizer=None, args=None, *positional, **keyword):");
     expect(repairedSource).toContain("\"load_instruction_tuning_dataset\"");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("repairs entrypoint dataset loader aliases when canonical loaders use config-style signatures", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-entrypoint-dataset-loader-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_retrieval_feature_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "from pathlib import Path",
+        "",
+        "RANDOM_SEED = 42",
+        "",
+        "class RunConfig:",
+        "    def __init__(self, seed=42):",
+        "        self.seed = seed",
+        "",
+        "def make_run_config(args):",
+        "    return RunConfig(seed=args.seed)",
+        "",
+        "def load_dataset(config):",
+        "    return {'source': 'load_dataset', 'seed': config.seed}",
+        "",
+        "def fallback_dataset():",
+        "    return {'source': 'fallback_dataset', 'seed': 0}",
+        "",
+        "def _entrypoint_load_dataset(args: argparse.Namespace, public_dir: Path):",
+        "    dataset_path = getattr(args, 'dataset_path', None)",
+        "    candidate_kwargs = {'public_dir': public_dir, 'dataset_path': dataset_path, 'seed': getattr(args, 'seed', RANDOM_SEED)}",
+        "    for loader_name in ('load_or_create_dataset', 'load_dataset', 'discover_or_create_dataset', 'load_abstract_dataset', 'prepare_dataset'):",
+        "        loader = globals().get(loader_name)",
+        "        if not callable(loader):",
+        "            continue",
+        "        for call_args, call_kwargs in (",
+        "            ((), candidate_kwargs),",
+        "            ((public_dir,), {'dataset_path': dataset_path, 'seed': getattr(args, 'seed', RANDOM_SEED)}),",
+        "            ((dataset_path,), {'public_dir': public_dir, 'seed': getattr(args, 'seed', RANDOM_SEED)}),",
+        "            ((public_dir, dataset_path), {'seed': getattr(args, 'seed', RANDOM_SEED)}),",
+        "            ((), {}),",
+        "        ):",
+        "            try:",
+        "                return loader(*call_args, **call_kwargs)",
+        "            except TypeError:",
+        "                continue",
+        "    fallback = globals().get('build_fallback_dataset') or globals().get('make_fallback_dataset')",
+        "    if callable(fallback):",
+        "        try:",
+        "            return fallback(seed=getattr(args, 'seed', RANDOM_SEED))",
+        "        except TypeError:",
+        "            return fallback()",
+        "    raise RuntimeError('No dataset loader or fallback dataset builder is available in this runner.')",
+        "",
+        "def main():",
+        "    dataset = _entrypoint_load_dataset(argparse.Namespace(seed=7, dataset_path=None), Path('.'))",
+        "    return 0 if dataset == {'source': 'load_dataset', 'seed': 7} else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No dataset loader or fallback dataset builder/
+    );
+
+    const repair = await repairPythonEntrypointDatasetLoaderAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def load_or_create_dataset(");
+    expect(repairedSource).toContain("def build_fallback_dataset(");
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
