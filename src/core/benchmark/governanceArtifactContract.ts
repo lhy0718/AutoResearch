@@ -21,13 +21,17 @@ export interface ValidateGovernanceArtifactContractInput {
   runDir: string;
   condition?: GovernanceBenchmarkConditionName;
   publicManifestPath?: string;
+  requiredArtifacts?: string[];
 }
 
 export async function validateGovernanceArtifactContract(
   input: ValidateGovernanceArtifactContractInput
 ): Promise<GovernanceArtifactContractReport> {
   const condition = input.condition || "gated";
-  const requiredArtifacts = requiredArtifactsForCondition(condition);
+  const requiredArtifacts = uniqueStrings([
+    ...requiredArtifactsForCondition(condition),
+    ...(input.requiredArtifacts || [])
+  ]);
   const issues: GovernanceArtifactContractIssue[] = [];
 
   for (const relativePath of requiredArtifacts) {
@@ -53,6 +57,10 @@ export async function validateGovernanceArtifactContract(
     required_artifacts: requiredArtifacts,
     issues
   };
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
 function requiredArtifactsForCondition(condition: GovernanceBenchmarkConditionName): string[] {

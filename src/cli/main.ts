@@ -5,7 +5,7 @@ import { runAutoLabOSWebServer } from "../web/server.js";
 import { runCompareAnalysisCli } from "./compareAnalysis.js";
 import { runEvalHarnessCli } from "./evalHarness.js";
 import { runEvolveCli } from "./evolveRun.js";
-import { runGovernanceBenchmarkSeedCli } from "./governanceBenchmark.js";
+import { runGovernanceBenchmarkDryRunCli, runGovernanceBenchmarkSeedCli } from "./governanceBenchmark.js";
 import { runMetaHarnessCli } from "./metaHarness.js";
 
 function printHelp(): void {
@@ -23,6 +23,7 @@ function printHelp(): void {
     "  autolabos eval-harness [--run <run-id>] [--limit 10] [--output outputs/eval-harness/latest.json] [--no-history]",
     "  autolabos evolve [--max-cycles 3] [--target skills|prompts|all] [--dry-run]",
     "  autolabos governance-benchmark seed --source <path> [--task AGB-001] [--out-dir outputs/governance-benchmark/seeds] [--reference-only]",
+    "  autolabos governance-benchmark dry-run --seed <path> [--task AGB-001] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/AGB-001]",
     "  autolabos meta-harness [--runs 5] [--node analyze_results|review] [--no-apply] [--dry-run]",
     "  autolabos --help",
     "  autolabos --version"
@@ -95,6 +96,17 @@ async function main(): Promise<void> {
       taskId: action.taskId,
       outDir: action.outDir,
       referenceOnly: action.referenceOnly
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-dry-run") {
+    await runGovernanceBenchmarkDryRunCli({
+      cwd: process.cwd(),
+      seedPath: action.seedPath,
+      taskId: action.taskId,
+      outDir: action.outDir,
+      conditions: action.conditions
     });
     return;
   }

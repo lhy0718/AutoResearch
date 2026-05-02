@@ -1,3 +1,4 @@
+import { GovernanceBenchmarkConditionName } from "../core/benchmark/governanceCondition.js";
 import { NodeOptionPackageName } from "../types.js";
 
 export type CliAction =
@@ -7,6 +8,7 @@ export type CliAction =
   | { kind: "eval-harness"; runIds: string[]; limit: number; outputPath?: string; noHistory?: boolean }
   | { kind: "evolve"; maxCycles: number; target: "skills" | "prompts" | "all"; dryRun: boolean }
   | { kind: "governance-benchmark-seed"; sourcePath: string; taskId?: string; outDir?: string; referenceOnly: boolean }
+  | { kind: "governance-benchmark-dry-run"; seedPath: string; taskId?: string; outDir?: string; conditions: GovernanceBenchmarkConditionName[] }
   | { kind: "meta-harness"; runs: number; nodes: ("analyze_results" | "review")[]; noApply: boolean; dryRun: boolean }
   | { kind: "help" }
   | { kind: "version" }
@@ -207,8 +209,72 @@ export function resolveCliAction(args: string[]): CliAction {
 
   if (first === "governance-benchmark") {
     const subcommand = args[1];
-    if (subcommand !== "seed") {
-      return { kind: "error", message: "Usage: governance-benchmark seed --source <path> [--task <id>] [--out-dir outputs/governance-benchmark/seeds] [--reference-only]." };
+    if (subcommand !== "seed" && subcommand !== "dry-run") {
+      return {
+        kind: "error",
+        message:
+          "Usage: governance-benchmark seed --source <path> [--task <id>] [--out-dir outputs/governance-benchmark/seeds] [--reference-only] | governance-benchmark dry-run --seed <path> [--task <id>] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/<task>]."
+      };
+    }
+    if (subcommand === "dry-run") {
+      let seedPath: string | undefined;
+      let taskId: string | undefined;
+      let outDir: string | undefined;
+      const conditions: GovernanceBenchmarkConditionName[] = [];
+      for (let index = 2; index < args.length; index += 1) {
+        const token = args[index];
+        if (token === "--seed" || token === "--source") {
+          const value = args[index + 1];
+          if (!value) {
+            return { kind: "error", message: `Missing value for ${token}.` };
+          }
+          seedPath = value;
+          index += 1;
+          continue;
+        }
+        if (token === "--task") {
+          const value = args[index + 1];
+          if (!value) {
+            return { kind: "error", message: "Missing value for --task." };
+          }
+          taskId = value;
+          index += 1;
+          continue;
+        }
+        if (token === "--condition") {
+          const value = args[index + 1];
+          if (!value) {
+            return { kind: "error", message: "Missing value for --condition." };
+          }
+          const condition = parseGovernanceBenchmarkCondition(value);
+          if (!condition) {
+            return {
+              kind: "error",
+              message: `Unsupported governance benchmark condition: ${value}.`
+            };
+          }
+          conditions.push(condition);
+          index += 1;
+          continue;
+        }
+        if (token === "--out-dir") {
+          const value = args[index + 1];
+          if (!value) {
+            return { kind: "error", message: "Missing value for --out-dir." };
+          }
+          outDir = value;
+          index += 1;
+          continue;
+        }
+        return {
+          kind: "error",
+          message: `Unsupported governance-benchmark dry-run argument: ${token}`
+        };
+      }
+      if (!seedPath) {
+        return { kind: "error", message: "Missing required argument: --seed <path>." };
+      }
+      return { kind: "governance-benchmark-dry-run", seedPath, taskId, outDir, conditions };
     }
     let sourcePath: string | undefined;
     let taskId: string | undefined;
@@ -320,6 +386,19 @@ export function resolveCliAction(args: string[]): CliAction {
     message:
       "Unsupported CLI arguments. Run `autolabos`, `autolabos web`, `autolabos compare-analysis`, `autolabos eval-harness`, `autolabos evolve`, `autolabos meta-harness`, or use slash commands inside the TUI."
   };
+}
+
+function parseGovernanceBenchmarkCondition(value: string): GovernanceBenchmarkConditionName | undefined {
+  if (
+    value === "gated"
+    || value === "ungated"
+    || value === "no_claim_ceiling"
+    || value === "no_review_gate"
+    || value === "no_figure_audit"
+  ) {
+    return value;
+  }
+  return undefined;
 }
 
 const VALID_NODE_OPTION_PACKAGES: NodeOptionPackageName[] = ["fast", "thorough", "paper_scale"];

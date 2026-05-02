@@ -93,6 +93,31 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports governance benchmark dry-run mode", () => {
+    expect(
+      resolveCliAction([
+        "governance-benchmark",
+        "dry-run",
+        "--seed",
+        "outputs/governance-benchmark/seeds/AGB-001",
+        "--task",
+        "AGB-001",
+        "--condition",
+        "gated",
+        "--condition",
+        "ungated",
+        "--out-dir",
+        "outputs/governance-benchmark/AGB-001"
+      ])
+    ).toEqual({
+      kind: "governance-benchmark-dry-run",
+      seedPath: "outputs/governance-benchmark/seeds/AGB-001",
+      taskId: "AGB-001",
+      conditions: ["gated", "ungated"],
+      outDir: "outputs/governance-benchmark/AGB-001"
+    });
+  });
+
   it("requires a run id for compare-analysis", () => {
     const action = resolveCliAction(["compare-analysis"]);
     expect(action.kind).toBe("error");
@@ -100,6 +125,11 @@ describe("resolveCliAction", () => {
 
   it("requires a source for governance benchmark seed import mode", () => {
     const action = resolveCliAction(["governance-benchmark", "seed"]);
+    expect(action.kind).toBe("error");
+  });
+
+  it("requires a seed for governance benchmark dry-run mode", () => {
+    const action = resolveCliAction(["governance-benchmark", "dry-run"]);
     expect(action.kind).toBe("error");
   });
 
