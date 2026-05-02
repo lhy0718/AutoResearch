@@ -18,6 +18,14 @@ export type ManuscriptType =
   | "paper_ready"
   | "blocked_for_paper_scale";
 
+const MANUSCRIPT_TYPE_RANKING: Record<ManuscriptType, number> = {
+  paper_ready: 0,
+  paper_scale_candidate: 1,
+  research_memo: 2,
+  system_validation_note: 3,
+  blocked_for_paper_scale: 4
+};
+
 // ---------------------------------------------------------------------------
 // Critique decision
 // ---------------------------------------------------------------------------
@@ -90,6 +98,8 @@ export interface PaperCritique {
   transition_recommendation: CritiqueDecision;
   paper_readiness_state: ManuscriptType;
   downgrade_reason: string | null;
+  pre_draft_manuscript_type?: ManuscriptType;
+  claim_ceiling_applied?: boolean;
   manuscript_claim_risk_summary: string;
 
   needs_additional_experiments: boolean;
@@ -205,6 +215,7 @@ export function buildPreDraftCritique(input: PreDraftCritiqueInput): PaperCritiq
       manuscriptType,
       input.minimumGateCeiling
     ),
+    claim_ceiling_applied: false,
     manuscript_claim_risk_summary: claimRisk,
     needs_additional_experiments: needsExperiments,
     needs_additional_statistics: needsStatistics,
@@ -254,8 +265,14 @@ export function buildPostDraftCritique(input: PostDraftCritiqueInput): PaperCrit
   const blockingIssues = issues.filter((i) => i.severity === "blocking" || i.severity === "high");
   const nonBlockingIssues = issues.filter((i) => i.severity !== "blocking" && i.severity !== "high");
 
-  // Manuscript type
-  const manuscriptType = classifyPostDraftManuscriptType(input, blockingIssues);
+  // Manuscript type. Post-draft polish cannot raise the manuscript above a
+  // weak pre-draft evidence ceiling.
+  const classifiedManuscriptType = classifyPostDraftManuscriptType(input, blockingIssues);
+  const ceiling = applyPreDraftClaimCeiling(
+    classifiedManuscriptType,
+    input.preDraftCritique?.manuscript_type
+  );
+  const manuscriptType = ceiling.manuscriptType;
 
   // Upstream deficit flags
   const needsExperiments = input.evidenceDiagnostics.blocked_by_evidence_insufficiency
@@ -287,9 +304,13 @@ export function buildPostDraftCritique(input: PostDraftCritiqueInput): PaperCrit
     non_blocking_issues: nonBlockingIssues,
     transition_recommendation: overallDecision,
     paper_readiness_state: manuscriptType,
-    downgrade_reason: manuscriptType !== "paper_ready" && manuscriptType !== "paper_scale_candidate"
-      ? `Post-draft critique classified manuscript as ${manuscriptType}.`
-      : null,
+    downgrade_reason: ceiling.applied
+      ? `Pre-draft claim ceiling capped the manuscript at ${manuscriptType} (review classified evidence as ${input.preDraftCritique?.manuscript_type}).`
+      : manuscriptType !== "paper_ready" && manuscriptType !== "paper_scale_candidate"
+        ? `Post-draft critique classified manuscript as ${manuscriptType}.`
+        : null,
+    pre_draft_manuscript_type: input.preDraftCritique?.manuscript_type,
+    claim_ceiling_applied: ceiling.applied,
     manuscript_claim_risk_summary: claimRisk,
     needs_additional_experiments: needsExperiments,
     needs_additional_statistics: needsStatistics,
@@ -519,15 +540,10 @@ function applyMinimumGateCeiling(
   }
 
   const gateCap = mapMinimumGateCeilingToManuscriptType(minimumGateCeiling);
-  const ranking: Record<ManuscriptType, number> = {
-    paper_ready: 0,
-    paper_scale_candidate: 1,
-    research_memo: 2,
-    system_validation_note: 3,
-    blocked_for_paper_scale: 4
-  };
 
-  return ranking[manuscriptType] >= ranking[gateCap] ? manuscriptType : gateCap;
+  return MANUSCRIPT_TYPE_RANKING[manuscriptType] >= MANUSCRIPT_TYPE_RANKING[gateCap]
+    ? manuscriptType
+    : gateCap;
 }
 
 function mapMinimumGateCeilingToManuscriptType(ceiling: MinimumGateCeiling): ManuscriptType {
@@ -573,6 +589,25 @@ function classifyPostDraftManuscriptType(
   }
 
   return "research_memo";
+}
+
+function applyPreDraftClaimCeiling(
+  postDraftType: ManuscriptType,
+  preDraftType?: ManuscriptType
+): { manuscriptType: ManuscriptType; applied: boolean } {
+  if (
+    !preDraftType ||
+    preDraftType === "paper_ready" ||
+    preDraftType === "paper_scale_candidate"
+  ) {
+    return { manuscriptType: postDraftType, applied: false };
+  }
+
+  if (MANUSCRIPT_TYPE_RANKING[postDraftType] >= MANUSCRIPT_TYPE_RANKING[preDraftType]) {
+    return { manuscriptType: postDraftType, applied: false };
+  }
+
+  return { manuscriptType: preDraftType, applied: true };
 }
 
 function buildPreDraftDowngradeReason(

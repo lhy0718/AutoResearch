@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import { EventStream } from "../events.js";
 import { saveReflexion } from "../agents/runtime/reflexion.js";
 import { EpisodeMemory } from "../memory/episodeMemory.js";
@@ -21,6 +23,13 @@ import { loadGovernancePolicy } from "../../governance/policyLoader.js";
 import { GovernancePolicy } from "../../governance/policyTypes.js";
 import { ClassifiableAction } from "../../governance/actionRiskClassifier.js";
 import { evaluateActionDetailed, PolicyEvaluationResult } from "../../governance/policyEngine.js";
+import {
+  GovernanceBenchmarkCondition,
+  GovernanceBenchmarkConditionName,
+  resolveGovernanceBenchmarkCondition
+} from "../benchmark/governanceCondition.js";
+import { buildWorkspaceRunRoot } from "../runs/runPaths.js";
+import { writeJsonFile } from "../../utils/fs.js";
 
 export class StateGraphRuntime {
   private governancePolicy?: GovernancePolicy;
@@ -34,6 +43,7 @@ export class StateGraphRuntime {
       approvalMode?: WorkflowApprovalMode;
       budgetGuardUsd?: number;
       governancePolicy?: GovernancePolicy;
+      benchmarkCondition?: GovernanceBenchmarkConditionName | GovernanceBenchmarkCondition;
       evaluateGovernanceAction?: (
         action: ClassifiableAction,
         policy: GovernancePolicy,
@@ -54,6 +64,7 @@ export class StateGraphRuntime {
       run.graph.currentNode = run.currentNode;
     }
     run.status = "running";
+    await this.recordGovernanceBenchmarkCondition(run);
     this.syncLatestSummary(run);
     const budgetPaused = await this.pauseForBudgetGuardIfNeeded(run);
     if (budgetPaused) {
@@ -106,6 +117,7 @@ export class StateGraphRuntime {
     }
 
     const node = run.currentNode;
+    const governanceCondition = await this.recordGovernanceBenchmarkCondition(run);
     const governanceDecision = await this.evaluateNodeGovernance(run, node);
     if (governanceDecision?.decision === "require_review") {
       return this.pauseForGovernanceReview(run, node, governanceDecision.detail);
@@ -126,7 +138,7 @@ export class StateGraphRuntime {
       type: "NODE_STARTED",
       runId: run.id,
       node,
-      payload: { node }
+      payload: { node, ...(governanceCondition ? { governance_condition: governanceCondition } : {}) }
     });
 
     const before = await this.saveCheckpointAndPersist(run, "before");
@@ -145,6 +157,7 @@ export class StateGraphRuntime {
       const result = await this.nodeRegistry.get(node).execute({
         run,
         graph: run.graph,
+        governanceCondition,
         abortSignal
       });
       // Once a node returns, its result becomes the source of truth even if a
@@ -1112,6 +1125,25 @@ export class StateGraphRuntime {
       this.governancePolicy = this.options.governancePolicy || loadGovernancePolicy();
     }
     return this.governancePolicy;
+  }
+
+  private async recordGovernanceBenchmarkCondition(
+    run: RunRecord
+  ): Promise<GovernanceBenchmarkCondition | undefined> {
+    if (!this.options.benchmarkCondition) {
+      return undefined;
+    }
+    const condition =
+      typeof this.options.benchmarkCondition === "string"
+        ? resolveGovernanceBenchmarkCondition(this.options.benchmarkCondition)
+        : this.options.benchmarkCondition;
+    const runRoot = buildWorkspaceRunRoot(process.cwd(), run.id);
+    await writeJsonFile(path.join(runRoot, "governance_condition.json"), {
+      ...condition,
+      recorded_at: new Date().toISOString(),
+      run_id: run.id
+    });
+    return condition;
   }
 
   private buildNodeGovernanceAction(runId: string, node: GraphNodeId): ClassifiableAction {

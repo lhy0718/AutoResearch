@@ -71,8 +71,35 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports governance benchmark seed import mode", () => {
+    expect(
+      resolveCliAction([
+        "governance-benchmark",
+        "seed",
+        "--source",
+        "fixtures/AGB-001",
+        "--task",
+        "AGB-001",
+        "--out-dir",
+        "outputs/seeds",
+        "--reference-only"
+      ])
+    ).toEqual({
+      kind: "governance-benchmark-seed",
+      sourcePath: "fixtures/AGB-001",
+      taskId: "AGB-001",
+      outDir: "outputs/seeds",
+      referenceOnly: true
+    });
+  });
+
   it("requires a run id for compare-analysis", () => {
     const action = resolveCliAction(["compare-analysis"]);
+    expect(action.kind).toBe("error");
+  });
+
+  it("requires a source for governance benchmark seed import mode", () => {
+    const action = resolveCliAction(["governance-benchmark", "seed"]);
     expect(action.kind).toBe("error");
   });
 

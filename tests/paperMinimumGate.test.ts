@@ -108,6 +108,16 @@ describe("paperMinimumGate", () => {
     expect(result.summary).toContain("passed");
   });
 
+  it("records measured values and threshold values for every gate check", () => {
+    const result = evaluateMinimumGate(fullInput());
+
+    for (const check of result.checks) {
+      expect(check.measured_value).toBeDefined();
+      expect(check.threshold_value).toBeDefined();
+      expect(check.threshold_source).toMatch(/^docs\//u);
+    }
+  });
+
   it("has exactly 9 checks", () => {
     const result = evaluateMinimumGate(fullInput());
     expect(result.checks).toHaveLength(10);

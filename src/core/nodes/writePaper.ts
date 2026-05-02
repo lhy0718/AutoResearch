@@ -230,6 +230,8 @@ interface PaperReadinessArtifact {
   generated_at: string;
   paper_ready: boolean;
   readiness_state: ManuscriptType;
+  pre_draft_manuscript_type?: ManuscriptType;
+  claim_ceiling_applied: boolean;
   overall_score?: number;
   reason: string;
   citation_check: CitationReport["status"];
@@ -360,7 +362,8 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         (await runContextMemory.get<BriefEvidenceAssessment>("analyze_results.brief_evidence_assessment")) ?? undefined;
       const writeEligibility = evaluateWritePaperEligibility({
         preDraftCritique,
-        briefEvidenceAssessment
+        briefEvidenceAssessment,
+        reviewRequired: Boolean(deps.config.workflow)
       });
       await writeRunArtifact(
         run,
@@ -1038,6 +1041,8 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       );
       const paperReadiness = buildPaperReadinessArtifact({
         manuscriptType: postDraftCritique.manuscript_type,
+        preDraftManuscriptType: postDraftCritique.pre_draft_manuscript_type,
+        claimCeilingApplied: postDraftCritique.claim_ceiling_applied,
         overallScore: postDraftCritique.overall_score,
         evidenceGateDecision,
         claimStatusTable,
@@ -3496,6 +3501,8 @@ function buildEvidenceGateDecisionArtifact(
 
 function buildPaperReadinessArtifact(input: {
   manuscriptType: ManuscriptType;
+  preDraftManuscriptType?: ManuscriptType;
+  claimCeilingApplied?: boolean;
   overallScore?: number;
   evidenceGateDecision: EvidenceGateDecisionArtifact;
   claimStatusTable: ClaimStatusTableArtifact;
@@ -3504,8 +3511,10 @@ function buildPaperReadinessArtifact(input: {
   submissionValidationOk: boolean;
   manuscriptQualityAction: ManuscriptRepairDecision["action"];
 }): PaperReadinessArtifact {
+  const claimCeilingApplied = input.claimCeilingApplied === true;
   const paperReady =
     input.manuscriptType === "paper_ready"
+    && !claimCeilingApplied
     && input.evidenceGateDecision.status !== "fail"
     && input.citationReport.status !== "fail"
     && input.scientificGateStatus !== "fail"
@@ -3516,16 +3525,21 @@ function buildPaperReadinessArtifact(input: {
     ...(input.citationReport.status === "fail" ? ["citation_check"] : []),
     ...(input.scientificGateStatus === "fail" ? ["scientific_validation"] : []),
     ...(!input.submissionValidationOk ? ["submission_validation"] : []),
-    ...(input.manuscriptQualityAction === "stop" ? ["manuscript_quality"] : [])
+    ...(input.manuscriptQualityAction === "stop" ? ["manuscript_quality"] : []),
+    ...(claimCeilingApplied ? ["claim_ceiling"] : [])
   ];
   return {
     generated_at: new Date().toISOString(),
     paper_ready: paperReady,
     readiness_state: paperReady ? "paper_ready" : input.manuscriptType,
+    pre_draft_manuscript_type: input.preDraftManuscriptType,
+    claim_ceiling_applied: claimCeilingApplied,
     overall_score: typeof input.overallScore === "number" ? input.overallScore : undefined,
     citation_check: input.citationReport.status,
     reason: paperReady
       ? "The manuscript passed manuscript-quality, evidence, scientific, and submission gates."
+      : claimCeilingApplied
+        ? "paper_ready is blocked because the pre-draft review claim ceiling classified the evidence below paper-ready."
       : input.citationReport.status === "fail"
         ? "citation_gap"
       : input.evidenceGateDecision.status === "fail"
@@ -3956,6 +3970,7 @@ function buildPostDraftTransitionRecommendation(
 function evaluateWritePaperEligibility(input: {
   preDraftCritique: PaperCritique | null;
   briefEvidenceAssessment?: BriefEvidenceAssessment;
+  reviewRequired?: boolean;
 }): {
   generated_at: string;
   allowed: boolean;
@@ -3963,6 +3978,15 @@ function evaluateWritePaperEligibility(input: {
   manuscript_type?: ManuscriptType;
   brief_evidence_status?: BriefEvidenceAssessment["status"];
 } {
+  if (input.reviewRequired && !input.preDraftCritique) {
+    return {
+      generated_at: new Date().toISOString(),
+      allowed: false,
+      reason: "write_paper blocked because review/paper_critique.json is required before drafting.",
+      brief_evidence_status: input.briefEvidenceAssessment?.status
+    };
+  }
+
   if (input.briefEvidenceAssessment?.enabled && input.briefEvidenceAssessment.status === "fail") {
     return {
       generated_at: new Date().toISOString(),

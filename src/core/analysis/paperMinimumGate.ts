@@ -29,6 +29,9 @@ export interface MinimumGateCheck {
   label: string;
   passed: boolean;
   detail: string;
+  measured_value?: number | string | boolean;
+  threshold_value?: number | string | boolean;
+  threshold_source?: string;
 }
 
 export interface MinimumGateResult {
@@ -80,7 +83,10 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
       passed: hasObjective,
       detail: hasObjective
       ? `Objective: ${input.objectiveMetric.slice(0, GATE_THRESHOLDS.objectiveMetricPreviewLength)}`
-      : "No objective metric specified"
+      : "No objective metric specified",
+    measured_value: hasObjective,
+    threshold_value: true,
+    threshold_source: "docs/paper-quality-bar.md#paper-ready-minimum-gate"
   });
 
   // 2. Experiment plan exists (task/dataset grounding)
@@ -90,7 +96,10 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
     passed: input.presence.experimentPlanPresent,
     detail: input.presence.experimentPlanPresent
       ? "experiment_plan.yaml present"
-      : "No experiment_plan.yaml — no task/dataset grounding"
+      : "No experiment_plan.yaml — no task/dataset grounding",
+    measured_value: input.presence.experimentPlanPresent,
+    threshold_value: true,
+    threshold_source: "docs/experiment-quality-bar.md#paper-scale-experiment-minimum-gate"
   });
 
   // 3. At least one baseline or comparator is explicit
@@ -104,7 +113,12 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
       ? input.presence.baselineSummaryPresent
         ? "baseline_summary.json present"
         : `${input.report.condition_comparisons.length} condition comparison(s) found`
-      : "No baseline_summary.json and no condition comparisons"
+      : "No baseline_summary.json and no condition comparisons",
+    measured_value: input.presence.baselineSummaryPresent
+      ? "baseline_summary_present"
+      : input.report.condition_comparisons?.length ?? 0,
+    threshold_value: "baseline_summary_present_or_condition_comparisons>=1",
+    threshold_source: "docs/experiment-quality-bar.md#paper-scale-experiment-minimum-gate"
   });
 
   // 4. At least one executed comparison result exists
@@ -115,7 +129,10 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
     passed: hasExecutedResult,
     detail: hasExecutedResult
       ? "metrics.json present"
-      : "No metrics.json — no executed result evidence"
+      : "No metrics.json — no executed result evidence",
+    measured_value: hasExecutedResult,
+    threshold_value: true,
+    threshold_source: "docs/experiment-quality-bar.md#run_experiments-success-expectations"
   });
 
   // 5. Evidence goes beyond a single thin run
@@ -124,7 +141,10 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
     id: "evidence_depth",
     label: "Evidence goes beyond a single thin run",
     passed: evidenceDepth.passed,
-    detail: evidenceDepth.detail
+    detail: evidenceDepth.detail,
+    measured_value: evidenceDepth.measuredValue,
+    threshold_value: evidenceDepth.thresholdValue,
+    threshold_source: "docs/experiment-quality-bar.md#paper-scale-experiment-minimum-gate"
   });
 
   // 6. Key result artifacts exist and are parseable
@@ -135,7 +155,10 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
     passed: hasResultTable,
     detail: hasResultTable
       ? "result_table.json present"
-      : "No result_table.json"
+      : "No result_table.json",
+    measured_value: hasResultTable,
+    threshold_value: true,
+    threshold_source: "docs/experiment-quality-bar.md#result-table-expectation"
   });
 
   // 7. Claim→evidence linkage support
@@ -153,7 +176,10 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
       ? `evidence_store.jsonl present, ${claimsWithEvidence}/${input.report.paper_claims?.length ?? 0} claim(s) with evidence`
       : !input.presence.evidenceStorePresent
         ? "No evidence_store.jsonl"
-        : "No paper claims generated"
+        : "No paper claims generated",
+    measured_value: claimsWithEvidence,
+    threshold_value: GATE_THRESHOLDS.minEvidenceLinksClaimCount,
+    threshold_source: "docs/paper-quality-bar.md#claim-evidence-table-expectation"
   });
 
   // 8. Paper claim-evidence artifacts are structurally grounded when emitted
@@ -162,7 +188,10 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
     id: "claim_evidence_missing",
     label: "Paper claim-evidence artifacts are grounded",
     passed: artifactClaimEvidence.passed,
-    detail: artifactClaimEvidence.detail
+    detail: artifactClaimEvidence.detail,
+    measured_value: artifactClaimEvidence.measuredValue,
+    threshold_value: artifactClaimEvidence.thresholdValue,
+    threshold_source: "docs/paper-quality-bar.md#evidence-linkage-sanity"
   });
 
   // 9. Results table includes explicit baseline/comparator values
@@ -173,7 +202,10 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
     passed: hasStructuredResultsTable,
     detail: hasStructuredResultsTable
       ? "result_analysis.results_table contains at least one complete baseline/comparator row."
-      : "No result_analysis.results_table row has both baseline and comparator populated."
+      : "No result_analysis.results_table row has both baseline and comparator populated.",
+    measured_value: hasStructuredResultsTable,
+    threshold_value: true,
+    threshold_source: "docs/experiment-quality-bar.md#result-table-expectation"
   });
 
   // 10. Not merely system/smoke validation
@@ -190,7 +222,10 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
         ? "No hypotheses — may be system-only validation"
         : !hasEnoughFindings
           ? "No primary findings — may be smoke test only"
-          : "Missing objective metric"
+          : "Missing objective metric",
+    measured_value: input.report.primary_findings?.length ?? 0,
+    threshold_value: GATE_THRESHOLDS.minPrimaryFindingCount,
+    threshold_source: "docs/experiment-quality-bar.md#toy-smoke-exclusion-rule"
   });
 
   if (
@@ -202,7 +237,10 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
       id: "brief_minimum_evidence",
       label: "Brief minimum evidence requirements satisfied",
       passed: input.briefEvidenceAssessment.status !== "fail",
-      detail: input.briefEvidenceAssessment.summary
+      detail: input.briefEvidenceAssessment.summary,
+      measured_value: input.briefEvidenceAssessment.status,
+      threshold_value: "pass_or_not_applicable",
+      threshold_source: "docs/research-brief-template.md"
     });
   }
 
@@ -260,7 +298,12 @@ function moreRestrictiveCeiling(
   return ranking[left] >= ranking[right as MinimumGateCeiling] ? left : (right as MinimumGateCeiling);
 }
 
-function deriveEvidenceDepth(report: AnalysisReport): { passed: boolean; detail: string } {
+function deriveEvidenceDepth(report: AnalysisReport): {
+  passed: boolean;
+  detail: string;
+  measuredValue: string;
+  thresholdValue: string;
+} {
   const totalTrials =
     report.statistical_summary?.total_trials ??
     report.statistical_summary?.executed_trials ??
@@ -279,46 +322,63 @@ function deriveEvidenceDepth(report: AnalysisReport): { passed: boolean; detail:
 
   return {
     passed: hasRobustnessEvidence,
-    detail: `Observed total_trials=${totalTrials ?? "unknown"}, executed_trials=${executedTrials ?? "unknown"}, confidence_intervals=${confidenceIntervalCount}, stability_metrics=${stabilityMetricCount}, effect_estimates=${effectEstimateCount}.`
+    detail: `Observed total_trials=${totalTrials ?? "unknown"}, executed_trials=${executedTrials ?? "unknown"}, confidence_intervals=${confidenceIntervalCount}, stability_metrics=${stabilityMetricCount}, effect_estimates=${effectEstimateCount}.`,
+    measuredValue: `total_trials=${totalTrials ?? "unknown"};confidence_intervals=${confidenceIntervalCount};stability_metrics=${stabilityMetricCount};effect_estimates=${effectEstimateCount}`,
+    thresholdValue: `total_trials>=${GATE_THRESHOLDS.minRobustnessTotalTrials} OR confidence_intervals>=${GATE_THRESHOLDS.minRobustnessConfidenceIntervalCount} OR stability_metrics>=${GATE_THRESHOLDS.minRobustnessStabilityMetricCount} OR effect_estimates>=${GATE_THRESHOLDS.minRobustnessEffectEstimateCount}`
   };
 }
 
-function evaluateClaimEvidenceArtifacts(input: MinimumGateInput): { passed: boolean; detail: string } {
+function evaluateClaimEvidenceArtifacts(input: MinimumGateInput): {
+  passed: boolean;
+  detail: string;
+  measuredValue: string | number;
+  thresholdValue: string | number;
+} {
   const evidenceLinks = normalizeArtifactClaims(input.evidenceLinksArtifact);
   const claimEvidenceTable = normalizeArtifactClaims(input.claimEvidenceTableArtifact);
 
   if (!evidenceLinks.present && !claimEvidenceTable.present) {
     return {
       passed: true,
-      detail: "paper/evidence_links.json and paper/claim_evidence_table.json not emitted yet; relying on pre-draft claim linkage."
+      detail: "paper/evidence_links.json and paper/claim_evidence_table.json not emitted yet; relying on pre-draft claim linkage.",
+      measuredValue: "not_emitted",
+      thresholdValue: "grounded_when_emitted"
     };
   }
 
   if (!evidenceLinks.present) {
     return {
       passed: false,
-      detail: "paper/evidence_links.json missing or malformed."
+      detail: "paper/evidence_links.json missing or malformed.",
+      measuredValue: "evidence_links_missing",
+      thresholdValue: "evidence_links_present"
     };
   }
 
   if (evidenceLinks.claims.length < GATE_THRESHOLDS.minEvidenceLinksClaimCount) {
     return {
       passed: false,
-      detail: "paper/evidence_links.json must include at least one claim entry."
+      detail: "paper/evidence_links.json must include at least one claim entry.",
+      measuredValue: evidenceLinks.claims.length,
+      thresholdValue: GATE_THRESHOLDS.minEvidenceLinksClaimCount
     };
   }
 
   if (!claimEvidenceTable.present) {
     return {
       passed: false,
-      detail: "paper/claim_evidence_table.json missing or malformed."
+      detail: "paper/claim_evidence_table.json missing or malformed.",
+      measuredValue: "claim_evidence_table_missing",
+      thresholdValue: "claim_evidence_table_present"
     };
   }
 
   if (claimEvidenceTable.claims.length < GATE_THRESHOLDS.minClaimEvidenceRows) {
     return {
       passed: false,
-      detail: "paper/claim_evidence_table.json must include at least one claim entry."
+      detail: "paper/claim_evidence_table.json must include at least one claim entry.",
+      measuredValue: claimEvidenceTable.claims.length,
+      thresholdValue: GATE_THRESHOLDS.minClaimEvidenceRows
     };
   }
 
@@ -328,13 +388,17 @@ function evaluateClaimEvidenceArtifacts(input: MinimumGateInput): { passed: bool
   if (emptyEvidenceClaim) {
     return {
       passed: false,
-      detail: `Claim ${String((emptyEvidenceClaim as Record<string, unknown>).claim_id || "unknown")} has no evidence/artifact/citation references in paper/claim_evidence_table.json.`
+      detail: `Claim ${String((emptyEvidenceClaim as Record<string, unknown>).claim_id || "unknown")} has no evidence/artifact/citation references in paper/claim_evidence_table.json.`,
+      measuredValue: 0,
+      thresholdValue: GATE_THRESHOLDS.minClaimEvidenceRefsPerClaim
     };
   }
 
   return {
     passed: true,
-    detail: `${evidenceLinks.claims.length} evidence link claim(s) and ${claimEvidenceTable.claims.length} claim-evidence row(s) grounded.`
+    detail: `${evidenceLinks.claims.length} evidence link claim(s) and ${claimEvidenceTable.claims.length} claim-evidence row(s) grounded.`,
+    measuredValue: claimEvidenceTable.claims.length,
+    thresholdValue: GATE_THRESHOLDS.minClaimEvidenceRows
   };
 }
 

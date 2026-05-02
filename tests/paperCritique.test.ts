@@ -338,8 +338,24 @@ describe("post-draft critique", () => {
     const critique = buildPostDraftCritique(makePostDraftInput());
     expect(critique.stage).toBe("post_draft_review");
     expect(critique.manuscript_type).toBe("paper_ready");
+    expect(critique.claim_ceiling_applied).toBe(false);
     expect(critique.overall_decision).toBe("advance");
     expect(critique.blocking_issues_count).toBe(0);
+  });
+
+  it("does not let post-draft polish raise a weak pre-draft claim ceiling to paper_ready", () => {
+    const preDraft = buildPreDraftCritique(makePreDraftInput({
+      minimumGateCeiling: "research_memo"
+    }));
+    const critique = buildPostDraftCritique(makePostDraftInput({
+      preDraftCritique: preDraft
+    }));
+
+    expect(preDraft.manuscript_type).toBe("research_memo");
+    expect(critique.manuscript_type).toBe("research_memo");
+    expect(critique.pre_draft_manuscript_type).toBe("research_memo");
+    expect(critique.claim_ceiling_applied).toBe(true);
+    expect(critique.downgrade_reason).toContain("Pre-draft claim ceiling capped");
   });
 
   it("evidence insufficiency triggers backtrack", () => {

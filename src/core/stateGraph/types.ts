@@ -1,4 +1,5 @@
 import { ApprovalSignal, GraphNodeId, RunGraphState, RunRecord, TransitionRecommendation } from "../../types.js";
+import type { GovernanceBenchmarkCondition } from "../benchmark/governanceCondition.js";
 
 export type CheckpointPhase = "before" | "after" | "fail" | "jump" | "retry";
 
@@ -17,6 +18,7 @@ export interface CheckpointRecord {
 export interface GraphNodeContext {
   run: RunRecord;
   graph: RunGraphState;
+  governanceCondition?: GovernanceBenchmarkCondition;
   abortSignal?: AbortSignal;
 }
 

@@ -127,6 +127,14 @@ export interface FigureAuditSummary {
   figure_count: number;
   issues: FigureAuditIssue[];
   severe_mismatch_count: number;
+  gate_thresholds?: {
+    severe_mismatch_count: {
+      measured_value: number;
+      threshold_value: number;
+      threshold_source: string;
+      passed: boolean;
+    };
+  };
   review_block_required: boolean;
 }
 

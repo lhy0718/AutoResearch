@@ -19,6 +19,7 @@ import {
   HarnessValidationReport,
   runHarnessValidation
 } from "./validation/harnessValidationService.js";
+import { buildBriefCompletenessArtifact } from "./runs/researchBriefFiles.js";
 
 export interface DoctorRunOptions {
   llmMode?: "codex" | "codex_chatgpt_only" | "openai_api" | "ollama";
@@ -40,6 +41,7 @@ export interface DoctorRunOptions {
   codeExecutionExpected?: boolean;
   candidateIsolation?: "attempt_snapshot_restore" | "attempt_worktree";
   manualOverride?: boolean;
+  researchBriefPath?: string;
   /** @deprecated Compatibility-only. Network access is no longer controlled by this boolean. */
   allowNetwork?: boolean;
   networkPolicy?: ExperimentNetworkPolicy;
@@ -73,6 +75,9 @@ export interface DoctorReadinessSnapshot {
   containerizationRequired: boolean;
   webRestrictionRequired: boolean;
   manualOverride: boolean;
+  researchBriefPath?: string;
+  researchBriefContractReady?: boolean;
+  researchBriefMissingSections?: string[];
   warningChecks: string[];
   failedChecks: string[];
 }
@@ -231,6 +236,11 @@ export async function runDoctorReport(
       : "No manual override is active."
   });
 
+  const researchBriefCheck = await runResearchBriefContractCheck(opts?.researchBriefPath, workspaceRoot);
+  if (researchBriefCheck) {
+    checks.push(researchBriefCheck.check);
+  }
+
   checks.push(await runBinaryCheck("python3", ["--version"], "python"));
   checks.push(await runBinaryCheck("pip3", ["--version"], "pip"));
   checks.push(await runBinaryCheck("pdflatex", ["--version"], "latex"));
@@ -346,6 +356,9 @@ export async function runDoctorReport(
       containerizationRequired,
       webRestrictionRequired,
       manualOverride,
+      researchBriefPath: researchBriefCheck?.resolvedPath,
+      researchBriefContractReady: researchBriefCheck?.contractReady,
+      researchBriefMissingSections: researchBriefCheck?.missingSections,
       warningChecks,
       failedChecks: [
         ...failedChecks,
@@ -481,6 +494,53 @@ async function runConfigExistsCheck(configFile: string): Promise<DoctorCheck> {
       name: "workspace-config",
       ok: false,
       detail: "workspace not initialized – run setup first"
+    };
+  }
+}
+
+async function runResearchBriefContractCheck(
+  researchBriefPath: string | undefined,
+  workspaceRoot: string
+): Promise<{
+  check: DoctorCheck;
+  resolvedPath: string;
+  contractReady: boolean;
+  missingSections: string[];
+} | undefined> {
+  if (!researchBriefPath) {
+    return undefined;
+  }
+  const resolvedPath = path.isAbsolute(researchBriefPath)
+    ? researchBriefPath
+    : path.resolve(workspaceRoot, researchBriefPath);
+  try {
+    const markdown = await fs.readFile(resolvedPath, "utf8");
+    const completeness = buildBriefCompletenessArtifact(markdown);
+    const missingSections = completeness.contract_missing_sections.length > 0
+      ? completeness.contract_missing_sections
+      : completeness.missing_sections;
+    return {
+      resolvedPath,
+      contractReady: completeness.contract_ready,
+      missingSections,
+      check: {
+        name: "research-brief-contract",
+        ok: completeness.contract_ready,
+        detail: completeness.contract_ready
+          ? `Research brief contract is complete at ${resolvedPath}.`
+          : `Research brief contract is missing required section(s): ${missingSections.join(", ")}.`
+      }
+    };
+  } catch (error) {
+    return {
+      resolvedPath,
+      contractReady: false,
+      missingSections: ["brief file readable"],
+      check: {
+        name: "research-brief-contract",
+        ok: false,
+        detail: `Research brief contract check failed at ${resolvedPath}: ${error instanceof Error ? error.message : String(error)}`
+      }
     };
   }
 }

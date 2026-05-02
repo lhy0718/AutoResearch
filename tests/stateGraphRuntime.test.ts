@@ -11,6 +11,7 @@ import { CheckpointStore } from "../src/core/stateGraph/checkpointStore.js";
 import { StateGraphRuntime } from "../src/core/stateGraph/runtime.js";
 import { GraphNodeHandler, GraphNodeRegistry } from "../src/core/stateGraph/types.js";
 import { FailureMemory, buildErrorFingerprint } from "../src/core/experiments/failureMemory.js";
+import type { GovernanceBenchmarkConditionName } from "../src/core/benchmark/governanceCondition.js";
 import { GRAPH_NODE_ORDER, GraphNodeId, RunRecord } from "../src/types.js";
 import { readJsonFile } from "../src/utils/fs.js";
 import { GovernancePolicy } from "../src/governance/policyTypes.js";
@@ -72,6 +73,7 @@ async function setupWithOptions(
   options?: {
     approvalMode?: "manual" | "minimal" | "hybrid";
     budgetGuardUsd?: number;
+    benchmarkCondition?: GovernanceBenchmarkConditionName;
     governancePolicy?: GovernancePolicy;
     evaluateGovernanceAction?: any;
   }
@@ -85,7 +87,7 @@ async function setupWithOptions(
 
   const store = new RunStore(paths);
   const checkpointStore = new CheckpointStore(paths);
-  const runtime = new StateGraphRuntime(store, registry, checkpointStore, new InMemoryEventStream(), options);
+    const runtime = new StateGraphRuntime(store, registry, checkpointStore, new InMemoryEventStream(), options);
   return { paths, store, checkpointStore, runtime };
 }
 
@@ -132,6 +134,58 @@ describe("StateGraphRuntime", () => {
     expect(persisted?.currentNode).toBe("analyze_papers");
     expect(persisted?.graph.currentNode).toBe("analyze_papers");
     expect(persisted?.graph.checkpointSeq).toBe(2);
+  });
+
+  it("records the active benchmark governance condition in run artifacts and events", async () => {
+    const registry = new Registry({
+      collect_papers: {
+        id: "collect_papers",
+        execute: async (context) => {
+          expect(context.governanceCondition?.name).toBe("no_review_gate");
+          return {
+            status: "success",
+            summary: "collect complete",
+            needsApproval: false,
+            toolCallsUsed: 1
+          };
+        }
+      }
+    });
+    const eventStream = new InMemoryEventStream();
+    const cwd = mkdtempSync(path.join(os.tmpdir(), "autolabos-runtime-condition-"));
+    tempDirs.push(cwd);
+    process.chdir(cwd);
+    const paths = resolveAppPaths(cwd);
+    await ensureScaffold(paths);
+    const store = new RunStore(paths);
+    const checkpointStore = new CheckpointStore(paths);
+    const runtime = new StateGraphRuntime(store, registry, checkpointStore, eventStream, {
+      benchmarkCondition: "no_review_gate"
+    });
+    const run = await store.createRun({
+      title: "Benchmark condition",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    await runtime.step(run.id);
+
+    const condition = await readJsonFile<{
+      name: string;
+      gates: { review_gate: boolean };
+      run_id: string;
+    }>(path.join(paths.runsDir, run.id, "governance_condition.json"));
+    expect(condition).toMatchObject({
+      name: "no_review_gate",
+      gates: { review_gate: false },
+      run_id: run.id
+    });
+    const started = eventStream.history(10, run.id).find((event) => event.type === "NODE_STARTED");
+    expect(started?.payload.governance_condition).toMatchObject({
+      name: "no_review_gate",
+      gates: { review_gate: false }
+    });
   });
 
   it("pauses for governance review before executing a node when policy requires it", async () => {
@@ -1321,7 +1375,7 @@ describe("StateGraphRuntime", () => {
     run.graph.nodeStates.run_experiments.status = "running";
     await store.updateRun(run);
 
-    const errorMessage = "Experiment finished without metrics output at /tmp/metrics.json";
+    const errorMessage = "Experiment finished without metrics output at <workspace>/metrics.json";
     const failureMemory = FailureMemory.forRun(run.id);
     const fingerprint = buildErrorFingerprint(errorMessage);
     for (let attempt = 1; attempt <= 3; attempt += 1) {

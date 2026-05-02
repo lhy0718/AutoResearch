@@ -6,6 +6,7 @@ export type CliAction =
   | { kind: "compare-analysis"; runId: string; limit: number; judge: boolean }
   | { kind: "eval-harness"; runIds: string[]; limit: number; outputPath?: string; noHistory?: boolean }
   | { kind: "evolve"; maxCycles: number; target: "skills" | "prompts" | "all"; dryRun: boolean }
+  | { kind: "governance-benchmark-seed"; sourcePath: string; taskId?: string; outDir?: string; referenceOnly: boolean }
   | { kind: "meta-harness"; runs: number; nodes: ("analyze_results" | "review")[]; noApply: boolean; dryRun: boolean }
   | { kind: "help" }
   | { kind: "version" }
@@ -202,6 +203,59 @@ export function resolveCliAction(args: string[]): CliAction {
       };
     }
     return { kind: "evolve", maxCycles, target, dryRun };
+  }
+
+  if (first === "governance-benchmark") {
+    const subcommand = args[1];
+    if (subcommand !== "seed") {
+      return { kind: "error", message: "Usage: governance-benchmark seed --source <path> [--task <id>] [--out-dir outputs/governance-benchmark/seeds] [--reference-only]." };
+    }
+    let sourcePath: string | undefined;
+    let taskId: string | undefined;
+    let outDir: string | undefined;
+    let referenceOnly = false;
+    for (let index = 2; index < args.length; index += 1) {
+      const token = args[index];
+      if (token === "--source") {
+        const value = args[index + 1];
+        if (!value) {
+          return { kind: "error", message: "Missing value for --source." };
+        }
+        sourcePath = value;
+        index += 1;
+        continue;
+      }
+      if (token === "--task") {
+        const value = args[index + 1];
+        if (!value) {
+          return { kind: "error", message: "Missing value for --task." };
+        }
+        taskId = value;
+        index += 1;
+        continue;
+      }
+      if (token === "--out-dir") {
+        const value = args[index + 1];
+        if (!value) {
+          return { kind: "error", message: "Missing value for --out-dir." };
+        }
+        outDir = value;
+        index += 1;
+        continue;
+      }
+      if (token === "--reference-only") {
+        referenceOnly = true;
+        continue;
+      }
+      return {
+        kind: "error",
+        message: `Unsupported governance-benchmark seed argument: ${token}`
+      };
+    }
+    if (!sourcePath) {
+      return { kind: "error", message: "Missing required argument: --source <path>." };
+    }
+    return { kind: "governance-benchmark-seed", sourcePath, taskId, outDir, referenceOnly };
   }
 
   if (first === "meta-harness") {

@@ -44,22 +44,22 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 
 ### P0 — Sprint Queue
 
-- [ ] P0-1. Competitive-analysis hardening slice: evidence gates, readiness/doctor checks, slug/log/provenance contracts, and quantified thresholds.
-- [ ] P0-2. Research brief input path handling for benchmark and external brief starts.
-- [ ] P0-3. Benchmark seed import or reference execution.
-- [ ] P0-4. Gated, ungated, and ablation execution branches.
-- [ ] P0-5. Required artifact contract validation.
-- [ ] P0-6. Governance rubric and scoring output.
+- [x] P0-1. Competitive-analysis hardening slice: evidence gates, readiness/doctor checks, slug/log/provenance contracts, and quantified thresholds.
+- [x] P0-2. Research brief input path handling for benchmark and external brief starts.
+- [x] P0-3. Benchmark seed import or reference execution.
+- [x] P0-4. Gated, ungated, and ablation execution branches.
+- [x] P0-5. Required artifact contract validation.
+- [x] P0-6. Governance rubric and scoring output.
 - [ ] P0-7. AGB-001 dry-run contract lock.
 
 ### P1 — Next Release Cycle
 
-- [ ] P1-1. Paper-readiness gate and claim ceiling.
-- [ ] P1-2. Claim-evidence table and unsupported-claim scoring.
-- [ ] P1-3. Result table validation and Baseline Compare surface.
-- [ ] P1-4. Figure audit and visualization-agent handoff review.
-- [ ] P1-5. Review-before-writing enforcement.
-- [ ] P1-6. Live-validation failure taxonomy and scoring.
+- [x] P1-1. Paper-readiness gate and claim ceiling.
+- [x] P1-2. Claim-evidence table and unsupported-claim scoring.
+- [x] P1-3. Result table validation and Baseline Compare surface.
+- [x] P1-4. Figure audit and visualization-agent handoff review.
+- [x] P1-5. Review-before-writing enforcement.
+- [x] P1-6. Live-validation failure taxonomy and scoring.
 - [ ] P1-7. AGB-002 through AGB-010 batch or replay.
 - [ ] P1-8. Paper/system demo artifact bundle export.
 - [ ] P1-9. Runtime and worker surfaces: environment bootstrapping, eval-history/fitness, prompt/skill contracts, failure memory, stage routing, model-worker adapter, and autonomy metrics.
@@ -89,7 +89,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 
 ### P0-1. Competitive-Analysis Hardening Slice
 
-- [ ] Status: not started
+- [x] Status: completed 2026-05-02
 - Merged source items:
   - Evidence-consistency gate hardening
   - Readiness/doctor gate hardening
@@ -107,11 +107,9 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - Existing: `src/core/stateGraph/runtime.ts`
   - Tests: `tests/doctorHarnessIntegration.test.ts`, `tests/paperMinimumGate.test.ts`, `tests/reviewGateStrength.test.ts`, `tests/figureAuditor.test.ts`, `tests/publicOutputPublisher.test.ts`, `tests/stateGraphRuntime.test.ts`
 - Planned files if needed:
-  - `src/core/provenance/artifactProvenance.ts`
-  - `tests/artifactProvenance.test.ts`
-  - `tests/doctorReadinessGate.test.ts`
+  - None currently required; existing public-output manifest and runtime node targets already provide deterministic slug/provenance coverage.
 - Validation commands:
-  - `npm test -- tests/doctorHarnessIntegration.test.ts tests/doctorReadinessGate.test.ts tests/paperMinimumGate.test.ts tests/reviewGateStrength.test.ts tests/figureAuditor.test.ts tests/artifactProvenance.test.ts`
+  - `npm test -- tests/doctorHarnessIntegration.test.ts tests/paperMinimumGate.test.ts tests/figureAuditor.test.ts tests/paperGateThresholds.test.ts`
   - `npm run validate:harness`
   - `npm run build`
 - Completion criteria:
@@ -122,7 +120,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 
 ### P0-2. Research Brief Input Path Handling
 
-- [ ] Status: not started
+- [x] Status: completed 2026-05-02
 - Related repo files:
   - Existing: `src/core/runs/researchBriefFiles.ts`
   - Existing: `src/core/runs/runBriefParser.ts`
@@ -130,9 +128,9 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - Existing: `src/interaction/InteractionSession.ts`
   - Tests: `tests/researchBriefFiles.test.ts`, `tests/runBriefParser.test.ts`, `tests/runBriefStartFlow.test.ts`, `tests/newSlashCommands.test.ts`
 - Planned files if needed:
-  - `tests/benchmarkSeedBriefStart.test.ts`
+  - `tests/briefStartPath.test.ts`
 - Validation commands:
-  - `npm test -- tests/researchBriefFiles.test.ts tests/runBriefParser.test.ts tests/runBriefStartFlow.test.ts tests/newSlashCommands.test.ts`
+  - `npm test -- tests/briefStartPath.test.ts tests/researchBriefFiles.test.ts tests/runBriefParser.test.ts tests/runBriefStartFlow.test.ts tests/newSlashCommands.test.ts`
   - `npm run build`
 - Completion criteria:
   - `/brief start <path-to-AGB-001-brief.md>` is accepted as an input path without copying from or modifying an external reference source.
@@ -142,7 +140,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 
 ### P0-3. Benchmark Seed Import Or Reference Execution
 
-- [ ] Status: not started
+- [x] Status: completed 2026-05-02
 - Related repo files:
   - Existing: `src/cli/main.ts`
   - Existing: `src/cli/args.ts`
@@ -155,8 +153,9 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - `src/cli/governanceBenchmark.ts`
   - `tests/governanceSeedBundle.test.ts`
 - Validation commands:
-  - `npm test -- tests/governanceSeedBundle.test.ts tests/harnessValidators.test.ts`
+  - `npm test -- tests/governanceSeedBundle.test.ts tests/cliArgs.test.ts`
   - `npm run validate:harness`
+  - `npm run build`
 - Completion criteria:
   - Repo supports either reference execution from an external reference path or an explicit import into a repo-controlled generated directory.
   - Any import command records source path, checksum or mtime, and task id.
@@ -164,7 +163,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 
 ### P0-4. Gated, Ungated, And Ablation Execution Branches
 
-- [ ] Status: not started
+- [x] Status: completed 2026-05-02
 - Related repo files:
   - Existing: `src/config/governance.default.yaml`
   - Existing: `src/config.ts`
@@ -187,7 +186,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 
 ### P0-5. Required Artifact Contract Validation
 
-- [ ] Status: not started
+- [x] Status: completed 2026-05-02
 - Related repo files:
   - Existing: `src/core/validation/harnessValidators.ts`
   - Existing: `src/core/validation/harnessValidationService.ts`
@@ -208,7 +207,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 
 ### P0-6. Rubric Scoring Output
 
-- [ ] Status: not started
+- [x] Status: completed 2026-05-02
 - Related repo files:
   - Existing: `src/cli/evalHarness.ts`
   - Existing: `src/core/evaluation/evalHarness.ts`
@@ -253,7 +252,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 
 ### P1-1. Paper-Readiness Gate And Claim Ceiling
 
-- [ ] Status: not started
+- [x] Status: completed 2026-05-02
 - Related repo files:
   - Existing: `src/core/analysis/paperMinimumGate.ts`
   - Existing: `src/core/paperCritique.ts`
@@ -265,7 +264,8 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 - Planned files if needed:
   - `tests/governancePaperReadinessGate.test.ts`
 - Validation commands:
-  - `npm test -- tests/paperMinimumGate.test.ts tests/reviewGateStrength.test.ts tests/reviewDecision.test.ts tests/paperGateThresholds.test.ts`
+  - `npm test -- tests/governancePaperReadinessGate.test.ts tests/paperCritique.test.ts tests/paperMinimumGate.test.ts tests/reviewGateStrength.test.ts tests/reviewDecision.test.ts tests/paperGateThresholds.test.ts`
+  - `npm test -- tests/writePaperPdfBuild.test.ts tests/paperWriting.test.ts`
   - `npm run build`
 - Completion criteria:
   - Weak evidence is classified as `system_validation_note`, `research_memo`, or `blocked_for_paper_scale`, not `paper_ready`.
@@ -274,7 +274,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 
 ### P1-2. Claim-Evidence Table
 
-- [ ] Status: not started
+- [x] Status: completed 2026-05-02
 - Related repo files:
   - Existing: `src/core/nodes/writePaper.ts`
   - Existing: `src/core/analysis/scientificWriting.ts`
@@ -286,8 +286,9 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - `src/core/benchmark/claimEvidenceScoring.ts`
   - `tests/claimEvidenceScoring.test.ts`
 - Validation commands:
-  - `npm test -- tests/claimEvidenceScoring.test.ts tests/citationConsistencyChecker.test.ts tests/evidenceSerializer.test.ts`
+  - `npm test -- tests/claimEvidenceScoring.test.ts tests/citationConsistencyChecker.test.ts tests/evidenceSerializer.test.ts tests/governanceScorer.test.ts`
   - `npm run validate:harness`
+  - `npm run build`
 - Completion criteria:
   - `paper/claim_evidence_table.json` maps every major claim to literature, experiment, qualitative observation, or limitation evidence.
   - Unsupported claims are counted, downgraded, or blocked.
@@ -295,7 +296,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 
 ### P1-3. Result Table Validation And Baseline Compare
 
-- [ ] Status: not started
+- [x] Status: completed 2026-05-02
 - Related repo files:
   - Existing: `src/core/analysis/resultsTableSchema.ts`
   - Existing: `src/core/nodes/analyzeResults.ts`
@@ -315,7 +316,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 
 ### P1-4. Figure Audit And Visualization Handoff
 
-- [ ] Status: not started
+- [x] Status: completed 2026-05-02
 - Related repo files:
   - Existing: `src/core/analysis/figureAuditor.ts`
   - Existing: `src/core/nodes/figureAudit.ts`
@@ -334,7 +335,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 
 ### P1-5. Review-Before-Writing
 
-- [ ] Status: not started
+- [x] Status: completed 2026-05-02
 - Related repo files:
   - Existing: `src/core/nodes/review.ts`
   - Existing: `src/core/nodes/writePaper.ts`
@@ -346,6 +347,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 - Validation commands:
   - `npm test -- tests/reviewNode.test.ts tests/reviewDecision.test.ts tests/reviewBeforeWritingGovernance.test.ts`
   - `npm run validate:harness`
+  - `npm run build`
 - Completion criteria:
   - `review/paper_critique.json` is produced before drafting and blocks weak evidence from entering `write_paper`.
   - `review/decision.json` recommends supported upstream targets for missing baseline, missing result table, unsupported claim, or figure mismatch.
@@ -353,7 +355,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 
 ### P1-6. Live-Validation Failure Taxonomy
 
-- [ ] Status: not started
+- [x] Status: completed 2026-05-02
 - Related repo files:
   - Existing: `ISSUES.md`
   - Existing: `docs/live-validation-issue-template.md`
@@ -364,8 +366,9 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - `src/core/benchmark/liveValidationScoring.ts`
   - `tests/liveValidationScoring.test.ts`
 - Validation commands:
-  - `npm test -- tests/doctorHarnessIntegration.test.ts tests/harnessValidators.test.ts tests/liveValidationScoring.test.ts`
+  - `npm test -- tests/doctorHarnessIntegration.test.ts tests/harnessValidators.test.ts tests/liveValidationScoring.test.ts tests/liveFixtureWorkspace.test.ts`
   - `npm run validate:harness`
+  - `npm run build`
   - For real interactive defects: re-run the same TUI/web flow after fixes.
 - Completion criteria:
   - Every live-validation case records one dominant class: `persisted_state_bug`, `in_memory_projection_bug`, `refresh_render_bug`, `resume_reload_bug`, or `race_timing_bug`.

@@ -7,6 +7,7 @@ import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as doctorModule from "../src/core/doctor.js";
+import { buildGuidedResearchBriefMarkdown } from "../src/core/runs/researchBriefFiles.js";
 import { CodexNativeClient } from "../src/integrations/codex/codexCliClient.js";
 
 const tempDirs: string[] = [];
@@ -395,6 +396,77 @@ describe("runDoctorReport", () => {
       });
     }
   });
+
+  it("fails readiness when a provided research brief is missing governance contract sections", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-brief-contract-missing-");
+    await seedDoctorTooling(workspace);
+    await seedDoctorWorkspace(workspace);
+    await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
+    const briefPath = path.join(workspace, "Brief.md");
+    await writeFile(
+      briefPath,
+      [
+        "# Research Brief",
+        "",
+        "## Topic",
+        "A concrete test topic for doctor readiness.",
+        "",
+        "## Objective Metric",
+        "- Primary metric: accuracy"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const report = await withWorkspacePath(workspace, () =>
+      doctorModule.runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        includeHarnessValidation: false,
+        researchBriefPath: briefPath
+      })
+    );
+
+    expect(report.readiness.blocked).toBe(true);
+    expect(report.readiness.failedChecks).toContain("research-brief-contract");
+    expect(report.readiness.researchBriefPath).toBe(briefPath);
+    expect(report.readiness.researchBriefContractReady).toBe(false);
+    expect(report.readiness.researchBriefMissingSections).toContain("Baseline / Comparator");
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "research-brief-contract",
+        ok: false,
+        detail: expect.stringContaining("missing required section")
+      })
+    );
+  });
+
+  it("passes readiness for a provided research brief with complete governance contract sections", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-brief-contract-complete-");
+    await seedDoctorTooling(workspace);
+    await seedDoctorWorkspace(workspace);
+    await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
+    const briefPath = path.join(workspace, "Brief.md");
+    await writeFile(briefPath, buildCompleteBriefMarkdown(), "utf8");
+
+    const report = await withWorkspacePath(workspace, () =>
+      doctorModule.runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        includeHarnessValidation: false,
+        researchBriefPath: briefPath
+      })
+    );
+
+    expect(report.readiness.blocked).toBe(false);
+    expect(report.readiness.failedChecks).not.toContain("research-brief-contract");
+    expect(report.readiness.researchBriefPath).toBe(briefPath);
+    expect(report.readiness.researchBriefContractReady).toBe(true);
+    expect(report.readiness.researchBriefMissingSections).toEqual([]);
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "research-brief-contract",
+        ok: true
+      })
+    );
+  });
 });
 
 function createCodexStub(): CodexNativeClient {
@@ -447,6 +519,29 @@ async function withWorkspacePath<T>(workspace: string, fn: () => Promise<T>): Pr
 async function writeJson(filePath: string, value: unknown): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+function buildCompleteBriefMarkdown(): string {
+  return buildGuidedResearchBriefMarkdown({
+    topic: "A small real experiment for a governed classifier comparison.",
+    primaryMetric: "macro F1",
+    secondaryMetrics: "runtime; memory",
+    meaningfulImprovement: "Macro F1 improves by at least two points without worse runtime.",
+    constraints: "Use a small public dataset; keep execution reproducible; fixed random seed.",
+    researchQuestion: "Does the proposed preprocessing improve macro F1 over a named baseline on a small public task?",
+    whySmallExperiment: "The dataset is small; the baseline is simple; the metric is objective; the run budget is bounded.",
+    baselineComparator: "Baseline: bag-of-words logistic regression.",
+    datasetTaskBench: "Dataset: small public text classification fixture.",
+    targetComparison: "Compare baseline versus preprocessing-enhanced condition on macro F1.",
+    minimumAcceptableEvidence: "At least one executed baseline and one executed comparator with numeric macro F1.",
+    disallowedShortcuts: "No synthetic-only metrics; no paper-ready claim without executed comparator.",
+    allowedBudgetedPasses: "One design pass; one implementation repair pass; one analysis repair pass.",
+    paperCeiling: "research_memo unless baseline and comparator evidence are both present.",
+    minimumExperimentPlan: "Train baseline; train comparator; evaluate macro F1; record result table.",
+    failureConditions: "Missing baseline; missing metric; failed execution; unsupported improvement claim.",
+    notes: "Doctor test fixture.",
+    questionsRisks: "Small sample size may limit generality."
+  });
 }
 
 const VALID_ISSUE_MARKDOWN = `

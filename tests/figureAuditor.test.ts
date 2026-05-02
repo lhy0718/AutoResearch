@@ -109,6 +109,12 @@ describe("figureAuditor", () => {
 
     expect(summary.review_block_required).toBe(true);
     expect(summary.severe_mismatch_count).toBeGreaterThan(0);
+    expect(summary.gate_thresholds?.severe_mismatch_count).toEqual({
+      measured_value: summary.severe_mismatch_count,
+      threshold_value: 0,
+      threshold_source: "docs/paper-quality-bar.md#method-result-consistency",
+      passed: false
+    });
   });
 
   it("critiqueFiguresVision returns no issues when the vision gate is disabled", async () => {

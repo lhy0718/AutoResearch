@@ -215,6 +215,14 @@ export async function runAllGates(input: FigureAuditInput): Promise<FigureAuditS
     figure_count: figureCount,
     issues,
     severe_mismatch_count: severeMismatchCount,
+    gate_thresholds: {
+      severe_mismatch_count: {
+        measured_value: severeMismatchCount,
+        threshold_value: 0,
+        threshold_source: "docs/paper-quality-bar.md#method-result-consistency",
+        passed: severeMismatchCount === 0
+      }
+    },
     review_block_required: severeMismatchCount > 0
   };
 }
