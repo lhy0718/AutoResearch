@@ -51,7 +51,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 - [x] P0-5. Required artifact contract validation.
 - [x] P0-6. Governance rubric and scoring output.
 - [x] P0-7. AGB-001 dry-run contract lock.
-- [ ] P0-8. AGB-001 live full-run validation. Live TUI run attempted on 2026-05-02; `LV-320`, `LV-321`, `LV-322`, `LV-323`, `LV-324`, and `LV-325` repairs are implemented with automated validation passing, but P0-8 remains blocked pending rebuilt same-flow live revalidation.
+- [ ] P0-8. AGB-001 live full-run validation. Live TUI run attempted on 2026-05-02; `LV-320`, `LV-321`, `LV-322`, `LV-323`, `LV-324`, and `LV-325` repairs are implemented with automated validation passing; rebuilt same-flow validation passed the LV-325 symptom, auto-repaired `LV-326` in-run, and is now back at `design_experiments` after an evidence-quality gate.
 
 ### P1 — Next Release Cycle
 
@@ -258,7 +258,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 
 ### P0-8. AGB-001 Live Full-Run Validation
 
-- [ ] Status: attempted on 2026-05-02; `LV-320`, `LV-321`, `LV-322`, `LV-323`, `LV-324`, and `LV-325` repairs implemented with automated validation passing; rebuilt same-flow live revalidation pending
+- [ ] Status: attempted on 2026-05-02; `LV-320`, `LV-321`, `LV-322`, `LV-323`, `LV-324`, and `LV-325` repairs implemented with automated validation passing; rebuilt same-flow revalidation passed the LV-325 resolver symptom, exposed/repaired `LV-326` in-run, then backtracked from `analyze_results` to `design_experiments` on evidence quality
 - Related repo files:
   - Existing: `src/cli/args.ts`
   - Existing: `src/cli/main.ts`
@@ -271,7 +271,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - Existing: `src/core/benchmark/governanceCondition.ts`
   - Existing: `src/core/benchmark/governanceArtifactContract.ts`
 - Planned files if needed:
-  - Same-flow revalidation notes after `LV-321`, `LV-322`, `LV-323`, `LV-324`, and `LV-325` repairs
+  - Same-flow revalidation notes after `LV-321`, `LV-322`, `LV-323`, `LV-324`, `LV-325`, and `LV-326` repairs
 - Validation commands:
   - `npm run build`
   - `npm test`
@@ -289,7 +289,10 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - After the `LV-322` repair, the rebuilt same-flow live run advanced past rollback artifact loss, then exposed a generated dataset-dispatch mismatch where the final entrypoint could not invoke generated `load_dataset(config)` or generated `fallback_dataset()` (`LV-323`).
   - After the `LV-323` repair, the rebuilt same-flow live run advanced past dataset-dispatch mismatch, then exposed a generated baseline-first evaluator whose final dispatcher called `run_baseline_first_condition_evaluation(records)` without `records` and did not unwrap the returned `conditions` mapping (`LV-324`).
   - After the `LV-324` repair, the rebuilt same-flow live run advanced into real `run_experiments`; the prior evaluator `records` TypeError did not reproduce, but the runner failed before metrics creation because the final baseline/retrieval condition resolver searched canonical names while generated helpers used semantically specific names (`LV-325`).
-  - `LV-321`, `LV-322`, `LV-323`, `LV-324`, and `LV-325` repairs pass targeted regressions, full build, full test suite, and harness validation. Same-flow live TUI revalidation is still required before checking P0-8.
+  - After the `LV-325` repair, rebuilt P0-8 run `26756a6f-cf0e-4cb6-9266-99f400bff3db` no longer reproduced the resolver-name failure. The first `run_experiments` attempt instead failed the metrics contract because `accuracy_delta_vs_baseline` was absent (`LV-326`).
+  - The same run auto-repaired `LV-326`: `implement_experiments` regenerated the runner, local verification passed, `run_experiments` completed, and `metrics.json` contained `accuracy_delta_vs_baseline: 0`.
+  - `analyze_results` then completed and correctly backtracked to `design_experiments` because `accuracy_delta_vs_baseline=0` did not satisfy `> 0` and evidence quality remained weak. P0-8 remains unchecked until the run either reaches downstream governance surfaces or fails earlier with a recorded blocker.
+  - `LV-321`, `LV-322`, `LV-323`, `LV-324`, and `LV-325` repairs pass targeted regressions, full build, full test suite, harness validation, and same-flow revalidation for their original symptoms.
 - Completion criteria:
   - [x] Live TUI run starts from the external AGB-001 brief path without copying private source paths into committed docs.
   - [x] `/doctor` output is checked before the live run.

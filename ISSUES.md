@@ -18,7 +18,8 @@ Path placeholders:
 ## Current active status
 
 - Live-validation status and tracked defects:
-  - `LV-325` repair implemented with targeted regression, build, full test, and harness validation passing; rebuilt same-flow live revalidation pending. P0-8 AGB-001 same-flow TUI revalidation after the LV-324 repair advanced into real `run_experiments`, no longer reproduced the `records` TypeError, then exposed a generated baseline/retrieval condition resolver alias mismatch.
+  - `LV-326` reproduced in rebuilt P0-8 AGB-001 same-flow TUI validation and same-run repair succeeded. The first rebuilt `run_experiments` attempt produced metrics without `accuracy_delta_vs_baseline`; the auto-repair regenerated the runner, `run_experiments` passed, and `analyze_results` correctly backtracked to `design_experiments` because the objective remained unmet and evidence was weak.
+  - `LV-325` repair implemented with targeted regression, build, full test, harness validation, and rebuilt same-flow live revalidation passing for the original resolver-mismatch symptom. P0-8 advanced through `run_experiments` after a later same-run metrics-contract repair, then backtracked from `analyze_results` on evidence quality.
   - `LV-324` repair implemented with automated regression, build, and harness validation passing; same-flow live revalidation pending. P0-8 AGB-001 same-flow TUI revalidation after the LV-323 repair advanced past dataset-dispatch mismatch, then exposed a generated baseline-first evaluator whose final dispatcher called `run_baseline_first_condition_evaluation(records)` without `records` and failed to unwrap the returned `conditions` mapping.
   - `LV-323` repair implemented; same-flow live revalidation pending. P0-8 AGB-001 same-flow TUI revalidation after the LV-322 repair advanced past rollback artifact loss, then exposed a generated runner whose final dataset dispatcher could not invoke `load_dataset(config)` and did not search generated `fallback_dataset()`.
   - `LV-322` repair implemented; same-flow live revalidation pending. P0-8 AGB-001 same-flow TUI revalidation after the LV-320 repair rolled back from `run_experiments` to `implement_experiments`, then failed because the public experiment runner path no longer existed.
@@ -1108,9 +1109,67 @@ Path placeholders:
 
 ## Active live validation issues
 
+## Issue: LV-326
+
+- Status: reproduced in rebuilt same-flow live validation; same-run auto-repair succeeded, and no repo code change is pending unless this metrics-contract gap recurs
+- Validation target: `run_experiments` should persist the configured objective metric `accuracy_delta_vs_baseline` when the generated runner completes, so `analyze_results` can evaluate the governed evidence gate.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>`
+  - TUI command: built AutoLabOS CLI with `--benchmark-condition gated`
+  - run: `26756a6f-cf0e-4cb6-9266-99f400bff3db`
+  - backend: native Codex OAuth with `gpt-5.5` and `medium`
+  - input brief: external AGB-001 brief path, not copied into committed docs
+
+- Reproduction steps:
+  1. Build AutoLabOS with the LV-325 repair.
+  2. Start the built TUI from `<validation-workspace>` with `--benchmark-condition gated`.
+  3. Run `/doctor`.
+  4. Start the external AGB-001 brief with `/brief start <path-to-AGB-001-brief.md>`.
+  5. Let the run advance through `collect_papers`, `analyze_papers`, `generate_hypotheses`, `design_experiments`, `implement_experiments`, and `run_experiments`.
+
+- Expected behavior:
+  - The generated runner should include the configured objective metric key in `metrics.json`.
+  - `run_experiments` should not fail its metrics contract solely because `accuracy_delta_vs_baseline` is absent.
+
+- Actual behavior:
+  - The rebuilt same-flow run no longer reproduced the LV-325 `No usable condition resolver found among...` failure.
+  - The first `run_experiments` attempt completed with exit code `0`, but `run_experiments_verify_report.json` reported:
+    - `Experiment metrics contract failed: Objective metric "accuracy_delta_vs_baseline" was not found in metrics.json.`
+  - The workflow retried `run_experiments` three times, then jumped back into `implement_experiments`.
+  - The same-run implementation repair regenerated the runner, local verification passed, and the next `run_experiments` attempt produced `accuracy_delta_vs_baseline: 0`.
+  - `analyze_results` completed and then recommended/applied `backtrack_to_design` because the objective metric did not satisfy `> 0` and evidence remained weak.
+
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in a fresh rebuilt P0-8 AGB-001 TUI validation workspace.
+  - Existing session: the same persisted run recorded the initial metrics-contract failures, the implementation repair, the successful second `run_experiments`, and the evidence-gated backtrack.
+  - Divergence: no fresh/resumed projection divergence established; this was a generated-runner metrics-contract gap that the same run repaired.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: staged materialization can initially persist a syntactically valid runner whose fallback/failed-condition metrics omit the configured objective metric key. `run_experiments` detects the missing metric contract and forces a repair; the observed same-run repair produced the key without requiring a repo code change.
+
+- Code/test changes:
+  - Code: none in the repository for this issue so far.
+  - Tests: none added; recurrence would justify deterministic regression coverage around generated runner metrics fallback preserving `accuracy_delta_vs_baseline`.
+
+- Regression status:
+  - Reproduced in real TUI same-flow validation on 2026-05-02.
+  - Same-flow repair result: pass for this specific run; the regenerated runner produced `accuracy_delta_vs_baseline: 0`, `run_experiments` completed, and `analyze_results` ran.
+  - Remaining flow status: P0-8 is still unchecked because `analyze_results` backtracked to `design_experiments` on evidence quality instead of reaching downstream review/write-paper governance surfaces.
+
+- Follow-up risks:
+  - The successful repair used synthetic/fallback metrics with `accuracy_delta_vs_baseline: 0`, so it is not paper-scale experimental evidence.
+  - If future rebuilt runs repeatedly omit the objective metric before repair, promote this to a repo-level implement-stage repair and add deterministic tests.
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/26756a6f-cf0e-4cb6-9266-99f400bff3db/run_record.json`
+  - `<validation-workspace>/.autolabos/runs/26756a6f-cf0e-4cb6-9266-99f400bff3db/events.jsonl`
+  - `<validation-workspace>/.autolabos/runs/26756a6f-cf0e-4cb6-9266-99f400bff3db/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/26756a6f-cf0e-4cb6-9266-99f400bff3db/metrics.json`
+  - `<validation-workspace>/outputs/retrieval-augmented-features-for-macro-f1-in-noi-26756a6f/experiment/run_experiments_verify_report.json`
+
 ## Issue: LV-325
 
-- Status: repair implemented with automated validation passing; rebuilt same-flow live revalidation pending after P0-8 AGB-001 same-flow TUI reproduction on 2026-05-02
+- Status: repair implemented with automated validation and rebuilt same-flow live revalidation passing for the original resolver-mismatch symptom after P0-8 AGB-001 same-flow TUI reproduction on 2026-05-02
 - Validation target: `implement_experiments` local handoff verification should reconcile generated baseline/retrieval condition resolver names before `run_experiments`.
 - Environment/session context:
   - validation workspace: `<validation-workspace>`
@@ -1163,10 +1222,10 @@ Path placeholders:
   - Build: pass on 2026-05-02 with `npm run build`.
   - Full automated regression: pass on 2026-05-02 with `npm test` (`160` root test files / `1756` root tests, plus `1` web test file / `14` web tests).
   - Harness validation: pass on 2026-05-02 with `npm run validate:harness`.
-  - Same-flow revalidation: pending rebuilt TUI run after this repair.
+  - Same-flow revalidation: pass for the original resolver-mismatch symptom in rebuilt P0-8 run `26756a6f-cf0e-4cb6-9266-99f400bff3db`; `run_experiments` did not fail with `No usable condition resolver found among...`. The same run later exposed LV-326, repaired it in-run, and backtracked from `analyze_results` on evidence quality.
 
 - Follow-up risks:
-  - The current live TUI process was already running from the pre-repair built CLI when the failure was observed; a rebuilt process is required to validate the new repair.
+  - Future generated runner shapes may still require adjacent alias repairs if they search a different canonical resolver surface.
   - P0-8 remains unchecked until the rebuilt same-flow live run reaches the downstream governance surfaces or fails earlier with a newly recorded blocker.
 - Evidence/artifacts:
   - `<validation-workspace>/.autolabos/runs/1dff774b-300d-4f34-bf25-4515cd168b6f/run_record.json`
