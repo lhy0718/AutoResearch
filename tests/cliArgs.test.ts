@@ -80,6 +80,32 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports paper-readiness audit by seed and run root", () => {
+    expect(resolveCliAction(["audit", "--seed", "AGB-001", "--out-dir", "outputs/audit"])).toEqual({
+      kind: "audit",
+      seedId: "AGB-001",
+      runRoot: undefined,
+      outDir: "outputs/audit"
+    });
+    expect(resolveCliAction(["audit", "--run", "outputs/run-a"])).toEqual({
+      kind: "audit",
+      runRoot: "outputs/run-a",
+      seedId: undefined,
+      outDir: undefined
+    });
+  });
+
+  it("requires exactly one paper-readiness audit input", () => {
+    expect(resolveCliAction(["audit"])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("--run")
+    });
+    expect(resolveCliAction(["audit", "--run", "outputs/run-a", "--seed", "AGB-001"])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("--run")
+    });
+  });
+
   it("supports meta-harness mode", () => {
     expect(resolveCliAction(["meta-harness", "--runs", "2", "--node", "review", "--no-apply"])).toEqual({
       kind: "meta-harness",

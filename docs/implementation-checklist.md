@@ -65,6 +65,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 - [x] P1-8. Paper/system demo artifact bundle export.
 - [x] P1-9. Runtime and worker surfaces: environment bootstrapping, eval-history/fitness, prompt/skill contracts, failure memory, stage routing, model-worker adapter, and autonomy metrics.
 - [x] P1-10. Design and positioning reviews: StagePolicies, ExplorationManager, differentiation, baseline-first support, HITL modes, rapid iteration, external benchmark plans, artifact access, and responsible-use docs.
+- [x] P1-11. Audit-first CLI surface for paper-readiness reports.
 
 ### P2 — Longer-Horizon Queue
 
@@ -73,9 +74,9 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 - [x] P2-3. Month-long autonomous execution checkpoint/resume review.
 - [x] P2-4. DeepReviewer-style review backend integration study.
 - [x] P2-5. StagePolicies autonomous evolution experiment design.
-- [ ] P2-6. ExplorationManager autonomous knowledge-retention design review.
-- [ ] P2-7. Multimodal memory layer review.
-- [ ] P2-8. Node output serialization stability audit.
+- [x] P2-6. ExplorationManager autonomous knowledge-retention design review.
+- [x] P2-7. Multimodal memory layer review.
+- [x] P2-8. Node output serialization stability audit.
 - [ ] P2-9. Intermediate artifact capture during experiment implementation and execution.
 - [ ] P2-10. Reverse-from-data research design mode review.
 - [ ] P2-11. ArtifactReactor-style peer-agent coordination review.
@@ -576,6 +577,30 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - [x] Differentiation and ethics documents emphasize enforceable governance, reproducibility, baseline discipline, claim ceilings, responsible use, and human review gates.
   - [x] Any design that affects the governed workflow preserves the fixed top-level workflow contract unless an explicit architecture update is approved.
 
+### P1-11. Audit-First CLI Surface
+
+- [x] Status: completed 2026-05-04 as a thin product surface over existing governance benchmark scorers and artifact contracts
+- Related repo files:
+  - Added: `src/core/audit/paperReadinessAudit.ts`
+  - Added: `src/cli/audit.ts`
+  - Updated: `src/cli/args.ts`
+  - Updated: `src/cli/main.ts`
+  - Tests: `tests/paperReadinessAudit.test.ts`, `tests/cliArgs.test.ts`
+- CLI:
+  - `autolabos audit --seed AGB-001 --out-dir outputs/audit`
+  - `autolabos audit --seed AGB-003 --out-dir outputs/audit`
+  - `autolabos audit --seed AGB-010 --out-dir outputs/audit`
+  - `autolabos audit --run <run-artifact-root> --out-dir outputs/audit`
+- Generated outputs:
+  - `outputs/audit/paper-readiness-audit.md`
+  - `outputs/audit/audit-summary.json`
+  - `outputs/audit/blockers.json`
+- Completion criteria:
+  - [x] Audit reports include verdict, top blockers, unsupported claims, baseline/comparator status, result-table completeness, figure/result/caption mismatch status, citation support issues, claim ceiling, and next actions.
+  - [x] Claim ceiling rules block comparative claims without baseline/comparator evidence, block paper-ready promotion without complete metric/result tables, block quantitative research claims for fallback-only evidence, downgrade unsupported related-work claims, block manuscript promotion on figure/result mismatch, and block hidden failed runs.
+  - [x] AGB-001, AGB-003, and AGB-010 are regression-covered as false paper-ready blocking demos.
+  - [x] `write_paper` completion remains visible but is not treated as paper-ready.
+
 ### P2-1. Whole-Run Evolution Regression Scope
 
 - [x] Status: implemented, keep under regression coverage
@@ -593,15 +618,15 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 
 ### P2-2 Through P2-17. Longer-Horizon Design Queue
 
-- [ ] Status: P2-2 through P2-5 completed as bounded slices; P2-6 through P2-17 remain pending.
+- [ ] Status: P2-2 through P2-8 completed as bounded slices; P2-9 through P2-17 remain pending.
 - Scope checklist:
   - [x] P2-2. Meta-Harness external multi-run loop.
   - [x] P2-3. Month-long autonomous execution checkpoint/resume review.
   - [x] P2-4. DeepReviewer-style review backend integration study.
   - [x] P2-5. StagePolicies autonomous evolution experiment design.
-  - [ ] P2-6. ExplorationManager autonomous knowledge-retention design review.
-  - [ ] P2-7. Multimodal memory layer review.
-  - [ ] P2-8. Node output serialization stability audit.
+  - [x] P2-6. ExplorationManager autonomous knowledge-retention design review.
+  - [x] P2-7. Multimodal memory layer review.
+  - [x] P2-8. Node output serialization stability audit.
   - [ ] P2-9. Intermediate artifact capture during experiment implementation and execution.
   - [ ] P2-10. Reverse-from-data research design mode review.
   - [ ] P2-11. ArtifactReactor-style peer-agent coordination review.
@@ -628,15 +653,18 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - Updated: `src/core/validation/harnessValidationService.ts`
   - Updated: `docs/long-run-stability-review.md`
   - Updated: `docs/reproducibility.md`
-  - Added: `docs/deep-reviewer-backend-integration-study.md`
-  - Added: `docs/stage-evolution-design.md`
+  - Added: `docs/design/deep-reviewer-backend-integration-study.md`
+  - Added: `docs/design/stage-evolution-design.md`
+  - Added: `docs/design/exploration-knowledge-retention-review.md`
+  - Added: `docs/design/multimodal-memory-layer-review.md`
+  - Added: `docs/design/node-output-serialization-stability-audit.md`
   - Tests: `tests/metaHarness.test.ts`, `tests/cliArgs.test.ts`
   - Tests: `tests/harnessValidationService.test.ts`
 - Planned docs if needed:
   - `docs/long-run-stability-review.md`
   - `docs/domain-agent-plugin-design.md`
   - `docs/artifact-access-design.md`
-  - `docs/stage-evolution-design.md`
+  - `docs/design/stage-evolution-design.md`
   - `docs/distributed-experiment-ecosystem-review.md`
   - `docs/research-world-model-review.md`
 - Validation commands:
@@ -647,6 +675,9 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - P2-3 validation: `npm test -- tests/harnessValidationService.test.ts`; `npm run build`; `npm run validate:harness`.
   - P2-4 validation: markdown/readability inspection plus portability scan.
   - P2-5 validation: markdown/readability inspection plus portability scan.
+  - P2-6 validation: markdown/readability inspection plus portability scan.
+  - P2-7 validation: markdown/readability inspection plus portability scan.
+  - P2-8 validation: markdown/readability inspection plus portability scan.
 - Completion criteria:
   - [x] P2-2 receives its own design note and first read-only external context ingestion slice.
   - [x] P2-2 supports repeatable `--external-run <run-artifact-root>` only with `--no-apply`, copies allowlisted artifacts into a meta-harness context, records safe source labels without absolute external paths, and avoids LLM/apply behavior in this slice.
@@ -656,13 +687,19 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - [x] P2-4 preserves review-before-writing, claim ceilings, human approval, artifact validation, and paper-readiness downgrade paths.
   - [x] P2-5 documents StagePolicy candidate artifacts, shadow/advisory/gated modes, invariant checks, comparison metrics, promotion rules, and failure conditions.
   - [x] P2-5 keeps StagePolicies evolution separate from prompt/skill `evolve` loops and disallows automatic production policy mutation without validation and human review.
+  - [x] P2-6 documents knowledge-retention boundaries, allowed retained facts, disallowed private or unverifiable state, traceability requirements, resume/reload checks, and audit interaction rules.
+  - [x] P2-6 keeps retained knowledge subordinate to run-scoped artifacts, review gates, claim ceilings, and failed-run visibility.
+  - [x] P2-7 documents multimodal memory boundaries for visual, table, caption, figure-audit, and claim-link references without promoting visual context into evidence by memory alone.
+  - [x] P2-7 keeps `figure_audit`, result-table validation, claim-evidence links, review gates, and audit verdicts authoritative over retained multimodal context.
+  - [x] P2-8 documents parseability, JSON/JSONL shape, path portability, null semantics, stale projection, non-finite metric, provenance, and hidden-failure risks for node outputs.
+  - [x] P2-8 keeps serialization failures as evidence-quality blockers or downgrades rather than allowing malformed artifacts to support paper-ready claims.
   - Each remaining P2 item receives its own design note or an explicit deferral rationale before implementation.
   - Long-run checkpointing, review backend integration, autonomous StagePolicies, knowledge retention, multimodal memory, serialization stability, intermediate artifact capture, reverse-from-data design, peer-agent coordination, distributed experiments, knowledge graphs, zero-cost monitoring, SOTA tracking, strategist/worker separation, and domain-agent plugins remain under existing governance and artifact contracts.
   - Existing whole-run evolution behavior remains regression-protected rather than rebuilt.
 
 ## First Implementation Slice
 
-Start with P0-1 through P0-6 before executing benchmark runs. These establish the hardening, input, condition, artifact, and scoring contracts. Then run P0-7 as the contract lock. Only after AGB-001 passes should P1-1 through P1-7 be broadened across AGB-002 through AGB-010. P1-8 through P1-10 and the P2 queue should be implemented incrementally after the P0 hardening slice has validation coverage.
+Start with P0-1 through P0-6 before executing benchmark runs. These establish the hardening, input, condition, artifact, and scoring contracts. Then run P0-7 as the contract lock. Only after AGB-001 passes should P1-1 through P1-7 be broadened across AGB-002 through AGB-010. P1-8 through P1-11 and the P2 queue should be implemented incrementally after the P0 hardening slice has validation coverage.
 
 ## Validation Policy For Future Edits
 

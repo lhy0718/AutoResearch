@@ -5,6 +5,7 @@ import { runAutoLabOSWebServer } from "../web/server.js";
 import { runCompareAnalysisCli } from "./compareAnalysis.js";
 import { runEvalHarnessCli } from "./evalHarness.js";
 import { runEvolveCli } from "./evolveRun.js";
+import { runPaperReadinessAuditCli } from "./audit.js";
 import {
   runGovernanceBenchmarkBatchCli,
   runGovernanceBenchmarkDryRunCli,
@@ -27,6 +28,7 @@ function printHelp(): void {
     "  autolabos compare-analysis --run <run-id> [--limit 3] [--no-judge]",
     "  autolabos eval-harness [--run <run-id>] [--limit 10] [--output outputs/eval-harness/latest.json] [--no-history]",
     "  autolabos evolve [--max-cycles 3] [--target skills|prompts|all] [--dry-run]",
+    "  autolabos audit (--run <run-artifact-root> | --seed AGB-001|AGB-003|AGB-010) [--out-dir outputs/audit]",
     "  autolabos governance-benchmark seed --source <path> [--task AGB-001] [--out-dir outputs/governance-benchmark/seeds] [--reference-only]",
     "  autolabos governance-benchmark dry-run --seed <path> [--task AGB-001] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/AGB-001]",
     "  autolabos governance-benchmark batch --seeds <path> [--task AGB-001] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/batch]",
@@ -94,6 +96,16 @@ async function main(): Promise<void> {
       maxCycles: action.maxCycles,
       target: action.target,
       dryRun: action.dryRun
+    });
+    return;
+  }
+
+  if (action.kind === "audit") {
+    await runPaperReadinessAuditCli({
+      cwd: process.cwd(),
+      runRoot: action.runRoot,
+      seedId: action.seedId,
+      outDir: action.outDir
     });
     return;
   }

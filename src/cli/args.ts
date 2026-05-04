@@ -11,6 +11,7 @@ export type CliAction =
   | { kind: "governance-benchmark-dry-run"; seedPath: string; taskId?: string; outDir?: string; conditions: GovernanceBenchmarkConditionName[] }
   | { kind: "governance-benchmark-batch"; seedsRoot: string; taskIds: string[]; outDir?: string; conditions: GovernanceBenchmarkConditionName[] }
   | { kind: "governance-benchmark-export-bundles"; publicOutputRoots: string[]; outDir?: string; maxBundles?: number }
+  | { kind: "audit"; runRoot?: string; seedId?: string; outDir?: string }
   | {
       kind: "meta-harness";
       runs: number;
@@ -232,6 +233,53 @@ export function resolveCliAction(args: string[]): CliAction {
       };
     }
     return { kind: "evolve", maxCycles, target, dryRun };
+  }
+
+  if (first === "audit") {
+    let runRoot: string | undefined;
+    let seedId: string | undefined;
+    let outDir: string | undefined;
+    for (let index = 1; index < args.length; index += 1) {
+      const token = args[index];
+      if (token === "--run") {
+        const value = args[index + 1];
+        if (!value) {
+          return { kind: "error", message: "Missing value for --run." };
+        }
+        runRoot = value;
+        index += 1;
+        continue;
+      }
+      if (token === "--seed") {
+        const value = args[index + 1];
+        if (!value) {
+          return { kind: "error", message: "Missing value for --seed." };
+        }
+        seedId = value;
+        index += 1;
+        continue;
+      }
+      if (token === "--out-dir") {
+        const value = args[index + 1];
+        if (!value) {
+          return { kind: "error", message: "Missing value for --out-dir." };
+        }
+        outDir = value;
+        index += 1;
+        continue;
+      }
+      return {
+        kind: "error",
+        message: `Unsupported audit argument: ${token}`
+      };
+    }
+    if (Boolean(runRoot) === Boolean(seedId)) {
+      return {
+        kind: "error",
+        message: "Usage: audit (--run <run-artifact-root> | --seed AGB-001|AGB-003|AGB-010) [--out-dir outputs/audit]."
+      };
+    }
+    return { kind: "audit", runRoot, seedId, outDir };
   }
 
   if (first === "governance-benchmark") {
