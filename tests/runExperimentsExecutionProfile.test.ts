@@ -88,6 +88,23 @@ describe("run_experiments execution profile behavior", () => {
     ) as { status: string; summary: string };
     expect(verifierReport.status).toBe("skipped");
     expect(verifierReport.summary).toContain("plan_only");
+
+    const intermediateArtifacts = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments", "intermediate_artifacts.json"), "utf8")
+    ) as {
+      summary: { present: number; missing_required: number };
+      entries: Array<{ artifact_id: string; status: string; parse_status: string; relative_path: string }>;
+    };
+    expect(intermediateArtifacts.summary.present).toBeGreaterThanOrEqual(1);
+    expect(intermediateArtifacts.summary.missing_required).toBe(0);
+    expect(intermediateArtifacts.entries).toContainEqual(
+      expect.objectContaining({
+        artifact_id: "run_experiments_verify_report",
+        relative_path: "run_experiments_verify_report.json",
+        status: "present",
+        parse_status: "parseable"
+      })
+    );
   });
 
   it("treats remote bootstrap requirements as metadata instead of a hard policy stop", async () => {

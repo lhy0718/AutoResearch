@@ -24,6 +24,7 @@ import {
   validateDesignImplementationAlignment,
   validateVerificationCommandSurface
 } from "../experiments/designImplementationValidator.js";
+import { buildIntermediateArtifactCaptureManifest } from "../artifacts/intermediateArtifactCapture.js";
 import { supportsRealExecutionBundle, writeRealExecutionBundle } from "../experiments/realExecutionBundle.js";
 import { RunVerifierReport } from "../experiments/runVerifierFeedback.js";
 import { AgentComputerInterface, AciObservation } from "../../tools/aci.js";
@@ -1532,6 +1533,75 @@ export class ImplementSessionManager {
       raw_event_count: rawEvents.length,
       updated_at: new Date().toISOString()
     });
+    const intermediateArtifactCapture = await buildIntermediateArtifactCaptureManifest({
+      runId: run.id,
+      runDir,
+      node: "implement_experiments",
+      phase: "finalize",
+      status: finalVerifyReport.status,
+      artifacts: [
+        {
+          artifactId: "implement_task_spec",
+          relativePath: "implement_task_spec.json",
+          role: "diagnostic",
+          required: true,
+          parseAs: "json"
+        },
+        {
+          artifactId: "implement_result",
+          relativePath: "implement_result.json",
+          role: "candidate_output",
+          required: true,
+          parseAs: "json"
+        },
+        {
+          artifactId: "verify_report",
+          relativePath: "verify_report.json",
+          role: "verification",
+          required: true,
+          parseAs: "json"
+        },
+        {
+          artifactId: "implement_attempts",
+          relativePath: "implement_attempts.json",
+          role: "diagnostic",
+          required: true,
+          parseAs: "json"
+        },
+        {
+          artifactId: "partial_response",
+          relativePath: IMPLEMENT_PARTIAL_RESPONSE_ARTIFACT,
+          role: "partial",
+          required: false,
+          parseAs: "text"
+        },
+        {
+          artifactId: "progress_log",
+          relativePath: IMPLEMENT_PROGRESS_LOG_ARTIFACT,
+          role: "log",
+          required: false,
+          parseAs: "jsonl"
+        },
+        {
+          artifactId: "published_script",
+          filePath: publishedScriptPath,
+          role: "candidate_output",
+          required: finalVerifyReport.status === "pass",
+          parseAs: "text"
+        },
+        {
+          artifactId: "metrics",
+          filePath: finalAttempt.metricsPath,
+          role: "metric",
+          required: false,
+          parseAs: "json",
+          notes: ["Metrics remain diagnostic until run_experiments verifies execution."]
+        }
+      ]
+    });
+    const intermediateArtifactCapturePath = path.join(runDir, "implement_experiments", "intermediate_artifacts.json");
+    await writeJsonFile(intermediateArtifactCapturePath, intermediateArtifactCapture);
+    await runContext.put("implement_experiments.intermediate_artifact_capture", intermediateArtifactCapture);
 
     const publicOutputs = await publishPublicRunOutputs({
       workspaceRoot: this.deps.workspaceRoot,
@@ -1539,9 +1609,15 @@ export class ImplementSessionManager {
       node: "implement_experiments",
       runContext,
       section: "experiment",
-      files: [...publicArtifacts].map((filePath) => ({
-        sourcePath: filePath
-      })),
+      files: [
+        ...[...publicArtifacts].map((filePath) => ({
+          sourcePath: filePath
+        })),
+        {
+          sourcePath: intermediateArtifactCapturePath,
+          targetRelativePath: "implement_experiments_intermediate_artifacts.json"
+        }
+      ],
       workspaceChangedFiles
     });
     emitImplementObservation("publish", `Public experiment outputs are available at ${publicOutputs.sectionDirRelative}.`, {

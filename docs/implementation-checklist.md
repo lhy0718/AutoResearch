@@ -1,7 +1,7 @@
 # AutoLabOS Governance Benchmark Implementation Checklist
 
 Created: 2026-05-02
-Updated: 2026-05-04
+Updated: 2026-05-05
 
 This checklist turns repo contracts and private planning notes into repo-local implementation work. Do not include machine-local reference paths or private documentation paths in this public checklist.
 
@@ -77,7 +77,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 - [x] P2-6. ExplorationManager autonomous knowledge-retention design review.
 - [x] P2-7. Multimodal memory layer review.
 - [x] P2-8. Node output serialization stability audit.
-- [ ] P2-9. Intermediate artifact capture during experiment implementation and execution.
+- [x] P2-9. Intermediate artifact capture during experiment implementation and execution.
 - [ ] P2-10. Reverse-from-data research design mode review.
 - [ ] P2-11. ArtifactReactor-style peer-agent coordination review.
 - [ ] P2-12. Distributed experiment ecosystem review.
@@ -618,7 +618,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 
 ### P2-2 Through P2-17. Longer-Horizon Design Queue
 
-- [ ] Status: P2-2 through P2-8 completed as bounded slices; P2-9 through P2-17 remain pending.
+- [ ] Status: P2-2 through P2-9 completed as bounded slices; P2-10 through P2-17 remain pending.
 - Scope checklist:
   - [x] P2-2. Meta-Harness external multi-run loop.
   - [x] P2-3. Month-long autonomous execution checkpoint/resume review.
@@ -627,7 +627,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - [x] P2-6. ExplorationManager autonomous knowledge-retention design review.
   - [x] P2-7. Multimodal memory layer review.
   - [x] P2-8. Node output serialization stability audit.
-  - [ ] P2-9. Intermediate artifact capture during experiment implementation and execution.
+  - [x] P2-9. Intermediate artifact capture during experiment implementation and execution.
   - [ ] P2-10. Reverse-from-data research design mode review.
   - [ ] P2-11. ArtifactReactor-style peer-agent coordination review.
   - [ ] P2-12. Distributed experiment ecosystem review.
@@ -658,7 +658,11 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - Added: `docs/design/exploration-knowledge-retention-review.md`
   - Added: `docs/design/multimodal-memory-layer-review.md`
   - Added: `docs/design/node-output-serialization-stability-audit.md`
-  - Tests: `tests/metaHarness.test.ts`, `tests/cliArgs.test.ts`
+  - Added: `docs/design/intermediate-artifact-capture-design.md`
+  - Added: `src/core/artifacts/intermediateArtifactCapture.ts`
+  - Updated: `src/core/agents/implementSessionManager.ts`
+  - Updated: `src/core/nodes/runExperiments.ts`
+  - Tests: `tests/metaHarness.test.ts`, `tests/cliArgs.test.ts`, `tests/intermediateArtifactCapture.test.ts`, `tests/runExperimentsExecutionProfile.test.ts`
   - Tests: `tests/harnessValidationService.test.ts`
 - Planned docs if needed:
   - `docs/long-run-stability-review.md`
@@ -678,6 +682,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - P2-6 validation: markdown/readability inspection plus portability scan.
   - P2-7 validation: markdown/readability inspection plus portability scan.
   - P2-8 validation: markdown/readability inspection plus portability scan.
+  - P2-9 validation: `npm test -- tests/intermediateArtifactCapture.test.ts tests/runExperimentsExecutionProfile.test.ts`; `npm run build`; `npm run validate:harness`.
 - Completion criteria:
   - [x] P2-2 receives its own design note and first read-only external context ingestion slice.
   - [x] P2-2 supports repeatable `--external-run <run-artifact-root>` only with `--no-apply`, copies allowlisted artifacts into a meta-harness context, records safe source labels without absolute external paths, and avoids LLM/apply behavior in this slice.
@@ -693,6 +698,9 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - [x] P2-7 keeps `figure_audit`, result-table validation, claim-evidence links, review gates, and audit verdicts authoritative over retained multimodal context.
   - [x] P2-8 documents parseability, JSON/JSONL shape, path portability, null semantics, stale projection, non-finite metric, provenance, and hidden-failure risks for node outputs.
   - [x] P2-8 keeps serialization failures as evidence-quality blockers or downgrades rather than allowing malformed artifacts to support paper-ready claims.
+  - [x] P2-9 adds run-scoped intermediate artifact capture manifests for `implement_experiments` implementation artifacts and `run_experiments` verifier outputs, metrics pointers, and logs.
+  - [x] P2-9 normalizes run-relative paths, redacts external artifact paths, records parse status, and publishes the capture manifest to public experiment outputs.
+  - [x] P2-9 keeps intermediate artifacts diagnostic until linked evidence, result tables, review gates, and audit contracts support stronger claims.
   - Each remaining P2 item receives its own design note or an explicit deferral rationale before implementation.
   - Long-run checkpointing, review backend integration, autonomous StagePolicies, knowledge retention, multimodal memory, serialization stability, intermediate artifact capture, reverse-from-data design, peer-agent coordination, distributed experiments, knowledge graphs, zero-cost monitoring, SOTA tracking, strategist/worker separation, and domain-agent plugins remain under existing governance and artifact contracts.
   - Existing whole-run evolution behavior remains regression-protected rather than rebuilt.

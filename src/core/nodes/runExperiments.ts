@@ -52,6 +52,7 @@ import {
   countExecutedPlannedConditions,
   deriveRequiredPlannedConditionCount
 } from "../analysis/plannedConditionCoverage.js";
+import { buildIntermediateArtifactCaptureManifest } from "../artifacts/intermediateArtifactCapture.js";
 
 type SupplementalProfileName = "quick_check" | "confirmatory";
 
@@ -2050,6 +2051,45 @@ async function persistRunVerifierReport(
   report: RunVerifierReport
 ): Promise<PublishPublicRunOutputsResult> {
   const reportPath = await writeRunArtifact(run, "run_experiments_verify_report.json", JSON.stringify(report, null, 2));
+  const runDir = path.join(process.cwd(), ".autolabos", "runs", run.id);
+  const intermediateArtifactCapture = await buildIntermediateArtifactCaptureManifest({
+    runId: run.id,
+    runDir,
+    node: "run_experiments",
+    phase: report.stage,
+    status: report.status,
+    artifacts: [
+      {
+        artifactId: "run_experiments_verify_report",
+        filePath: reportPath,
+        role: "verification",
+        required: true,
+        parseAs: "json"
+      },
+      {
+        artifactId: "metrics",
+        filePath: report.metrics_path,
+        role: "metric",
+        required: report.status === "pass",
+        parseAs: "json",
+        notes: report.metrics_path
+          ? ["Metrics are required for paper-scale claims only when verification passes."]
+          : ["No metrics path was recorded by the runner."]
+      },
+      {
+        artifactId: "run_log",
+        filePath: report.log_file,
+        role: "log",
+        required: false,
+        parseAs: "text"
+      }
+    ]
+  });
+  const intermediateArtifactCapturePath = await writeRunArtifact(
+    run,
+    "run_experiments/intermediate_artifacts.json",
+    JSON.stringify(intermediateArtifactCapture, null, 2)
+  );
   const publicOutputs = await publishPublicRunOutputs({
     workspaceRoot: process.cwd(),
     run,
@@ -2060,10 +2100,15 @@ async function persistRunVerifierReport(
       {
         sourcePath: reportPath,
         targetRelativePath: "run_experiments_verify_report.json"
+      },
+      {
+        sourcePath: intermediateArtifactCapturePath,
+        targetRelativePath: "run_experiments_intermediate_artifacts.json"
       }
     ]
   });
   await runContext.put("run_experiments.last_report", report);
+  await runContext.put("run_experiments.intermediate_artifact_capture", intermediateArtifactCapture);
   if (report.status === "fail") {
     await runContext.put("run_experiments.feedback_for_implementer", report);
     await runContext.put("implement_experiments.runner_feedback", report);
