@@ -43,6 +43,12 @@ AutoLabOS can share components with agentic research systems, including experime
 - evidence ceilings before publication framing
 - pause/backtrack before appearance-driven completion
 
+## Judge Lane
+
+AutoLabOS treats `figure_audit`, `review`, and paper-readiness audit as a judge lane. Planner/worker nodes can produce hypotheses, designs, code, experiments, analysis, and drafts, but the judge lane decides whether evidence is sufficient, whether claims must be downgraded, and whether manuscript promotion is blocked.
+
+This separation exists to prevent self-grading, premature completion, and `write_paper` success being mistaken for paper-ready research evidence.
+
 ## Competitive Framing
 
 When comparing AutoLabOS to other systems, use claims like:
@@ -60,4 +66,3 @@ Avoid claims like:
 - "paper-ready by default"
 
 unless a matching benchmark report exists.
-

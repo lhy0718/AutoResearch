@@ -106,6 +106,16 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 - [x] P4-6. Competitive-signal watchlist for domain skill libraries and benchmark-store UX.
 - [x] P4-7. Pilot readiness review and go/no-go package.
 
+### P5 — Audit Timeline And Done-Condition Hardening
+
+- [x] P5-1. Audit timeline export from durable run events and checkpoints.
+- [x] P5-2. Claim promotion timeline and blocked-claim event report.
+- [x] P5-3. Done-condition contract for normal runs and governance seeds.
+- [x] P5-4. Judge-lane documentation and audit report labeling.
+- [x] P5-5. Long-run autonomy and evidence-integrity metrics.
+- [x] P5-6. Pilot evidence signal log and go/no-go review refresh.
+- [x] P5-7. Brain/hands/session boundary design for future external workers.
+
 ## Detailed Task Cards
 
 ### P0-1. Competitive-Analysis Hardening Slice
@@ -857,6 +867,84 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - [x] P4-7 defines go/no-go thresholds for the next cycle: recent pain evidence, artifact sharing, repeat audit request, and clear paper-readiness audit positioning.
   - [x] P4 keeps AutoLabOS positioned as an evidence governance and paper-readiness audit layer, not as a broad autonomous scientist or paper-ready-by-default system.
 
+### P5-1 Through P5-7. Audit Timeline And Done-Condition Hardening
+
+- [x] Status: completed 2026-05-05.
+- Planning interpretation:
+  - The next implementation wedge is durable audit explanation: reconstruct claim and readiness decisions from run events, checkpoints, review packets, and audit artifacts.
+  - Long-running-agent patterns should be absorbed as session log, done-condition, judge-lane, progress, and sandbox-boundary governance. They should not reposition AutoLabOS as a managed agent platform or broad autonomous scientist.
+  - Pilot validation should continue to measure concrete artifact access and repeat audit behavior, not generic interest.
+- Scope checklist:
+  - [x] P5-1. Audit timeline export from durable run events and checkpoints.
+  - [x] P5-2. Claim promotion timeline and blocked-claim event report.
+  - [x] P5-3. Done-condition contract for normal runs and governance seeds.
+  - [x] P5-4. Judge-lane documentation and audit report labeling.
+  - [x] P5-5. Long-run autonomy and evidence-integrity metrics.
+  - [x] P5-6. Pilot evidence signal log and go/no-go review refresh.
+  - [x] P5-7. Brain/hands/session boundary design for future external workers.
+- Related repo files:
+  - Existing: `src/core/audit/paperReadinessAudit.ts`
+  - Existing: `src/core/audit/auditTimeline.ts`
+  - Existing: `src/core/audit/claimPromotionTimeline.ts`
+  - Existing: `src/core/audit/doneConditionAudit.ts`
+  - Existing: `src/core/audit/autonomyMetrics.ts`
+  - Existing: `src/core/audit/claimEvidenceExport.ts`
+  - Existing: `src/core/audit/externalArtifactIntake.ts`
+  - Existing: `src/core/audit/literatureDiscoveryAudit.ts`
+  - Existing: `src/core/runStore.ts`
+  - Existing: `src/core/events.ts`
+  - Existing: `src/core/checkpoints.ts`
+  - Existing: `src/core/benchmark/governanceSeedBundle.ts`
+  - Existing: `src/core/benchmark/governanceScorer.ts`
+  - Existing: `src/core/analysis/paperMinimumGate.ts`
+  - Existing: `src/core/analysis/figureAuditor.ts`
+  - Existing: `src/core/nodes/review.ts`
+  - Existing: `docs/architecture.md`
+  - Existing: `docs/reproducibility.md`
+  - Existing: `docs/paper-quality-bar.md`
+  - Existing: `docs/research-brief-template.md`
+  - Existing: `docs/differentiation.md`
+  - Existing: `docs/roadmap/p5-audit-timeline.md`
+  - Existing: `docs/status/pilot-evidence-review.md`
+  - Existing: `docs/architecture/brain-hands-session-boundary.md`
+  - Existing: `docs/status/pilot-readiness-review.md`
+  - Existing: `docs/templates/concierge-audit-request.md`
+  - Existing: `tests/paperReadinessAudit.test.ts`
+  - Existing: `tests/auditTimeline.test.ts`
+  - Existing: `tests/claimPromotionTimeline.test.ts`
+  - Existing: `tests/doneConditionAudit.test.ts`
+  - Existing: `tests/autonomyMetrics.test.ts`
+  - Existing: `tests/governanceSeedBundle.test.ts`
+  - Existing: `tests/governanceScorer.test.ts`
+- Planned files if needed:
+  - None currently; next work should be driven by full live validation or sanitized pilot evidence.
+- Validation commands:
+  - P5 docs-only edits: markdown/readability inspection plus portability scan.
+  - Audit timeline/runtime changes: `npm test -- tests/paperReadinessAudit.test.ts tests/auditTimeline.test.ts tests/claimPromotionTimeline.test.ts`; `npm run build`; `npm run validate:harness`.
+  - Done-condition changes: `npm test -- tests/doneConditionAudit.test.ts tests/governanceSeedBundle.test.ts tests/briefValidation.test.ts`; `npm run validate:harness`.
+  - Autonomy metric changes: `npm test -- tests/autonomyMetrics.test.ts tests/evalHarness.test.ts`; `npm run build`.
+  - Pilot evidence docs: update status docs from sanitized pilot signal records only; run portability scan before commit.
+  - Completed P5 validation on 2026-05-05: targeted P5 tests passed; `npm run build` passed; `npm run validate:harness` passed; `npm run demo:audit-full-seeds -- --out-dir outputs/audit-full-seeds-p5-smoke` passed with all expected outcomes met; full `npm test` passed with 178 test files and 1810 root tests plus 14 web tests.
+- Completion criteria:
+  - [x] P5-1 emits `audit-timeline.json` from existing run events, checkpoints, review packets, figure audit artifacts, paper gate artifacts, and audit outputs.
+  - [x] P5-1 includes timeline entries for node start/end, checkpoint creation, result-table availability, figure audit decision, review decision, claim-ceiling changes, and paper-readiness verdict where evidence exists.
+  - [x] P5-1 keeps missing event streams explicit as `unmeasured` or `timeline_incomplete` instead of fabricating chronology.
+  - [x] P5-2 emits `claim-promotion-timeline.md` or `claim-promotion-timeline.json` that shows when major claims became supported, unsupported, blocked, downgraded, or allowed only as descriptive/system-validation notes.
+  - [x] P5-2 emits `blocked-claim-events.json` for unsupported claims, citation gaps, failed-run visibility, fallback-only evidence, figure mismatch, and baseline/result-table blockers.
+  - [x] P5-2 derives claim events from existing artifacts, scorer issues, review decisions, and paper-readiness audit results; it does not create new support for unsupported claims.
+  - [x] P5-3 treats Research Brief fields and governance seed condition metadata as external done-conditions, including allowed weak-output states such as `paper_ready=false`.
+  - [x] P5-3 prevents `write_paper` completion, PDF build success, or workflow completion from satisfying a paper-ready done-condition by themselves.
+  - [x] P5-3 adds regression coverage for missing baseline, missing result table, fallback-only evidence, failed-run hiding, and unsupported citation done-condition failures.
+  - [x] P5-4 documents `figure_audit`, `review`, and paper-readiness audit as the judge lane, separate from planner/worker nodes.
+  - [x] P5-4 labels judge-lane findings in audit reports without changing the fixed workflow order or weakening review gates.
+  - [x] P5-5 records run-level `autonomy_span`, `human_intervention_count`, `evidence_integrity_score`, `backtrack_success_rate`, `claim_violation_count`, and `reproducibility_score` where artifacts support them.
+  - [x] P5-5 marks unavailable autonomy metrics as unmeasured and keeps them out of paper-readiness claims unless backed by artifacts.
+  - [x] P5-6 refreshes pilot readiness with sanitized evidence signals: concrete recent failure examples, artifact bundles shared, repeat audit requests, repo integration requests, and positioning comprehension.
+  - [x] P5-6 keeps generic praise, demo-only seed replay, or internal smoke success from counting as customer validation.
+  - [x] P5-7 adds a design note for future external worker integration that separates model/harness, code execution sandbox, and durable session log.
+  - [x] P5-7 explicitly states credential and token boundaries for future sandbox or remote execution work, while avoiding new runtime dependencies unless separately approved.
+  - [x] P5 keeps AutoLabOS positioned as an evidence governance and paper-readiness audit layer, not as a hosted long-running agent platform or paper-ready-by-default system.
+
 ## First Implementation Slice
 
 Start with P0-1 through P0-6 before executing benchmark runs. These establish the hardening, input, condition, artifact, and scoring contracts. Then run P0-7 as the contract lock. Only after AGB-001 passes should P1-1 through P1-7 be broadened across AGB-002 through AGB-010. P1-8 through P1-11 and the P2 queue should be implemented incrementally after the P0 hardening slice has validation coverage.
@@ -864,6 +952,8 @@ Start with P0-1 through P0-6 before executing benchmark runs. These establish th
 P3 starts only after the P0/P1/P2 checklist is complete. P3 should harden the audit-first product surface, demo reliability, live-validation workflow, and release package without changing the governed workflow or weakening evidence gates.
 
 P4 starts after P3 release hygiene. P4 should convert the audit-first surface into a pilot-ready artifact intake and full-seed regression package while preserving public-repo portability and conservative claim ceilings.
+
+P5 starts after P4 external intake and full-seed replay are complete. P5 should make the audit product explain not only final artifact status, but also when claims were promoted, blocked, downgraded, or allowed by explicit done-conditions. P5 must keep long-running-agent patterns as governance infrastructure, not a broad autonomous scientist claim.
 
 ## Validation Policy For Future Edits
 

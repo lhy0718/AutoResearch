@@ -25,11 +25,18 @@ export function formatPaperReadinessAuditCliSummary(summary: PaperReadinessAudit
     `Citation support issues: ${summary.citation_support_issues.length}`,
     `Design contract findings: ${summary.design_contract_findings.length}`,
     `Literature discovery findings: ${summary.scorer_outputs.literature_discovery.findings.length}`,
+    `Audit timeline: ${summary.audit_timeline.status}; entries=${summary.audit_timeline.entry_count}`,
+    `Done condition: ${summary.done_condition.status}; failures=${summary.done_condition.failure_count}`,
     "Outputs:",
     `  report: ${summary.outputs.report_path}`,
     `  summary: ${summary.outputs.summary_path}`,
     `  blockers: ${summary.outputs.blockers_path}`,
     `  claim evidence: ${summary.outputs.claim_evidence_path}`,
+    `  audit timeline: ${summary.outputs.audit_timeline_path}`,
+    `  claim promotion: ${summary.outputs.claim_promotion_timeline_path}`,
+    `  blocked claim events: ${summary.outputs.blocked_claim_events_path}`,
+    `  done condition: ${summary.outputs.done_condition_path}`,
+    `  autonomy metrics: ${summary.outputs.autonomy_metrics_path}`,
     ...(summary.outputs.external_intake_manifest_path
       ? [`  external intake: ${summary.outputs.external_intake_manifest_path}`]
       : []),

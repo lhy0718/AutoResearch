@@ -34,6 +34,14 @@ describe("paper-readiness audit", () => {
     expect(summary.claim_ceiling.allowed_level).toBe(expectedCeiling);
     expect(summary.outputs.report_path).toBe("outputs/audit/paper-readiness-audit.md");
     expect(summary.outputs.claim_evidence_path).toBe("outputs/audit/claim-evidence-table.json");
+    expect(summary.outputs.audit_timeline_path).toBe("outputs/audit/audit-timeline.json");
+    expect(summary.outputs.claim_promotion_timeline_path).toBe("outputs/audit/claim-promotion-timeline.json");
+    expect(summary.outputs.blocked_claim_events_path).toBe("outputs/audit/blocked-claim-events.json");
+    expect(summary.outputs.done_condition_path).toBe("outputs/audit/done-condition-audit.json");
+    expect(summary.outputs.autonomy_metrics_path).toBe("outputs/audit/autonomy-metrics.json");
+    expect(summary.audit_timeline.status).toBe("available");
+    expect(summary.done_condition.status).toBe("pass");
+    expect(summary.judge_lane.judge_nodes).toContain("paper_readiness_audit");
 
     const report = await readFile(path.join(workspace, "outputs", "audit", "paper-readiness-audit.md"), "utf8");
     expect(report).toContain("Verdict: blocked");
@@ -46,6 +54,10 @@ describe("paper-readiness audit", () => {
     expect(report).toContain('<a id="citation-support"></a>');
     expect(report).toContain('<a id="design-contract-findings"></a>');
     expect(report).toContain('<a id="literature-discovery-findings"></a>');
+    expect(report).toContain('<a id="judge-lane"></a>');
+    expect(report).toContain('<a id="audit-timeline"></a>');
+    expect(report).toContain('<a id="done-condition"></a>');
+    expect(report).toContain('<a id="autonomy-metrics"></a>');
     expect(report).toContain("## Claim Ceiling");
     expect(report).toContain('<a id="claim-ceiling"></a>');
     expect(report).toContain('<a id="next-actions"></a>');
@@ -65,6 +77,17 @@ describe("paper-readiness audit", () => {
 
     const claimEvidence = await readFile(path.join(workspace, "outputs", "audit", "claim-evidence-table.json"), "utf8");
     expect(claimEvidence).toContain("does not create evidence");
+
+    const timeline = await readFile(path.join(workspace, "outputs", "audit", "audit-timeline.json"), "utf8");
+    expect(timeline).toContain("paper_readiness_verdict");
+    const claimPromotion = await readFile(path.join(workspace, "outputs", "audit", "claim-promotion-timeline.json"), "utf8");
+    expect(claimPromotion).toContain("Claim promotion events are derived");
+    const blockedClaimEvents = await readFile(path.join(workspace, "outputs", "audit", "blocked-claim-events.json"), "utf8");
+    expect(blockedClaimEvents).toContain(expectedBlocker);
+    const doneCondition = await readFile(path.join(workspace, "outputs", "audit", "done-condition-audit.json"), "utf8");
+    expect(doneCondition).toContain("write_paper completion");
+    const autonomyMetrics = await readFile(path.join(workspace, "outputs", "audit", "autonomy-metrics.json"), "utf8");
+    expect(autonomyMetrics).toContain("evidence_integrity_score");
   });
 
   it("audits an existing run artifact root", async () => {
@@ -86,6 +109,42 @@ describe("paper-readiness audit", () => {
     expect(summary.verdict).toBe("blocked");
     expect(summary.baseline_comparator_status.status).toBe("missing");
     expect(summary.result_table_completeness.paper_ready_allowed).toBe(false);
+  });
+
+  it("fails the done-condition audit when paper_ready hides known blockers", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-done-condition-"));
+    tempDirs.push(workspace);
+    const seedSummary = await runPaperReadinessAudit({
+      cwd: workspace,
+      seedId: "AGB-001",
+      outDir: "outputs/seed-audit"
+    });
+    const runRoot = path.join(workspace, seedSummary.input.run_root);
+    await writeFile(
+      path.join(runRoot, "paper", "paper_readiness.json"),
+      JSON.stringify({ paper_ready: true, readiness_state: "paper_ready" }),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runRoot, "run_record.json"),
+      JSON.stringify({ id: "AGB-001-gated-audit", status: "failed" }),
+      "utf8"
+    );
+
+    const summary = await runPaperReadinessAudit({
+      cwd: workspace,
+      runRoot: seedSummary.input.run_root,
+      outDir: "outputs/done-condition-audit"
+    });
+
+    expect(summary.done_condition.status).toBe("fail");
+    expect(summary.done_condition.failure_count).toBeGreaterThan(0);
+    expect(summary.top_blockers.map((blocker) => blocker.code)).toContain("hidden_failed_run");
+    const doneCondition = await readFile(
+      path.join(workspace, "outputs", "done-condition-audit", "done-condition-audit.json"),
+      "utf8"
+    );
+    expect(doneCondition).toContain("Paper-ready comparative claims require baseline/comparator evidence");
   });
 
   it("uses only run-artifact evidence for selected P2 design contract audit findings", async () => {

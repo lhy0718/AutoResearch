@@ -61,6 +61,11 @@ function printAuditHelp(): void {
     "Outputs:",
     "  paper-readiness-audit.md",
     "  claim-evidence-table.json",
+    "  audit-timeline.json",
+    "  claim-promotion-timeline.json",
+    "  blocked-claim-events.json",
+    "  done-condition-audit.json",
+    "  autonomy-metrics.json",
     "  audit-summary.json",
     "  blockers.json",
     "  external-intake-manifest.json (for --external)"

@@ -13,6 +13,10 @@ import { writeJsonFile } from "../../utils/fs.js";
 import { buildClaimEvidenceExport, type ClaimEvidenceExport } from "./claimEvidenceExport.js";
 import { materializeExternalAuditArtifacts } from "./externalArtifactIntake.js";
 import { scoreLiteratureDiscoveryAudit, type LiteratureDiscoveryAuditScore } from "./literatureDiscoveryAudit.js";
+import { buildAuditTimeline, type AuditTimeline } from "./auditTimeline.js";
+import { buildClaimPromotionTimeline, type BlockedClaimEvents, type ClaimPromotionTimeline } from "./claimPromotionTimeline.js";
+import { evaluateDoneConditionAudit, type DoneConditionAudit } from "./doneConditionAudit.js";
+import { computeAuditAutonomyMetrics, type AuditAutonomyMetrics } from "./autonomyMetrics.js";
 
 export type PaperReadinessAuditVerdict = "blocked" | "needs-review" | "conditionally-ready";
 
@@ -60,6 +64,11 @@ export interface PaperReadinessAuditSummary {
     summary_path: string;
     blockers_path: string;
     claim_evidence_path: string;
+    audit_timeline_path: string;
+    claim_promotion_timeline_path: string;
+    blocked_claim_events_path: string;
+    done_condition_path: string;
+    autonomy_metrics_path: string;
     external_intake_manifest_path?: string;
   };
   top_blockers: PaperReadinessAuditBlocker[];
@@ -93,6 +102,26 @@ export interface PaperReadinessAuditSummary {
     readiness_state?: string;
     write_paper_completed: boolean;
   };
+  judge_lane: {
+    planner_worker_nodes: string[];
+    judge_nodes: string[];
+    audit_report_label: string;
+  };
+  audit_timeline: {
+    status: AuditTimeline["status"];
+    measured: boolean;
+    entry_count: number;
+    event_count: number;
+    checkpoint_count: number;
+  };
+  done_condition: {
+    status: DoneConditionAudit["status"];
+    measured: boolean;
+    declared_source: DoneConditionAudit["declared_source"];
+    failure_count: number;
+    warning_count: number;
+  };
+  autonomy_metrics: AuditAutonomyMetrics;
   scorer_outputs: {
     result_table: ResultTableScore;
     claim_evidence: ClaimEvidenceScore;
@@ -113,17 +142,24 @@ interface LoadedRunArtifacts {
   evidenceLinks: unknown;
   evidenceGateDecision: Record<string, unknown> | undefined;
   paperReadiness: Record<string, unknown> | undefined;
+  reviewDecision: Record<string, unknown> | undefined;
   figureAuditSummary: FigureAuditSummary | null | undefined;
   runRecord: Record<string, unknown> | undefined;
   evidenceStoreLines: Record<string, unknown>[];
   designContractPayloads: Array<{ path: string; payload: Record<string, unknown> }>;
   literatureDiscoveryPayloads: Array<{ path: string; payload: Record<string, unknown> }>;
+  governanceConditionPayload: Record<string, unknown> | undefined;
+  researchBriefText: string | undefined;
   mainTexExists: boolean;
 }
 
 interface PaperReadinessAuditBuildResult {
   summary: PaperReadinessAuditSummary;
   claimEvidenceExport: ClaimEvidenceExport;
+  auditTimeline: AuditTimeline;
+  claimPromotionTimeline: ClaimPromotionTimeline;
+  blockedClaimEvents: BlockedClaimEvents;
+  doneConditionAudit: DoneConditionAudit;
 }
 
 const SUPPORTED_AUDIT_SEEDS = new Set([
@@ -186,6 +222,11 @@ export async function runPaperReadinessAudit(
     next_action_checklist: summary.next_action_checklist
   });
   await writeJsonFile(path.join(outDir, "claim-evidence-table.json"), buildResult.claimEvidenceExport);
+  await writeJsonFile(path.join(outDir, "audit-timeline.json"), buildResult.auditTimeline);
+  await writeJsonFile(path.join(outDir, "claim-promotion-timeline.json"), buildResult.claimPromotionTimeline);
+  await writeJsonFile(path.join(outDir, "blocked-claim-events.json"), buildResult.blockedClaimEvents);
+  await writeJsonFile(path.join(outDir, "done-condition-audit.json"), buildResult.doneConditionAudit);
+  await writeJsonFile(path.join(outDir, "autonomy-metrics.json"), summary.autonomy_metrics);
   await fs.writeFile(path.join(outDir, "paper-readiness-audit.md"), renderAuditMarkdown(summary), "utf8");
 
   return summary;
@@ -370,9 +411,58 @@ async function buildAuditSummary(input: {
     claimEvidenceScore: claimEvidence,
     unsupportedClaims
   });
+  const claimPromotion = buildClaimPromotionTimeline({
+    claimEvidenceExport,
+    blockers,
+    unsupportedClaims,
+    citationSupportIssues,
+    allowedClaimLevel: allowedLevel
+  });
+  const reviewDecision = stringValue(input.artifacts.reviewDecision?.outcome)
+    || stringValue(input.artifacts.reviewDecision?.decision)
+    || stringValue(input.artifacts.reviewDecision?.recommendation);
+  const auditTimeline = await buildAuditTimeline({
+    runRoot: input.artifacts.runRoot,
+    resultTableMeasured: resultTable.measured,
+    resultTableCompleteRows: resultTable.complete_row_count,
+    figureAuditStatus: figureAudit.audit_status,
+    reviewDecision,
+    claimCeilingAllowedLevel: allowedLevel,
+    paperReadinessVerdict: verdict,
+    paperReady,
+    blockers
+  });
+  const fallbackOnly = evidenceStore.deterministicFallbackUsed && !evidenceStore.nonFallbackMetricEvidencePresent;
+  const doneConditionAudit = evaluateDoneConditionAudit({
+    governanceCondition: input.artifacts.governanceConditionPayload,
+    researchBriefText: input.artifacts.researchBriefText,
+    paperReady,
+    writePaperCompleted: input.artifacts.mainTexExists,
+    missingBaselineOrComparator: resultTable.missing_baseline_count > 0 || resultTable.missing_comparator_count > 0,
+    resultTableReady: resultTable.measured && resultTable.complete_row_count > 0,
+    fallbackOnlyEvidence: fallbackOnly,
+    failedRunHidden,
+    unsupportedClaimCount: claimEvidence.unsupported_claim_count,
+    citationSupportIssueCount: citationSupportIssues.length,
+    figureMismatchPresent: figureAudit.severe_mismatch_count > 0 || figureAudit.review_block_required
+  });
+  const requiredOutputCount = input.externalIntakeManifestPresent ? 10 : 9;
+  const presentOutputCount = requiredOutputCount;
+  const autonomyMetrics = computeAuditAutonomyMetrics({
+    timeline: auditTimeline,
+    blockerCount: blockers.filter((blocker) => blocker.severity === "blocker").length,
+    unsupportedClaimCount: claimEvidence.unsupported_claim_count,
+    citationSupportIssueCount: citationSupportIssues.length,
+    requiredOutputCount,
+    presentOutputCount
+  });
 
   return {
     claimEvidenceExport,
+    auditTimeline,
+    claimPromotionTimeline: claimPromotion.timeline,
+    blockedClaimEvents: claimPromotion.blockedClaimEvents,
+    doneConditionAudit,
     summary: {
     generated_at: new Date().toISOString(),
     verdict,
@@ -386,6 +476,11 @@ async function buildAuditSummary(input: {
       summary_path: path.posix.join(relativeOutDir, "audit-summary.json"),
       blockers_path: path.posix.join(relativeOutDir, "blockers.json"),
       claim_evidence_path: path.posix.join(relativeOutDir, "claim-evidence-table.json"),
+      audit_timeline_path: path.posix.join(relativeOutDir, "audit-timeline.json"),
+      claim_promotion_timeline_path: path.posix.join(relativeOutDir, "claim-promotion-timeline.json"),
+      blocked_claim_events_path: path.posix.join(relativeOutDir, "blocked-claim-events.json"),
+      done_condition_path: path.posix.join(relativeOutDir, "done-condition-audit.json"),
+      autonomy_metrics_path: path.posix.join(relativeOutDir, "autonomy-metrics.json"),
       ...(input.externalIntakeManifestPresent
         ? { external_intake_manifest_path: path.posix.join(relativeOutDir, "external-intake-manifest.json") }
         : {})
@@ -425,6 +520,34 @@ async function buildAuditSummary(input: {
       ...(readinessState ? { readiness_state: readinessState } : {}),
       write_paper_completed: input.artifacts.mainTexExists
     },
+    judge_lane: {
+      planner_worker_nodes: [
+        "collect_papers",
+        "analyze_papers",
+        "generate_hypotheses",
+        "design_experiments",
+        "implement_experiments",
+        "run_experiments",
+        "analyze_results"
+      ],
+      judge_nodes: ["figure_audit", "review", "paper_readiness_audit"],
+      audit_report_label: "judge_lane_evidence_governance"
+    },
+    audit_timeline: {
+      status: auditTimeline.status,
+      measured: auditTimeline.measured,
+      entry_count: auditTimeline.entries.length,
+      event_count: auditTimeline.event_count,
+      checkpoint_count: auditTimeline.checkpoint_count
+    },
+    done_condition: {
+      status: doneConditionAudit.status,
+      measured: doneConditionAudit.measured,
+      declared_source: doneConditionAudit.declared_source,
+      failure_count: doneConditionAudit.failures.length,
+      warning_count: doneConditionAudit.warnings.length
+    },
+    autonomy_metrics: autonomyMetrics,
     scorer_outputs: {
       result_table: resultTable,
       claim_evidence: claimEvidence,
@@ -449,11 +572,14 @@ async function loadRunArtifacts(runRoot: string): Promise<LoadedRunArtifacts> {
     evidenceLinks: await readOptionalJson(path.join(runRoot, "paper", "evidence_links.json")),
     evidenceGateDecision: await readOptionalJson<Record<string, unknown>>(path.join(runRoot, "paper", "evidence_gate_decision.json")),
     paperReadiness: await readOptionalJson<Record<string, unknown>>(path.join(runRoot, "paper", "paper_readiness.json")),
+    reviewDecision: await readOptionalJson<Record<string, unknown>>(path.join(runRoot, "review", "decision.json")),
     figureAuditSummary: await readOptionalJson<FigureAuditSummary>(path.join(runRoot, "figure_audit", "figure_audit_summary.json")),
     runRecord: await readOptionalJson<Record<string, unknown>>(path.join(runRoot, "run_record.json")),
     evidenceStoreLines: await readJsonl(path.join(runRoot, "evidence_store.jsonl")),
     designContractPayloads: await readDesignContractPayloads(runRoot),
     literatureDiscoveryPayloads: await readLiteratureDiscoveryPayloads(runRoot),
+    governanceConditionPayload: conditionPayload,
+    researchBriefText: await readResearchBriefText(runRoot),
     mainTexExists: await fileExists(path.join(runRoot, "paper", "main.tex"))
   };
 }
@@ -473,7 +599,10 @@ async function materializeSeedAuditRun(input: {
   await writeJsonFile(path.join(runRoot, "governance_condition.json"), {
     name: "gated",
     task_id: input.seedId,
-    replay_mode: "audit_seed_replay"
+    replay_mode: "audit_seed_replay",
+    expected_paper_ready: false,
+    allowed_weak_output_states: ["paper_ready=false", "research_memo", "system_validation_note"],
+    false_pass_conditions: scenario.triggeredBy
   });
   await writeJsonFile(path.join(runRoot, "result_table.json"), scenario.resultTable);
   await fs.writeFile(path.join(runRoot, "evidence_store.jsonl"), scenario.evidenceStoreJsonl, "utf8");
@@ -523,7 +652,58 @@ async function materializeSeedAuditRun(input: {
     await writeJsonFile(path.join(runRoot, "collect_papers", "literature_discovery_audit.json"), scenario.literatureDiscoveryAudit);
   }
   await fs.writeFile(path.join(runRoot, "paper", "main.tex"), "\\section{Audit Seed Replay}\nPaper-shaped output is not paper-ready evidence.\n", "utf8");
+  await writeSeedReplayTimelineArtifacts(runRoot, input.seedId, scenario.triggeredBy);
   return runRoot;
+}
+
+async function writeSeedReplayTimelineArtifacts(
+  runRoot: string,
+  seedId: string,
+  triggeredBy: string[]
+): Promise<void> {
+  const startedAt = "2026-05-04T00:00:00.000Z";
+  const completedAt = "2026-05-04T00:01:00.000Z";
+  const events = [
+    {
+      id: `${seedId}-evt-review-started`,
+      type: "NODE_STARTED",
+      timestamp: startedAt,
+      runId: `${seedId}-gated-audit`,
+      node: "review",
+      payload: { replay_mode: "audit_seed_replay" }
+    },
+    {
+      id: `${seedId}-evt-review-completed`,
+      type: "NODE_COMPLETED",
+      timestamp: completedAt,
+      runId: `${seedId}-gated-audit`,
+      node: "review",
+      payload: { triggered_by: triggeredBy }
+    }
+  ];
+  await fs.writeFile(path.join(runRoot, "events.jsonl"), events.map((event) => JSON.stringify(event)).join("\n") + "\n", "utf8");
+  const checkpoint = {
+    seq: 1,
+    runId: `${seedId}-gated-audit`,
+    node: "review",
+    phase: "before",
+    reason: "paper-readiness audit seed replay checkpoint",
+    createdAt: startedAt,
+    runSnapshot: {
+      id: `${seedId}-gated-audit`,
+      currentNode: "review",
+      graph: { checkpointSeq: 1 }
+    }
+  };
+  await writeJsonFile(path.join(runRoot, "checkpoints", "0001-review-before.json"), checkpoint);
+  await writeJsonFile(path.join(runRoot, "checkpoints", "latest.json"), {
+    seq: 1,
+    node: "review",
+    phase: "before",
+    createdAt: startedAt,
+    reason: "paper-readiness audit seed replay checkpoint",
+    file: "0001-review-before.json"
+  });
 }
 
 function seedScenario(seedId: string): {
@@ -1163,6 +1343,41 @@ function renderAuditMarkdown(summary: PaperReadinessAuditSummary): string {
     `- write_paper completed: ${summary.paper_readiness.write_paper_completed}`,
     `- paper_ready flag: ${summary.paper_readiness.paper_ready}`,
     "",
+    '<a id="judge-lane"></a>',
+    "## Judge Lane",
+    "",
+    `- label: ${summary.judge_lane.audit_report_label}`,
+    `- planner/worker nodes: ${summary.judge_lane.planner_worker_nodes.join(", ")}`,
+    `- judge nodes: ${summary.judge_lane.judge_nodes.join(", ")}`,
+    "",
+    '<a id="audit-timeline"></a>',
+    "## Audit Timeline",
+    "",
+    `- status: ${summary.audit_timeline.status}`,
+    `- measured: ${summary.audit_timeline.measured}`,
+    `- entries: ${summary.audit_timeline.entry_count}`,
+    `- durable events: ${summary.audit_timeline.event_count}`,
+    `- checkpoints: ${summary.audit_timeline.checkpoint_count}`,
+    "",
+    '<a id="done-condition"></a>',
+    "## Done Condition",
+    "",
+    `- status: ${summary.done_condition.status}`,
+    `- measured: ${summary.done_condition.measured}`,
+    `- declared source: ${summary.done_condition.declared_source}`,
+    `- failures: ${summary.done_condition.failure_count}`,
+    `- warnings: ${summary.done_condition.warning_count}`,
+    "",
+    '<a id="autonomy-metrics"></a>',
+    "## Autonomy / Evidence Metrics",
+    "",
+    `- autonomy_span: ${metricValue(summary.autonomy_metrics.autonomy_span)}`,
+    `- human_intervention_count: ${metricValue(summary.autonomy_metrics.human_intervention_count)}`,
+    `- evidence_integrity_score: ${metricValue(summary.autonomy_metrics.evidence_integrity_score)}`,
+    `- backtrack_success_rate: ${metricValue(summary.autonomy_metrics.backtrack_success_rate)}`,
+    `- claim_violation_count: ${metricValue(summary.autonomy_metrics.claim_violation_count)}`,
+    `- reproducibility_score: ${metricValue(summary.autonomy_metrics.reproducibility_score)}`,
+    "",
     '<a id="claim-ceiling"></a>',
     "## Claim Ceiling",
     "",
@@ -1176,6 +1391,11 @@ function renderAuditMarkdown(summary: PaperReadinessAuditSummary): string {
     `- summary: ${summary.outputs.summary_path}`,
     `- blockers: ${summary.outputs.blockers_path}`,
     `- claim evidence: ${summary.outputs.claim_evidence_path}`,
+    `- audit timeline: ${summary.outputs.audit_timeline_path}`,
+    `- claim promotion timeline: ${summary.outputs.claim_promotion_timeline_path}`,
+    `- blocked claim events: ${summary.outputs.blocked_claim_events_path}`,
+    `- done condition: ${summary.outputs.done_condition_path}`,
+    `- autonomy metrics: ${summary.outputs.autonomy_metrics_path}`,
     ...(summary.outputs.external_intake_manifest_path ? [`- external intake manifest: ${summary.outputs.external_intake_manifest_path}`] : []),
     "",
     '<a id="next-actions"></a>',
@@ -1189,6 +1409,13 @@ function renderAuditMarkdown(summary: PaperReadinessAuditSummary): string {
 
 function listOrNone(values: string[]): string[] {
   return values.length > 0 ? values.map((value) => `- ${value}`) : ["- none"];
+}
+
+function metricValue(metric: { measured: boolean; value: number | null; unit?: string }): string {
+  if (!metric.measured || metric.value === null) {
+    return "unmeasured";
+  }
+  return `${metric.value}${metric.unit ? ` ${metric.unit}` : ""}`;
 }
 
 function normalizeSeedId(value: string): string {
@@ -1252,6 +1479,26 @@ async function readLiteratureDiscoveryPayloads(runRoot: string): Promise<Array<{
     }
   }
   return payloads;
+}
+
+async function readResearchBriefText(runRoot: string): Promise<string | undefined> {
+  const candidates = [
+    "research_brief.md",
+    "brief.md",
+    path.join("brief", "research_brief.md"),
+    path.join("inputs", "research_brief.md")
+  ];
+  for (const candidate of candidates) {
+    try {
+      const raw = await fs.readFile(path.join(runRoot, candidate), "utf8");
+      if (raw.trim()) {
+        return raw;
+      }
+    } catch {
+      // Try the next conventional brief location.
+    }
+  }
+  return undefined;
 }
 
 async function readJsonl(filePath: string): Promise<Record<string, unknown>[]> {

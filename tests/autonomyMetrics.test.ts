@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { computeAuditAutonomyMetrics } from "../src/core/audit/autonomyMetrics.js";
 import {
   buildAutonomyAggregateMetrics,
   buildRunAutonomyMetrics,
@@ -89,6 +90,40 @@ describe("autonomy metrics", () => {
         "Learning rate hyperparameter was unstable."
       ])
     ).toEqual(["bug", "prompt", "architecture", "hyperparameter"]);
+  });
+});
+
+describe("audit autonomy metrics", () => {
+  it("computes run-level metrics only where artifact support exists", () => {
+    const metrics = computeAuditAutonomyMetrics({
+      timeline: {
+        version: 1,
+        generated_at: "2026-05-05T00:00:00.000Z",
+        measured: true,
+        status: "available",
+        event_count: 3,
+        checkpoint_count: 1,
+        artifact_entry_count: 2,
+        entries: [
+          { id: "evt-1", source: "event", kind: "NODE_STARTED", title: "node started", timestamp: "2026-05-05T00:00:00.000Z", event_type: "NODE_STARTED" },
+          { id: "evt-2", source: "event", kind: "NODE_ROLLBACK", title: "manual approval rollback", timestamp: "2026-05-05T00:00:30.000Z", event_type: "NODE_ROLLBACK" },
+          { id: "evt-3", source: "event", kind: "NODE_COMPLETED", title: "node completed", timestamp: "2026-05-05T00:01:00.000Z", event_type: "NODE_COMPLETED" }
+        ],
+        policy_note: "test"
+      },
+      blockerCount: 1,
+      unsupportedClaimCount: 1,
+      citationSupportIssueCount: 1,
+      requiredOutputCount: 5,
+      presentOutputCount: 4
+    });
+
+    expect(metrics.autonomy_span.measured).toBe(true);
+    expect(metrics.autonomy_span.value).toBe(60000);
+    expect(metrics.human_intervention_count.value).toBe(1);
+    expect(metrics.backtrack_success_rate.value).toBe(1);
+    expect(metrics.claim_violation_count.value).toBe(2);
+    expect(metrics.reproducibility_score.value).toBe(0.8);
   });
 });
 
