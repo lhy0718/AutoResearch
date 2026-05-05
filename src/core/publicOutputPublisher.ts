@@ -2,7 +2,7 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 
 import { GraphNodeId, RunRecord } from "../types.js";
-import { ensureDir, fileExists, writeJsonFile } from "../utils/fs.js";
+import { ensureDir, fileExists, normalizeFsPath, writeJsonFile } from "../utils/fs.js";
 import { RunContextMemory } from "./memory/runContextMemory.js";
 import { updateRepositoryKnowledgeIndex } from "./repositoryKnowledge.js";
 import {
@@ -69,7 +69,7 @@ export async function publishPublicRunOutputs(
   const manifestPath = buildPublicRunManifestPath(input.workspaceRoot, input.run);
   const existingManifest = await loadStoredPublicRunManifest(manifestPath);
   if (existingManifest?.run_id && existingManifest.run_id !== input.run.id) {
-    await fs.rm(outputRoot, { recursive: true, force: true });
+    await fs.rm(normalizeFsPath(outputRoot), { recursive: true, force: true });
   }
   const sectionDir = buildPublicSectionDir(input.workspaceRoot, input.run, input.section);
   await ensureDir(sectionDir);
@@ -95,14 +95,16 @@ export async function publishPublicRunOutputs(
 
     if (!sourceExists) {
       if (await fileExists(targetPath)) {
-        await fs.rm(targetPath, { force: true });
+        await fs.rm(normalizeFsPath(targetPath), { force: true });
       }
       continue;
     }
 
     await ensureDir(path.dirname(targetPath));
-    if (path.resolve(sourcePath) !== path.resolve(targetPath)) {
-      await fs.copyFile(sourcePath, targetPath);
+    const normalizedSourcePath = normalizeFsPath(sourcePath);
+    const normalizedTargetPath = normalizeFsPath(targetPath);
+    if (path.resolve(normalizedSourcePath) !== path.resolve(normalizedTargetPath)) {
+      await fs.copyFile(normalizedSourcePath, normalizedTargetPath);
     }
   }
   const sectionFiles = await listSectionFiles(sectionDir, outputRoot);
@@ -172,7 +174,7 @@ async function loadPublicRunManifest(
   provenance: PublicRunManifest["provenance"]
 ): Promise<PublicRunManifest> {
   try {
-    const raw = await fs.readFile(manifestPath, "utf8");
+    const raw = await fs.readFile(normalizeFsPath(manifestPath), "utf8");
     const parsed = JSON.parse(raw) as PublicRunManifest;
     if (parsed && parsed.version === 1 && parsed.run_id === run.id) {
       return {
@@ -232,7 +234,7 @@ function normalizeWorkspaceChangedFiles(
 async function listSectionFiles(sectionDir: string, outputRoot: string): Promise<string[]> {
   const collected = new Set<string>();
   async function walk(currentDir: string): Promise<void> {
-    const entries = await fs.readdir(currentDir, { withFileTypes: true }).catch(() => undefined);
+    const entries = await fs.readdir(normalizeFsPath(currentDir), { withFileTypes: true }).catch(() => undefined);
     if (!entries) {
       return;
     }
@@ -326,7 +328,7 @@ export async function generatePublicRunReadme(
   const readmePath = path.join(outputRoot, "README.md");
   const content = lines.join("\n");
   await ensureDir(outputRoot);
-  await fs.writeFile(readmePath, content, "utf8");
+  await fs.writeFile(normalizeFsPath(readmePath), content, "utf8");
 
   return readmePath;
 }

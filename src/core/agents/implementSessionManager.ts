@@ -1533,9 +1533,10 @@ export class ImplementSessionManager {
       raw_event_count: rawEvents.length,
       updated_at: new Date().toISOString()
     });
+    const artifactRunDir = normalizeFsPath(runDir);
     const intermediateArtifactCapture = await buildIntermediateArtifactCaptureManifest({
       runId: run.id,
-      runDir,
+      runDir: artifactRunDir,
       node: "implement_experiments",
       phase: "finalize",
       status: finalVerifyReport.status,
@@ -1584,14 +1585,14 @@ export class ImplementSessionManager {
         },
         {
           artifactId: "published_script",
-          filePath: publishedScriptPath,
+          filePath: publishedScriptPath ? normalizeFsPath(publishedScriptPath) : publishedScriptPath,
           role: "candidate_output",
           required: finalVerifyReport.status === "pass",
           parseAs: "text"
         },
         {
           artifactId: "metrics",
-          filePath: finalAttempt.metricsPath,
+          filePath: finalAttempt.metricsPath ? normalizeFsPath(finalAttempt.metricsPath) : finalAttempt.metricsPath,
           role: "metric",
           required: false,
           parseAs: "json",
@@ -1600,6 +1601,7 @@ export class ImplementSessionManager {
       ]
     });
     const intermediateArtifactCapturePath = path.join(runDir, "implement_experiments", "intermediate_artifacts.json");
+    const intermediateArtifactCaptureSourcePath = normalizeFsPath(intermediateArtifactCapturePath);
     await writeJsonFile(intermediateArtifactCapturePath, intermediateArtifactCapture);
     await runContext.put("implement_experiments.intermediate_artifact_capture", intermediateArtifactCapture);
 
@@ -1614,7 +1616,7 @@ export class ImplementSessionManager {
           sourcePath: filePath
         })),
         {
-          sourcePath: intermediateArtifactCapturePath,
+          sourcePath: intermediateArtifactCaptureSourcePath,
           targetRelativePath: "implement_experiments_intermediate_artifacts.json"
         }
       ],
