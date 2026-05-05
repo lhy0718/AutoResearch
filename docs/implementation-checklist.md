@@ -40,7 +40,7 @@ The governed workflow remains fixed around:
 
 ## Unified Priority Checklist
 
-This is the canonical checklist. Legacy numeric-only implementation items have been merged into the P0/P1/P2 sequence below.
+This is the canonical checklist. Legacy numeric-only implementation items have been merged into the P0/P1/P2/P3 sequence below.
 
 ### P0 — Sprint Queue
 
@@ -86,6 +86,14 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 - [x] P2-15. AutoSOTA-style SOTA tracking module review.
 - [x] P2-16. Strategist/Worker loop separation experiment design.
 - [x] P2-17. Domain-specific research-agent plugin structure.
+
+### P3 — Product Hardening And Demo Readiness
+
+- [x] P3-1. Audit UX hardening.
+- [x] P3-2. Public demo bundle for false-paper-ready blocking.
+- [x] P3-3. Live validation playbook.
+- [x] P3-4. Audit integration for selected P2 design contracts.
+- [x] P3-5. Release hygiene and milestone review package.
 
 ## Detailed Task Cards
 
@@ -717,9 +725,60 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - [x] Long-run checkpointing, review backend integration, autonomous StagePolicies, knowledge retention, multimodal memory, serialization stability, intermediate artifact capture, reverse-from-data design, peer-agent coordination, distributed experiments, knowledge graphs, zero-cost monitoring, SOTA tracking, strategist/worker separation, and domain-agent plugins remain under existing governance and artifact contracts.
   - Existing whole-run evolution behavior remains regression-protected rather than rebuilt.
 
+### P3-1 Through P3-5. Product Hardening And Demo Readiness
+
+- [x] Status: P3 complete; P3-1 through P3-5 are implemented and release hygiene passed on 2026-05-05.
+- Scope checklist:
+  - [x] P3-1. Audit UX hardening.
+  - [x] P3-2. Public demo bundle for false-paper-ready blocking.
+  - [x] P3-3. Live validation playbook.
+  - [x] P3-4. Audit integration for selected P2 design contracts.
+  - [x] P3-5. Release hygiene and milestone review package.
+- Related repo files:
+  - Existing: `docs/roadmap/p3-roadmap.md`
+  - Existing: `docs/status/p2-completion-audit-2026-05-05.md`
+  - Existing: `src/cli/main.ts`
+  - Existing: `src/cli/args.ts`
+  - Existing: `src/cli/audit.ts`
+  - Existing: `src/core/audit/paperReadinessAudit.ts`
+  - Existing: `src/core/audit/auditDemoBundle.ts`
+  - Existing: `tests/paperReadinessAudit.test.ts`
+  - Existing: `tests/cliArgs.test.ts`
+  - Existing: `tests/auditDemoBundle.test.ts`
+  - Existing: `scripts/demo-audit-blockers.mjs`
+  - Existing: `docs/tui-live-validation.md`
+  - Existing: `docs/live-validation-issue-template.md`
+  - Existing: `docs/live-validation-playbook.md`
+  - Existing: `docs/status/audit-first-milestone-review.md`
+  - Existing: `ISSUES.md`
+- Planned files if needed:
+  - `docs/roadmap/p3-demo-readiness.md`
+  - `tests/auditCli.test.ts`
+  - `tests/auditReportSnapshots.test.ts`
+- Validation commands:
+  - Docs-only P3 edits: markdown/readability inspection plus portability scan.
+  - Audit CLI/runtime changes: `npm test -- tests/paperReadinessAudit.test.ts tests/cliArgs.test.ts tests/auditCli.test.ts`; `npm run build`; `npm run validate:harness`.
+  - Demo script changes: run the script in a generated output directory, confirm AGB-001/AGB-003/AGB-010 remain blocked or downgraded, then run portability scan on generated sample outputs.
+  - Live validation playbook changes: verify reproduction steps against `docs/tui-live-validation.md` and `docs/live-validation-issue-template.md`; run same-flow live validation when the playbook claims a concrete interactive flow.
+  - Release hygiene changes: `npm audit`; `npm --prefix web audit`; `npm test`; `npm run build`; `npm run validate:harness`.
+- Completion criteria:
+  - [x] P3-1 adds compact audit CLI summary output, severity grouping, stable report anchors, usage examples for `--seed`, `--run`, and `--out-dir`, and regression coverage for report shape.
+  - [x] P3-1 keeps audit reports conservative and does not weaken claim ceilings, baseline/comparator requirements, result-table requirements, figure-audit checks, citation support, or failed-run visibility.
+  - [x] P3-2 adds a repo-safe demo path for AGB-001, AGB-003, and AGB-010 that shows false paper-ready claims blocked or downgraded.
+  - [x] P3-2 keeps demo outputs generated or fixture-scoped, free of machine-local paths, and explicit about expected verdicts and blockers.
+  - [x] P3-3 documents fresh-run, resume, and failed-run inspection flows for real TUI/web validation.
+  - [x] P3-3 keeps deterministic smoke checks secondary to direct live validation when the issue is interactive.
+  - [x] P3-4 promotes selected P2 design contracts into audit findings only where artifact evidence is available.
+  - [x] P3-4 does not treat advisory design notes, memory summaries, peer-agent opinions, SOTA snapshots, or plugin heuristics as implemented evidence by themselves.
+  - [x] P3-5 adds a milestone review or release note that distinguishes implemented runtime behavior from design-only contracts and future work.
+  - [x] P3-5 verifies package metadata, CLI help, npm audit status, full tests, build, and harness before release-facing commits.
+  - [x] P3 keeps the audit-first positioning and does not introduce broad research OS, fully autonomous scientist, or paper-ready-by-default claims.
+
 ## First Implementation Slice
 
 Start with P0-1 through P0-6 before executing benchmark runs. These establish the hardening, input, condition, artifact, and scoring contracts. Then run P0-7 as the contract lock. Only after AGB-001 passes should P1-1 through P1-7 be broadened across AGB-002 through AGB-010. P1-8 through P1-11 and the P2 queue should be implemented incrementally after the P0 hardening slice has validation coverage.
+
+P3 starts only after the P0/P1/P2 checklist is complete. P3 should harden the audit-first product surface, demo reliability, live-validation workflow, and release package without changing the governed workflow or weakening evidence gates.
 
 ## Validation Policy For Future Edits
 

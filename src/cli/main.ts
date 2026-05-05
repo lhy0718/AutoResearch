@@ -40,11 +40,40 @@ function printHelp(): void {
   ].join("\n") + "\n");
 }
 
+function printAuditHelp(): void {
+  process.stdout.write([
+    "autolabos audit",
+    "",
+    "Audit AI research-agent outputs for paper-readiness without treating write_paper completion as paper-ready.",
+    "",
+    "Usage:",
+    "  autolabos audit --seed AGB-001 [--out-dir outputs/audit]",
+    "  autolabos audit --seed AGB-003 [--out-dir outputs/audit]",
+    "  autolabos audit --seed AGB-010 [--out-dir outputs/audit]",
+    "  autolabos audit --run <run-artifact-root> [--out-dir outputs/audit]",
+    "",
+    "Examples:",
+    "  autolabos audit --seed AGB-001",
+    "  autolabos audit --seed AGB-003 --out-dir outputs/audit/AGB-003",
+    "  autolabos audit --run .autolabos/runs/<run-id> --out-dir outputs/audit/<run-id>",
+    "",
+    "Outputs:",
+    "  paper-readiness-audit.md",
+    "  audit-summary.json",
+    "  blockers.json"
+  ].join("\n") + "\n");
+}
+
 async function main(): Promise<void> {
   const action = resolveCliAction(process.argv.slice(2));
 
   if (action.kind === "help") {
     printHelp();
+    return;
+  }
+
+  if (action.kind === "audit-help") {
+    printAuditHelp();
     return;
   }
 

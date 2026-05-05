@@ -34,6 +34,13 @@ export interface PaperReadinessAuditUnsupportedClaim {
   statement?: string;
 }
 
+export interface PaperReadinessAuditDesignContractFinding {
+  code: string;
+  severity: "blocker" | "warning";
+  message: string;
+  evidence_path: string;
+}
+
 export interface PaperReadinessAuditSummary {
   generated_at: string;
   verdict: PaperReadinessAuditVerdict;
@@ -68,6 +75,7 @@ export interface PaperReadinessAuditSummary {
     manuscript_promotion_allowed: boolean;
   };
   citation_support_issues: PaperReadinessAuditUnsupportedClaim[];
+  design_contract_findings: PaperReadinessAuditDesignContractFinding[];
   claim_ceiling: {
     allowed_level: string;
     rules_applied: string[];
@@ -99,6 +107,7 @@ interface LoadedRunArtifacts {
   figureAuditSummary: FigureAuditSummary | null | undefined;
   runRecord: Record<string, unknown> | undefined;
   evidenceStoreLines: Record<string, unknown>[];
+  designContractPayloads: Array<{ path: string; payload: Record<string, unknown> }>;
   mainTexExists: boolean;
 }
 
@@ -175,6 +184,7 @@ async function buildAuditSummary(input: {
     : undefined;
   const unsupportedClaims = collectUnsupportedClaims(input.artifacts, claimEvidence);
   const citationSupportIssues = collectCitationSupportIssues(input.artifacts);
+  const designContractFindings = collectDesignContractFindings(input.artifacts);
   const paperReady = input.artifacts.paperReadiness?.paper_ready === true;
   const readinessState = stringValue(input.artifacts.paperReadiness?.readiness_state);
   const failedRunHidden = isFailedRun(input.artifacts.runRecord) && paperReady;
@@ -259,6 +269,14 @@ async function buildAuditSummary(input: {
       source: "artifactContract"
     });
   }
+  for (const finding of designContractFindings) {
+    blockers.push({
+      code: finding.code,
+      severity: finding.severity,
+      message: finding.message,
+      source: "designContractEvidence"
+    });
+  }
   if (paperReady && blockers.some((blocker) => blocker.severity === "blocker")) {
     blockers.push({
       code: "false_paper_ready_blocked",
@@ -329,6 +347,7 @@ async function buildAuditSummary(input: {
       manuscript_promotion_allowed: figureAudit.severe_mismatch_count === 0 && !figureAudit.review_block_required
     },
     citation_support_issues: citationSupportIssues,
+    design_contract_findings: designContractFindings,
     claim_ceiling: {
       allowed_level: allowedLevel,
       rules_applied: [...new Set(rulesApplied)]
@@ -363,6 +382,7 @@ async function loadRunArtifacts(runRoot: string): Promise<LoadedRunArtifacts> {
     figureAuditSummary: await readOptionalJson<FigureAuditSummary>(path.join(runRoot, "figure_audit", "figure_audit_summary.json")),
     runRecord: await readOptionalJson<Record<string, unknown>>(path.join(runRoot, "run_record.json")),
     evidenceStoreLines: await readJsonl(path.join(runRoot, "evidence_store.jsonl")),
+    designContractPayloads: await readDesignContractPayloads(runRoot),
     mainTexExists: await fileExists(path.join(runRoot, "paper", "main.tex"))
   };
 }
@@ -583,6 +603,88 @@ function collectCitationSupportIssues(
     }));
 }
 
+function collectDesignContractFindings(
+  artifacts: LoadedRunArtifacts
+): PaperReadinessAuditDesignContractFinding[] {
+  const findings: PaperReadinessAuditDesignContractFinding[] = [];
+  for (const item of artifacts.designContractPayloads) {
+    const rows = [
+      ...recordArray(item.payload.findings),
+      ...recordArray(item.payload.contract_findings),
+      ...recordArray(item.payload.audit_findings)
+    ];
+    for (const row of rows) {
+      if (row.advisory_only === true || row.design_note_only === true) {
+        continue;
+      }
+      const code = stringValue(row.code) || stringValue(row.contract);
+      const message = stringValue(row.message) || stringValue(row.summary);
+      if (!code || !message) {
+        continue;
+      }
+      findings.push({
+        code,
+        severity: parseFindingSeverity(row.severity),
+        message,
+        evidence_path: stringValue(row.evidence_path) || item.path
+      });
+    }
+
+    const hiddenFailedWorkerCount = numberValue(item.payload.hidden_failed_worker_count);
+    if (hiddenFailedWorkerCount > 0 && stringValue(item.payload.failed_worker_visibility) !== "visible") {
+      findings.push({
+        code: "distributed_worker_failure_hidden",
+        severity: "blocker",
+        message: `${hiddenFailedWorkerCount} failed worker run(s) are recorded without visible failed-run preservation.`,
+        evidence_path: item.path
+      });
+    }
+    if (item.payload.reverse_from_data_origin === true && item.payload.exploratory_origin_visible !== true) {
+      findings.push({
+        code: "reverse_from_data_origin_hidden",
+        severity: "warning",
+        message: "Reverse-from-data exploratory origin is recorded but not visible in the audit handoff.",
+        evidence_path: item.path
+      });
+    }
+    if (item.payload.sota_ranking_claimed === true && item.payload.sota_evidence_present !== true) {
+      findings.push({
+        code: "unsupported_sota_ranking",
+        severity: "warning",
+        message: "A SOTA/ranking claim is recorded without supporting ranking evidence.",
+        evidence_path: item.path
+      });
+    }
+    if (item.payload.plugin_manifest_gate_bypassed === true) {
+      findings.push({
+        code: "plugin_manifest_gate_bypassed",
+        severity: "blocker",
+        message: "A domain-plugin manifest gate bypass is recorded in artifact evidence.",
+        evidence_path: item.path
+      });
+    }
+  }
+  return dedupeDesignFindings(findings);
+}
+
+function dedupeDesignFindings(
+  findings: PaperReadinessAuditDesignContractFinding[]
+): PaperReadinessAuditDesignContractFinding[] {
+  const seen = new Set<string>();
+  return findings.filter((finding) => {
+    const key = `${finding.code}\u0000${finding.message}\u0000${finding.evidence_path}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function parseFindingSeverity(value: unknown): "blocker" | "warning" {
+  return value === "blocker" ? "blocker" : "warning";
+}
+
 function claimRows(artifacts: LoadedRunArtifacts): Array<{
   claim_id: string;
   statement?: string;
@@ -717,11 +819,15 @@ function renderAuditMarkdown(summary: PaperReadinessAuditSummary): string {
   const lines = [
     "# Paper-Readiness Audit",
     "",
+    '<a id="verdict"></a>',
+    "## Verdict",
+    "",
     `Generated: ${summary.generated_at}`,
     `Verdict: ${summary.verdict}`,
     `Input: ${summary.input.mode}${summary.input.seed_id ? ` ${summary.input.seed_id}` : ""}`,
     `Run artifacts: ${summary.input.run_root}`,
     "",
+    '<a id="top-blockers"></a>',
     "## Top Blockers",
     ""
   ];
@@ -734,27 +840,64 @@ function renderAuditMarkdown(summary: PaperReadinessAuditSummary): string {
   }
   lines.push(
     "",
+    '<a id="unsupported-claims"></a>',
     "## Unsupported Claims",
     "",
     ...listOrNone(summary.unsupported_claims.map((claim) =>
       `${claim.claim_id}: ${claim.statement || claim.message}`
     )),
     "",
-    "## Evidence Status",
+    '<a id="baseline-comparator-status"></a>',
+    "## Baseline / Comparator Status",
     "",
-    `- baseline/comparator: ${summary.baseline_comparator_status.status}`,
-    `- result table: ${summary.result_table_completeness.complete_row_count}/${summary.result_table_completeness.row_count} complete row(s)`,
-    `- figure audit: ${summary.figure_result_caption_mismatch.status}, severe mismatches=${summary.figure_result_caption_mismatch.severe_mismatch_count}`,
-    `- citation support issues: ${summary.citation_support_issues.length}`,
+    `- status: ${summary.baseline_comparator_status.status}`,
+    `- missing baseline rows: ${summary.baseline_comparator_status.missing_baseline_count}`,
+    `- missing comparator rows: ${summary.baseline_comparator_status.missing_comparator_count}`,
+    `- comparative claims allowed: ${summary.baseline_comparator_status.comparative_claim_allowed}`,
+    "",
+    '<a id="result-table-completeness"></a>',
+    "## Result Table Completeness",
+    "",
+    `- measured: ${summary.result_table_completeness.measured}`,
+    `- complete rows: ${summary.result_table_completeness.complete_row_count}/${summary.result_table_completeness.row_count}`,
+    `- comparator coverage: ${summary.result_table_completeness.comparator_coverage ?? "n/a"}`,
+    `- paper-ready allowed: ${summary.result_table_completeness.paper_ready_allowed}`,
+    "",
+    '<a id="figure-result-caption-mismatch"></a>',
+    "## Figure / Result / Caption Mismatch",
+    "",
+    `- status: ${summary.figure_result_caption_mismatch.status}`,
+    `- severe mismatches: ${summary.figure_result_caption_mismatch.severe_mismatch_count}`,
+    `- manuscript promotion allowed: ${summary.figure_result_caption_mismatch.manuscript_promotion_allowed}`,
+    "",
+    '<a id="citation-support"></a>',
+    "## Citation Support",
+    "",
+    ...listOrNone(summary.citation_support_issues.map((issue) =>
+      `${issue.claim_id}: ${issue.statement || issue.message}`
+    )),
+    "",
+    '<a id="design-contract-findings"></a>',
+    "## Design Contract Findings",
+    "",
+    ...listOrNone(summary.design_contract_findings.map((finding) =>
+      `${finding.severity}: ${finding.code} - ${finding.message} (${finding.evidence_path})`
+    )),
+    "",
+    '<a id="paper-readiness-flags"></a>',
+    "## Paper-Readiness Flags",
+    "",
     `- write_paper completed: ${summary.paper_readiness.write_paper_completed}`,
     `- paper_ready flag: ${summary.paper_readiness.paper_ready}`,
     "",
+    '<a id="claim-ceiling"></a>',
     "## Claim Ceiling",
     "",
     `Allowed level: ${summary.claim_ceiling.allowed_level}`,
     "",
     ...listOrNone(summary.claim_ceiling.rules_applied),
     "",
+    '<a id="next-actions"></a>',
     "## Next Actions",
     "",
     ...summary.next_action_checklist.map((action) => `- [ ] ${action}`),
@@ -798,6 +941,22 @@ async function readOptionalJson<T = unknown>(filePath: string): Promise<T | unde
   }
 }
 
+async function readDesignContractPayloads(runRoot: string): Promise<Array<{ path: string; payload: Record<string, unknown> }>> {
+  const candidates = [
+    "design_contracts.json",
+    path.join("audit", "design_contracts.json"),
+    path.join("review", "design_contract_findings.json")
+  ];
+  const payloads: Array<{ path: string; payload: Record<string, unknown> }> = [];
+  for (const candidate of candidates) {
+    const payload = await readOptionalJson<Record<string, unknown>>(path.join(runRoot, candidate));
+    if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+      payloads.push({ path: candidate.replace(/\\/g, "/"), payload });
+    }
+  }
+  return payloads;
+}
+
 async function readJsonl(filePath: string): Promise<Record<string, unknown>[]> {
   try {
     const raw = await fs.readFile(filePath, "utf8");
@@ -836,6 +995,16 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean)
     : [];
+}
+
+function recordArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+    : [];
+}
+
+function numberValue(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 function relativePath(cwd: string, value: string): string {

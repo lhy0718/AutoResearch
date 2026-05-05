@@ -12,6 +12,7 @@ export type CliAction =
   | { kind: "governance-benchmark-batch"; seedsRoot: string; taskIds: string[]; outDir?: string; conditions: GovernanceBenchmarkConditionName[] }
   | { kind: "governance-benchmark-export-bundles"; publicOutputRoots: string[]; outDir?: string; maxBundles?: number }
   | { kind: "audit"; runRoot?: string; seedId?: string; outDir?: string }
+  | { kind: "audit-help" }
   | {
       kind: "meta-harness";
       runs: number;
@@ -236,6 +237,9 @@ export function resolveCliAction(args: string[]): CliAction {
   }
 
   if (first === "audit") {
+    if (args[1] === "--help" || args[1] === "-h") {
+      return { kind: "audit-help" };
+    }
     let runRoot: string | undefined;
     let seedId: string | undefined;
     let outDir: string | undefined;

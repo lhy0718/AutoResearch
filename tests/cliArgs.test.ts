@@ -27,6 +27,11 @@ describe("resolveCliAction", () => {
     expect(resolveCliAction(["--help"]).kind).toBe("help");
   });
 
+  it("supports audit-specific help", () => {
+    expect(resolveCliAction(["audit", "--help"]).kind).toBe("audit-help");
+    expect(resolveCliAction(["audit", "-h"]).kind).toBe("audit-help");
+  });
+
   it("supports web mode with host and port", () => {
     expect(resolveCliAction(["web", "--host", "0.0.0.0", "--port", "3001"])).toEqual({
       kind: "web",

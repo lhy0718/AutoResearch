@@ -1,7 +1,7 @@
 {
   "name": "autolabos",
   "version": "0.1.0",
-  "description": "Local TUI and web ops UI for AI-agent-driven research automation, from paper collection to experiment execution and paper drafting.",
+  "description": "Governed local TUI and web UI for audit-first AI research-agent workflows, evidence gates, and paper-readiness review.",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -50,6 +50,7 @@
     "test:watch": "vitest",
     "eval:harness": "tsx src/cli/main.ts eval-harness",
     "evolve:skills": "bash scripts/evolve-skills.sh",
+    "demo:audit-blockers": "npm run build && node scripts/demo-audit-blockers.mjs",
     "validate:harness": "tsx src/cli/validateHarness.ts",
     "test:smoke:natural-collect": "bash tests/smoke/run_natural_collect_pending_command.sh",
     "test:smoke:natural-collect-execute": "bash tests/smoke/run_natural_collect_execute_and_verify_artifacts.sh",
