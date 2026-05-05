@@ -78,14 +78,14 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 - [x] P2-7. Multimodal memory layer review.
 - [x] P2-8. Node output serialization stability audit.
 - [x] P2-9. Intermediate artifact capture during experiment implementation and execution.
-- [ ] P2-10. Reverse-from-data research design mode review.
-- [ ] P2-11. ArtifactReactor-style peer-agent coordination review.
-- [ ] P2-12. Distributed experiment ecosystem review.
-- [ ] P2-13. Research World Model or knowledge-graph design review.
-- [ ] P2-14. Zero-cost monitoring mode for long-running experiments.
-- [ ] P2-15. AutoSOTA-style SOTA tracking module review.
-- [ ] P2-16. Strategist/Worker loop separation experiment design.
-- [ ] P2-17. Domain-specific research-agent plugin structure.
+- [x] P2-10. Reverse-from-data research design mode review.
+- [x] P2-11. ArtifactReactor-style peer-agent coordination review.
+- [x] P2-12. Distributed experiment ecosystem review.
+- [x] P2-13. Research World Model or knowledge-graph design review.
+- [x] P2-14. Zero-cost monitoring mode for long-running experiments.
+- [x] P2-15. AutoSOTA-style SOTA tracking module review.
+- [x] P2-16. Strategist/Worker loop separation experiment design.
+- [x] P2-17. Domain-specific research-agent plugin structure.
 
 ## Detailed Task Cards
 
@@ -618,7 +618,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 
 ### P2-2 Through P2-17. Longer-Horizon Design Queue
 
-- [ ] Status: P2-2 through P2-9 completed as bounded slices; P2-10 through P2-17 remain pending.
+- [x] Status: P2-2 through P2-17 completed as bounded slices.
 - Scope checklist:
   - [x] P2-2. Meta-Harness external multi-run loop.
   - [x] P2-3. Month-long autonomous execution checkpoint/resume review.
@@ -628,14 +628,14 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - [x] P2-7. Multimodal memory layer review.
   - [x] P2-8. Node output serialization stability audit.
   - [x] P2-9. Intermediate artifact capture during experiment implementation and execution.
-  - [ ] P2-10. Reverse-from-data research design mode review.
-  - [ ] P2-11. ArtifactReactor-style peer-agent coordination review.
-  - [ ] P2-12. Distributed experiment ecosystem review.
-  - [ ] P2-13. Research World Model or knowledge-graph design review.
-  - [ ] P2-14. Zero-cost monitoring mode for long-running experiments.
-  - [ ] P2-15. AutoSOTA-style SOTA tracking module review.
-  - [ ] P2-16. Strategist/Worker loop separation experiment design.
-  - [ ] P2-17. Domain-specific research-agent plugin structure.
+  - [x] P2-10. Reverse-from-data research design mode review.
+  - [x] P2-11. ArtifactReactor-style peer-agent coordination review.
+  - [x] P2-12. Distributed experiment ecosystem review.
+  - [x] P2-13. Research World Model or knowledge-graph design review.
+  - [x] P2-14. Zero-cost monitoring mode for long-running experiments.
+  - [x] P2-15. AutoSOTA-style SOTA tracking module review.
+  - [x] P2-16. Strategist/Worker loop separation experiment design.
+  - [x] P2-17. Domain-specific research-agent plugin structure.
 - Related repo files:
   - Existing: `docs/architecture.md`
   - Existing: `docs/experiment-quality-bar.md`
@@ -659,18 +659,21 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - Added: `docs/design/multimodal-memory-layer-review.md`
   - Added: `docs/design/node-output-serialization-stability-audit.md`
   - Added: `docs/design/intermediate-artifact-capture-design.md`
+  - Added: `docs/design/reverse-from-data-research-design-review.md`
+  - Added: `docs/design/peer-agent-artifact-coordination-review.md`
+  - Added: `docs/design/distributed-experiment-ecosystem-review.md`
+  - Added: `docs/design/research-world-model-knowledge-graph-review.md`
+  - Added: `docs/design/zero-cost-monitoring-mode.md`
+  - Added: `docs/design/autosota-tracking-module-review.md`
+  - Added: `docs/design/strategist-worker-loop-separation.md`
+  - Added: `docs/design/domain-specific-research-agent-plugin-structure.md`
   - Added: `src/core/artifacts/intermediateArtifactCapture.ts`
   - Updated: `src/core/agents/implementSessionManager.ts`
   - Updated: `src/core/nodes/runExperiments.ts`
   - Tests: `tests/metaHarness.test.ts`, `tests/cliArgs.test.ts`, `tests/intermediateArtifactCapture.test.ts`, `tests/runExperimentsExecutionProfile.test.ts`
   - Tests: `tests/harnessValidationService.test.ts`
 - Planned docs if needed:
-  - `docs/long-run-stability-review.md`
-  - `docs/domain-agent-plugin-design.md`
-  - `docs/artifact-access-design.md`
-  - `docs/design/stage-evolution-design.md`
-  - `docs/distributed-experiment-ecosystem-review.md`
-  - `docs/research-world-model-review.md`
+  - None currently required for P2-2 through P2-17; longer notes live under `docs/design/`.
 - Validation commands:
   - Docs-only review: markdown/readability inspection plus portability scan.
   - If harness expectations change: `npm run validate:harness`.
@@ -683,6 +686,7 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - P2-7 validation: markdown/readability inspection plus portability scan.
   - P2-8 validation: markdown/readability inspection plus portability scan.
   - P2-9 validation: `npm test -- tests/intermediateArtifactCapture.test.ts tests/runExperimentsExecutionProfile.test.ts`; `npm run build`; `npm run validate:harness`.
+  - P2-10 through P2-17 validation: markdown/readability inspection plus portability scan.
 - Completion criteria:
   - [x] P2-2 receives its own design note and first read-only external context ingestion slice.
   - [x] P2-2 supports repeatable `--external-run <run-artifact-root>` only with `--no-apply`, copies allowlisted artifacts into a meta-harness context, records safe source labels without absolute external paths, and avoids LLM/apply behavior in this slice.
@@ -701,8 +705,16 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - [x] P2-9 adds run-scoped intermediate artifact capture manifests for `implement_experiments` implementation artifacts and `run_experiments` verifier outputs, metrics pointers, and logs.
   - [x] P2-9 normalizes run-relative paths, redacts external artifact paths, records parse status, and publishes the capture manifest to public experiment outputs.
   - [x] P2-9 keeps intermediate artifacts diagnostic until linked evidence, result tables, review gates, and audit contracts support stronger claims.
-  - Each remaining P2 item receives its own design note or an explicit deferral rationale before implementation.
-  - Long-run checkpointing, review backend integration, autonomous StagePolicies, knowledge retention, multimodal memory, serialization stability, intermediate artifact capture, reverse-from-data design, peer-agent coordination, distributed experiments, knowledge graphs, zero-cost monitoring, SOTA tracking, strategist/worker separation, and domain-agent plugins remain under existing governance and artifact contracts.
+  - [x] P2-10 documents reverse-from-data mode as exploratory, requiring prospective validation before confirmatory or paper-ready claims.
+  - [x] P2-11 documents peer-agent coordination through artifact queues, scoped reports, conflict preservation, and deterministic gate authority.
+  - [x] P2-12 documents distributed experiment job and worker-report contracts that preserve failed, skipped, and missing-metric jobs.
+  - [x] P2-13 documents research-world-model graph boundaries, source-linked nodes/edges, stale-reference handling, and non-evidence memory semantics.
+  - [x] P2-14 documents zero-cost monitoring as read-only operational inspection that cannot advance workflow or execute expensive work.
+  - [x] P2-15 documents AutoSOTA tracking as citation-backed comparator discovery that cannot claim current SOTA without source, timestamp, metric, and benchmark comparability.
+  - [x] P2-16 documents strategist/worker separation with scoped planning, worker reports, failure visibility, and no substitution of planning confidence for evidence.
+  - [x] P2-17 documents domain-specific plugin manifests, allowed extension points, and strict preservation of core gates.
+  - [x] Each P2 item receives its own design note or implementation artifact before being marked complete.
+  - [x] Long-run checkpointing, review backend integration, autonomous StagePolicies, knowledge retention, multimodal memory, serialization stability, intermediate artifact capture, reverse-from-data design, peer-agent coordination, distributed experiments, knowledge graphs, zero-cost monitoring, SOTA tracking, strategist/worker separation, and domain-agent plugins remain under existing governance and artifact contracts.
   - Existing whole-run evolution behavior remains regression-protected rather than rebuilt.
 
 ## First Implementation Slice

@@ -11,6 +11,15 @@ These notes are not claims that the described runtime behavior is already implem
 - `exploration-knowledge-retention-review.md`
 - `multimodal-memory-layer-review.md`
 - `node-output-serialization-stability-audit.md`
+- `intermediate-artifact-capture-design.md`
+- `reverse-from-data-research-design-review.md`
+- `peer-agent-artifact-coordination-review.md`
+- `distributed-experiment-ecosystem-review.md`
+- `research-world-model-knowledge-graph-review.md`
+- `zero-cost-monitoring-mode.md`
+- `autosota-tracking-module-review.md`
+- `strategist-worker-loop-separation.md`
+- `domain-specific-research-agent-plugin-structure.md`
 
 ## Placement Rule
 
