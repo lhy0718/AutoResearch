@@ -231,8 +231,8 @@ export function buildPaperWriterPrompt(input: {
   objectiveMetricProfile: ObjectiveMetricProfile;
   objectiveEvaluation?: ObjectiveMetricEvaluation;
 }): string {
-  const allowedEvidenceIds = input.bundle.evidenceRows.map((item) => item.evidence_id);
-  const allowedPaperIds = input.bundle.corpus.map((item) => item.paper_id);
+  const allowedEvidenceIds = uniqueStrings(input.bundle.evidenceRows.map((item) => item.evidence_id)).slice(0, 80);
+  const allowedPaperIds = uniqueStrings(input.bundle.corpus.map((item) => item.paper_id)).slice(0, 80);
   const relatedWorkBrief = buildRelatedWorkBrief(input.bundle);
   const promptPayload = {
     run: {
@@ -272,7 +272,7 @@ export function buildPaperWriterPrompt(input: {
       selected_summary: input.bundle.experimentPlan?.selectedSummary,
       excerpt: truncateText(input.bundle.experimentPlan?.rawText || "", 1400)
     },
-    result_analysis: input.bundle.resultAnalysis || undefined,
+    result_analysis: buildPromptResultAnalysisDigest(input.bundle.resultAnalysis),
     detailed_results:
       input.bundle.latestResults && typeof input.bundle.latestResults === "object"
         ? {
@@ -467,6 +467,177 @@ export function buildPaperWriterPrompt(input: {
     "Context JSON:",
     JSON.stringify(promptPayload, null, 2)
   ].join("\n");
+}
+
+function buildPromptResultAnalysisDigest(resultAnalysis?: ResultAnalysisArtifact): Record<string, unknown> | undefined {
+  if (!resultAnalysis) {
+    return undefined;
+  }
+  const resultsTable = arrayValue(resultAnalysis.results_table);
+  const metricTable = arrayValue(resultAnalysis.metric_table);
+  const conditionComparisons = arrayValue(resultAnalysis.condition_comparisons);
+  const primaryFindings = stringListValue(resultAnalysis.primary_findings);
+  const limitations = stringListValue(resultAnalysis.limitations);
+  const warnings = stringListValue(resultAnalysis.warnings);
+  const paperClaims = arrayValue(resultAnalysis.paper_claims);
+  const figureSpecs = arrayValue(resultAnalysis.figure_specs);
+  const failureTaxonomy = arrayValue(resultAnalysis.failure_taxonomy);
+
+  return {
+    analysis_version: resultAnalysis.analysis_version,
+    generated_at: resultAnalysis.generated_at,
+    mean_score: resultAnalysis.mean_score,
+    objective_metric: compactPromptJsonValue(resultAnalysis.objective_metric, {
+      maxDepth: 4,
+      maxArrayItems: 8,
+      maxObjectKeys: 16,
+      maxStringLength: 500
+    }),
+    overview: compactPromptJsonValue(resultAnalysis.overview, {
+      maxDepth: 3,
+      maxArrayItems: 8,
+      maxObjectKeys: 16,
+      maxStringLength: 500
+    }),
+    selected_design: compactPromptJsonValue(resultAnalysis.plan_context?.selected_design, {
+      maxDepth: 3,
+      maxArrayItems: 8,
+      maxObjectKeys: 12,
+      maxStringLength: 500
+    }),
+    results_table: resultsTable.slice(0, 12).map((row) => compactPromptJsonValue(row, {
+      maxDepth: 2,
+      maxArrayItems: 8,
+      maxObjectKeys: 8,
+      maxStringLength: 300
+    })),
+    metric_table: metricTable.slice(0, 16).map((row) => compactPromptJsonValue(row, {
+      maxDepth: 3,
+      maxArrayItems: 8,
+      maxObjectKeys: 12,
+      maxStringLength: 300
+    })),
+    condition_comparisons: conditionComparisons.slice(0, 8).map((item) => compactPromptJsonValue(item, {
+      maxDepth: 4,
+      maxArrayItems: 8,
+      maxObjectKeys: 14,
+      maxStringLength: 500
+    })),
+    execution_summary: compactPromptJsonValue(resultAnalysis.execution_summary, {
+      maxDepth: 3,
+      maxArrayItems: 8,
+      maxObjectKeys: 12,
+      maxStringLength: 500
+    }),
+    statistical_summary: compactPromptJsonValue(resultAnalysis.statistical_summary, {
+      maxDepth: 4,
+      maxArrayItems: 12,
+      maxObjectKeys: 16,
+      maxStringLength: 500
+    }),
+    primary_findings: primaryFindings.slice(0, 8).map((item) => truncateText(item, 500)),
+    limitations: limitations.slice(0, 8).map((item) => truncateText(item, 500)),
+    warnings: warnings.slice(0, 8).map((item) => truncateText(item, 400)),
+    paper_claims: paperClaims.slice(0, 10).map((item) => compactPromptJsonValue(item, {
+      maxDepth: 3,
+      maxArrayItems: 8,
+      maxObjectKeys: 10,
+      maxStringLength: 500
+    })),
+    figure_specs: figureSpecs.slice(0, 4).map((item) => compactPromptJsonValue(item, {
+      maxDepth: 3,
+      maxArrayItems: 6,
+      maxObjectKeys: 10,
+      maxStringLength: 400
+    })),
+    verifier_feedback: compactPromptJsonValue(resultAnalysis.verifier_feedback, {
+      maxDepth: 3,
+      maxArrayItems: 8,
+      maxObjectKeys: 12,
+      maxStringLength: 500
+    }),
+    failure_taxonomy: failureTaxonomy.slice(0, 6).map((item) => compactPromptJsonValue(item, {
+      maxDepth: 3,
+      maxArrayItems: 8,
+      maxObjectKeys: 10,
+      maxStringLength: 400
+    })),
+    synthesis: compactPromptJsonValue(resultAnalysis.synthesis, {
+      maxDepth: 4,
+      maxArrayItems: 8,
+      maxObjectKeys: 12,
+      maxStringLength: 500
+    }),
+    raw_metrics_omitted: {
+      reason: "Full raw metrics are intentionally omitted from paper-writing prompts; use the compact result table, comparisons, statistical summary, verifier feedback, and claims above.",
+      metric_key_count: Object.keys(resultAnalysis.metrics || {}).length,
+      sample_metric_keys: Object.keys(resultAnalysis.metrics || {}).slice(0, 20)
+    }
+  };
+}
+
+function arrayValue(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function stringListValue(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function compactPromptJsonValue(
+  value: unknown,
+  options: {
+    maxDepth: number;
+    maxArrayItems: number;
+    maxObjectKeys: number;
+    maxStringLength: number;
+  }
+): unknown {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  if (typeof value === "string") {
+    return truncateText(sanitizePaperNarrativeText(value), options.maxStringLength);
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  if (options.maxDepth <= 0) {
+    return "[omitted nested detail]";
+  }
+  if (Array.isArray(value)) {
+    const compacted = value
+      .slice(0, options.maxArrayItems)
+      .map((item) => compactPromptJsonValue(item, {
+        ...options,
+        maxDepth: options.maxDepth - 1
+      }))
+      .filter((item) => item !== undefined);
+    if (value.length > options.maxArrayItems) {
+      compacted.push(`[${value.length - options.maxArrayItems} item(s) omitted]`);
+    }
+    return compacted;
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item !== undefined)
+      .slice(0, options.maxObjectKeys);
+    const compacted: Record<string, unknown> = {};
+    for (const [key, item] of entries) {
+      compacted[key] = compactPromptJsonValue(item, {
+        ...options,
+        maxDepth: options.maxDepth - 1
+      });
+    }
+    const keyCount = Object.keys(value as Record<string, unknown>).length;
+    if (keyCount > options.maxObjectKeys) {
+      compacted.__omitted_keys = keyCount - options.maxObjectKeys;
+    }
+    return compacted;
+  }
+  return undefined;
 }
 
 export function normalizePaperDraft(input: {

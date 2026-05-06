@@ -639,7 +639,13 @@ function buildMethodologyFallback(
     );
   }
 
-  if ((report.execution_summary.observation_count || 0) <= 1) {
+  const executedTrials =
+    report.statistical_summary.executed_trials ??
+    report.statistical_summary.total_trials ??
+    report.overview.execution_runs ??
+    report.execution_summary.observation_count ??
+    0;
+  if (executedTrials <= 1) {
     findings.push(
       createFinding("methodology_reviewer", "Methodology reviewer", "methodology", "medium", "Single-run methodology coverage", "Only one observed execution was recorded, so methodology robustness is still limited.", ["result_analysis.json"], [], "Run confirmatory variants or multiple seeds to widen methodological coverage.", 0.75)
     );

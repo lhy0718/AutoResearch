@@ -694,4 +694,86 @@ describe("run_experiments execution profile behavior", () => {
     });
     expect(verifierReport.summary).toContain("Experiment metrics payload reports failed recipe(s)");
   });
+
+  it("fails verification when a required run contract exits zero with no completed runs", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-zero-completed-"));
+    process.chdir(root);
+    const run = makeRun("run-zero-completed");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "success",
+                accuracy: 0.95,
+                required_condition_count: 5,
+                completed_condition_count: 0,
+                required_run_count: 25,
+                completed_run_count: 0,
+                study_summary: {
+                  status: "failed",
+                  required_run_count: 25,
+                  completed_run_count: 0
+                }
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "runner exited zero after failed condition loop",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("No required experiment runs completed successfully");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string };
+    expect(verifierReport).toMatchObject({
+      status: "fail",
+      stage: "metrics"
+    });
+    expect(verifierReport.summary).toContain("No required experiment runs completed successfully");
+  });
 });

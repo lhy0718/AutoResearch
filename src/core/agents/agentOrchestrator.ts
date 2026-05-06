@@ -50,20 +50,6 @@ export class AgentOrchestrator {
         await this.runtime.jumpToNode(runId, nodeId, "force", "manual node run");
       }
     }
-
-
-function shouldTreatManualRunAsApprovalHandoff(run: RunRecord, nodeId: GraphNodeId): boolean {
-  const recommendation = run.graph.pendingTransition;
-  if (!recommendation || recommendation.action !== "pause_for_human") {
-    return false;
-  }
-  if (recommendation.targetNode !== nodeId) {
-    return false;
-  }
-  const currentIdx = GRAPH_NODE_ORDER.indexOf(run.currentNode);
-  const targetIdx = GRAPH_NODE_ORDER.indexOf(nodeId);
-  return currentIdx >= 0 && targetIdx === currentIdx + 1;
-}
     await this.runtime.runUntilPause(runId, {
       abortSignal: opts?.abortSignal,
       stopAfterApprovalBoundary: true,
@@ -131,7 +117,7 @@ function shouldTreatManualRunAsApprovalHandoff(run: RunRecord, nodeId: GraphNode
   }
 
   async approveCurrent(runId: string): Promise<RunRecord> {
-    await this.runtime.approveCurrent(runId, { continueAfterApprove: true });
+    await this.runtime.approveCurrent(runId, { continueAfterApprove: true, allowPauseForHuman: true });
     return this.getPersistedRunOrThrow(runId);
   }
 
@@ -176,6 +162,19 @@ function shouldTreatManualRunAsApprovalHandoff(run: RunRecord, nodeId: GraphNode
     }
     return run;
   }
+}
+
+function shouldTreatManualRunAsApprovalHandoff(run: RunRecord, nodeId: GraphNodeId): boolean {
+  const recommendation = run.graph.pendingTransition;
+  if (!recommendation || recommendation.action !== "pause_for_human") {
+    return false;
+  }
+  if (recommendation.targetNode !== nodeId) {
+    return false;
+  }
+  const currentIdx = GRAPH_NODE_ORDER.indexOf(run.currentNode);
+  const targetIdx = GRAPH_NODE_ORDER.indexOf(nodeId);
+  return currentIdx >= 0 && targetIdx === currentIdx + 1;
 }
 
 function summarizeRun(run: RunRecord, requestedNode?: GraphNodeId): string {

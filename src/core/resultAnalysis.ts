@@ -1120,9 +1120,29 @@ function buildStatisticalSummary(args: {
   };
 }): AnalysisStatisticalSummary {
   const sampling = asRecord(args.metrics.sampling_profile);
-  const totalTrials = asNumber(sampling.total_trials);
-  const executedTrials = asNumber(sampling.executed_trials);
-  const cachedTrials = asNumber(sampling.cached_trials);
+  const totalTrials =
+    asNumber(sampling.total_trials) ??
+    firstNumber(args.metrics, [
+      "total_trials",
+      "required_run_count",
+      "required_trial_count",
+      "planned_run_count",
+      "planned_trial_count",
+      "expected_run_count",
+      "expected_trial_count"
+    ]);
+  const executedTrials =
+    asNumber(sampling.executed_trials) ??
+    firstNumber(args.metrics, [
+      "executed_trials",
+      "completed_run_count",
+      "completed_trial_count",
+      "successful_run_count",
+      "successful_trial_count"
+    ]);
+  const cachedTrials =
+    asNumber(sampling.cached_trials) ??
+    firstNumber(args.metrics, ["cached_trials", "cached_run_count", "cached_trial_count"]);
   const preferredKeys = uniqueStrings(
     [
       args.objectiveEvaluation.matchedMetricKey,
@@ -1136,6 +1156,7 @@ function buildStatisticalSummary(args: {
       value: args.metrics,
       sampleSize: totalTrials
     }),
+    ...extractConditionSummaryHalfWidthConfidenceIntervals(args.metrics),
     ...args.supplementalMetrics.flatMap((item) =>
       extractConfidenceIntervals({
         value: item.metrics,
@@ -1358,6 +1379,58 @@ function extractConfidenceIntervals(args: {
   }
 
   return intervals;
+}
+
+function extractConditionSummaryHalfWidthConfidenceIntervals(
+  metrics: Record<string, unknown>
+): AnalysisConfidenceInterval[] {
+  return asArray(metrics.condition_summaries)
+    .map((item) => asRecord(item))
+    .flatMap((row) => {
+      const conditionName = readConditionName(row);
+      return Object.entries(row)
+        .map(([key, raw]) => {
+          const match = key.match(/^(.+)_ci(\d{2,3})$/iu);
+          const halfWidth = asNumber(raw);
+          if (!match || typeof halfWidth !== "number") {
+            return undefined;
+          }
+          const metricBase = match[1];
+          const mean =
+            asNumber(row[`${metricBase}_mean`]) ??
+            asNumber(row[metricBase]);
+          if (typeof mean !== "number") {
+            return undefined;
+          }
+          const level = normalizeConfidenceLevel(Number(match[2])) ?? 0.95;
+          const metricKey = conditionName
+            ? `condition_summaries.${conditionName}.${metricBase}`
+            : `condition_summaries.${metricBase}`;
+          const sampleSize =
+            asNumber(row[`${metricBase}_count`]) ??
+            asNumber(row.completed_seed_count) ??
+            asNumber(row.planned_seed_count);
+          const lower = Number((mean - halfWidth).toFixed(6));
+          const upper = Number((mean + halfWidth).toFixed(6));
+          const label = humanizeMetricLabel(metricKey);
+          const interval: AnalysisConfidenceInterval = {
+            metric_key: metricKey,
+            label,
+            lower,
+            upper,
+            level,
+            source: "condition_metrics" as const,
+            summary: `${label} ${formatConfidenceIntervalPercent(level)}% CI [${formatMetricValue(lower)}, ${formatMetricValue(upper)}]${
+              typeof sampleSize === "number" ? ` over n=${sampleSize}` : ""
+            }.`
+          };
+          if (typeof sampleSize === "number") {
+            interval.sample_size = sampleSize;
+          }
+          return interval;
+        })
+        .filter((item): item is AnalysisConfidenceInterval => item !== undefined);
+    });
 }
 
 function readDirectConfidenceInterval(args: {
@@ -1688,10 +1761,15 @@ function buildConditionMetricPair(args: {
       value: Number((item.value - (comparatorMetrics.get(item.key) as number)).toFixed(4))
     }))
     .sort((left, right) => {
-      const leftPreferred = args.preferredKeys.includes(left.key) ? 1 : 0;
-      const rightPreferred = args.preferredKeys.includes(right.key) ? 1 : 0;
-      if (leftPreferred !== rightPreferred) {
-        return rightPreferred - leftPreferred;
+      const leftRank = metricPreferenceRank(left.key, args.preferredKeys);
+      const rightRank = metricPreferenceRank(right.key, args.preferredKeys);
+      if (leftRank !== rightRank) {
+        return leftRank - rightRank;
+      }
+      const leftStatisticRank = preferredMetricStatisticRank(left.key, args.preferredKeys);
+      const rightStatisticRank = preferredMetricStatisticRank(right.key, args.preferredKeys);
+      if (leftStatisticRank !== rightStatisticRank) {
+        return leftStatisticRank - rightStatisticRank;
       }
       return Math.abs(right.value) - Math.abs(left.value);
     })
@@ -1781,6 +1859,11 @@ function buildResultsArrayConditionComparison(args: {
       if (leftRank !== rightRank) {
         return leftRank - rightRank;
       }
+      const leftStatisticRank = preferredMetricStatisticRank(left.key, preferredKeys);
+      const rightStatisticRank = preferredMetricStatisticRank(right.key, preferredKeys);
+      if (leftStatisticRank !== rightStatisticRank) {
+        return leftStatisticRank - rightStatisticRank;
+      }
       return Math.abs(right.value) - Math.abs(left.value);
     })
     .slice(0, 6);
@@ -1840,8 +1923,19 @@ function readResultRowsFromMetrics(metrics: Record<string, unknown>): {
 function enrichResultRow(row: Record<string, unknown>): Record<string, unknown> {
   const next = { ...row };
   const evaluation = asRecord(next.evaluation);
-  const arcAccuracy = asNumber(asRecord(evaluation.arc_challenge).accuracy);
-  const hellaswagAccuracy = asNumber(asRecord(evaluation.hellaswag).accuracy);
+  const taskAccuracies = asRecord(next.task_accuracies);
+  const taskReports = asRecord(next.task_reports);
+  const tasks = asRecord(next.tasks);
+  const arcAccuracy =
+    firstNumber(asRecord(evaluation.arc_challenge), ["accuracy"]) ??
+    firstNumber(taskAccuracies, ["arc_challenge", "arc_challenge_accuracy", "arc", "ARC-Challenge"]) ??
+    firstNumber(asRecord(taskReports.arc_challenge), ["accuracy"]) ??
+    firstNumber(asRecord(tasks.arc_challenge), ["accuracy"]);
+  const hellaswagAccuracy =
+    firstNumber(asRecord(evaluation.hellaswag), ["accuracy"]) ??
+    firstNumber(taskAccuracies, ["hellaswag", "hellaswag_accuracy", "HellaSwag"]) ??
+    firstNumber(asRecord(taskReports.hellaswag), ["accuracy"]) ??
+    firstNumber(asRecord(tasks.hellaswag), ["accuracy"]);
   if (arcAccuracy !== undefined && next.arc_challenge_accuracy === undefined) {
     next.arc_challenge_accuracy = arcAccuracy;
   }
@@ -1870,6 +1964,7 @@ function enrichConditionRow(row: Record<string, unknown>): Record<string, unknow
   const evaluation = asRecord(next.evaluation);
   const evalMetrics = asRecord(next.eval_metrics);
   const training = asRecord(next.training);
+  const parameterReport = asRecord(next.parameter_report);
 
   const evalMeanAccuracy = asNumber(evalMetrics.mean_accuracy);
   const evalMeanZeroShotAccuracy =
@@ -1890,7 +1985,9 @@ function enrichConditionRow(row: Record<string, unknown>): Record<string, unknow
     asNumber(next.trainable_params) ||
     asNumber(next.trainable_parameters) ||
     asNumber(training.trainable_params) ||
-    asNumber(training.trainable_parameters);
+    asNumber(training.trainable_parameters) ||
+    asNumber(parameterReport.trainable_params) ||
+    asNumber(parameterReport.trainable_parameters);
   if (next.trainable_params === undefined && typeof trainableParams === "number") {
     next.trainable_params = trainableParams;
   }
@@ -1915,6 +2012,8 @@ function buildResultArrayPreferredKeys(
     objectiveEvaluation.matchedMetricKey,
     objectiveProfile.primaryMetric,
     ...objectiveProfile.preferredMetricKeys,
+    "average_accuracy",
+    "accuracy_delta_vs_baseline",
     "mean_zero_shot_accuracy",
     "mean_accuracy",
     "arc_challenge_accuracy",
@@ -1982,6 +2081,11 @@ function buildRecipesConditionComparison(args: {
       const rightRank = metricPreferenceRank(right.key, preferredKeys);
       if (leftRank !== rightRank) {
         return leftRank - rightRank;
+      }
+      const leftStatisticRank = preferredMetricStatisticRank(left.key, preferredKeys);
+      const rightStatisticRank = preferredMetricStatisticRank(right.key, preferredKeys);
+      if (leftStatisticRank !== rightStatisticRank) {
+        return leftStatisticRank - rightStatisticRank;
       }
       return Math.abs(right.value) - Math.abs(left.value);
     })
@@ -2065,6 +2169,11 @@ function buildConditionsArrayConditionComparison(args: {
       if (leftRank !== rightRank) {
         return leftRank - rightRank;
       }
+      const leftStatisticRank = preferredMetricStatisticRank(left.key, preferredKeys);
+      const rightStatisticRank = preferredMetricStatisticRank(right.key, preferredKeys);
+      if (leftStatisticRank !== rightStatisticRank) {
+        return leftStatisticRank - rightStatisticRank;
+      }
       return Math.abs(right.value) - Math.abs(left.value);
     })
     .slice(0, 6);
@@ -2100,23 +2209,30 @@ function readConditionRowsFromMetrics(metrics: Record<string, unknown>): {
   source: "metrics.conditions" | "metrics.condition_results" | "metrics.condition_summaries";
   rows: Array<Record<string, unknown>>;
 } {
+  const baselineMarkers = readBaselineConditionMarkers(metrics);
   const summaryRows = asArray(metrics.condition_summaries)
-    .map((item) => enrichConditionRow(asRecord(item)))
+    .map((item) => markBaselineConditionRow(enrichConditionRow(asRecord(item)), baselineMarkers))
     .filter((row) => Object.keys(row).length > 0);
   const summariesByName = new Map(
     summaryRows
       .map((row) => [readConditionName(row), row] as const)
       .filter(([name]) => Boolean(name))
   );
-  const conditionRowsFromArray = asArray(metrics.conditions)
+  const explicitBaselineRows = readExplicitBaselineConditionRows(metrics, summariesByName);
+  const conditionRowsFromArray = mergeConditionRowsByName([
+    ...explicitBaselineRows,
+    ...asArray(metrics.conditions)
     .map((item) => {
       const row = asRecord(item);
       const name = readConditionName(row);
       const summary = name ? summariesByName.get(name) : undefined;
-      return enrichConditionRow(summary ? { ...summary, ...row } : row);
+      return markBaselineConditionRow(enrichConditionRow(summary ? { ...summary, ...row } : row), baselineMarkers);
     })
-    .filter((row) => Object.keys(row).length > 0);
-  const conditionRowsFromRecord = Object.entries(asRecord(metrics.conditions))
+    .filter((row) => Object.keys(row).length > 0)
+  ]);
+  const conditionRowsFromRecord = mergeConditionRowsByName([
+    ...explicitBaselineRows,
+    ...Object.entries(asRecord(metrics.conditions))
     .map(([name, value]) => {
       const row = { ...asRecord(value) };
       if (!asString(row.name)) {
@@ -2127,9 +2243,10 @@ function readConditionRowsFromMetrics(metrics: Record<string, unknown>): {
       }
       const rowName = readConditionName(row);
       const summary = rowName ? summariesByName.get(rowName) : undefined;
-      return enrichConditionRow(summary ? { ...summary, ...row } : row);
+      return markBaselineConditionRow(enrichConditionRow(summary ? { ...summary, ...row } : row), baselineMarkers);
     })
-    .filter((row) => Object.keys(row).length > 0);
+    .filter((row) => Object.keys(row).length > 0)
+  ]);
   const conditionRows = conditionRowsFromArray.length > 0
     ? conditionRowsFromArray
     : conditionRowsFromRecord;
@@ -2138,7 +2255,7 @@ function readConditionRowsFromMetrics(metrics: Record<string, unknown>): {
       const row = asRecord(item);
       const name = readConditionName(row);
       const summary = name ? summariesByName.get(name) : undefined;
-      return enrichConditionRow(summary ? { ...summary, ...row } : row);
+      return markBaselineConditionRow(enrichConditionRow(summary ? { ...summary, ...row } : row), baselineMarkers);
     })
     .filter((row) => Object.keys(row).length > 0);
   if (conditionRows.length > 0) {
@@ -2148,6 +2265,70 @@ function readConditionRowsFromMetrics(metrics: Record<string, unknown>): {
     return { source: "metrics.condition_results", rows: conditionResultRows };
   }
   return { source: "metrics.condition_summaries", rows: summaryRows };
+}
+
+function readBaselineConditionMarkers(metrics: Record<string, unknown>): Set<string> {
+  const studySummary = asRecord(metrics.study_summary);
+  return new Set(
+    [
+      asString(metrics.baseline_marker),
+      asString(metrics.baseline_condition_marker),
+      asString(metrics.baseline_condition),
+      asString(metrics.baseline_condition_id),
+      asString(studySummary.baseline_marker),
+      asString(studySummary.baseline_condition_marker),
+      asString(studySummary.baseline_condition),
+      asString(studySummary.baseline_condition_id)
+    ].filter((item): item is string => Boolean(item))
+  );
+}
+
+function markBaselineConditionRow(
+  row: Record<string, unknown>,
+  baselineMarkers: Set<string>
+): Record<string, unknown> {
+  const name = readConditionName(row);
+  if (!name || !baselineMarkers.has(name) || row.is_baseline === true || row.baseline === true) {
+    return row;
+  }
+  return { ...row, is_baseline: true };
+}
+
+function readExplicitBaselineConditionRows(
+  metrics: Record<string, unknown>,
+  summariesByName: Map<string, Record<string, unknown>>
+): Array<Record<string, unknown>> {
+  const baseline = asRecord(metrics.baseline);
+  if (Object.keys(baseline).length === 0) {
+    return [];
+  }
+  const row = { ...baseline };
+  if (!asString(row.name) && !asString(row.condition_name) && !asString(row.condition_id)) {
+    row.condition_name = "baseline";
+  }
+  if (row.is_baseline !== false) {
+    row.is_baseline = true;
+  }
+  const name = readConditionName(row);
+  const summary = name ? summariesByName.get(name) : undefined;
+  return [enrichConditionRow(summary ? { ...summary, ...row } : row)].filter(
+    (item) => Object.keys(item).length > 0
+  );
+}
+
+function mergeConditionRowsByName(rows: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  const merged = new Map<string, Record<string, unknown>>();
+  const anonymous: Array<Record<string, unknown>> = [];
+  for (const row of rows) {
+    const name = readConditionName(row);
+    if (!name) {
+      anonymous.push(row);
+      continue;
+    }
+    const existing = merged.get(name);
+    merged.set(name, existing ? { ...existing, ...row } : row);
+  }
+  return [...merged.values(), ...anonymous];
 }
 
 function isCompletedConditionRow(row: Record<string, unknown>): boolean {
@@ -2197,7 +2378,7 @@ function selectEligibleComparatorConditionRows(
 }
 
 function baselineConditionRowScore(row: Record<string, unknown>): number {
-  if (row.is_baseline === true) {
+  if (row.is_baseline === true || row.baseline === true) {
     return 5;
   }
   const roleText = [
@@ -2233,16 +2414,39 @@ function baselineConditionTextScore(text: string): number {
 
 function readBestConditionName(metrics: Record<string, unknown>): string | undefined {
   const primaryMetric = asRecord(metrics.primary_metric);
+  const studySummary = asRecord(metrics.study_summary);
   const bestCondition = asRecord(metrics.best_condition);
+  const bestTunedCondition = asRecord(metrics.best_tuned_condition);
   return (
     asString(primaryMetric.best_condition) ||
     asString(primaryMetric.best_condition_id) ||
+    asString(primaryMetric.best_condition_marker) ||
+    asString(primaryMetric.best_nonbaseline_condition) ||
+    asString(primaryMetric.best_nonbaseline_condition_id) ||
+    asString(primaryMetric.best_nonbaseline_condition_marker) ||
+    asString(studySummary.best_condition) ||
+    asString(studySummary.best_condition_id) ||
+    asString(studySummary.best_condition_marker) ||
+    asString(studySummary.best_nonbaseline_condition) ||
+    asString(studySummary.best_nonbaseline_condition_id) ||
+    asString(studySummary.best_nonbaseline_condition_marker) ||
     asString(bestCondition.name) ||
     asString(bestCondition.condition_id) ||
+    asString(bestCondition.condition_marker) ||
     asString(bestCondition.id) ||
     asString(bestCondition.recipe) ||
+    asString(bestTunedCondition.name) ||
+    asString(bestTunedCondition.condition_name) ||
+    asString(bestTunedCondition.condition_id) ||
+    asString(bestTunedCondition.condition_marker) ||
+    asString(bestTunedCondition.id) ||
+    asString(bestTunedCondition.recipe) ||
     asString(metrics.best_condition) ||
     asString(metrics.best_condition_id) ||
+    asString(metrics.best_condition_marker) ||
+    asString(metrics.best_nonbaseline_condition) ||
+    asString(metrics.best_nonbaseline_condition_id) ||
+    asString(metrics.best_nonbaseline_condition_marker) ||
     asString(metrics.best_tuned_condition_id) ||
     asString(metrics.best_recipe)
   );
@@ -2312,6 +2516,11 @@ function selectPreferredNumericMetric(
     if (leftRank !== rightRank) {
       return leftRank - rightRank;
     }
+    const leftStatisticRank = preferredMetricStatisticRank(left.key, preferredKeys);
+    const rightStatisticRank = preferredMetricStatisticRank(right.key, preferredKeys);
+    if (leftStatisticRank !== rightStatisticRank) {
+      return leftStatisticRank - rightStatisticRank;
+    }
     return left.key.localeCompare(right.key);
   })[0];
 }
@@ -2327,6 +2536,61 @@ function metricPreferenceRank(key: string, preferredKeys: string[]): number {
     return lowerKey.includes(lowerPreferred) || lowerPreferred.includes(lowerKey);
   });
   return fuzzy >= 0 ? preferredKeys.length + fuzzy : Number.MAX_SAFE_INTEGER;
+}
+
+function preferredMetricStatisticRank(key: string, preferredKeys: string[]): number {
+  if (preferredKeys.length === 0) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+  const normalizedKey = normalizeMetricStatisticKey(key);
+  let best = Number.MAX_SAFE_INTEGER;
+  preferredKeys.forEach((preferred, preferredIndex) => {
+    const normalizedPreferred = normalizeMetricStatisticKey(preferred);
+    const position = normalizedKey.indexOf(normalizedPreferred);
+    if (position < 0) {
+      return;
+    }
+    const suffix = normalizedKey.slice(position + normalizedPreferred.length).replace(/^_+/, "");
+    const prefixPenalty = position === 0 ? 0 : 20;
+    const rank = preferredIndex * 1000 + prefixPenalty + metricStatisticSuffixRank(suffix);
+    best = Math.min(best, rank);
+  });
+  return best;
+}
+
+function normalizeMetricStatisticKey(value: string): string {
+  return value.toLowerCase().replace(/[.-]+/gu, "_");
+}
+
+function metricStatisticSuffixRank(suffix: string): number {
+  if (!suffix) {
+    return 0;
+  }
+  if (/^(mean|avg|average)(?:_|$)/u.test(suffix)) {
+    return 1;
+  }
+  if (/^(value|score|observed)(?:_|$)/u.test(suffix)) {
+    return 2;
+  }
+  if (/^median(?:_|$)/u.test(suffix)) {
+    return 3;
+  }
+  if (/^(max|maximum)(?:_|$)/u.test(suffix)) {
+    return 10;
+  }
+  if (/^(min|minimum)(?:_|$)/u.test(suffix)) {
+    return 11;
+  }
+  if (/^ci\d*(?:_|$)/u.test(suffix)) {
+    return 40;
+  }
+  if (/^(sem|std|stdev|variance)(?:_|$)/u.test(suffix)) {
+    return 45;
+  }
+  if (/^(count|n|seed_count|sample_size)(?:_|$)/u.test(suffix)) {
+    return 80;
+  }
+  return 30;
 }
 
 function isUsefulResultArrayMetric(key: string, preferredKeys: string[]): boolean {

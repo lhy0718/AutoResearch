@@ -1,6 +1,6 @@
 import { AppConfig, PaperProfileConfig, RunRecord } from "../../types.js";
 import { EventStream } from "../events.js";
-import { LLMClient } from "../llm/client.js";
+import { LLMClient, LLMProgressEvent } from "../llm/client.js";
 import { RunStore } from "../runs/runStore.js";
 import { CodexNativeClient } from "../../integrations/codex/codexCliClient.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
@@ -47,6 +47,8 @@ import { createReviewerRole } from "./roles/reviewer.js";
 import { writeRunArtifact } from "../nodes/helpers.js";
 
 const DEFAULT_PAPER_WRITER_STAGE_TIMEOUT_MS = 0;
+const MAX_PAPER_WRITER_PROGRESS_EVENTS_PER_STAGE = 80;
+const MAX_PAPER_WRITER_PROGRESS_LINE_CHARS = 180;
 
 interface PaperWriterOutline {
   title: string;
@@ -456,16 +458,17 @@ export class PaperWriterSessionManager {
         text = result.finalText;
         activeThreadId = result.threadId || activeThreadId;
       } else {
+        const progress = createBoundedPaperWriterProgressEmitter({
+          run: input.run,
+          stage: "latex_repair",
+          emit: (run, text) => this.emit(run, text)
+        });
         const completion = await this.deps.llm.complete(buildLatexRepairPrompt(input.tex, input.buildLog), {
           systemPrompt: buildLatexRepairSystemPrompt(this.writerRole.sop),
           abortSignal: input.abortSignal,
-          onProgress: (event) => {
-            const line = event.text.trim();
-            if (line) {
-              this.emit(input.run, event.type === "delta" ? `LLM> ${line}` : line);
-            }
-          }
+          onProgress: progress.onProgress
         });
+        progress.flush();
         text = completion.text;
       }
 
@@ -954,17 +957,17 @@ export class PaperWriterSessionManager {
     }
 
     try {
+      const progress = createBoundedPaperWriterProgressEmitter({
+        run: input.run,
+        stage: input.stage,
+        emit: (run, text) => this.emit(run, text)
+      });
       const completion = await this.deps.llm.complete(input.prompt, {
         systemPrompt: input.systemPrompt,
         abortSignal: input.abortSignal,
-        onProgress: (event) => {
-          const text = event.text.trim();
-          if (!text) {
-            return;
-          }
-          this.emit(input.run, event.type === "delta" ? `LLM> ${text}` : text);
-        }
+        onProgress: progress.onProgress
       });
+      progress.flush();
       const completedAt = new Date().toISOString();
       input.trace?.push({
         stage: input.stage,
@@ -1069,6 +1072,62 @@ export class PaperWriterSessionManager {
 function resolvePaperWriterStageTimeoutMs(): number {
   const raw = Number.parseInt(process.env.AUTOLABOS_PAPER_WRITER_STAGE_TIMEOUT_MS || "", 10);
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_PAPER_WRITER_STAGE_TIMEOUT_MS;
+}
+
+function createBoundedPaperWriterProgressEmitter(input: {
+  run: RunRecord;
+  stage: string;
+  emit: (run: RunRecord, text: string) => void;
+}): { onProgress: (event: LLMProgressEvent) => void; flush: () => void } {
+  let emittedDeltaCount = 0;
+  let suppressedDeltaCount = 0;
+  let suppressionNoticeEmitted = false;
+
+  const flush = () => {
+    if (suppressedDeltaCount <= 0) {
+      return;
+    }
+    input.emit(
+      input.run,
+      `Paper writer stage "${input.stage}" suppressed ${suppressedDeltaCount} additional streamed LLM progress update(s) to keep TUI output bounded.`
+    );
+    suppressedDeltaCount = 0;
+  };
+
+  return {
+    onProgress(event: LLMProgressEvent) {
+      const text = compactProgressLine(event.text, MAX_PAPER_WRITER_PROGRESS_LINE_CHARS);
+      if (!text) {
+        return;
+      }
+      if (event.type !== "delta") {
+        input.emit(input.run, text);
+        return;
+      }
+      if (emittedDeltaCount >= MAX_PAPER_WRITER_PROGRESS_EVENTS_PER_STAGE) {
+        suppressedDeltaCount += 1;
+        if (!suppressionNoticeEmitted) {
+          suppressionNoticeEmitted = true;
+          input.emit(
+            input.run,
+            `Paper writer stage "${input.stage}" is still receiving streamed LLM output; further token-level progress is being summarized.`
+          );
+        }
+        return;
+      }
+      emittedDeltaCount += 1;
+      input.emit(input.run, `LLM> ${text}`);
+    },
+    flush
+  };
+}
+
+function compactProgressLine(value: string, maxLength: number): string {
+  const compact = value.replace(/\s+/gu, " ").trim();
+  if (compact.length <= maxLength) {
+    return compact;
+  }
+  return `${compact.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 }
 
 function forwardAbort(

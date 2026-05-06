@@ -652,6 +652,23 @@ function buildReviewTransitionRecommendation(
     });
   }
 
+  if (action === "advance" && critique.manuscript_type !== "paper_ready") {
+    return createReviewTransition({
+      action: "advance",
+      targetNode: "write_paper",
+      reason: `Pre-draft critique classified manuscript as ${critique.manuscript_type} with ${critique.blocking_issues_count} paper-readiness blocker(s); advancing only to draft under that downgraded claim ceiling, not as paper_ready.`,
+      confidence: Math.min(confidence, critique.confidence),
+      autoExecutable: true,
+      evidence: [
+        `Manuscript type: ${critique.manuscript_type}`,
+        `Paper-readiness blockers: ${critique.blocking_issues_count}`,
+        ...critique.blocking_issues.slice(0, 2).map((issue) => issue.summary),
+        ...evidence.slice(0, 1)
+      ],
+      suggestedCommands: packet.suggested_actions
+    });
+  }
+
   if (action === "advance") {
     return createReviewTransition({
       action: "advance",

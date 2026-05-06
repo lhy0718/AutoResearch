@@ -258,10 +258,11 @@ export function evaluateObjectiveMetric(
   const enrichedMetrics = synthesizeRelativeMetrics(metrics);
   const withPrimary = promotePrimaryMetric(enrichedMetrics);
   const flattened = flattenNumericMetrics(withPrimary);
-  const preferredKeys = dedupe([
+  const basePreferredKeys = dedupe([
     ...profile.preferredMetricKeys,
     ...(profile.primaryMetric ? [profile.primaryMetric] : [])
   ]);
+  const preferredKeys = prioritizePrimaryMetricRelativeKeys(enrichedMetrics, metrics, basePreferredKeys);
   const relativeObjective = isRelativeObjectiveMetricRequest(preferredKeys, rawObjectiveMetric);
   const matchableMetrics = relativeObjective
     ? flattened.filter((metric) => isRelativeMetricKey(metric.key))
@@ -326,6 +327,7 @@ const SYNTHESIZE_METRIC_KEYS = [
   "success_rate",
   "mean_accuracy",
   "primary_mean_accuracy",
+  "average_accuracy",
   "mean_zero_shot_accuracy",
   "zero_shot_accuracy",
   "arc_challenge_accuracy",
@@ -343,24 +345,24 @@ export function synthesizeRelativeMetrics(
   // Strategy 1: conditions array
   const conditions = metrics.conditions;
   if (Array.isArray(conditions) && conditions.length >= 2) {
-    const baseline = conditions.find(
+    const conditionRecords = conditions.filter(
       (c: unknown): c is Record<string, unknown> =>
-        !!c &&
-        typeof c === "object" &&
-        typeof (c as Record<string, unknown>).name === "string" &&
-        BASELINE_PATTERN.test((c as Record<string, unknown>).name as string)
+        !!c && typeof c === "object" && !Array.isArray(c)
     );
+    const baseline =
+      conditionRecords.find((record) => record.baseline === true || record.is_baseline === true) ||
+      conditionRecords.find((record) => baselineConditionScore(conditionArrayLabel(record), record) > 0);
     if (baseline) {
-      const nonBaseline = conditions.filter((c: unknown) => c !== baseline);
+      const nonBaseline = conditionRecords.filter((c: unknown) => c !== baseline);
       const enriched: Record<string, unknown> = { ...metrics };
       for (const metricKey of SYNTHESIZE_METRIC_KEYS) {
-        const baseVal = typeof baseline[metricKey] === "number" ? (baseline[metricKey] as number) : undefined;
+        const baseVal = getConditionMetricValue(baseline, metricKey);
         if (baseVal === undefined) continue;
         let bestDelta = -Infinity;
         for (const cond of nonBaseline) {
           if (!cond || typeof cond !== "object") continue;
           const condRecord = cond as Record<string, unknown>;
-          const val = typeof condRecord[metricKey] === "number" ? (condRecord[metricKey] as number) : undefined;
+          const val = getConditionMetricValue(condRecord, metricKey);
           if (val === undefined) continue;
           const delta = val - baseVal;
           if (delta > bestDelta) bestDelta = delta;
@@ -368,6 +370,10 @@ export function synthesizeRelativeMetrics(
         if (Number.isFinite(bestDelta)) {
           enriched[`${metricKey}_delta_vs_baseline`] = bestDelta;
           enriched[`${metricKey}_improvement_over_baseline`] = bestDelta;
+          if (metricKey.includes("accuracy")) {
+            enriched.accuracy_delta_vs_baseline = bestDelta;
+            enriched.accuracy_improvement_over_baseline = bestDelta;
+          }
         }
       }
       return enriched;
@@ -603,6 +609,20 @@ function conditionLabelText(name: string, record: Record<string, unknown>): stri
   return labels;
 }
 
+function conditionArrayLabel(record: Record<string, unknown>): string {
+  return [
+    record.name,
+    record.condition_marker,
+    record.condition,
+    record.condition_id,
+    record.recipe,
+    record.method,
+    record.label
+  ]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+}
+
 function getConditionMetricValue(record: Record<string, unknown>, metricKey: string): number | undefined {
   const direct = record[metricKey];
   if (typeof direct === "number" && Number.isFinite(direct)) {
@@ -747,6 +767,27 @@ function findMatchingMetric(
     }
   }
   return undefined;
+}
+
+function prioritizePrimaryMetricRelativeKeys(
+  enrichedMetrics: Record<string, unknown>,
+  originalMetrics: Record<string, unknown>,
+  preferredKeys: string[]
+): string[] {
+  const primaryMetric = typeof originalMetrics.primary_metric === "string"
+    ? originalMetrics.primary_metric.trim()
+    : "";
+  if (!primaryMetric || !preferredKeys.some((key) => /(?:^|_)accuracy(?:_|$)/iu.test(key))) {
+    return preferredKeys;
+  }
+  const scopedKeys = [
+    `${primaryMetric}_delta_vs_baseline`,
+    `${primaryMetric}_improvement_over_baseline`
+  ].filter((key) => typeof enrichedMetrics[key] === "number");
+  if (scopedKeys.length === 0) {
+    return preferredKeys;
+  }
+  return dedupe([...scopedKeys, ...preferredKeys]);
 }
 
 function buildObjectiveEvaluation(input: {

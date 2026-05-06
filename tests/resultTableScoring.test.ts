@@ -68,4 +68,42 @@ describe("result table scoring", () => {
     expect(score.comparator_coverage).toBeNull();
     expect(score.superiority_claim_supported).toBe(false);
   });
+
+  it("scores runtime comparison-summary artifacts as measured but incomplete", () => {
+    const score = scoreResultTableArtifact({
+      conditions: [
+        {
+          name: "rank_32_dropout_0_05_vs_rank_8_dropout_0_0",
+          metrics: {
+            accuracy_delta_vs_baseline_mean: 0.066667
+          }
+        }
+      ],
+      comparisons: [
+        {
+          primary: "rank_32_dropout_0_05_vs_rank_8_dropout_0_0",
+          baseline: "metrics.condition_summaries",
+          metric: "accuracy_delta_vs_baseline_mean",
+          delta: 0.066667,
+          hypothesis_supported: true
+        }
+      ],
+      primary_metric: "accuracy_delta_vs_baseline"
+    });
+
+    expect(score.measured).toBe(true);
+    expect(score.valid_schema).toBe(false);
+    expect(score.row_count).toBe(1);
+    expect(score.complete_row_count).toBe(0);
+    expect(score.missing_baseline_count).toBe(1);
+    expect(score.missing_comparator_count).toBe(1);
+    expect(score.missing_delta_count).toBe(0);
+    expect(score.issues.map((issue) => issue.code)).toEqual(
+      expect.arrayContaining([
+        "result_table_schema_noncanonical",
+        "result_table_baseline_missing",
+        "result_table_comparator_missing"
+      ])
+    );
+  });
 });

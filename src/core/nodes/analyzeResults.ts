@@ -452,7 +452,10 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
       }
 
       // --- Standalone result table artifact (for review gate) ---
-      const resultTable = buildResultTable(summary);
+      const resultTable =
+        summary.results_table && summary.results_table.length > 0
+          ? summary.results_table
+          : buildResultTable(summary);
       const resultTablePath = await writeRunArtifact(
         run,
         "result_table.json",

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildPaperWriterPrompt,
   buildRelatedWorkBrief,
   buildRelatedWorkNotes,
   PaperWritingBundle,
@@ -114,6 +115,141 @@ function makeBundle(): PaperWritingBundle {
 }
 
 describe("paperWriting related-work support", () => {
+  it("keeps paper-writer prompts compact when result analysis carries large raw metrics", () => {
+    const bundle = makeBundle();
+    bundle.resultAnalysis = {
+      analysis_version: 1,
+      generated_at: "2026-05-07T00:00:00.000Z",
+      mean_score: 0.51,
+      metrics: {
+        huge_raw_condition_blob: "x".repeat(1_200_000),
+        accuracy_delta_vs_baseline_mean: 0.0667
+      },
+      objective_metric: {
+        raw: "average accuracy",
+        evaluation: {
+          status: "met",
+          summary: "accuracy_delta_vs_baseline_mean improved by 0.0667.",
+          observedValue: 0.0667,
+          targetValue: 0.01,
+          matchedMetricKey: "accuracy_delta_vs_baseline_mean"
+        },
+        profile: {
+          source: "brief",
+          primary_metric: "accuracy_delta_vs_baseline_mean",
+          preferred_metric_keys: ["accuracy_delta_vs_baseline_mean"],
+          analysis_focus: ["baseline comparison"],
+          paper_emphasis: ["bounded claim"],
+          assumptions: []
+        }
+      },
+      overview: {
+        objective_status: "met",
+        objective_summary: "25/25 repeated-seed runs completed.",
+        matched_metric_key: "accuracy_delta_vs_baseline_mean",
+        observed_value: 0.0667,
+        target_description: ">= 0.01",
+        selected_design_title: "5-seed high-rank dropout stability against locked baseline",
+        execution_runs: 25
+      },
+      plan_context: {
+        selected_design: {
+          title: "5-seed high-rank dropout stability against locked baseline",
+          summary: "Compare rank/dropout conditions against the locked baseline."
+        }
+      },
+      metric_table: [
+        {
+          key: "accuracy_delta_vs_baseline_mean",
+          value: 0.0667,
+          label: "accuracy_delta_vs_baseline_mean"
+        }
+      ],
+      results_table: [
+        {
+          metric: "accuracy_delta_vs_baseline_mean",
+          baseline: 0,
+          comparator: 0.0667,
+          delta: 0.0667,
+          direction: "higher_better"
+        }
+      ],
+      condition_comparisons: [
+        {
+          baseline_condition: "rank_8_dropout_0_0",
+          comparator_condition: "rank_32_dropout_0_05",
+          metric_key: "accuracy_delta_vs_baseline_mean",
+          baseline_value: 0,
+          comparator_value: 0.0667,
+          delta: 0.0667,
+          direction: "higher_better",
+          summary: "rank_32_dropout_0_05 exceeded the locked baseline."
+        }
+      ],
+      execution_summary: {
+        observations: [],
+        observation_count: 25,
+        success_count: 25,
+        failure_count: 0
+      },
+      primary_findings: ["rank_32_dropout_0_05 had the best mean average accuracy."],
+      limitations: ["The study is scoped to one small model and bounded evaluation slices."],
+      warnings: [],
+      paper_claims: [
+        {
+          claim_id: "claim_1",
+          statement: "The strongest tested comparator improved over the locked baseline in this bounded run.",
+          evidence: ["accuracy_delta_vs_baseline_mean"],
+          strength: "moderate"
+        }
+      ],
+      figure_specs: [],
+      supplemental_runs: [],
+      external_comparisons: [],
+      statistical_summary: {
+        total_trials: 25,
+        executed_trials: 25,
+        cached_trials: 0,
+        notes: ["Five seeds per condition were executed."]
+      },
+      failure_taxonomy: [],
+      synthesis: {
+        discussion_points: ["The claim remains scoped to this model/task budget."],
+        failure_analysis: [],
+        confidence_statement: "Moderate confidence under the bounded run scope."
+      }
+    } as any;
+
+    const prompt = buildPaperWriterPrompt({
+      bundle,
+      constraintProfile: {
+        writing: {
+          targetVenue: "workshop",
+          toneHint: "cautious",
+          lengthHint: "full paper"
+        },
+        experiment: {
+          designNotes: "Use repeated seeds.",
+          evaluationNotes: "Report baseline and comparator."
+        }
+      } as any,
+      objectiveMetricProfile: {
+        source: "brief",
+        primaryMetric: "accuracy_delta_vs_baseline_mean",
+        targetDescription: ">= 0.01",
+        analysisFocus: ["baseline comparison"],
+        paperEmphasis: ["bounded claim"],
+        assumptions: []
+      } as any
+    });
+
+    expect(prompt.length).toBeLessThan(60_000);
+    expect(prompt).toContain("accuracy_delta_vs_baseline_mean");
+    expect(prompt).toContain("rank_32_dropout_0_05");
+    expect(prompt).toContain("raw_metrics_omitted");
+    expect(prompt).not.toContain("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+  });
+
   it("builds structured related-work notes and a two-paragraph brief", () => {
     const bundle = makeBundle();
 

@@ -2692,6 +2692,40 @@ function validateRunMetricsContract(input: {
   }
 
   const study = asRecord(input.metrics.study);
+  const studySummary = asRecord(input.metrics.study_summary);
+  const studySummaryStatus = asString(studySummary.status)?.toLowerCase();
+  if (studySummaryStatus && ["failed", "failure", "error", "errored"].includes(studySummaryStatus)) {
+    issues.push(`Study summary reports failed status: ${studySummaryStatus}.`);
+  }
+  const requiredRunCount = [
+    asNumber(input.metrics.required_run_count),
+    asNumber(studySummary.required_run_count),
+    asNumber(study.required_run_count)
+  ].find((value): value is number => typeof value === "number");
+  const completedRunCount = [
+    asNumber(input.metrics.completed_run_count),
+    asNumber(studySummary.completed_run_count),
+    asNumber(study.completed_run_count)
+  ].find((value): value is number => typeof value === "number");
+  if (requiredRunCount !== undefined && requiredRunCount > 0 && completedRunCount === 0) {
+    issues.push(`No required experiment runs completed successfully (${completedRunCount}/${requiredRunCount}).`);
+  }
+  const requiredConditionCount = [
+    asNumber(input.metrics.required_condition_count),
+    asNumber(studySummary.required_condition_count),
+    asNumber(study.required_condition_count)
+  ].find((value): value is number => typeof value === "number");
+  const completedConditionCount = [
+    asNumber(input.metrics.completed_condition_count),
+    asNumber(studySummary.completed_condition_count),
+    asNumber(study.completed_condition_count)
+  ].find((value): value is number => typeof value === "number");
+  if (requiredConditionCount !== undefined && requiredConditionCount > 0 && completedConditionCount === 0) {
+    issues.push(
+      `No required experiment conditions completed successfully (${completedConditionCount}/${requiredConditionCount}).`
+    );
+  }
+
   const aggregate = asRecord(study.aggregate);
   if (Object.keys(aggregate).length > 0) {
     const failedCount = asNumber(aggregate.failed_condition_count);

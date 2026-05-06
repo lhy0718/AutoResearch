@@ -3830,6 +3830,21 @@ describe("writePaper PDF build", () => {
     expect(
       failureArtifact.reviewer_covered_backstop_findings.every((issue) => issue.gate_role === "backstop_only")
     ).toBe(true);
+
+    const paperReadiness = JSON.parse(
+      await readFile(path.join(runDir, "paper", "paper_readiness.json"), "utf8")
+    ) as {
+      paper_ready: boolean;
+      readiness_state: string;
+      reason: string;
+      triggered_by: string[];
+      manuscript_quality_action: string;
+    };
+    expect(paperReadiness.paper_ready).toBe(false);
+    expect(paperReadiness.readiness_state).toBe("paper_scale_candidate");
+    expect(paperReadiness.reason).toMatch(/manuscript-quality gate/i);
+    expect(paperReadiness.triggered_by).toContain("manuscript_quality");
+    expect(paperReadiness.manuscript_quality_action).toBe("stop");
   });
 
   it("stops immediately when appendix contamination is missed by the reviewer and remains a hard-stop policy finding", async () => {

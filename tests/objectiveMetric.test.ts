@@ -339,6 +339,46 @@ describe("objectiveMetric", () => {
     expect(enriched.accuracy_delta_vs_baseline).toBeCloseTo(-0.02083333333333337, 10);
   });
 
+  it("synthesizes accuracy delta from condition arrays with explicit baseline flags and average accuracy", () => {
+    const objective = "accuracy_delta_vs_baseline >= 0.01";
+    const profile = normalizeObjectiveMetricProfile(
+      {
+        source: "llm",
+        primaryMetric: "accuracy_delta_vs_baseline",
+        preferredMetricKeys: ["accuracy_delta_vs_baseline"],
+        direction: "maximize",
+        comparator: ">=",
+        targetValue: 0.01
+      },
+      objective
+    );
+    const metrics = {
+      conditions: [
+        {
+          baseline: true,
+          condition_marker: "rank_8_dropout_0_0",
+          average_accuracy: 0.27083333333333337,
+          status: "completed"
+        },
+        {
+          baseline: false,
+          condition_marker: "rank_in_4_8_16_32_x_dropout_in_0_0_0_05",
+          average_accuracy: 0.29166666666666663,
+          status: "completed"
+        }
+      ]
+    };
+
+    const enriched = synthesizeRelativeMetrics(metrics);
+    const evaluation = evaluateObjectiveMetric(metrics, profile, objective);
+
+    expect(enriched.average_accuracy_delta_vs_baseline).toBeCloseTo(0.02083333333333326, 10);
+    expect(enriched.accuracy_delta_vs_baseline).toBeCloseTo(0.02083333333333326, 10);
+    expect(evaluation.matchedMetricKey).toBe("accuracy_delta_vs_baseline");
+    expect(evaluation.observedValue).toBeCloseTo(0.02083333333333326, 10);
+    expect(evaluation.status).toBe("met");
+  });
+
   it("synthesizes accuracy delta from top-level condition object maps with nested evaluation metrics", () => {
     const enriched = synthesizeRelativeMetrics({
       comparison_mode: "baseline_first_locked",
@@ -520,7 +560,7 @@ describe("objectiveMetric", () => {
     expect(evaluation.summary).toContain("memory 3.22x");
   });
 
-  it("does not match raw accuracy when the objective requires improvement over baseline", () => {
+  it("uses synthesized deltas instead of raw accuracy when the objective requires improvement over baseline", () => {
     const objective =
       "Primary metric: mean zero-shot accuracy. What counts as meaningful improvement: at least +1.0 percentage point over the named tuned baseline.";
     const profile = normalizeObjectiveMetricProfile(
@@ -563,9 +603,10 @@ describe("objectiveMetric", () => {
       objective
     );
 
-    expect(evaluation.status).toBe("missing");
-    expect(evaluation.matchedMetricKey).toBeUndefined();
-    expect(evaluation.summary).toContain("was not found");
+    expect(evaluation.status).toBe("not_met");
+    expect(evaluation.matchedMetricKey).toBe("accuracy_delta_vs_baseline");
+    expect(evaluation.observedValue).toBeCloseTo(-0.00390625, 10);
+    expect(evaluation.summary).toContain("not met");
   });
 
   it("does not satisfy a delta objective with absolute baseline accuracy from PEFT metrics", () => {

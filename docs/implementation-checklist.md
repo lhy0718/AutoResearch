@@ -41,7 +41,7 @@ The governed workflow remains fixed around:
 
 ## Unified Priority Checklist
 
-This is the canonical checklist. Legacy numeric-only implementation items have been merged into the P0/P1/P2/P3/P4 sequence below.
+This is the canonical checklist. Legacy numeric-only implementation items have been merged into the P0 through P6 sequence below.
 
 ### P0 — Sprint Queue
 
@@ -115,6 +115,18 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
 - [x] P5-5. Long-run autonomy and evidence-integrity metrics.
 - [x] P5-6. Pilot evidence signal log and go/no-go review refresh.
 - [x] P5-7. Brain/hands/session boundary design for future external workers.
+
+### P6 — Paper-Ready Full End-To-End Live Validation Readiness
+
+- [x] P6-1. Select and freeze one paper-scale validation brief.
+- [x] P6-2. Provider, credential, runtime, and TTY preflight for real execution.
+- [x] P6-3. Full live validation workspace and run-artifact contract.
+- [x] P6-4. Baseline/comparator and dataset/task readiness.
+- [x] P6-5. Real experiment execution reliability through `run_experiments`.
+- [x] P6-6. Result table, figure audit, and review gate handoff.
+- [x] P6-7. `write_paper` and post-draft critique readiness.
+- [x] P6-8. Paper-readiness audit acceptance gate for the completed run.
+- [x] P6-9. Full live validation record and regression package.
 
 ## Detailed Task Cards
 
@@ -945,6 +957,70 @@ This is the canonical checklist. Legacy numeric-only implementation items have b
   - [x] P5-7 explicitly states credential and token boundaries for future sandbox or remote execution work, while avoiding new runtime dependencies unless separately approved.
   - [x] P5 keeps AutoLabOS positioned as an evidence governance and paper-readiness audit layer, not as a hosted long-running agent platform or paper-ready-by-default system.
 
+### P6-1 Through P6-9. Paper-Ready Full End-To-End Live Validation Readiness
+
+- [x] Status: P6-1 through P6-9 are complete as a governance validation outcome, not as a paper-ready manuscript outcome. P6-6 was revalidated by the final audit: baseline/comparator evidence is present, the result table is measured with 6/6 complete rows, `figure_audit` has 0 severe mismatches, and `review` kept the output downgraded before `write_paper`. P6-7 and P6-8 were live-validated through an honest blocked outcome: `write_paper` generated manuscript artifacts but failed the manuscript-quality gate, and `autolabos audit --run` returned `blocked`. P6-9 is complete after the live-validation record, issue log, targeted regressions, full test suite, build, harness validation, and portability scan were updated or rechecked.
+- P6-1 topic decision recorded in `docs/status/p6-paper-ready-validation-topic.md`; frozen governed research brief recorded in `docs/status/p6-paper-ready-validation-brief.md`.
+- P6-2 preflight status recorded in `docs/status/p6-preflight-status.md`; local preflight outputs are generated under `outputs/p6-preflight/`.
+- P6-3 live validation record started in `docs/status/p6-live-validation-record.md`; active validation run is `2dcc480e-b4e5-4863-9c7f-6872f9c672e7`.
+- Planning interpretation:
+  - P6 is not a promise that AutoLabOS can always produce a paper-ready manuscript. P6 makes one honest full live run possible, and allows `paper_ready` only if every evidence gate passes.
+  - A valid full run may end as `blocked`, `needs-review`, `research_memo`, or `paper_ready=false`; this is still a successful governance outcome when the evidence is insufficient.
+  - Full end-to-end live validation starts from a governed research brief, runs the fixed workflow through `write_paper` when gates allow it, and audits the resulting run artifacts with `autolabos audit --run`.
+- Related repo files:
+  - Existing: `docs/research-brief-template.md`
+  - Existing: `docs/tui-live-validation.md`
+  - Existing: `docs/live-validation-playbook.md`
+  - Existing: `docs/experiment-quality-bar.md`
+  - Existing: `docs/paper-quality-bar.md`
+  - Existing: `docs/reproducibility.md`
+  - Existing: `docs/live-validation-issue-template.md`
+  - Existing: `ISSUES.md`
+  - Existing: `src/core/runs/researchBriefFiles.ts`
+  - Existing: `src/core/runs/runBriefParser.ts`
+  - Existing: `src/core/analysis/briefEvidenceValidator.ts`
+  - Existing: `src/core/analysis/paperMinimumGate.ts`
+  - Existing: `src/core/analysis/figureAuditor.ts`
+  - Existing: `src/core/nodes/review.ts`
+  - Existing: `src/core/nodes/writePaper.ts`
+  - Existing: `src/core/audit/paperReadinessAudit.ts`
+  - Existing: `src/core/validation/harnessValidationService.ts`
+  - Existing: `tests/smoke/common.sh`
+- Planned files if needed:
+  - None required for the checklist itself. During P6 implementation, add live-validation records, smoke helpers, or status documents only when they capture real run evidence.
+- Validation commands:
+  - P6 docs-only edits: markdown/readability inspection plus portability scan.
+  - Runtime or preflight changes: `npm run build`; targeted tests for the changed module; `npm run validate:harness`.
+  - TUI/live behavior changes: run `/doctor` first, then re-run the same real TUI/web flow in a fresh session and a resumed session when the environment allows.
+  - Full live acceptance: `autolabos audit --run .autolabos/runs/<run-id> --out-dir outputs/audit/<run-id>` after the workflow finishes or blocks.
+  - Web-facing interactive changes: `npm run test:web`.
+  - Smoke coverage: run the smallest relevant smoke command when natural command flow, run startup, or execution behavior changes.
+- Completion criteria:
+  - [x] P6-1 selects one paper-scale validation brief and freezes it as the run contract before execution.
+  - [x] P6-1 brief includes Topic, Objective Metric, Constraints, Plan, Research Question, small real experiment rationale, Baseline / Comparator, Dataset / Task / Bench, Target Comparison, Minimum Acceptable Evidence, Disallowed Shortcuts, Allowed Budgeted Passes, Paper Ceiling If Evidence Remains Weak, Minimum Experiment Plan, Paper-worthiness Gate, and Failure Conditions.
+  - [x] P6-1 brief has a fixed research question and falsifiable hypothesis; a vague topic or workflow demo cannot be used as a paper-ready target.
+  - [x] P6-2 `/doctor` passes in a clean validation workspace before the full run, except for explicitly recorded environment limitations.
+  - [x] P6-2 provider mode, credentials, model/runtime settings, writable run store, TTY support, and command execution prerequisites are verified without committing secrets or machine-specific paths.
+  - [x] P6-3 full live validation uses a dedicated validation workspace and produces inspectable run artifacts, checkpoints, events, status, and completeness outputs.
+  - [x] P6-3 validates fresh-session behavior and resumed-session behavior against the same run before claiming the flow is stable.
+  - [x] P6-4 dataset/task inputs are available before experiment execution, and the baseline or comparator is runnable within the declared budget.
+  - [x] P6-4 fallback-only or demo-only evidence cannot satisfy quantitative experimental evidence requirements.
+  - [x] P6-5 `implement_experiments` creates node-owned experiment code; coding-agent manual edits may diagnose or repair the system, but must not substitute final research artifacts.
+  - [x] P6-5 `run_experiments` executes a real command and keeps failed attempts visible in run artifacts instead of hiding or overwriting them.
+  - [x] P6-5 verifier or harness coverage catches missing CLI arguments, syntax failures, missing metrics, absent result tables, and hidden failed runs.
+- [x] P6-6 result tables include at least one complete metric, baseline/comparator, target result, and comparison row before any comparative claim is allowed.
+- [x] P6-6 `figure_audit` remains an independent checkpoint between `analyze_results` and `review`; figure/result/caption mismatch blocks manuscript promotion.
+- [x] P6-6 `review` blocks, backtracks, or downgrades when baseline, result table, claim evidence, related-work support, or reproducibility evidence is incomplete.
+- [x] P6-7 `write_paper` is reached only when the review gate permits it; PDF success or `write_paper` completion alone never means paper-ready.
+- [x] P6-7 post-draft critique checks claim-evidence linkage, citation support, limitations, failed-run disclosure, and whether the manuscript genre should be downgraded.
+- [x] P6-8 `autolabos audit --run` emits the P5 audit outputs for the completed or blocked run.
+- [x] P6-8 audit verdict is `conditionally-ready` only when no top blocker remains and the claim ceiling allows the manuscript-level claim; otherwise it must report `blocked`, `needs-review`, `research_memo`, or `paper_ready=false`.
+- [x] P6-8 unsupported claims, citation gaps, missing comparators, fallback-only evidence, hidden failed runs, figure mismatches, and missing result tables block or downgrade paper-readiness.
+  - [x] P6-9 full live validation record captures the run id, provider mode, command path using portable placeholders, fresh/resumed comparison, inspected artifacts, failures, and next action.
+  - [x] P6-9 every live issue found during the full run is recorded in `ISSUES.md` before patching, with root-cause class, reproduction steps, expected behavior, actual behavior, and regression status.
+  - [x] P6-9 deterministic regression coverage is added for any fixed live issue where a stable test or smoke fixture can honestly cover the behavior.
+  - [x] P6 keeps AutoLabOS positioned as an evidence governance and paper-readiness audit layer, not as a broad autonomous scientist or paper-ready-by-default system.
+
 ## First Implementation Slice
 
 Start with P0-1 through P0-6 before executing benchmark runs. These establish the hardening, input, condition, artifact, and scoring contracts. Then run P0-7 as the contract lock. Only after AGB-001 passes should P1-1 through P1-7 be broadened across AGB-002 through AGB-010. P1-8 through P1-11 and the P2 queue should be implemented incrementally after the P0 hardening slice has validation coverage.
@@ -954,6 +1030,8 @@ P3 starts only after the P0/P1/P2 checklist is complete. P3 should harden the au
 P4 starts after P3 release hygiene. P4 should convert the audit-first surface into a pilot-ready artifact intake and full-seed regression package while preserving public-repo portability and conservative claim ceilings.
 
 P5 starts after P4 external intake and full-seed replay are complete. P5 should make the audit product explain not only final artifact status, but also when claims were promoted, blocked, downgraded, or allowed by explicit done-conditions. P5 must keep long-running-agent patterns as governance infrastructure, not a broad autonomous scientist claim.
+
+P6 starts after P5 audit timeline and done-condition hardening. P6 should make a full live run capable of reaching `write_paper` and then being audited by `autolabos audit --run`, while preserving the right to end as blocked or downgraded when paper-scale evidence is missing.
 
 ## Validation Policy For Future Edits
 

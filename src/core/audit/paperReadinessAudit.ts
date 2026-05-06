@@ -242,7 +242,8 @@ async function buildAuditSummary(input: {
 }): Promise<PaperReadinessAuditBuildResult> {
   const contract = await validateGovernanceArtifactContract({
     runDir: input.artifacts.runRoot,
-    condition: input.artifacts.condition
+    condition: input.artifacts.condition,
+    requireGovernanceConditionArtifact: Boolean(input.artifacts.governanceConditionPayload)
   });
   const resultTable = scoreResultTableArtifact(input.artifacts.resultTable);
   const claimEvidence = scoreClaimEvidenceArtifacts({
@@ -276,6 +277,13 @@ async function buildAuditSummary(input: {
   const paperReady = input.artifacts.paperReadiness?.paper_ready === true;
   const readinessState = stringValue(input.artifacts.paperReadiness?.readiness_state);
   const failedRunHidden = isFailedRun(input.artifacts.runRecord) && paperReady;
+  const writePaperStatus = getWritePaperStatus(input.artifacts.runRecord);
+  const writePaperCompleted = isWritePaperCompleted({
+    status: writePaperStatus,
+    mainTexExists: input.artifacts.mainTexExists
+  });
+  const writePaperFailed = writePaperStatus === "failed" || writePaperStatus === "error";
+  const writePaperFailureMessage = getWritePaperFailureMessage(input.artifacts.runRecord);
   const blockers: PaperReadinessAuditBlocker[] = [];
   const rulesApplied: string[] = [];
 
@@ -355,6 +363,17 @@ async function buildAuditSummary(input: {
       severity: "blocker",
       message: "The run is marked failed while paper_ready=true; failed execution must remain visible.",
       source: "artifactContract"
+    });
+  }
+  if (writePaperFailed) {
+    rulesApplied.push("write_paper 실패 -> manuscript promotion 차단");
+    blockers.push({
+      code: "write_paper_failed",
+      severity: "blocker",
+      message: writePaperFailureMessage
+        ? `write_paper failed: ${writePaperFailureMessage}`
+        : "write_paper failed; generated manuscript artifacts are not accepted for paper-ready promotion.",
+      source: "runRecord"
     });
   }
   for (const finding of designContractFindings) {
@@ -437,7 +456,7 @@ async function buildAuditSummary(input: {
     governanceCondition: input.artifacts.governanceConditionPayload,
     researchBriefText: input.artifacts.researchBriefText,
     paperReady,
-    writePaperCompleted: input.artifacts.mainTexExists,
+    writePaperCompleted,
     missingBaselineOrComparator: resultTable.missing_baseline_count > 0 || resultTable.missing_comparator_count > 0,
     resultTableReady: resultTable.measured && resultTable.complete_row_count > 0,
     fallbackOnlyEvidence: fallbackOnly,
@@ -518,7 +537,7 @@ async function buildAuditSummary(input: {
     paper_readiness: {
       paper_ready: paperReady,
       ...(readinessState ? { readiness_state: readinessState } : {}),
-      write_paper_completed: input.artifacts.mainTexExists
+      write_paper_completed: writePaperCompleted
     },
     judge_lane: {
       planner_worker_nodes: [
@@ -1251,6 +1270,8 @@ function buildNextActions(blockers: PaperReadinessAuditBlocker[]): string[] {
       actions.add("Repair figure/result/caption mismatches and rerun figure_audit before review.");
     } else if (blocker.code === "hidden_failed_run") {
       actions.add("Expose failed run status in the audit bundle and remove paper_ready=true.");
+    } else if (blocker.code === "write_paper_failed") {
+      actions.add("Treat the manuscript as unaccepted, return to the failed gate, and rerun write_paper only after the cited blockers are repaired.");
     } else if (blocker.code === "artifact_contract_incomplete") {
       actions.add("Restore required governance artifacts or explicitly mark the bundle incomplete.");
     }
@@ -1439,6 +1460,44 @@ function parseConditionName(value: Record<string, unknown> | undefined): Governa
 function isFailedRun(value: Record<string, unknown> | undefined): boolean {
   const status = stringValue(value?.status) || stringValue(value?.state) || stringValue(value?.phase);
   return status === "failed" || status === "error";
+}
+
+function getWritePaperStatus(value: Record<string, unknown> | undefined): string | undefined {
+  const writePaper = getWritePaperNodeRecord(value);
+  return stringValue(writePaper?.status) || stringValue(writePaper?.state) || stringValue(writePaper?.phase);
+}
+
+function getWritePaperFailureMessage(value: Record<string, unknown> | undefined): string | undefined {
+  const writePaper = getWritePaperNodeRecord(value);
+  return stringValue(writePaper?.lastError) || stringValue(writePaper?.error) || stringValue(writePaper?.note);
+}
+
+function getWritePaperNodeRecord(value: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const graph = value.graph;
+  if (!graph || typeof graph !== "object" || Array.isArray(graph)) {
+    return undefined;
+  }
+  const nodeStates = (graph as Record<string, unknown>).nodeStates;
+  if (!nodeStates || typeof nodeStates !== "object" || Array.isArray(nodeStates)) {
+    return undefined;
+  }
+  const writePaper = (nodeStates as Record<string, unknown>).write_paper;
+  return writePaper && typeof writePaper === "object" && !Array.isArray(writePaper)
+    ? writePaper as Record<string, unknown>
+    : undefined;
+}
+
+function isWritePaperCompleted(input: {
+  status: string | undefined;
+  mainTexExists: boolean;
+}): boolean {
+  if (input.status) {
+    return input.status === "completed";
+  }
+  return input.mainTexExists;
 }
 
 async function readOptionalJson<T = unknown>(filePath: string): Promise<T | undefined> {

@@ -129,6 +129,47 @@ describe("CodexOAuthResponsesTextClient", () => {
     expect(progress).toContainEqual({ type: "status", text: "Received Codex OAuth output." });
   });
 
+  it("aborts an in-progress SSE stream read when the abort signal fires", async () => {
+    const encoder = new TextEncoder();
+    const stream = new TransformStream<Uint8Array>();
+    const writer = stream.writable.getWriter();
+    const fetchMock = vi.fn(async () => {
+      return new Response(stream.readable, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" }
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new CodexOAuthResponsesTextClient(
+      async () => ({
+        accessToken: "test-access-token",
+        accountId: "acct_123"
+      }),
+      { model: "gpt-5.3-codex", reasoningEffort: "high" }
+    );
+    const controller = new AbortController();
+    const completion = client.complete({
+      prompt: "hello",
+      abortSignal: controller.signal
+    });
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await writer.write(
+      encoder.encode(
+        [
+          "event: response.output_text.delta",
+          'data: {"type":"response.output_text.delta","delta":"partial"}',
+          "",
+          ""
+        ].join("\n")
+      )
+    );
+    controller.abort();
+
+    await expect(completion).rejects.toMatchObject({ name: "AbortError" });
+  });
+
   it("does not send previous_response_id when only a threadId is provided", async () => {
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body || "{}"));

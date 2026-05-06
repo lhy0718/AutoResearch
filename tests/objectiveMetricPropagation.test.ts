@@ -2702,6 +2702,312 @@ describe("objective metric propagation", () => {
     );
   });
 
+  it("does not pause when condition-array rows use baseline flags, average accuracy, and task accuracies", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-flagged-condition-table-"));
+    process.chdir(root);
+
+    const runId = "run-analyze-results-flagged-condition-table";
+    const run = {
+      ...makeRun(runId),
+      currentNode: "analyze_results" as const,
+      objectiveMetric: "accuracy_delta_vs_baseline >= 0.01"
+    };
+    run.graph.currentNode = "analyze_results";
+
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          status: "success",
+          baseline_first_ok: true,
+          completed_condition_count: 2,
+          conditions: [
+            {
+              baseline: true,
+              condition_marker: "rank_8_dropout_0_0",
+              status: "completed",
+              average_accuracy: 0.6458333333333333,
+              accuracy_delta_vs_baseline: 0,
+              task_accuracies: {
+                arc_challenge: 0.7916666666666666,
+                hellaswag: 0.5
+              }
+            },
+            {
+              baseline: false,
+              condition_marker: "rank_in_4_8_16_32_x_dropout_in_0_0_0_05",
+              status: "completed",
+              average_accuracy: 0.6666666666666667,
+              accuracy_delta_vs_baseline: 0.02083333333333348,
+              task_accuracies: {
+                arc_challenge: 0.8333333333333334,
+                hellaswag: 0.5
+              }
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "experiment_contract.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          run_id: runId,
+          created_at: new Date().toISOString(),
+          hypothesis: "Dropout should improve average accuracy over the locked baseline",
+          causal_mechanism: "Rank/dropout affects adapter generalization",
+          single_change: "rank/dropout condition",
+          confounded: false,
+          expected_metric_effect: "Higher average accuracy than baseline",
+          abort_condition: "Abort on missing baseline/comparator rows",
+          keep_or_discard_rule: "Keep if improved",
+          baselines: ["rank_8_dropout_0_0"],
+          metrics: ["average_accuracy", "arc_challenge_accuracy", "hellaswag_accuracy"],
+          results_table_schema: [
+            {
+              metric: "average_accuracy",
+              baseline: null,
+              comparator: null,
+              delta: null,
+              direction: "higher_better"
+            },
+            {
+              metric: "arc_challenge_accuracy",
+              baseline: null,
+              comparator: null,
+              delta: null,
+              direction: "higher_better"
+            },
+            {
+              metric: "hellaswag_accuracy",
+              baseline: null,
+              comparator: null,
+              delta: null,
+              direction: "higher_better"
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const analyzeNode = createAnalyzeResultsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await analyzeNode.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(result.transitionRecommendation?.reason).not.toBe("incomplete_results_table");
+
+    const analysisRaw = JSON.parse(
+      await readFile(path.join(runDir, "result_analysis.json"), "utf8")
+    ) as {
+      condition_comparisons: Array<{ source: string; label: string }>;
+      results_table: Array<{ metric: string; baseline: number | null; comparator: number | null; delta: number | null }>;
+    };
+    expect(analysisRaw.condition_comparisons[0]).toMatchObject({
+      source: "metrics.conditions",
+      label: "rank in 4 8 16 32 x dropout in 0 0 0 05 vs rank 8 dropout 0 0"
+    });
+    expect(analysisRaw.results_table).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metric: "average_accuracy",
+          baseline: 0.645833,
+          comparator: 0.666667,
+          delta: 0.0208
+        }),
+        expect.objectContaining({
+          metric: "arc_challenge_accuracy",
+          baseline: 0.7917,
+          comparator: 0.8333,
+          delta: 0.0416
+        }),
+        expect.objectContaining({
+          metric: "hellaswag_accuracy",
+          baseline: 0.5,
+          comparator: 0.5,
+          delta: 0
+        })
+      ])
+    );
+  });
+
+  it("does not pause when baseline is in metrics.baseline and tuned rows are in metrics.conditions", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-explicit-baseline-table-"));
+    process.chdir(root);
+
+    const runId = "run-analyze-results-explicit-baseline-table";
+    const run = {
+      ...makeRun(runId),
+      currentNode: "analyze_results" as const,
+      objectiveMetric: "accuracy_delta_vs_baseline >= 0.01"
+    };
+    run.graph.currentNode = "analyze_results";
+
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          status: "success",
+          accuracy_delta_vs_baseline: 0.0625,
+          baseline_average_accuracy: 0.5625,
+          completed_condition_count: 2,
+          baseline: {
+            condition_name: "unmodified_base",
+            status: "success",
+            average_accuracy: 0.5625,
+            tasks: {
+              arc_challenge: { accuracy: 1.0 },
+              hellaswag: { accuracy: 0.125 }
+            }
+          },
+          best_tuned_condition: {
+            condition_name: "rank_8_dropout_0_0_seed_42",
+            status: "success",
+            average_accuracy: 0.625,
+            accuracy_delta_vs_baseline: 0.0625,
+            rank: 8,
+            dropout: 0,
+            tasks: {
+              arc_challenge: { accuracy: 0.875 },
+              hellaswag: { accuracy: 0.375 }
+            }
+          },
+          conditions: [
+            {
+              condition_name: "rank_4_dropout_0_0_seed_42",
+              status: "success",
+              average_accuracy: 0.5625,
+              accuracy_delta_vs_baseline: 0,
+              rank: 4,
+              dropout: 0,
+              tasks: {
+                arc_challenge: { accuracy: 0.75 },
+                hellaswag: { accuracy: 0.375 }
+              }
+            },
+            {
+              condition_name: "rank_8_dropout_0_0_seed_42",
+              status: "success",
+              average_accuracy: 0.625,
+              accuracy_delta_vs_baseline: 0.0625,
+              rank: 8,
+              dropout: 0,
+              tasks: {
+                arc_challenge: { accuracy: 0.875 },
+                hellaswag: { accuracy: 0.375 }
+              }
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "experiment_contract.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          run_id: runId,
+          created_at: new Date().toISOString(),
+          hypothesis: "A tuned LoRA condition should improve over the unmodified baseline",
+          causal_mechanism: "LoRA training changes downstream accuracy",
+          single_change: "rank/dropout condition",
+          confounded: false,
+          expected_metric_effect: "Higher average accuracy than baseline",
+          abort_condition: "Abort on missing condition evidence",
+          keep_or_discard_rule: "Keep if improved",
+          baselines: ["unmodified_base"],
+          metrics: ["average_accuracy"],
+          results_table_schema: [
+            {
+              metric: "average_accuracy",
+              baseline: null,
+              comparator: null,
+              delta: null,
+              direction: "higher_better"
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const analyzeNode = createAnalyzeResultsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await analyzeNode.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(result.transitionRecommendation?.reason).not.toBe("incomplete_results_table");
+
+    const analysisRaw = JSON.parse(
+      await readFile(path.join(runDir, "result_analysis.json"), "utf8")
+    ) as {
+      condition_comparisons: Array<{ source: string; label: string }>;
+      results_table: Array<{ metric: string; baseline: number | null; comparator: number | null; delta: number | null }>;
+    };
+    expect(analysisRaw.condition_comparisons[0]).toMatchObject({
+      source: "metrics.conditions",
+      label: "rank 8 dropout 0 0 seed 42 vs unmodified base"
+    });
+    expect(analysisRaw.results_table).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metric: "average_accuracy",
+          baseline: 0.5625,
+          comparator: 0.625,
+          delta: 0.0625
+        })
+      ])
+    );
+
+    const resultTableRaw = JSON.parse(
+      await readFile(path.join(runDir, "result_table.json"), "utf8")
+    ) as Array<{ metric: string; baseline: number | null; comparator: number | null; delta: number | null }>;
+    expect(resultTableRaw).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metric: "average_accuracy",
+          baseline: 0.5625,
+          comparator: 0.625,
+          delta: 0.0625
+        })
+      ])
+    );
+  });
+
   it("does not pause for an incomplete table when metrics.conditions is keyed by condition name", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-conditions-map-table-"));
     process.chdir(root);

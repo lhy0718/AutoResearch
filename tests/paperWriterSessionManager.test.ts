@@ -40,6 +40,29 @@ class RecordingLLMClient extends MockLLMClient {
   }
 }
 
+class StreamingProgressLLMClient extends MockLLMClient {
+  override async complete(
+    _prompt: string,
+    opts?: { onProgress?: (event: { type: "status" | "delta"; text: string }) => void }
+  ): Promise<{ text: string }> {
+    opts?.onProgress?.({ type: "status", text: "Streaming paper writer output." });
+    for (let index = 0; index < 140; index += 1) {
+      opts?.onProgress?.({
+        type: "delta",
+        text: ` token-${index} with enough prose to exercise the progress stream and terminal renderer `
+      });
+    }
+    return {
+      text: [
+        "\\documentclass{article}",
+        "\\begin{document}",
+        "Repaired manuscript.",
+        "\\end{document}"
+      ].join("\n")
+    };
+  }
+}
+
 function makeRun(runId: string): RunRecord {
   return {
     version: 3,
@@ -65,6 +88,55 @@ function makeRun(runId: string): RunRecord {
 }
 
 describe("PaperWriterSessionManager", () => {
+  it("bounds streamed staged-LLM progress so write_paper does not flood the TUI", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-session-progress-"));
+    process.chdir(root);
+
+    const runId = "run-paper-session-progress";
+    const run = makeRun(runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+
+    const eventStream = new InMemoryEventStream();
+    const manager = new PaperWriterSessionManager({
+      config: {
+        providers: {
+          llm_mode: "openai_api"
+        }
+      } as any,
+      codex: {} as any,
+      llm: new StreamingProgressLLMClient(),
+      eventStream,
+      runStore: {
+        async getRun() {
+          return run;
+        },
+        async updateRun() {}
+      } as any,
+      workspaceRoot: root
+    });
+
+    await manager.repairLatex({
+      run,
+      tex: "\\documentclass{article}\\begin{document}Draft\\end{document}",
+      buildLog: "LaTeX warning"
+    });
+
+    const texts = eventStream
+      .history(300, runId)
+      .map((event) => String(event.payload.text || ""));
+    const streamedDeltas = texts.filter((text) => text.startsWith("LLM>"));
+    expect(streamedDeltas).toHaveLength(80);
+    expect(texts).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("further token-level progress is being summarized"),
+        expect.stringContaining("suppressed 60 additional streamed LLM progress update")
+      ])
+    );
+    expect(Math.max(...streamedDeltas.map((text) => text.length))).toBeLessThanOrEqual(190);
+  });
+
   it("appends the LaTeX template section order hint to the paper-writer system prompt", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-session-template-"));
     process.chdir(root);

@@ -1251,11 +1251,12 @@ function buildRepairTargetFromSpan(
   span: ManuscriptReviewSupportSpan
 ): ManuscriptRepairTarget {
   const normalizedSection = normalizeHeading(span.section);
+  const isAppendixSpan = isAppendixReviewSpan(span);
   const kind = normalizedSection === "title"
     ? "title"
     : normalizedSection === "abstract"
       ? "abstract"
-      : isAppendixSectionName(span.section)
+      : isAppendixSpan
         ? "appendix_paragraph"
         : "paragraph";
   const section = normalizedSection === "title"
@@ -2140,7 +2141,7 @@ function reviewSupportSpanToLocationKey(span: ManuscriptReviewSupportSpan): stri
   if (normalizedSection === "abstract") {
     return buildParagraphLocationKey("abstract", "Abstract", span.paragraph_index);
   }
-  if (isAppendixSectionName(span.section)) {
+  if (isAppendixReviewSpan(span)) {
     return buildParagraphLocationKey("appendix_paragraph", span.section, span.paragraph_index);
   }
   return buildParagraphLocationKey("paragraph", span.section, span.paragraph_index);
@@ -2149,6 +2150,12 @@ function reviewSupportSpanToLocationKey(span: ManuscriptReviewSupportSpan): stri
 function isAppendixSectionName(section: string): boolean {
   return normalizeHeading(section) === "appendix"
     || normalizeHeading(section).startsWith("appendix ");
+}
+
+function isAppendixReviewSpan(span: ManuscriptReviewSupportSpan): boolean {
+  return isAppendixSectionName(span.section)
+    || cleanString(span.anchor_id).startsWith("paragraph:appendix_")
+    || cleanString(span.anchor_id).startsWith("appendix_paragraph:");
 }
 
 function normalizeManuscriptReviewIssue(

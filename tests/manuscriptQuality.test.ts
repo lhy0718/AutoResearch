@@ -327,6 +327,89 @@ describe("manuscriptQuality style lint", () => {
     );
   });
 
+  it("keeps appendix traceability anchors in appendix-local repair scope", () => {
+    const manuscript = makeCleanManuscript();
+    manuscript.appendix_sections = [
+      {
+        heading: "Supplementary Experimental Details",
+        paragraphs: [
+          "The full planning space covered rank and dropout cells, while the confirmatory stage focused on the cells that fit the live validation budget."
+        ]
+      }
+    ];
+    const traceability = makeTraceability(manuscript);
+    traceability.paragraphs.push({
+      anchor_id: "paragraph:appendix_supplementary_experimental_details:0",
+      manuscript_section: "Supplementary Experimental Details",
+      paragraph_index: 0,
+      source_draft_section: "Appendix",
+      evidence_ids: ["ev_appendix"],
+      citation_paper_ids: [],
+      source_refs: [{ kind: "evidence", id: "ev_appendix" }]
+    });
+    const review = normalizeManuscriptReview(
+      {
+        overall_decision: "repair",
+        summary: "The appendix paragraph should be tightened locally.",
+        issues: [
+          {
+            code: "appendix_hygiene",
+            severity: "warning",
+            section: "Appendix",
+            repairable: true,
+            message: "The appendix repeats main-text planning prose.",
+            fix_recommendation: "Rewrite only the targeted appendix paragraph.",
+            supporting_spans: [
+              {
+                section: "Supplementary Experimental Details",
+                paragraph_index: 0,
+                excerpt: "The full planning space covered rank and dropout cells",
+                reason: "This is the local appendix paragraph."
+              }
+            ]
+          }
+        ]
+      },
+      manuscript
+    );
+    const validated = validateManuscriptReviewArtifact({
+      review,
+      manuscript,
+      traceability
+    });
+
+    const repairPlan = buildManuscriptRepairPlan({
+      passIndex: 1,
+      manuscript,
+      review: validated.review,
+      lint: buildManuscriptStyleLint({ manuscript, traceability }),
+      mustImproveIssues: [
+        {
+          source: "review",
+          code: "appendix_hygiene",
+          severity: "warning",
+          section: "Appendix",
+          repairable: true,
+          message: "The appendix repeats main-text planning prose.",
+          anchor_ids: validated.review.issues[0]?.supporting_spans.map((span) => span.anchor_id).filter(Boolean) as string[]
+        }
+      ]
+    });
+
+    expect(repairPlan.blocked_targets).toHaveLength(0);
+    expect(repairPlan.targets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "appendix_paragraph",
+          section: "Supplementary Experimental Details",
+          paragraph_index: 0,
+          edit_scope: "appendix_local",
+          allowed_location_keys: ["appendix_paragraph:supplementary_experimental_details:0"]
+        })
+      ])
+    );
+  });
+
   it("builds visual-local repair targets from reviewer-emitted visual targets", () => {
     const manuscript = makeCleanManuscript();
     manuscript.tables = [

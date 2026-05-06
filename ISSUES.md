@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-05-03
+Last updated: 2026-05-07
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
@@ -15,9 +15,718 @@ Path placeholders:
 
 ---
 
+## Issue: LV-377
+
+- Status: repair implemented; automated regression/build passed; same-flow live revalidation passed
+- Validation target: `write_paper` must emit a structured `paper/paper_readiness.json` artifact even when manuscript artifacts are generated but the manuscript-quality gate stops bounded repair.
+- Environment/session context: existing P6 live run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` in `<validation-workspace>/p6-paper-ready-live`, final audit follow-up on 2026-05-07 KST after P6-9 was closed.
+
+- Reproduction steps:
+  1. Run `autolabos audit --run <validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7 --out-dir <repo-root>/outputs/audit/p6-live-2dcc480e-final`.
+  2. Inspect `blockers.json` and the governance artifact contract result.
+  3. Check whether `paper/paper_readiness.json` exists in the run artifact root after `write_paper` failed at the manuscript-quality gate.
+
+- Expected behavior:
+  - Because `write_paper` already generated manuscript artifacts and stopped at an explicit quality gate, the paper bundle should include `paper/paper_readiness.json`.
+  - The readiness artifact should set `paper_ready=false`, expose `readiness_state`, and name manuscript quality as a trigger.
+  - The audit should continue to block manuscript promotion on `write_paper_failed`, but should not also report an incomplete artifact contract.
+
+- Actual behavior:
+  - `write_paper` wrote `paper/main.tex`, `paper/evidence_links.json`, `paper/readiness_risks.json`, and manuscript-quality failure artifacts.
+  - It returned before the post-draft critique block that writes `paper/paper_readiness.json`.
+  - The final audit therefore reported `artifact_contract_incomplete` in addition to `write_paper_failed`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started; this was reproduced on the persisted P6 live run.
+  - Existing session: reproduced in the resumed P6 run artifact root and final audit output.
+  - Divergence: no fresh/resume divergence observed; this is a failed-node artifact emission gap.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the `write_paper` node generated paper-facing artifacts before the manuscript-quality stop boundary, but `paper_readiness.json` was only emitted after all early failure gates, so stopped manuscript-quality runs lacked the explicit paper-ready=false artifact.
+
+- Code/test changes:
+  - Code: `src/core/nodes/writePaper.ts` now writes a preliminary `paper/paper_readiness.json` with `paper_ready=false` before early failure returns from manuscript-quality, evidence, scientific, or submission gates.
+  - Tests: `tests/writePaperPdfBuild.test.ts` asserts that manuscript-quality stop writes `paper_readiness.json` with manuscript-quality trigger metadata.
+
+- Regression status:
+  - Reproduced from the P6 final audit on 2026-05-07 KST.
+  - Targeted regression: passed with `npm test -- tests/writePaperPdfBuild.test.ts -t "stops after visual repair"`.
+  - Build: passed with `npm run build`.
+  - Same-flow live revalidation: passed on 2026-05-07 KST. Rerunning the P6 `write_paper` path produced `paper/paper_readiness.json`; `validateGovernanceArtifactContract(... requireGovernanceConditionArtifact=false)` passed with no issues; rerunning `autolabos audit --run` reported only `write_paper_failed` as the remaining blocker.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/paper/paper_readiness.json`
+  - `<repo-root>/outputs/audit/p6-live-2dcc480e-after-readiness-artifact/audit-summary.json`
+  - `<repo-root>/outputs/audit/p6-live-2dcc480e-after-readiness-artifact/blockers.json`
+  - `<repo-root>/outputs/p6-preflight/p6-continue-write_paper-output.txt`
+
+---
+
+## Issue: LV-376
+
+- Status: repair implemented; automated regression passed; same-flow live revalidation passed
+- Validation target: P6 continuation helper must not treat replayed node-local `Status: <node> error` text as a fresh stop boundary while the target node is still actively running.
+- Environment/session context: existing P6 live run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` in `<validation-workspace>/p6-paper-ready-live`, same-flow `write_paper` continuation on 2026-05-07 KST after the manuscript repair locality fix.
+
+- Reproduction steps:
+  1. Continue the P6 run with `AUTOLABOS_P6_NEXT_NODE=write_paper AUTOLABOS_P6_FORCE_RUN_ACTIVE=1 npm run p6:continue`.
+  2. Let the TUI replay the previous `write_paper` status error while a fresh `write_paper` attempt is already running.
+  3. Observe the P6 helper output and persisted run state.
+
+- Expected behavior:
+  - Replayed status text should not be accepted as a fresh terminal boundary.
+  - The helper should wait until the target node reaches a real stopped prompt or persisted stop boundary.
+  - `/quit` should not be queued into an active paper-writing node.
+
+- Actual behavior:
+  - The helper saw the target node running, then accepted replayed `x Status: write_paper error` text as terminal before the fresh attempt reached its real stop boundary.
+  - It queued `/quit` while `write_paper` was still running.
+  - The run was left as `Canceled by user` even though the scientific boundary being tested was the manuscript-quality gate.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started; this reproduced in the resumed P6 live run.
+  - Existing session: reproduced while observing the persisted run through the PTY helper.
+  - Divergence: no fresh/resume semantic divergence observed; this is a helper projection bug over replayed TUI text.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the helper's node-local status-error detection was gated on observing the node running, but it did not also require the stopped-session prompt that distinguishes a real terminal status from replayed active-run screen content.
+
+- Code/test changes:
+  - Code: `scripts/p6-approve-and-run-next.py` now treats node-local status-error text as a stop boundary only after the target node has been observed running and the subsequent stopped prompt says to wait for the next approval.
+  - Tests: extended the helper self-test to reject active-run status-error prompts and accept stopped status-error prompts.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-07 KST.
+  - Automated regression: passed with `npm test -- tests/p6ContinueScript.test.ts`.
+  - Same-flow live revalidation: passed on 2026-05-07 KST. The same helper reran `write_paper`, did not queue `/quit` on replayed status text, and exited cleanly only after `Node write_paper failed` and `Status: write_paper is paused after retry 3/3`.
+
+- Evidence/artifacts:
+  - `<repo-root>/outputs/p6-preflight/p6-continue-write_paper-output.txt`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/run_record.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/events.jsonl`
+
+---
+
+## Issue: LV-375
+
+- Status: repair implemented; automated regression/build passed; same-flow live revalidation passed
+- Validation target: manuscript-quality repair planning must keep appendix traceability anchors in appendix-local repair scope even when the appendix section heading does not begin with the literal word `Appendix`.
+- Environment/session context: existing P6 live run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` in `<validation-workspace>/p6-paper-ready-live`, `write_paper` manuscript-quality repair after bounded manuscript review on 2026-05-07 KST.
+
+- Reproduction steps:
+  1. Continue the P6 run into `write_paper`.
+  2. Let manuscript review emit a supporting span for the appendix section titled `Supplementary Experimental Details`.
+  3. Inspect `paper/manuscript_repair_plan_1.json`, `paper/manuscript_repair_verification_1.json`, and the final `write_paper` status.
+
+- Expected behavior:
+  - A traceability anchor such as `paragraph:appendix_supplementary_experimental_details:0` should remain an appendix-local repair target.
+  - The repair verifier should not flag the target appendix paragraph as an out-of-scope main-text edit.
+  - Manuscript-quality failure should reflect real remaining scientific/submission blockers, not a repair-scope projection mismatch.
+
+- Actual behavior:
+  - The review span's section was `Supplementary Experimental Details`, so the repair target builder treated it as a main `paragraph` instead of an `appendix_paragraph`.
+  - The repair plan and verification disagreed about the allowed location key.
+  - The verifier reported an out-of-scope appendix edit and stopped `write_paper` before the real manuscript-quality blockers were isolated.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started; this reproduced in the resumed P6 live run.
+  - Existing session: reproduced in persisted `write_paper` artifacts for the same run.
+  - Divergence: no fresh/resume divergence observed; this is a manuscript-review span projection bug.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: repair planning classified appendix spans only from the human-readable section heading. It did not consult the already-normalized traceability anchor ID, so non-literal appendix headings were projected into the wrong location-key namespace.
+
+- Code/test changes:
+  - Code: `src/core/analysis/manuscriptQuality.ts` now classifies appendix review spans from either appendix-like section names or appendix-prefixed traceability anchors.
+  - Tests: added regression coverage that keeps `paragraph:appendix_*` traceability anchors in `appendix_local` repair scope.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-07 KST.
+  - Targeted regression: passed with `npm test -- tests/manuscriptQuality.test.ts -t "keeps appendix traceability anchors"`.
+  - Build: passed with `npm run build`.
+  - Same-flow live revalidation: passed on 2026-05-07 KST. The repaired P6 `write_paper` attempt produced `scope_respected=true`, `locality_ok=true`, and `out_of_scope_changes=[]`; it then failed honestly at the manuscript-quality gate.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/paper/manuscript_repair_plan_1.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/paper/manuscript_repair_verification_1.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/paper/manuscript_quality_failure.json`
+
+---
+
+## Issue: LV-374
+
+- Status: repair implemented; automated regression passed; same-flow final audit revalidation passed
+- Validation target: P6 `analyze_results` must publish a run-scoped `result_table.json` that the paper-readiness audit can treat as a complete metric/baseline/comparator/delta table before comparative paper claims are allowed.
+- Environment/session context: existing P6 live run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` in `<validation-workspace>/p6-paper-ready-live`, final `autolabos audit --run` after `write_paper` failed the manuscript-quality gate on 2026-05-07 KST.
+
+- Reproduction steps:
+  1. Complete the P6 run through `run_experiments`, `analyze_results`, `figure_audit`, `review`, and the attempted `write_paper` gate.
+  2. Run `autolabos audit --run <run-artifact-root> --out-dir outputs/audit/p6-live-2dcc480e`.
+  3. Inspect `outputs/audit/p6-live-2dcc480e/audit-summary.json`.
+
+- Expected behavior:
+  - The audit should see the real repeated-seed result table as measured evidence.
+  - Comparative paper claims should be allowed only if the run-scoped result table contains explicit metric, baseline, comparator, and delta values.
+  - If the result table is non-canonical or incomplete, the audit should block comparative claims with a precise result-table completeness reason.
+
+- Actual behavior:
+  - Initial reproduction: the run-scoped `result_table.json` existed and recorded a `conditions`/`comparisons` summary with a baseline reference and delta, but did not expose canonical numeric baseline/comparator fields in the schema consumed by the audit scorer.
+  - After the audit normalization repair, `autolabos audit --run` correctly reported `Result table: 0/1 complete row(s)` instead of incorrectly calling the table missing.
+  - After the producer-side repair and final same-flow audit rerun, `autolabos audit --run` reports `Result table: 6/6 complete row(s)` and no longer blocks comparative claims on missing baseline/comparator or incomplete result-table evidence.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; the issue was reproduced in the same persisted P6 full live run.
+  - Existing session: reproduced during final audit of the persisted run artifacts.
+  - Divergence: no fresh/resume divergence observed; this is a run-artifact schema handoff gap.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `analyze_results` has enough baseline/comparator evidence to describe the best comparison, but the run-scoped `result_table.json` projection emits a comparison-summary object rather than canonical audit rows with numeric baseline and comparator values.
+
+- Code/test changes:
+  - Code: updated audit result-table scoring so runtime comparison-summary artifacts are measured and scored as incomplete, not treated as missing.
+  - Code: updated paper-readiness audit so a failed `write_paper` node is not marked completed merely because `paper/main.tex` exists.
+  - Tests: added regression coverage for comparison-summary result tables and failed `write_paper` audit status.
+
+- Regression status:
+  - Live blocker reproduced on 2026-05-07 KST.
+  - Audit-surface regression: passed with `npm test -- tests/resultTableScoring.test.ts tests/paperReadinessAudit.test.ts`.
+  - Producer-side repair: same P6 run now emits an audit-visible result table with explicit baseline/comparator/delta rows.
+  - Same-flow final audit revalidation: passed on 2026-05-07 KST. `autolabos audit --run` reports `Result table: 6/6 complete row(s)`, `Baseline/comparator: present`, and still returns `blocked` for the remaining `write_paper_failed` blocker after `LV-377` repaired the readiness-artifact contract gap.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/result_table.json`
+  - `<repo-root>/outputs/audit/p6-live-2dcc480e-final/audit-summary.json`
+  - `<repo-root>/outputs/audit/p6-live-2dcc480e-final/paper-readiness-audit.md`
+
+---
+
+## Issue: LV-373
+
+- Status: repair implemented; automated regression/build passed; same-flow live revalidation passed
+- Validation target: P6 `write_paper` staged LLM prompts must stay under provider input-size limits while preserving result-table, baseline/comparator, claim-ceiling, and evidence-link context.
+- Environment/session context: existing P6 live run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` in `<validation-workspace>/p6-paper-ready-live`, same-flow `review -> write_paper` continuation on 2026-05-07 KST after the LV-372 streamed-output bounding repair.
+
+- Reproduction steps:
+  1. Continue the P6 run from `review` into `write_paper` with `AUTOLABOS_P6_NEXT_NODE=write_paper npm run p6:continue`.
+  2. Let the paper writer reach staged LLM `draft` and `finalize`.
+  3. Inspect `events.jsonl`, `paper/session_trace.json`, and `paper/draft.raw.txt`.
+
+- Expected behavior:
+  - The paper writer should send compact, curated paper-writing context rather than full multi-megabyte analysis/metrics payloads.
+  - A completed 25-run result table should remain available to the writer as concise evidence, not be dropped into fallback because the prompt exceeds provider limits.
+  - `write_paper` should not silently rely on fallback drafts caused by oversized prompt payloads when real structured analysis artifacts exist.
+
+- Actual behavior:
+  - `write_paper` emitted provider errors for `draft` and `finalize`: `Invalid 'input[0].content[0].text': string too long ... maximum length 10485760`.
+  - The `draft` request attempted about 12.84MB of text and the `finalize` request attempted about 12.86MB of text.
+  - The live run artifacts show `result_analysis.json` at about 12.36MB and `metrics.json` at about 11.82MB.
+  - `paper/draft.raw.txt` is effectively empty, indicating that fallback draft generation replaced the intended staged LLM draft at that boundary.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started; this was reproduced in the same persisted P6 live run after approving `review`.
+  - Existing session: reproduced during resumed `write_paper` continuation with the real P6 result-analysis payload.
+  - Divergence: no fresh/resume divergence observed; the issue is tied to oversized paper-writing context construction for large real run artifacts.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `buildPaperWriterPrompt(...)` embeds the full `resultAnalysis` object in each paper-writing prompt. For repeated-seed runs whose result analysis carries large nested metrics, staged prompts exceed the backend input-size ceiling and fall back despite having valid result-table evidence.
+
+- Code/test changes:
+  - Code: compacted the paper-writer `result_analysis` prompt payload to preserve objective status, result table, metric table summary, condition comparisons, statistical summary, paper claims, figures, verifier feedback, failure taxonomy, and synthesis while omitting full raw metrics.
+  - Code: serialized `allowed_ids` as bounded arrays instead of JSON-empty `Set` objects.
+  - Tests: added `buildPaperWriterPrompt(...)` regression coverage for large raw metrics that would previously push paper-writing prompts toward provider input-size limits.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-07 KST.
+  - Automated regression: passed on 2026-05-07 KST with `npm test -- tests/paperWriting.test.ts -t "keeps paper-writer prompts compact"`.
+  - Build: passed on 2026-05-07 KST with `npm run build`.
+  - Same-flow revalidation: passed on 2026-05-07 KST. The same persisted P6 run retried `write_paper`; the final paper-writer session completed `outline`, `draft`, `review`, `finalize`, `polish`, manuscript review, bounded repair, and manuscript review audit with `fallbackUsed=false` in `paper/session_trace.json`. The earlier provider `string too long` error did not recur.
+  - Remaining boundary: `write_paper` still failed honestly at the manuscript-quality gate, then rolled back to `review`; this is tracked as a paper-readiness outcome, not an LV-373 prompt-size regression.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/events.jsonl`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/result_analysis.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/metrics.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/paper/draft.raw.txt`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/paper/session_trace.json`
+
+---
+
+## Issue: LV-372
+
+- Status: repair implemented; automated regression/build passed; same-flow live revalidation passed
+- Validation target: P6 `write_paper` must survive long streamed LLM output in a real TUI session without exhausting the Node.js heap or leaving the run stuck at `write_paper.running`.
+- Environment/session context: existing P6 live run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` in `<validation-workspace>/p6-paper-ready-live`, approving `review` into `write_paper` on 2026-05-07 KST.
+
+- Reproduction steps:
+  1. Start from `review.needs_approval` with a pending `advance -> write_paper` transition.
+  2. Run `AUTOLABOS_P6_NEXT_NODE=write_paper npm run p6:continue`.
+  3. Observe the TUI while `write_paper` streams LLM tokens and inspect the helper output after failure.
+
+- Expected behavior:
+  - Long `write_paper` LLM streaming should remain bounded in TUI/transcript memory.
+  - The node should either complete with paper artifacts and post-draft critique, fail with a persisted node error, or pause with an inspectable stop boundary.
+  - A helper or TUI failure should not leave the run indefinitely persisted as `write_paper.running`.
+
+- Actual behavior:
+  - The TUI repeatedly rendered many `LLM>` token lines while `write_paper` was running.
+  - The Node process terminated with `FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory`.
+  - Persisted state remained `status=running`, `currentNode=write_paper`, and `write_paper.status=running`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started; this was reproduced during same-flow continuation of the persisted P6 live run.
+  - Existing session: reproduced in a resumed TUI session with long streamed paper-writing output.
+  - Divergence: likely yes; the symptom depends on long interactive stream accumulation during an existing run.
+
+- Root cause hypothesis:
+  - Type: `refresh_render_bug`
+  - Hypothesis: the TUI and/or helper transcript path accumulates or rerenders unbounded streamed `LLM>` token output during `write_paper`, causing Node heap pressure before the node reaches its persisted stop boundary.
+
+- Code/test changes:
+  - Code: bounded staged LLM progress emission in `PaperWriterSessionManager` so paper-writing stages emit at most 80 token-level `LLM>` updates per stage and summarize suppressed progress.
+  - Tests: added paper-writer progress-bounding coverage in `tests/paperWriterSessionManager.test.ts`.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-07 KST.
+  - Automated regression: passed with targeted paper-writer progress coverage, adjacent write-paper tests, and `npm run build`.
+  - Same-flow revalidation: passed on 2026-05-07 KST. The same persisted P6 run streamed long `write_paper` LLM output across multiple paper-writing and manuscript-review stages without a Node heap crash; events record bounded summaries such as suppressed token-level progress counts.
+  - Final state after revalidation: `write_paper` failed with an explicit manuscript-quality gate error and the workflow rolled back to `review`, instead of remaining stuck as `write_paper.running`.
+
+- Evidence/artifacts:
+  - `<repo-root>/outputs/p6-preflight/p6-continue-write_paper-output.txt`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/run_record.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/events.jsonl`
+
+---
+
+## Issue: LV-371
+
+- Status: repair implemented; automated regression/build passed; same-flow live revalidation passed
+- Validation target: P6 `review` must keep the review critique, manuscript-type downgrade, blocking issue count, and transition recommendation mutually consistent before allowing `write_paper`.
+- Environment/session context: existing P6 live run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` in `<validation-workspace>/p6-paper-ready-live`, after `figure_audit` completed and `review` ran on 2026-05-07 KST.
+
+- Reproduction steps:
+  1. Continue the P6 live run from `figure_audit` into `review`.
+  2. Inspect `review/paper_critique.json`, `review/decision.json`, and the run's pending transition in `run_record.json`.
+  3. Compare the critique's blocking issue fields with the transition reason and target.
+
+- Expected behavior:
+  - If the critique records paper-scale blockers but downgrades the manuscript to `research_memo`, the transition reason should say that drafting is allowed only under the downgraded claim ceiling.
+  - If blockers require backtracking, the transition should point to a supported backtrack target instead of claiming there are no blocking issues.
+  - Review should not describe completed 25-run repeated-seed evidence as a single-run methodology package when result analysis already records 25 executed trials.
+
+- Actual behavior:
+  - `review/paper_critique.json` reported `manuscript_type=research_memo`, `blocking_issues_count=2`, `needs_design_revision=true`, and two high-severity methodology issues.
+  - The persisted transition still recommended `advance -> write_paper` with reason `Advance: the panel found no blocking review issues.`
+  - One review blocker stated that only one observed execution was recorded, despite `result_analysis.overview.execution_runs=25` and `statistical_summary.executed_trials=25`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started; this was reproduced in the same persisted P6 live run.
+  - Existing session: reproduced during resumed continuation after real repeated-seed execution and result analysis.
+  - Divergence: no fresh/resume divergence observed; the issue is a persisted review projection and transition-text inconsistency.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: review transition synthesis treats downgraded paper-readiness blockers as non-blocking workflow issues without carrying the downgrade reason into the transition, and at least one methodology reviewer path still uses raw execution-observation count instead of the result-analysis executed-trial count.
+
+- Code/test changes:
+  - Code: review methodology fallback now counts `statistical_summary.executed_trials`, `total_trials`, or `overview.execution_runs` before falling back to raw execution observations.
+  - Code: review transition recommendations now explicitly describe downgraded `research_memo` / non-`paper_ready` drafting as advancing under a downgraded claim ceiling instead of claiming no blocking review issues.
+  - Tests: added repeated-seed review downgrade coverage in `tests/reviewNode.test.ts`.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-07 KST.
+  - Automated regression: passed with targeted review-node coverage, adjacent review/critique tests, and `npm run build`.
+  - Same-flow revalidation: passed on 2026-05-07 KST. Re-running `review` removed the stale single-run methodology blocker, kept the scoped methodology issue, classified the run as `paper_scale_candidate` rather than `paper_ready`, and changed the pending transition reason to allow drafting only under the downgraded claim ceiling.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/review/paper_critique.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/review/decision.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/run_record.json`
+
+---
+
+## Issue: LV-370
+
+- Status: repair implemented; automated regression passed; same-flow live revalidation passed
+- Validation target: the P6 continue helper must keep observing when the requested target node completes and the runtime immediately auto-advances into the next node.
+- Environment/session context: existing P6 live run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` in `<validation-workspace>/p6-paper-ready-live`, approving `analyze_results` into `figure_audit` on 2026-05-07 KST.
+
+- Reproduction steps:
+  1. Start from the persisted P6 run paused at `analyze_results.needs_approval` with a pending transition to `figure_audit`.
+  2. Run `AUTOLABOS_P6_NEXT_NODE=figure_audit npm run p6:continue`.
+  3. Observe the helper transcript after `figure_audit` completes and the runtime starts `review`.
+
+- Expected behavior:
+  - The helper should recognize that the requested `figure_audit` node completed and the run has advanced into a new active node.
+  - It should continue observing the new active node until that node reaches a persisted stop boundary.
+  - It should not send `/quit` while the run is actively executing `review`.
+
+- Actual behavior:
+  - `figure_audit` completed with 0 severe mismatches and recommended `advance -> review`.
+  - `review` started immediately.
+  - The helper sent `/quit`, which was queued while `review` was still running, then timed out waiting for `Bye`.
+  - Persisted state remained `status=running`, `currentNode=review`, and `review.status=running`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started; this was reproduced during same-flow continuation of the persisted P6 live run.
+  - Existing session: reproduced when an approved node auto-advanced to the next node before the helper could exit cleanly.
+  - Divergence: likely yes; the failure depends on an existing run with immediate auto-handoff from one target node to the next.
+
+- Root cause hypothesis:
+  - Type: `race_timing_bug`
+  - Hypothesis: after `wait_for_stop_boundary(...)` returns for the requested node, the helper assumes the run is idle enough to quit. It does not re-check whether `run_record.json` has already moved into a different active-running node.
+
+- Code/test changes:
+  - Code: updated the P6 continue helper to re-check persisted state after a target-node stop boundary and keep observing any new active-running handoff node before sending `/quit`.
+  - Tests: extended the helper self-test, covered by `tests/p6ContinueScript.test.ts`, to project active-running nodes explicitly.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-07 KST.
+  - Automated regression: passed with `AUTOLABOS_P6_CONTINUE_SELFTEST=1 python3 scripts/p6-approve-and-run-next.py` and `npm test -- tests/p6ContinueScript.test.ts`.
+  - Same-flow revalidation: passed on 2026-05-07 KST. The repaired helper cleanly observed the rerun `review` node to `needs_approval` after the `figure_audit -> review` handoff failure mode.
+
+- Evidence/artifacts:
+  - `<repo-root>/outputs/p6-preflight/p6-continue-figure_audit-output.txt`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/run_record.json`
+
+---
+
+## Issue: LV-369
+
+- Status: repair implemented; automated regression passed; same-flow live revalidation passed
+- Validation target: the P6 continue helper must not accept stale resumed TUI output or transient command-start states as a stop boundary while the target node is still running.
+- Environment/session context: existing P6 live run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` in `<validation-workspace>/p6-paper-ready-live`, rerunning `analyze_results` on 2026-05-06 after the `LV-368` result-analysis projection repair.
+
+- Reproduction steps:
+  1. Start from the persisted P6 run where the previous `analyze_results` attempt paused with an incomplete-results-table recommendation.
+  2. Re-run the same node with `AUTOLABOS_P6_NEXT_NODE=analyze_results`, `AUTOLABOS_P6_COMMAND='/agent run analyze_results {run_id}'`, and `npm run p6:continue`.
+  3. Inspect the helper transcript and persisted `run_record.json` after the helper exits.
+
+- Expected behavior:
+  - The helper should ignore replayed stale status text from the previous `analyze_results` attempt.
+  - It should wait until persisted state shows a fresh stop boundary for the target node, such as `needs_approval`, `completed`, or `failed`.
+  - It should not send `/quit` while `run_record.json` still says the target node is actively running.
+
+- Actual behavior:
+  - The transcript replayed stale `Result analysis complete... Confidence intervals are missing...` lines and new `Analyzing results...` output in the same resumed TUI session.
+  - The helper sent `/quit`, then timed out waiting for `Bye`.
+  - Persisted state remained `status=running`, `currentNode=analyze_results`, and `analyze_results.status=running`, so the revalidation run was left mid-node rather than reaching an auditable stop boundary.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started; the defect was reproduced in the same persisted P6 live run because the same-flow revalidation must preserve the original run.
+  - Existing session: reproduced when a resumed TUI replayed prior node-status text while a fresh manual node rerun was active.
+  - Divergence: likely yes; the failure depends on resumed-session replay or transient persisted state around a manual node rerun.
+
+- Root cause hypothesis:
+  - Type: `race_timing_bug`
+  - Hypothesis: the helper can leave `wait_for_stop_boundary(...)` from a stale text match or transient record transition, then sends `/quit` without rechecking that the persisted run has a fresh stop boundary and is no longer actively running.
+
+- Code/test changes:
+  - Code: made the P6 continue helper require a fresh persisted stop-boundary signature to remain stable before returning from `wait_for_stop_boundary(...)`.
+  - Tests: extended the helper self-test, covered by `tests/p6ContinueScript.test.ts`, so stale running records are rejected and fresh boundaries only count after the grace interval.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-06.
+  - Automated regression: passed with `AUTOLABOS_P6_CONTINUE_SELFTEST=1 python3 scripts/p6-approve-and-run-next.py` and `npm test -- tests/p6ContinueScript.test.ts`.
+  - Same-flow revalidation: passed on 2026-05-06. The helper reran `analyze_results`, waited for a stable persisted stop boundary, exited cleanly, and left the run paused at `analyze_results.needs_approval` instead of killing the node mid-run.
+
+- Evidence/artifacts:
+  - `<repo-root>/outputs/p6-preflight/p6-continue-analyze_results-output.txt`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/run_record.json`
+
+---
+
+## Issue: LV-368
+
+- Status: repair implemented; automated regression/build passed; same-flow live revalidation passed
+- Validation target: after the P6 repeated-seed LoRA run completes, `analyze_results` must project the node-owned `condition_summary.json` evidence into a complete baseline/comparator result table with usable confidence-interval evidence before allowing figure/review handoff.
+- Environment/session context: existing P6 live run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` in `<validation-workspace>/p6-paper-ready-live`, continued on 2026-05-06 after `run_experiments` completed 25/25 required seed/condition runs.
+
+- Reproduction steps:
+  1. Continue the P6 live run from `run_experiments.needs_approval` with `AUTOLABOS_P6_NEXT_NODE=analyze_results npm run p6:continue`.
+  2. Inspect `result_analysis.json`, `result_table.json`, and `transition_recommendation.json`.
+  3. Compare those artifacts with the public experiment `condition_summary.json` and `study_results.csv`.
+
+- Expected behavior:
+  - `analyze_results` should detect `baseline_marker=rank_8_dropout_0_0` and treat that condition summary row as the baseline.
+  - It should choose the strongest completed non-baseline condition as comparator and populate `result_analysis.results_table` with baseline, comparator, and delta values.
+  - It should recognize repeated-seed half-width fields such as `average_accuracy_ci95` plus `average_accuracy_mean` as confidence-interval evidence.
+
+- Actual behavior:
+  - The source experiment artifacts include five completed condition summaries, five seeds per condition, no failed runs, and fields such as `average_accuracy_mean`, `average_accuracy_ci95`, `arc_challenge_accuracy_ci95`, and `hellaswag_accuracy_ci95`.
+  - `analyze_results` completed but paused with `reason: incomplete_results_table`.
+  - `transition_recommendation.json` reported baseline/comparator as null for required metrics.
+  - `result_analysis_synthesis.json` also stated that confidence intervals were missing, despite the repeated-seed condition summaries containing CI half-width fields.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started; this remains the persisted P6 live run.
+  - Existing session: the same persisted run advanced from real experiment execution into analysis, then exposed a result-analysis schema projection bug.
+  - Divergence: no fresh/resume divergence observed; this is an analysis artifact interpretation issue.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `resultAnalysis` can read `metrics.condition_summaries`, but baseline detection relies on row-local baseline labels and ignores top-level `baseline_marker`. Its CI extractor also handles direct low/high bounds but not generated repeated-seed half-width fields such as `<metric>_ci95` paired with `<metric>_mean`.
+
+- Code/test changes:
+  - Code: `src/core/resultAnalysis.ts` now marks baseline rows from top-level baseline markers, merges explicit `metrics.baseline` rows with tuned condition rows, extracts repeated-seed `<metric>_ci95` half-width intervals from `condition_summaries`, and prefers mean/delta statistics for baseline/comparator comparisons.
+  - Code: `src/core/nodes/analyzeResults.ts` now publishes the synthesized analysis result table when available instead of falling back to the older summary-only table shape.
+  - Tests: `tests/resultAnalysis.test.ts` and `tests/objectiveMetricPropagation.test.ts` cover the P6 condition-summary projection and run-scoped result-table handoff.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-06.
+  - Automated regression: passed with targeted `resultAnalysis` and objective propagation tests plus `npm run build`.
+  - Same-flow revalidation: passed on 2026-05-06. `analyze_results` now advances to `figure_audit`, recognizes repeated-seed confidence intervals from `condition_summaries`, selects `rank_32_dropout_0_05` as the strongest non-baseline comparator against `rank_8_dropout_0_0`, records 25 total/executed trials, and writes a complete result table headed by `accuracy_delta_vs_baseline_mean`.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/result_analysis.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/result_table.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/transition_recommendation.json`
+  - `<validation-workspace>/p6-paper-ready-live/outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment/condition_summary.json`
+
+---
+
+## Issue: LV-367
+
+- Status: repair implemented; automated regression/build passed; same-flow live revalidation passed
+- Validation target: the P6 repeated-seed LoRA rank/dropout live run must execute train plus evaluation rows for all required seed/condition cells, preserve the true internal failure when a generated runner fails, and release GPU/model state between seed runs.
+- Environment/session context: existing P6 live run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` in `<validation-workspace>/p6-paper-ready-live`, continued on 2026-05-06 after the helper-arity repairs allowed real Qwen/Qwen2.5-1.5B local execution to begin.
+
+- Reproduction steps:
+  1. Apply the generated-runner repairs for LoRA entrypoint context, `_coerce_int` defaults, and `_resolve_device_name` arity.
+  2. Re-run `run_experiments` with the explicit command override `/agent run run_experiments <run_id>` so the incorrect prior `needs_approval` state is not approved.
+  3. Inspect `run.log`, per-seed `training_evidence.json`, `metrics.json`, and `run_experiments_verify_report.json`.
+
+- Expected behavior:
+  - Each seed/condition cell should train and evaluate ARC-Challenge plus HellaSwag, then write completed rows with `average_accuracy` and baseline deltas when successful.
+  - Trained model/tokenizer objects should be released between seed runs to avoid accumulated VRAM pressure.
+  - If the study runner fails internally, the original internal error should be surfaced rather than being replaced by a generic fallback invocation error.
+
+- Actual behavior:
+  - The live run reached real local Qwen/Qwen2.5-1.5B execution on the dual RTX 4090 machine and started the 5-condition x 5-seed loop.
+  - Several seed cells reached `status=trained`, but the selected high-level per-seed executor was train-only, so rows did not receive evaluation metrics or `average_accuracy`.
+  - Later cells failed with CUDA OOM, consistent with model/tokenizer state not being reliably released between seed runs.
+  - The final failure message was masked as `TypeError: execute_lora_rank_dropout_study() missing 4 required positional arguments...` because `_main_invoke_callable(...)` swallowed a TypeError raised inside the runner and retried fallback call shapes.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started; this remains the persisted P6 live run.
+  - Existing session: the same-flow run advanced from immediate entrypoint failures into real model execution, then exposed train/eval assembly and GPU lifecycle problems.
+  - Divergence: no fresh/resume divergence observed; this is a generated execution projection and resource lifecycle bug in the live workflow.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the generated runner's helper resolver treats a train-only `run_one_seed_condition_lora_job(...)` as a complete train+evaluate per-seed executor, does not guarantee cleanup of successful model/tokenizer bundles before the next seed, and uses a broad TypeError fallback wrapper around the top-level study runner that can hide the real internal failure.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` now repairs generated LoRA repeated-seed runners so each seed/condition cell performs train plus ARC-Challenge/HellaSwag evaluation, records `average_accuracy`/baseline deltas, cleans up model resources between cells, and avoids broad entrypoint TypeError fallback masking.
+  - Code: `src/core/nodes/runExperiments.ts` keeps required-run completion checks aligned with the live verifier so zero-completed repeated-run payloads cannot be approved as successful evidence.
+  - Tests: `tests/implementSessionManager.test.ts` and `tests/runExperimentsExecutionProfile.test.ts` cover the generated-runner repair and required-run verifier behavior.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-06.
+  - Automated regression: passed with targeted `implementSessionManager` and `runExperimentsExecutionProfile` tests, plus `npm run build`.
+  - Same-flow revalidation: passed on 2026-05-06. The persisted P6 live run completed 25/25 required LoRA seed/condition cells with train plus ARC-Challenge/HellaSwag evaluation rows, wrote `average_accuracy` and baseline deltas, passed the run verifier, and paused at `run_experiments.needs_approval`.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/run.log`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/metrics.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/run_experiments_verify_report.json`
+  - `<validation-workspace>/p6-paper-ready-live/outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment/rank_16_dropout_0_0/seed_42/training_evidence.json`
+  - `<validation-workspace>/p6-paper-ready-live/outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment/rank_16_dropout_0_0/seed_46/training_evidence.json`
+
+---
+
+## Issue: LV-366
+
+- Status: repair implemented; automated regression/build passed; same-flow live revalidation advanced to `LV-367`
+- Validation target: generated LoRA runners must not pass `run_experiments` when all required repeated runs fail, and helper overrides must remain compatible with generated call sites.
+- Environment/session context: existing P6 live run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` in `<validation-workspace>/p6-paper-ready-live`, continued on 2026-05-06 after `LV-365` moved the runner past missing entrypoint context.
+
+- Reproduction steps:
+  1. Continue the repaired P6 run into `run_experiments`.
+  2. Observe the generated runner after data preparation and model preflight.
+  3. Inspect failures around `_coerce_int(...)`, `_resolve_device_name(...)`, and the verifier report for zero completed repeated runs.
+
+- Expected behavior:
+  - Generated helper overrides should preserve call-site arity, including `_coerce_int(value, default)` and `_resolve_device_name(device_info, device)`.
+  - A metrics payload with `required_run_count > 0` and `completed_run_count = 0` must fail `run_experiments` verification even if the process exits 0.
+
+- Actual behavior:
+  - The runner first failed in data preparation because a later `_coerce_int(value)` helper overrode an earlier default-aware `_coerce_int(value, default)` helper.
+  - After that repair, the runner failed every per-seed cell because a later one-argument `_resolve_device_name(device_context)` helper overrode the earlier two-argument helper used by training.
+  - Before the verifier guard was added, a zero-completed-run metrics payload could reach `run_experiments.needs_approval`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started.
+  - Existing session: the same persisted run exposed these helper override and verifier issues after entrypoint context materialization.
+  - Divergence: no session divergence observed; this is generated helper compatibility plus metrics-gate projection.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generated sections can redefine helper names with narrower signatures after earlier sections, and the run verifier trusted process success/objective evaluation before enforcing repeated-run completion counts.
+
+- Code/test changes:
+  - Code: widened generated `_coerce_int` default-argument compatibility before handoff.
+  - Code: widened generated `_resolve_device_name` arity compatibility before handoff.
+  - Code: made `run_experiments` fail metrics verification when required run/condition counts are present but zero completed runs/conditions are recorded.
+  - Tests: added targeted coverage for `_coerce_int`, `_resolve_device_name`, and zero-completed-run verifier failure.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-06.
+  - Automated regression: passed for targeted implement-session and run-experiments verifier tests.
+  - Build: passed.
+  - Same-flow revalidation: advanced into real Qwen execution and exposed `LV-367`.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/run.log`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/metrics.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/run_experiments_verify_report.json`
+
+---
+
+## Issue: LV-365
+
+- Status: repair implemented; automated regression/build passed; same-flow live revalidation advanced to `LV-366`
+- Validation target: after the P6 repeated-seed `implement_experiments` repair preserves the 5-condition x 5-seed LoRA rank/dropout contract, the generated runner must receive its required prepared data, device context, and model bundle at `run_experiments` handoff.
+- Environment/session context: existing P6 live run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` in `<validation-workspace>/p6-paper-ready-live`, continued on 2026-05-06 after `LV-364` same-flow revalidation advanced through `implement_experiments`.
+
+- Reproduction steps:
+  1. Continue the P6 live run through repaired `implement_experiments`.
+  2. Verify that the generated `bootstrap_contract.json` and `run_lora_rank_dropout_study.py` preserve the selected 5-condition x 5-seed design.
+  3. Allow the auto-handoff into `run_experiments`.
+  4. Inspect `run_experiments_verify_report.json`, `metrics.json`, and `exec_logs/run_experiments.txt`.
+
+- Expected behavior:
+  - The `run_experiments` command should invoke `execute_lora_rank_dropout_study(...)` with `config`, prepared study data, device/runtime context, and model bundle.
+  - The per-seed condition runner should also receive model name and device values needed to execute the repeated LoRA cells.
+  - Execution should start the governed 25-run condition sweep rather than failing at the Python entrypoint boundary.
+
+- Actual behavior:
+  - `implement_experiments` completed and generated a syntactically valid runner preserving `required_condition_count: 5`, `required_run_count: 25`, and seed schedule `[42,43,44,45,46]`.
+  - `run_experiments` failed during command execution before any condition ran.
+  - The run log reported: `TypeError: execute_lora_rank_dropout_study() missing 4 required positional arguments: 'config', 'prepared_data', 'device_context', and 'model_bundle'`.
+  - `metrics.json` still recorded the intended repeated-seed contract but had `completed_run_count: 0`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started; this is a continuation of the persisted P6 live run.
+  - Existing session: the persisted run now carries the correct repeated-seed contract into the generated implementation, but the execution handoff context does not materialize the required objects for the selected runner.
+  - Divergence: no session divergence observed; this is a generated-runner entrypoint/context projection bug in the live workflow.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the late handoff repair path recognizes the generated high-level LoRA study callable but does not populate the main execution context with prepared data, device context, runtime context, model bundle, and model/device aliases before dispatching to `_main_invoke_callable(...)`.
+
+- Code/test changes:
+  - Code: added a generated-runner repair that materializes LoRA study prepared data, device/runtime context, and model bundle before handoff, and projects model/device aliases into per-seed condition context.
+  - Code: repaired Namespace `parse_args` compatibility so an earlier marker no longer prevents remaining unguarded `parse_args(list(argv)...)` calls from being fixed.
+  - Tests: added targeted coverage for both the remaining Namespace parse-args repair and the LoRA study entrypoint context materialization repair.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-06.
+  - Automated regression: passed for targeted `implementSessionManager` repairs.
+  - Build: passed.
+  - Same-flow revalidation: the original missing `config`, `prepared_data`, `device_context`, and `model_bundle` entrypoint failure did not recur; the run advanced into data preparation/model preflight and exposed `LV-366`.
+
+- Evidence/artifacts:
+  - `<repo-root>/outputs/p6-preflight/p6-continue-implement_experiments-output.txt`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/run_experiments_verify_report.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/metrics.json`
+  - `<validation-workspace>/p6-paper-ready-live/outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment/run_lora_rank_dropout_study.py`
+
+---
+
+## Issue: LV-364
+
+- Status: repair implemented; automated regression/build passed; same-flow live revalidation advanced to `LV-365`
+- Validation target: after a paper-scale backtrack from `analyze_results` to `design_experiments`, the next `implement_experiments` run must preserve the selected repeated-seed design in the generated implementation contract and runner.
+- Environment/session context: existing P6 live run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` in `<validation-workspace>`, continued on 2026-05-06 after `analyze_results` correctly backtracked because the pilot lacked confidence intervals and repeated-run evidence.
+
+- Reproduction steps:
+  1. Continue the P6 live run through the backtracked `design_experiments` node.
+  2. Observe the selected design `5-seed high-rank dropout stability against locked baseline`.
+  3. Approve and run `implement_experiments`.
+  4. Inspect the generated public `experiment/bootstrap_contract.json` and `run_lora_rank_dropout_study.py`.
+
+- Expected behavior:
+  - The generated implementation contract should preserve the selected design's 5 repeated cells x 5 seeds contract, including baseline rank8/drop0.0 and high-rank rank16/rank32 dropout controls/treatments over seeds `[42,43,44,45,46]`.
+  - The generated runner should expose repeat/CI/variance artifacts rather than collapsing back to a 2-condition pilot.
+
+- Actual behavior:
+  - `implement_experiments` completed and `py_compile` passed.
+  - The generated `bootstrap_contract.json` set `required_condition_count: 2` and the generated runner locked `MAX_CONDITION_COUNT` to the same 2-condition pilot surface.
+  - This would allow the workflow to proceed while still lacking the evidence-scale contract that caused the earlier backtrack.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started; this is a continuation of the persisted P6 live run.
+  - Existing session: the persisted run correctly stored a repeated-seed selected design, but the implementation projection collapsed it when building the implementation contract.
+  - Divergence: no session divergence observed; this is a design-to-implementation projection bug in the live workflow.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the implementation contract/scaffold path relies on a baseline-first comparison contract or required condition markers and does not propagate repeated-cell/seed requirements from the selected experiment plan into the implementation instructions strongly enough.
+
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` now carries repeated-run contract fields such as `required_run_count`, `seed_schedule`, and `minimum_seeds_per_condition` into the planned condition contract and implementation instructions, and extracts rank/dropout condition markers instead of collapsing the selected design to a smaller pilot.
+  - Tests: `tests/implementSessionManager.test.ts` covers repeated-seed condition contract preservation before generated-runner handoff.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-06.
+  - Automated regression: passed for repeated-seed condition contract preservation.
+  - Build: passed.
+  - Same-flow revalidation: the original 2-condition pilot collapse did not recur; the regenerated runner preserved 5 conditions x 5 seeds and then exposed `LV-365`.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/experiment_plan.yaml`
+  - `<validation-workspace>/outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment/bootstrap_contract.json`
+  - `<validation-workspace>/outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment/run_lora_rank_dropout_study.py`
+
+---
+
 ## Current active status
 
 - Live-validation status and tracked defects:
+  - `LV-367` reproduced on 2026-05-06 after `LV-366` same-flow revalidation advanced into real Qwen/Qwen2.5-1.5B execution. The P6 runner began the 5-condition x 5-seed loop, but selected a train-only high-level per-seed executor, did not produce evaluation metrics/average accuracy rows, accumulated VRAM pressure across seed runs, and masked the internal failure behind a broad top-level TypeError fallback.
+  - `LV-366` repair implemented and same-flow live revalidation advanced to `LV-367` on 2026-05-06. Generated `_coerce_int` and `_resolve_device_name` helper override mismatches no longer block the runner, and `run_experiments` now rejects zero-completed-run metrics instead of treating them as approval-ready.
+  - `LV-365` repair implemented and same-flow live revalidation advanced to `LV-366` on 2026-05-06. The repeated-seed LoRA runner no longer fails immediately because the generated high-level study entrypoint was called without prepared data, device context, runtime context, and model bundle.
+  - `LV-364` repair implemented and same-flow live revalidation advanced to `LV-365` on 2026-05-06. The regenerated runner no longer collapses the selected repeated-seed stability design back to a 2-condition pilot; it preserved `required_condition_count: 5`, `required_run_count: 25`, and seeds `[42,43,44,45,46]`.
+  - `LV-363` repair implemented and same-flow live revalidation passed on 2026-05-06. `analyze_results` no longer pauses for `incomplete_results_table`; it now populates condition-row baseline/comparator comparisons, then correctly recommends `backtrack_to_design` for missing confidence intervals and weak repeated-run evidence.
+  - `LV-362` repair implemented and same-flow live revalidation passed on 2026-05-06. The active P6 `run_experiments` retry completed real local TinyLlama baseline/tuned pilot execution, promoted the condition-row `average_accuracy` delta to `accuracy_delta_vs_baseline`, and reached `run_experiments.needs_approval`.
+  - `LV-361` repair implemented and same-flow live revalidation advanced to `LV-362` on 2026-05-06. The P6 helper now got past the conditional `sentencepiece` bootstrap check; `implement_experiments` materialized the repaired LoRA rank/dropout runner, passed `py_compile`, and handed off to `run_experiments`.
+  - `LV-360` reproduced while trying to same-flow revalidate `LV-359`. The P6 continuation helper sent `/agent run implement_experiments`, observed the transient force-jump state where `currentNode=implement_experiments`, `run.status=paused`, and node status was still `pending`, treated it as a fresh stop boundary, queued `/quit` while the node was starting, and caused the Codex OAuth implementation stream to abort before a runnable implementation was produced.
+  - `LV-359` reproduced in the active P6 full live validation run after `LV-358` same-flow revalidation advanced through `implement_experiments`. The regenerated LoRA rank/dropout runner passed `py_compile` and `implement_experiments` handoff, but `run_experiments` failed immediately because the final entrypoint invoked `prepare_study_inputs()` without the generated `selected_model_info` and `device_info` inputs it requires.
+  - `LV-358` reproduced in the active P6 full live validation run after the `LV-357` deterministic module-check repair. The original false missing-package blocker no longer appeared, but bootstrap evaluation now hard-blocked on missing optional `evaluate` even though the contract described it as useful only if the repaired runner uses standardized metric helpers and the current runner already contains node-owned local evaluators.
+  - `LV-357` reproduced in the active P6 full live validation run while trying to revalidate `LV-356`. The run loaded the previous Namespace runner feedback, retried `implement_experiments`, then blocked before code generation because the bootstrap contract claimed the active Python interpreter was missing `transformers`, `datasets`, `peft`, and `accelerate`, even though the same validation workspace's `python3` can import those modules.
+  - `LV-356` reproduced in the active P6 full live validation run after `LV-355` same-flow revalidation advanced past the execution-plan mapping mismatch. The regenerated LoRA rank/dropout runner reached `run_experiments`, but the generated callable dispatcher fed an already-parsed `argparse.Namespace` back into `parse_args(list(argv) if argv is not None else None)`, failing before node-owned condition execution with `TypeError: 'Namespace' object is not iterable`.
+  - `LV-355` repair implemented and same-flow live revalidation advanced to `LV-356` on 2026-05-06. The regenerated LoRA rank/dropout runner no longer failed on the original execution-plan mapping keys and reached a later generated-runner Namespace dispatch boundary.
+  - `LV-354` repair implemented and same-flow live revalidation advanced to `LV-355` on 2026-05-06. The regenerated runner no longer failed on the original contract-flag argparse mismatch; `run_experiments` reached the runner's execution-plan resolver before exposing the next plan projection bug.
+  - `LV-353` repair implemented and same-flow live revalidation advanced to `LV-354` on 2026-05-06. The regenerated LoRA rank/dropout runner now preserves the supplied `--metrics-path`, and the original missing `manifest_payload` / `comparison_contract` / `planned_condition_contract` study invocation error did not recur before the next CLI contract mismatch was exposed.
+  - `LV-352` repair implemented and same-flow live revalidation advanced to `LV-353` on 2026-05-06. The regenerated runner no longer normalized `--metrics-path .../metrics.json` to the run directory; `run_experiments` reached the supplied metrics file path before exposing a new study-dispatch argument mismatch.
+  - `LV-351` repair implemented and same-flow live revalidation passed on 2026-05-06. `result_table.json` now projects the explicit `metrics.baseline` plus tuned `metrics.conditions` schema into a populated average-accuracy baseline/comparator row; the live run no longer pauses for `incomplete_results_table` and instead backtracks for genuine evidence-scale gaps.
+  - `LV-350` repair implemented and same-flow live revalidation passed on 2026-05-06. The P6 PTY helper no longer accepted stale replayed stop text while the persisted target node remained running; it recovered the stale `run_experiments` state, re-ran the node, and `run_experiments` reached `needs_approval` with a passing verifier report.
+  - `LV-349` repair implemented and same-flow live revalidation passed on 2026-05-06. The regenerated runner no longer reproduced the missing `device` / `benchmark_suite` baseline-dispatch failure; `run_experiments` completed real baseline plus five tuned-condition executions and wrote successful run-root metrics.
+  - `LV-348` repair implemented and same-flow live revalidation advanced to `LV-349` on 2026-05-06. The regenerated runner no longer reproduced the `StudyCondition` object bound into `deadline_unix_sec` failure.
+  - `LV-347` repair implemented and same-flow live revalidation advanced to `LV-348` on 2026-05-06. The regenerated runner no longer reproduced the `--plan` invalid-choice failure.
+  - `LV-346` repair implemented and same-flow live revalidation advanced to `LV-347` on 2026-05-06. The regenerated runner no longer reproduced the `Namespace.expanduser()` plan snapshot loader failure.
+  - `LV-345` reproduced in the active P6 full live validation run after `LV-343`/`LV-344` repairs allowed `implement_experiments` to regenerate and hand off a runner. `run_experiments` executed the generated runner but wrote failed metrics with `baseline_first_observed: false`, zero condition rows, and empty condition order even though the runner contains a concrete `run_locked_baseline_first_study(...)` and locked baseline-first condition builder. Repair in progress in the generated-runner final study resolver.
+  - `LV-344` reproduced while trying to revalidate `LV-343` with `npm run p6:continue`. The active run screen rendered `Add steering, or wait for the next approval.` while the P6 helper waited only for the older `Add steering, or wait for the next run or approval.` readiness text, so it timed out before issuing a retry command. Repair implemented in the P6 helper readiness pattern with targeted regression passing; same-flow live revalidation pending.
+  - `LV-343` reproduced in the active P6 full live validation run after the `LV-342` handoff repair advanced through `implement_experiments`. The regenerated runner passed implement-stage `py_compile`, but `run_experiments` failed immediately because the final entrypoint parsed args through `build_arg_parser().parse_args(...)` and then `initialize_run_context(...)` accessed missing `args.command_tokens`. Repair implemented in generated-runner handoff compatibility with targeted regression and build passing; same-flow live revalidation pending.
+  - `LV-342` reproduced in the active P6 full live validation run while revalidating `LV-341`. A regenerated `implement_experiments` candidate materialized a public `run_lora_rank_dropout_study.py`, but the handoff verifier rejected it as having no runnable artifact or `run_command` because runnable detection was decided before materialized nonstandard script artifacts were inferred. Repair implemented in handoff script inference; same-flow live revalidation pending.
+  - `LV-341` reproduced in the active P6 full live validation run after `implement_experiments` completed. The generated runner passed `py_compile`, but `run_experiments` failed three times because the runner ignored AutoLabOS `--metrics-out` and then passed `None` path values through `_namespace_get(...)` into `Path(...)`. Repair implemented in generated-runner handoff compatibility; same-flow live revalidation pending.
+  - `LV-340` reproduced in the active P6 full live validation run. `implement_experiments` bootstrap planning treated a missing public `baseline_first_manifest.json` that the implementation should create as a pre-code-generation local input requirement, blocking before a runnable implementation could be produced. Repair implemented; same-flow live revalidation advanced through `implement_experiments.needs_approval` and exposed `LV-341`.
+  - `LV-339` reproduced while force-resuming the active P6 live run. The P6 helper still observed stale active-running state in force mode, injected `/doctor` into an active node, and matched replayed unrelated node completion text as a stop boundary. Repair implemented in the helper; same-flow revalidation advanced back to `design_experiments.needs_approval`.
+  - `LV-338` reproduced after the LV-337 approval repair. The P6 helper treated the approval handoff/current-node completion as a stop boundary, queued `/quit` while `generate_hypotheses` was running, then exposed a second attach-time `/doctor` injection cancellation path. Repair implemented by observing the post-approval target node, removing approval handoff text from stop boundaries, and switching to observe mode when a run is already running after attach; same-flow revalidation advanced through `generate_hypotheses` and `design_experiments`.
+  - `LV-337` repair implemented and same-flow revalidation passed on 2026-05-05. Explicit orchestrator approval now allows `pause_for_human`, and the P6 run advanced from partial `analyze_papers` to `generate_hypotheses`.
+  - `LV-336` repair implemented and same-flow revalidation passed on 2026-05-05. The P6 continue helper now detects persisted stop boundaries in `run_record.json`, not only screen text.
+  - `LV-335` repair implemented and same-flow revalidation passed for the active-running observation path on 2026-05-05. `p6:continue` no longer injects `/doctor` into a run that is already active at attach.
+  - `LV-334` repair implemented and same-flow revalidation passed for active-running skip behavior on 2026-05-05. `p6:resume-check` skips opening a TUI against an already-running P6 node.
+  - `LV-333` repair implemented with targeted regression, build, and same-flow revalidation on 2026-05-05. The Codex OAuth Responses SSE reader now honors abort while awaiting stream reads.
+  - `LV-332` reproduced during P6 helper regression testing. Vitest global setup/teardown deleted the real P6 live validation workspace because `p6-paper-ready-live` was not in the validation-root preservation allowlist, removing the active run artifacts before continuation. Repair in progress by preserving the P6 real live workspace during test cleanup.
+  - `LV-331` reproduced during P6 paper-ready full live validation automation. `npm run p6:continue` successfully approved `collect_papers` and started `analyze_papers`, but the PTY helper kept waiting for a narrow approval log pattern, timed out while `analyze_papers` was already running, then terminated the TUI process. The live run was left with `analyze_papers.status: running` and no after-checkpoint/evidence artifact yet. Repair in progress in the P6 PTY helper and same-flow revalidation pending.
   - `LV-330` reproduced during rebuilt P0-8 AGB-001 same-flow TUI revalidation after the LV-329 repair. The missing-baseline brief contract was correctly blocked at `design_experiments`, but the runtime treated that deterministic governance blocker as retryable, exhausted three `design_experiments` attempts, then auto-rolled back to `generate_hypotheses`. Repair implemented in the state graph failure classifier with targeted regression, build, full test, harness validation, and rebuilt same-flow live revalidation passing: the repaired run failed once at `design_experiments`, did not emit `NODE_RETRY` or `NODE_ROLLBACK`, and left downstream experiment nodes pending.
   - `LV-329` reproduced during rebuilt P0-8 AGB-001 same-flow TUI revalidation after the LV-328 repair. The wrapper-alias failure no longer reproduced; the run advanced into `run_experiments`, then failed after 9 `run_experiments` executions and 2 automatic rollbacks because the AGB seed artifact-audit brief explicitly has no baseline/locked split while the generated experiment plan and runner require a baseline-first locked train/test split. Repair implemented in the brief-vs-design consistency gate with targeted regression, build, full test, harness validation, and rebuilt same-flow TUI revalidation passing for the original locked-split projection symptom: the rebuilt run blocked at `design_experiments` with `MISSING_BASELINE_CONTRACT_VIOLATED` and `MISSING_BASELINE_CLAIM_CEILING_VIOLATED` before `implement_experiments` or `run_experiments`.
   - `LV-328` reproduced in rebuilt P0-8 AGB-001 same-flow TUI validation while revalidating the LV-327 repair. The regenerated runner no longer failed at the support-split training-record boundary, but then failed `run_experiments` because `_invoke_runtime_wrapper(...)` searched final wrapper names while the generated script exposed only implementation-shaped helpers such as `execute_experiment(...)`. Repair implemented with targeted regression, build, full test, harness validation, and same-flow live revalidation passing for the original wrapper-alias symptom.
@@ -65,7 +774,7 @@ Path placeholders:
   - `LV-283` reproduced: regenerated PEFT runners can define a correct high-level `build_and_write_metrics(...)` contract writer but the final metrics dispatcher selects raw `write_metrics_json(...)` first and calls it without a `metrics` payload, causing second-stage execution to fail after experiment orchestration with `TypeError: write_metrics_json() missing 1 required positional argument: 'metrics'`.
   - `LV-282` reproduced: regenerated PEFT runners can materialize real model/data helpers under names such as `load_compact_model_and_tokenizer(...)` and `load_instruction_dataset(...)`, while the final condition execution dispatcher searches only narrower canonical names, causing every planned condition to fail and the metrics contract to observe zero successful tuned conditions.
   - `LV-281` reproduced: regenerated PEFT runners can define `cleanup_model_resources(...)` and `cleanup_torch_memory(...)` but call missing `cleanup_model_artifacts()`, causing second-stage execution to fail after local verification passes and failure metrics are written.
-  - `LV-280` reproduced: implement-stage local verification can treat shell output redirection targets such as `>/tmp/peft_study_help.txt` as required pre-existing artifacts, causing verification to fail before `py_compile` or `--help` can run.
+  - `LV-280` reproduced: implement-stage local verification can treat shell output redirection targets such as `><tmp>/peft_study_help.txt` as required pre-existing artifacts, causing verification to fail before `py_compile` or `--help` can run.
   - `LV-279` reproduced: regenerated PEFT runners can define `run_conditions_baseline_first(...)`, while the final `_entrypoint_run_conditions(...)` resolver searches only narrower helper names and then the failure metrics writer collapses because `write_metrics_payload(...)` requires `aggregated_metrics`.
   - `LV-278` reproduced: regenerated PEFT runners can define executable condition comparison helpers such as `run_baseline_first_condition_comparison(...)` and `run_condition_comparison(...)`, while the final `_run_conditions_from_config(...)` dispatcher searches only narrower names and fails before any condition executes.
   - `LV-266` mitigated: objective evaluation now downgrades accuracy-delta success when the winning PEFT alternative violates the objective's runtime/memory regression clause.
@@ -145,6 +854,1437 @@ Path placeholders:
 ---
 
 ## Research and paper-readiness watchlist
+
+## Issue: LV-363
+
+- Status: repair implemented; automated regression/build passed; same-flow live revalidation passed
+- Validation target: P6 `analyze_results` result-table discipline after `LV-362` allowed `run_experiments` to complete.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - active run id: `2dcc480e-b4e5-4863-9c7f-6872f9c672e7`
+  - current node: `analyze_results.needs_approval`
+  - metrics source: `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/metrics.json`
+- Reproduction steps:
+  1. Apply the `LV-362` objective metric condition-array synthesis repair.
+  2. Re-run `run_experiments` in the active P6 workspace and approve it into `analyze_results`.
+  3. Let `analyze_results` build `result_analysis.json`, `result_table.json`, and `transition_recommendation.json`.
+  4. Inspect the transition recommendation and result table.
+- Expected behavior:
+  - Since `metrics.conditions[]` contains a completed baseline row and a completed comparator row, result-table extraction should populate baseline and comparator values for `average_accuracy`, `arc_challenge_accuracy`, and `hellaswag_accuracy`.
+  - The analysis gate should still be allowed to downgrade claims for missing confidence intervals or two-condition pilot scope, but it should not claim the result table has null baseline/comparator values when measured values are present.
+- Actual behavior:
+  - `run_experiments` completed and `objective_evaluation.json` matched `accuracy_delta_vs_baseline=0.02083333333333348`.
+  - `analyze_results` completed but recommended `pause_for_human` with `reason: incomplete_results_table`.
+  - `transition_recommendation.json` reported:
+    - `average_accuracy ... baseline=null, comparator=null`
+    - `accuracy_delta_vs_baseline ... baseline=null, comparator=null`
+    - `arc_challenge_accuracy: baseline=null, comparator=null`
+  - `result_table.json` contained only a synthetic `primary` condition from the flattened metric table and no baseline/comparator comparisons.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; this is the active P6 full live validation workspace.
+  - Existing session: the resumed helper path reproduced the incomplete result-table projection after real run execution and result analysis.
+  - Divergence: no session-mode divergence observed; the mismatch is between measured condition rows and analysis-layer comparison extraction.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: result-analysis condition comparison extraction recognizes `is_baseline: true` and some nested `eval_metrics` schemas, but not the active P6 runner's `baseline: true`, direct `average_accuracy`, and `task_accuracies` schema. This leaves `condition_comparisons` empty and forces result-table validation to fall back to null contract rows.
+- Code/test changes:
+  - Code: result analysis now recognizes `baseline: true` condition rows, promotes direct `average_accuracy`, and derives per-task accuracies from `task_accuracies` / `task_reports` schemas for result-table comparison extraction.
+  - Tests: added `objectiveMetricPropagation` regression coverage for condition-array rows with baseline flags, average accuracy, and task accuracies.
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-06.
+  - Automated regression: `npm test -- tests/objectiveMetricPropagation.test.ts -t "baseline flags, average accuracy, and task accuracies|metrics.conditions has completed baseline and comparator rows|baseline is in metrics.baseline"` passed on 2026-05-06.
+  - Build: `npm run build` passed on 2026-05-06.
+  - Same-flow live revalidation: `analyze_results` no longer produced `incomplete_results_table`; it populated `result_table.json` with `metrics.conditions` comparison rows and then recommended `backtrack_to_design` for the genuine evidence-scale gap.
+- Follow-up risks:
+  - This repair should populate table cells from measured rows only. It must keep confidence-interval and pilot-scope weaknesses visible for downstream review and paper-readiness gates.
+- Evidence/artifacts:
+  - `<repo-root>/outputs/p6-preflight/p6-continue-analyze_results-output.txt`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/result_table.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/transition_recommendation.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/result_analysis.json`
+
+## Issue: LV-362
+
+- Status: repair implemented; automated regression/build passed; same-flow live revalidation passed
+- Validation target: P6 `run_experiments` metrics contract after the `LV-361` conditional fallback-tokenizer bootstrap repair.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - active run id: `2dcc480e-b4e5-4863-9c7f-6872f9c672e7`
+  - public runner: `<validation-workspace>/p6-paper-ready-live/outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment/run_lora_rank_dropout_study.py`
+  - helper command: `npm run p6:continue` with `AUTOLABOS_P6_NEXT_NODE=implement_experiments` and `AUTOLABOS_P6_COMMAND='/agent run implement_experiments {run_id}'`
+- Reproduction steps:
+  1. Apply the `LV-361` conditional module severity repair.
+  2. Force-run `implement_experiments` in the active P6 workspace.
+  3. Let the node materialize and verify the LoRA rank/dropout runner.
+  4. Let the automatic handoff enter `run_experiments` and execute the generated Python runner with `--output-dir` and `--metrics-path`.
+- Expected behavior:
+  - Real condition execution should remain visible in `metrics.json`.
+  - If condition rows include numeric `accuracy_delta_vs_baseline`, the objective metric evaluator should use that objective value or synthesize the equivalent top-level delta from the baseline/tuned rows.
+  - The metrics contract should not fail only because the runner uses a condition-row schema with `baseline: true`, `condition_marker`, and `average_accuracy`.
+- Actual behavior:
+  - `implement_experiments` completed after regenerating the runner and passing `python -m py_compile`.
+  - `run_experiments` loaded cached TinyLlama and cached datasets, executed two real local PEFT conditions on CUDA, and wrote completed rows.
+  - `metrics.json` contained condition-level values:
+    - baseline row `accuracy_delta_vs_baseline: 0`
+    - tuned row `accuracy_delta_vs_baseline: 0.02083333333333326`
+  - The top-level metrics object did not contain `accuracy_delta_vs_baseline`.
+  - The run paused with `Experiment metrics contract failed: Objective metric "accuracy_delta_vs_baseline" was not found in metrics.json.`
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; this is the active P6 full live validation workspace.
+  - Existing session: the resumed helper path advanced through `implement_experiments`, then reproduced the metrics-schema projection gap in the persisted live run.
+  - Divergence: no session-mode divergence observed; the mismatch is between condition-row metrics and objective-metric synthesis.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `synthesizeRelativeMetrics(...)` handles condition arrays only when the baseline row has a string `name` matching the baseline pattern and only synthesizes from a narrow metric-key list. The active P6 runner emits condition rows with `baseline: true`, `condition_marker`, and `average_accuracy`, so the objective evaluator sees no top-level `accuracy_delta_vs_baseline` even though the condition evidence is present.
+- Code/test changes:
+  - Code: `synthesizeRelativeMetrics(...)` now recognizes `conditions[]` rows that use explicit `baseline: true` / `is_baseline: true`, `condition_marker`, and `average_accuracy`, and promotes measured accuracy deltas to `accuracy_delta_vs_baseline`.
+  - Tests: added objective-metric regression coverage for condition arrays with explicit baseline flags and average accuracy.
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-06.
+  - Automated regression: `npm test -- tests/objectiveMetric.test.ts -t "condition arrays|synthesizes accuracy delta from PEFT recipe result rows|top-level condition object"` passed on 2026-05-06.
+  - Build: `npm run build` passed on 2026-05-06.
+  - Same-flow live revalidation: `run_experiments` completed on 2026-05-06, `objective_evaluation.json` matched `accuracy_delta_vs_baseline`, and the node reached `needs_approval`.
+- Follow-up risks:
+  - This repair should promote existing measured metrics only. It must not fabricate additional planned conditions, hide that the current execution is only a two-condition pilot, or turn workflow completion into paper readiness.
+- Evidence/artifacts:
+  - `<repo-root>/outputs/p6-preflight/p6-continue-implement_experiments-output.txt`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/metrics.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/run_record.json`
+
+## Issue: LV-361
+
+- Status: repair implemented; automated regression/build passed; same-flow live revalidation advanced to LV-362
+- Validation target: P6 `implement_experiments` bootstrap contract evaluation after the `LV-360` P6 helper stop-boundary repair.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - active run id: `2dcc480e-b4e5-4863-9c7f-6872f9c672e7`
+  - helper command: `npm run p6:continue` with `AUTOLABOS_P6_NEXT_NODE=implement_experiments` and `AUTOLABOS_P6_COMMAND='/agent run implement_experiments {run_id}'`
+  - preferred P6 model: `Qwen/Qwen2.5-1.5B`
+  - fallback P6 model: `TinyLlama/TinyLlama-1.1B-Chat-v1.0`
+- Reproduction steps:
+  1. Apply the `LV-360` helper stop-boundary repair.
+  2. Force-run `implement_experiments` in the active P6 workspace.
+  3. Let the implementation bootstrap/environment contract be generated and evaluated before code generation.
+  4. Observe the deterministic Python module check results.
+- Expected behavior:
+  - Deterministic checks should still hard-block truly required modules such as `torch`, `transformers`, `datasets`, `peft`, and `accelerate`.
+  - Conditional tokenizer helpers should not hard-block the preferred-model implementation path when the contract itself says the dependency is needed only if a fallback or Llama-family checkpoint is selected.
+  - A missing conditional tokenizer backend should be surfaced as a limitation or fallback risk, not consume implement retries before code generation.
+- Actual behavior:
+  - The helper no longer queued `/quit` early, so `LV-360` did not recur.
+  - Bootstrap evaluation failed before code generation with `check-python-module-sentencepiece: required Python module is unavailable (sentencepiece)`.
+  - Direct environment check confirmed `sentencepiece` is not installed.
+  - The bootstrap contract reason said: `Needed for tokenizer support if the selected checkpoint is TinyLlama or another Llama-family model.`
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; this is the active P6 full live validation workspace.
+  - Existing session: the resumed helper path reproduced the conditional-module hard-block.
+  - Divergence: no session-mode divergence observed; the mismatch is bootstrap severity classification.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `isOptionalBootstrapPythonModuleCheck(...)` handles explicit optional wording such as `if used`, but not conditional dependency wording like `if the selected checkpoint is ...`, so fallback-only tokenizer dependencies become hard blockers for the preferred-model implementation path.
+- Code/test changes:
+  - Code: missing `python_module_available` checks with conditional selected/fallback runtime wording no longer hard-block implementation before code generation.
+  - Tests: added targeted `implementSessionManager` coverage for conditional fallback tokenizer modules.
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-06.
+  - Automated regression: `npm test -- tests/implementSessionManager.test.ts tests/p6ContinueScript.test.ts -t "conditional fallback tokenizer modules|optional Python helper modules|python_module_available checks|declared Python module check fails|study preparation calls|p6 continue helper"` passed on 2026-05-06.
+  - Build: `npm run build` passed on 2026-05-06.
+  - Same-flow live revalidation: the original `sentencepiece` pre-code-generation hard-block did not recur; `implement_experiments` completed and handed off to `run_experiments`, which advanced to `LV-362`.
+- Follow-up risks:
+  - If the preferred Qwen path fails and the run falls back to TinyLlama, missing `sentencepiece` may become a real environment blocker and must remain visible in the failure artifacts.
+- Evidence/artifacts:
+  - `<repo-root>/outputs/p6-preflight/p6-continue-implement_experiments-output.txt`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/implement_experiments/bootstrap_contract.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/run_record.json`
+
+## Issue: LV-360
+
+- Status: repair implemented; automated regression passed; same-flow live revalidation advanced to LV-361
+- Validation target: P6 continuation helper while force-running `implement_experiments` to same-flow revalidate `LV-359`.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - active run id: `2dcc480e-b4e5-4863-9c7f-6872f9c672e7`
+  - helper command: `npm run p6:continue` with `AUTOLABOS_P6_NEXT_NODE=implement_experiments` and `AUTOLABOS_P6_COMMAND='/agent run implement_experiments {run_id}'`
+  - previous node state: `run_experiments.failed` with `prepare_study_inputs()` arity failure
+- Reproduction steps:
+  1. Keep the active P6 run at `run_experiments.failed` after `LV-359`.
+  2. Run the P6 continuation helper with a command override that force-runs `implement_experiments`.
+  3. Observe the TUI after `/agent run implement_experiments <run-id>` is sent.
+  4. Compare the helper transcript with persisted `run_record.json` and `events.jsonl`.
+- Expected behavior:
+  - The helper should ignore the transient force-jump state where the target node has become current but is still `pending`.
+  - It should keep observing until the target node reaches a real stop boundary such as `needs_approval`, `completed`, or `failed`.
+  - It should not queue `/quit` while a node is starting or running.
+- Actual behavior:
+  - The helper sent `/agent run implement_experiments <run-id>`.
+  - The TUI logged `Jumped to implement_experiments (force).`
+  - The helper immediately queued `/quit` before `implement_experiments` finished.
+  - The node then started and the queued quit interrupted the staged Codex OAuth stream.
+  - Persisted state ended with `implement_experiments.failed` and `Implementation execution failed before any runnable implementation was produced: Codex OAuth stream aborted`.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; this occurred in the active P6 full live validation workspace.
+  - Existing session: the resumed helper path reproduced the race after a manual force-run command.
+  - Divergence: no UI/session data divergence observed; the problem is the helper's stop-boundary interpretation during a force-jump/run transition.
+- Root cause hypothesis:
+  - Type: `race_timing_bug`
+  - Hypothesis: `has_record_stop_boundary(...)` treats `currentNode == target`, `run.status == paused`, and node status `pending` as a stop boundary. During `/agent run <previous-node>`, a force jump can persist exactly that transient state before the node starts, so the helper exits early and queues `/quit`.
+- Code/test changes:
+  - Code: `has_record_stop_boundary(...)` now ignores transient `currentNode == target`, `run.status == paused`, `node.status == pending` force-jump states.
+  - Tests: added P6 helper selftest coverage for the transient force-jump pending state.
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-06.
+  - Same-flow revalidation: the immediate `/quit` race did not recur on 2026-05-06; the same flow advanced to `LV-361`.
+- Follow-up risks:
+  - After the helper race is fixed, rerun the same `implement_experiments` force-run flow to revalidate `LV-359`; do not count the Codex OAuth abort as a scientific blocker.
+- Evidence/artifacts:
+  - `<repo-root>/outputs/p6-preflight/p6-continue-implement_experiments-output.txt`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/run_record.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/events.jsonl`
+
+## Issue: LV-359
+
+- Status: repair implemented; automated regression/build passed; same-flow live revalidation advanced through `implement_experiments` to LV-362
+- Validation target: P6 `run_experiments` second-stage execution after the `LV-358` optional helper-module bootstrap repair.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - active run id: `2dcc480e-b4e5-4863-9c7f-6872f9c672e7`
+  - public runner: `<validation-workspace>/p6-paper-ready-live/outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment/run_lora_rank_dropout_study.py`
+  - node: `run_experiments` after approving the `implement_experiments.needs_approval` handoff on 2026-05-06
+  - helper command: `npm run p6:continue` with `AUTOLABOS_P6_NEXT_NODE=run_experiments`
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the `LV-358` bootstrap severity repair.
+  2. Continue the active P6 live run into `implement_experiments`.
+  3. Allow the node-owned implementer to regenerate the LoRA rank/dropout runner and pass `python -m py_compile`.
+  4. Approve the `implement_experiments` gate into `run_experiments`.
+  5. Let the automatic verifier execute `python .../run_lora_rank_dropout_study.py --output-dir ... --metrics-path ... --preferred-model Qwen/Qwen2.5-1.5B --fallback-model TinyLlama/TinyLlama-1.1B-Chat-v1.0 --budget-profile single_run_locked`.
+- Expected behavior:
+  - The generated runner should materialize or bridge required study inputs before invoking `prepare_study_inputs(...)`.
+  - If a generated helper requires `selected_model_info` and `device_info`, the final entrypoint should pass those concrete values or a compatibility adapter should reject/repair the mismatch before handoff.
+  - `run_experiments` should advance to real training/evaluation or fail on an actual environment/model/data blocker, not on a generated helper arity mismatch.
+- Actual behavior:
+  - `implement_experiments` completed and handed off the runner after `py_compile` passed.
+  - `run_experiments` started and archived the previous metrics payload.
+  - The metrics payload reported failed status: `prepare_study_inputs() missing 2 required positional arguments: 'selected_model_info' and 'device_info'`.
+  - The run paused at `run_experiments` after retry 3/3, before node-owned condition execution could begin.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; this is the active P6 full live validation workspace.
+  - Existing session: the resumed/continued run reproduced the helper-input arity mismatch after an approved implement handoff.
+  - Divergence: no session-mode divergence observed; the failure is in generated runner call projection.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation can define a concrete `prepare_study_inputs(selected_model_info, device_info, ...)` helper, while the final executable entrypoint calls it with no arguments. The handoff verifier currently checks syntax and selected compatibility patterns but does not repair or fail this newer helper-input projection mismatch before `run_experiments`.
+- Code/test changes:
+  - Code: generated `prepare_study_inputs(...)` calls now receive compatible `selected_model_info`, `model_info`, `device_info`, and `runtime_device_info` context when those parameters are required.
+  - Tests: added targeted `implementSessionManager` coverage for study preparation calls that omit generated model and device context.
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-06.
+  - Automated regression: `npm test -- tests/implementSessionManager.test.ts -t "study preparation calls|high-level condition sweep|optional Python helper modules|python_module_available checks|parse_args calls|execution-plan mapping|study invoke kwargs"` passed on 2026-05-06.
+  - Build: `npm run build` passed on 2026-05-06.
+  - Same-flow live revalidation: the original `prepare_study_inputs()` missing `selected_model_info` / `device_info` error did not recur after the `LV-360` and `LV-361` blocking repairs; the run reached real condition execution and then exposed `LV-362`.
+- Follow-up risks:
+  - After this arity bridge is fixed, the active run still needs to reach real condition execution with visible failed-run accounting, parseable metrics, result tables, figure audit, review gating, paper writing or downgrade, and audit report generation before P6 can be considered complete.
+- Evidence/artifacts:
+  - `<repo-root>/outputs/p6-preflight/p6-continue-run_experiments-output.txt`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/events.jsonl`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/metrics.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/run_record.json`
+
+## Issue: LV-358
+
+- Status: repair implemented; automated regression/build passed; same-flow live revalidation advanced to LV-359
+- Validation target: P6 `implement_experiments` bootstrap contract evaluation after the `LV-357` deterministic Python module check repair.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - active run id: `2dcc480e-b4e5-4863-9c7f-6872f9c672e7`
+  - node: `implement_experiments` after approving the regenerated `design_experiments` output on 2026-05-06
+  - helper command: `npm run p6:continue` with `AUTOLABOS_P6_NEXT_NODE=implement_experiments`
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the `LV-357` deterministic package-check repair.
+  2. Rerun `design_experiments` after rollback and approve it into `implement_experiments`.
+  3. Let `implement_experiments` plan a bootstrap/environment contract.
+  4. Observe bootstrap evaluation before implementation materialization begins.
+- Expected behavior:
+  - Required Python modules such as `torch`, `transformers`, `datasets`, `peft`, and `accelerate` should still be deterministic hard gates.
+  - Optional or conditional helper libraries should not hard-block implementation when the contract describes them as useful only if used by a particular repaired runner path.
+  - A missing optional metric-helper package should be surfaced as a limitation/remediation, not consume implement retries before code generation.
+- Actual behavior:
+  - `LV-357`'s false missing-package blocker did not recur.
+  - Bootstrap evaluation blocked before code generation with `check_module_evaluate: required Python module is unavailable (evaluate)`.
+  - Direct environment check confirmed `evaluate` is not installed, but the bootstrap contract described it as `metric computation helpers if used by the repaired runner` and `Useful for standardized metric helpers`.
+  - The existing public runner already contains local ARC/HellaSwag evaluator functions, so `evaluate` is not a mandatory P6 evidence contract dependency.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; this is the active P6 live validation workspace.
+  - Existing session: the resumed run reproduced the optional-helper hard-block after design approval.
+  - Divergence: no UI/session divergence observed; the mismatch is in bootstrap check severity classification.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: deterministic module checks correctly detect missing modules after `LV-357`, but all missing `python_module_available` checks are treated as hard blockers even when the contract marks the module as optional, conditional, or merely useful.
+- Code/test changes:
+  - Code: bootstrap contract evaluation now treats missing `python_module_available` checks as non-blocking when the check/related requirement text marks the module as optional, useful only if used, or otherwise conditional.
+  - Tests: added targeted `implementSessionManager` coverage proving required missing Python modules still block while optional helper modules do not hard-block implementation.
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-06.
+  - Direct environment check: `python3 -c "import importlib.util; print(importlib.util.find_spec('evaluate'))"` returned `None` in the validation workspace on 2026-05-06.
+  - Automated regression: `npm test -- tests/implementSessionManager.test.ts -t "optional Python helper modules|python_module_available checks|declared Python module check fails|parse_args calls|execution-plan mapping|contract JSON argparse flags|study invoke kwargs|parent-directory helpers"` passed on 2026-05-06.
+  - Build: `npm run build` passed on 2026-05-06.
+  - Same-flow live revalidation: advanced past the original optional `evaluate` hard-block to `LV-359` on 2026-05-06.
+- Follow-up risks:
+  - Once optional helper severity is repaired, `implement_experiments` should reach materialization/handoff again, where `LV-356` still needs same-flow confirmation.
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/events.jsonl`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/implement_experiments/bootstrap_contract.json`
+  - `<repo-root>/outputs/p6-preflight/p6-continue-implement_experiments-output.txt`
+
+## Issue: LV-357
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-358
+- Validation target: P6 `implement_experiments` bootstrap contract evaluation while revalidating the `LV-356` generated-runner Namespace/list parse repair.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - active run id: `2dcc480e-b4e5-4863-9c7f-6872f9c672e7`
+  - node: `implement_experiments` retry after previous `run_experiments` feedback was loaded on 2026-05-06
+  - helper command: `npm run p6:continue` with `AUTOLABOS_P6_NEXT_NODE=implement_experiments` and the retry command configured for `implement_experiments`
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the `LV-356` list-wrapped Namespace parse_args repair.
+  2. Continue the active P6 live run from the `implement_experiments` retry path.
+  3. Let `implement_experiments` load the previous `run_experiments` feedback and plan a bootstrap/environment contract.
+  4. Observe bootstrap contract evaluation before materialization/handoff repairs can run.
+- Expected behavior:
+  - Bootstrap evaluation should verify `python_module_available` checks deterministically instead of trusting a stale or hallucinated package-missing `blocking_reason`.
+  - If declared modules such as `transformers`, `datasets`, `peft`, and `accelerate` are importable in the active validation workspace, bootstrap planning should proceed to materialization or a real remaining blocker.
+  - False package-missing claims should not consume implement retries or trigger rollback.
+- Actual behavior:
+  - The private bootstrap contract claimed: `The active Python interpreter is missing required Python packages: transformers, datasets, peft, and accelerate.`
+  - Direct validation in the same workspace showed `python3` resolves to the active Conda interpreter and successfully imports `transformers 5.3.0`, `datasets 4.7.0`, `peft 0.18.1`, and `accelerate 1.13.0`.
+  - `implement_experiments` blocked before code generation and rolled back to `design_experiments`, so the `LV-356` runner handoff repair was not same-flow confirmed.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; this is the active P6 live validation workspace.
+  - Existing session: the resumed run reproduced the bootstrap false-block while processing existing `run_experiments` feedback.
+  - Divergence: no UI/session divergence observed; the mismatch is between bootstrap-contract prose and deterministic Python environment reality.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `evaluateImplementBootstrapContract(...)` handles generated output paths conservatively but does not execute `python_module_available` checks, and it treats a package-missing `blocking_reason` as authoritative even when the declared modules are importable.
+- Code/test changes:
+  - Code: `evaluateImplementBootstrapContract(...)` now evaluates `command_available` and `python_module_available` checks deterministically, and ignores package-missing `blocking_reason` text when all declared Python module checks pass.
+  - Tests: added targeted `implementSessionManager` coverage for both importable-module false-block suppression and real missing-module blocking.
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-06.
+  - Direct environment check: `python3 -c "import transformers, datasets, peft, accelerate"` passed in the validation workspace on 2026-05-06.
+  - Automated regression: `npm test -- tests/implementSessionManager.test.ts -t "python_module_available checks|declared Python module check fails|parse_args calls|execution-plan mapping|contract JSON argparse flags|study invoke kwargs|parent-directory helpers"` passed on 2026-05-06.
+  - Build: `npm run build` passed on 2026-05-06.
+  - Same-flow live revalidation: advanced past the original false `transformers` / `datasets` / `peft` / `accelerate` missing-package blocker to `LV-358` on 2026-05-06.
+- Follow-up risks:
+  - Once bootstrap false-blocking is repaired, the run still needs to re-enter implement/handoff so the `LV-356` repair can be confirmed or a later real runner/runtime blocker can be exposed.
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/events.jsonl`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/implement_experiments/bootstrap_contract.json`
+  - `<repo-root>/outputs/p6-preflight/p6-continue-implement_experiments-output.txt`
+
+## Issue: LV-356
+
+- Status: repair implemented; automated regression/build passed; same-flow live revalidation preempted by LV-357
+- Validation target: P6 `run_experiments` execution of the regenerated LoRA rank/dropout runner after the `LV-355` execution-plan mapping repair.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - active run id: `2dcc480e-b4e5-4863-9c7f-6872f9c672e7`
+  - node: `run_experiments` after `implement_experiments` completed on 2026-05-06
+  - public runner: `<validation-workspace>/p6-paper-ready-live/outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment/run_lora_rank_dropout_study.py`
+  - helper command: `npm run p6:continue` with `AUTOLABOS_P6_NEXT_NODE=implement_experiments` and the retry command configured for `implement_experiments`
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the `LV-355` execution-plan mapping repair.
+  2. Continue the active P6 live run from the `implement_experiments.needs_approval` gate.
+  3. Allow `implement_experiments` to regenerate the runner and hand off to `run_experiments`.
+  4. Let `run_experiments` execute the generated runner with `--output-dir` and `--metrics-path`.
+- Expected behavior:
+  - Namespace-aware generated-runner dispatch should not feed an already parsed `argparse.Namespace` back into a sequence-oriented `parse_args(...)` call.
+  - A parser helper written as `parse_runner_args(argv)` should return the supplied Namespace or otherwise unwrap it before calling `list(argv)`.
+  - The runner should advance to node-owned condition execution or fail on a real ML/runtime/evidence blocker.
+- Actual behavior:
+  - The runner reached `run_and_finalize_study(...)`, selected `prepare_runner_setup(...)`, and passed a parsed Namespace as the first positional argument.
+  - `prepare_runner_setup(...)` called `parse_runner_args(argv)`.
+  - `parse_runner_args(...)` called `parser.parse_args(list(argv) if argv is not None else None)`.
+  - Python raised `TypeError: 'Namespace' object is not iterable` before any condition execution.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; this is the active P6 live validation workspace.
+  - Existing session: the resumed run advanced from the repaired `implement_experiments` handoff into `run_experiments` and reproduced the Namespace/list projection mismatch.
+  - Divergence: no UI/session divergence observed; the mismatch is internal to generated-runner argument projection.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the generated-runner handoff repair makes direct `parse_args(args=...)` and `parse_args(args)` calls Namespace-aware, but it does not cover the common generated pattern `parse_args(list(argv) if argv is not None else None)`.
+- Code/test changes:
+  - Code: extended the generated-runner Namespace parse_args handoff repair in `src/core/agents/implementSessionManager.ts` to cover `parse_args(list(argv) if argv is not None else None)` and equivalent list-wrapped argument names.
+  - Tests: added targeted coverage in `tests/implementSessionManager.test.ts` for list-wrapped `parse_args(...)` calls receiving an `argparse.Namespace` from workflow dispatch.
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-06.
+  - Automated regression: `npm test -- tests/implementSessionManager.test.ts -t "parse_args calls|execution-plan mapping|contract JSON argparse flags|study invoke kwargs|parent-directory helpers"` passed on 2026-05-06.
+  - Build: `npm run build` passed on 2026-05-06.
+  - Same-flow live revalidation: attempted on 2026-05-06, but `implement_experiments` was preempted by `LV-357` before a new runner handoff could apply this repair.
+- Follow-up risks:
+  - Once Namespace/list parsing is repaired, the live run may advance into genuine model/data loading, PEFT runtime, CUDA memory/runtime, metrics completeness, failed-run visibility, or paper-scale evidence blockers.
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/events.jsonl`
+  - `<repo-root>/outputs/p6-preflight/p6-continue-implement_experiments-output.txt`
+
+## Issue: LV-355
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-356
+- Validation target: P6 `run_experiments` execution of the regenerated LoRA rank/dropout runner after the `LV-354` CLI alias repair.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - node: `run_experiments` after `implement_experiments` completed on 2026-05-06
+  - public runner: `<validation-workspace>/p6-paper-ready-live/outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment/run_lora_rank_dropout_study.py`
+  - helper command: `npm run p6:continue` with `AUTOLABOS_P6_NEXT_NODE=implement_experiments` and the retry command configured for `implement_experiments`
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the `LV-354` generated-runner argparse alias repair.
+  2. Continue the active P6 live run from the `implement_experiments.needs_approval` gate.
+  3. Allow `implement_experiments` to regenerate the runner and hand off to `run_experiments`.
+  4. Let `run_experiments` execute the generated runner with the baseline-first comparison and planned-condition contracts.
+- Expected behavior:
+  - The runner should convert the baseline-first plan resolver output into a sequence of baseline/tuned condition entries.
+  - Resolver mappings that expose the ordered conditions under generated names such as `entries` or `ordered_conditions` should be accepted.
+  - The runner should advance to node-owned baseline/condition execution or fail on a real experiment/runtime blocker.
+- Actual behavior:
+  - The runner accepted the scheduler command and reached `execute_study_workflow`.
+  - `_resolve_workflow_execution_plan(...)` selected the generated `resolve_execution_plan` alias, which returns a mapping containing `entries` and `ordered_conditions`.
+  - The wrapper checked only `ordered_execution_plan`, `execution_plan`, `ordered_plan`, `plan`, and `conditions`, then raised `StudyRunnerError: Execution plan resolver did not return a sequence of conditions.`
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; this is the active P6 live validation workspace.
+  - Existing session: the resumed run advanced from the repaired `implement_experiments` handoff into `run_experiments` and reproduced the execution-plan projection mismatch.
+  - Divergence: no UI/session divergence observed; the mismatch is internal to generated-runner plan projection.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: generated baseline-first planning helpers return a rich mapping, but the final workflow wrapper recognizes only a subset of common sequence keys and does not fall back to the already-generated fallback plan when the mapping uses `entries` / `ordered_conditions`.
+- Code/test changes:
+  - Added a generated-runner handoff repair that accepts execution-plan mappings exposing the ordered sequence as `ordered_conditions` or `entries` before `run_experiments` executes the script.
+  - Added an `implementSessionManager` regression test covering the repaired mapping keys.
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-06.
+  - Automated regression: `npm test -- tests/implementSessionManager.test.ts -t "execution-plan mapping|contract JSON argparse flags|study invoke kwargs|parent-directory helpers"` passed on 2026-05-06.
+  - Build: `npm run build` passed on 2026-05-06.
+  - Same-flow live revalidation: advanced past the original execution-plan mapping mismatch to `LV-356` on 2026-05-06.
+- Follow-up risks:
+  - Once execution-plan projection is repaired, the live run may still expose real ML-runtime limits, under-executed conditions, metrics-schema gaps, or paper-scale evidence insufficiency.
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/events.jsonl`
+  - `<repo-root>/outputs/p6-preflight/p6-continue-implement_experiments-output.txt`
+
+## Issue: LV-354
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-355
+- Validation target: P6 `run_experiments` execution of the regenerated LoRA rank/dropout runner after the `LV-353` study-dispatch alias repair.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - node: `run_experiments` after `implement_experiments` completed on 2026-05-06
+  - public runner: `<validation-workspace>/p6-paper-ready-live/outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment/run_lora_rank_dropout_study.py`
+  - helper command: `npm run p6:continue` with `AUTOLABOS_P6_NEXT_NODE=implement_experiments` and the retry command configured for `implement_experiments`
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the `LV-353` generated-runner study contract alias repair.
+  2. Continue the active P6 live run from the `implement_experiments.needs_approval` gate.
+  3. Allow the helper to approve `implement_experiments`; the run automatically advances into `run_experiments`.
+  4. Let `run_experiments` execute the generated runner command containing `--comparison-contract-json` and `--planned-condition-contract-json`.
+- Expected behavior:
+  - The runner CLI accepted by the handoff verifier should match the scheduler's `run_command` flags before handoff.
+  - Contract JSON aliases should bind to the same destinations as the generated `--comparison-contract` and `--planned-condition-contract` arguments.
+  - The runner should advance to node-owned baseline/condition execution or fail on a real experiment/runtime blocker.
+- Actual behavior:
+  - The regenerated runner accepted `--comparison-contract` and `--planned-condition-contract`.
+  - The `run_experiments` command supplied `--comparison-contract-json` and `--planned-condition-contract-json`.
+  - Python argparse rejected the command before experiment execution with unrecognized arguments for the two `*-contract-json` flags.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; this is the active P6 live validation workspace.
+  - Existing session: the resumed run advanced from the repaired `implement_experiments` handoff into `run_experiments` and reproduced the CLI contract mismatch.
+  - Divergence: no UI/session divergence observed; the mismatch is between the scheduler's run-command projection and the generated runner's argparse aliases.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the late handoff repair adds several run-command argparse aliases, but it does not yet map scheduler-emitted contract JSON flags onto the semantically equivalent generated contract flags, so verifier compatibility can pass without the exact second-stage CLI surface being accepted.
+- Code/test changes:
+  - Code: added scheduler-emitted contract JSON aliases to the generated-runner `run_command` argparse alias repair in `src/core/agents/implementSessionManager.ts`.
+  - Tests: added targeted coverage in `tests/implementSessionManager.test.ts` for `--comparison-contract-json` and `--planned-condition-contract-json` binding to generated contract argparse destinations.
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-06.
+  - Automated regression: pass on 2026-05-06 with `npm test -- tests/implementSessionManager.test.ts -t "contract JSON argparse flags|study invoke kwargs|parent-directory helpers"`.
+  - Build: pass on 2026-05-06 with `npm run build`.
+  - Same-flow live revalidation: advanced past the original contract-flag argparse mismatch to `LV-355` on 2026-05-06.
+- Follow-up risks:
+  - Once argparse aliasing is repaired, the live run may still expose real ML-runtime limits, under-executed conditions, metrics-schema gaps, or paper-scale evidence insufficiency.
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/events.jsonl`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/metrics.json`
+  - `<repo-root>/outputs/p6-preflight/p6-continue-implement_experiments-output.txt`
+
+## Issue: LV-353
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-354
+- Validation target: P6 `run_experiments` execution of the regenerated LoRA rank/dropout runner after the `LV-352` metrics-path repair.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - node: `run_experiments` after `implement_experiments` completed on 2026-05-06
+  - public runner: `<validation-workspace>/p6-paper-ready-live/outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment/run_lora_rank_dropout_study.py`
+  - helper command: `npm run p6:continue` with `AUTOLABOS_P6_NEXT_NODE=implement_experiments` and the retry command configured for `implement_experiments`
+- Reproduction steps:
+  1. Continue the active P6 live run from the `implement_experiments.needs_approval` gate created after the `LV-352` repair.
+  2. Allow the helper to approve `implement_experiments`; the run automatically advances into `run_experiments`.
+  3. Let `run_experiments` execute the generated runner with `--manifest`, `--output-dir`, and `--metrics-path`.
+  4. Inspect the `run_experiments` event log and failed metrics stderr payload.
+- Expected behavior:
+  - The final study dispatcher should pass the manifest payload, comparison contract, and planned condition contract into the generated baseline-first study function.
+  - Missing optional arguments should be filled from already loaded manifest/context data, not by retrying with no positional study contract.
+  - The runner should begin baseline-first condition execution or write a trustworthy failed metrics payload for a real experiment/runtime blocker.
+- Actual behavior:
+  - The event log shows the runner command preserved `--metrics-path <validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/metrics.json`.
+  - `run_experiments` failed immediately with `run_baseline_first_study() missing 3 required positional arguments: 'manifest_payload', 'comparison_contract', and 'planned_condition_contract'`.
+  - The traceback points from `_run_study(...)` through `_invoke_with_supported_kwargs(...)` into `run_baseline_first_study(...)`, before any baseline or condition execution.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; this is the active P6 live validation workspace.
+  - Existing session: the resumed run advanced from the repaired `implement_experiments` handoff into `run_experiments` and reproduced the new dispatcher mismatch.
+  - Divergence: no UI/session divergence observed; the mismatch is inside the generated runner's in-memory study invocation projection.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the generated final dispatcher builds a generic invoke-kwargs map that omits semantically required aliases for `manifest_payload`, `comparison_contract`, and `planned_condition_contract`, so the helper's signature filter cannot bind the baseline-first study contract.
+- Code/test changes:
+  - Code: added generated-runner study contract invoke alias repair in `src/core/agents/implementSessionManager.ts`
+  - Tests: added targeted coverage in `tests/implementSessionManager.test.ts`
+- Regression status:
+  - Automated regression test linked: yes, study invoke kwargs contract alias coverage in `tests/implementSessionManager.test.ts`
+  - Re-validation result: same-flow live revalidation on 2026-05-06 advanced past the original missing `manifest_payload`, `comparison_contract`, and `planned_condition_contract` TypeError; the run then exposed `LV-354`.
+- Follow-up risks:
+  - Once dispatcher argument binding is repaired, the next live run may still expose real ML-environment blockers, condition under-execution, or evidence-floor gaps before P6 can progress toward paper-ready validation.
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/events.jsonl`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/metrics.json`
+  - `<repo-root>/outputs/p6-preflight/p6-continue-implement_experiments-output.txt`
+
+## Issue: LV-352
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-353
+- Validation target: P6 `run_experiments` execution of the regenerated LoRA rank/dropout runner after the updated `implement_experiments` handoff for run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7`.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - node: `run_experiments` after `implement_experiments` completed on 2026-05-06
+  - public runner: `<validation-workspace>/p6-paper-ready-live/outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment/run_lora_rank_dropout_study.py`
+  - helper command: `npm run p6:continue` with `AUTOLABOS_P6_NEXT_NODE=run_experiments`
+- Reproduction steps:
+  1. Continue the active P6 live run from the `implement_experiments.needs_approval` gate.
+  2. Approve `implement_experiments` and request `run_experiments`.
+  3. Allow the TUI/helper to execute the generated runner command with `--manifest`, `--output-dir`, and `--metrics-path`.
+  4. Inspect `run_experiments_verify_report.json` and the event log after the command retries.
+- Expected behavior:
+  - The runner should preserve the supplied `--metrics-path` file path ending in `metrics.json`.
+  - Successful or failed experiment payloads should be written to that metrics file, not to the run directory.
+  - If the experiment itself fails, the failure should be represented as a metrics artifact and not masked by metrics-writer path collapse.
+- Actual behavior:
+  - The event log shows the command passed `--metrics-path <validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/metrics.json`.
+  - The runner log then reports `metrics_path=<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7`.
+  - The runner executed the baseline and comparator path briefly, then failed while writing the summary payload with `IsADirectoryError`.
+  - The failure handler repeated the same directory write attempt, so no current metrics payload could be trusted.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; this is the active P6 live validation workspace.
+  - Existing session: the resumed run preserved the correct command in the event log but the generated runner projected the metrics path incorrectly at runtime.
+  - Divergence: no UI/session divergence observed; the mismatch is between command-line argument text and in-runner path normalization.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: a generated CLI/path compatibility shim or Namespace-aware parser normalizes `--metrics-path` by taking its parent/run root instead of preserving the explicit file path supplied by AutoLabOS.
+- Code/test changes:
+  - Code: repaired generated parent-directory helper return-value normalization in `src/core/agents/implementSessionManager.ts`
+  - Tests: added targeted coverage in `tests/implementSessionManager.test.ts`
+- Regression status:
+  - Automated regression test linked: yes, parent-directory helper repair coverage in `tests/implementSessionManager.test.ts`
+  - Re-validation result: the original `IsADirectoryError` metrics-path collapse did not reproduce; the same flow advanced to `LV-353`
+- Follow-up risks:
+  - After metrics-path preservation is fixed, the current implementation contract still appears to run only a locked baseline plus one comparator rather than the full 8-condition P6 evidence floor, so the run may remain claim-limited even if execution succeeds.
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/run_experiments_verify_report.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/events.jsonl`
+  - `<repo-root>/outputs/p6-preflight/p6-continue-run_experiments-output.txt`
+
+## Issue: LV-351
+
+- Status: repair implemented; same-flow live revalidation passed
+- Validation target: P6 `analyze_results` projection of baseline/comparator result-table rows after a successful `run_experiments` execution for run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7`.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - node: `analyze_results` after `run_experiments` reached `needs_approval` with a passing verifier report
+  - metrics source: `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/metrics.json`
+- Reproduction steps:
+  1. Build AutoLabOS with the `LV-350` helper freshness repair.
+  2. Re-run the active P6 `run_experiments` node so it writes successful run-root metrics.
+  3. Approve the `run_experiments` gate and execute `analyze_results`.
+  4. Inspect `result_table.json` and the `analyze_results` pending transition.
+- Expected behavior:
+  - The result table should expose baseline and comparator values from the executed metrics for each reported primary row.
+  - A completed baseline plus successful tuned conditions should produce at least one condition comparison row with non-null baseline, comparator, and delta.
+  - If evidence is still too small for paper-ready claims, the node should downgrade for confidence/sample-size reasons, not because the table lost executed values.
+- Actual behavior:
+  - Run-root `metrics.json` contains:
+    - `baseline.average_accuracy=0.5625`
+    - `best_tuned_condition.average_accuracy=0.625`
+    - `accuracy_delta_vs_baseline=0.0625`
+    - `completed_condition_count=5`
+  - `result_table.json` contains a single `primary` row whose metrics are flattened, while `comparisons` is empty.
+  - `result_analysis.json` reports `incomplete_results_table` with evidence such as `baseline=null, comparator=null`.
+  - `analyze_results` paused correctly instead of auto-promoting downstream nodes.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; this is the active P6 live run after the `LV-350` same-flow revalidation.
+  - Existing session: persisted metrics and public CSV contain baseline/comparator values, but the analysis result table projection omits them.
+  - Divergence: no TUI/session divergence observed; the issue is an artifact-projection mismatch between metrics and result table.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: result-table construction prefers generic objective metric extraction and does not synthesize comparison rows from the common `baseline` / `best_tuned_condition` / `conditions` metrics schema emitted by the generated LoRA runner. The table therefore loses baseline/comparator structure even though the underlying metrics are present.
+- Code/test changes:
+  - Code:
+    - `src/core/resultAnalysis.ts`
+      - merges an explicit `metrics.baseline` row into condition-row analysis when tuned rows live under `metrics.conditions`.
+      - recognizes `metrics.best_tuned_condition` as an explicit comparator selector.
+      - prioritizes `average_accuracy` and `accuracy_delta_vs_baseline` when ranking condition-comparison metrics.
+  - Tests:
+    - `tests/objectiveMetricPropagation.test.ts`
+      - added regression coverage for live-run-shaped metrics where baseline is a top-level object and tuned rows are in `conditions`.
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-06.
+  - Automated regression passed on 2026-05-06 with `npm test -- tests/objectiveMetricPropagation.test.ts -t "baseline is in metrics.baseline"`.
+  - Related result-table regression group passed on 2026-05-06 with `npm test -- tests/objectiveMetricPropagation.test.ts -t "incomplete table|metrics.conditions|metrics.results|metrics.result_rows|metrics.recipes"`.
+  - Build passed on 2026-05-06 with `npm run build`.
+  - Same-flow revalidation passed on 2026-05-06: retrying `analyze_results` regenerated `result_table.json` with `average_accuracy` delta `0.0625` and no longer produced the `incomplete_results_table` transition.
+- Follow-up risks:
+  - Even after table projection is repaired, the current run should remain claim-limited because it is a small preflight slice with task-level eval count 8 and no confidence intervals.
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/metrics.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/result_table.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/result_analysis.json`
+
+## Issue: LV-350
+
+- Status: repair implemented; same-flow live revalidation passed
+- Validation target: P6 helper continuation of the active full live validation run after `implement_experiments` completed for run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7`.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - node: `run_experiments` after `implement_experiments` revalidation passed locally with the generated LoRA rank/dropout runner
+  - helper command: `npm run p6:continue` with `AUTOLABOS_P6_COMMAND=/agent retry {next_node} {run_id}`
+  - public runner: `<validation-workspace>/p6-paper-ready-live/outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment/run_lora_rank_dropout_study.py`
+- Reproduction steps:
+  1. Build AutoLabOS with the `LV-349` high-level sweep dispatch repair.
+  2. Continue the active P6 run with the P6 PTY helper and `/agent retry implement_experiments 2dcc480e-b4e5-4863-9c7f-6872f9c672e7`.
+  3. Let `implement_experiments` complete and auto-handoff to `run_experiments`.
+  4. Observe the helper while the TUI replay still contains older `Node run_experiments failed` lines from previous attempts.
+- Expected behavior:
+  - The helper should observe until a persisted stop boundary for the current node is fresh relative to the pre-command signature.
+  - Replayed terminal text should not be enough to stop observation while `run_record.json` still reports the target node as `running`.
+  - The helper should not send `/quit` into an active `run_experiments` execution.
+- Actual behavior:
+  - The helper returned from stop-boundary observation on stale replay text even though the persisted run still reported:
+    - `status: running`
+    - `currentNode: run_experiments`
+    - `graph.nodeStates.run_experiments.status: running`
+  - It then sent `/quit`, timed out waiting for `Bye`, and terminated the TUI process group.
+  - The latest `exec_logs/run_experiments.txt` recorded `The operation was aborted`.
+  - The expected run-root `metrics.json` was not present after the abort.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; this is a resumed helper attachment to the active P6 validation workspace.
+  - Existing session: the existing run retained replayed `run_experiments failed` text from prior attempts and a fresh persisted `running` state for the current attempt.
+  - Divergence: the TUI replay projection contained old stop text, while persisted state showed the node was still active.
+- Root cause hypothesis:
+  - Type: `resume_reload_bug`
+  - Hypothesis: `wait_for_stop_boundary(...)` searches newly read PTY chunks for the node stop regex but does not require the persisted node boundary signature to change before accepting a text match. Replayed transcript from a resumed TUI can therefore masquerade as a fresh stop event.
+- Code/test changes:
+  - Code:
+    - `scripts/p6-approve-and-run-next.py`
+      - added a persisted-state freshness gate for stop-boundary acceptance.
+      - `wait_for_stop_boundary(...)` now treats screen text as authoritative only when the run record is unavailable or the target node has a fresh persisted stop-boundary signature.
+      - stale replay text is ignored while the target node still reports `running` with the original boundary signature.
+  - Tests:
+    - `tests/p6ContinueScript.test.ts`
+      - exercises the helper selftest path, including stale-replay stop-boundary rejection.
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-06.
+  - Automated regression passed on 2026-05-06 with `npm test -- tests/p6ContinueScript.test.ts`.
+  - Same-flow revalidation passed on 2026-05-06: the helper recovered the stale running `run_experiments` node, re-ran it without aborting the active command, and the node reached `needs_approval` with `run_experiments_verify_report.json.status=pass`.
+- Follow-up risks:
+  - Once fixed, the active run may need a forced retry or cleanup from stale `run_experiments.status: running` before the real runner can execute to metrics.
+  - After the helper no longer aborts active runs, `run_experiments` may still expose true model-loading, dataset fallback, CUDA, budget, or result-table contract blockers.
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/run_record.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/run_experiments_verify_report.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/metrics.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/exec_logs/run_experiments.txt`
+  - `<repo-root>/outputs/p6-preflight/p6-continue-implement_experiments-output.txt`
+  - `<repo-root>/outputs/p6-preflight/p6-continue-run_experiments-output.txt`
+
+## Issue: LV-349
+
+- Status: repair implemented; same-flow live revalidation passed
+- Validation target: P6 `run_experiments` execution of the regenerated LoRA rank/dropout runner for run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` while revalidating `LV-348`.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - node: `run_experiments` after `implement_experiments` completed on 2026-05-06
+  - public runner: `<validation-workspace>/p6-paper-ready-live/outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment/run_lora_rank_dropout_study.py`
+  - command source: `run_context.run_command`
+- Reproduction steps:
+  1. Build AutoLabOS with the `LV-348` deadline argument repair.
+  2. Continue the active P6 run with `/agent retry implement_experiments 2dcc480e-b4e5-4863-9c7f-6872f9c672e7`.
+  3. Allow `implement_experiments` to regenerate the public LoRA rank/dropout runner and hand off to `run_experiments`.
+  4. Let the automatic verifier execute `python .../run_lora_rank_dropout_study.py --plan plan_1 --output-dir ... --metrics-path ...`.
+- Expected behavior:
+  - The final condition dispatcher should materialize or reuse the generated device/runtime object and bounded benchmark suite.
+  - Baseline-first execution should call `run_unmodified_base_baseline(...)` with `plan`, `selected_model_name`, `device`, `output_paths`, and `benchmark_suite`.
+  - The run should reach real baseline evaluation or an honest model/dataset/runtime blocker, not fail because dispatcher arguments are missing.
+- Actual behavior:
+  - `run_experiments` entered `run_lora_rank_dropout_study`.
+  - `metrics.json` recorded the baseline condition `unmodified_base` as failed before real evaluation.
+  - The baseline error was:
+    - `TypeError: run_unmodified_base_baseline() missing 4 required positional arguments: 'selected_model_name', 'device', 'output_paths', and 'benchmark_suite'`
+  - Traceback shows `_execute_condition_record(...)` calling `_call_with_supported_kwargs(runner, **call_kwargs)` where `call_kwargs` contains `plan`, `output_paths`, and `selected_model_name`, but not `device` or `benchmark_suite`.
+  - Tuned conditions were then skipped with `baseline_failed_or_unavailable`, preserving the baseline-first no-substitution policy.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; this is a continuation of the active P6 full live validation run after rebuilding AutoLabOS.
+  - Existing session: the persisted run advanced from the previous `LV-348` deadline argument boundary to this generated baseline runtime-input projection boundary.
+  - Divergence: no fresh/resume divergence observed; the failure is a generated dispatcher argument-projection mismatch.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced a complete high-level `run_baseline_and_planned_condition_sweep(...)` helper that materializes `device` and `benchmark_suite`, plus a final generic `_execute_condition_record(...)` dispatcher that calls lower-level baseline/tuned helpers directly. The final dispatcher did not include the generated runtime inputs in `call_kwargs`, so signature filtering could not satisfy required baseline helper parameters before execution.
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added `repairPythonHighLevelConditionSweepDispatchSurface(...)`.
+      - the repair lets generated final `_orchestrate_plan_execution(...)` dispatch through an already-generated high-level baseline-first sweep such as `run_baseline_and_planned_condition_sweep(...)`, passing selected model, runtime device, output paths, deadline, and evaluation budget inputs.
+      - the repair also supplies `tuned_results`, runtime context, model info, and timestamps to `build_final_metrics_payload(...)`, and prevents a fallback `success=false` value from overriding a completed helper payload.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added targeted regression coverage for a generated runner whose final condition dispatcher omitted the high-level sweep runtime inputs and whose final metrics builder omitted `tuned_results`.
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-06.
+  - Automated regression passed on 2026-05-06 with `npm test -- tests/implementSessionManager.test.ts -t "high-level sweep runtime inputs"`.
+  - Adjacent targeted regressions passed on 2026-05-06 with `npm test -- tests/implementSessionManager.test.ts -t "plan snapshot path|plan choices|condition executor deadline|high-level sweep runtime inputs|locked baseline-first study"`.
+  - Build passed on 2026-05-06 with `npm run build`.
+  - Same-flow revalidation passed on 2026-05-06: after the `LV-350` helper recovery fix, `run_experiments` completed a real Qwen/Qwen2.5-1.5B baseline plus five tuned-condition executions and wrote successful metrics with `accuracy_delta_vs_baseline=0.0625`.
+- Follow-up risks:
+  - After this repair, execution may advance into actual cached model loading, dataset/evaluator compatibility, LoRA training runtime, budget exhaustion semantics, full factorial condition coverage, or result-table completeness blockers.
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/metrics.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/run_experiments_verify_report.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/p6-paper-ready-live/outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment/run_lora_rank_dropout_study.py`
+
+## Issue: LV-348
+
+- Status: repair implemented; same-flow live revalidation advanced to `LV-349`
+- Validation target: P6 `run_experiments` execution of the regenerated LoRA rank/dropout runner for run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` while revalidating `LV-347`.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - node: `run_experiments` after `implement_experiments` completed on 2026-05-06
+  - public runner: `<validation-workspace>/p6-paper-ready-live/outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment/run_lora_rank_dropout_study.py`
+  - command source: `run_context.run_command`
+- Reproduction steps:
+  1. Build AutoLabOS with the `LV-347` `--plan` choices repair.
+  2. Continue the active P6 run with `/agent retry implement_experiments 2dcc480e-b4e5-4863-9c7f-6872f9c672e7`.
+  3. Allow `implement_experiments` to regenerate the public LoRA rank/dropout runner and hand off to `run_experiments`.
+  4. Let the automatic verifier execute `python .../run_lora_rank_dropout_study.py --plan plan_1 --output-dir ... --metrics-path ... --condition-records-path ... --budget-timeout-sec 1800`.
+- Expected behavior:
+  - The generated per-condition dispatcher should supply a scalar deadline, or `None`, to condition executors that declare `deadline_unix_sec`.
+  - The baseline-first condition loop should reach real task/model execution or an honest later dependency/runtime blocker.
+  - Failed condition rows should reflect real condition failures, not dispatcher argument projection corruption.
+- Actual behavior:
+  - `run_experiments` entered `run_lora_rank_dropout_study`.
+  - `metrics.json` recorded all 11 planned conditions as failed with zero successful conditions.
+  - The first and repeated condition error was:
+    - `TypeError: '>' not supported between instances of 'float' and 'StudyCondition'`
+  - Traceback shows `execute_study_condition(...)` calling `_enforce_deadline(deadline_unix_sec, ...)`, where `deadline_unix_sec` had been bound to the current `StudyCondition` object.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; this is a continuation of the active P6 full live validation run after rebuilding AutoLabOS.
+  - Existing session: the persisted run advanced from the previous `LV-347` CLI choice boundary to this generated per-condition deadline argument boundary.
+  - Divergence: no fresh/resume divergence observed; the failure is a generated dispatcher argument-projection mismatch.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `_invoke_condition_executor(...)` builds keyword arguments from generated function signatures but does not recognize `deadline_unix_sec`, then uses fallback positional values for any required unknown parameter. Because `deadline_unix_sec` is keyword-only, the first fallback value (`condition`) is assigned as `deadline_unix_sec`, corrupting every condition before real execution begins.
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added `repairPythonConditionExecutorDeadlineArgumentSurface(...)`.
+      - the repair makes generated `_invoke_condition_executor(...)` dispatchers accept and propagate `deadline_unix_sec` explicitly instead of binding unknown required parameters from unrelated fallback positional values.
+      - the repair also passes the study-level deadline into the generated P6 condition loop when the current runner exposes `study_started_unix` and `budget_timeout_sec`.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added targeted regression coverage for a generated condition executor whose keyword-only `deadline_unix_sec` was previously bound to a `StudyCondition`.
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-06.
+  - Automated regression passed on 2026-05-06 with `npm test -- tests/implementSessionManager.test.ts -t "condition executor deadline"`.
+  - Adjacent targeted regressions passed on 2026-05-06 with `npm test -- tests/implementSessionManager.test.ts -t "plan snapshot path|plan choices|condition executor deadline|locked baseline-first study"`.
+  - Build passed on 2026-05-06 with `npm run build`.
+  - Re-validation result: same-flow live revalidation on 2026-05-06 no longer reproduced the `StudyCondition` object bound into `deadline_unix_sec` failure. The active P6 run advanced to `LV-349`, where the final baseline dispatcher omitted generated `device` and `benchmark_suite` runtime inputs.
+- Follow-up risks:
+  - After this repair, execution may advance into actual cached model loading, dataset/evaluator compatibility, LoRA training runtime, budget exhaustion semantics, or result-table completeness blockers.
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/metrics.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/run_experiments_verify_report.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/p6-paper-ready-live/outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment/run_lora_rank_dropout_study.py`
+
+## Issue: LV-347
+
+- Status: repair implemented; same-flow live revalidation pending
+- Validation target: generated P6 PEFT runners must accept the AutoLabOS handoff `--plan <brief-path>` argument and must not constrain `--plan` to a synthetic internal id such as `plan_1`.
+- Environment/session context: active P6 run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` in `<validation-workspace>/p6-paper-ready-live`, continued through `npm run p6:continue` after the LV-346 repair.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-346 plan-snapshot path repair.
+  2. Continue the active P6 run with `/agent retry implement_experiments 2dcc480e-b4e5-4863-9c7f-6872f9c672e7`.
+  3. Allow `implement_experiments` to regenerate `outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment/run_lora_rank_dropout_study.py`.
+  4. Let the automatic `run_experiments` handoff execute the generated command with `--plan <validation-workspace>/p6-paper-ready-live/briefs/p6-paper-ready-validation-brief.md`.
+
+- Expected behavior:
+  - The generated runner should accept a real brief/plan path passed by AutoLabOS.
+  - If it also supports internal plan ids, path input should still be treated as a valid plan source or ignored safely in favor of the persisted brief snapshot.
+  - The runner should reach node-owned condition execution or a later real runtime/preflight blocker.
+
+- Actual behavior:
+  - `implement_experiments` completed and local `py_compile` passed.
+  - Handoff repairs made parse-args calls Namespace-aware and metrics JSON serialization strict.
+  - `run_experiments` failed immediately with:
+    - `argument --plan: invalid choice: '<validation-workspace>/p6-paper-ready-live/briefs/p6-paper-ready-validation-brief.md' (choose from plan_1)`
+  - No condition rows, metrics, or real training/evaluation evidence were produced in this attempt.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; this is a continuation of the active P6 full live validation run after rebuilding AutoLabOS.
+  - Existing session: the persisted run advanced from the previous LV-346 `Namespace.expanduser()` boundary to this generated CLI choice boundary.
+  - Divergence: no fresh/resume divergence observed; the failure is a generated CLI contract mismatch between AutoLabOS handoff semantics and script-local argparse choices.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation represented the governed plan as a synthetic `DEFAULT_PLAN_ID = "plan_1"` and constrained `parser.add_argument("--plan", choices=[DEFAULT_PLAN_ID])`, while the AutoLabOS runtime contract passes the persisted brief path through `--plan`. Existing parse-args compatibility repairs make Namespace input safe but do not remove path-hostile `choices` constraints.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added `repairPythonPlanArgumentPathChoicesSurface(...)`.
+      - the repair removes `choices=[...]` constraints specifically from generated Python `--plan` argparse blocks, allowing AutoLabOS to pass a persisted brief/plan path while preserving all other CLI arguments.
+      - wired the repair into the late handoff repair chain after plan snapshot path argument repair.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added targeted regression coverage for a generated parser that rejects `--plan <brief-path>` because `choices=[DEFAULT_PLAN_ID]`.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-06.
+  - Automated regression passed on 2026-05-06 with `npm test -- tests/implementSessionManager.test.ts -t "plan choices"`.
+  - Adjacent targeted regressions passed on 2026-05-06 with `npm test -- tests/implementSessionManager.test.ts -t "plan snapshot path|plan choices|locked baseline-first study"`.
+  - Build passed on 2026-05-06 with `npm run build`.
+  - Same-flow revalidation pending.
+
+- Follow-up risks:
+  - After this repair, execution may advance into actual model/dataset/evaluator preflight, cached model loading, LoRA training, condition-result completeness, or result-table claim-ceiling blockers.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/run_experiments_verify_report.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/p6-paper-ready-live/outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment/run_lora_rank_dropout_study.py`
+
+## Issue: LV-346
+
+- Status: reproduced; repair in progress
+- Validation target: P6 `run_experiments` execution of the regenerated LoRA rank/dropout runner for run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` while revalidating `LV-345`.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - node: `run_experiments` after `implement_experiments` completed on 2026-05-06
+  - public runner: `<validation-workspace>/p6-paper-ready-live/outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment/run_lora_rank_dropout_study.py`
+  - command source: `run_context.run_command`
+- Reproduction steps:
+  1. Re-run `implement_experiments` for the active P6 run after the `LV-345` repair.
+  2. Let staged generation finish and hand off the regenerated runner to `run_experiments`.
+  3. Allow the second-stage verifier to execute the generated runner command.
+- Expected behavior:
+  - The final entrypoint should load the preserved plan snapshot from the CLI plan path or fall back to the embedded plan snapshot.
+  - A helper whose signature is `load_plan_snapshot(plan_path)` should receive a `Path`-like plan path, not the entire CLI namespace.
+- Actual behavior:
+  - `run_experiments` executed:
+    `python .../run_lora_rank_dropout_study.py --plan .../plan_snapshot.json --metrics-path .../metrics.json --output-dir .../experiment`
+  - The runner wrote failed private metrics with:
+    - `status: error`
+    - `error_type: AttributeError`
+    - `error: "'Namespace' object has no attribute 'expanduser'"`
+  - Traceback shows `main(...)` calling `_call_helper_with_supported_signature(load_plan_helper, load_patterns)`, selecting `load_plan_snapshot(plan_path)` with `args` as the positional argument, then `resolve_plan_snapshot_path(...)` calling `explicit_plan_path.expanduser().resolve()`.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this reproduced in the resumed active P6 full live validation run.
+  - Existing session: the same persisted run advanced through `implement_experiments` after `LV-345`, then failed in `run_experiments` before plan loading completed.
+- Dominant root-cause class: `in_memory_projection_bug`
+- Root-cause hypothesis:
+  - The generated signature dispatcher treats `inspect.signature(...).bind(...)` success as sufficient compatibility, so a one-argument path loader accepts the namespace positionally before the later path-specific patterns are tried.
+  - The plan path resolver assumes the accepted object is already `Path`-like and does not unwrap `argparse.Namespace` plan fields.
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` adds a generated-runner handoff repair that makes `resolve_plan_snapshot_path(...)` unwrap `argparse.Namespace` plan fields (`plan_snapshot`, `plan_snapshot_path`, `plan_path`, `plan`, `study_plan`) before calling `expanduser()`.
+  - Tests: `tests/implementSessionManager.test.ts` adds a regression where `inspect.signature(...).bind(...)` accepts the CLI namespace as the positional argument for `load_plan_snapshot(plan_path)`.
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-06.
+  - Automated regression passed: `npm test -- tests/implementSessionManager.test.ts -t "plan snapshot path loaders"`.
+  - Adjacent LV-345 regression passed after the repair: `npm test -- tests/implementSessionManager.test.ts -t "locked baseline-first study"`.
+  - Build passed: `npm run build`.
+  - Same-flow live revalidation pending.
+- Remaining risks:
+  - Fixing plan loading may reveal the next real model/data/runtime dependency boundary. That should be preserved as explicit condition failure evidence rather than hidden as paper-ready progress.
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/run_experiments_verify_report.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/metrics.json`
+  - `<validation-workspace>/p6-paper-ready-live/outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment/run_experiments_verify_report.json`
+
+## Issue: LV-345
+
+- Status: reproduced; repair in progress
+- Validation target: P6 `run_experiments` execution of the regenerated LoRA rank/dropout runner for run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` after the `LV-343`/`LV-344` repairs.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - node: `run_experiments` after `implement_experiments` completed on 2026-05-06
+  - public runner: `<validation-workspace>/p6-paper-ready-live/outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment/run_lora_rank_dropout_study.py`
+  - command source: `run_context.run_command`
+- Reproduction steps:
+  1. Run `npm run p6:continue` against the active failed P6 run with `AUTOLABOS_P6_COMMAND='/agent retry {next_node} {run_id}'` and `AUTOLABOS_P6_NEXT_NODE=implement_experiments`.
+  2. Let staged `implement_experiments` complete and hand the regenerated runner to `run_experiments`.
+  3. Allow `run_experiments` to execute the node-generated command.
+- Expected behavior:
+  - The final study resolver should select the concrete generated baseline-first orchestration helper, execute the unmodified baseline first, and then execute or explicitly fail each governed tuned condition.
+  - If the experiment cannot complete, metrics should still preserve attempted/failed condition rows rather than reporting an empty condition set.
+- Actual behavior:
+  - `run_experiments` executed:
+    `python .../run_lora_rank_dropout_study.py --plan .../experiment_plan.yaml --output-dir .../experiment --metrics-out .../metrics.json`
+  - The command exited 1 after writing `metrics.json` with:
+    - `status: failed`
+    - `baseline_first_observed: false`
+    - `completed_condition_count: 0`
+    - `failed_condition_count: 0`
+    - `total_condition_count: 0`
+    - `condition_execution_order: []`
+  - `study_results.json` shows `aggregated_metrics.total_condition_count: 0` and `plan.conditions: []` even though the runner defines `_build_locked_baseline_first_conditions(...)` and `run_locked_baseline_first_study(...)`.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this reproduced in the resumed active P6 full live validation run.
+  - Existing session: the same persisted run advanced past `LV-343`/`LV-344`, completed `implement_experiments`, then failed in `run_experiments` with empty condition metrics.
+- Dominant root-cause class: `in_memory_projection_bug`
+- Root-cause hypothesis:
+  - The generated final `_resolve_study_runner(...)` preferred-name list omits `run_locked_baseline_first_study(...)`.
+  - Its generic fallback can select a lower-level callable such as `execute_study_condition(...)` before the real locked baseline-first orchestration helper, so the final metrics aggregator receives a single-condition shaped payload and extracts zero condition records.
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` adds a generated-runner handoff repair for final `_resolve_study_runner(...)` surfaces that define `run_locked_baseline_first_study(...)` but omit it from the preferred orchestration names.
+  - Code: the same repair also tries `(plan, args, runtime_context)` before `(args, plan, runtime_context)` for this resolver shape so the locked baseline-first study receives its generated signature in the intended order.
+  - Tests: `tests/implementSessionManager.test.ts` adds a regression where a generic `execute_study_condition(...)` shadows the real locked baseline-first study and previously produced no baseline-first condition records.
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-06.
+  - Automated regression passed: `npm test -- tests/implementSessionManager.test.ts -t "locked baseline-first study"`.
+  - Build passed: `npm run build`.
+  - Adjacent targeted regression passed: `npm test -- tests/implementSessionManager.test.ts -t "command_tokens metadata"`.
+  - Broader file regression attempted: `npm test -- tests/implementSessionManager.test.ts` currently fails one deferred-metrics local verification fixture while the targeted LV-345 coverage passes; this needs separate follow-up if it blocks release validation.
+  - Same-flow live revalidation advanced through `implement_experiments` on 2026-05-06 but hit `LV-346` during plan loading before condition execution could confirm the locked study resolver path.
+- Remaining risks:
+  - Fixing the resolver may expose real model/data execution failures; those should remain visible as condition rows rather than being hidden behind empty metrics.
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/run_experiments_verify_report.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/run_experiments_panel/triage.json`
+  - `<validation-workspace>/p6-paper-ready-live/outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment/metrics.json`
+  - `<validation-workspace>/p6-paper-ready-live/outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment/study_results.json`
+
+## Issue: LV-344
+
+- Status: repair implemented; same-flow live revalidation pending
+- Validation target: P6 live-validation helper attach/readiness path for run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7`.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - command: `npm run p6:continue` with `AUTOLABOS_P6_NEXT_NODE=implement_experiments`
+  - helper: `scripts/p6-approve-and-run-next.py`
+- Reproduction steps:
+  1. Start `npm run p6:continue` against the active failed P6 run after implementing the `LV-343` source repair.
+  2. Let the helper attach to the TUI/PTY view.
+  3. Wait for the helper's initial readiness pattern.
+- Expected behavior:
+  - The helper should recognize the failed/paused run screen and send the requested retry/jump command rather than timing out on harmless wording drift.
+- Actual behavior:
+  - The TUI rendered `Add steering, or wait for the next approval.`
+  - The helper waited only for `Add steering, or wait for the next run or approval.` and timed out before sending any command.
+  - No new runner was regenerated, so `LV-343` same-flow revalidation did not actually occur.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this reproduced while attaching to the existing P6 run.
+  - Existing session: reproduced on the persisted failed P6 run immediately after the `LV-343` code repair.
+- Dominant root-cause class: `in_memory_projection_bug`
+- Root-cause hypothesis:
+  - The P6 helper encoded one exact readiness string while the current TUI paused/failure render uses the shorter `next approval` copy.
+- Code/test changes:
+  - Code: `scripts/p6-approve-and-run-next.py`, `scripts/p6-doctor-pty-smoke.py`, `scripts/p6-start-live-run.py`, and `scripts/p6-resume-check.py` accept both `next approval` and `next run or approval` readiness copy.
+  - Code: `scripts/p6-approve-and-run-next.py` supports `AUTOLABOS_P6_COMMAND` for explicit same-flow retry commands.
+  - Tests: `tests/p6ContinueScript.test.ts` exercises the helper self-test, including readiness-pattern and command-override checks.
+- Regression status:
+  - Reproduced in same-flow helper execution on 2026-05-06.
+  - Automated regression test passed: `npm test -- tests/p6ContinueScript.test.ts`.
+  - Same-flow live revalidation pending.
+- Remaining risks:
+  - Fixing the initial readiness matcher may reveal that the helper also needs an explicit retry command path for failed previous-node revalidation.
+- Evidence/artifacts:
+  - `<repo-root>/outputs/p6-preflight/p6-continue-implement_experiments-output.txt`
+
+## Issue: LV-343
+
+- Status: repair implemented; same-flow live revalidation pending
+- Validation target: P6 `run_experiments` execution of the regenerated LoRA rank/dropout runner for run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7`.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - node: `run_experiments` after `implement_experiments` completed on 2026-05-06
+  - public runner: `<validation-workspace>/p6-paper-ready-live/outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment/run_lora_rank_dropout_study.py`
+  - command source: `run_context.run_command`
+- Reproduction steps:
+  1. Re-run `implement_experiments` for the active P6 run after the `LV-342` repair.
+  2. Let staged generation finish and hand off the generated Python runner to `run_experiments`.
+  3. Allow the second-stage verifier to execute the generated runner command.
+- Expected behavior:
+  - A runner that defines `parse_cli_args(...)` and records `command_tokens` should expose equivalent command metadata when the final entrypoint parses args through `build_arg_parser().parse_args(...)`.
+  - Missing command metadata should not crash before model/data execution or metrics emission starts.
+- Actual behavior:
+  - `implement_experiments` completed and local verification passed via `python -m py_compile`.
+  - `run_experiments` executed:
+    `python .../run_lora_rank_dropout_study.py --plan .../experiment_plan.yaml --output-dir .../experiment --metrics-path .../metrics.json`
+  - The runner crashed before experiment execution with:
+    `AttributeError: 'Namespace' object has no attribute 'command_tokens'`
+    at `initialize_run_context(...)` when it executed `command = " ".join(args.command_tokens)`.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this reproduced in the resumed active P6 full live validation run.
+  - Existing session: the same persisted run advanced past `LV-342`, completed `implement_experiments`, then failed in `run_experiments` at the generated CLI/context boundary.
+- Dominant root-cause class: `in_memory_projection_bug`
+- Root-cause hypothesis:
+  - Handoff repairs made parser calls Namespace-aware and added aliases, but they did not normalize generated runner metadata fields that `parse_cli_args(...)` sets and `initialize_run_context(...)` later assumes.
+  - The final generated `main(...)` uses `build_arg_parser().parse_args(argv)`, bypassing `parse_cli_args(...)` and leaving `command_tokens` absent.
+- Code/test changes:
+  - Code: `src/core/agents/implementSessionManager.ts` adds a generated-runner handoff repair that reconstructs command token metadata when `main(...)` bypasses `parse_cli_args(...)`.
+  - Tests: `tests/implementSessionManager.test.ts` adds a regression where `initialize_run_context(...)` reads `args.command_tokens` after raw `build_arg_parser().parse_args(...)`.
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-06.
+  - Automated regression test passed: `npm test -- tests/implementSessionManager.test.ts -t "command_tokens metadata"`.
+  - Build passed: `npm run build`.
+  - Same-flow live revalidation pending.
+- Remaining risks:
+  - Fixing `command_tokens` may expose the next runtime boundary in the generated PEFT runner; `py_compile` remains only a lightweight handoff check and does not prove real experiment execution.
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/run_experiments_verify_report.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/run_experiments_panel/triage.json`
+
+## Issue: LV-342
+
+- Status: repair implemented; same-flow live revalidation pending
+- Validation target: P6 `implement_experiments` handoff verification for run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7`.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - node: `implement_experiments` rerun after `run_experiments` rolled back from `LV-341`
+  - public experiment directory: `<validation-workspace>/p6-paper-ready-live/outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment`
+- Reproduction steps:
+  1. Re-run `implement_experiments` for the active P6 run after `LV-341`.
+  2. Let staged generation materialize the public runner and complete implementation attempt 1.
+  3. Observe handoff verification before `run_experiments` can be retried.
+- Expected behavior:
+  - If the node materializes a substantive public runner such as `run_lora_rank_dropout_study.py`, handoff should infer `script_path` and a runnable command even when the model omits explicit `script_path`/`run_command` fields in the structured result.
+  - The repair must not create or modify node-owned run artifacts manually; it should only improve handoff inference over artifacts the node already materialized.
+- Actual behavior:
+  - Attempt 1 localized and materialized `run_lora_rank_dropout_study.py`, `experiment_plan.yaml`, and bootstrap contract files.
+  - Handoff verification failed with `Implementer did not return a runnable artifact or run_command.`
+  - The implementation manager restored 42 paths and started attempt 2/3, delaying same-flow `run_experiments` revalidation.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this reproduced in the resumed active P6 full live validation run.
+  - Existing session: the persisted run advanced past `LV-340` and `LV-341` repairs into a new `implement_experiments` attempt, then exposed the handoff inference gap.
+- Dominant root-cause class: `in_memory_projection_bug`
+- Root-cause hypothesis:
+  - `prepareStructuredAttempt(...)` computed `hasRunnableArtifact` before `materializeDeclaredArtifacts(...)` had a chance to infer a nonstandard script path from public artifacts.
+  - `materializeDeclaredArtifacts(...)` only preserved an already-known `scriptPath`; it did not infer one from existing public artifacts such as `run_*.py`.
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - infer runnable scripts from materialized public artifacts when `script_path` was omitted.
+      - infer a default `run_command` after materialization when a script path is discovered late.
+      - compute `hasRunnableArtifact` after materialized-artifact inference.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added regression coverage for a materialized nonstandard public runner with no explicit `script_path` or `run_command`.
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-06.
+  - Automated regression: passed targeted `implementSessionManager` test on 2026-05-06.
+  - Build: passed `npm run build` on 2026-05-06.
+  - Same-flow revalidation: pending.
+- Remaining risks:
+  - The active process is already running from the pre-repair build, so this repair applies to the next `p6:continue` execution after the current node attempt returns.
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/implement_experiments/progress.jsonl`
+  - `<validation-workspace>/p6-paper-ready-live/outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment/run_lora_rank_dropout_study.py`
+
+## Issue: LV-341
+
+- Status: repair implemented; same-flow live revalidation pending
+- Validation target: P6 `run_experiments` execution of the generated LoRA rank/dropout runner for run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7`.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - current handoff: `implement_experiments` completed with a node-generated runner under the public experiment directory
+  - attempted command source: `run_context.run_command`
+- Reproduction steps:
+  1. Let the active P6 run reach `implement_experiments.needs_approval`.
+  2. Approve into `run_experiments`.
+  3. Observe three automatic `run_experiments` attempts and rollback to `implement_experiments`.
+- Expected behavior:
+  - A runner that reports implement-stage verification success should accept the AutoLabOS execution contract, including the governed metrics output flag and public output directory.
+  - Optional output-path argparse fields should fall back to default paths when omitted instead of flowing `None` into `Path(...)`.
+  - The repair must preserve node-owned experiment execution; it may only repair generated-runner compatibility before handoff.
+- Actual behavior:
+  - The generated runner passed `python -m py_compile`.
+  - `run_experiments` invoked the node-generated command with `--metrics-out <run-metrics>` and `--public-dir <public-experiment-dir>`.
+  - The runner logged `Ignoring unknown CLI arguments: ['--metrics-out', ...]`.
+  - It then failed before real training/evaluation with `TypeError: argument should be a str or an os.PathLike object ... not 'NoneType'` at `Path(_namespace_get(args, "schedule_path", default_schedule))`.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this reproduced in the resumed active P6 full live validation run.
+  - Existing session: the persisted run advanced past LV-340 and generated a new runner, but compile-only verification did not exercise the real AutoLabOS run command.
+- Dominant root-cause class: `in_memory_projection_bug`
+- Root-cause hypothesis:
+  - Staged generated-runner handoff repairs do not ensure the runner accepts AutoLabOS metrics/public-output CLI aliases when `parse_known_args(...)` is present.
+  - A generated `_namespace_get(...)` helper treats an existing argparse attribute with value `None` as a real value instead of falling back to the provided default.
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added AutoLabOS execution-contract argparse aliases for `--metrics-out` and `--plan` when generated runners expose equivalent parser flags.
+      - added a generated-runner handoff repair that makes `_namespace_get(..., default=...)` treat argparse `None`/empty values as missing so default output paths are used.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added targeted regression coverage for `_namespace_get` None-safe defaults.
+      - added targeted regression coverage for AutoLabOS `--metrics-out`/`--plan` aliases plus None-safe path defaults before handoff.
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-06.
+  - Automated regression: passed targeted `implementSessionManager` tests on 2026-05-06.
+  - Build: passed `npm run build` on 2026-05-06.
+  - Same-flow revalidation: pending.
+- Remaining risks:
+  - After this repair, the run may advance into actual dependency/model loading/training limits or quantitative result sufficiency checks.
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/run_record.json`
+  - `<validation-workspace>/p6-paper-ready-live/outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment/run_lora_rank_dropout_study.py`
+
+## Issue: LV-340
+
+- Status: repair implemented; same-flow live revalidation advanced through `implement_experiments.needs_approval` and exposed `LV-341` on 2026-05-06
+- Validation target: staged native-Codex `implement_experiments` bootstrap planning for P6 run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7`.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - node: `implement_experiments` after repaired helper continuation through `design_experiments`
+  - public experiment directory: `<validation-workspace>/p6-paper-ready-live/outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment`
+- Reproduction steps:
+  1. Continue the P6 run through `generate_hypotheses` and `design_experiments` until `design_experiments` reaches `needs_approval`.
+  2. Approve into `implement_experiments`.
+  3. Observe staged bootstrap contract evaluation before code generation.
+- Expected behavior:
+  - Bootstrap planning may warn about Hugging Face model/dataset/network/cache requirements.
+  - It should hard-block only concrete pre-existing inputs or environment requirements that the implementation node cannot produce.
+  - Public experiment artifacts such as baseline/result manifests, metrics summaries, generated scripts, and run outputs should be listed as implementation outputs, not as pre-code-generation local path requirements.
+- Actual behavior:
+  - `implement_experiments` failed before code generation with:
+    - `baseline-manifest: expected local path is missing (outputs/lora-rank-dropout-interaction-in-budget-constrai-2dcc480e/experiment/baseline_first_manifest.json)`
+    - `check-manifest-path: required path is missing (...)`
+  - The public directory contained generated design/run artifacts, but no `baseline_first_manifest.json`; this file is a generated implementation/output artifact, not a pre-existing user input.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; the issue reproduced in the active P6 full live validation run.
+  - Existing session: the resumed P6 run had prior public artifacts from the first implement/run attempt, and the bootstrap planner treated one missing output-like manifest as a hard precondition.
+- Dominant root-cause class: `in_memory_projection_bug`
+- Root-cause hypothesis:
+  - The staged bootstrap contract prompt and evaluator do not clearly distinguish pre-existing local inputs from files the implementation node is expected to generate under the public experiment output directory.
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - staged bootstrap prompt/evaluation now distinguishes generated public experiment outputs from pre-existing local inputs.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added regression coverage for missing generated public experiment outputs in the bootstrap contract.
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-06.
+  - Automated regression: passed with targeted `implementSessionManager` tests and `npm run build`.
+  - Same-flow revalidation: the active P6 run advanced past bootstrap, generated `run_lora_rank_dropout_study.py`, and reached `implement_experiments.needs_approval`; the next blocker is `LV-341`.
+- Remaining risks:
+  - The repair must still block genuinely missing local-only inputs and must not manually substitute node-owned experiment artifacts.
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/implement_experiments/bootstrap_contract.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/run_record.json`
+
+## Issue: LV-339
+
+- Status: repair implemented; same-flow live revalidation advanced to `design_experiments.needs_approval` on 2026-05-06
+- Validation target: P6 continue helper force-resume and node-specific stop-boundary handling for run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7`.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - commands:
+    - `AUTOLABOS_P6_FORCE_RUN_ACTIVE=1 AUTOLABOS_P6_RUN_ID=<run-id> AUTOLABOS_P6_NEXT_NODE=implement_experiments npm run p6:continue`
+    - `AUTOLABOS_P6_RUN_ID=<run-id> AUTOLABOS_P6_NEXT_NODE=design_experiments npm run p6:continue`
+- Reproduction steps:
+  1. Let a long `implement_experiments`/handoff attempt time out in the helper while persisted state still suggests the node may be active.
+  2. Run the P6 continue helper with `AUTOLABOS_P6_FORCE_RUN_ACTIVE=1`.
+  3. Observe attach-time behavior and stop-boundary matching while replayed prior node logs are present.
+- Expected behavior:
+  - Force mode should bypass stale active-running observation and send the requested `/agent run` command.
+  - If the TUI is already streaming a requested node, the helper should not inject `/doctor`.
+  - While waiting for a specific node, replayed completion text for other nodes should not satisfy the stop boundary.
+- Actual behavior:
+  - Force mode initially still observed stale active-running state instead of re-running the requested node.
+  - A later force retry sent `/doctor` into an active node and timed out, causing cancellation during cleanup.
+  - Another retry matched replayed `Node implement_experiments finished` text while waiting for `design_experiments`, producing a false PASS without executing the target node.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this reproduced while force-resuming the active P6 full live validation run.
+  - Existing session: stale persisted running state and replayed TUI history were both present, so the helper needed explicit force and node-specific observation semantics.
+- Dominant root-cause class: `race_timing_bug`
+- Root-cause hypothesis:
+  - The helper used one active-running decision path and one generic stop-boundary regex across force-resume, attach, and target-node observation, so stale persisted state and replayed logs could override the operator's requested node.
+- Code/test changes:
+  - Code:
+    - `scripts/p6-approve-and-run-next.py`
+      - force mode bypasses active-running observation both before and after TUI attach.
+      - force mode skips `/doctor` and sends the requested `/agent run` command directly.
+      - stop-boundary matching is now scoped to the observed node instead of accepting unrelated replayed node completion text.
+  - Tests:
+    - `tests/p6ContinueScript.test.ts`
+      - self-test covers force-mode active-observation bypass and node-specific stop-pattern behavior.
+- Regression status:
+  - Script compile: pass on 2026-05-06 with `python3 -m py_compile scripts/p6-approve-and-run-next.py`.
+  - Targeted regression: pass on 2026-05-06 with `npm test -- tests/p6ContinueScript.test.ts`.
+  - Same-flow revalidation: pass on 2026-05-06; the helper reran `design_experiments` and the run reached `design_experiments.status: needs_approval`.
+- Remaining risks:
+  - Force mode is an operator recovery path. Use it only after inspecting persisted state, because it intentionally bypasses active-running protection.
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/run_record.json`
+  - `<repo-root>/outputs/p6-preflight/p6-continue-design_experiments-output.txt`
+
+## Issue: LV-338
+
+- Status: repair implemented; same-flow live revalidation advanced through `generate_hypotheses` and `design_experiments` on 2026-05-05
+- Validation target: P6 continue helper approval handoff and attach-time observation behavior for run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7`.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - commands:
+    - `AUTOLABOS_P6_RUN_ID=<run-id> npm run p6:continue`
+    - `AUTOLABOS_P6_RUN_ID=<run-id> AUTOLABOS_P6_NEXT_NODE=generate_hypotheses AUTOLABOS_P6_NEXT_NODE_ARGS= npm run p6:continue`
+  - source nodes: `analyze_papers`, then `generate_hypotheses`
+- Reproduction steps:
+  1. Approve partial `analyze_papers` after the LV-337 repair.
+  2. Observe the TUI advance into `generate_hypotheses`.
+  3. The helper treats the approval/current-node completion boundary as sufficient, sends `/quit`, and interrupts the running next node.
+  4. Retry stale-running `generate_hypotheses`; after attach, the TUI is already streaming node output but the helper still sends `/doctor`, then times out waiting for readiness text and cancels the node again.
+- Expected behavior:
+  - An approval message is an intermediate handoff, not a stop boundary.
+  - After `/approve`, the helper should observe the pending transition target or requested next node until that node reaches a persisted stop boundary.
+  - If the run is active after TUI attach, the helper should observe without injecting `/doctor` or another command.
+- Actual behavior:
+  - First reproduction queued `/quit` while `generate_hypotheses.status: running`.
+  - Second reproduction injected `/doctor` after attach-time streaming had already resumed and left `generate_hypotheses` canceled/pending.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this reproduced while continuing the active P6 full live validation run.
+  - Existing session: the persisted run advanced, but helper cleanup and command injection interrupted the next live node.
+- Dominant root-cause class: `race_timing_bug`
+- Root-cause hypothesis:
+  - The helper decided the observed node from the pre-command state only and treated approval/current-node completion as terminal even when the runtime immediately continued into a long-running successor node.
+- Code/test changes:
+  - Code:
+    - `scripts/p6-approve-and-run-next.py`
+      - removes `Approved <node>. Next node is` from `STOP_PATTERN`.
+      - observes `pendingTransition.targetNode` after `/approve` when present.
+      - otherwise observes the requested next node after `/approve`.
+      - reloads `run_record.json` after attach and switches to observation mode if the run is already active.
+      - avoids default `--top-n 12` args for non-`analyze_papers` nodes.
+  - Tests:
+    - `tests/p6ContinueScript.test.ts`
+      - self-test covers active-running detection, stop-boundary detection, and approval observation target selection.
+- Regression status:
+  - Script compile: pass on 2026-05-05 with `python3 -m py_compile scripts/p6-approve-and-run-next.py scripts/p6-resume-check.py`.
+  - Targeted regression: pass on 2026-05-05 with `npm test -- tests/p6ContinueScript.test.ts`.
+  - Same-flow revalidation: pass on 2026-05-05; `generate_hypotheses` reached `needs_approval` with 2 selected hypotheses, then `design_experiments` reached `needs_approval`.
+- Remaining risks:
+  - Later long-running nodes can still exceed a caller-provided timeout. Use a timeout aligned to node runtime and do not treat helper timeout as research failure without inspecting persisted artifacts.
+
+## Issue: LV-337
+
+- Status: repair implemented; targeted regression and same-flow live revalidation passed on 2026-05-05
+- Validation target: P6 approval handoff from partial `analyze_papers` to `generate_hypotheses` for run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7`.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - command: `/approve` via `npm run p6:continue`
+  - source node: `analyze_papers`
+  - target node: `generate_hypotheses`
+- Reproduction steps:
+  1. Let `analyze_papers` preserve partial evidence and pause with `pendingTransition.action: pause_for_human`, `targetNode: generate_hypotheses`.
+  2. Run `/approve` through the P6 continue helper.
+  3. Inspect the TUI log and persisted `run_record.json`.
+- Expected behavior:
+  - Explicit `/approve` should approve the human pause, mark `analyze_papers` completed, and continue into `generate_hypotheses`.
+- Actual behavior:
+  - The TUI printed `Approved analyze_papers. Next node is analyze_papers.`
+  - Persisted state remained `status: paused`, `currentNode: analyze_papers`, `analyze_papers.status: needs_approval`.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; reproduced in the active P6 full live validation workspace.
+  - Existing session: approval UI/log and persisted run state disagreed.
+- Dominant root-cause class: `persisted_state_bug`
+- Root-cause hypothesis:
+  - `AgentOrchestrator.approveCurrent()` called runtime approval without `allowPauseForHuman`, so runtime refused to apply a human-pause transition while the TUI still logged approval.
+- Code/test changes:
+  - Code:
+    - `src/core/agents/agentOrchestrator.ts`
+      - passes `allowPauseForHuman: true` for explicit orchestrator approval.
+  - Tests:
+    - `tests/agentOrchestrator.test.ts`
+      - adds regression coverage for approving a partial `analyze_papers` human pause into `generate_hypotheses`.
+- Regression status:
+  - Targeted regression: pass on 2026-05-05 with `npm test -- tests/agentOrchestrator.test.ts --testNamePattern "pause_for_human analyze_papers|continues into generate_hypotheses after approving analyze_papers"`.
+  - Build: pass on 2026-05-05 with `npm run build`.
+  - Same-flow approval revalidation: pass on 2026-05-05; persisted state advanced to `currentNode: generate_hypotheses`, `analyze_papers.status: completed`, and `generate_hypotheses.status: running`.
+- Remaining risks:
+  - The follow-on helper observation bug is tracked separately as `LV-338`.
+
+## Issue: LV-336
+
+- Status: reproduced on 2026-05-05; repair in progress
+- Validation target: P6 continue helper observing the `analyze_papers` stop boundary for run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7`.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - command: `npm run p6:continue`
+  - node: `analyze_papers`
+- Reproduction steps:
+  1. Attach the P6 continue helper to the active `analyze_papers` run.
+  2. Let `analyze_papers` reach its manual-review pause after preserving partial evidence.
+  3. Observe persisted events and run record reach a stop boundary while the helper continues waiting for a TUI regex match.
+- Expected behavior:
+  - The helper should exit successfully when `run_record.json` shows `analyze_papers.status: needs_approval`, `completed`, or `failed`, even if the rendered TUI wording differs.
+- Actual behavior:
+  - The run persisted `NODE_COMPLETED`, an after-checkpoint, `pause_for_human`, and `analyze_papers.status: needs_approval`.
+  - The helper remained active until manually interrupted because the screen text did not match `STOP_PATTERN`.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this reproduced in the active P6 full live validation workspace.
+  - Existing session: persisted run state and helper observation diverged.
+- Dominant root-cause class: `in_memory_projection_bug`
+- Root-cause hypothesis:
+  - The helper treated the TUI screen as the only stop-boundary source even though the persisted run record is the authoritative state.
+- Code/test changes:
+  - Code:
+    - `scripts/p6-approve-and-run-next.py`
+      - adds persisted stop-boundary detection from `run_record.json`.
+      - exits when the target node reaches `needs_approval`, `completed`, or `failed` in persisted state.
+  - Tests:
+    - `tests/p6ContinueScript.test.ts`
+      - self-test coverage pending through the helper's built-in self-test.
+- Regression status:
+  - Targeted regression: pending.
+  - Same-flow helper revalidation: pending.
+- Remaining risks:
+  - The helper still needs a same-flow pass on an already-paused `analyze_papers` state before advancing to `generate_hypotheses`.
+
+## Issue: LV-335
+
+- Status: reproduced on 2026-05-05; repair in progress
+- Validation target: P6 continue helper after LV-334 resume helper repair for run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7`.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - command: `npm run p6:continue`
+  - node: `analyze_papers`
+- Reproduction steps:
+  1. Leave the P6 run in `analyze_papers.status: running`.
+  2. Run the P6 continue helper against that run id.
+  3. Observe the helper attach to the active-running screen, send `/doctor`, and wait for readiness output while analysis logs continue streaming.
+- Expected behavior:
+  - When the run is already active-running, the helper should not inject `/doctor`, `/approve`, or `/agent run ...` into the live node.
+  - It should observe until the next stop boundary, or fail without interrupting the active node.
+- Actual behavior:
+  - The helper timed out waiting for `/doctor` readiness output.
+  - Its cleanup terminated the TUI process and canceled `analyze_papers`.
+  - `run_record.json` ended at `status: paused`, `currentNode: analyze_papers`, `analyze_papers.status: pending`, with a `Canceled by user` note and zero evidence.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this reproduced in the active P6 full live validation workspace.
+  - Existing session: the active P6 run was interrupted by the helper after it attached to a running node.
+- Dominant root-cause class: `race_timing_bug`
+- Root-cause hypothesis:
+  - The P6 continue helper assumed it could always run `/doctor` before continuing. During an active node, the TUI is busy streaming node output, so `/doctor` output may not appear before the helper timeout and cleanup becomes an accidental cancellation path.
+- Code/test changes:
+  - Code:
+    - `scripts/p6-approve-and-run-next.py`
+      - detects active-running run records before attaching.
+      - observes already-running nodes until a stop boundary instead of injecting `/doctor` or a new `/agent run`.
+      - accepts pending/canceled screens for recovery starts.
+  - Tests:
+    - `tests/p6ContinueScript.test.ts`
+      - self-test coverage pending for active-running detection through the helper's built-in self-test.
+- Regression status:
+  - Targeted regression: pending.
+  - Same-flow continue revalidation: pending.
+- Remaining risks:
+  - The current P6 run has lost the prior partial analysis rows and needs a clean `analyze_papers` retry.
+
+## Issue: LV-334
+
+- Status: reproduced on 2026-05-05; repair in progress
+- Validation target: P6 resume-check after LV-333 stream-abort repair for run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7`.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - command: `npm run p6:resume-check`
+  - node: `analyze_papers`
+- Reproduction steps:
+  1. Leave the P6 run in `analyze_papers.status: running` after an interrupted live validation attempt.
+  2. Run the P6 resume-check helper against that run id.
+  3. Observe the TUI render `analyze_papers running`, while the helper waits only for the older `collect_papers needs_approval` pattern.
+- Expected behavior:
+  - Resume-check should not open and later terminate a TUI session for a run whose current node is actively `running`.
+  - If the run is paused, failed, completed, or waiting for approval, resume-check should accept the current node state instead of assuming the first approval gate.
+- Actual behavior:
+  - The helper failed waiting for `collect_papers needs_approval`.
+  - The recent buffer showed `analyze_papers running`.
+  - After helper termination, `run_record.json` still showed `analyze_papers.status: running`, while `paper_summaries.jsonl` and `evidence_store.jsonl` were absent.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this reproduced in the active P6 full live validation workspace.
+  - Existing session: the active P6 run was opened through the resume helper and then interrupted by helper failure.
+- Dominant root-cause class: `resume_reload_bug`
+- Root-cause hypothesis:
+  - The P6 resume helper encoded the first-gate validation assumption from the original `collect_papers` pause and did not account for later live states. Opening an active-running run for a read-only check can restart or expose active work and then kill it through helper cleanup.
+- Code/test changes:
+  - Code:
+    - `scripts/p6-resume-check.py`
+      - skips TUI startup when the target run is actively running.
+      - broadens the accepted resumed node-state pattern for paused/completed later nodes.
+  - Tests:
+    - pending.
+- Regression status:
+  - Targeted regression: pending.
+  - Same-flow resume-check: pending.
+- Remaining risks:
+  - The interrupted run now needs a safe `analyze_papers` retry/recovery path before P6 can proceed to hypothesis generation.
+
+## Issue: LV-333
+
+- Status: reproduced on 2026-05-05; repair in progress
+- Validation target: P6 paper-ready full live validation continuation for run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7`.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - backend: Codex OAuth Responses analysis path
+  - node: `analyze_papers`
+- Reproduction steps:
+  1. Start the P6 live run and approve `collect_papers`.
+  2. Continue into `analyze_papers` with the P6 PTY helper.
+  3. Observe `analyze_papers` persist partial summaries/evidence, emit Codex OAuth Responses progress, and then stop updating live artifacts while the TUI/node process remains alive.
+- Expected behavior:
+  - Each planner/extractor/reviewer timeout should abort the active stream read and return control to `analyze_papers`.
+  - If analysis cannot complete, the node should pause or fail with visible partial artifacts and a bounded error rather than remaining indefinitely `running`.
+- Actual behavior:
+  - The latest event was a Codex OAuth Responses submission for additional paper analysis.
+  - `events.jsonl`, `paper_summaries.jsonl`, and `run_record.json` stopped updating while the process stayed alive.
+  - The run remained at `analyze_papers.status: running` after the helper was interrupted.
+- Fresh vs existing session comparison:
+  - Fresh session: not separately run from `/new`; this reproduced in the active P6 full live validation workspace.
+  - Existing session: the same live run stopped progressing during `analyze_papers`.
+- Dominant root-cause class: `race_timing_bug`
+- Root-cause hypothesis:
+  - The Codex OAuth Responses client passed the abort signal into `fetch(...)`, but the SSE body reader loop did not explicitly observe that signal while awaiting `reader.read()`. A stalled stream could therefore outlive the node-level timeout and leave the live run visibly stuck.
+- Code/test changes:
+  - Code:
+    - `src/integrations/codex/oauthResponsesTextClient.ts`
+      - makes SSE stream reads abortable and cancels the reader when the active abort signal fires.
+  - Tests:
+    - `tests/codexOAuthTextClient.test.ts`
+      - adds a regression test for aborting an in-progress SSE stream read.
+- Regression status:
+  - Targeted regression: pending.
+  - Build: pending.
+  - Same-flow live revalidation: pending.
+- Remaining risks:
+  - The interrupted P6 run still records `analyze_papers` as running and needs resume/retry validation after the stream-abort repair is built.
+  - Additional upstream request paths may need the same bounded stream-read treatment if they expose separate readers.
 
 ## Issue: LV-195
 
@@ -1112,6 +3252,114 @@ Path placeholders:
 ---
 
 ## Active live validation issues
+
+## Issue: LV-332
+
+- Status: in_progress
+- Validation target: P6 real live validation workspace artifacts must survive targeted Vitest regression runs so helper tests do not erase active run evidence.
+- Environment/session context:
+  - validation workspace root: `<validation-workspace>`
+  - P6 workspace: `<validation-workspace>/p6-paper-ready-live`
+  - command that reproduced deletion: `npm test -- tests/p6ContinueScript.test.ts`
+  - affected run: `df02a1b7-75be-4ab6-9fa8-9774ee4a0492`
+
+- Reproduction steps:
+  1. Run `npm run p6:preflight` to create `<validation-workspace>/p6-paper-ready-live`.
+  2. Confirm the workspace exists.
+  3. Run `npm test -- tests/p6ContinueScript.test.ts`.
+  4. Confirm `<validation-workspace>/p6-paper-ready-live` no longer exists.
+
+- Expected behavior:
+  - Test cleanup should remove only test-created temp workspaces.
+  - Real live validation workspaces should survive targeted regression tests, matching the source comment that live TUI validation workspaces survive Vitest runs.
+
+- Actual behavior:
+  - `tests/globalTeardown.ts` preserves only `smoke`, `.env`, `.autolabos`, `outputs`, `output`, and `.tmp`.
+  - The P6 real live workspace is a validation-root child directory named `p6-paper-ready-live`, so global setup/teardown removes it.
+  - The active P6 run artifacts disappeared from the validation root and could no longer be used as paper-readiness evidence.
+
+- Fresh vs existing session comparison:
+  - Fresh session: a freshly recreated P6 workspace exists immediately after `npm run p6:preflight`.
+  - Existing session: running the targeted regression test deletes the existing P6 workspace before continuation.
+  - Divergence: yes; test cleanup state diverges from real live validation state by removing a non-test workspace.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: the validation-root cleanup allowlist predates the P6 real live workspace convention and treats any unknown validation-root child directory as disposable test state.
+
+- Code/test changes:
+  - Code: `tests/globalTeardown.ts` pending
+  - Tests: `tests/p6ContinueScript.test.ts` pending
+
+- Regression status:
+  - Automated regression test linked: no
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - Other future named live-validation workspaces may need an explicit preservation convention rather than a one-off allowlist entry.
+  - The deleted `df02a1b7-75be-4ab6-9fa8-9774ee4a0492` run cannot be used as reproducibility evidence; P6 must continue from a new run.
+
+- Evidence/artifacts:
+  - `outputs/p6-preflight/p6-live-run-id.txt`
+  - `outputs/p6-preflight/p6-live-start-output.txt`
+  - `tests/globalTeardown.ts`
+
+## Issue: LV-331
+
+- Status: in_progress
+- Validation target: P6 full paper-ready live validation helper should approve a gate, start or resume the requested TUI node, and wait for the real node stop boundary without killing a long-running node because a transient approval message was not matched.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>/p6-paper-ready-live`
+  - run: `df02a1b7-75be-4ab6-9fa8-9774ee4a0492`
+  - helper command: `npm run p6:continue`
+  - active node after reproduction: `analyze_papers`
+  - backend: native Codex OAuth via the real TUI
+
+- Reproduction steps:
+  1. Start the P6 live run from the frozen P6 brief with `npm run p6:start-live`.
+  2. Confirm the fresh run pauses at `collect_papers needs_approval`.
+  3. Resume the same workspace and confirm `/doctor` passes with `npm run p6:resume-check`.
+  4. Run `AUTOLABOS_P6_RUN_ID=<run-id> npm run p6:continue`.
+  5. Inspect the persisted run store after the helper exits.
+
+- Expected behavior:
+  - The helper should treat approval handoff, already-running requested node state, and node progress output as valid progression.
+  - It should keep waiting until the TUI reports a real stop boundary such as `Run paused:`, `Research stopped:`, `Research finished:`, `Node <node> failed:`, `Use /approve to continue`, or `No pending approval`.
+  - It should write the PTY transcript even on failure and avoid reporting success unless the same live flow reaches an inspectable stop state.
+
+- Actual behavior:
+  - The helper sent `/approve` and the live TUI advanced into `analyze_papers`.
+  - The helper waited only for `Approved <node>. Next node is`, `Run completed.`, or `No pending approval` before issuing or tracking the next node, so it timed out while `analyze_papers` was already streaming Codex output.
+  - The helper terminated the TUI process in `finally`.
+  - Persisted run state shows `status: running`, `currentNode: analyze_papers`, `collect_papers.status: completed`, `analyze_papers.status: running`, checkpoint `0004-analyze_papers-before.json`, and no `analyze_papers` after-checkpoint/evidence output yet.
+
+- Fresh vs existing session comparison:
+  - Fresh session: `npm run p6:start-live` correctly created the run, collected 164 papers, and paused at the approval gate.
+  - Existing session: resumed P6 session correctly projected `collect_papers needs_approval` before continuation, then the helper left the existing run in a stale in-progress `analyze_papers running` state after terminating the TUI.
+  - Divergence: yes; the live TUI itself advanced, while the helper's in-memory PTY wait condition failed to recognize that progression.
+
+- Root cause hypothesis:
+  - Type: `race_timing_bug`
+  - Hypothesis: the helper modeled `/approve` and `/agent run` as a strict two-message sequence, but the real TUI can advance directly into long-running node output before the helper observes the exact approval line. The timeout path then kills the process without first classifying the run as actively progressing.
+
+- Code/test changes:
+  - Code: `scripts/p6-approve-and-run-next.py` pending
+  - Tests: pending
+
+- Regression status:
+  - Automated regression test linked: no
+  - Re-validation result: pending
+
+- Follow-up risks:
+  - The run may need a governed retry of `analyze_papers` because the previous TUI process was terminated after a before-checkpoint and partial stream events.
+  - The same helper pattern could affect later long-running P6 nodes if stop-boundary and active-progress handling remain too narrow.
+
+- Evidence/artifacts:
+  - `outputs/p6-preflight/p6-live-start-output.txt`
+  - `outputs/p6-preflight/p6-resume-check-output.txt`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/df02a1b7-75be-4ab6-9fa8-9774ee4a0492/run_record.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/df02a1b7-75be-4ab6-9fa8-9774ee4a0492/events.jsonl`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/df02a1b7-75be-4ab6-9fa8-9774ee4a0492/checkpoints/0004-analyze_papers-before.json`
 
 ## Issue: LV-330
 
@@ -7123,7 +9371,7 @@ The resolved entries below are kept as recent validation history and regression 
 - Evidence/artifacts:
   - `test/.tmp/compact-brief-rerun-6/.autolabos/runs/b86d40eb-4e9c-454c-bb48-019563a90bed/run_record.json`
   - `test/.tmp/compact-brief-rerun-6/.autolabos/runs/b86d40eb-4e9c-454c-bb48-019563a90bed/events.jsonl`
-  - `/tmp/retry-analyze-b86-2.log`
+  - `<tmp>/retry-analyze-b86-2.log`
   - `test/.tmp/compact-brief-rerun-8-g6F8m6/.autolabos/runs/6147662c-96c4-45e3-b580-4f81d824c462/run_record.json`
   - `test/.tmp/compact-brief-rerun-8-g6F8m6/.autolabos/runs/6147662c-96c4-45e3-b580-4f81d824c462/events.jsonl`
   - `test/.tmp/compact-brief-rerun-8-g6F8m6/.autolabos/runs/6147662c-96c4-45e3-b580-4f81d824c462/paper_summaries.jsonl`
@@ -7408,14 +9656,14 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - The current UI is readable but still dense for long real research runs; deeper visual polish may require prioritizing which evidence cards and logs should be collapsed by default.
   - Evidence/artifacts:
-  - `/tmp/autolabos-webui-fixed.png`
-  - `/tmp/autolabos-webui-fixed-full.png`
-  - `/tmp/autolabos-webui-mobile-fixed.png`
-  - `/tmp/autolabos-main-card-wide.png`
-  - `/tmp/autolabos-main-card-full-width.png`
-  - `/tmp/autolabos-main-card-title-fixed.png`
-  - `/tmp/autolabos-main-card-rebalanced.png`
-  - `/tmp/autolabos-main-card-readable-title.png`
+  - `<tmp>/autolabos-webui-fixed.png`
+  - `<tmp>/autolabos-webui-fixed-full.png`
+  - `<tmp>/autolabos-webui-mobile-fixed.png`
+  - `<tmp>/autolabos-main-card-wide.png`
+  - `<tmp>/autolabos-main-card-full-width.png`
+  - `<tmp>/autolabos-main-card-title-fixed.png`
+  - `<tmp>/autolabos-main-card-rebalanced.png`
+  - `<tmp>/autolabos-main-card-readable-title.png`
   - `curl -L -s -S http://127.0.0.1:4317/api/bootstrap`
 
 ## Issue: LV-088
@@ -7468,8 +9716,8 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - If bootstrap becomes very slow, the loading card should remain useful but deeper API latency diagnostics may still be needed.
 - Evidence/artifacts:
-  - `/tmp/autolabos-localhost-confirm.png`
-  - `/tmp/autolabos-localhost-final.png`
+  - `<tmp>/autolabos-localhost-confirm.png`
+  - `<tmp>/autolabos-localhost-final.png`
   - `lsof -i :4317`
   - `curl -L -s -S -I http://127.0.0.1:4317`
 
@@ -12396,8 +14644,8 @@ The resolved entries below are kept as recent validation history and regression 
   3. Rerun `implement_experiments` for existing validation run `73050f85-6b56-4385-8c31-2ec69a5b7dec`.
   4. Allow staged Codex OAuth generation to complete all chunks and enter implement-stage local verification.
 
-- Expected behavior: local verification should treat source scripts and referenced input artifacts as required materialized artifacts, but it should not require shell output redirection targets such as `>/tmp/peft_study_help.txt` to exist before the command runs.
-- Actual behavior: staged generation completed all chunks, but local verification failed before execution with `Local verification could not start because required artifact(s) were not materialized for python3 -m py_compile ... && python3 ... --help >/tmp/peft_study_help.txt: >/tmp/peft_study_help.txt`.
+- Expected behavior: local verification should treat source scripts and referenced input artifacts as required materialized artifacts, but it should not require shell output redirection targets such as `><tmp>/peft_study_help.txt` to exist before the command runs.
+- Actual behavior: staged generation completed all chunks, but local verification failed before execution with `Local verification could not start because required artifact(s) were not materialized for python3 -m py_compile ... && python3 ... --help ><tmp>/peft_study_help.txt: ><tmp>/peft_study_help.txt`.
 
 - Fresh vs existing session comparison:
   - Fresh session: not separately run from `/new`; this was reproduced in the active validation workspace after rebuilding and restarting the localhost-only Web API.
@@ -12406,7 +14654,7 @@ The resolved entries below are kept as recent validation history and regression 
 
 - Root cause hypothesis:
   - Type: `in_memory_projection_bug`
-  - Hypothesis: the verification artifact scanner tokenizes shell commands and treats any token containing `/` as a required pre-existing path. Attached output redirection tokens such as `>/tmp/peft_study_help.txt` are therefore misclassified as missing input artifacts.
+  - Hypothesis: the verification artifact scanner tokenizes shell commands and treats any token containing `/` as a required pre-existing path. Attached output redirection tokens such as `><tmp>/peft_study_help.txt` are therefore misclassified as missing input artifacts.
 
 - Code/test changes:
   - Code:

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { buildResultsTableValidation } from "../src/core/nodes/analyzeResults.js";
 import { buildAnalysisReport } from "../src/core/resultAnalysis.js";
 
 describe("resultAnalysis", () => {
@@ -356,6 +357,148 @@ describe("resultAnalysis", () => {
       )
     ).toBe(true);
     expect(report.failure_taxonomy.some((item) => item.id === "missing_confidence_intervals")).toBe(false);
+  });
+
+  it("projects P6 repeated-seed condition_summaries with a top-level baseline marker", () => {
+    const report = buildAnalysisReport({
+      run: {
+        objectiveMetric: "accuracy_delta_vs_baseline >= 0.01"
+      },
+      experimentPlanRaw: [
+        "selected_design:",
+        "  title: 5-seed high-rank dropout stability against locked baseline",
+        "  risks:",
+        "    - The small backbone may make the effect unstable."
+      ].join("\n"),
+      metrics: {
+        status: "completed",
+        baseline_marker: "rank_8_dropout_0_0",
+        required_run_count: 25,
+        completed_run_count: 25,
+        accuracy_delta_vs_baseline: 0.04479166666666667,
+        condition_summaries: [
+          {
+            condition_marker: "rank_8_dropout_0_0",
+            status: "completed",
+            lora_rank: 8,
+            lora_dropout: 0,
+            completed_seed_count: 5,
+            average_accuracy_mean: 0.4416666666666667,
+            average_accuracy_ci95: 0.030006249349093926,
+            average_accuracy_count: 5,
+            accuracy_delta_vs_baseline_mean: 0,
+            accuracy_delta_vs_baseline_ci95: 0,
+            accuracy_delta_vs_baseline_count: 5,
+            arc_challenge_accuracy_mean: 0.5666666666666667,
+            hellaswag_accuracy_mean: 0.31666666666666665
+          },
+          {
+            condition_marker: "rank_16_dropout_0_0",
+            status: "completed",
+            lora_rank: 16,
+            lora_dropout: 0,
+            completed_seed_count: 5,
+            average_accuracy_mean: 0.4666666666666667,
+            average_accuracy_ci95: 0.0586068587188299,
+            average_accuracy_count: 5,
+            accuracy_delta_vs_baseline_mean: 0.025000000000000012,
+            accuracy_delta_vs_baseline_ci95: 0.08408097948472716,
+            accuracy_delta_vs_baseline_count: 5,
+            arc_challenge_accuracy_mean: 0.6166666666666667,
+            hellaswag_accuracy_mean: 0.31666666666666665
+          },
+          {
+            condition_marker: "rank_32_dropout_0_05",
+            status: "completed",
+            lora_rank: 32,
+            lora_dropout: 0.05,
+            completed_seed_count: 5,
+            average_accuracy_mean: 0.5083333333333333,
+            average_accuracy_ci95: 0.04000833246545857,
+            average_accuracy_count: 5,
+            accuracy_delta_vs_baseline_mean: 0.06666666666666667,
+            accuracy_delta_vs_baseline_ci95: 0.06378370568657102,
+            accuracy_delta_vs_baseline_count: 5,
+            arc_challenge_accuracy_mean: 0.6416666666666667,
+            hellaswag_accuracy_mean: 0.375
+          }
+        ]
+      },
+      objectiveProfile: {
+        source: "llm",
+        raw: "accuracy_delta_vs_baseline >= 0.01",
+        primaryMetric: "accuracy_delta_vs_baseline",
+        preferredMetricKeys: ["accuracy_delta_vs_baseline", "average_accuracy", "arc_challenge_accuracy", "hellaswag_accuracy"],
+        comparator: ">=",
+        targetValue: 0.01,
+        targetDescription: "Accuracy delta should improve by at least one point.",
+        analysisFocus: [],
+        paperEmphasis: [],
+        assumptions: []
+      },
+      objectiveEvaluation: {
+        rawObjectiveMetric: "accuracy_delta_vs_baseline >= 0.01",
+        profileSource: "llm",
+        primaryMetric: "accuracy_delta_vs_baseline",
+        preferredMetricKeys: ["accuracy_delta_vs_baseline", "average_accuracy", "arc_challenge_accuracy", "hellaswag_accuracy"],
+        matchedMetricKey: "accuracy_delta_vs_baseline",
+        comparator: ">=",
+        targetValue: 0.01,
+        observedValue: 0.04479166666666667,
+        status: "met",
+        summary: "Objective metric met."
+      }
+    });
+
+    expect(report.condition_comparisons[0]).toMatchObject({
+      id: "rank_32_dropout_0_05_vs_rank_8_dropout_0_0",
+      source: "metrics.condition_summaries",
+      hypothesis_supported: true
+    });
+    expect(report.condition_comparisons[0]?.metrics[0]?.key).toBe("accuracy_delta_vs_baseline_mean");
+    expect(report.condition_comparisons[0]?.metrics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: "accuracy_delta_vs_baseline_mean",
+          baseline_value: 0,
+          primary_value: 0.066667,
+          value: 0.0667
+        }),
+        expect.objectContaining({
+          key: "average_accuracy_mean",
+          baseline_value: 0.441667,
+          primary_value: 0.508333,
+          value: 0.0667
+        })
+      ])
+    );
+    expect(report.overview.execution_runs).toBe(25);
+    expect(report.statistical_summary.total_trials).toBe(25);
+    expect(report.statistical_summary.executed_trials).toBe(25);
+    expect(report.primary_findings).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("25 executed trial(s)")
+      ])
+    );
+    expect(
+      report.statistical_summary.confidence_intervals.some((item) =>
+        item.metric_key === "condition_summaries.rank_32_dropout_0_05.average_accuracy"
+      )
+    ).toBe(true);
+    expect(report.failure_taxonomy.some((item) => item.id === "missing_confidence_intervals")).toBe(false);
+
+    const validation = buildResultsTableValidation({ report });
+    expect(validation.valid).toBe(true);
+    expect(validation.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metric: "accuracy_delta_vs_baseline_mean",
+          baseline: 0,
+          comparator: 0.066667,
+          delta: 0.0667
+        })
+      ])
+    );
   });
 
   it("extracts a preset runtime guardrail from the experiment plan and removes the stale threshold warning", () => {

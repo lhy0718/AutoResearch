@@ -922,6 +922,29 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         `${JSON.stringify(fallbackReadinessRisks, null, 2)}\n`,
         "utf8"
       );
+      const preliminaryManuscriptType = preDraftCritique?.manuscript_type || "paper_scale_candidate";
+      const preliminaryPaperReadiness = buildPaperReadinessArtifact({
+        manuscriptType: preliminaryManuscriptType,
+        preDraftManuscriptType: preDraftCritique?.pre_draft_manuscript_type,
+        claimCeilingApplied: preDraftCritique?.claim_ceiling_applied,
+        overallScore: preDraftCritique?.overall_score,
+        evidenceGateDecision,
+        claimStatusTable,
+        citationReport: citationConsistency,
+        scientificGateStatus: gateDecision.status,
+        submissionValidationOk: submissionValidation.ok,
+        manuscriptQualityAction: manuscriptQuality.repairDecision.action
+      });
+      await writeRunArtifact(
+        run,
+        "paper/paper_readiness.json",
+        `${JSON.stringify(preliminaryPaperReadiness, null, 2)}\n`
+      );
+      await fs.writeFile(
+        path.join(publicPaperDir, "paper_readiness.json"),
+        `${JSON.stringify(preliminaryPaperReadiness, null, 2)}\n`,
+        "utf8"
+      );
 
       const preCompileToolCallsUsed =
         Math.max(1, 4 - sessionResult.stageFallbacks)
@@ -955,6 +978,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await runContextMemory.put("write_paper.manuscript_quality_gate", manuscriptQuality.repairDecision);
       await runContextMemory.put("write_paper.manuscript_repair_reports", manuscriptQuality.repairReports);
       await runContextMemory.put("write_paper.readiness_risks", fallbackReadinessRisks);
+      await runContextMemory.put("write_paper.paper_readiness", preliminaryPaperReadiness);
       if (manuscriptQuality.repairDecision.action === "stop") {
         const manuscriptError = buildManuscriptQualityFailureError(manuscriptQuality.repairDecision);
         emitLog(manuscriptError);
@@ -3538,6 +3562,8 @@ function buildPaperReadinessArtifact(input: {
     citation_check: input.citationReport.status,
     reason: paperReady
       ? "The manuscript passed manuscript-quality, evidence, scientific, and submission gates."
+      : input.manuscriptQualityAction === "stop"
+        ? "paper_ready is blocked because the manuscript-quality gate stopped bounded repair."
       : claimCeilingApplied
         ? "paper_ready is blocked because the pre-draft review claim ceiling classified the evidence below paper-ready."
       : input.citationReport.status === "fail"

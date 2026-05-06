@@ -178,7 +178,7 @@ export class CodexOAuthResponsesTextClient {
       throw new Error(`Codex OAuth backend request failed: ${response.status}${raw ? ` ${raw}` : ""}`);
     }
 
-    const streamed = await readCodexStream(response, opts.onProgress);
+    const streamed = await readCodexStream(response, opts.onProgress, opts.abortSignal);
     if (streamed.payload?.error?.message) {
       throw new Error(`Codex OAuth backend returned an error: ${streamed.payload.error.message}`);
     }
@@ -230,7 +230,8 @@ function inferImageMimeType(imagePath: string): string {
 
 async function readCodexStream(
   response: Response,
-  onProgress?: (event: CodexOAuthResponsesProgressEvent) => void
+  onProgress?: (event: CodexOAuthResponsesProgressEvent) => void,
+  abortSignal?: AbortSignal
 ): Promise<{ text: string; payload: CodexResponsesApiResponse }> {
   const reader = response.body?.getReader();
   if (!reader) {
@@ -248,7 +249,7 @@ async function readCodexStream(
   const candidateTexts = new Set<string>();
 
   while (true) {
-    const { done, value } = await reader.read();
+    const { done, value } = await readCodexStreamChunk(reader, abortSignal);
     if (done) {
       break;
     }
@@ -291,6 +292,47 @@ async function readCodexStream(
 
   onProgress?.({ type: "status", text: "Received streamed Codex OAuth output." });
   return { text: selectBestText(text, payload, candidateTexts), payload };
+}
+
+async function readCodexStreamChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  abortSignal?: AbortSignal
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  if (!abortSignal) {
+    return reader.read();
+  }
+  if (abortSignal.aborted) {
+    throw makeAbortError();
+  }
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => abortSignal.removeEventListener("abort", onAbort);
+    const settle = (fn: () => void) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      fn();
+    };
+    const onAbort = () => {
+      void reader.cancel().catch(() => undefined);
+      settle(() => reject(makeAbortError()));
+    };
+
+    abortSignal.addEventListener("abort", onAbort, { once: true });
+    reader.read().then(
+      (value) => settle(() => resolve(value)),
+      (error: unknown) => settle(() => reject(error))
+    );
+  });
+}
+
+function makeAbortError(): Error {
+  const error = new Error("Codex OAuth stream aborted");
+  error.name = "AbortError";
+  return error;
 }
 
 function parseSseFrame(frame: string): CodexResponsesEvent | undefined {

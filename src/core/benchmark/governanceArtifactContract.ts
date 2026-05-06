@@ -22,6 +22,7 @@ export interface ValidateGovernanceArtifactContractInput {
   condition?: GovernanceBenchmarkConditionName;
   publicManifestPath?: string;
   requiredArtifacts?: string[];
+  requireGovernanceConditionArtifact?: boolean;
 }
 
 export async function validateGovernanceArtifactContract(
@@ -29,7 +30,9 @@ export async function validateGovernanceArtifactContract(
 ): Promise<GovernanceArtifactContractReport> {
   const condition = input.condition || "gated";
   const requiredArtifacts = uniqueStrings([
-    ...requiredArtifactsForCondition(condition),
+    ...requiredArtifactsForCondition(condition, {
+      requireGovernanceConditionArtifact: input.requireGovernanceConditionArtifact ?? true
+    }),
     ...(input.requiredArtifacts || [])
   ]);
   const issues: GovernanceArtifactContractIssue[] = [];
@@ -63,9 +66,12 @@ function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
-function requiredArtifactsForCondition(condition: GovernanceBenchmarkConditionName): string[] {
+function requiredArtifactsForCondition(
+  condition: GovernanceBenchmarkConditionName,
+  options: { requireGovernanceConditionArtifact: boolean }
+): string[] {
   const required = [
-    "governance_condition.json",
+    ...(options.requireGovernanceConditionArtifact ? ["governance_condition.json"] : []),
     "result_table.json",
     "evidence_store.jsonl"
   ];

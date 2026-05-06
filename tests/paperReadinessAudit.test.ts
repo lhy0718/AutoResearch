@@ -111,6 +111,111 @@ describe("paper-readiness audit", () => {
     expect(summary.result_table_completeness.paper_ready_allowed).toBe(false);
   });
 
+  it("audits runtime comparison-summary result tables without treating them as missing", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-live-result-table-"));
+    tempDirs.push(workspace);
+    const runRoot = await writeMinimalAuditRun(workspace, {
+      resultTable: {
+        conditions: [
+          {
+            name: "rank_32_dropout_0_05_vs_rank_8_dropout_0_0",
+            metrics: {
+              accuracy_delta_vs_baseline_mean: 0.066667
+            }
+          }
+        ],
+        comparisons: [
+          {
+            primary: "rank_32_dropout_0_05_vs_rank_8_dropout_0_0",
+            baseline: "metrics.condition_summaries",
+            metric: "accuracy_delta_vs_baseline_mean",
+            delta: 0.066667,
+            hypothesis_supported: true
+          }
+        ],
+        primary_metric: "accuracy_delta_vs_baseline"
+      }
+    });
+
+    const summary = await runPaperReadinessAudit({
+      cwd: workspace,
+      runRoot,
+      outDir: "outputs/live-result-table-audit"
+    });
+
+    expect(summary.result_table_completeness.measured).toBe(true);
+    expect(summary.result_table_completeness.row_count).toBe(1);
+    expect(summary.top_blockers.map((blocker) => blocker.code)).not.toContain("result_table_missing");
+    expect(summary.top_blockers.map((blocker) => blocker.code)).toEqual(
+      expect.arrayContaining(["result_table_incomplete", "baseline_or_comparator_missing"])
+    );
+    expect(summary.claim_ceiling.allowed_level).toBe("descriptive_only_no_comparative_claims");
+  });
+
+  it("does not treat failed write_paper artifacts as completed manuscript acceptance", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-failed-write-paper-"));
+    tempDirs.push(workspace);
+    const runRoot = await writeMinimalAuditRun(workspace, {
+      resultTable: [
+        {
+          metric: "accuracy",
+          baseline: 0.7,
+          comparator: 0.75,
+          delta: 0.05,
+          direction: "higher_better"
+        }
+      ],
+      runRecord: {
+        id: "failed-write-paper-run",
+        status: "paused",
+        graph: {
+          nodeStates: {
+            write_paper: {
+              status: "failed",
+              lastError: "manuscript-quality gate failed"
+            }
+          }
+        }
+      }
+    });
+
+    const summary = await runPaperReadinessAudit({
+      cwd: workspace,
+      runRoot,
+      outDir: "outputs/failed-write-paper-audit"
+    });
+
+    expect(summary.paper_readiness.write_paper_completed).toBe(false);
+    expect(summary.top_blockers.map((blocker) => blocker.code)).toContain("write_paper_failed");
+    expect(summary.next_action_checklist.join("\n")).toContain("manuscript as unaccepted");
+  });
+
+  it("does not require seed-only governance_condition artifacts for ordinary run audits", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-ordinary-run-contract-"));
+    tempDirs.push(workspace);
+    const runRoot = await writeMinimalAuditRun(workspace, {
+      includeGovernanceCondition: false,
+      resultTable: [
+        {
+          metric: "accuracy",
+          baseline: 0.7,
+          comparator: 0.75,
+          delta: 0.05,
+          direction: "higher_better"
+        }
+      ]
+    });
+
+    const summary = await runPaperReadinessAudit({
+      cwd: workspace,
+      runRoot,
+      outDir: "outputs/ordinary-run-audit"
+    });
+
+    expect(summary.top_blockers.map((blocker) => blocker.code)).not.toContain("artifact_contract_incomplete");
+    expect(summary.scorer_outputs.governance_score.dimension_scores.artifact_completeness).toBe(2);
+  });
+
   it("fails the done-condition audit when paper_ready hides known blockers", async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-done-condition-"));
     tempDirs.push(workspace);
@@ -200,3 +305,65 @@ describe("paper-readiness audit", () => {
     expect(report).toContain("distributed_worker_failure_hidden");
   });
 });
+
+async function writeMinimalAuditRun(
+  workspace: string,
+  input: {
+    resultTable: unknown;
+    runRecord?: Record<string, unknown>;
+    includeGovernanceCondition?: boolean;
+  }
+): Promise<string> {
+  const runRoot = path.join(workspace, "runs", "live-audit-run");
+  await mkdir(path.join(runRoot, "figure_audit"), { recursive: true });
+  await mkdir(path.join(runRoot, "review"), { recursive: true });
+  await mkdir(path.join(runRoot, "paper"), { recursive: true });
+  if (input.includeGovernanceCondition !== false) {
+    await writeJson(path.join(runRoot, "governance_condition.json"), {
+      name: "gated",
+      allowed_weak_output_states: ["paper_ready=false", "paper_scale_candidate"]
+    });
+  }
+  await writeJson(path.join(runRoot, "result_table.json"), input.resultTable);
+  await writeFile(
+    path.join(runRoot, "evidence_store.jsonl"),
+    `${JSON.stringify({ id: "ev_metric", metric: "accuracy_delta_vs_baseline", metric_evidence_present: true })}\n`,
+    "utf8"
+  );
+  await writeJson(path.join(runRoot, "figure_audit", "figure_audit_summary.json"), {
+    audited_at: "2026-05-06T00:00:00.000Z",
+    figure_count: 1,
+    issues: [],
+    severe_mismatch_count: 0,
+    review_block_required: false
+  });
+  await writeJson(path.join(runRoot, "review", "paper_critique.json"), {
+    paper_readiness_state: "paper_scale_candidate",
+    claim_ceiling_applied: true
+  });
+  await writeJson(path.join(runRoot, "review", "decision.json"), {
+    outcome: "revise"
+  });
+  await writeFile(path.join(runRoot, "paper", "main.tex"), "\\section{Results}\n", "utf8");
+  await writeJson(path.join(runRoot, "paper", "paper_readiness.json"), {
+    paper_ready: false,
+    readiness_state: "paper_scale_candidate"
+  });
+  await writeJson(path.join(runRoot, "paper", "claim_evidence_table.json"), {
+    claims: []
+  });
+  await writeJson(path.join(runRoot, "paper", "claim_status_table.json"), {
+    claims: []
+  });
+  await writeJson(path.join(runRoot, "paper", "evidence_links.json"), {
+    claims: []
+  });
+  if (input.runRecord) {
+    await writeJson(path.join(runRoot, "run_record.json"), input.runRecord);
+  }
+  return runRoot;
+}
+
+async function writeJson(filePath: string, value: unknown): Promise<void> {
+  await writeFile(filePath, JSON.stringify(value, null, 2), "utf8");
+}
