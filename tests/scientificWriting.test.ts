@@ -10,6 +10,7 @@ import {
   applyScientificWritingPolicy,
   buildScientificValidationArtifact,
   buildWritePaperGateDecision,
+  experimentArtifactLoader,
   materializeScientificManuscript,
   pageBudgetManager,
   resolvePaperProfile
@@ -566,6 +567,170 @@ describe("scientificWriting", () => {
       scientific.auto_repairs.expansion_recheck.resolved_headings.length
       + scientific.auto_repairs.expansion_recheck.unresolved_headings.length
     ).toBe(scientific.auto_repairs.expanded_sections.length);
+  });
+
+  it("uses LM benchmark evidence instead of tabular CV requirements when latest_results is absent", () => {
+    const bundle = makeRichBundle();
+    bundle.runTitle = "LoRA rank-dropout repeated-seed benchmark";
+    bundle.topic = "LoRA rank and dropout interaction for a small LLM benchmark";
+    bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    bundle.latestResults = undefined as any;
+    bundle.experimentPlan = {
+      selectedTitle: "5-seed high-rank dropout stability against locked baseline",
+      selectedSummary: "Compare repeated LoRA rank/dropout cells on ARC-Challenge and HellaSwag.",
+      rawText: [
+        "selected_design:",
+        '  title: "5-seed high-rank dropout stability against locked baseline"',
+        "  datasets:",
+        '    - "Alpaca Clean subset"',
+        '    - "ARC-Challenge"',
+        '    - "HellaSwag"',
+        "  metrics:",
+        '    - "average_accuracy"',
+        '    - "accuracy_delta_vs_baseline"',
+        '    - "arc_challenge_accuracy"',
+        '    - "hellaswag_accuracy"',
+        "  baselines:",
+        '    - "rank=8 dropout=0.0 locked baseline"',
+        "  implementation_notes:",
+        '    - "Use Qwen/Qwen2.5-1.5B as the base model with LoRA adapters."',
+        '    - "Hold optimizer, token budget, data order, and evaluation harness constant."',
+        '    - "Training dataset is Alpaca Clean with max_train_samples=10000 examples."',
+        "  evaluation_steps:",
+        '    - "Execute 25 train-plus-eval runs total across repeated seeded rank/dropout cells."',
+        '    - "Use training seeds [42,43,44,45,46] and report failed runs."',
+        "  resource_notes:",
+        '    - "Hyperparameter grid covers LoRA rank and dropout."'
+      ].join("\n")
+    };
+    bundle.relatedWorkNotes = [
+      {
+        paper_id: "qlora",
+        title: "QLoRA: Efficient Finetuning of Quantized LLMs",
+        source_type: "analyzed_paper",
+        comparison_role: "supporting",
+        method_family: "adapter fine-tuning",
+        problem_focus: "LoRA-based fine-tuning of language models.",
+        setting_focus: "LLM adaptation.",
+        contribution_focus: "Quantized LLM fine-tuning with LoRA adapters.",
+        limitation_or_caveat: "Not a rank/dropout repeated-seed audit.",
+        relation_to_study: "Provides a nearby comparison point for the current study objective.",
+        year: 2023
+      },
+      {
+        paper_id: "maple",
+        title: "MAPLE: Multilingual Evaluation of Parameter Efficient Finetuning",
+        source_type: "analyzed_paper",
+        comparison_role: "supporting",
+        method_family: "evaluation and benchmarking",
+        problem_focus: "PEFT benchmark design for language models.",
+        setting_focus: "Benchmark evaluation.",
+        contribution_focus: "Evaluation breadth for PEFT.",
+        limitation_or_caveat: "Different task mix.",
+        relation_to_study: "Supports positioning of benchmark scope.",
+        year: 2024
+      },
+      {
+        paper_id: "vblora",
+        title: "VB-LoRA",
+        source_type: "analyzed_paper",
+        comparison_role: "background",
+        method_family: "alternative parameterization",
+        problem_focus: "Parameter-efficient LoRA variants.",
+        setting_focus: "LLM adaptation.",
+        contribution_focus: "Alternative adapter parameterization.",
+        limitation_or_caveat: "Not the same locked-baseline audit.",
+        relation_to_study: "Background for rank-sensitive adapter choices.",
+        year: 2024
+      }
+    ];
+    bundle.resultAnalysis = {
+      ...(bundle.resultAnalysis as any),
+      metric_table: [
+        { key: "accuracy_delta_vs_baseline", value: 0.0448 },
+        { key: "arc_challenge_accuracy", value: 0.6417 },
+        { key: "hellaswag_accuracy", value: 0.3133 },
+        { key: "average_accuracy", value: 0.4775 },
+        { key: "run_accuracy_delta_vs_baseline_std", value: 0.0748 },
+        { key: "run_accuracy_delta_vs_baseline_ci95", value: 0.0293 },
+        { key: "wall_clock_runtime_s", value: 244.2 },
+        { key: "peak_vram_bytes_mean", value: 4946062049 },
+        { key: "completed_run_count", value: 25 }
+      ],
+      condition_comparisons: [
+        {
+          id: "rank32_drop005_vs_baseline",
+          label: "rank 32 dropout 0.05 vs rank 8 dropout 0.0",
+          source: "metrics.condition_summaries",
+          summary: "Rank 32 dropout 0.05 improves average accuracy relative to the locked baseline.",
+          metrics: [{ key: "accuracy_delta_vs_baseline_mean", value: 0.0667 }]
+        }
+      ],
+      statistical_summary: {
+        total_trials: 25,
+        executed_trials: 25,
+        cached_trials: 0,
+        confidence_intervals: [
+          {
+            metric_key: "accuracy_delta_vs_baseline",
+            label: "Accuracy delta",
+            lower: 0.0155,
+            upper: 0.0741,
+            level: 0.95,
+            source: "metrics",
+            summary: "The repeated-seed 95% interval for the accuracy delta remains positive."
+          }
+        ],
+        stability_metrics: [{ key: "run_accuracy_delta_vs_baseline_std", value: 0.0748 }],
+        effect_estimates: [
+          {
+            comparison_id: "rank32_drop005_vs_baseline",
+            metric_key: "accuracy_delta_vs_baseline",
+            delta: 0.0667,
+            direction: "positive",
+            summary: "The best nonbaseline cell has a positive mean delta."
+          }
+        ],
+        notes: ["Seed-level dispersion is reported across the repeated benchmark runs."]
+      },
+      figure_specs: [
+        {
+          id: "performance",
+          title: "LoRA benchmark performance",
+          path: "figures/performance.svg",
+          metric_keys: ["accuracy_delta_vs_baseline"],
+          summary: "Repeated-seed LoRA benchmark comparison with task accuracies."
+        }
+      ],
+      primary_findings: [
+        "All 25 planned runs executed.",
+        "The best nonbaseline cell shows a positive directional accuracy delta."
+      ],
+      limitations: ["The small LLM preflight does not establish a general stability law."],
+      synthesis: {
+        source: "fallback",
+        discussion_points: ["The evidence supports a narrow benchmark signal, not a universal LoRA prescription."],
+        failure_analysis: [],
+        follow_up_actions: [],
+        confidence_statement: "Confidence is moderate because repeated runs and intervals are available."
+      }
+    } as any;
+
+    const context = experimentArtifactLoader({ bundle });
+    expect(context.protocol_kind).toBe("lm_benchmark");
+
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle,
+      profile: PAPER_PROFILE
+    });
+
+    expect(scientific.method_completeness.status).toBe("complete");
+    expect(scientific.method_completeness.present).toContain("model/backbone");
+    expect(scientific.method_completeness.missing).not.toContain("#classes");
+    expect(scientific.method_completeness.missing).not.toContain("outer folds");
+    expect(scientific.results_richness.status).toBe("complete");
+    expect(scientific.related_work_richness.status).toBe("complete");
   });
 
   it("does not flag equivalent numeric formatting as a contradiction", () => {

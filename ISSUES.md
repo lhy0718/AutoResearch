@@ -15,6 +15,57 @@ Path placeholders:
 
 ---
 
+## Issue: LV-378
+
+- Status: scientific-validator repair implemented; targeted regression/build/full test/harness passed; same-flow live revalidation blocked by stale `write_paper: running` state.
+- Validation target: P6 `write_paper` scientific writing validation should judge the LoRA/ARC/HellaSwag run as an LM benchmark, not as a tabular nested-CV experiment, when `latest_results.json` is absent but `result_analysis.json` contains benchmark metrics, repeated-trial counts, confidence evidence, and resource measurements.
+- Environment/session context: existing P6 live run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` in `<validation-workspace>/p6-paper-ready-live`, follow-up after the final audit showed `write_paper_failed` as the remaining blocker.
+
+- Reproduction steps:
+  1. Inspect the P6 `write_paper` scientific validation artifacts after the manuscript-quality gate failure.
+  2. Compare the run's experiment plan and result analysis against the scientific writing validator diagnostics.
+  3. Rerun the scientific artifact loader against `experiment_plan.yaml`, `result_analysis.json`, and `paper/related_work_notes.json`.
+
+- Expected behavior:
+  - The validator should infer an LM benchmark protocol from LoRA/PEFT/Qwen, ARC-Challenge, HellaSwag, Alpaca, token-budget, GPU/VRAM, and benchmark metric evidence.
+  - Method completeness should require model/backbone and benchmark task names, not tabular-only fields such as `#classes`, outer folds, inner folds, fold-internal fit scope, or stratification.
+  - Result richness should use benchmark task metrics, confidence/dispersion metrics, completed-run counts, and resource measurements from `result_analysis.json` when `latest_results.json` is absent.
+  - Related-work and discussion checks should stay conservative but should not fail solely because nearby positioning notes are marked `supporting` instead of `closest`.
+
+- Actual behavior:
+  - The validator treated the P6 run like a tabular CV experiment and reported missing tabular-only method fields.
+  - Result and reproducibility checks were under-crediting run-owned `result_analysis.json` evidence when no `latest_results.json` was present.
+  - Offline replay after the repair now reports `method`, `results`, `related`, and `discussion` as complete for the persisted P6 artifacts under the LM benchmark protocol.
+  - Same-flow live revalidation has not completed: rerunning the P6 continuation helper did not produce new `write_paper` artifacts and appeared to attach to a stale persisted `write_paper: running` state.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started for this specific repair; the available evidence is from the persisted P6 run and deterministic regression coverage.
+  - Existing session: the stale persisted run stayed at `currentNode=write_paper` and node status `running` without advancing paper artifact mtimes during the revalidation attempt.
+  - Divergence: unresolved; the next validation step should compare a recovered/resumed run against a fresh `write_paper` continuation boundary if possible.
+
+- Root cause hypothesis:
+  - Type: `resume_reload_bug`
+  - Hypothesis: the scientific-validator failure was caused by domain misclassification and incomplete fallback from `result_analysis.json`; the remaining live-revalidation failure is a resume/reload recovery issue where the continuation helper observes stale persisted `write_paper: running` state without launching a fresh artifact-producing attempt.
+
+- Code/test changes:
+  - Code: `src/core/analysis/scientificWriting.ts` now infers `lm_benchmark`, adjusts method completeness requirements by protocol kind, derives benchmark task summaries and dispersion/CI/runtime evidence from `result_analysis.json`, accepts repeated-trial evidence outside `latest_results.json`, and recognizes conservative supporting related-work positioning notes.
+  - Tests: `tests/scientificWriting.test.ts` adds an LM benchmark regression with no `latest_results.json` and verifies that tabular CV fields are not required.
+
+- Regression status:
+  - Targeted regression: passed with `npm test -- tests/scientificWriting.test.ts -t "LM benchmark evidence"`.
+  - Build: passed with `npm run build`.
+  - Full test suite: passed with `npm test`.
+  - Harness validation: passed with `npm run validate:harness`.
+  - Same-flow live revalidation: blocked. The continuation helper was stopped after no new `write_paper` artifacts were emitted from the stale running state.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/experiment_plan.yaml`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/result_analysis.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/paper/related_work_notes.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/paper/scientific_validation.json`
+
+---
+
 ## Issue: LV-377
 
 - Status: repair implemented; automated regression/build passed; same-flow live revalidation passed

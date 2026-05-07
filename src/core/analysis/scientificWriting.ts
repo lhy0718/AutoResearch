@@ -81,6 +81,8 @@ export interface EvidenceInsufficiencyReport {
   section_diagnostics: SectionEvidenceDiagnostic[];
 }
 
+type ExperimentProtocolKind = "tabular_cv" | "lm_benchmark" | "generic";
+
 export interface ScientificAutoRepairRecheck {
   attempted: boolean;
   page_budget_before: PageBudgetManagerReport["status"];
@@ -134,6 +136,7 @@ export interface ManuscriptProvenanceMap {
 }
 
 export interface ExperimentArtifactContext {
+  protocol_kind: ExperimentProtocolKind;
   method: {
     dataset_names: string[];
     dataset_sources: string[];
@@ -506,6 +509,7 @@ export function experimentArtifactLoader(input: {
   const parsedPlan = parsePlanYaml(input.bundle.experimentPlan?.rawText);
   const latestResults = asRecord(input.bundle.latestResults);
   const resultAnalysis = input.bundle.resultAnalysis;
+  const protocolKind = inferExperimentProtocolKind(parsedPlan, latestResults, resultAnalysis);
   const method = {
     dataset_names: collectDatasetNames(input.bundle, parsedPlan, latestResults),
     dataset_sources: collectDatasetSourceHints(parsedPlan, latestResults),
@@ -553,7 +557,7 @@ export function experimentArtifactLoader(input: {
     dispersion_notes: dispersionNotes,
     ci_notes: ciNotes,
     ...(ciNotes.length === 0 ? { ci_unavailable_reason: buildCiUnavailableReason(resultAnalysis, latestResults) } : {}),
-    paired_artifact_available: hasPairedArtifact(latestResults),
+    paired_artifact_available: hasPairedArtifact(latestResults, resultAnalysis),
     runtime_notes: collectRuntimeNotes(datasetSummaries, resultAnalysis),
     memory_notes: collectMemoryNotes(datasetSummaries, resultAnalysis),
     figure_captions: collectFigureCaptions(resultAnalysis, datasetSummaries),
@@ -565,25 +569,23 @@ export function experimentArtifactLoader(input: {
   const comparisonAxes = input.bundle.relatedWorkScout?.papers?.length
     ? uniqueStrings(input.bundle.relatedWorkScout.papers.map((item) => firstSentence(item.summary)).filter(Boolean))
     : [];
+  const positioningNotes = relatedWorkNotes.filter((item) => isPositioningRelatedWorkNote(item));
   const relatedWork = {
     clusters: uniqueStrings(relatedWorkNotes.map((item) => item.method_family).filter(Boolean)),
-    closest_titles: relatedWorkNotes
-      .filter((item) => item.comparison_role === "closest")
-      .map((item) => item.title)
-      .slice(0, 3),
+    closest_titles: positioningNotes.map((item) => item.title).slice(0, 3),
     comparison_axes:
       uniqueStrings([
         ...(input.bundle.relatedWorkNotes || []).map((item) => item.problem_focus),
         ...comparisonAxes
       ]).slice(0, 4),
     note_count: relatedWorkNotes.length,
-    positioning_available: relatedWorkNotes.some((item) => item.comparison_role === "closest")
+    positioning_available: positioningNotes.length > 0
   };
 
   const discussion = {
     discussion_points: uniqueStrings(resultAnalysis?.synthesis?.discussion_points || []).slice(0, 4),
     limitations: uniqueStrings(resultAnalysis?.limitations || []).slice(0, 6),
-    practical_implications: buildPracticalImplications(input.bundle, datasetSummaries)
+    practical_implications: buildPracticalImplications(input.bundle, datasetSummaries, resultAnalysis)
   };
 
   const reproducibilityNotes = uniqueStrings([
@@ -595,6 +597,7 @@ export function experimentArtifactLoader(input: {
   ]).filter(Boolean);
 
   return {
+    protocol_kind: protocolKind,
     method,
     results,
     related_work: relatedWork,
@@ -602,33 +605,87 @@ export function experimentArtifactLoader(input: {
     reproducibility: {
       has_artifact:
         reproducibilityNotes.length > 0 &&
-        (hasPairedArtifact(latestResults) || method.seeds.length > 0 || method.runtime_measurement),
+        (hasPairedArtifact(latestResults, resultAnalysis) || method.seeds.length > 0 || method.runtime_measurement),
       artifact_notes: reproducibilityNotes.slice(0, 6)
     }
   };
 }
 
+function inferExperimentProtocolKind(
+  parsedPlan: Record<string, unknown>,
+  latestResults: Record<string, unknown>,
+  resultAnalysis: ResultAnalysisArtifact | undefined
+): ExperimentProtocolKind {
+  const haystack = JSON.stringify({
+    plan: parsedPlan,
+    latest_results_protocol: asRecord(latestResults.protocol),
+    result_metrics: (resultAnalysis?.metric_table || []).slice(0, 120),
+    result_overview: resultAnalysis?.overview,
+    experiment_portfolio: resultAnalysis?.experiment_portfolio
+  }).toLowerCase();
+  if (
+    /\b(lora|qlora|peft|llm|language model|instruction tuning|arc[-_ ]?challenge|hellaswag|alpaca|qwen|tinyllama|token budget|vram|gpu)\b/u.test(
+      haystack
+    )
+  ) {
+    return "lm_benchmark";
+  }
+  if (/\b(openml|tabular|outer fold|inner fold|stratified|macro[-_ ]?f1|logistic regression|nested cv)\b/u.test(haystack)) {
+    return "tabular_cv";
+  }
+  return "generic";
+}
+
+function isPositioningRelatedWorkNote(
+  item: NonNullable<PaperWritingBundle["relatedWorkNotes"]>[number]
+): boolean {
+  if (item.comparison_role === "closest") {
+    return true;
+  }
+  return (
+    item.comparison_role === "supporting" &&
+    /nearby comparison|comparison point|current study|position|baseline|objective/iu.test(
+      `${item.relation_to_study} ${item.problem_focus} ${item.contribution_focus}`
+    )
+  );
+}
+
 export function methodCompletenessValidator(context: ExperimentArtifactContext): CompletenessReport {
   const present: string[] = [];
   const missing: string[] = [];
+  const isLmBenchmark = context.protocol_kind === "lm_benchmark";
 
   pushFieldStatus(present, missing, context.method.dataset_names.length > 0, "dataset names");
   pushFieldStatus(present, missing, context.method.dataset_sources.length > 0, "dataset source");
   pushFieldStatus(present, missing, context.method.sample_size_notes.length > 0, "#samples");
-  pushFieldStatus(present, missing, context.method.feature_notes.length > 0, "#features");
-  pushFieldStatus(present, missing, context.method.class_notes.length > 0, "#classes");
-  pushFieldStatus(
-    present,
-    missing,
-    context.method.imbalance_notes.length > 0 || context.method.missingness_notes.length > 0,
-    "imbalance or missingness"
-  );
+  if (isLmBenchmark) {
+    pushFieldStatus(present, missing, context.method.model_names.length > 0, "model/backbone");
+    pushFieldStatus(
+      present,
+      missing,
+      context.method.dataset_names.some((item) => /arc|hellaswag|benchmark|task|alpaca/iu.test(item)),
+      "benchmark task names"
+    );
+  } else {
+    pushFieldStatus(present, missing, context.method.feature_notes.length > 0, "#features");
+    pushFieldStatus(present, missing, context.method.class_notes.length > 0, "#classes");
+    pushFieldStatus(
+      present,
+      missing,
+      context.method.imbalance_notes.length > 0 || context.method.missingness_notes.length > 0,
+      "imbalance or missingness"
+    );
+  }
   pushFieldStatus(present, missing, context.method.preprocessing_steps.length > 0, "preprocessing steps/order");
-  pushFieldStatus(present, missing, context.method.fit_scope_notes.length > 0, "fold-internal fit scope");
-  pushFieldStatus(present, missing, context.method.outer_fold_notes.length > 0, "outer folds");
-  pushFieldStatus(present, missing, context.method.inner_fold_notes.length > 0, "inner folds");
+  if (!isLmBenchmark) {
+    pushFieldStatus(present, missing, context.method.fit_scope_notes.length > 0, "fold-internal fit scope");
+    pushFieldStatus(present, missing, context.method.outer_fold_notes.length > 0, "outer folds");
+    pushFieldStatus(present, missing, context.method.inner_fold_notes.length > 0, "inner folds");
+  }
   pushFieldStatus(present, missing, context.method.repeat_notes.length > 0, "repeats");
-  pushFieldStatus(present, missing, context.method.stratification_notes.length > 0, "stratification");
+  if (!isLmBenchmark) {
+    pushFieldStatus(present, missing, context.method.stratification_notes.length > 0, "stratification");
+  }
   pushFieldStatus(present, missing, context.method.seeds.length > 0, "seeds");
   pushFieldStatus(present, missing, context.method.hyperparameter_notes.length > 0, "hyperparameter search space");
   pushFieldStatus(present, missing, context.method.selection_metrics.length > 0, "selection/reporting metrics");
@@ -4056,15 +4113,25 @@ export function applyGateWarningsToLimitations(
 
 function buildPracticalImplications(
   bundle: PaperWritingBundle,
-  datasetSummaries: DatasetResultSummary[]
+  datasetSummaries: DatasetResultSummary[],
+  resultAnalysis?: ResultAnalysisArtifact
 ): string[] {
   const implications: string[] = [];
-  if (datasetSummaries.some((item) => typeof item.delta_value === "number" && item.delta_value > 0)) {
+  const hasPositiveDelta =
+    datasetSummaries.some((item) => typeof item.delta_value === "number" && item.delta_value > 0)
+    || (resultAnalysis?.metric_table || []).some(
+      (item) => /delta_vs_baseline|improvement_over_baseline/iu.test(item.key) && item.value > 0
+    )
+    || (resultAnalysis?.statistical_summary?.effect_estimates || []).some((item) => item.direction === "positive");
+  if (hasPositiveDelta) {
     implications.push(
       `The current evidence is most actionable as a cautious benchmark note for ${bundle.topic}, especially where small positive deltas repeat across datasets.`
     );
   }
-  if (datasetSummaries.some((item) => typeof item.runtime_seconds_mean === "number")) {
+  const hasResourceMeasurement =
+    datasetSummaries.some((item) => typeof item.runtime_seconds_mean === "number")
+    || (resultAnalysis?.metric_table || []).some((item) => /runtime|latency|memory|vram|ram/iu.test(item.key));
+  if (hasResourceMeasurement) {
     implications.push(
       "Practical adoption should weigh any observed quality gain against the accompanying runtime or memory footprint."
     );
@@ -4175,7 +4242,58 @@ function collectDatasetResultSummaries(input: {
     });
   }
 
+  if (summaries.length === 0) {
+    summaries.push(...collectBenchmarkTaskResultSummaries(input.resultAnalysis, input.objectiveMetricProfile));
+  }
+
   return summaries.slice(0, 8);
+}
+
+function collectBenchmarkTaskResultSummaries(
+  resultAnalysis: ResultAnalysisArtifact | undefined,
+  objectiveMetricProfile?: ObjectiveMetricProfile
+): DatasetResultSummary[] {
+  const metricTable = resultAnalysis?.metric_table || [];
+  const taskMetrics = metricTable.filter((item) =>
+    /(^|\.)(arc[_-]?challenge|hellaswag|mmlu|gsm8k|truthfulqa|winogrande|boolq|benchmark|task).*accuracy$/iu.test(item.key)
+  );
+  const summaries = taskMetrics
+    .filter((item) => !/raw_result\./iu.test(item.key))
+    .map((item) => {
+      const dataset = humanizeToken(item.key.replace(/(_?accuracy|\.accuracy)$/iu, ""));
+      return {
+        dataset,
+        label: `${dataset} benchmark task`,
+        main_metric_label: inferDatasetMainMetricLabel(objectiveMetricProfile, { accuracy: item.value }),
+        main_metric_value: item.value,
+        heterogeneity_notes: [],
+        summary: `${dataset} reports ${formatNumber(item.value)} accuracy in the structured result analysis.`
+      };
+    });
+  if (summaries.length > 0) {
+    return summaries;
+  }
+
+  const comparison = resultAnalysis?.condition_comparisons?.[0];
+  const deltaMetric = metricTable.find((item) => /delta_vs_baseline|improvement_over_baseline/iu.test(item.key));
+  if (comparison || deltaMetric) {
+    const delta = (comparison?.metrics || []).find((item) => /delta|improvement/iu.test(item.key))?.value ?? deltaMetric?.value;
+    return [
+      {
+        dataset: "primary comparison",
+        label: cleanString(comparison?.label) || "primary comparison",
+        main_metric_label: humanizeToken(deltaMetric?.key || objectiveMetricProfile?.primaryMetric || "primary metric"),
+        main_metric_value: delta,
+        delta_label: humanizeToken(deltaMetric?.key || "delta versus baseline"),
+        delta_value: delta,
+        heterogeneity_notes: [],
+        summary:
+          cleanString(comparison?.summary)
+          || `The primary comparison reports ${humanizeToken(deltaMetric?.key || "a baseline delta")} of ${formatNumber(delta)}.`
+      }
+    ];
+  }
+  return [];
 }
 
 function collectAggregateResults(
@@ -4259,6 +4377,9 @@ function collectDispersionNotes(
 ): string[] {
   const notes = uniqueStrings([
     ...(resultAnalysis?.statistical_summary?.notes || []).filter((item) => /variance|stability|dispersion|heterogeneity|consistency/iu.test(item)),
+    ...(resultAnalysis?.metric_table || [])
+      .filter((item) => /(_std|_sem|_variance|ci95|ci_?95|confidence)/iu.test(item.key))
+      .map((item) => `${humanizeToken(item.key)}=${formatNumber(item.value)}.`),
     ...datasetSummaries.flatMap((item) => item.heterogeneity_notes)
   ]).filter(Boolean);
   return notes.slice(0, 4);
@@ -4277,8 +4398,21 @@ function buildCiUnavailableReason(
   return "Confidence intervals are unavailable because the repeated evaluation artifact could not be aligned to a single reported comparison.";
 }
 
-function hasPairedArtifact(latestResults: Record<string, unknown>): boolean {
-  return asArray(latestResults.repeat_records).length >= 2;
+function hasPairedArtifact(
+  latestResults: Record<string, unknown>,
+  resultAnalysis?: ResultAnalysisArtifact
+): boolean {
+  const repeatedRows = asArray(latestResults.repeat_records).length;
+  if (repeatedRows >= 2) {
+    return true;
+  }
+  const trialCount = resultAnalysis?.statistical_summary?.executed_trials ?? resultAnalysis?.statistical_summary?.total_trials;
+  if (typeof trialCount === "number" && trialCount >= 2) {
+    return true;
+  }
+  return (resultAnalysis?.metric_table || []).some(
+    (item) => /run_.*_count|completed_run_count|executed_trial|total_trial/iu.test(item.key) && item.value >= 2
+  );
 }
 
 function collectRuntimeNotes(
@@ -4386,7 +4520,9 @@ function collectModelNames(parsedPlan: Record<string, unknown>, latestResults: R
   return uniqueStrings([
     ...asStringArray(protocol.models),
     ...asStringArray(selectedDesign.baselines),
-    ...asStringArray(selectedDesign.metrics).filter((item) => /bert|tree|forest|regression|svm|xgboost|workflow|nested/iu.test(item)),
+    ...asStringArray(selectedDesign.implementation_notes).filter((item) => /qwen|tinyllama|llm|language model|backbone|base model|lora|peft/iu.test(item)),
+    ...asStringArray(selectedDesign.baselines).filter((item) => /qwen|tinyllama|llm|language model|backbone|base model|lora|peft/iu.test(item)),
+    ...asStringArray(selectedDesign.metrics).filter((item) => /bert|tree|forest|regression|svm|xgboost|workflow|nested|qwen|tinyllama|llm|lora|peft/iu.test(item)),
     ...datasetSummaries.flatMap((item) => Object.keys(asRecord(asRecord(item.workflows).nested).models || {})),
     ...datasetSummaries.flatMap((item) => Object.keys(asRecord(item.models)))
   ]).filter(Boolean).slice(0, 8);
@@ -4418,7 +4554,16 @@ function collectDatasetNames(
 function collectDatasetSourceHints(parsedPlan: Record<string, unknown>, latestResults: Record<string, unknown>): string[] {
   const protocol = asRecord(latestResults.protocol);
   return uniqueStrings([
-    ...collectKeywordNotes(parsedPlan, ["uci", "hugging face", "openml", "public benchmark", "benchmark suite"]),
+    ...collectKeywordNotes(parsedPlan, [
+      "uci",
+      "hugging face",
+      "openml",
+      "public benchmark",
+      "benchmark suite",
+      "alpaca",
+      "arc-challenge",
+      "hellaswag"
+    ]),
     asString(protocol.dataset_source) || ""
   ]).filter(Boolean).slice(0, 4);
 }
@@ -4447,8 +4592,19 @@ function collectClassHints(parsedPlan: Record<string, unknown>, latestResults: R
 function collectPreprocessingSteps(parsedPlan: Record<string, unknown>): string[] {
   const selectedDesign = asRecord(parsedPlan.selected_design);
   return uniqueStrings([
-    ...asStringArray(selectedDesign.implementation_notes).filter((item) => /normalize|standardize|preprocess|tokeniz|imput|scale|encode|clean|dedupe/iu.test(item)),
-    ...collectKeywordNotes(parsedPlan, ["normalize", "standardize", "preprocess", "imput", "scale", "encode", "clean"])
+    ...asStringArray(selectedDesign.implementation_notes).filter((item) => /normalize|standardize|preprocess|tokeniz|imput|scale|encode|clean|dedupe|data order|token budget|evaluation harness/iu.test(item)),
+    ...collectKeywordNotes(parsedPlan, [
+      "normalize",
+      "standardize",
+      "preprocess",
+      "imput",
+      "scale",
+      "encode",
+      "clean",
+      "token budget",
+      "training example order",
+      "evaluation harness"
+    ])
   ]).slice(0, 6);
 }
 

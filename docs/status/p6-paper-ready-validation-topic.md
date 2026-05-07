@@ -64,6 +64,8 @@ The active P6 run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` completed `run_experime
 - `autolabos audit --run` returned `blocked` with a `needs_repair_before_manuscript_promotion` ceiling.
 - Final audit result-table status: measured, 6/6 complete rows.
 - Final audit after the readiness-artifact repair reports only `write_paper_failed` as the remaining blocker; the governance artifact contract now passes because `paper/paper_readiness.json` is emitted even for the stopped manuscript-quality path.
+- Follow-up offline replay now classifies the run as an LM benchmark and finds the scientific-writing method/results/related/discussion checks complete under that protocol.
+- The same-flow live rerun remains incomplete because the continuation helper stalled against stale persisted `write_paper: running` state without producing new paper artifacts.
 
 This is enough to keep the topic fixed as the first full-run validation topic. It is not enough to call the output paper-ready; the final audit requires the manuscript-quality gate blocker to be repaired before manuscript promotion is allowed.
 
@@ -77,6 +79,6 @@ This is enough to keep the topic fixed as the first full-run validation topic. I
 
 ## Immediate P6 Follow-Up
 
-1. Repair the remaining manuscript-quality blocker.
-2. Keep the manuscript ceiling at `paper_scale_candidate` or lower unless the repaired audit removes all blockers.
-3. Rerun `write_paper -> autolabos audit --run` only after the manuscript-quality blockers are addressed without broadening claims beyond the evidence.
+1. Recover or safely reset the stale `write_paper: running` continuation boundary.
+2. Rerun `write_paper -> autolabos audit --run` in the same governed flow.
+3. Keep the manuscript ceiling at `paper_scale_candidate` or lower unless the live audit removes all blockers without broadening claims beyond the evidence.

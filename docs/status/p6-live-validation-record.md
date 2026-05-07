@@ -94,20 +94,23 @@ The run currently includes:
 - Final audit figure status: warn, with 0 severe figure/result/caption mismatches.
 - Final audit blockers after the readiness-artifact repair: `write_paper_failed`.
 - Final audit outputs after the readiness-artifact repair: `<repo-root>/outputs/audit/p6-live-2dcc480e-after-readiness-artifact/`.
+- Follow-up scientific-validator replay: the persisted P6 artifacts now classify as `lm_benchmark`; offline replay reports `method`, `results`, `related`, and `discussion` complete under that protocol.
+- Follow-up live revalidation status: not complete. The attempted same-flow `write_paper` continuation did not emit new artifacts and appeared to attach to stale persisted `write_paper: running` state.
 
 ## Regression Validation
 
 - `npm run build`: pass on 2026-05-07 after the final P6 code and documentation changes.
-- `npm test`: pass on 2026-05-07 with 179 root test files / 1856 tests and 1 web test file / 14 tests.
-- `npm run validate:harness`: pass on 2026-05-07 with 306 issue entries checked and no structural violations.
+- `npm test`: pass on 2026-05-07 with 179 root test files / 1857 tests and 1 web test file / 14 tests.
+- `npm run validate:harness`: pass on 2026-05-07 with 308 issue entries checked and no structural violations.
+- `npm test -- tests/scientificWriting.test.ts -t "LM benchmark evidence"`: pass on 2026-05-07 after adding the LM benchmark/no-`latest_results.json` regression.
 - `npm test -- tests/writePaperPdfBuild.test.ts -t "stops after visual repair"`: pass on 2026-05-07 after adding the failed-`write_paper` readiness-artifact regression.
 - P6 targeted regressions were run for the continuation helper, manuscript-quality appendix repair scope, objective metric/result-table handling, and generated-runner argparse/verification repairs.
 - Portability scan over the edited public docs/scripts found no new local validation workspace or Vault path leaks; the remaining `/tmp` matches are code-level safety checks in `src/core/agents/implementSessionManager.ts`.
 
 ## Current Limitation
 
-The run is not paper-ready. It has real repeated-seed quantitative evidence, a complete audit-visible result table, figure audit, review artifacts, manuscript artifacts, `paper/paper_readiness.json`, and a final audit report, but `write_paper` failed the manuscript-quality gate after bounded repair. The final audit therefore blocks manuscript promotion even though the governance artifact contract, baseline/comparator evidence, and result-table evidence are now present.
+The run is not paper-ready. It has real repeated-seed quantitative evidence, a complete audit-visible result table, figure audit, review artifacts, manuscript artifacts, `paper/paper_readiness.json`, and a final audit report, but `write_paper` failed the manuscript-quality gate after bounded repair. Follow-up offline replay shows the scientific-writing validator no longer blocks this run on tabular-CV-only requirements, but the same-flow live `write_paper -> audit` rerun still has to recover from the stale running state before manuscript promotion can be reconsidered.
 
 ## Next Action
 
-Repair the remaining manuscript-quality blocker, then rerun the gated `write_paper -> audit` path only if the manuscript can be improved without broadening claims beyond the evidence.
+Recover or safely reset the stale `write_paper: running` continuation boundary, rerun the gated `write_paper -> audit` path, and keep the claim ceiling at `paper_scale_candidate` or lower unless the live audit removes all blockers.
