@@ -733,6 +733,114 @@ describe("scientificWriting", () => {
     expect(scientific.related_work_richness.status).toBe("complete");
   });
 
+  it("sanitizes reader-facing manuscript prose and promotes executed method details from run artifacts", () => {
+    const bundle = makeRichBundle();
+    bundle.runTitle = "LoRA rank-dropout repeated-seed benchmark";
+    bundle.topic = "LoRA rank and dropout interaction for a small LLM benchmark";
+    bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    bundle.experimentPlan = {
+      selectedTitle: "5-seed high-rank dropout stability against locked baseline",
+      selectedSummary: "Compare repeated LoRA rank/dropout cells on ARC-Challenge and HellaSwag.",
+      rawText: [
+        "selected_design:",
+        '  title: "5-seed high-rank dropout stability against locked baseline"',
+        "  datasets:",
+        '    - "Alpaca Clean subset"',
+        '    - "ARC-Challenge"',
+        '    - "HellaSwag"',
+        "  implementation_notes:",
+        '    - "Use Qwen/Qwen2.5-1.5B as the base model with LoRA adapters."',
+        '    - "Hold optimizer, token budget, data order, and evaluation harness constant."',
+        "  evaluation_steps:",
+        '    - "Use training seeds [42,43,44,45,46] and report failed runs."'
+      ].join("\n")
+    };
+    bundle.latestResults = {
+      selected_model: "Qwen/Qwen2.5-1.5B",
+      condition_summaries: [
+        {
+          condition_marker: "rank_32_dropout_0_05",
+          seed_results: [
+            {
+              train_metadata: {
+                model_name: "Qwen/Qwen2.5-1.5B",
+                selected_target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"],
+                num_train_samples: 32,
+                train_dataset_token_count: 5068,
+                trainer_state: {
+                  learning_rate: 0.0002,
+                  per_device_train_batch_size: 1,
+                  gradient_accumulation_steps: 4,
+                  weight_decay: 0,
+                  max_grad_norm: 1,
+                  optimizer_steps: 6
+                }
+              }
+            }
+          ]
+        }
+      ]
+    };
+
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle,
+      profile: PAPER_PROFILE
+    });
+    const candidate: PaperManuscript = {
+      title: "Repeated-Seed LoRA Dropout Benchmark",
+      abstract: "A conservative repeated-seed benchmark.",
+      keywords: ["LoRA", "instruction tuning"],
+      sections: [
+        {
+          heading: "Introduction",
+          paragraphs: [
+            "QLoRA [doi:10.48550/arxiv.2305.14314] motivates memory-aware adaptation, and adapter variants [15a1c2d8eb2c55e3ceb9ce9f72b3446ac1eb183a] motivate careful comparison."
+          ]
+        },
+        {
+          heading: "Method",
+          paragraphs: [
+            "The protocol compares high-rank LoRA conditions under fixed data order.",
+            "The implementation notes indicate that optimizer settings and LoRA target modules were held constant, although the compact study summary does not surface their exact numeric values in the manuscript-facing record."
+          ]
+        },
+        {
+          heading: "Results",
+          paragraphs: [
+            "The rank 32 dropout 0.05 condition has the strongest exposed mean delta. Direct supporting evidence is currently limited",
+            "The same aggregate comparison remains narrow; direct supporting evidence is currently limited"
+          ]
+        },
+        {
+          heading: "Conclusion",
+          paragraphs: ["The study supports a cautious preflight conclusion."]
+        }
+      ]
+    };
+
+    const manuscript = materializeScientificManuscript({
+      candidate,
+      draft: scientific.draft,
+      bundle,
+      profile: PAPER_PROFILE,
+      appendixPlan: scientific.appendix_plan,
+      pageBudget: scientific.page_budget
+    }).manuscript;
+
+    const allText = [
+      manuscript.abstract,
+      ...manuscript.sections.flatMap((section) => section.paragraphs)
+    ].join(" ");
+    const methodText = manuscript.sections.find((section) => section.heading === "Method")?.paragraphs.join(" ") || "";
+    expect(allText).not.toMatch(/doi:|15a1c2d8eb2c55e3ceb9ce9f72b3446ac1eb183a/);
+    expect(allText).not.toMatch(/direct supporting evidence is currently limited/i);
+    expect(methodText).toMatch(/Qwen\/Qwen2\.5-1\.5B/);
+    expect(methodText).toMatch(/learning rate 0\.0002/);
+    expect(methodText).toMatch(/gradient accumulation 4/);
+    expect(methodText).toMatch(/optimizer steps/);
+  });
+
   it("does not flag equivalent numeric formatting as a contradiction", () => {
     const bundle = makeRichBundle();
     const scientific = applyScientificWritingPolicy({

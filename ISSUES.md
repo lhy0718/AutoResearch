@@ -15,6 +15,61 @@ Path placeholders:
 
 ---
 
+## Issue: LV-380
+
+- Status: repair implemented; targeted regression/build/harness passed; same-flow live revalidation passed for the targeted prose/Method metadata issues; final paper readiness remains blocked by the manuscript-quality gate.
+- Validation target: P6 `write_paper` should produce reader-facing manuscript prose that does not expose raw citation tokens, repeated evidence-placeholder boilerplate, or avoidable Method incompleteness when run artifacts contain executed backbone and training settings.
+- Environment/session context: existing P6 live run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` in `<validation-workspace>/p6-paper-ready-live`.
+
+- Reproduction steps:
+  1. Rerun P6 `write_paper` on the persisted live run after LV-379.
+  2. Inspect `paper/manuscript.json`, `paper/manuscript_quality_gate.json`, and `paper/manuscript_quality_failure.json`.
+  3. Confirm whether Method/Results/Introduction still trigger manuscript-quality failures for section completeness, citation hygiene, appendix/internal wording, and paragraph redundancy.
+
+- Expected behavior:
+  - Human-facing paragraph text should not contain raw DOI strings, Semantic Scholar hashes, evidence ids, or paper ids when citations are already represented through source refs.
+  - Repeated `direct supporting evidence is currently limited` placeholder prose should not remain in multiple main-paper Results/Conclusion paragraphs.
+  - If `metrics.json` contains executed model and training metadata, Method should surface the actual trained backbone and fixed numeric training settings instead of saying exact values are unavailable.
+
+- Actual behavior:
+  - The final P6 manuscript exposed raw citation identifiers in Introduction/Related Work.
+  - Multiple Results/Conclusion paragraphs repeated `Direct supporting evidence is currently limited`.
+  - Method said exact fixed hyperparameter values were not surfaced even though the run-owned metrics artifact includes selected model, LoRA target modules, learning rate, gradient accumulation, optimizer steps, training examples, and token counts.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started for this issue; evidence comes from the persisted P6 live run.
+  - Existing session: reproduced from the resumed P6 run and manuscript-quality artifacts.
+  - Divergence: no fresh/resume divergence observed; this is a manuscript materialization and artifact-loading gap.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `write_paper` only loaded public `latest_results.json` into the paper-writing context and did not fall back to run-owned `metrics.json`, while manuscript materialization preserved raw citation/provenance tokens and repeated conservative placeholder text in reader-facing prose.
+
+- Code/test changes:
+  - Code: `src/core/nodes/writePaper.ts` now falls back to `.autolabos/runs/<run_id>/metrics.json` when public `latest_results.json` is absent.
+  - Code: `src/core/analysis/scientificWriting.ts` sanitizes raw citation tokens and repeated evidence-placeholder boilerplate from human-facing manuscript text, and inserts executed backbone/training-setting details into Method when available from run metadata.
+  - Code: `src/core/analysis/paperManuscript.ts` strengthens the manuscript-conversion prompt against raw citation tokens, unavailable-value wording, and repeated evidence boilerplate.
+  - Tests: `tests/scientificWriting.test.ts` adds a regression for reader-facing sanitation and Method detail promotion.
+
+- Regression status:
+  - Reproduced from final P6 manuscript-quality failure on 2026-05-07 KST.
+  - Targeted regression: passed with `npm test -- tests/scientificWriting.test.ts -t "sanitizes reader-facing manuscript prose"`.
+  - Build: passed with `npm run build`.
+  - Harness validation: passed with `npm run validate:harness`.
+  - Same-flow live revalidation: passed for the targeted sanitation and Method-detail boundary on 2026-05-07 KST. The resumed P6 run retried `write_paper`; `paper/session_trace.json` records staged LLM execution through outline, draft, review, finalize, polish, validation repair, manuscript review, two bounded manuscript repair passes, and final manuscript review audit with `fallbackUsed=false`.
+  - Live result: the generated manuscript now surfaces the executed `Qwen/Qwen2.5-1.5B` backbone, LoRA target modules, learning rate `0.0002`, gradient accumulation `4`, and `6` optimizer steps; repeated `direct supporting evidence is currently limited` boilerplate was not present in the final manuscript prose.
+  - Remaining paper-readiness boundary: `write_paper` stopped honestly after manuscript-quality round 2 with `decision=stop`, `remaining_issues=3`, `improvement=no`, and reason `A third manuscript repair pass is forbidden.`
+  - Final audit: `node dist/cli/main.js audit --run <validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7 --out-dir outputs/audit/p6-live-2dcc480e-after-manuscript-sanitization` reports `blocked`, `Unsupported claims: 0`, and the top blocker `write_paper_failed`.
+  - Caveat: the generated TeX still uses DOI/URL-like citation keys inside `\cite{...}` commands, and the final manuscript-quality review flags `citation_hygiene`; that is a separate remaining paper-readiness blocker rather than the prose-token sanitation issue fixed here.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/paper/manuscript.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/paper/manuscript_quality_failure.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/paper/session_trace.json`
+  - `outputs/audit/p6-live-2dcc480e-after-manuscript-sanitization/audit-summary.json`
+
+---
+
 ## Issue: LV-379
 
 - Status: repair implemented; targeted regression/build/full test/harness passed; same-flow live revalidation passed for the unsupported-claim blocker; final audit still blocked by manuscript-quality failure.

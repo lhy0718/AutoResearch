@@ -98,6 +98,9 @@ The run currently includes:
 - Follow-up live revalidation status: complete for the scientific-validator blocker. A normal resumed `write_paper` continuation emitted fresh artifacts; the new `scientific_validation.json` reports `method`, `results`, `related`, and `discussion` complete with no issues.
 - Follow-up final audit after the LM benchmark validator repair: `blocked`, with top blockers `unsupported_claims_present` and `write_paper_failed`.
 - Follow-up audit outputs: `<repo-root>/outputs/audit/p6-live-2dcc480e-after-lm-validator-recheck/`.
+- Follow-up manuscript-materialization repair: the same live `write_paper` path now surfaces executed backbone and training settings from run-owned metrics, removes repeated evidence-placeholder boilerplate from reader-facing prose, and leaves unsupported manuscript claims at 0 in the final audit.
+- Follow-up final audit after the manuscript-materialization repair: `blocked`, with top blocker `write_paper_failed` from the manuscript-quality hard stop after bounded repair.
+- Follow-up audit outputs: `<repo-root>/outputs/audit/p6-live-2dcc480e-after-manuscript-sanitization/`.
 
 ## Regression Validation
 
@@ -105,14 +108,15 @@ The run currently includes:
 - `npm test`: pass on 2026-05-07 with 179 root test files / 1857 tests and 1 web test file / 14 tests.
 - `npm run validate:harness`: pass on 2026-05-07 with 308 issue entries checked and no structural violations.
 - `npm test -- tests/scientificWriting.test.ts -t "LM benchmark evidence"`: pass on 2026-05-07 after adding the LM benchmark/no-`latest_results.json` regression.
+- `npm test -- tests/scientificWriting.test.ts -t "sanitizes reader-facing manuscript prose"`: pass on 2026-05-07 after adding the manuscript prose sanitation and Method metadata regression.
 - `npm test -- tests/writePaperPdfBuild.test.ts -t "stops after visual repair"`: pass on 2026-05-07 after adding the failed-`write_paper` readiness-artifact regression.
 - P6 targeted regressions were run for the continuation helper, manuscript-quality appendix repair scope, objective metric/result-table handling, and generated-runner argparse/verification repairs.
 - Portability scan over the edited public docs/scripts found no new local validation workspace or Vault path leaks; the remaining `/tmp` matches are code-level safety checks in `src/core/agents/implementSessionManager.ts`.
 
 ## Current Limitation
 
-The run is not paper-ready. It has real repeated-seed quantitative evidence, a complete audit-visible result table, figure audit, review artifacts, manuscript artifacts, `paper/paper_readiness.json`, and a final audit report. The scientific-writing validator no longer blocks this run on tabular-CV-only requirements, including in the same live `write_paper` flow, but manuscript promotion remains blocked by unsupported claims and the failed manuscript-quality gate.
+The run is not paper-ready. It has real repeated-seed quantitative evidence, a complete audit-visible result table, figure audit, review artifacts, manuscript artifacts, `paper/paper_readiness.json`, and a final audit report. The scientific-writing validator no longer blocks this run on tabular-CV-only requirements, and the audit no longer reports unsupported manuscript claims after the manuscript-materialization repair. Manuscript promotion remains blocked by the failed manuscript-quality gate.
 
 ## Next Action
 
-Repair the unsupported manuscript claims and remaining manuscript-quality findings, then rerun the gated `write_paper -> audit` path. Keep the claim ceiling at `paper_scale_candidate` or lower unless the live audit removes all blockers.
+Repair the remaining manuscript-quality findings, especially citation hygiene, result/visual completeness, and visual redundancy, then rerun the gated `write_paper -> audit` path. Keep the claim ceiling at `paper_scale_candidate` or lower unless the live audit removes all blockers.

@@ -66,6 +66,7 @@ The active P6 run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` completed `run_experime
 - Final audit after the readiness-artifact repair reports only `write_paper_failed` as the remaining blocker; the governance artifact contract now passes because `paper/paper_readiness.json` is emitted even for the stopped manuscript-quality path.
 - Follow-up offline replay and same-flow live rerun now classify the run as an LM benchmark and find the scientific-writing method/results/related/discussion checks complete under that protocol.
 - The follow-up final audit remains `blocked` after the LM benchmark validator repair, with top blockers `unsupported_claims_present` and `write_paper_failed`.
+- The follow-up manuscript-materialization repair removes the unsupported-claim audit blocker by grounding reader-facing Method/Results prose in run-owned metrics and sanitizing repeated placeholder wording; the latest final audit remains `blocked` with top blocker `write_paper_failed`.
 
 This is enough to keep the topic fixed as the first full-run validation topic. It is not enough to call the output paper-ready; the final audit requires the manuscript-quality gate blocker to be repaired before manuscript promotion is allowed.
 
@@ -79,6 +80,6 @@ This is enough to keep the topic fixed as the first full-run validation topic. I
 
 ## Immediate P6 Follow-Up
 
-1. Repair or downgrade the six unsupported manuscript claims surfaced by the follow-up audit.
-2. Repair the remaining manuscript-quality findings: executed backbone identity, internal/system-style language, introduction redundancy, and result-table usefulness.
-3. Rerun `write_paper -> autolabos audit --run` in the same governed flow, keeping the manuscript ceiling at `paper_scale_candidate` or lower unless the live audit removes all blockers without broadening claims beyond the evidence.
+1. Repair the remaining manuscript-quality findings: citation hygiene, result/visual completeness, and visual redundancy.
+2. Rerun `write_paper -> autolabos audit --run` in the same governed flow, keeping the manuscript ceiling at `paper_scale_candidate` or lower unless the live audit removes all blockers without broadening claims beyond the evidence.
+3. Treat any successful PDF or generated TeX as insufficient for `paper_ready` until the manuscript-quality gate and audit both pass.

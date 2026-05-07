@@ -3378,7 +3378,7 @@ export function materializeScientificManuscript(input: {
     input.candidate.sections.map((section) => [normalizeHeading(section.heading), section] as const)
   );
 
-  const sections: PaperManuscriptSection[] = input.draft.sections.map((section) => {
+  const sections: PaperManuscriptSection[] = strengthenHumanFacingSections(input.draft.sections.map((section) => {
     const candidateSection = candidateSectionMap.get(normalizeHeading(section.heading));
     const candidateParagraphs = candidateSection?.paragraphs || [];
     const mergedParagraphs = candidateParagraphs.length >= section.paragraphs.length
@@ -3390,11 +3390,11 @@ export function materializeScientificManuscript(input: {
     return {
       heading: section.heading,
       paragraphs: mergedParagraphs.map((paragraph) =>
-        rewriteTextForClaimStrength(paragraph, context, [])
+        sanitizeHumanFacingManuscriptText(rewriteTextForClaimStrength(paragraph, context, []))
       ),
       source_refs: buildSectionSourceRefs(section, input.draft.claims)
     };
-  });
+  }), context);
 
   const mainTables = datasetResultTableBuilder(context);
   const candidateTables = attachFallbackSourceRefsToTables(
@@ -3458,7 +3458,7 @@ export function materializeScientificManuscript(input: {
 
   const manuscript: PaperManuscript = {
     ...input.candidate,
-    abstract: rewriteTextForClaimStrength(input.candidate.abstract, context, []),
+    abstract: sanitizeHumanFacingManuscriptText(rewriteTextForClaimStrength(input.candidate.abstract, context, [])),
     sections,
     ...(tables ? { tables } : {}),
     ...(selectedFigures ? { figures: selectedFigures } : {}),
@@ -3490,6 +3490,99 @@ export function materializeScientificManuscript(input: {
     appendix_lint: appendixLint,
     provenance_map: provenanceMap
   };
+}
+
+function strengthenHumanFacingSections(
+  sections: PaperManuscriptSection[],
+  context: ExperimentArtifactContext
+): PaperManuscriptSection[] {
+  return sections.map((section) => {
+    if (!/^method$/iu.test(cleanString(section.heading))) {
+      return section;
+    }
+    return strengthenMethodSectionWithArtifactDetails(section, context);
+  });
+}
+
+function strengthenMethodSectionWithArtifactDetails(
+  section: PaperManuscriptSection,
+  context: ExperimentArtifactContext
+): PaperManuscriptSection {
+  const detailParagraph = buildExecutedProtocolDetailParagraph(context);
+  if (!detailParagraph) {
+    return section;
+  }
+  const paragraphs = section.paragraphs.map((paragraph) =>
+    sanitizeHumanFacingManuscriptText(
+      paragraph
+        .replace(
+          /\s*although\s+the\s+compact\s+study\s+summary\s+does\s+not\s+surface\s+their\s+exact\s+numeric\s+values\s+in\s+the\s+manuscript-facing\s+record\.?/giu,
+          "."
+        )
+        .replace(
+          /\s*although\s+the\s+condensed\s+materials\s+do\s+not\s+yet\s+expose\s+[^.]*exact\s+numeric\s+training\s+hyperparameters[^.]*\.?/giu,
+          "."
+        )
+    )
+  );
+  const sectionText = paragraphs.join(" ");
+  if (/learning rate|per-device train batch size|gradient accumulation|optimizer steps/iu.test(sectionText)) {
+    return {
+      ...section,
+      paragraphs
+    };
+  }
+  const insertIndex = Math.min(2, paragraphs.length);
+  return {
+    ...section,
+    paragraphs: [
+      ...paragraphs.slice(0, insertIndex),
+      detailParagraph,
+      ...paragraphs.slice(insertIndex)
+    ]
+  };
+}
+
+function buildExecutedProtocolDetailParagraph(context: ExperimentArtifactContext): string {
+  const modelName = context.method.model_names.find((item) => /qwen|tinyllama|llm|language model|backbone|base model/iu.test(item))
+    || context.method.model_names[0]
+    || "";
+  const exactHyperparameterNotes = context.method.hyperparameter_notes.filter((item) =>
+    /learning rate|per-device train batch size|gradient accumulation|optimizer steps|lora target modules|training examples|train dataset tokens/iu.test(item)
+  );
+  if (!modelName && exactHyperparameterNotes.length === 0) {
+    return "";
+  }
+  const sentences: string[] = [];
+  if (modelName) {
+    sentences.push(`The executable run metadata identifies ${modelName} as the trained backbone for the reported study.`);
+  }
+  sentences.push(...exactHyperparameterNotes.slice(0, 3));
+  return sanitizeHumanFacingManuscriptText(sentences.join(" "));
+}
+
+function sanitizeHumanFacingManuscriptText(text: string): string {
+  const cleaned = cleanString(text);
+  if (!cleaned) {
+    return text;
+  }
+  return stripLimitedEvidenceBoilerplate(stripRawCitationTokens(cleaned))
+    .replace(/\s+([.,;:])/gu, "$1")
+    .replace(/\.{2,}/gu, ".")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function stripRawCitationTokens(text: string): string {
+  return text
+    .replace(/\s*\[(?=[^\]]*(?:doi:|arxiv|[a-f0-9]{20,}))[^\]]+\]/giu, "")
+    .replace(/\s*\((?=[^)]*(?:doi:|arxiv|[a-f0-9]{20,}))[^)]+\)/giu, "");
+}
+
+function stripLimitedEvidenceBoilerplate(text: string): string {
+  return text
+    .replace(/\s*(?:;|,|\.)?\s*direct supporting evidence is currently limited\.?/giu, ".")
+    .replace(/\s*this section is written conservatively because direct supporting evidence is currently limited\.?/giu, "");
 }
 
 function buildManuscriptProvenanceMap(input: {
@@ -4516,8 +4609,15 @@ function collectSeeds(parsedPlan: Record<string, unknown>, latestResults: Record
 function collectModelNames(parsedPlan: Record<string, unknown>, latestResults: Record<string, unknown>): string[] {
   const selectedDesign = asRecord(parsedPlan.selected_design);
   const protocol = asRecord(latestResults.protocol);
+  const studySummary = asRecord(latestResults.study_summary);
+  const requestedModels = asRecord(latestResults.requested_models);
   const datasetSummaries = asArray(latestResults.dataset_summaries).map((item) => asRecord(item));
   return uniqueStrings([
+    asString(latestResults.selected_model) || "",
+    asString(latestResults.model_id) || "",
+    asString(studySummary.selected_model) || "",
+    asString(studySummary.model_id) || "",
+    asString(requestedModels.preferred_model) || "",
     ...asStringArray(protocol.models),
     ...asStringArray(selectedDesign.baselines),
     ...asStringArray(selectedDesign.implementation_notes).filter((item) => /qwen|tinyllama|llm|language model|backbone|base model|lora|peft/iu.test(item)),
@@ -4630,10 +4730,84 @@ function collectRepeatNotes(parsedPlan: Record<string, unknown>, latestResults: 
 function collectHyperparameterNotes(parsedPlan: Record<string, unknown>, latestResults: Record<string, unknown>): string[] {
   const selectedDesign = asRecord(parsedPlan.selected_design);
   return uniqueStrings([
+    ...collectExecutedTrainingHyperparameterNotes(latestResults),
     ...asStringArray(selectedDesign.resource_notes).filter((item) => /grid|search|hyperparameter|sweep|tuning/iu.test(item)),
     ...collectKeywordNotes(parsedPlan, ["hyperparameter", "grid search", "random search", "bayesian search", "tuning"]),
     ...collectKeywordNotes(latestResults, ["hyperparameter", "grid", "search space"])
   ]).slice(0, 6);
+}
+
+function collectExecutedTrainingHyperparameterNotes(latestResults: Record<string, unknown>): string[] {
+  const trainMetadata = findFirstTrainMetadata(latestResults);
+  if (!trainMetadata) {
+    return [];
+  }
+  const trainerState = asRecord(trainMetadata.trainer_state);
+  const notes: string[] = [];
+  const targetModules = asStringArray(trainMetadata.selected_target_modules).slice(0, 8);
+  if (targetModules.length > 0) {
+    notes.push(`LoRA target modules were ${joinHumanList(targetModules)}.`);
+  }
+
+  const fixedSettings: string[] = [];
+  const learningRate = asNumber(trainerState.learning_rate);
+  const batchSize = asNumber(trainerState.per_device_train_batch_size);
+  const gradientAccumulation = asNumber(trainerState.gradient_accumulation_steps) ?? asNumber(trainMetadata.gradient_accumulation_steps);
+  const weightDecay = asNumber(trainerState.weight_decay);
+  const maxGradNorm = asNumber(trainerState.max_grad_norm);
+  const optimizerSteps = asNumber(trainerState.optimizer_steps) ?? asNumber(trainMetadata.optimizer_steps);
+  if (typeof learningRate === "number") {
+    fixedSettings.push(`learning rate ${formatNumber(learningRate)}`);
+  }
+  if (typeof batchSize === "number") {
+    fixedSettings.push(`per-device train batch size ${formatNumber(batchSize)}`);
+  }
+  if (typeof gradientAccumulation === "number") {
+    fixedSettings.push(`gradient accumulation ${formatNumber(gradientAccumulation)}`);
+  }
+  if (typeof weightDecay === "number") {
+    fixedSettings.push(`weight decay ${formatNumber(weightDecay)}`);
+  }
+  if (typeof maxGradNorm === "number") {
+    fixedSettings.push(`max gradient norm ${formatNumber(maxGradNorm)}`);
+  }
+  if (typeof optimizerSteps === "number") {
+    fixedSettings.push(`${formatNumber(optimizerSteps)} optimizer steps`);
+  }
+  if (fixedSettings.length > 0) {
+    notes.push(`Fixed training settings included ${joinHumanList(fixedSettings)}.`);
+  }
+
+  const trainSamples = asNumber(trainMetadata.num_train_samples);
+  const trainTokens = asNumber(trainMetadata.train_dataset_token_count);
+  if (typeof trainSamples === "number" || typeof trainTokens === "number") {
+    notes.push(
+      `Run metadata records ${typeof trainSamples === "number" ? `${formatNumber(trainSamples)} training examples` : "training examples"}${typeof trainSamples === "number" && typeof trainTokens === "number" ? " and " : ""}${typeof trainTokens === "number" ? `${formatNumber(trainTokens)} train dataset tokens` : ""} for the inspected seed-level record.`
+    );
+  }
+  return notes;
+}
+
+function findFirstTrainMetadata(latestResults: Record<string, unknown>): Record<string, unknown> | undefined {
+  const direct = asRecord(latestResults.train_metadata);
+  if (Object.keys(direct).length > 0) {
+    return direct;
+  }
+  for (const condition of asArray(latestResults.condition_summaries)) {
+    for (const seedResult of asArray(asRecord(condition).seed_results)) {
+      const trainMetadata = asRecord(asRecord(seedResult).train_metadata);
+      if (Object.keys(trainMetadata).length > 0) {
+        return trainMetadata;
+      }
+    }
+  }
+  for (const seedResult of asArray(latestResults.seed_results)) {
+    const trainMetadata = asRecord(asRecord(seedResult).train_metadata);
+    if (Object.keys(trainMetadata).length > 0) {
+      return trainMetadata;
+    }
+  }
+  return undefined;
 }
 
 function hasRuntimeMeasurement(

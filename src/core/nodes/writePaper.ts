@@ -1688,16 +1688,149 @@ async function loadObjectiveEvaluation(
 async function loadLatestResultsArtifact(
   run: Pick<Parameters<GraphNodeHandler["execute"]>[0]["run"], "id" | "title">
 ): Promise<Record<string, unknown> | undefined> {
-  const filePath = path.join(buildPublicAnalysisDir(process.cwd(), run), "latest_results.json");
-  try {
-    const raw = await fs.readFile(filePath, "utf8");
-    const parsed = JSON.parse(raw) as unknown;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : undefined;
-  } catch {
-    return undefined;
+  const candidatePaths = [
+    path.join(buildPublicAnalysisDir(process.cwd(), run), "latest_results.json"),
+    path.join(".autolabos", "runs", run.id, "metrics.json")
+  ];
+  for (const filePath of candidatePaths) {
+    try {
+      const raw = await fs.readFile(filePath, "utf8");
+      const parsed = JSON.parse(raw) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const record = parsed as Record<string, unknown>;
+        return filePath.endsWith("metrics.json")
+          ? buildLatestResultsFallbackFromMetrics(record)
+          : record;
+      }
+    } catch {
+      continue;
+    }
   }
+  return undefined;
+}
+
+function buildLatestResultsFallbackFromMetrics(metrics: Record<string, unknown>): Record<string, unknown> {
+  const studySummary = readRecord(metrics.study_summary);
+  return {
+    selected_model: readString(metrics.selected_model) || readString(studySummary.selected_model) || readString(studySummary.model_id),
+    requested_models: readRecord(metrics.requested_models),
+    study_summary: pickRecordFields(studySummary, [
+      "status",
+      "model_id",
+      "selected_model",
+      "completed_run_count",
+      "completed_condition_count",
+      "failed_run_count",
+      "planned_run_count",
+      "baseline_condition_marker",
+      "best_nonbaseline_condition_marker",
+      "best_nonbaseline_accuracy_delta_vs_baseline_mean",
+      "run_average_accuracy_mean",
+      "run_accuracy_delta_vs_baseline_mean",
+      "run_accuracy_delta_vs_baseline_ci95",
+      "run_runtime_sec_mean",
+      "run_peak_vram_bytes_mean",
+      "run_train_loss_mean",
+      "seed_schedule"
+    ]),
+    condition_summaries: readArray(metrics.condition_summaries).slice(0, 12).map((condition) =>
+      summarizeConditionForPaperContext(readRecord(condition))
+    )
+  };
+}
+
+function summarizeConditionForPaperContext(condition: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...pickRecordFields(condition, [
+      "condition_marker",
+      "lora_rank",
+      "lora_dropout",
+      "completed_seed_count",
+      "failed_seed_count",
+      "average_accuracy_mean",
+      "average_accuracy_ci95",
+      "accuracy_delta_vs_baseline_mean",
+      "accuracy_delta_vs_baseline_ci95",
+      "arc_challenge_accuracy_mean",
+      "hellaswag_accuracy_mean",
+      "runtime_sec_mean",
+      "peak_vram_bytes_mean",
+      "train_loss_mean"
+    ]),
+    seed_results: readArray(condition.seed_results).slice(0, 1).map((seedResult) =>
+      summarizeSeedResultForPaperContext(readRecord(seedResult))
+    )
+  };
+}
+
+function summarizeSeedResultForPaperContext(seedResult: Record<string, unknown>): Record<string, unknown> {
+  const trainMetadata = readRecord(seedResult.train_metadata);
+  const trainerState = readRecord(trainMetadata.trainer_state);
+  return {
+    ...pickRecordFields(seedResult, [
+      "seed",
+      "condition_marker",
+      "rank",
+      "dropout",
+      "average_accuracy",
+      "accuracy_delta_vs_baseline",
+      "arc_challenge_accuracy",
+      "hellaswag_accuracy",
+      "completed",
+      "train_status"
+    ]),
+    train_metadata: {
+      ...pickRecordFields(trainMetadata, [
+        "model_name",
+        "model_dtype",
+        "device_name",
+        "lora_rank",
+        "lora_dropout",
+        "selected_target_modules",
+        "num_train_samples",
+        "train_dataset_token_count",
+        "train_loss",
+        "runtime_sec",
+        "peak_vram_bytes",
+        "optimizer_steps",
+        "gradient_accumulation_steps",
+        "status"
+      ]),
+      trainer_state: pickRecordFields(trainerState, [
+        "learning_rate",
+        "per_device_train_batch_size",
+        "gradient_accumulation_steps",
+        "weight_decay",
+        "max_grad_norm",
+        "optimizer_steps",
+        "max_steps_requested"
+      ])
+    }
+  };
+}
+
+function pickRecordFields(record: Record<string, unknown>, keys: string[]): Record<string, unknown> {
+  const picked: Record<string, unknown> = {};
+  for (const key of keys) {
+    if (record[key] !== undefined) {
+      picked[key] = record[key];
+    }
+  }
+  return picked;
+}
+
+function readRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function readArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function readString(value: unknown): string {
+  return typeof value === "string" ? value : "";
 }
 
 async function readRequiredRunArtifact(
