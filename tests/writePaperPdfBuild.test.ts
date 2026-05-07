@@ -3363,6 +3363,193 @@ describe("writePaper PDF build", () => {
     expect(readinessRisks.summary_lines.length).toBeGreaterThan(0);
   });
 
+  it("grounds experiment result claims with run-owned artifacts when draft evidence ids are absent", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-artifact-claims-"));
+    process.chdir(root);
+
+    const run = makeRun("run-artifact-claim-grounding");
+    const runDir = await seedRun(root, run);
+    await writeFile(
+      path.join(runDir, "result_table.json"),
+      JSON.stringify(
+        {
+          columns: ["condition", "average_accuracy"],
+          rows: [
+            { condition: "baseline", average_accuracy: 0.51 },
+            { condition: "thread-backed", average_accuracy: 0.56 }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify(
+        {
+          status: "completed",
+          average_accuracy_delta: 0.05,
+          baseline_average_accuracy: 0.51,
+          winning_average_accuracy: 0.56
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const outline = JSON.stringify({
+      title: "Run Artifact Claim Grounding",
+      abstract_focus: ["baseline comparison", "run artifacts"],
+      section_headings: ["Introduction", "Method", "Results", "Discussion", "Limitations", "Conclusion"],
+      key_claim_themes: ["The repeated run improved average accuracy over the baseline."],
+      citation_plan: []
+    });
+    const draft = JSON.stringify({
+      title: "Run Artifact Claim Grounding",
+      abstract: "A conservative report over a completed baseline comparison.",
+      keywords: ["run artifacts", "claim evidence"],
+      sections: [
+        {
+          heading: "Introduction",
+          paragraphs: ["This report studies whether paper claims remain grounded in generated run artifacts."],
+          evidence_ids: [],
+          citation_paper_ids: []
+        },
+        {
+          heading: "Method",
+          paragraphs: ["The protocol compares a thread-backed condition with a baseline condition."],
+          evidence_ids: [],
+          citation_paper_ids: []
+        },
+        {
+          heading: "Results",
+          paragraphs: ["The repeated run improved average accuracy by 0.05 over the baseline."],
+          evidence_ids: [],
+          citation_paper_ids: []
+        },
+        {
+          heading: "Discussion",
+          paragraphs: ["The result supports only a narrow interpretation within the completed run."],
+          evidence_ids: [],
+          citation_paper_ids: []
+        },
+        {
+          heading: "Limitations",
+          paragraphs: ["The evidence remains limited to one compact benchmark setting."],
+          evidence_ids: [],
+          citation_paper_ids: []
+        },
+        {
+          heading: "Conclusion",
+          paragraphs: ["The generated report should keep quantitative claims linked to run artifacts."],
+          evidence_ids: [],
+          citation_paper_ids: []
+        }
+      ],
+      claims: [
+        {
+          claim_id: "c_run_result",
+          statement: "The repeated run improved average accuracy by 0.05 over the baseline.",
+          section_heading: "Results",
+          evidence_ids: [],
+          citation_paper_ids: []
+        },
+        {
+          claim_id: "c_literature_context",
+          statement: "Prior benchmark design work motivates careful evidence linkage.",
+          section_heading: "Introduction",
+          evidence_ids: ["ev_1"],
+          citation_paper_ids: ["paper_1"]
+        },
+        {
+          claim_id: "c_run_conclusion",
+          statement: "The preflight appears strong enough to justify cautious continuation but not broad generalization.",
+          section_heading: "Conclusion",
+          evidence_ids: [],
+          citation_paper_ids: []
+        }
+      ]
+    });
+    const review = JSON.stringify({
+      summary: "The draft is conservative.",
+      revision_notes: [],
+      unsupported_claims: [],
+      missing_sections: [],
+      missing_citations: []
+    });
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient([
+        outline,
+        draft,
+        review,
+        draft,
+        buildPolishedManuscriptResponse(),
+        buildManuscriptReviewResponse({ decision: "pass" }),
+        buildManuscriptReviewAuditResponse()
+      ]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const claimEvidence = JSON.parse(
+      await readFile(path.join(runDir, "paper", "claim_evidence_table.json"), "utf8")
+    ) as { claims: Array<{ claim_id: string; artifact_refs: string[]; strength: string }> };
+    const evidenceLinks = JSON.parse(
+      await readFile(path.join(runDir, "paper", "evidence_links.json"), "utf8")
+    ) as { claims: Array<{ claim_id: string; evidence_ids: string[] }> };
+    const claimStatus = JSON.parse(
+      await readFile(path.join(runDir, "paper", "claim_status_table.json"), "utf8")
+    ) as {
+      claims: Array<{
+        claim_id: string;
+        status: string;
+        primary_source_present: boolean;
+        run_artifact_present: boolean;
+        artifact_refs: string[];
+      }>;
+    };
+
+    const evidenceRow = claimEvidence.claims.find((claim) => claim.claim_id === "c_run_result");
+    expect(evidenceRow?.artifact_refs).toEqual(
+      expect.arrayContaining(["result_analysis.json", "result_table.json", "metrics.json"])
+    );
+    expect(evidenceRow?.strength).not.toBe("low");
+
+    const evidenceLinkRow = evidenceLinks.claims.find((claim) => claim.claim_id === "c_run_result");
+    expect(evidenceLinkRow?.evidence_ids).toEqual(
+      expect.arrayContaining(["result_analysis.json", "result_table.json", "metrics.json"])
+    );
+
+    const statusRow = claimStatus.claims.find((claim) => claim.claim_id === "c_run_result");
+    expect(statusRow?.status).not.toBe("unverified");
+    expect(statusRow?.primary_source_present).toBe(true);
+    expect(statusRow?.run_artifact_present).toBe(true);
+    expect(statusRow?.artifact_refs).toEqual(
+      expect.arrayContaining(["result_analysis.json", "result_table.json", "metrics.json"])
+    );
+
+    const literatureRow = claimEvidence.claims.find((claim) => claim.claim_id === "c_literature_context");
+    expect(literatureRow?.artifact_refs).toEqual(["ev_1"]);
+
+    const conclusionRow = claimStatus.claims.find((claim) => claim.claim_id === "c_run_conclusion");
+    expect(conclusionRow?.status).not.toBe("unverified");
+    expect(conclusionRow?.artifact_refs).toEqual(expect.arrayContaining(["result_analysis.json"]));
+  });
+
   it("retries manuscript review once when supporting-span validation fails and records validation plus audit artifacts", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-review-retry-"));
     process.chdir(root);

@@ -26,6 +26,7 @@ import {
   buildPaperBibtex,
   buildPaperEvidenceMap,
   collectPaperCitationIds,
+  type PaperDraftClaim,
   PaperWritingBundle,
   parseCorpusRows,
   parseEvidenceRows,
@@ -765,17 +766,18 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       const manuscript = manuscriptQuality.evaluation.manuscript;
       const traceability = manuscriptQuality.evaluation.traceability;
       const tex = manuscriptQuality.evaluation.tex;
-      const evidenceMapObject = buildPaperEvidenceMap(paperDraft);
+      const evidenceMapObject = attachRunArtifactRefsToEvidenceMap(buildPaperEvidenceMap(paperDraft), bundle);
       const evidenceMap = JSON.stringify(evidenceMapObject, null, 2);
       const traceabilityJson = `${JSON.stringify(traceability, null, 2)}\n`;
       const manuscriptJson = `${JSON.stringify(manuscript, null, 2)}\n`;
       const provenanceMapJson = `${JSON.stringify(scientificManuscript.provenance_map, null, 2)}\n`;
       const submissionValidation = manuscriptQuality.evaluation.submissionValidation;
-      const claimEvidenceTable = buildClaimEvidenceTableArtifact(evidenceMapObject);
+      const claimEvidenceTable = buildClaimEvidenceTableArtifact(evidenceMapObject, bundle);
       const claimStatusTable = buildClaimStatusTableArtifact({
         evidenceMap: evidenceMapObject,
         traceability,
-        verifiedRegistry
+        verifiedRegistry,
+        bundle
       });
       const evidenceGateDecision = buildEvidenceGateDecisionArtifact(claimStatusTable);
 
@@ -3340,19 +3342,22 @@ const CRITICAL_REPEAT_MANUSCRIPT_CODES = new Set([
 ]);
 
 function buildClaimEvidenceTableArtifact(
-  evidenceMap: ReturnType<typeof buildPaperEvidenceMap>
+  evidenceMap: ReturnType<typeof buildPaperEvidenceMap>,
+  bundle: PaperWritingBundle
 ): { generated_at: string; claims: ClaimEvidenceTableRow[] } {
   return {
     generated_at: new Date().toISOString(),
     claims: evidenceMap.claims.map((claim) => {
-      const sourceType = classifyClaimEvidenceSourceType(claim.section_heading, claim.evidence_ids, claim.citation_paper_ids);
-      const strength = classifyClaimStrength(claim.evidence_ids.length, claim.citation_paper_ids.length);
+      const artifactRefs = inferRunArtifactRefsForClaim(claim, bundle);
+      const claimArtifactRefs = uniqueStrings([...claim.evidence_ids, ...artifactRefs]);
+      const sourceType = classifyClaimEvidenceSourceType(claim.section_heading, claimArtifactRefs, claim.citation_paper_ids);
+      const strength = classifyClaimStrength(claimArtifactRefs.length, claim.citation_paper_ids.length);
       return {
         claim_id: claim.claim_id,
         statement: claim.statement,
         section_heading: claim.section_heading,
         evidence_source_type: sourceType,
-        artifact_refs: claim.evidence_ids,
+        artifact_refs: claimArtifactRefs,
         citation_refs: claim.citation_paper_ids,
         strength,
         ...(strength === "low"
@@ -3363,10 +3368,29 @@ function buildClaimEvidenceTableArtifact(
   };
 }
 
+function attachRunArtifactRefsToEvidenceMap(
+  evidenceMap: ReturnType<typeof buildPaperEvidenceMap>,
+  bundle: PaperWritingBundle
+): ReturnType<typeof buildPaperEvidenceMap> {
+  return {
+    sections: evidenceMap.sections,
+    claims: evidenceMap.claims.map((claim) => {
+      const artifactRefs = inferRunArtifactRefsForClaim(claim, bundle);
+      return artifactRefs.length > 0
+        ? {
+            ...claim,
+            evidence_ids: uniqueStrings([...claim.evidence_ids, ...artifactRefs])
+          }
+        : claim;
+    })
+  };
+}
+
 function buildClaimStatusTableArtifact(input: {
   evidenceMap: ReturnType<typeof buildPaperEvidenceMap>;
   traceability: PaperTraceabilityReport;
   verifiedRegistry: VerifiedRegistryArtifact;
+  bundle: PaperWritingBundle;
 }): ClaimStatusTableArtifact {
   const traceabilityByClaimId = new Map<string, PaperTraceabilityReport["paragraphs"]>();
   const registryByCitationPaperId = new Map(
@@ -3382,6 +3406,10 @@ function buildClaimStatusTableArtifact(input: {
 
   const claims = input.evidenceMap.claims.map((claim) => {
     const traceEntries = traceabilityByClaimId.get(claim.claim_id) || [];
+    const artifactRefs = uniqueStrings([
+      ...claim.evidence_ids,
+      ...inferRunArtifactRefsForClaim(claim, input.bundle)
+    ]);
     const citationStatuses = claim.citation_paper_ids
       .map((citationPaperId) => registryByCitationPaperId.get(citationPaperId))
       .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
@@ -3396,8 +3424,8 @@ function buildClaimStatusTableArtifact(input: {
     const weakCitationSupport = citationStatuses.filter(
       (entry) => entry.status === "unverified" || entry.status === "inferred"
     );
-    const primarySourcePresent = usableCitationSupport || claim.evidence_ids.length > 0;
-    const runArtifactPresent = claim.evidence_ids.length > 0;
+    const primarySourcePresent = usableCitationSupport || artifactRefs.length > 0;
+    const runArtifactPresent = artifactRefs.length > 0;
     const reproductionTracePresent = traceEntries.length > 0;
     const notes: string[] = [];
     let status: ClaimEvidenceStatus;
@@ -3446,7 +3474,7 @@ function buildClaimStatusTableArtifact(input: {
       primary_source_present: primarySourcePresent,
       run_artifact_present: runArtifactPresent,
       reproduction_trace_present: reproductionTracePresent,
-      artifact_refs: claim.evidence_ids,
+      artifact_refs: artifactRefs,
       citation_refs: claim.citation_paper_ids,
       claim_ids_in_trace: traceEntries.flatMap((entry) => entry.claim_ids || []).filter(Boolean),
       citation_statuses: citationStatuses,
@@ -3464,6 +3492,51 @@ function buildClaimStatusTableArtifact(input: {
     },
     claims
   };
+}
+
+function inferRunArtifactRefsForClaim(
+  claim: PaperDraftClaim,
+  bundle: PaperWritingBundle
+): string[] {
+  const sectionHeading = claim.section_heading.toLowerCase();
+  const text = `${claim.section_heading} ${claim.statement}`.toLowerCase();
+  const experimentSection = /method|result|discussion|limitation|conclusion|appendix/iu.test(sectionHeading);
+  const unlinkedExperimentClaim =
+    claim.evidence_ids.length === 0
+    && claim.citation_paper_ids.length === 0
+    && /this study|present study|experiment|run|baseline|comparator|metric|result|accuracy|objective|condition|seed|rank|dropout|arc|hellaswag|qwen|tinyllama|alpaca/iu.test(text);
+  if (!experimentSection && !unlinkedExperimentClaim) {
+    return [];
+  }
+
+  const refs: string[] = [];
+  const hasResultAnalysis = Boolean(bundle.resultAnalysis);
+  const hasLatestResults = Boolean(bundle.latestResults);
+  const hasExperimentPlan = Boolean(bundle.experimentPlan?.rawText || bundle.experimentPlan?.selectedTitle);
+  const resultLike =
+    /result|accuracy|metric|delta|baseline|comparator|confidence|interval|ci\b|uncertainty|seed|task|arc|hellaswag|condition|rank|dropout|runtime|memory|vram|completed|failed|objective|improvement|inconclusive|promising|feasibility|preflight|continuation|generalization|study scope|supplemental artifact|compute-side|compute budget/iu.test(text);
+  const methodLike =
+    /method|protocol|design|dataset|model|backbone|qwen|tinyllama|alpaca|seed|condition|rank|dropout|baseline|harness|preprocess|token|budget|reproducib|run identifier|command line/iu.test(text);
+  const runStateLike =
+    /completed|failed|run visibility|failed attempts|execution status|run identifier|command line|environment|reproducib/iu.test(text);
+
+  if (hasExperimentPlan && methodLike) {
+    refs.push("experiment_plan.yaml");
+  }
+  if (hasResultAnalysis && resultLike) {
+    refs.push("result_analysis.json", "result_table.json");
+  }
+  if (hasLatestResults && resultLike) {
+    refs.push("latest_results.json");
+  }
+  if (runStateLike || (hasResultAnalysis && /completed|failed|25 train|five cells|five seeds|seed/i.test(text))) {
+    refs.push("run_record.json");
+  }
+  if (hasResultAnalysis && /metric|accuracy|delta|baseline|runtime|memory|vram|loss|condition|task|arc|hellaswag|completed|failed/iu.test(text)) {
+    refs.push("metrics.json");
+  }
+
+  return uniqueStrings(refs);
 }
 
 function buildEvidenceGateDecisionArtifact(

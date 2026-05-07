@@ -15,6 +15,60 @@ Path placeholders:
 
 ---
 
+## Issue: LV-379
+
+- Status: repair implemented; targeted regression/build/full test/harness passed; same-flow live revalidation passed for the unsupported-claim blocker; final audit still blocked by manuscript-quality failure.
+- Validation target: P6 `write_paper` claim-evidence artifacts should map experiment-owned Method/Results/Discussion claims to run artifacts when the LLM draft omits literature-style `evidence_ids`.
+- Environment/session context: existing P6 live run `2dcc480e-b4e5-4863-9c7f-6872f9c672e7` in `<validation-workspace>/p6-paper-ready-live`, final audit output at `<repo-root>/outputs/audit/p6-live-2dcc480e-after-claim-artifact-grounding`.
+
+- Reproduction steps:
+  1. Rerun `write_paper` for the P6 live run after the LV-378 scientific-validator repair.
+  2. Run `autolabos audit --run <validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7 --out-dir <repo-root>/outputs/audit/p6-live-2dcc480e-after-lm-validator-recheck`.
+  3. Inspect `paper/claim_evidence_table.json`, `paper/claim_status_table.json`, and the generated audit `blockers.json`.
+
+- Expected behavior:
+  - Experiment-result claims about baseline/comparator status, objective deltas, task-level outcomes, and failed/completed run visibility should cite the run-owned artifacts that support them.
+  - Method/protocol claims should cite `experiment_plan.yaml` when the bundle contains an experiment plan.
+  - Results/discussion claims should cite `result_analysis.json`, `result_table.json`, `metrics.json`, or `run_record.json` as appropriate.
+  - The audit should not mark an experiment claim unsupported solely because the LLM did not attach a literature evidence id.
+
+- Actual behavior:
+  - The final audit reports `unsupported_claims_present` for six Method/Results/Discussion claims.
+  - `paper/claim_evidence_table.json` and `paper/claim_status_table.json` list those claims with no artifact refs even though the run contains `experiment_plan.yaml`, `result_analysis.json`, `result_table.json`, `metrics.json`, and `run_record.json`.
+  - The run remains correctly blocked by manuscript-quality failures, but the unsupported-claims blocker is over-broad for run-owned experimental claims.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started for this issue; the evidence is from the persisted P6 live run.
+  - Existing session: reproduced from the resumed P6 run and final audit artifacts.
+  - Divergence: no fresh/resume divergence observed; this is an artifact-projection gap in `write_paper`.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `write_paper` builds claim evidence/status artifacts from draft `evidence_ids` and citation ids, but does not infer available run-owned artifact refs for experimental Method/Results/Discussion claims when the LLM omits those ids.
+
+- Code/test changes:
+  - Code: `src/core/nodes/writePaper.ts` now infers conservative run artifact refs from claim section/text and available paper-writing bundle artifacts, writes those refs into `paper/evidence_links.json`, and carries them through `paper/claim_evidence_table.json` and `paper/claim_status_table.json`.
+  - Tests: `tests/writePaperPdfBuild.test.ts` adds a regression where a Results claim has empty draft `evidence_ids` but the run bundle contains result artifacts; the generated evidence links and claim tables must expose those artifact refs.
+
+- Regression status:
+  - Reproduced from final P6 audit on 2026-05-07 KST.
+  - Targeted regression: passed with `npm test -- tests/writePaperPdfBuild.test.ts -t "grounds experiment result claims"`.
+  - Build: passed with `npm run build`.
+  - Full tests: passed with `npm test`.
+  - Harness validation: passed with `npm run validate:harness`.
+  - Same-flow live revalidation: passed with `AUTOLABOS_P6_FORCE_RUN_ACTIVE=1 AUTOLABOS_P6_RUN_ID=2dcc480e-b4e5-4863-9c7f-6872f9c672e7 AUTOLABOS_P6_NEXT_NODE=write_paper AUTOLABOS_P6_NEXT_TIMEOUT_SEC=3600 npm run p6:continue`.
+  - Live artifact result: `paper/evidence_links.json` now maps all eight claims to concrete evidence ids or run artifact paths; `paper/claim_status_table.json` reports `verified=8`, `unverified=0`, `blocked=0`.
+  - Audit result: `autolabos audit --run` reports `Unsupported claims: 0`; the only remaining top blocker is `write_paper_failed` from the manuscript-quality hard stop.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/paper/claim_evidence_table.json`
+  - `<validation-workspace>/p6-paper-ready-live/.autolabos/runs/2dcc480e-b4e5-4863-9c7f-6872f9c672e7/paper/claim_status_table.json`
+  - `<repo-root>/outputs/audit/p6-live-2dcc480e-after-lm-validator-recheck/blockers.json`
+  - `<repo-root>/outputs/audit/p6-live-2dcc480e-after-claim-artifact-grounding/audit-summary.json`
+  - `<repo-root>/outputs/audit/p6-live-2dcc480e-after-claim-artifact-grounding/blockers.json`
+
+---
+
 ## Issue: LV-378
 
 - Status: scientific-validator repair implemented; targeted regression/build/full test/harness passed; same-flow live revalidation passed for the scientific-validator blocker; final audit still blocked by unsupported claims and failed manuscript-quality gate.
