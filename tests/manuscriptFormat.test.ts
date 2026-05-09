@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   parseAppendixPreferencesFromBrief,
+  parseManuscriptAuthorsFromBrief,
   parseManuscriptFormatFromBrief,
   parseManuscriptTemplateFromBrief
 } from "../src/core/runs/researchBriefFiles.js";
@@ -192,6 +193,37 @@ describe("parseAppendixPreferencesFromBrief", () => {
     expect(parseAppendixPreferencesFromBrief(brief)).toEqual({
       preferAppendixFor: ["hyperparameter_grids", "extended_error_analysis"],
       keepInMainBody: []
+    });
+  });
+});
+
+describe("parseManuscriptAuthorsFromBrief", () => {
+  it("extracts authors and affiliations for final paper metadata", () => {
+    const brief = [
+      "# Research Brief",
+      "",
+      "## Manuscript Authors",
+      "- authors: Alice Doe; Bob Roe",
+      "- affiliations: AutoLab Institute; Example University"
+    ].join("\n");
+
+    expect(parseManuscriptAuthorsFromBrief(brief)).toEqual({
+      authors: ["Alice Doe", "Bob Roe"],
+      affiliations: ["AutoLab Institute", "Example University"],
+      anonymous: false
+    });
+  });
+
+  it("supports anonymous review mode", () => {
+    const brief = [
+      "## Manuscript Authors",
+      "- anonymous: true"
+    ].join("\n");
+
+    expect(parseManuscriptAuthorsFromBrief(brief)).toEqual({
+      authors: [],
+      affiliations: [],
+      anonymous: true
     });
   });
 });
@@ -403,6 +435,48 @@ describe("renderSubmissionPaperTex column_count", () => {
     expect(tex).toContain("\\newcommand{\\eg}{\\textit{e.g.,}}");
     expect(tex).not.toContain("\\usepackage[margin=0.75in]{geometry}");
     expect(tex).not.toContain("\\usepackage[margin=1in]{geometry}");
+  });
+
+  it("renders author metadata and column-safe table/figure environments", () => {
+    const manuscript: PaperManuscript = {
+      ...makeMinimalManuscript(),
+      tables: [
+        {
+          caption: "Main result table.",
+          rows: [
+            { label: "A very long metric label that should wrap inside one column", value: 0.42 }
+          ]
+        }
+      ],
+      figures: [
+        {
+          caption: "Main result chart.",
+          bars: [
+            { label: "Baseline", value: 0.31 },
+            { label: "Candidate", value: 0.42 }
+          ]
+        }
+      ]
+    };
+
+    const tex = renderSubmissionPaperTex({
+      manuscript,
+      traceability: makeMinimalTraceability(),
+      citationKeysByPaperId: new Map(),
+      paperProfile: { column_count: 2 } as any,
+      authorMetadata: {
+        authors: ["Alice Doe", "Bob Roe"],
+        affiliations: ["AutoLab Institute", "Example University"]
+      }
+    });
+
+    expect(tex).toContain("\\author{Alice Doe \\\\ AutoLab Institute \\and Bob Roe \\\\ Example University}");
+    expect(tex).toContain("\\usepackage{booktabs}");
+    expect(tex).toContain("\\usepackage{tabularx}");
+    expect(tex).toContain("\\begin{tabularx}{\\columnwidth}");
+    expect(tex).toContain("\\toprule");
+    expect(tex).toContain("\\begin{figure}[t]");
+    expect(tex).toContain("\\makebox[4.2em]");
   });
 });
 

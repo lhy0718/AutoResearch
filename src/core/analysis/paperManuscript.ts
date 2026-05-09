@@ -65,6 +65,12 @@ export interface PaperManuscriptFigure {
   source_refs?: PaperSourceRef[];
 }
 
+export interface PaperAuthorMetadata {
+  authors: string[];
+  affiliations?: string[];
+  anonymous?: boolean;
+}
+
 export interface PaperSourceRef {
   kind: "evidence" | "claim" | "citation" | "artifact";
   id: string;
@@ -566,6 +572,7 @@ export function renderSubmissionPaperTex(input: {
   template?: string;
   paperProfile?: PaperProfileConfig;
   parsedTemplate?: ParsedLatexTemplate | null;
+  authorMetadata?: PaperAuthorMetadata | null;
 }): string {
   const sectionCitationMap = new Map<string, string[]>();
   for (const item of input.traceability.paragraphs) {
@@ -577,12 +584,16 @@ export function renderSubmissionPaperTex(input: {
 
   const columnCount = input.parsedTemplate?.columnLayout ?? (input.paperProfile?.column_count ?? 2);
   const docClassOptions = columnCount === 2 ? "[twocolumn]" : "";
+  const renderedAuthor = renderAuthorCommand(input.authorMetadata);
+  const supportPackages = buildSubmissionSupportPackages(input.parsedTemplate);
 
   const lines = input.parsedTemplate
     ? [
         input.parsedTemplate.documentClass || resolveDocumentClass(input.template).replace("{article}", `${docClassOptions}{article}`),
         input.parsedTemplate.preamble,
+        ...supportPackages,
         "\\title{" + latexEscape(input.manuscript.title) + "}",
+        ...(renderedAuthor ? [renderedAuthor] : []),
         "\\date{}",
         "\\begin{document}",
         "\\maketitle",
@@ -597,7 +608,9 @@ export function renderSubmissionPaperTex(input: {
           ? "\\usepackage[margin=0.75in]{geometry}"
           : "\\usepackage[margin=1in]{geometry}",
         "\\usepackage{graphicx}",
+        ...supportPackages,
         "\\title{" + latexEscape(input.manuscript.title) + "}",
+        ...(renderedAuthor ? [renderedAuthor] : []),
         "\\date{}",
         "\\begin{document}",
         "\\maketitle",
@@ -1281,15 +1294,16 @@ function renderVisualCollection(
   for (const table of tables) {
     lines.push("\\begin{table}[t]");
     lines.push("\\centering");
-    lines.push("\\begin{tabular}{lr}");
-    lines.push("\\hline");
+    lines.push("\\small");
+    lines.push("\\begin{tabularx}{\\columnwidth}{>{\\raggedright\\arraybackslash}X r}");
+    lines.push("\\toprule");
     lines.push("Metric & Value \\\\");
-    lines.push("\\hline");
+    lines.push("\\midrule");
     for (const row of table.rows) {
       lines.push(`${latexEscape(row.label)} & ${formatTexNumber(row.value)} \\\\`);
     }
-    lines.push("\\hline");
-    lines.push("\\end{tabular}");
+    lines.push("\\bottomrule");
+    lines.push("\\end{tabularx}");
     lines.push(`\\caption{${latexEscape(table.caption)}}`);
     lines.push("\\end{table}");
     lines.push("");
@@ -1299,18 +1313,48 @@ function renderVisualCollection(
     const maxValue = Math.max(...figure.bars.map((row) => Math.abs(row.value)), 1);
     lines.push("\\begin{figure}[t]");
     lines.push("\\centering");
-    lines.push("\\begin{tabular}{l l r}");
+    lines.push("\\small");
+    lines.push("\\begin{tabularx}{\\columnwidth}{>{\\raggedright\\arraybackslash}X l r}");
     for (const row of figure.bars) {
-      const widthEm = Math.max(1.5, Math.min(10, Number(((Math.abs(row.value) / maxValue) * 10).toFixed(2))));
-      lines.push(`${latexEscape(row.label)} & \\rule{${widthEm}em}{1.2ex} & ${formatTexNumber(row.value)} \\\\`);
+      const widthEm = Math.max(0.4, Math.min(4, Number(((Math.abs(row.value) / maxValue) * 4).toFixed(2))));
+      lines.push(`${latexEscape(row.label)} & \\makebox[4.2em][l]{\\rule{${widthEm}em}{1.2ex}} & ${formatTexNumber(row.value)} \\\\`);
     }
-    lines.push("\\end{tabular}");
+    lines.push("\\end{tabularx}");
     lines.push(`\\caption{${latexEscape(figure.caption)}}`);
     lines.push("\\end{figure}");
     lines.push("");
   }
 
   return lines;
+}
+
+function buildSubmissionSupportPackages(parsedTemplate?: ParsedLatexTemplate | null): string[] {
+  const preamble = parsedTemplate?.preamble || "";
+  const packages = [
+    "\\usepackage{booktabs}",
+    "\\usepackage{array}",
+    "\\usepackage{tabularx}"
+  ];
+  return packages.filter((pkg) => {
+    const name = pkg.match(/\{([^}]+)\}/u)?.[1];
+    return name ? !new RegExp(`\\\\usepackage(?:\\[[^\\]]*\\])?\\{${escapeRegExp(name)}\\}`, "u").test(preamble) : true;
+  });
+}
+
+function renderAuthorCommand(authorMetadata?: PaperAuthorMetadata | null): string | undefined {
+  if (!authorMetadata || authorMetadata.anonymous) {
+    return undefined;
+  }
+  const authors = uniqueStrings(authorMetadata.authors || []);
+  if (authors.length === 0) {
+    return undefined;
+  }
+  const affiliations = authorMetadata.affiliations || [];
+  const authorText = authors.map((author, index) => {
+    const affiliation = affiliations[index];
+    return affiliation ? `${latexEscape(author)} \\\\ ${latexEscape(affiliation)}` : latexEscape(author);
+  }).join(" \\and ");
+  return `\\author{${authorText}}`;
 }
 
 function collectClaimIdsForSection(

@@ -2014,7 +2014,12 @@ async function seedMediumScientificRun(run: RunRecord): Promise<void> {
   await writeLatestResults(run, buildMediumLatestResults());
 }
 
-function createPdfBuildAci(options?: { failFirstCompile?: boolean; failAllCompiles?: boolean; pdfPageCount?: number }) {
+function createPdfBuildAci(options?: {
+  failFirstCompile?: boolean;
+  failAllCompiles?: boolean;
+  pdfPageCount?: number;
+  pdfText?: string;
+}) {
   const commands: string[] = [];
   let firstCompileFailed = false;
 
@@ -2068,6 +2073,19 @@ function createPdfBuildAci(options?: { failFirstCompile?: boolean; failAllCompil
           return {
             status: "ok" as const,
             stdout: `Title: mock\nPages: ${options?.pdfPageCount ?? 8}\n`,
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 1
+          };
+        }
+        if (command === "pdftotext -layout main.pdf -") {
+          const pageCount = options?.pdfPageCount ?? 8;
+          const pages = Array.from({ length: Math.max(0, pageCount) }, (_, index) =>
+            `Main body page ${index + 1}`
+          );
+          return {
+            status: "ok" as const,
+            stdout: options?.pdfText ?? pages.join("\f"),
             stderr: "",
             exit_code: 0,
             duration_ms: 1
@@ -2457,7 +2475,8 @@ describe("writePaper PDF build", () => {
       "bibtex main",
       "pdflatex -interaction=nonstopmode -halt-on-error -file-line-error main.tex",
       "pdflatex -interaction=nonstopmode -halt-on-error -file-line-error main.tex",
-      "pdfinfo main.pdf"
+      "pdfinfo main.pdf",
+      "pdftotext -layout main.pdf -"
     ]);
 
     expect(await exists(path.join(runDir, "paper", "main.pdf"))).toBe(true);
@@ -2638,7 +2657,8 @@ describe("writePaper PDF build", () => {
       "bibtex main",
       "pdflatex -interaction=nonstopmode -halt-on-error -file-line-error main.tex",
       "pdflatex -interaction=nonstopmode -halt-on-error -file-line-error main.tex",
-      "pdfinfo main.pdf"
+      "pdfinfo main.pdf",
+      "pdftotext -layout main.pdf -"
     ]);
 
     const repairedTex = await readFile(path.join(runDir, "paper", "latex_repair.tex"), "utf8");
@@ -2786,6 +2806,15 @@ describe("writePaper PDF build", () => {
       deps: {
         aci: {
           async runCommand(command: string) {
+            if (command === "pdftotext -layout main.pdf -") {
+              return {
+                status: "ok" as const,
+                stdout: "",
+                stderr: "",
+                exit_code: 0,
+                duration_ms: 1
+              };
+            }
             expect(command).toBe("pdfinfo main.pdf");
             return {
               status: "ok" as const,
@@ -2827,6 +2856,15 @@ describe("writePaper PDF build", () => {
       deps: {
         aci: {
           async runCommand(command: string) {
+            if (command === "pdftotext -layout main.pdf -") {
+              return {
+                status: "ok" as const,
+                stdout: Array.from({ length: 10 }, (_, index) => `Main body page ${index + 1}`).join("\f"),
+                stderr: "",
+                exit_code: 0,
+                duration_ms: 1
+              };
+            }
             expect(command).toBe("pdfinfo main.pdf");
             return {
               status: "ok" as const,
@@ -2859,6 +2897,66 @@ describe("writePaper PDF build", () => {
     expect(compiledPageValidation.minimum_main_pages).toBe(8);
     expect(compiledPageValidation.target_main_pages).toBe(8);
     expect(compiledPageValidation.message).toContain("meeting the configured minimum_main_pages");
+  });
+
+  it("excludes reference and appendix pages from the main-body page floor", async () => {
+    const run = makeRun("run-paper-pdf-main-body-only");
+    const compiledPageValidation = await validateCompiledPdfPageBudget({
+      deps: {
+        aci: {
+          async runCommand(command: string) {
+            if (command === "pdftotext -layout main.pdf -") {
+              return {
+                status: "ok" as const,
+                stdout: [
+                  "Introduction",
+                  "Method",
+                  "Results",
+                  "Discussion",
+                  "Limitations",
+                  "Conclusion",
+                  "References",
+                  "Appendix A"
+                ].join("\f"),
+                stderr: "",
+                exit_code: 0,
+                duration_ms: 1
+              };
+            }
+            expect(command).toBe("pdfinfo main.pdf");
+            return {
+              status: "ok" as const,
+              stdout: "Title: mock\nPages: 8\n",
+              stderr: "",
+              exit_code: 0,
+              duration_ms: 1
+            };
+          }
+        }
+      } as any,
+      run,
+      compileResult: {
+        enabled: true,
+        status: "success",
+        repaired: false,
+        toolCallsUsed: 0,
+        attempts: [],
+        warnings: [],
+        pdf_path: path.join(".autolabos", "runs", run.id, "paper", "main.pdf")
+      },
+      validationMode: "strict_paper",
+      minimumMainPages: 8,
+      targetMainPages: 8,
+      referencesCounted: false,
+      appendicesCounted: false
+    });
+
+    expect(compiledPageValidation.status).toBe("fail");
+    expect(compiledPageValidation.compiled_pdf_page_count).toBe(8);
+    expect(compiledPageValidation.main_body_pdf_page_count).toBe(6);
+    expect(compiledPageValidation.references_page_count).toBe(1);
+    expect(compiledPageValidation.appendix_page_count).toBe(1);
+    expect(compiledPageValidation.message).toContain("Compiled main body is only 6 pages");
   });
 
   it("fails the node when PDF compilation still fails after repair", async () => {

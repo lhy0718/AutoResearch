@@ -52,10 +52,11 @@ import {
   type ReadinessRiskArtifact
 } from "../readinessRisks.js";
 import {
-  PaperManuscript,
-  PaperManuscriptVisualRow,
-  PaperSubmissionValidationReport,
-  PaperTraceabilityReport,
+  type PaperManuscript,
+  type PaperAuthorMetadata,
+  type PaperManuscriptVisualRow,
+  type PaperSubmissionValidationReport,
+  type PaperTraceabilityReport,
   buildFallbackPaperManuscript,
   buildPaperSubmissionValidation,
   buildPaperTraceability,
@@ -111,6 +112,7 @@ import {
 } from "../latex/latexTemplateLoader.js";
 import {
   parseAppendixPreferencesFromBrief,
+  parseManuscriptAuthorsFromBrief,
   parseManuscriptTemplateFromBrief
 } from "../runs/researchBriefFiles.js";
 
@@ -157,8 +159,64 @@ interface CompiledPdfPageValidationReport {
   target_main_pages: number;
   main_page_limit: number;
   compiled_pdf_page_count: number | null;
+  main_body_pdf_page_count?: number | null;
+  references_page_count?: number | null;
+  appendix_page_count?: number | null;
+  references_counted?: boolean;
+  appendices_counted?: boolean;
   pdf_path: string | null;
   message: string;
+}
+
+interface PaperFigureManifestEntry {
+  id: string;
+  kind: "result_chart" | "conceptual_diagram" | "algorithm_diagram";
+  caption: string;
+  source_refs: string[];
+  included_in_main_body: boolean;
+  status: "rendered" | "needs_generation" | "omitted";
+  audit_status: "pending" | "pass" | "fail" | "not_applicable";
+  path?: string;
+  prompt_path?: string;
+}
+
+interface PaperFigureManifest {
+  generated_at: string;
+  figures: PaperFigureManifestEntry[];
+  conceptual_diagram_prompt?: {
+    use_case: "scientific-educational";
+    asset_type: string;
+    prompt: string;
+    intended_path: string;
+  };
+}
+
+interface PaperRenderValidationIssue {
+  code: string;
+  severity: "warning" | "fail";
+  message: string;
+}
+
+interface PaperRenderValidationReport {
+  checked: boolean;
+  validation_mode: "default" | "strict_paper";
+  status: "pass" | "warn" | "fail";
+  issues: PaperRenderValidationIssue[];
+  metrics: {
+    author_count: number;
+    template_applied: boolean;
+    rendered_citation_count: number;
+    bibliography_entry_count: number;
+    main_body_table_count: number;
+    main_body_figure_count: number;
+    result_chart_count: number;
+    conceptual_diagram_count: number;
+    overfull_hbox_count: number;
+    max_overfull_hbox_pt: number;
+    main_body_pdf_page_count: number | null;
+    target_main_pages: number;
+  };
+  summary: string[];
 }
 
 interface PaperInputValidationIssue {
@@ -245,6 +303,7 @@ interface PaperReadinessArtifact {
   manuscript_quality_action: ManuscriptRepairDecision["action"];
   compile_status?: PaperCompileResult["status"];
   compiled_page_validation_status?: CompiledPdfPageValidationReport["status"];
+  render_validation_status?: PaperRenderValidationReport["status"];
   claim_status_counts: Record<ClaimEvidenceStatus, number>;
 }
 
@@ -416,6 +475,9 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       const briefAppendixPreferences = rawBrief
         ? (parseAppendixPreferencesFromBrief(rawBrief) ?? undefined)
         : undefined;
+      const authorMetadata = rawBrief
+        ? (parseManuscriptAuthorsFromBrief(rawBrief) ?? null)
+        : null;
       const resolvedTemplatePath = await resolveLatexTemplatePath(
         process.cwd(),
         briefTemplatePath
@@ -751,6 +813,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         unresolvedCitationPaperIds,
         template: deps.config?.paper?.template,
         parsedTemplate,
+        authorMetadata,
         emitLog,
         abortSignal,
         runContextMemory
@@ -770,6 +833,15 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       const manuscript = manuscriptQuality.evaluation.manuscript;
       const traceability = manuscriptQuality.evaluation.traceability;
       const tex = manuscriptQuality.evaluation.tex;
+      const figureManifest = buildPaperFigureManifest({
+        manuscript,
+        runTitle: run.title,
+        topic: bundle.experimentPlan?.selectedTitle || run.title
+      });
+      const figureManifestJson = `${JSON.stringify(figureManifest, null, 2)}\n`;
+      const conceptualDiagramPromptJson = figureManifest.conceptual_diagram_prompt
+        ? `${JSON.stringify(figureManifest.conceptual_diagram_prompt, null, 2)}\n`
+        : undefined;
       const evidenceMapObject = attachRunArtifactRefsToEvidenceMap(buildPaperEvidenceMap(paperDraft), bundle);
       const evidenceMap = JSON.stringify(evidenceMapObject, null, 2);
       const traceabilityJson = `${JSON.stringify(traceability, null, 2)}\n`;
@@ -808,6 +880,10 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         "paper/evidence_gate_decision.json",
         `${JSON.stringify(evidenceGateDecision, null, 2)}\n`
       );
+      await writeRunArtifact(run, "paper/figures/figure_manifest.json", figureManifestJson);
+      if (conceptualDiagramPromptJson) {
+        await writeRunArtifact(run, "paper/figures/concept_diagram_prompt.json", conceptualDiagramPromptJson);
+      }
       const citationConsistency = checkCitationConsistency(path.join(process.cwd(), ".autolabos", "runs", run.id));
       await writeRunArtifact(
         run,
@@ -849,6 +925,8 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
 
       const publicPaperDir = buildPublicPaperDir(process.cwd(), run);
       await ensureDir(publicPaperDir);
+      const publicFiguresDir = path.join(publicPaperDir, "figures");
+      await ensureDir(publicFiguresDir);
       await fs.writeFile(path.join(publicPaperDir, "main.tex"), tex, "utf8");
       await fs.writeFile(path.join(publicPaperDir, "references.bib"), bibtex.references, "utf8");
       await fs.writeFile(path.join(publicPaperDir, "manuscript.json"), manuscriptJson, "utf8");
@@ -875,6 +953,14 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         `${JSON.stringify(evidenceGateDecision, null, 2)}\n`,
         "utf8"
       );
+      await fs.writeFile(path.join(publicFiguresDir, "figure_manifest.json"), figureManifestJson, "utf8");
+      if (conceptualDiagramPromptJson) {
+        await fs.writeFile(
+          path.join(publicFiguresDir, "concept_diagram_prompt.json"),
+          conceptualDiagramPromptJson,
+          "utf8"
+        );
+      }
       await fs.writeFile(
         path.join(publicPaperDir, "citation_consistency.json"),
         `${JSON.stringify(citationConsistency, null, 2)}\n`,
@@ -968,6 +1054,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await runContextMemory.put("write_paper.verified_registry", verifiedRegistry);
       await runContextMemory.put("write_paper.claim_status_table", claimStatusTable);
       await runContextMemory.put("write_paper.evidence_gate_decision", evidenceGateDecision);
+      await runContextMemory.put("write_paper.figure_manifest", figureManifest);
       await runContextMemory.put("write_paper.citation_consistency", citationConsistency);
       await runContextMemory.put("write_paper.validation", validation);
       await runContextMemory.put("write_paper.consistency_lint", {
@@ -1226,6 +1313,16 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
             optional: true
           },
           {
+            sourcePath: path.join(runPaperDir, "figures", "figure_manifest.json"),
+            targetRelativePath: "figures/figure_manifest.json",
+            optional: true
+          },
+          {
+            sourcePath: path.join(runPaperDir, "figures", "concept_diagram_prompt.json"),
+            targetRelativePath: "figures/concept_diagram_prompt.json",
+            optional: true
+          },
+          {
             sourcePath: path.join(runPaperDir, "paper_readiness.json"),
             targetRelativePath: "paper_readiness.json",
             optional: true
@@ -1376,7 +1473,9 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         compileResult,
         validationMode,
         minimumMainPages: scientificDraft.page_budget.minimum_main_pages,
-        targetMainPages: scientificDraft.page_budget.target_main_pages
+        targetMainPages: scientificDraft.page_budget.target_main_pages,
+        referencesCounted: scientificDraft.page_budget.references_counted,
+        appendicesCounted: !scientificDraft.page_budget.appendix_allowed
       });
       await writeRunArtifact(
         run,
@@ -1392,6 +1491,31 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       if (compiledPageValidation.status === "warn") {
         emitLog(`Compiled PDF page-budget warning: ${compiledPageValidation.message}`);
       }
+      const renderValidation = buildPaperRenderValidation({
+        validationMode,
+        manuscript,
+        tex,
+        authorMetadata,
+        parsedTemplate,
+        citationReport: citationConsistency,
+        compileResult,
+        compiledPageValidation,
+        figureManifest
+      });
+      await writeRunArtifact(
+        run,
+        "paper/render_validation.json",
+        `${JSON.stringify(renderValidation, null, 2)}\n`
+      );
+      await fs.writeFile(
+        path.join(publicPaperDir, "render_validation.json"),
+        `${JSON.stringify(renderValidation, null, 2)}\n`,
+        "utf8"
+      );
+      await runContextMemory.put("write_paper.render_validation", renderValidation);
+      if (renderValidation.status === "warn") {
+        emitLog(`Rendered manuscript validation warning: ${renderValidation.summary.join(" ")}`);
+      }
       const finalPaperReadiness = buildPaperReadinessArtifact({
         manuscriptType: postDraftCritique.manuscript_type,
         preDraftManuscriptType: postDraftCritique.pre_draft_manuscript_type,
@@ -1404,7 +1528,8 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         submissionValidationOk: submissionValidation.ok,
         manuscriptQualityAction: manuscriptQuality.repairDecision.action,
         compileStatus: compileResult.status,
-        compiledPageValidationStatus: compiledPageValidation.status
+        compiledPageValidationStatus: compiledPageValidation.status,
+        renderValidationStatus: renderValidation.status
       });
       const finalReadinessRisks = buildPaperReadinessRiskArtifact({
         manuscriptType: postDraftCritique.manuscript_type,
@@ -1417,6 +1542,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         manuscriptQualityAction: manuscriptQuality.repairDecision.action,
         compileStatus: compileResult.status,
         compiledPageValidation,
+        renderValidation,
         config: deps.config
       });
       await writeRunArtifact(
@@ -1450,6 +1576,17 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
           toolCallsUsed
         };
       }
+      if (renderValidation.status === "fail") {
+        const renderValidationError = buildPaperRenderValidationError(renderValidation);
+        emitLog(renderValidationError);
+        await runContextMemory.put("write_paper.last_error", renderValidationError);
+        return {
+          status: "failure",
+          error: renderValidationError,
+          summary: renderValidationError,
+          toolCallsUsed
+        };
+      }
       if (compiledPageValidation.status === "fail") {
         const pageValidationError = buildCompiledPdfPageValidationError(compiledPageValidation);
         emitLog(pageValidationError);
@@ -1474,6 +1611,8 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
             "paper/manuscript.json",
             "paper/traceability.json",
             "paper/provenance_map.json",
+            "paper/figures/figure_manifest.json",
+            "paper/render_validation.json",
             ...(compileResult.pdf_path ? ["paper/main.pdf"] : []),
             publicPaperDir
           ]
@@ -2383,6 +2522,7 @@ async function runManuscriptQualityLoop(input: {
   unresolvedCitationPaperIds: string[];
   template?: string;
   parsedTemplate?: ParsedLatexTemplate | null;
+  authorMetadata?: PaperAuthorMetadata | null;
   emitLog: (text: string) => void;
   abortSignal?: AbortSignal;
   runContextMemory: RunContextMemory;
@@ -2431,7 +2571,8 @@ let currentManuscript = input.initialManuscript;
       citationKeysByPaperId: input.citationKeysByPaperId,
       template: input.template,
       paperProfile: input.paperProfile,
-      parsedTemplate: input.parsedTemplate
+      parsedTemplate: input.parsedTemplate,
+      authorMetadata: input.authorMetadata
     });
     const submissionValidation = buildPaperSubmissionValidation({
       manuscript,
@@ -4002,10 +4143,12 @@ function buildPaperReadinessArtifact(input: {
   manuscriptQualityAction: ManuscriptRepairDecision["action"];
   compileStatus?: PaperCompileResult["status"];
   compiledPageValidationStatus?: CompiledPdfPageValidationReport["status"];
+  renderValidationStatus?: PaperRenderValidationReport["status"];
 }): PaperReadinessArtifact {
   const claimCeilingApplied = input.claimCeilingApplied === true;
   const compileFailed = input.compileStatus === "failed";
   const compiledPageValidationFailed = input.compiledPageValidationStatus === "fail";
+  const renderValidationFailed = input.renderValidationStatus === "fail";
   const paperReady =
     input.manuscriptType === "paper_ready"
     && !claimCeilingApplied
@@ -4015,7 +4158,8 @@ function buildPaperReadinessArtifact(input: {
     && input.submissionValidationOk
     && input.manuscriptQualityAction !== "stop"
     && !compileFailed
-    && !compiledPageValidationFailed;
+    && !compiledPageValidationFailed
+    && !renderValidationFailed;
   const triggeredBy = [
     ...(input.evidenceGateDecision.status === "fail" ? ["evidence_gate"] : []),
     ...(input.citationReport.status === "fail" ? ["citation_check"] : []),
@@ -4024,6 +4168,7 @@ function buildPaperReadinessArtifact(input: {
     ...(input.manuscriptQualityAction === "stop" ? ["manuscript_quality"] : []),
     ...(compileFailed ? ["compile"] : []),
     ...(compiledPageValidationFailed ? ["compiled_page_validation"] : []),
+    ...(renderValidationFailed ? ["render_validation"] : []),
     ...(claimCeilingApplied ? ["claim_ceiling"] : [])
   ];
   return {
@@ -4052,6 +4197,8 @@ function buildPaperReadinessArtifact(input: {
         ? "paper_ready is blocked because PDF compilation failed."
       : compiledPageValidationFailed
         ? "paper_ready is blocked because the compiled PDF failed page-budget validation."
+      : renderValidationFailed
+        ? "paper_ready is blocked because rendered manuscript validation failed."
         : `paper_ready remains ${input.manuscriptType} after post-draft critique.`,
     triggered_by: triggeredBy,
     evidence_gate_status: input.evidenceGateDecision.status,
@@ -4060,6 +4207,7 @@ function buildPaperReadinessArtifact(input: {
     manuscript_quality_action: input.manuscriptQualityAction,
     compile_status: input.compileStatus,
     compiled_page_validation_status: input.compiledPageValidationStatus,
+    render_validation_status: input.renderValidationStatus,
     claim_status_counts: input.claimStatusTable.counts
   };
 }
@@ -4075,6 +4223,7 @@ function buildPaperReadinessRiskArtifact(input: {
   manuscriptQualityAction: ManuscriptRepairDecision["action"];
   compileStatus?: PaperCompileResult["status"];
   compiledPageValidation?: CompiledPdfPageValidationReport;
+  renderValidation?: PaperRenderValidationReport;
   config: NodeExecutionDeps["config"];
 }): ReadinessRiskArtifact {
   const risks: ReadinessRisk[] = buildNetworkDependencyReadinessRisks({
@@ -4213,6 +4362,21 @@ function buildPaperReadinessRiskArtifact(input: {
     });
   }
 
+  if (input.renderValidation?.status === "fail") {
+    risks.push({
+      risk_code: "paper_render_validation_fail",
+      severity: "blocked",
+      category: "submission_validation",
+      status: "blocked",
+      message: input.renderValidation.summary[0] || "Rendered manuscript validation failed.",
+      triggered_by: ["render_validation"],
+      affected_claim_ids: [],
+      affected_citation_ids: [],
+      recommended_action: "Repair the rendered paper surface, including author/template/citation/figure/table/page-budget blockers, before final paper handoff.",
+      recheck_condition: "paper/render_validation.json reports status=pass."
+    });
+  }
+
   if (input.manuscriptType !== "paper_ready") {
     const blocked = input.manuscriptType === "blocked_for_paper_scale";
     risks.push({
@@ -4260,6 +4424,9 @@ function buildFallbackPaperReadinessRiskArtifact(input: {
     citationReport: input.citationReport ?? {
       orphan_citations: [],
       unchecked_sources: [],
+      rendered_citations: [],
+      bibliography_entries: [],
+      missing_rendered_citations: [],
       status: "pass"
     },
     scientificGateStatus: input.scientificGateStatus,
@@ -4340,6 +4507,189 @@ function buildEvidenceGateFailureError(report: EvidenceGateDecisionArtifact): st
   return `write_paper generated manuscript artifacts but stopped before scientific/submission acceptance because the evidence gate failed: ${lead}`;
 }
 
+function buildPaperFigureManifest(input: {
+  manuscript: PaperManuscript;
+  runTitle: string;
+  topic: string;
+}): PaperFigureManifest {
+  const resultFigures: PaperFigureManifestEntry[] = (input.manuscript.figures || []).map((figure, index) => ({
+    id: `main-result-figure-${index + 1}`,
+    kind: "result_chart",
+    caption: figure.caption,
+    source_refs: (figure.source_refs || []).map((ref) => `${ref.kind}:${ref.id}`),
+    included_in_main_body: true,
+    status: "rendered",
+    audit_status: "pending"
+  }));
+  const conceptualPrompt = buildConceptualDiagramPrompt(input);
+  const conceptualEntry: PaperFigureManifestEntry = {
+    id: "conceptual-diagram-1",
+    kind: "conceptual_diagram",
+    caption: "Conceptual overview of the governed experiment protocol.",
+    source_refs: ["brief:topic", "experiment:design", "workflow:figure_audit"],
+    included_in_main_body: false,
+    status: "needs_generation",
+    audit_status: "pending",
+    prompt_path: "paper/figures/concept_diagram_prompt.json"
+  };
+  return {
+    generated_at: new Date().toISOString(),
+    figures: [...resultFigures, conceptualEntry],
+    conceptual_diagram_prompt: conceptualPrompt
+  };
+}
+
+function buildConceptualDiagramPrompt(input: {
+  runTitle: string;
+  topic: string;
+}): PaperFigureManifest["conceptual_diagram_prompt"] {
+  return {
+    use_case: "scientific-educational",
+    asset_type: "paper conceptual diagram",
+    intended_path: "paper/figures/conceptual_diagram.png",
+    prompt: [
+      "Use case: scientific-educational",
+      "Asset type: two-column research paper conceptual diagram",
+      `Primary request: Create a clean algorithm/protocol explanation figure for '${input.runTitle}'.`,
+      `Scientific context: ${input.topic}`,
+      "Diagram content: show a governed research flow from fixed brief, locked baseline/comparator, LoRA rank/dropout grid, executed training/evaluation, result table, figure audit, review gate, and paper-readiness decision.",
+      "Style: publication-ready, minimal, high contrast, white background, no decorative scene, no fake numeric results.",
+      "Text constraints: use short labels only; do not include claims, citations, author names, watermarks, or fabricated data.",
+      "Output intent: candidate raster figure that must pass figure_audit before inclusion in the final paper."
+    ].join("\n")
+  };
+}
+
+function buildPaperRenderValidation(input: {
+  validationMode: "default" | "strict_paper";
+  manuscript: PaperManuscript;
+  tex: string;
+  authorMetadata: PaperAuthorMetadata | null;
+  parsedTemplate: ParsedLatexTemplate | null;
+  citationReport: CitationReport;
+  compileResult: PaperCompileResult;
+  compiledPageValidation: CompiledPdfPageValidationReport;
+  figureManifest: PaperFigureManifest;
+}): PaperRenderValidationReport {
+  const issues: PaperRenderValidationIssue[] = [];
+  const strict = input.validationMode === "strict_paper";
+  const failOrWarn = (code: string, message: string, strictOnly = true) => {
+    issues.push({
+      code,
+      severity: strictOnly && !strict ? "warning" : "fail",
+      message
+    });
+  };
+
+  const authorCount = input.authorMetadata?.authors?.length || 0;
+  if (authorCount === 0) {
+    failOrWarn("missing_author", "Strict paper output requires manuscript author metadata.");
+  }
+  if (!input.parsedTemplate) {
+    failOrWarn("missing_template", "Strict paper output requires an explicit manuscript template file.");
+  }
+  if (input.citationReport.status === "fail") {
+    failOrWarn(
+      "citation_rendering_failed",
+      "Rendered manuscript citations do not match the bibliography or no citations were rendered for available bibliography/evidence support."
+    );
+  }
+
+  const logText = collectCompileLogText(input.compileResult);
+  const overfull = extractOverfullHBoxPoints(logText);
+  const maxOverfull = overfull.length > 0 ? Math.max(...overfull) : 0;
+  if (/No \\author given/u.test(logText)) {
+    failOrWarn("latex_missing_author", "LaTeX reported that no author was given.", false);
+  }
+  if (/Empty `thebibliography' environment|I found no \\citation commands/iu.test(logText)) {
+    failOrWarn("empty_bibliography", "LaTeX/BibTeX reported no rendered citations or an empty bibliography.", false);
+  }
+  if (maxOverfull > 5) {
+    failOrWarn("overfull_hbox", `LaTeX reported overfull content up to ${maxOverfull.toFixed(2)}pt, which can overlap columns.`, false);
+  }
+
+  const mainBodyFigureCount = (input.manuscript.figures || []).length;
+  const mainBodyTableCount = (input.manuscript.tables || []).length;
+  const resultChartCount = input.figureManifest.figures.filter((figure) => figure.kind === "result_chart" && figure.included_in_main_body).length;
+  const conceptualDiagramCount = input.figureManifest.figures.filter((figure) => figure.kind !== "result_chart" && figure.included_in_main_body).length;
+  if (mainBodyTableCount > 0 && mainBodyFigureCount === 0) {
+    failOrWarn("missing_main_body_figure", "A quantitative paper with main result tables must include at least one audited main-body figure or chart.");
+  }
+
+  const rawLeak = extractRawPaperTextLeak(input.tex);
+  if (rawLeak) {
+    failOrWarn("raw_artifact_text", `Rendered manuscript still contains raw artifact or log-style text: ${rawLeak}`, false);
+  }
+  if (input.compiledPageValidation.status === "fail") {
+    failOrWarn("main_body_page_budget", input.compiledPageValidation.message, false);
+  }
+
+  const failCount = issues.filter((issue) => issue.severity === "fail").length;
+  const warningCount = issues.filter((issue) => issue.severity === "warning").length;
+  return {
+    checked: true,
+    validation_mode: input.validationMode,
+    status: failCount > 0 ? "fail" : warningCount > 0 ? "warn" : "pass",
+    issues,
+    metrics: {
+      author_count: authorCount,
+      template_applied: Boolean(input.parsedTemplate),
+      rendered_citation_count: input.citationReport.rendered_citations.length,
+      bibliography_entry_count: input.citationReport.bibliography_entries.length,
+      main_body_table_count: mainBodyTableCount,
+      main_body_figure_count: mainBodyFigureCount,
+      result_chart_count: resultChartCount,
+      conceptual_diagram_count: conceptualDiagramCount,
+      overfull_hbox_count: overfull.length,
+      max_overfull_hbox_pt: Number(maxOverfull.toFixed(2)),
+      main_body_pdf_page_count: input.compiledPageValidation.main_body_pdf_page_count ?? input.compiledPageValidation.compiled_pdf_page_count,
+      target_main_pages: input.compiledPageValidation.target_main_pages
+    },
+    summary:
+      issues.length === 0
+        ? ["Rendered manuscript validation passed."]
+        : [
+            `Rendered manuscript validation found ${failCount} blocking issue(s) and ${warningCount} warning(s).`,
+            ...issues.map((issue) => `${issue.severity}: ${issue.code}: ${issue.message}`)
+          ]
+  };
+}
+
+function collectCompileLogText(compileResult: PaperCompileResult): string {
+  return [
+    ...compileResult.warnings,
+    ...compileResult.attempts.flatMap((attempt) => [
+      attempt.error || "",
+      ...attempt.warnings,
+      ...attempt.commands.flatMap((command) => [command.stdout || "", command.stderr || ""])
+    ])
+  ].join("\n");
+}
+
+function extractOverfullHBoxPoints(text: string): number[] {
+  return Array.from(text.matchAll(/Overfull \\hbox \(([-+]?\d+(?:\.\d+)?)pt too wide\)/giu), (match) =>
+    Number.parseFloat(match[1])
+  ).filter((value) => Number.isFinite(value));
+}
+
+function extractRawPaperTextLeak(tex: string): string | undefined {
+  const patterns = [
+    /raw result [^\\\n.]{0,80}/iu,
+    /Objective metric:\s*-/iu,
+    /accuracy\\?_delta\\?_vs\\?_baseline/iu,
+    /study summary run/iu,
+    /\bP6\b/u,
+    /We study Study how/iu
+  ];
+  for (const pattern of patterns) {
+    const match = tex.match(pattern);
+    if (match?.[0]) {
+      return match[0].trim();
+    }
+  }
+  return undefined;
+}
+
 function buildSubmissionValidationError(
   report: {
     issues: Array<{ message: string; value?: string }>;
@@ -4360,6 +4710,13 @@ function buildSubmissionValidationError(
 function buildCompiledPdfPageValidationError(report: CompiledPdfPageValidationReport): string {
   const qualifier = report.validation_mode === "strict_paper" ? "strict-paper mode" : "default mode";
   return `write_paper generated PDF artifacts but stopped because compiled PDF page-budget validation failed in ${qualifier}: ${report.message}`;
+}
+
+function buildPaperRenderValidationError(report: PaperRenderValidationReport): string {
+  const lead = report.issues.find((issue) => issue.severity === "fail")?.message
+    || report.summary[0]
+    || "rendered manuscript validation failed";
+  return `write_paper generated manuscript/PDF artifacts but stopped because rendered-paper validation failed: ${lead}`;
 }
 
 function buildCompileFailureError(result: PaperCompileResult): string {
@@ -4399,7 +4756,11 @@ export async function validateCompiledPdfPageBudget(input: {
   validationMode: "default" | "strict_paper";
   minimumMainPages: number;
   targetMainPages: number;
+  referencesCounted?: boolean;
+  appendicesCounted?: boolean;
 }): Promise<CompiledPdfPageValidationReport> {
+  const referencesCounted = input.referencesCounted === true;
+  const appendicesCounted = input.appendicesCounted === true;
   if (!input.compileResult.pdf_path) {
     return {
       checked: false,
@@ -4410,6 +4771,11 @@ export async function validateCompiledPdfPageBudget(input: {
       target_main_pages: input.targetMainPages,
       main_page_limit: input.minimumMainPages,
       compiled_pdf_page_count: null,
+      main_body_pdf_page_count: null,
+      references_page_count: null,
+      appendix_page_count: null,
+      references_counted: referencesCounted,
+      appendices_counted: appendicesCounted,
       pdf_path: null,
       message: "Compiled PDF page-budget validation was skipped because no PDF artifact was produced."
     };
@@ -4430,12 +4796,28 @@ export async function validateCompiledPdfPageBudget(input: {
       target_main_pages: input.targetMainPages,
       main_page_limit: input.minimumMainPages,
       compiled_pdf_page_count: null,
+      main_body_pdf_page_count: null,
+      references_page_count: null,
+      appendix_page_count: null,
+      references_counted: referencesCounted,
+      appendices_counted: appendicesCounted,
       pdf_path: input.compileResult.pdf_path,
       message:
         "Compiled PDF page count could not be verified with pdfinfo, so minimum_main_pages compliance remains unverified."
     };
   }
-  if (parsedPageCount < input.minimumMainPages) {
+  const textObservation = await input.deps.aci.runCommand("pdftotext -layout main.pdf -", runPaperDir);
+  const pageBreakdown = textObservation.status === "ok"
+    ? computeCompiledPdfPageBreakdown(textObservation.stdout || "", {
+        totalPages: parsedPageCount,
+        referencesCounted,
+        appendicesCounted
+      })
+    : undefined;
+  const mainBodyPageCount = pageBreakdown?.mainBodyPages ?? parsedPageCount;
+  const referencesPageCount = pageBreakdown?.referencesPages ?? null;
+  const appendixPageCount = pageBreakdown?.appendixPages ?? null;
+  if (mainBodyPageCount < input.minimumMainPages) {
     return {
       checked: true,
       validation_mode: input.validationMode,
@@ -4445,10 +4827,17 @@ export async function validateCompiledPdfPageBudget(input: {
       target_main_pages: input.targetMainPages,
       main_page_limit: input.minimumMainPages,
       compiled_pdf_page_count: parsedPageCount,
+      main_body_pdf_page_count: mainBodyPageCount,
+      references_page_count: referencesPageCount,
+      appendix_page_count: appendixPageCount,
+      references_counted: referencesCounted,
+      appendices_counted: appendicesCounted,
       pdf_path: input.compileResult.pdf_path,
       message:
-        `Compiled PDF is only ${parsedPageCount} page${parsedPageCount === 1 ? "" : "s"}, below the configured ` +
-        `minimum_main_pages of ${input.minimumMainPages}.`
+        `Compiled main body is only ${mainBodyPageCount} page${mainBodyPageCount === 1 ? "" : "s"} ` +
+        `(total PDF pages=${parsedPageCount}, references pages=${referencesPageCount ?? "unknown"}, ` +
+        `appendix pages=${appendixPageCount ?? "unknown"}), below the configured minimum_main_pages of ` +
+        `${input.minimumMainPages}.`
     };
   }
   return {
@@ -4460,11 +4849,70 @@ export async function validateCompiledPdfPageBudget(input: {
     target_main_pages: input.targetMainPages,
     main_page_limit: input.minimumMainPages,
     compiled_pdf_page_count: parsedPageCount,
+    main_body_pdf_page_count: mainBodyPageCount,
+    references_page_count: referencesPageCount,
+    appendix_page_count: appendixPageCount,
+    references_counted: referencesCounted,
+    appendices_counted: appendicesCounted,
     pdf_path: input.compileResult.pdf_path,
     message:
-      `Compiled PDF reached ${parsedPageCount} page${parsedPageCount === 1 ? "" : "s"}, meeting the configured ` +
-      `minimum_main_pages of ${input.minimumMainPages}.`
+      `Compiled main body reached ${mainBodyPageCount} page${mainBodyPageCount === 1 ? "" : "s"} ` +
+      `(total PDF pages=${parsedPageCount}, references pages=${referencesPageCount ?? "unknown"}, ` +
+      `appendix pages=${appendixPageCount ?? "unknown"}), meeting the configured minimum_main_pages of ` +
+      `${input.minimumMainPages}.`
   };
+}
+
+function computeCompiledPdfPageBreakdown(
+  pdfText: string,
+  options: {
+    totalPages: number;
+    referencesCounted: boolean;
+    appendicesCounted: boolean;
+  }
+): {
+  mainBodyPages: number;
+  referencesPages: number;
+  appendixPages: number;
+} {
+  const pages = pdfText.split("\f").map((page) => page.trim()).filter((page, index, all) =>
+    page.length > 0 || index < all.length - 1
+  );
+  const pageCount = pages.length > 0 ? Math.max(pages.length, options.totalPages) : options.totalPages;
+  const referenceStart = findFirstPageIndex(pages, [
+    /^\s*references\s*$/imu,
+    /^\s*bibliography\s*$/imu
+  ]);
+  const appendixStart = findFirstPageIndex(pages, [
+    /^\s*appendix\b/imu,
+    /^\s*appendices\b/imu,
+    /^\s*supplementary\b/imu
+  ]);
+  const excludedStarts = [
+    options.referencesCounted ? undefined : referenceStart,
+    options.appendicesCounted ? undefined : appendixStart
+  ].filter((value): value is number => typeof value === "number" && value >= 0);
+  const firstExcludedStart = excludedStarts.length > 0 ? Math.min(...excludedStarts) : pageCount;
+  const referencesPages =
+    referenceStart === undefined
+      ? 0
+      : Math.max(0, (appendixStart !== undefined && appendixStart > referenceStart ? appendixStart : pageCount) - referenceStart);
+  const appendixPages = appendixStart === undefined ? 0 : Math.max(0, pageCount - appendixStart);
+  return {
+    mainBodyPages: Math.max(0, Math.min(firstExcludedStart, pageCount)),
+    referencesPages,
+    appendixPages
+  };
+}
+
+function findFirstPageIndex(pages: string[], patterns: RegExp[]): number | undefined {
+  for (let index = 0; index < pages.length; index += 1) {
+    const page = pages[index] || "";
+    if (patterns.some((pattern) => pattern.test(page))) {
+      return index;
+    }
+  }
+  return undefined;
 }
 
 function isMissingBinaryObservation(obs: { stderr?: string; exit_code?: number }): boolean {

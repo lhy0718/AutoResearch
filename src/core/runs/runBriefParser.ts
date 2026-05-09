@@ -52,6 +52,7 @@ export interface MarkdownRunBriefSections {
   failureConditions?: string;
   manuscriptFormat?: string;
   manuscriptTemplate?: string;
+  manuscriptAuthors?: string;
   appendixPreferences?: string;
 }
 
@@ -248,6 +249,7 @@ export function parseMarkdownRunBriefSections(markdown: string): MarkdownRunBrie
     failureConditions: collapseMarkdownSection(sections.failureConditions),
     manuscriptFormat: collapseMarkdownSection(sections.manuscriptFormat),
     manuscriptTemplate: collapseMarkdownSection(sections.manuscriptTemplate),
+    manuscriptAuthors: collapseMarkdownSection(sections.manuscriptAuthors),
     appendixPreferences: collapseMarkdownSection(sections.appendixPreferences)
   };
 }
@@ -653,6 +655,12 @@ function mapMarkdownHeadingToSection(value: string): keyof MarkdownRunBriefSecti
     case "paper template":
     case "template":
       return "manuscriptTemplate";
+    case "manuscript authors":
+    case "manuscript author":
+    case "paper authors":
+    case "paper author":
+    case "authors":
+      return "manuscriptAuthors";
     case "appendix preferences":
     case "appendix preference":
     case "appendix policy":

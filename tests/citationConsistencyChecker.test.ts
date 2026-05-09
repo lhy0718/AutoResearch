@@ -79,4 +79,46 @@ describe("citationConsistencyChecker", () => {
     expect(report.orphan_citations).toEqual([]);
     expect(report.unchecked_sources).toEqual(["paper_1"]);
   });
+
+  it("fails when evidence-backed bibliography entries are never rendered as citations", async () => {
+    const runDir = await makeRunDir("autolabos-citation-not-rendered-");
+    await writeFile(
+      path.join(runDir, "paper", "main.tex"),
+      "\\section{Intro}\nPrior work is discussed without a rendered citation.",
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "paper", "references.bib"),
+      "@article{paper_1,\n  title = {Paper 1}\n}\n",
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "paper", "evidence_links.json"),
+      JSON.stringify({
+        claims: [
+          {
+            claim_id: "c1",
+            citation_paper_ids: ["paper_1"]
+          }
+        ]
+      }, null, 2),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "corpus.jsonl"),
+      `${JSON.stringify({
+        paper_id: "paper_1",
+        title: "Paper 1",
+        doi: "10.0000/example"
+      })}\n`,
+      "utf8"
+    );
+
+    const report = checkCitationConsistency(runDir);
+
+    expect(report.status).toBe("fail");
+    expect(report.rendered_citations).toEqual([]);
+    expect(report.bibliography_entries).toEqual(["paper_1"]);
+    expect(report.missing_rendered_citations).toEqual(["paper_1"]);
+  });
 });

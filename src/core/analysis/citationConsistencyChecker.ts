@@ -6,6 +6,9 @@ import type { StoredCorpusRow } from "../collection/types.js";
 export interface CitationReport {
   orphan_citations: string[];
   unchecked_sources: string[];
+  rendered_citations: string[];
+  bibliography_entries: string[];
+  missing_rendered_citations: string[];
   status: "pass" | "fail";
 }
 
@@ -33,11 +36,19 @@ export function checkCitationConsistency(runDir: string): CitationReport {
     citedKeys.filter((key) => !bibKeys.has(key))
   );
   const uncheckedSources = resolveUncheckedSources(evidenceLinks, corpusRows);
+  const citedPaperIds = resolveEvidenceCitationPaperIds(evidenceLinks);
+  const missingRenderedCitations =
+    (bibKeys.size > 0 || citedPaperIds.length > 0) && citedKeys.length === 0
+      ? citedPaperIds.length > 0 ? citedPaperIds : [...bibKeys]
+      : [];
 
   return {
     orphan_citations: orphanCitations,
     unchecked_sources: uncheckedSources,
-    status: orphanCitations.length > 0 ? "fail" : "pass"
+    rendered_citations: citedKeys,
+    bibliography_entries: [...bibKeys],
+    missing_rendered_citations: missingRenderedCitations,
+    status: orphanCitations.length > 0 || missingRenderedCitations.length > 0 ? "fail" : "pass"
   };
 }
 
@@ -115,16 +126,7 @@ function resolveUncheckedSources(
   evidenceLinks: EvidenceLinksArtifactLike | null,
   corpusRows: Map<string, StoredCorpusRow>
 ): string[] {
-  const claims = Array.isArray(evidenceLinks?.claims)
-    ? evidenceLinks.claims as EvidenceLinksClaimLike[]
-    : [];
-  const citationPaperIds = uniqueStrings(
-    claims.flatMap((claim) =>
-      Array.isArray(claim.citation_paper_ids)
-        ? claim.citation_paper_ids.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-        : []
-    )
-  );
+  const citationPaperIds = resolveEvidenceCitationPaperIds(evidenceLinks);
 
   return citationPaperIds.filter((paperId) => {
     const row = corpusRows.get(paperId);
@@ -133,6 +135,19 @@ function resolveUncheckedSources(
     }
     return !Boolean(row.doi || row.url || row.landing_url || row.pdf_url);
   });
+}
+
+function resolveEvidenceCitationPaperIds(evidenceLinks: EvidenceLinksArtifactLike | null): string[] {
+  const claims = Array.isArray(evidenceLinks?.claims)
+    ? evidenceLinks.claims as EvidenceLinksClaimLike[]
+    : [];
+  return uniqueStrings(
+    claims.flatMap((claim) =>
+      Array.isArray(claim.citation_paper_ids)
+        ? claim.citation_paper_ids.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+        : []
+    )
+  );
 }
 
 function uniqueStrings(values: string[]): string[] {

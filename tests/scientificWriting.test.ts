@@ -901,7 +901,7 @@ describe("scientificWriting", () => {
     expect(methodText).toMatch(/training-token count of 5068/i);
   });
 
-  it("prefers the deterministic condition-level table and drops overlapping condition figures", () => {
+  it("prefers the deterministic condition-level table and preserves condition figures for paper render audit", () => {
     const bundle = makeRichBundle();
     bundle.runTitle = "LoRA rank-dropout repeated-seed benchmark";
     bundle.topic = "LoRA rank and dropout interaction for a small LLM benchmark";
@@ -1030,7 +1030,7 @@ describe("scientificWriting", () => {
     expect(manuscript.tables?.[0]?.rows.map((row) => row.label).join(" ")).toMatch(/n=5/);
     expect(manuscript.tables?.[0]?.rows.map((row) => row.label).join(" ")).not.toMatch(/delta/);
     expect(manuscript.tables?.[0]?.rows.map((row) => row.label).join(" ")).not.toMatch(/Conditions analyzed/);
-    expect(manuscript.figures ?? []).toHaveLength(0);
+    expect(manuscript.figures?.length ?? 0).toBeGreaterThan(0);
     expect(
       result.consistency_lint.issues.filter(
         (issue) =>

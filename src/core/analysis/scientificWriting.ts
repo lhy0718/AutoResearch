@@ -3851,7 +3851,7 @@ export function materializeScientificManuscript(input: {
       }))
     : undefined;
   const figures = conditionFigures.length > 0 ? derivedFigures : (candidateFigures?.length ? candidateFigures : derivedFigures);
-  const selectedFigures = conditionFigures.length === 0 && hasExplicitAuthoredFigureMarker(candidateFigures)
+  const selectedFigures = conditionFigures.length > 0 || hasExplicitAuthoredFigureMarker(candidateFigures)
     ? figures
     : dropRedundantFiguresAgainstTables(tables, figures);
   const generatedAppendixSections = input.appendixPlan.sections.map((section) => ({

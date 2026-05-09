@@ -32,6 +32,7 @@ type ResearchBriefSectionKey =
   | "failureConditions"
   | "manuscriptFormat"
   | "manuscriptTemplate"
+  | "manuscriptAuthors"
   | "appendixPreferences"
   | "notes"
   | "questionsRisks";
@@ -67,7 +68,7 @@ export interface GuidedResearchBriefAnswers {
 
 type RequiredResearchBriefSectionKey = Exclude<
   ResearchBriefSectionKey,
-  "manuscriptFormat" | "manuscriptTemplate" | "appendixPreferences" | "notes" | "questionsRisks"
+  "manuscriptFormat" | "manuscriptTemplate" | "manuscriptAuthors" | "appendixPreferences" | "notes" | "questionsRisks"
 >;
 
 const RESEARCH_BRIEF_SECTION_SPECS: Array<{
@@ -261,11 +262,21 @@ const RESEARCH_BRIEF_SECTION_SPECS: Array<{
     heading: "Manuscript Template",
     required: false,
     lines: [
-      "Optional. Relative path to a .tex template file from the workspace root.",
+      "Required for final paper-ready outputs. Relative path to a .tex template file from the workspace root.",
       "If provided, write_paper uses the file's preamble",
       "(\\documentclass through \\begin{document}) and any detected section order.",
-      "Leave blank to use the built-in preamble generator.",
+      "Leave blank only when a draft or downgraded research memo is acceptable.",
       "Example: template.tex"
+    ]
+  },
+  {
+    key: "manuscriptAuthors",
+    heading: "Manuscript Authors",
+    required: false,
+    lines: [
+      "Required for final paper-ready outputs.",
+      "- authors: First Author; Second Author",
+      "- affiliations: Affiliation One; Affiliation Two"
     ]
   },
   {
@@ -754,6 +765,59 @@ export function parseManuscriptTemplateFromBrief(markdown: string): string | und
   if (!candidate) return undefined;
   if (!/^[a-zA-Z0-9._/\\-]+$/.test(candidate)) return undefined;
   return candidate;
+}
+
+export interface ParsedManuscriptAuthors {
+  authors: string[];
+  affiliations: string[];
+  anonymous: boolean;
+}
+
+export function parseManuscriptAuthorsFromBrief(markdown: string): ParsedManuscriptAuthors | undefined {
+  const sections = parseMarkdownRunBriefSections(markdown);
+  if (!sections?.manuscriptAuthors) return undefined;
+  const text = sections.manuscriptAuthors.trim();
+  if (!text) return undefined;
+  const anonymous = /\banonymous\s*:\s*(?:yes|true)\b|^\s*anonymous\s*$/imu.test(text);
+  const authorsLine = extractBriefFieldLine(text, "authors");
+  const affiliationsLine = extractBriefFieldLine(text, "affiliations");
+  const fallbackAuthors = authorsLine ? [] : splitBriefPeopleList(text);
+  const authors = uniqueBriefStrings(
+    splitBriefPeopleList(authorsLine || "").length > 0
+      ? splitBriefPeopleList(authorsLine || "")
+      : fallbackAuthors
+  );
+  const affiliations = uniqueBriefStrings(splitBriefPeopleList(affiliationsLine || ""));
+  if (!anonymous && authors.length === 0 && affiliations.length === 0) {
+    return undefined;
+  }
+  return {
+    authors,
+    affiliations,
+    anonymous
+  };
+}
+
+function extractBriefFieldLine(text: string, field: string): string | undefined {
+  const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = text.match(new RegExp(`^\\s*[-*]?\\s*${escaped}\\s*:\\s*(.+)$`, "imu"));
+  return match?.[1]?.trim();
+}
+
+function splitBriefPeopleList(value: string): string[] {
+  return value
+    .split(/[;\n,]+/u)
+    .map((item) => item.replace(/^[-*]\s*/u, "").trim())
+    .filter((item) =>
+      item.length > 0
+      && !/^(required|optional|authors?|affiliations?|anonymous)\b/iu.test(item)
+      && !/^example\s*:?$/iu.test(item)
+      && !/template|paper-ready|outputs?/iu.test(item)
+    );
+}
+
+function uniqueBriefStrings(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
 function normalizeAppendixPreferenceToken(token: string): string | undefined {
