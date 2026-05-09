@@ -89,6 +89,15 @@ A fix only counts when the same live flow is rerun and the observed symptom is r
 
 If the user explicitly asks you to test the system yourself or to inspect actual runtime behavior, deterministic smoke can still be used later for regression coverage, but it must not be presented as satisfying that direct-testing request. If credentials, network access, or required binaries block the real flow, say so explicitly instead of silently substituting a fixture-driven run.
 
+## Long-running helper rule
+For unattended helpers that drive a TUI or live workflow:
+
+- Treat persisted run records and node status files as the state authority; terminal replay text can be stale.
+- When detecting completion, require a fresh persisted boundary instead of accepting old `needs_approval`, `lastError`, or status text from the scrollback.
+- After a backtrack or force-jump, a paused target with `pending` state can be a stabilizable stop boundary; a running target is not.
+- If a newly handed-off node is running while old error text remains in the record or terminal output, continue observing the fresh running node instead of aborting on the stale error.
+- When a node completes into `needs_approval`, do not report the next workflow node as executed until the approval has actually been sent and the persisted record shows the next node running or completed.
+
 ## Node-ownership rule
 During live validation or test-driven execution, do not let the external coding agent perform work that belongs to an AutoLabOS workflow node.
 
