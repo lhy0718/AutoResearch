@@ -23,6 +23,7 @@ Use this skill when the user asks to:
 - verify page-budget compliance
 - determine whether TeX→PDF is wired correctly
 - ensure the canonical output path is coherent
+- verify that a live validation run used the intended brief, template, and workspace-local paper inputs
 
 ## Required validations
 Always report:
@@ -34,15 +35,19 @@ Always report:
 6. PDF status
 7. page-budget compliance status
 8. wiring/path changes needed
+9. active brief/template/source workspace used for the generated paper
 
 ## Required principles
 - AutoLabOS should generate the canonical paper artifacts itself.
 - Do not manually substitute externally written TeX/PDF as if it were system output.
 - Prefer one coherent canonical bundle over many partially overlapping bundles.
 - Keep operator-facing outputs easy to inspect.
+- Manuscript templates and style files used for live validation belong in the validation workspace, not in the repository, unless the project explicitly adds a public example template.
 
 ## Guardrails
 - Do not manually author TeX/PDF as a substitute for system output.
 - Do not multiply output folders unless the contract explicitly requires it.
 - Do not break canonical runtime paths while cleaning structure.
 - Distinguish between "artifact exists" and "artifact is correctly wired and usable".
+- Do not treat a fallback built-in preamble as equivalent to the requested submission template.
+- If the template package name and available `.sty` filename differ by case, call it out as a build-risk and fix it in the workspace before rerunning.
