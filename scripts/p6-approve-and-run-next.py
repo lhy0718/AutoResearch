@@ -155,6 +155,15 @@ def active_running_node(record: dict | None) -> str:
     return current_node(record)
 
 
+def running_node_after_fresh_handoff(record: dict | None) -> str:
+    if not record or record.get("status") != "running":
+        return ""
+    current = current_node(record)
+    if current and node_status(record, current) == "running":
+        return current
+    return ""
+
+
 def should_observe_active_running(record: dict, *, force_run_active: bool) -> bool:
     if force_run_active:
         return False
@@ -170,9 +179,11 @@ def has_record_stop_boundary(record: dict, node: str) -> bool:
         return False
     # A manual /agent run can first persist a force-jump state such as
     # currentNode=<target>, run.status=paused, node.status=pending, then start
-    # the node moments later. Treating that transient as a stop boundary queues
-    # /quit while the node is starting and can abort provider streams.
-    return status not in {"pending", "running"}
+    # the node moments later. The caller requires a stable boundary grace
+    # interval before quitting, so a pending paused target can be accepted when
+    # it remains stable instead of keeping the helper open indefinitely after a
+    # completed backtrack.
+    return status != "running"
 
 
 def record_boundary_signature(record: dict, node: str) -> tuple[str, str, str, str]:
@@ -231,6 +242,14 @@ def should_accept_text_stop_boundary(
     if record is None:
         return True
     return has_fresh_record_stop_boundary(record, node, initial_signature)
+
+
+def should_accept_node_status_error_text(
+    record: dict | None,
+    node: str,
+    initial_signature: tuple[str, str, str, str] | None
+) -> bool:
+    return should_accept_text_stop_boundary(record, node, initial_signature)
 
 
 def build_continue_command(record: dict, run_id: str, next_node: str, node_args: str) -> str:
@@ -342,7 +361,9 @@ def wait_for_stop_boundary(
         if observed_target_running:
             searchable_after_target_running += chunk
         if observed_target_running and has_node_status_error_stop_text(searchable_after_target_running, node):
-            return joined
+            record = try_load_run_record(workspace, run_id)
+            if should_accept_node_status_error_text(record, node, initial_signature):
+                return joined
         if regex.search(searchable):
             record = try_load_run_record(workspace, run_id)
             if is_target_node_running(record, node) and not observed_target_running:
@@ -421,6 +442,12 @@ def run_selftest() -> int:
     if active_running_node(analyze_running) != "analyze_papers":
         print("FAIL: active-running node was not projected")
         return 1
+    if running_node_after_fresh_handoff(analyze_running) != "analyze_papers":
+        print("FAIL: fresh handoff running node was not projected")
+        return 1
+    if running_node_after_fresh_handoff(analyze_running_with_error) != "analyze_papers":
+        print("FAIL: fresh handoff ignored a running node that still carries prior lastError")
+        return 1
     if not is_target_node_running(analyze_running, "analyze_papers"):
         print("FAIL: target-node running state was not detected")
         return 1
@@ -456,8 +483,8 @@ def run_selftest() -> int:
         "currentNode": "implement_experiments",
         "graph": {"nodeStates": {"implement_experiments": {"status": "pending", "updatedAt": "later"}}},
     }
-    if has_record_stop_boundary(jumped_pending, "implement_experiments"):
-        print("FAIL: transient force-jump pending state was incorrectly treated as a stop boundary")
+    if not has_record_stop_boundary(jumped_pending, "implement_experiments"):
+        print("FAIL: paused pending target was not exposed as a stabilizable stop boundary")
         return 1
     if record_boundary_signature(analyze_needs_approval, "analyze_papers") == record_boundary_signature(
         analyze_running,
@@ -475,6 +502,9 @@ def run_selftest() -> int:
     if should_accept_text_stop_boundary(analyze_running, "analyze_papers", initial_running_signature):
         print("FAIL: stale replay text would be accepted while persisted state is still running")
         return 1
+    if should_accept_node_status_error_text(analyze_running, "analyze_papers", initial_running_signature):
+        print("FAIL: stale node-status error text would be accepted while persisted state is still running")
+        return 1
     advanced_record = {
         "status": "paused",
         "currentNode": "analyze_papers",
@@ -482,6 +512,9 @@ def run_selftest() -> int:
     }
     if not should_accept_text_stop_boundary(advanced_record, "analyze_papers", initial_running_signature):
         print("FAIL: fresh persisted stop boundary was not accepted")
+        return 1
+    if not should_accept_node_status_error_text(advanced_record, "analyze_papers", initial_running_signature):
+        print("FAIL: fresh persisted stop boundary did not accept node-status error text")
         return 1
     advanced_signature = fresh_record_stop_boundary_signature(
         advanced_record,
@@ -668,6 +701,8 @@ def main() -> int:
         while observed_handoffs < 3:
             record_after_boundary = try_load_run_record(workspace, run_id)
             active_node = active_running_node(record_after_boundary)
+            if not active_node:
+                active_node = running_node_after_fresh_handoff(record_after_boundary)
             if not active_node:
                 break
             observed_handoffs += 1
