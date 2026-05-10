@@ -109,6 +109,18 @@ When a live node exposes an implementation bug and you patch AutoLabOS repo code
 - Treat missing top-level contract fields, hidden failed runs, and stale summary text as validation blockers until the same live flow proves the repair.
 - When a runner stores completed evidence under nested fields such as `raw_result.raw_results`, verify that the public/top-level contract fields (`status`, `success`, `condition_results`, completed/failed counts, objective metrics) project the same facts. A nested success with top-level failure is a validation blocker, not an acceptable completion.
 
+## Generated-runner contract rule
+For generated Python experiment runners, `python3 -m py_compile` is only a syntax gate.
+
+Before treating a generated runner as live-validated:
+
+- Execute the same node-owned runner path that the workflow will use.
+- Check runtime helper call surfaces, especially dynamically resolved helpers whose signatures may drift from the call aliases.
+- Verify executor resolver functions still accept the context shape used by the node.
+- Normalize helper return-shape drift only at the contract boundary; preserve the generated experiment logic.
+- Confirm objective metrics are projected to the public artifact contract, not only nested in raw results.
+- Add deterministic regressions for each repaired boundary, then rerun the same live node.
+
 ## Node-ownership rule
 During live validation or test-driven execution, do not let the external coding agent perform work that belongs to an AutoLabOS workflow node.
 

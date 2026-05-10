@@ -51,6 +51,15 @@ Downgrade the output if any of the following are missing:
 - claim-to-evidence linkage
 - limitations/failure cases
 
+## Review-gate continuation rule
+When a review gate blocks paper-scale progression, treat the block as a governed outcome, not as a writing problem.
+
+- Do not force `write_paper` after a paper-quality reject unless the user explicitly asks for a downgraded memo/draft.
+- Follow the recommended transition or backtrack target before attempting manuscript generation again.
+- If the objective metric is not met, preserve the negative result and lower the claim ceiling instead of polishing around it.
+- If implementation executes fewer conditions, seeds, baselines, or comparisons than the approved design required, treat that as an evidence-scope blocker until rerun or explicitly downgraded.
+- Require the next hypothesis/design pass to state what evidence gap it is repairing.
+
 ## Output format
 1. Current artifact status
 2. Research-question status
