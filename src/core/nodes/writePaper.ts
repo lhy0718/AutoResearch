@@ -60,7 +60,8 @@ import {
   buildFallbackPaperManuscript,
   buildPaperSubmissionValidation,
   buildPaperTraceability,
-  renderSubmissionPaperTex
+  renderSubmissionPaperTex,
+  stabilizePaperManuscriptForSubmission
 } from "../analysis/paperManuscript.js";
 import {
   applyGateWarningsToLimitations,
@@ -68,6 +69,7 @@ import {
   applyScientificWritingPolicy,
   buildScientificValidationArtifact,
   buildWritePaperGateDecision,
+  enforceManuscriptPageBudgetFloor,
   ConsistencyLintReport,
   experimentArtifactLoader,
   manuscriptConsistencyLinter,
@@ -2409,7 +2411,7 @@ function sanitizeReaderFacingRepairTargets(
         value: row.value
       }));
   };
-  return {
+  const merged: PaperManuscript = {
     ...manuscriptBeforeRepair,
     title: selectIfAllowed("title", manuscriptBeforeRepair.title, repairedManuscript.title),
     abstract: selectIfAllowed("abstract", manuscriptBeforeRepair.abstract, repairedManuscript.abstract),
@@ -2490,6 +2492,82 @@ function sanitizeReaderFacingRepairTargets(
         }
       : {})
   };
+  return compactReaderFacingRepairedManuscript(merged);
+}
+
+function compactReaderFacingRepairedManuscript(manuscript: PaperManuscript): PaperManuscript {
+  return {
+    ...manuscript,
+    sections: manuscript.sections.map((section) => ({
+      ...section,
+      paragraphs: dedupeNarrativeParagraphs(section.paragraphs.map((paragraph) => sanitizePaperNarrativeText(paragraph)))
+    })),
+    ...(manuscript.appendix_sections
+      ? {
+          appendix_sections: manuscript.appendix_sections.map((section) => ({
+            ...section,
+            paragraphs: dedupeNarrativeParagraphs(section.paragraphs.map((paragraph) => sanitizePaperNarrativeText(paragraph)))
+          }))
+        }
+      : {}),
+    ...(manuscript.figures
+      ? { figures: manuscript.figures.filter((figure) => !isNoisyMixedMetricRepairFigure(figure)) }
+      : {}),
+    ...(manuscript.appendix_tables
+      ? { appendix_tables: dedupeRepairTables(manuscript.appendix_tables) }
+      : {})
+  };
+}
+
+function dedupeNarrativeParagraphs(paragraphs: string[]): string[] {
+  const compact: string[] = [];
+  const seen = new Set<string>();
+  for (const paragraph of paragraphs) {
+    const cleaned = sanitizePaperNarrativeText(paragraph);
+    if (!cleaned) {
+      continue;
+    }
+    const key = normalizeRepairTextKey(cleaned);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    compact.push(cleaned);
+  }
+  return compact;
+}
+
+function dedupeRepairTables<T extends { caption: string; rows: PaperManuscriptVisualRow[] }>(tables: T[]): T[] {
+  const compact: T[] = [];
+  const seen = new Set<string>();
+  for (const table of tables) {
+    const key = [
+      normalizeRepairTextKey(table.caption),
+      ...table.rows.map((row) => `${normalizeRepairTextKey(row.label)}=${row.value}`)
+    ].join("|");
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    compact.push(table);
+  }
+  return compact;
+}
+
+function isNoisyMixedMetricRepairFigure(figure: { bars: PaperManuscriptVisualRow[] }): boolean {
+  const labels = figure.bars.map((row) => row.label).join(" ");
+  const hasAccuracy = /accuracy|delta|baseline/iu.test(labels);
+  const hasRawResource =
+    /memory|cuda|vram|bytes|runtime|seconds/iu.test(labels)
+    && figure.bars.some((row) => Number.isFinite(row.value) && Math.abs(row.value) > 10_000);
+  return hasAccuracy && hasRawResource;
+}
+
+function normalizeRepairTextKey(value: string): string {
+  return sanitizePaperNarrativeText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, " ")
+    .trim();
 }
 
 function buildMainParagraphLocationKey(heading: string, paragraphIndex: number): string {
@@ -2546,6 +2624,9 @@ let currentManuscript = input.initialManuscript;
   let previousIssues: ManuscriptQualityIssueSnapshot[] | undefined;
 
   const evaluateCandidate = (manuscript: PaperManuscript): ManuscriptCandidateEvaluation => {
+    manuscript = stabilizePaperManuscriptForSubmission(manuscript, {
+      conditionSummaries: context.results.condition_summaries
+    });
     const consistencyLint = manuscriptConsistencyLinter({
       manuscript,
       context
@@ -2595,6 +2676,23 @@ let currentManuscript = input.initialManuscript;
       appendixLint,
       gateDecision
     };
+  };
+
+  const enforcePageBudgetFloor = (candidateEvaluation: ManuscriptCandidateEvaluation): ManuscriptCandidateEvaluation => {
+    const floor = enforceManuscriptPageBudgetFloor({
+      manuscript: candidateEvaluation.manuscript,
+      draft: input.draft,
+      pageBudget: input.pageBudget
+    });
+    if (!floor.applied) {
+      return candidateEvaluation;
+    }
+    input.emitLog(
+      `Restored ${floor.added_paragraph_count} scientific draft paragraph(s) after manuscript repair compressed the main body ` +
+      `from ${floor.estimated_main_words_before} to ${floor.estimated_main_words_after} words ` +
+      `(minimum ${floor.minimum_main_words}).`
+    );
+    return evaluateCandidate(floor.manuscript);
   };
 
   const persistRoundArtifacts = async (roundIndex: number, payload: {
@@ -2924,6 +3022,7 @@ let currentManuscript = input.initialManuscript;
     `Manuscript quality round 0: decision=${decision.action}, issues=${decision.issues_before.length}, lint=${effectiveStyleLint.issues.length}, review_reliability=${resolveReviewArtifactReliability(reviewValidation, reviewAudit)}.`
   );
   if (decision.action === "pass") {
+    evaluation = enforcePageBudgetFloor(evaluation);
     return {
       evaluation,
       review,
@@ -2972,7 +3071,10 @@ let currentManuscript = input.initialManuscript;
     if (repairResult.source !== "fallback") {
       toolCallsUsed += 1;
     }
-    currentManuscript = sanitizeReaderFacingRepairTargets(manuscriptBeforeRepair, repairResult.manuscript, repairPlan);
+    currentManuscript = stabilizePaperManuscriptForSubmission(
+      sanitizeReaderFacingRepairTargets(manuscriptBeforeRepair, repairResult.manuscript, repairPlan),
+      { conditionSummaries: context.results.condition_summaries }
+    );
     evaluation = evaluateCandidate(currentManuscript);
     reviewCycle = await runGroundedReviewCycle({
       evaluation,
@@ -3090,6 +3192,10 @@ let currentManuscript = input.initialManuscript;
         2
       )}\n`
     );
+  }
+
+  if (decision.action !== "stop") {
+    evaluation = enforcePageBudgetFloor(evaluation);
   }
 
   return {
@@ -3302,6 +3408,29 @@ function buildFollowupManuscriptRepairDecision(input: {
     }, reviewReliability);
   }
   if (reviewReliability === "partially_grounded") {
+    const hasBlockingAuditIssue = input.reviewAudit.issues.some((issue) =>
+      issue.severity === "fail"
+    );
+    if (
+      !hasBlockingAuditIssue
+      && remainingFailCount === 0
+      && input.gateDecision.status !== "fail"
+      && input.submissionValidation.ok
+      && input.reviewValidation.ok
+    ) {
+      return finalizeManuscriptRepairDecision({
+        action: "pass",
+        pass_index: input.passIndex,
+        triggered_by: uniqueStrings(input.previousIssues.map((issue) => issue.code)),
+        allowed_max_passes: input.passIndex === 1 ? 1 : 2,
+        remaining_allowed_repairs: 0,
+        issues_before: input.previousIssues,
+        issues_after: input.issuesAfter,
+        improvement_detected: improvement,
+        stop_or_continue_reason:
+          "Only non-blocking manuscript warnings remain after repair; the follow-up review audit is partially grounded but has no blocking grounding failure."
+      }, reviewReliability);
+    }
     return finalizeManuscriptRepairDecision({
       action: "stop",
       pass_index: input.passIndex,

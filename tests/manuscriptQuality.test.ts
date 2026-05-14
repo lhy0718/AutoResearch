@@ -1397,6 +1397,29 @@ describe("manuscriptQuality style lint", () => {
     );
   });
 
+  it("rejects stale repeated-seed appendix claims that conflict with a single-run pilot", () => {
+    const manuscript = makeCleanManuscript();
+    manuscript.appendix_sections = [
+      {
+        heading: "Appendix. Notes",
+        paragraphs: [
+          "Seed coverage is part of the evidence contract. The five repeated cells and five seeds per cell expose whether the observed mean gain is stable enough to motivate a larger run."
+        ]
+      }
+    ];
+
+    const lint = buildManuscriptStyleLint({
+      manuscript,
+      traceability: makeTraceability(manuscript)
+    });
+
+    expect(lint.ok).toBe(false);
+    expect(lint.issues.some((issue) => issue.code === "appendix_internal_text")).toBe(true);
+    expect(lint.issues.find((issue) => issue.code === "appendix_internal_text")?.location_keys).toEqual(
+      expect.arrayContaining([expect.stringMatching(/^appendix_paragraph:.*:0$/)])
+    );
+  });
+
   it("marks uncovered appendix contamination as a hard-stop policy finding in the reconciled lint artifact", () => {
     const manuscript = makeCleanManuscript();
     manuscript.appendix_sections = [

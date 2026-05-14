@@ -1354,7 +1354,7 @@ function buildAppendixLeakagePatterns(): Array<{ code: string; pattern: RegExp; 
   return [
     {
       code: "appendix_internal_text",
-      pattern: /\bworkflow directive|system prompt|internal instruction|implementation todo|author note\b/iu,
+      pattern: /\bworkflow directive|system prompt|internal instruction|implementation todo|author note|verifier feedback status|audit-?log sentence\b/iu,
       fix: "Remove internal or process-facing language from the appendix."
     },
     {
@@ -1366,6 +1366,11 @@ function buildAppendixLeakagePatterns(): Array<{ code: string; pattern: RegExp; 
       code: "appendix_raw_artifact_reference",
       pattern: /(?:\/home\/|\.autolabos\/|result_analysis\.json|metrics\.json|events\.jsonl)/iu,
       fix: "Remove raw artifact paths and internal file references from the appendix prose."
+    },
+    {
+      code: "appendix_internal_text",
+      pattern: /\bfive repeated cells and five seeds per cell|five repeated cells|five seeds per cell\b/iu,
+      fix: "Replace stale repeated-seed appendix language with condition-coverage language that matches the executed pilot."
     }
   ];
 }
@@ -1511,6 +1516,16 @@ function applyReviewRepairScope(input: {
     });
   }
   if (input.issue.code === "paragraph_redundancy") {
+    const spanRangeKeys = findSameSectionSpanRangeKeys(input.manuscript, input.target, input.issue.supporting_spans);
+    if (spanRangeKeys.length > 0) {
+      return {
+        ...input.target,
+        edit_scope: "adjacent_two_paragraphs",
+        allowed_location_keys: spanRangeKeys,
+        scope_reason:
+          "Paragraph-redundancy repair may revise the bounded same-section span because the validated issue connects non-adjacent repeated paragraphs."
+      };
+    }
     const pairedParagraphKey = findAdjacentParagraphKeyFromIssueSpans(
       input.target,
       input.issue.supporting_spans
@@ -1554,6 +1569,43 @@ function applyReviewRepairScope(input: {
     });
   }
   return input.target;
+}
+
+function findSameSectionSpanRangeKeys(
+  manuscript: PaperManuscript,
+  target: ManuscriptRepairTarget,
+  spans: ManuscriptReviewSupportSpan[]
+): string[] {
+  if (target.kind !== "paragraph" || target.paragraph_index === undefined) {
+    return [];
+  }
+  const section = manuscript.sections.find(
+    (item) => normalizeHeading(item.heading) === normalizeHeading(target.section)
+  );
+  if (!section) {
+    return [];
+  }
+  const indices = uniqueNumbers([
+    target.paragraph_index,
+    ...spans
+      .filter((span) => normalizeHeading(span.section) === normalizeHeading(target.section))
+      .map((span) => span.paragraph_index)
+      .filter((index) => Number.isInteger(index) && index >= 0 && index < section.paragraphs.length)
+  ]);
+  if (indices.length < 2) {
+    return [];
+  }
+  const minIndex = Math.min(...indices);
+  const maxIndex = Math.max(...indices);
+  if (maxIndex - minIndex <= 1) {
+    return [];
+  }
+  if (maxIndex - minIndex > 8) {
+    return [];
+  }
+  return section.paragraphs
+    .slice(minIndex, maxIndex + 1)
+    .map((_, offset) => buildParagraphLocationKey("paragraph", section.heading, minIndex + offset));
 }
 
 function buildSectionParagraphLocationKeys(manuscript: PaperManuscript, sectionName: string): string[] {
@@ -2783,6 +2835,10 @@ function jaccard(left: Set<string>, right: Set<string>): number {
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.filter((value) => value && value.trim().length > 0))];
+}
+
+function uniqueNumbers(values: number[]): number[] {
+  return [...new Set(values.filter((value) => Number.isFinite(value)))];
 }
 
 function cleanString(value: unknown): string {

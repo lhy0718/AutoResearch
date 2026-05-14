@@ -1167,10 +1167,14 @@ function buildVisualLabelOverclaimStopResponses(): string[] {
   ];
 }
 
-function buildPartiallyGroundedRepairStopResponses(): string[] {
+function buildPartiallyGroundedRepairStopResponses(options?: {
+  auditIssueCode?: "unsupported_issue" | "missing_major_issue" | "check_issue_mismatch" | "insufficient_grounding";
+  auditIssueSeverity?: "warning" | "fail";
+}): string[] {
   const repair1 = JSON.parse(buildPolishedManuscriptResponse()) as any;
   repair1.sections[0].paragraphs[1] =
     "The introduction now frames the contribution around revision stability in the tested workflow setting.";
+  const auditIssueCode = options?.auditIssueCode ?? "insufficient_grounding";
   return [
     ...buildSessionResponses(),
     buildPolishedManuscriptResponse(),
@@ -1227,8 +1231,8 @@ function buildPartiallyGroundedRepairStopResponses(): string[] {
       summary: "The follow-up review is usable, but one warning-level grounding mismatch remains.",
       issues: [
         {
-          severity: "warning",
-          code: "insufficient_grounding",
+          severity: options?.auditIssueSeverity ?? "fail",
+          code: auditIssueCode,
           section: "Related Work",
           message: "The surviving Related Work issue is directionally useful but not fully grounded enough for another repair pass.",
           fix_recommendation: "Do not spend a second repair pass on a partially grounded review artifact."
@@ -3228,13 +3232,13 @@ describe("writePaper PDF build", () => {
       "Supplementary Experimental Details"
     );
     expect(manuscript.appendix_sections?.map((section) => section.heading)).toContain(
-      "Supplementary Claim Ceiling Audit"
+      "Supplementary Boundary Notes"
     );
     expect(manuscript.appendix_sections?.map((section) => section.heading)).toContain(
       "Supplementary Reproducibility Trace"
     );
     expect(manuscript.appendix_sections?.flatMap((section) => section.paragraphs).join(" ")).toContain(
-      "repeated cells"
+      "rank/dropout cells"
     );
     const appendixText = manuscript.appendix_sections?.flatMap((section) => section.paragraphs).join(" ") ?? "";
     expect(appendixText).toContain("training-token count was 5068");
@@ -4422,6 +4426,48 @@ describe("writePaper PDF build", () => {
     expect(gate.action).toBe("stop");
     expect(gate.stop_or_continue_reason).toMatch(/partially grounded|second manuscript repair is not allowed/i);
     expect(gate.decision_digest.stop_reason_category).toBe("review_reliability");
+    expect(gate.decision_digest.review_reliability).toBe("partially_grounded");
+  });
+
+  it("allows a warning-only partially grounded follow-up review when deterministic gates pass", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-partially-grounded-warning-pass-"));
+    process.chdir(root);
+
+    const run = makeRun("run-manuscript-partially-grounded-warning-pass");
+    const runDir = await seedRun(root, run);
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient(buildPartiallyGroundedRepairStopResponses({
+        auditIssueCode: "unsupported_issue",
+        auditIssueSeverity: "warning"
+      })),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(await exists(path.join(runDir, "paper", "manuscript_repair_2_report.json"))).toBe(false);
+
+    const gate = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_quality_gate.json"), "utf8")
+    ) as {
+      action: string;
+      stop_or_continue_reason: string;
+      decision_digest: { stop_reason_category: string; review_reliability: string };
+    };
+    expect(gate.action).toBe("pass");
+    expect(gate.stop_or_continue_reason).toMatch(/non-blocking manuscript warnings/i);
+    expect(gate.decision_digest.stop_reason_category).toBe("clean_pass");
     expect(gate.decision_digest.review_reliability).toBe("partially_grounded");
   });
 

@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-05-10
+Last updated: 2026-05-14
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
@@ -14,6 +14,1911 @@ Path placeholders:
 - `<repo-root>` means the local AutoLabOS implementation checkout.
 
 ---
+
+## Issue: LV-440
+
+- Status: repair implemented; same-flow live revalidation passed through paper/PDF generation on 2026-05-14.
+- Validation target: `write_paper` should render reader-visible citation callouts for source-dependent Method and Discussion paragraphs, preserve a non-duplicated reader-facing result figure, and complete manuscript-quality, TeX/PDF, page, and render validation before reporting paper output availability.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, driven through the real TUI from `<validation-workspace>` with the repository rebuilt after each implementation change.
+
+- Reproduction steps:
+  1. Build AutoLabOS.
+  2. Start the real TUI from `<validation-workspace>`.
+  3. Run `/agent run write_paper 3bc89107-909f-4315-9340-d75ce02eb0e0`.
+  4. Let `write_paper` reach manuscript review, manuscript repair, and the follow-up manuscript-quality gate.
+
+- Expected behavior:
+  - Method paragraphs that name external datasets, benchmarks, training sources, or model resources should show citation callouts when traceability contains resolved citation IDs.
+  - Discussion paragraphs that make prior-work or fixed-budget study comparisons should show citation callouts when traceability contains resolved citation IDs.
+  - The manuscript-quality gate should not stop only because renderer-level citation callouts were hidden from otherwise traceable paragraphs.
+  - The generated main-body figure should not duplicate the condition table or appear twice.
+  - A successful live run should publish a buildable PDF and passing render/page-validation artifacts.
+
+- Actual behavior:
+  - The follow-up manuscript review stopped with citation-hygiene failures for `paragraph:method:1`, `paragraph:discussion:0`, and `paragraph:discussion:1`.
+  - `traceability.json` contained citation IDs for those paragraphs, but `renderSubmissionPaperTex(...)` suppressed them.
+  - The gate stopped after repair pass 1 with `review_reliability=partially_grounded` and `remaining_issues=5`; no fresh `main.pdf` was generated from that failed pass.
+  - Subsequent same-flow reruns exposed adjacent paper-generation defects before the final passing run:
+    - scientific-validation numeric target inference treated baseline and best-condition accuracy values as conflicting;
+    - generated manuscript prose could retain stale model-identity and table-availability claims;
+    - generated result figures could duplicate the condition table, then later duplicate the derived task-level figure;
+    - TeX output could fail or warn on narrow-column overfull lines without an explicit line-stretch guard.
+
+- Fresh vs existing session comparison:
+  - Fresh session: a fresh TUI process was used in `<validation-workspace>` against the existing persisted run.
+  - Existing session: stale terminal status text from older failures remained visible, but persisted paper artifacts and newly updated manuscript-quality files showed the current failure boundary.
+  - Divergence: no behavior divergence identified; the actionable failure is a renderer projection bug in the live `write_paper` flow.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: paragraph traceability carried resolved citation IDs, but `shouldRenderSubmissionCitationsForParagraph(...)` suppressed Method citations when resource paragraphs also mentioned run details such as seed/model selection, and it suppressed Discussion citations by default outside Introduction/Related Work.
+
+- Code/test changes:
+  - Code:
+    - `src/core/analysis/paperManuscript.ts`
+      - render citation callouts for Method paragraphs that name Alpaca Clean, ARC-Challenge, HellaSwag, Qwen/Qwen2.5, TinyLlama, or related benchmark/source surfaces.
+      - render citation callouts for Discussion paragraphs that make prior-work, PEFT/QLoRA, low-budget, fixed-budget, adapter, benchmarking, or literature comparisons.
+      - stabilize reader-facing manuscript claims about executed model identity, table availability, appendix hygiene, raw metric-key prose, and submission-safe keywords.
+      - derive a task-level leading-condition figure from condition summaries and de-duplicate identical main-text figures.
+      - add a TeX `\emergencystretch=3em` guard when building submission support packages.
+    - `src/core/analysis/scientificWriting.ts`
+      - distinguish baseline-vs-best comparison targets when extracting numeric facts from generated prose.
+      - preserve/restores substantive draft paragraphs when page-budget enforcement over-trims the manuscript.
+    - `src/core/analysis/paperWriting.ts`
+      - align reader-facing sanitizer replacements for raw metric keys and table/figure claim wording.
+    - `src/core/nodes/writePaper.ts`
+      - run manuscript stabilization with condition summaries before candidate evaluation and after bounded repair.
+  - Tests:
+    - `tests/paperSubmissionSanitization.test.ts`
+      - added deterministic coverage for reader-visible citations in Method resource paragraphs and Discussion prior-work claims.
+      - added coverage for task-level figure derivation, raw metric-key removal, TeX line-stretch guard, and duplicate figure removal.
+    - `tests/scientificWriting.test.ts`
+      - added coverage for comparison-target numeric consistency and manuscript page-floor restoration.
+    - `tests/writePaperPdfBuild.test.ts`
+      - added/updated coverage for bounded manuscript-quality repair, partially grounded review handling, and PDF build surfaces.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-14.
+  - Automated targeted regression: passed on 2026-05-14 with `npm test -- --run tests/paperSubmissionSanitization.test.ts`.
+  - Related regression bundle: passed on 2026-05-14 with `npm test -- --run tests/paperSubmissionSanitization.test.ts tests/scientificWriting.test.ts tests/writePaperPdfBuild.test.ts tests/manuscriptQuality.test.ts`.
+  - Build: passed on 2026-05-14 with `npm run build`.
+  - Same-flow revalidation: passed through the real TUI on run `3bc89107-909f-4315-9340-d75ce02eb0e0`.
+    - `write_paper` finished from the TUI with `Manuscript: paper_ready`.
+    - `main.pdf` built successfully after one automatic LaTeX repair.
+    - `render_validation.json` passed with `overfull_hbox_count=0`, `main_body_table_count=1`, and `main_body_figure_count=1`.
+    - `compiled_page_validation.json` passed with 7 main-body pages and 10 total PDF pages.
+    - `paper_readiness.json` reports `paper_ready=true`, `scientific_validation_status=warn`, and `render_validation_status=pass`.
+
+- Follow-up risks:
+  - The live run is system-valid and marked `paper_ready=true`, but `gate_decision.json` still records 26 non-blocking scientific-validation warnings; future paper-quality work should reduce those warnings before treating the manuscript as a polished submission.
+  - The extracted PDF text still contains some repetitive introduction/proposal-style prose; render/page gates pass, but editorial refinement remains useful.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/paper/manuscript_quality_failure.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/paper/manuscript_quality_gate.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/paper/traceability.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/paper/main.tex`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/paper/main.pdf`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/paper/render_validation.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/paper/compiled_page_validation.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/paper/main.pdf`
+
+## Issue: LV-439
+
+- Status: repair implemented; same-flow live revalidation passed on 2026-05-13.
+- Validation target: a governed backward jump should make the target node genuinely re-runnable, including retry/rollback budget state, not only node status.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-438 changed `review` from an impossible `write_paper` advance into `backtrack_to_implement`.
+
+- Reproduction steps:
+  1. Continue the live run through `review` until it recommends `backtrack_to_implement`.
+  2. Approve the pending transition with the P6 live helper.
+  3. Inspect `run_record.json` and the helper transcript after the jump.
+
+- Expected behavior:
+  - `implement_experiments` should be reset to `pending` and have a fresh bounded retry/rollback budget for the new research cycle.
+  - The helper should be able to run `implement_experiments` rather than immediately reporting that prior retry attempts are exhausted.
+
+- Actual behavior:
+  - The backward jump reset `implement_experiments` and downstream node states to `pending`.
+  - `graph.retryCounters.implement_experiments=3` and `graph.rollbackCounters.implement_experiments=2` remained from the previous cycle.
+  - The helper reported `Status: implement_experiments is paused after retry 3/3` and did not proceed through the intended re-implementation cycle.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation attached to the existing persisted run.
+  - Existing session: persisted graph state carried exhausted counters across the backward jump even though node statuses were reset.
+  - Divergence: no session divergence observed.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: `jumpToNode(...)` resets `nodeStates` for backward jumps but does not clear retry/rollback counters for the same reset node range, so projection and supervisor logic still treat the target as exhausted.
+
+- Code/test changes:
+  - `src/core/stateGraph/runtime.ts` now clears retry and rollback counters for the same target/downstream node range reset by a backward jump.
+  - `tests/stateGraphRuntime.test.ts` asserts that backward jumps clear stale retry/rollback counters for reset nodes.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-13.
+  - Automated regression passed: `npm test -- --run tests/stateGraphRuntime.test.ts -t "backward jump resets the target node itself|rollback note|uses the latest persisted retry state"`.
+  - Build passed after the repair: `npm run build`.
+  - Same-flow revalidation passed: approving the regenerated `backtrack_to_implement` transition reset `implement_experiments`, `run_experiments`, `analyze_results`, `figure_audit`, `review`, and `write_paper` to pending with empty retry and rollback counters.
+
+- Follow-up risks:
+  - Resetting counters should be limited to the nodes whose execution state is reset by the backward jump; earlier completed nodes should retain their history.
+
+---
+
+## Issue: LV-438
+
+- Status: repair implemented; same-flow live revalidation passed and now recommends `backtrack_to_implement` instead of an impossible `write_paper` transition on 2026-05-13.
+- Validation target: `review -> write_paper` should have a consistent contract for downgraded manuscript generation when review classifies a run as `blocked_for_paper_scale`.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-437 passed the brief evidence gate and `figure_audit` completed with zero severe mismatches.
+
+- Reproduction steps:
+  1. Continue the run from `analyze_results` through `figure_audit`.
+  2. Let `review` complete.
+  3. Approve the pending transition to `write_paper`.
+  4. Inspect the helper transcript and `run_record.json`.
+
+- Expected behavior:
+  - If `review` recommends `advance -> write_paper` while explicitly setting a downgraded claim ceiling, `write_paper` should either generate a bounded/downgraded manuscript artifact or `review` should not recommend advancement.
+  - The workflow should not recommend a transition that the target node immediately rejects as impossible.
+
+- Actual behavior:
+  - `review` recommended `advance -> write_paper` with reason: advancing only to draft under a downgraded claim ceiling, not as `paper_ready`.
+  - `write_paper` immediately failed three times with `write_paper blocked because review classified this run as blocked_for_paper_scale`.
+  - The workflow rolled back to `review` and paused.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation attached to the existing persisted run.
+  - Existing session: persisted run advanced from `review needs_approval` to `write_paper`, then auto-rolled back after repeated hard-block failures.
+  - Divergence: no session divergence observed.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the review transition logic treats `blocked_for_paper_scale` as eligible for downgraded drafting, but `write_paper` treats the same manuscript type as a hard block instead of honoring the downgraded-draft path or target type.
+
+- Code/test changes:
+  - Updated `src/core/nodes/review.ts` so the research-cycle cap does not override hard-blocked manuscript types (`blocked_for_paper_scale`, `system_validation_note`) into `write_paper`.
+  - Added regression coverage in `tests/reviewNode.test.ts` for a high-cycle run whose minimum/brief gates pass but whose pre-draft critique remains `blocked_for_paper_scale`.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-13.
+  - Automated regression: `npm test -- --run tests/reviewNode.test.ts -t "blocked_for_paper_scale|repeated-seed"` passed on 2026-05-13.
+  - Build regression: `npm run build` passed on 2026-05-13.
+  - Same-flow revalidation: passed on 2026-05-13. Rerunning `review` produced `pendingTransition.action=backtrack_to_implement`, `targetNode=implement_experiments`, while preserving `manuscript_type=blocked_for_paper_scale`.
+
+- Follow-up risks:
+  - A generated artifact under this path must clearly remain a downgraded research memo / blocked-for-paper-scale draft, not a claim of paper-ready manuscript quality.
+
+---
+
+## Issue: LV-437
+
+- Status: repair implemented; same-flow live revalidation passed and advanced to `figure_audit` approval on 2026-05-13.
+- Validation target: `analyze_results` should count uncertainty evidence when generated real-execution metrics include per-example prediction records but no explicit `ci_*` fields.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after cycle 37 reran the LoRA rank/dropout grid and produced 8 completed conditions with `best_condition.accuracy_delta_vs_baseline=0.0625`.
+
+- Reproduction steps:
+  1. Continue the run through `run_experiments` after cycle 37.
+  2. Confirm `experiment/metrics.json` contains `condition_results[*].evaluation.<task>.predictions[*].correct` records for ARC-Challenge and HellaSwag.
+  3. Continue to `analyze_results`.
+  4. Inspect `analysis/evidence_scale_assessment.json` and `analysis/result_analysis.json`.
+
+- Expected behavior:
+  - When per-example correctness records are present, `analyze_results` should derive bounded confidence intervals for condition accuracy metrics rather than reporting zero confidence-interval artifacts.
+  - The brief evidence gate should evaluate the actual uncertainty artifacts present in the analysis, not only explicit runner-emitted `ci_*` fields.
+
+- Actual behavior:
+  - `run_experiments` completed 8/8 conditions and met the objective metric.
+  - `analyze_results` emitted `confidence_interval_count=0`, `missing_confidence_intervals`, and a `backtrack_to_design` recommendation because the generated runner did not emit explicit CI fields.
+  - The underlying metrics already include per-example correctness evidence from which a conservative binomial interval can be derived.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation attached to the existing persisted run.
+  - Existing session: persisted run advanced from `run_experiments needs_approval` into `analyze_results`, then paused at the evidence gate.
+  - Divergence: no session divergence observed.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `buildStatisticalSummary(...)` only recognizes explicit confidence-interval fields, condition summary half-width fields, or supplemental metrics. It does not derive uncertainty intervals from generated `condition_results`/`conditions` rows that include prediction-level `correct` values.
+
+- Code/test changes:
+  - Added Wilson 95% CI derivation from `condition_results`/`conditions` prediction-level `correct` records in `src/core/resultAnalysis.ts`.
+  - Downgraded missing supplemental quick-check/confirmatory runs to a low-severity risk when structured uncertainty or stability evidence is present, so the brief gate can distinguish "no robustness evidence" from "bounded robustness evidence without repeats."
+  - Added deterministic regression coverage in `tests/objectiveMetricPropagation.test.ts` for generated condition prediction records without explicit `ci_*` fields.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-13.
+  - Automated regression: `npm test -- --run tests/objectiveMetricPropagation.test.ts -t "prediction correctness|marker fields|condition-array rows"` passed on 2026-05-13.
+  - Build regression: `npm run build` passed on 2026-05-13.
+  - Same-flow revalidation: passed on 2026-05-13. Rerunning `analyze_results` produced `confidence_interval_count=8`, `evidence_gap_count=0`, `evidence_scale_assessment.status=pass`, and `transition_recommendation.action=advance` to `figure_audit`.
+
+- Follow-up risks:
+  - A derived binomial CI from tiny benchmark samples is valid uncertainty evidence for gate accounting, but it should still constrain claims. It should not be described as strong generalization evidence or a submission-ready statistical result without review approval.
+
+---
+
+## Issue: LV-424
+
+- Status: active paper-readiness risk observed on 2026-05-12
+- Validation target: P6 paper-generation path should not advance from `analyze_results` to manuscript generation when the evidence gate recommends a governed backtrack.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-423 metrics projection repair and live approval of `run_experiments` into `analyze_results`.
+
+- Reproduction steps:
+  1. Approve `run_experiments` for run `3bc89107-909f-4315-9340-d75ce02eb0e0` through the P6 helper with `AUTOLABOS_P6_NEXT_NODE=analyze_results`.
+  2. Let `analyze_results` consume the node-owned metrics and public experiment outputs.
+  3. Inspect `run_record.json`, `transition_recommendation.json`, `result_analysis_synthesis.json`, and the helper transcript.
+
+- Expected behavior:
+  - If the objective metric is not met and required statistical support is missing, `analyze_results` should lower the claim ceiling and recommend a governed backtrack rather than silently proceeding to paper generation.
+  - Subsequent live validation should follow the recommended transition unless the user explicitly asks for a downgraded memo/draft instead of a paper-scale continuation.
+
+- Actual behavior:
+  - `analyze_results` completed and paused at `needs_approval`.
+  - The node reported `accuracy_delta_vs_baseline=0` and did not meet the `>= 0.01` objective metric.
+  - The persisted transition recommendation is `backtrack_to_design -> design_experiments`.
+  - The evidence list includes `executed_trials=24`, `confidence_intervals=0`, and the unmet objective metric.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation attached to the existing persisted run.
+  - Existing session: the persisted run advanced from `run_experiments` approval into `analyze_results`, completed analysis, and paused with a design backtrack recommendation.
+  - Divergence: no session divergence observed.
+
+- Root cause hypothesis:
+  - Type: paper-readiness evidence gap, not an interactive defect taxonomy item.
+  - Hypothesis: the current experiment run executed node-owned trials, but produced no positive objective improvement and no confidence intervals, so the paper-scale evidence gate correctly prevented forward progress to `figure_audit` / `review` / `write_paper`.
+
+- Code/test changes:
+  - No code change yet; this is a governed research-quality outcome.
+
+- Regression status:
+  - Live validation observed on 2026-05-12 through `AUTOLABOS_P6_NEXT_NODE=analyze_results`.
+  - Same-flow continuation: pending; next action is to approve the recommended transition to `design_experiments`.
+
+- Follow-up risks:
+  - A backtracked design may require additional experiment planning, implementation, and execution cycles before paper generation is ethically reachable.
+  - If the run continues to miss the objective metric, the honest output genre may remain a research memo or negative-result system validation note rather than a paper-ready manuscript.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/transition_recommendation.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/result_analysis_synthesis.json`
+  - `<repo-root>/outputs/p6-live-root/p6-continue-analyze_results-output.txt`
+
+---
+
+## Issue: LV-425
+
+- Status: repair implemented; same-flow revalidation pending on 2026-05-12
+- Validation target: P6 `run_experiments` generated runner should normalize CLI/runtime arguments without passing an `argparse.Namespace` object to `pathlib.Path`.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-424 governed backtrack, fresh `design_experiments` retry, and regenerated `implement_experiments` runner.
+
+- Reproduction steps:
+  1. Approve `implement_experiments` for run `3bc89107-909f-4315-9340-d75ce02eb0e0` through the P6 helper with `AUTOLABOS_P6_NEXT_NODE=run_experiments`.
+  2. Let `run_experiments` run the node-owned command:
+     `python3 <validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py --output-dir ... --metrics-path ...`
+  3. Inspect `run_experiments_verify_report.json`, `metrics.json`, and `run_record.json`.
+
+- Expected behavior:
+  - The generated runner should convert CLI `Namespace` values into the expected config/path fields before path normalization.
+  - Runtime helper dispatch should not treat generic callables such as `pathlib.Path` as a compatible args-preparation hook for a whole `Namespace`.
+  - Failures, if any, should occur in node-owned experiment logic with visible condition rows, not at CLI normalization before execution starts.
+
+- Actual behavior:
+  - `py_compile` passed during `implement_experiments`.
+  - `run_experiments` failed before executing conditions.
+  - `metrics.json` reports `status=failed`, `completed_condition_count=0`, `failed_condition_count=8`, and `error_type=TypeError`.
+  - The traceback shows `_normalize_runtime_args(_resolve_cli_args(argv)) -> _invoke_compatible(prepare_fn, normalized, args=normalized) -> pathlib.Path(...)`, raising `TypeError: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'Namespace'`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation attached to the existing persisted run.
+  - Existing session: the persisted run advanced from `implement_experiments` approval into `run_experiments`, executed the regenerated runner, and failed at CLI normalization.
+  - Divergence: no session divergence observed.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the generated runner's compatibility dispatcher accepts a broad `prepare_fn` surface and passes the entire `Namespace` as a positional argument to a path constructor. The existing handoff repairs patch annotation evaluation and JSON serialization, but do not guard Namespace-to-Path runtime normalization.
+
+- Code/test changes:
+  - Added `repairPythonRuntimePathPrepareCallableSurface(...)` in `src/core/agents/implementSessionManager.ts` to guard runtime path preparation dispatch from treating `pathlib.Path`/path classes as Namespace-compatible prepare hooks.
+  - Wired the repair into the `implement_experiments` pre-handoff verification loop so regenerated node-owned runners are patched before `run_experiments`.
+  - Added `tests/implementSessionManager.test.ts` coverage that first reproduces the `Path(argparse.Namespace)` TypeError in a generated-runner-shaped script, then verifies the repaired script preserves the parsed Namespace.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-12.
+  - Automated regression: `npm test -- --run tests/implementSessionManager.test.ts -t "guards runtime path preparation dispatch"` passed on 2026-05-12.
+  - Build regression: `npm run build` passed on 2026-05-12.
+  - Same-flow revalidation: rerun completed `implement_experiments` and advanced to `run_experiments`; the previous `--disable-progress-bars` verifier failure did not recur. The next live blocker is recorded as LV-435.
+
+- Follow-up risks:
+  - After this runtime normalization repair, the regenerated runner may expose further implementation, metrics-contract, analysis, or paper-readiness gates.
+  - `py_compile` remains insufficient for generated runner readiness; the node-owned command must execute.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_experiments_verify_report.json`
+  - `<repo-root>/outputs/p6-live-root/p6-continue-run_experiments-output.txt`
+
+---
+
+## Issue: LV-426
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-434 on 2026-05-12
+- Validation target: P6 `implement_experiments` staged bootstrap planning should recover the schema-valid bootstrap contract when streamed provider output includes tool-transcript noise before the final JSON object.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, rerunning `implement_experiments` after LV-425 repository repair.
+
+- Reproduction steps:
+  1. Run the P6 helper with `AUTOLABOS_P6_NEXT_NODE=implement_experiments` and `/agent run implement_experiments 3bc89107-909f-4315-9340-d75ce02eb0e0`.
+  2. Let staged bootstrap planning stream provider output.
+  3. Inspect `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/bootstrap_contract_raw_response.txt` and `status.json`.
+
+- Expected behavior:
+  - If the raw response contains a later schema-valid bootstrap contract JSON object, the parser should recover it even when earlier transcript text contains tool-call JSON, braces, or dangling quotes.
+  - `implement_experiments` should either evaluate the recovered bootstrap contract or fail for a real contract blocker, not for parse failure when a valid contract is present.
+
+- Actual behavior:
+  - `implement_experiments` failed before runnable implementation handoff with `staged_llm bootstrap planning did not return a parseable bootstrap contract`.
+  - `bootstrap_contract_raw_response.txt` ends with a valid object containing `version`, `strategy`, `summary`, `requirements`, and `checks`.
+  - Replaying the existing extraction logic over the raw response produced only one candidate object, the leading `cmd` tool-call object, and missed the final contract.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation attached to the existing persisted run.
+  - Existing session: the persisted run was reset to `implement_experiments`, streamed a new bootstrap response, then failed at parse recovery.
+  - Divergence: no session divergence observed.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `extractBalancedJsonObjectStrings(...)` tracks quote/bracket state across the whole raw provider transcript. Tool transcript noise can leave the scanner in a non-JSON string state, preventing later schema-valid JSON objects from being considered.
+
+- Code/test changes:
+  - Updated `extractBalancedJsonObjectStrings(...)` in `src/core/agents/implementSessionManager.ts` to attempt balanced-object recovery independently from each `{` start, so earlier transcript quote state cannot hide a later schema-valid object.
+  - Exported `parseImplementBootstrapContractFromText(...)` for focused regression coverage.
+  - Added `tests/implementSessionManager.test.ts` coverage for a leading tool transcript plus dangling non-JSON quote followed by a valid bootstrap contract.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-12.
+  - Automated regression: `npm test -- --run tests/implementSessionManager.test.ts -t "recovers bootstrap contracts after noisy tool transcripts|guards runtime path preparation dispatch"` passed on 2026-05-12.
+  - Build regression: `npm run build` passed on 2026-05-12.
+  - Same-flow revalidation: rerun advanced past the LV-433 generated helper-selection/input-projection boundary, then failed earlier in `implement_experiments` local verification on a run-command argparse alias mismatch recorded as LV-434.
+
+- Follow-up risks:
+  - After bootstrap parsing is repaired, `implement_experiments` must still regenerate/repair the node-owned runner and LV-425 must be rechecked in `run_experiments`.
+
+---
+
+## Issue: LV-427
+
+- Status: repair in progress on 2026-05-12
+- Validation target: P6 `implement_experiments` staged LLM materialization should tolerate transient provider connection failures during long multi-chunk runner generation.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, rerunning `implement_experiments` after LV-426 parser repair.
+
+- Reproduction steps:
+  1. Run the P6 helper with `AUTOLABOS_P6_NEXT_NODE=implement_experiments` and `/agent run implement_experiments 3bc89107-909f-4315-9340-d75ce02eb0e0`.
+  2. Let staged materialization progress through `bootstrap_contract.json`, `decomposition_plan.json`, `file_plan.json`, and generated runner chunks.
+  3. Observe `status.json`, `progress.jsonl`, and the persisted run record after provider timeouts.
+
+- Expected behavior:
+  - Transient provider `ETIMEDOUT` failures during long materialization should receive enough retry budget/backoff to recover when the provider resumes.
+  - If a request fails after partial output, the failure should be reported as a transient provider/materialization interruption rather than as a runner or paper-readiness outcome.
+
+- Actual behavior:
+  - LV-426 no longer reproduced: `bootstrap_contract.json` was written and materialization progressed into chunk 4.
+  - `run_lora_rank_dropout_study.py` grew to 142349 bytes through node-owned generation.
+  - During chunk 4 re-subdivision for the "Baseline-first study execution loop", the Codex OAuth backend returned repeated `fetch failed | cause: AggregateError, code=ETIMEDOUT`; after 5 quick retry attempts, `implement_experiments` failed before handoff verification.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation attached to the existing persisted run.
+  - Existing session: the persisted run reset to `implement_experiments`, progressed through new staged artifacts, and failed on transient provider retries.
+  - Divergence: no session divergence observed.
+
+- Root cause hypothesis:
+  - Type: `race_timing_bug`
+  - Hypothesis: the staged LLM transient retry budget/backoff is too small for long-running materialization requests when the provider temporarily cannot establish an HTTP response.
+
+- Code/test changes:
+  - Increased bounded staged LLM transient retry resilience in `src/core/agents/implementSessionManager.ts` from 5 attempts with 1s linear backoff to 12 attempts with 5s linear backoff.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-12.
+  - Automated regression: `npm test -- --run tests/implementSessionManager.test.ts -t "recovers bootstrap contracts after noisy tool transcripts|guards runtime path preparation dispatch"` passed on 2026-05-12.
+  - Build regression: `npm run build` passed on 2026-05-12.
+  - Same-flow revalidation: pending.
+
+- Follow-up risks:
+  - Even if provider retry resilience succeeds, the generated runner still needs pre-handoff repairs, `py_compile`, and same-flow `run_experiments` execution to recheck LV-425.
+
+---
+
+## Issue: LV-428
+
+- Status: repair in progress on 2026-05-12
+- Validation target: regenerated P6 LoRA rank/dropout runners should pass the preflight model-selection payload into condition executors whose signatures require `model_selection`.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-427 same-flow retry allowed `implement_experiments` to complete and hand off to `run_experiments`.
+
+- Reproduction steps:
+  1. Rerun `implement_experiments` for run `3bc89107-909f-4315-9340-d75ce02eb0e0` through the P6 helper.
+  2. Let the generated runner pass `py_compile` and hand off to `run_experiments`.
+  3. Inspect `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json` and `run_record.json`.
+
+- Expected behavior:
+  - The inline baseline-first condition loop should call `execute_condition(...)` with all required runtime inputs, including a mapping-compatible `model_selection` payload derived from model preflight.
+  - The repair must not synthesize successful condition rows or objective metrics; it should only pass the real preflight payload to the generated executor.
+
+- Actual behavior:
+  - `implement_experiments` completed and verified the generated runner with `python3 -m py_compile`.
+  - `run_experiments` invoked the generated runner, which observed all 8 locked condition markers but every condition failed immediately with:
+    - `TypeError: execute_condition() missing 1 required positional argument: 'model_selection'`
+  - The top-level metrics payload consequently had no numeric `accuracy_delta_vs_baseline`, so `run_experiments` failed the metrics contract.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation attached to the existing persisted run.
+  - Existing session: the persisted run advanced from `implement_experiments` completion into `run_experiments` and failed at the condition-executor invocation boundary.
+  - Divergence: no session divergence observed.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced `execute_condition(condition, args, model_selection, output_dir)`, but the final orchestration call projected only model-name strings and generic runtime kwargs. The signature filter dropped unsupported fields and had no `model_selection` key available to pass.
+
+- Code/test changes:
+  - Added `repairPythonStudyCallModelSelectionKwargSurface(...)` in `src/core/agents/implementSessionManager.ts` so regenerated study runners derive `model_selection_payload` from model preflight and pass it through `_study_call_with_supported_kwargs(...)`.
+  - Wired the repair into the late handoff repair set before `run_experiments`.
+  - Added `tests/implementSessionManager.test.ts` coverage that reproduces the missing `model_selection` TypeError, applies the repair, and executes the repaired runner.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-12.
+  - Automated regression: `npm test -- --run tests/implementSessionManager.test.ts -t "passes preflight model_selection|recovers bootstrap contracts after noisy tool transcripts|guards runtime path preparation dispatch"` passed on 2026-05-12.
+  - Build regression: `npm run build` passed on 2026-05-12.
+  - Same-flow revalidation: pending.
+
+- Follow-up risks:
+  - Once the executor receives `model_selection`, the live run may advance into real model loading, dataset/evaluation runtime failures, or honest paper-readiness gates if the experiment completes but evidence remains weak.
+
+---
+
+## Issue: LV-429
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-430 on 2026-05-12
+- Validation target: regenerated P6 LoRA rank/dropout runners should pass a mapping-compatible call context into generated condition invokers instead of passing a `StudyCondition` object where the invoker expects a mapping.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-428 same-flow retry allowed `implement_experiments` to complete and hand off to `run_experiments`.
+
+- Reproduction steps:
+  1. Rerun `implement_experiments` for run `3bc89107-909f-4315-9340-d75ce02eb0e0` through the P6 helper.
+  2. Let the generated runner pass `python3 -m py_compile` and hand off to `run_experiments`.
+  3. Inspect `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json` and `run_record.json`.
+
+- Expected behavior:
+  - `_invoke_condition_runner_from_main(...)` should call `_invoke_condition_runner(runner, call_context)` with a dict-like context containing `condition`, `args`, `condition_output_dir`, and timing/runtime fields.
+  - The repair must preserve node-owned execution and must not synthesize condition rows or objective metrics.
+
+- Actual behavior:
+  - `implement_experiments` completed and verified the generated runner with `python3 -m py_compile`.
+  - `run_experiments` invoked the generated runner, which observed all 8 locked condition markers.
+  - Every condition failed immediately with:
+    - `TypeError: argument of type 'StudyCondition' is not iterable`
+  - The traceback shows `_invoke_condition_runner_from_main(...) -> _call_with_supported_kwargs(invoker, runner, condition, **common_kwargs) -> _invoke_condition_runner(runner, call_context)` where `call_context` received the positional `StudyCondition` object.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation attached to the existing persisted run.
+  - Existing session: the persisted run advanced from `implement_experiments` completion into `run_experiments` and failed at the condition-invoker context bridge.
+  - Divergence: no session divergence observed.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced an invoker whose second parameter is a mapping-style `call_context`, but the generic supported-kwargs adapter forwarded `(runner, condition)` as positional args before filtering kwargs. Compile-only verification did not catch the runtime positional/mapping mismatch.
+
+- Code/test changes:
+  - Added `repairPythonCallContextInvokerBridgeSurface(...)` in `src/core/agents/implementSessionManager.ts` so generated `_call_with_supported_kwargs(...)` dispatchers detect invokers with a `call_context` parameter and pass a dict-like context assembled from the generated kwargs.
+  - Wired the repair into the late handoff repair set before `run_experiments`.
+  - Added `tests/implementSessionManager.test.ts` coverage that reproduces the `StudyCondition`-as-`call_context` TypeError, applies the repair, and executes the repaired runner.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-12.
+  - Automated regression: `npm test -- --run tests/implementSessionManager.test.ts -t "call_context invokers|passes preflight model_selection"` passed on 2026-05-12.
+  - Build regression: `npm run build` passed on 2026-05-12.
+  - Same-flow revalidation: regenerated runner no longer reproduced the `StudyCondition`-as-`call_context` crash; live flow advanced to LV-430 condition input materialization failure.
+
+- Follow-up risks:
+  - Once the condition invoker receives a proper context mapping, the live run may advance into real model loading, dataset/evaluation runtime failures, metrics schema gaps, or honest paper-readiness gates.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+---
+
+## Issue: LV-430
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-431 on 2026-05-12
+- Validation target: regenerated P6 LoRA rank/dropout runners should materialize real train/eval records and selected model/device inputs before invoking each locked condition runner.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-429 repair allowed `implement_experiments` to complete and hand off to a regenerated `run_experiments` attempt.
+
+- Reproduction steps:
+  1. Rerun `implement_experiments` for run `3bc89107-909f-4315-9340-d75ce02eb0e0` through the P6 helper.
+  2. Let the generated runner pass `python3 -m py_compile` and hand off to `run_experiments`.
+  3. Inspect `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`, public `condition_results.json`, and `study_results.json`.
+
+- Expected behavior:
+  - The generated study orchestration should pass `model_id`, `device`, `train_records`, and `eval_examples_by_task` into the per-condition runner.
+  - Dataset and model helper discovery should not treat lower-level helpers requiring `tokenizer`, `model_id`, or `runtime_device` as zero-argument high-level setup helpers.
+  - The repair must use real loader outputs from the generated runner and must not synthesize completed metrics.
+
+- Actual behavior:
+  - `implement_experiments` completed and verified the regenerated runner with `python3 -m py_compile`.
+  - `run_experiments` invoked the runner, but the runner reported `status=failed`, `completed_condition_count=0`, and `failed_condition_count=8`.
+  - `study_results.json` recorded setup warnings:
+    - `model_preflight_helper_failed:TypeError: preflight_model_candidate() missing 2 required positional arguments: 'model_id' and 'runtime_device'`
+    - `dataset_bundle_helper_failed:TypeError: prepare_experiment_datasets() missing 1 required positional argument: 'tokenizer'`
+  - Every condition remained `status=pending`/failed with `error_message="No training records were provided."`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation attached to the existing persisted run.
+  - Existing session: the persisted run advanced from `implement_experiments` completion into `run_experiments` and failed at condition input materialization.
+  - Divergence: no session divergence observed.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced a high-level study orchestrator that discovers lower-level setup helpers by broad token matching, then filters unsupported kwargs and calls them without required runtime inputs. The condition loop also omits direct `train_records` and `eval_examples_by_task` materialization, so the real per-condition runner receives empty inputs.
+
+- Code/test changes:
+  - Added `repairPythonStudyConditionRuntimeInputMaterializationSurface(...)` in `src/core/agents/implementSessionManager.ts` so generated study loops inject real loader-backed `train_records`, `eval_examples_by_task`, selected model, and device kwargs before invoking each condition runner.
+  - Added a missing-required-input guard around generated setup helper dispatch so token-matched lower-level helpers are skipped instead of called without required inputs.
+  - Wired the repair into the late handoff repair set before `run_experiments`.
+  - Added `tests/implementSessionManager.test.ts` coverage that reproduces the missing train/eval records failure, applies the repair, py-compiles the repaired runner, and verifies the condition runner receives real records.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-12.
+  - Automated regression: `npm test -- --run tests/implementSessionManager.test.ts -t "materializes generated study condition|call_context invokers|passes preflight model_selection"` passed on 2026-05-12.
+  - Build regression: `npm run build` passed on 2026-05-12.
+  - Same-flow revalidation: regenerated runner no longer reproduced the empty train/eval input failure; live flow advanced to LV-431 final study runner alias failure.
+
+- Follow-up risks:
+  - Once condition inputs are materialized, the live run may advance into real model download/loading, GPU training/evaluation runtime failures, or honest paper-readiness gates if the experiment completes but evidence remains weak.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/condition_results.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/study_results.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+---
+
+## Issue: LV-431
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-432 on 2026-05-12
+- Validation target: regenerated P6 LoRA rank/dropout runners should expose the real baseline-first condition sweep under a final study-runner name searched by `_invoke_study_runner(...)`.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-430 repair allowed `implement_experiments` to complete and hand off to a regenerated `run_experiments` attempt.
+
+- Reproduction steps:
+  1. Rerun `implement_experiments` for run `3bc89107-909f-4315-9340-d75ce02eb0e0` through the P6 helper.
+  2. Let the generated runner pass `python3 -m py_compile` and hand off to `run_experiments`.
+  3. Inspect `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`, `metrics.json`, and `exec_logs/run_experiments.txt`.
+
+- Expected behavior:
+  - `_invoke_study_runner(options)` should find a callable entrypoint and execute the node-owned baseline-first locked condition sweep.
+  - The repair must alias or bridge the generated callable only; it must not synthesize condition rows, metrics, or paper-scale evidence.
+
+- Actual behavior:
+  - `implement_experiments` completed and verified the regenerated runner with `python3 -m py_compile`.
+  - The generated script defines `run_baseline_first_condition_sweep(output_dir, metrics_path, *, device, ...)`.
+  - `_invoke_study_runner(...)` searches `run_locked_lora_rank_dropout_study`, `run_lora_rank_dropout_study`, `execute_locked_study`, `execute_baseline_first_sweep`, `run_baseline_first_sweep`, `run_locked_study`, `run_study`, and `run_experiment`, but none are defined.
+  - `run_experiments` failed immediately with:
+    - `RuntimeError: Unable to locate the study execution function in the current module. Tried: run_locked_lora_rank_dropout_study, run_lora_rank_dropout_study, execute_locked_study, execute_baseline_first_sweep, run_baseline_first_sweep, run_locked_study, run_study, run_experiment`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation attached to the existing persisted run.
+  - Existing session: the persisted run advanced from `implement_experiments` completion into `run_experiments` and failed at final study-runner lookup.
+  - Divergence: no session divergence observed.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced a real high-level condition sweep helper named `run_baseline_first_condition_sweep(...)`, while the final CLI runtime resolver used a narrower vocabulary that omitted `condition_sweep` names. Compile-only verification cannot catch a callable-name projection mismatch.
+
+- Code/test changes:
+  - Extended `repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurface(...)` in `src/core/agents/implementSessionManager.ts` so it detects RuntimeOptions-based `_invoke_study_runner(...)` resolvers and `run_baseline_first_condition_sweep(...)` / locked condition sweep helper names.
+  - The alias bridge now accepts `options`, passes real `output_dir`, `metrics_path`, device, and budget/runtime kwargs into the generated sweep helper, and still avoids synthesizing condition rows or metrics.
+  - Added `tests/implementSessionManager.test.ts` coverage that reproduces the exact missing `run_baseline_first_condition_sweep(...)` lookup failure and verifies the repaired alias executes with RuntimeOptions-derived paths and runtime values.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-12.
+  - Automated regression: `npm test -- --run tests/implementSessionManager.test.ts -t "RuntimeOptions study runners|baseline-first locked sweep helpers|chunk3b final main resolver|materializes generated study condition"` passed on 2026-05-12.
+  - Build regression: `npm run build` passed on 2026-05-12.
+  - Same-flow revalidation: regenerated runner no longer reproduced the missing `_invoke_study_runner(...)` alias boundary; live flow advanced into `run_experiments` and exposed LV-432.
+
+- Follow-up risks:
+  - Once the final study-runner alias resolves, the live run may advance into real model download/loading, GPU training/evaluation runtime failures, metrics schema gaps, or honest paper-readiness gates if the experiment completes but evidence remains weak.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+---
+
+## Issue: LV-432
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-433 on 2026-05-12
+- Validation target: regenerated P6 LoRA rank/dropout runners should expose generated per-condition prepare/train/evaluate helpers to final fallback sweep execution.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-431 repair allowed `implement_experiments` to complete and a regenerated `run_experiments` attempt to enter the final locked-study fallback.
+
+- Reproduction steps:
+  1. Rerun `implement_experiments` for run `3bc89107-909f-4315-9340-d75ce02eb0e0` through the P6 helper.
+  2. Let the generated runner pass `python3 -m py_compile` and hand off to `run_experiments`.
+  3. Inspect `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`, `run_record.json`, and `exec_logs/run_experiments.txt`.
+
+- Expected behavior:
+  - If the final study runner falls back to per-condition execution, it should discover a real generated single-condition bridge that materializes model, training dataset, evaluation examples, and condition artifacts through generated helpers.
+  - The repair must preserve node-owned execution and must not synthesize successful condition rows or metric values.
+
+- Actual behavior:
+  - The regenerated script defines real lower-level helpers including `load_model_bundle_with_fallback(...)`, `prepare_instruction_tuning_data(...)`, `prepare_benchmark_evaluation_data(...)`, `prepare_trainable_condition_model(...)`, `run_single_condition_training(...)`, and `evaluate_trained_condition(...)`.
+  - The final `_run_locked_study_fallback(...)` searches only `run_single_condition`, `_run_single_condition`, `run_condition`, `_run_condition`, `execute_condition`, `_execute_condition`, `run_lora_condition`, `_run_lora_condition`, `execute_lora_condition`, and `_run_one_condition`.
+  - No searched per-condition runner is defined, so `run_experiments` fails before any condition executes with:
+    - `RuntimeError: No per-condition runner helper is available for fallback sweep execution.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation attached to the existing persisted run.
+  - Existing session: the persisted run advanced from LV-431 into `run_experiments`, then failed at final fallback per-condition runner discovery.
+  - Divergence: no session divergence observed.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation produced composable condition-level prepare/train/evaluate helpers but did not project them into the final fallback runner vocabulary. The final study helper also can fall through to this fallback after a high-level sweep invocation mismatch, so compile-only verification does not catch the missing bridge.
+
+- Code/test changes:
+  - Added `repairPythonFallbackBoundedFinetuningConditionRunnerSurface(...)` in `src/core/agents/implementSessionManager.ts` so generated fallback sweep execution exposes searched per-condition runner names backed by real generated helpers: model loading, instruction-data preparation, benchmark-data preparation, trainable condition preparation, bounded condition training, and evaluation.
+  - Wired the repair into the late handoff repair set before `run_experiments`.
+  - Added deterministic regression coverage in `tests/implementSessionManager.test.ts` that reproduces the missing fallback runner failure and verifies the repaired script calls the generated training and evaluation helpers.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-12.
+  - Automated regression: `npm test -- --run tests/implementSessionManager.test.ts -t "bounded finetuning helpers|RuntimeOptions study runners|baseline-first locked sweep helpers|chunk3b final main resolver"` passed on 2026-05-12.
+  - Build regression: `npm run build` passed on 2026-05-12.
+  - Same-flow revalidation: regenerated runner no longer stopped at the previous missing per-condition runner-helper boundary; live flow advanced into a new generated orchestration helper-selection/input-projection failure recorded as LV-433.
+
+- Follow-up risks:
+  - Once the fallback per-condition bridge resolves, the live run may advance into real model download/loading, LoRA training/evaluation runtime failures, objective-metric non-attainment, metrics schema gaps, or honest paper-readiness gates.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+---
+
+## Issue: LV-433
+
+- Status: repair in progress on 2026-05-12
+- Validation target: regenerated P6 LoRA rank/dropout runners should select concrete generated preflight/data/train/evaluate helpers instead of treating helper classes as condition runners or calling incompatible helper signatures.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-432 repair allowed `implement_experiments` to complete and `run_experiments` to run the regenerated script.
+
+- Reproduction steps:
+  1. Rerun `implement_experiments` for run `3bc89107-909f-4315-9340-d75ce02eb0e0` through the P6 helper after applying the LV-432 repair.
+  2. Let the node hand off to `run_experiments`.
+  3. Inspect `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json` and `exec_logs/run_experiments.txt`.
+
+- Expected behavior:
+  - The final orchestration runner should use generated `preflight_and_select_model(...)`, `prepare_study_data(...)`, `execute_condition_training(...)`, `evaluate_condition_on_tasks(...)`, and `build_condition_result_record(...)` helpers with compatible argument projection.
+  - The repair must preserve real node-owned condition execution and must not fabricate successful condition rows or metric values.
+
+- Actual behavior:
+  - `run_experiments` starts all eight locked conditions, but every condition immediately fails.
+  - `metrics.json` reports `completed_condition_count=0`, `failed_condition_count=8`, and failure reason:
+    - `StudyCondition.__init__() missing 3 required positional arguments: 'marker', 'rank', and 'lora_dropout'`
+  - Runtime context also records incompatible helper projection:
+    - `preflight_candidate_model() missing 1 required positional argument: 'runtime'`
+    - `TypeError: Any cannot be instantiated`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation attached to the existing persisted run.
+  - Existing session: the persisted run advanced past LV-432 and failed in `run_experiments` at generated orchestration helper selection/input projection.
+  - Divergence: no session divergence observed.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the generated helper resolver falls back to broad callable scanning, so it can select `StudyCondition` as a condition runner and can select low-level helpers such as `preflight_candidate_model(...)` or `typing.Any`-typed surfaces instead of the higher-level generated preflight/data helpers. Compile-only verification cannot catch the runtime signature mismatch.
+
+- Code/test changes:
+  - Added `repairPythonOrchestrationTrainEvalConditionBridgeSurface(...)` in `src/core/agents/implementSessionManager.ts` to expose exact final-orchestration facades backed by generated helpers:
+    - `preflight_model_and_runtime(...) -> preflight_and_select_model(...)`
+    - `prepare_datasets(...) -> prepare_study_data(...)`
+    - `execute_condition` / `run_condition` / related exact runner names -> `execute_condition_training(...)` plus `evaluate_condition_on_tasks(...)` and `build_condition_result_record(...)`
+  - Wired the repair into the late handoff repair set before `run_experiments`.
+  - Added deterministic regression coverage in `tests/implementSessionManager.test.ts` that reproduces the broad resolver selecting `StudyCondition` as the condition runner, then verifies the repair calls the generated preflight, data, training, and evaluation helpers.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-12.
+  - Automated regression: `npm test -- --run tests/implementSessionManager.test.ts -t "train/eval helpers|bounded finetuning helpers|RuntimeOptions study runners|baseline-first locked sweep helpers|chunk3b final main resolver"` passed on 2026-05-12.
+  - Build regression: `npm run build` passed on 2026-05-12.
+  - Same-flow revalidation: pending.
+
+- Follow-up risks:
+  - After this repair, the live run may finally advance into real model download/loading, LoRA training/evaluation runtime limits, objective-metric non-attainment, metrics schema gaps, or honest paper-readiness gates.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+---
+
+## Issue: LV-434
+
+- Status: repair in progress on 2026-05-12
+- Validation target: `implement_experiments` local verification should accept scheduler-emitted `runCommand` flags when the generated Python runner exposes semantically equivalent argparse flags.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-433 repair and same-flow retry through the P6 helper.
+
+- Reproduction steps:
+  1. Rerun `implement_experiments` for run `3bc89107-909f-4315-9340-d75ce02eb0e0` through the P6 helper after applying and building the LV-433 repair.
+  2. Let the node regenerate and locally verify `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`.
+  3. Inspect `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/status.json`.
+
+- Expected behavior:
+  - The local verifier should repair or accept safe aliases when `runCommand` uses `--disable-progress-bars` and the generated parser exposes `--disable-progress-bar`.
+  - The alias repair must preserve argparse semantics, especially boolean `store_true` flags, by adding the command flag to the existing parser argument rather than rewriting the command with a value.
+
+- Actual behavior:
+  - `implement_experiments` failed local verification after three attempts.
+  - The final persisted status reports:
+    - `run_command passes unsupported Python argparse flag(s): --disable-progress-bars`
+    - accepted flags include `--base-model`, `--condition-markers`, `--disable-progress-bar`, `--fallback-base-model`, and `--gradient-accumulation-steps`.
+  - Earlier attempts in the same node also exposed adjacent semantic alias drift for `--fallback-model`, `--base-model`, and `--baseline-condition`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation attached to the existing persisted run.
+  - Existing session: the persisted run advanced past LV-433 but failed in the same `implement_experiments` node at run-command/parser flag projection.
+  - Divergence: no session divergence observed.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `repairPythonRunCommandArgparseAliases(...)` only bridges a small set of known scheduler/parser flag pairs. The generated runner can expose equivalent but singular/plural or naming-drifted flags, so the verifier rejects a command that would be safe if the command flag were added as an alias to the canonical parser argument.
+
+- Code/test changes:
+  - Extended `repairPythonRunCommandArgparseAliases(...)` in `src/core/agents/implementSessionManager.ts` with scheduler/generated-runner aliases for:
+    - `--disable-progress-bars -> --disable-progress-bar`
+    - `--fallback-model -> --fallback-base-model` / `--fallback-model-id`
+    - `--base-model -> --base-model-id` / `--model-name` / `--model-name-or-path`
+    - `--baseline-condition -> --baseline-condition-marker` / `--baseline-marker` / `--baseline`
+  - Repaired `extractLongOptionFlags(...)` to use shell-token-based option extraction so adjacent flags such as `--disable-progress-bars --fallback-model` are not skipped by a whitespace-consuming regex.
+  - Added deterministic regression coverage in `tests/implementSessionManager.test.ts` for scheduler-emitted LoRA runtime argparse aliases, including boolean `store_true` preservation for `--disable-progress-bars`.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-12.
+  - Automated regression: `npm test -- --run tests/implementSessionManager.test.ts -t "LoRA runtime argparse flags|run_command aliases|boolean argparse flag|python run_command uses flags missing"` passed on 2026-05-12.
+  - Build regression: `npm run build` passed on 2026-05-12.
+  - Same-flow revalidation: pending.
+
+- Follow-up risks:
+  - After this repair, the run may advance into `run_experiments` again and expose runtime, metrics, or governed paper-readiness blockers. Those must be handled as node-owned behavior, not by manually fabricating experiment artifacts.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/status.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+  - `outputs/p6-live-root/p6-continue-implement_experiments-output.txt`
+
+---
+
+## Issue: LV-435
+
+- Status: repair implemented; same-flow live revalidation advanced to governed `run_experiments` approval on 2026-05-13
+- Validation target: `run_experiments` should execute the regenerated LoRA rank/dropout runner with the runtime inputs required by its ordered-condition collector.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-434 repair and same-flow retry through the P6 helper.
+
+- Reproduction steps:
+  1. Rerun `implement_experiments` for run `3bc89107-909f-4315-9340-d75ce02eb0e0` after the LV-434 repair.
+  2. Let the node hand off to `run_experiments`.
+  3. Inspect `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/exec_logs/run_experiments.txt`.
+
+- Expected behavior:
+  - The final orchestration layer should call `collect_ordered_condition_results(...)` with the generated runner's required keyword-only runtime inputs:
+    - `base_model_name`
+    - `device`
+    - `task_datasets`
+  - The repair must materialize real task datasets through the generated dataset configuration and must not fabricate condition results or metrics.
+
+- Actual behavior:
+  - `implement_experiments` completed and handed off to `run_experiments`.
+  - `run_experiments` failed immediately with:
+    - `TypeError: collect_ordered_condition_results() missing 3 required keyword-only arguments: 'base_model_name', 'device', and 'task_datasets'`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation attached to the existing persisted run.
+  - Existing session: the persisted run advanced past LV-434 but failed in `run_experiments` at final collector input materialization.
+  - Divergence: no session divergence observed.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the generated final orchestration resolves the correct `collect_ordered_condition_results(...)` helper, but its `_call_with_supported_kwargs(...)` invocation omits the high-level runtime inputs required by that helper. Compile-only verification cannot detect the missing keyword-only inputs.
+
+- Code/test changes:
+  - Added `repairPythonOrderedConditionCollectorRuntimeInputsSurface(...)` in `src/core/agents/implementSessionManager.ts`.
+  - The repair materializes:
+    - `collector_base_model_name` from CLI args/default model globals,
+    - `collector_device` from `torch.device(...)` or a safe CPU fallback,
+    - `collector_task_datasets` from generated `TASK_DATASET_CONFIGS` via the runner's own `load_dataset(...)`.
+  - The final collector call now passes `base_model_name`, `device`, `task_datasets`, and compatible aliases through `_call_with_supported_kwargs(...)`.
+  - Added deterministic regression coverage in `tests/implementSessionManager.test.ts` for the exact missing keyword-only collector input boundary.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-13.
+  - Automated regression: `npm test -- --run tests/implementSessionManager.test.ts -t "ordered condition collectors|high-level sweep runtime inputs|study preparation calls|LoRA runtime argparse flags|run_command aliases|boolean argparse flag|python run_command uses flags missing"` passed on 2026-05-13.
+  - Build regression: `npm run build` passed on 2026-05-13.
+  - Same-flow revalidation: rerun completed `implement_experiments`, then `run_experiments` executed the regenerated runner. The previous missing keyword-only collector inputs did not recur. The node produced 8 completed conditions, 0 failed conditions, and paused at `run_experiments needs_approval` because `accuracy_delta_vs_baseline=0` did not meet the objective threshold `>=0.01`.
+
+- Follow-up risks:
+  - After this repair, the run may advance into actual dataset/model loading, LoRA training/evaluation runtime, metrics completeness, or governed paper-readiness blockers.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+---
+
+## Issue: LV-436
+
+- Status: repair implemented; same-flow live revalidation passed for the projection boundary on 2026-05-13.
+- Validation target: `analyze_results` should project completed `metrics.conditions` rows into `condition_comparisons`, `result_table.json`, and baseline evidence counts when generated runners use `marker` as the condition identifier.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-435 repair allowed `run_experiments` to complete 8/8 LoRA rank/dropout conditions.
+
+- Reproduction steps:
+  1. Approve `run_experiments` for run `3bc89107-909f-4315-9340-d75ce02eb0e0` and continue to `analyze_results`.
+  2. Inspect `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/metrics.json`.
+  3. Inspect the generated analysis artifacts:
+     - `analysis/result_table.json`
+     - `analysis/baseline_comparison.json`
+     - `analysis/evidence_scale_assessment.json`
+     - `run_record.json` pending transition.
+
+- Expected behavior:
+  - `metrics.conditions` rows with `marker` fields should be recognized as condition rows.
+  - The row whose `marker` equals `baseline_condition_marker` should count as the baseline.
+  - `analyze_results` should emit at least one baseline/comparator condition comparison and a non-null structured result table for metrics such as `accuracy_delta_vs_baseline`, `average_accuracy`, and task accuracies.
+
+- Actual behavior:
+  - `run_experiments` produced real metrics with 8 completed conditions, 0 failed conditions, and `baseline_condition_marker=rank_8_dropout_0_0`.
+  - Each condition row uses `marker`, not `condition_marker`.
+  - `analyze_results` emitted `condition_comparisons=[]`, `baseline_count=0`, and `result_table.json` rows with `baseline=null` and `comparator=null`.
+  - The workflow paused with `pendingTransition.reason=incomplete_results_table`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation attached to the existing persisted run.
+  - Existing session: the persisted run advanced from live `run_experiments` completion into `analyze_results`, then paused because result-table projection missed the baseline/comparator rows.
+  - Divergence: no session divergence observed.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `readConditionName(...)` recognizes `condition_marker`, `condition_id`, and related aliases, but not the generated runner's plain `marker` field. This prevents `markBaselineConditionRow(...)` from matching `baseline_condition_marker`, so downstream condition comparison and result table construction see no baseline/comparator pair.
+
+- Code/test changes:
+  - Added `marker` as a condition-name alias in `readConditionName(...)` in `src/core/resultAnalysis.ts`.
+  - Added deterministic regression coverage in `tests/objectiveMetricPropagation.test.ts` for generated `metrics.conditions` rows that use `marker` plus top-level `baseline_condition_marker`.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-13.
+  - Automated regression: `npm test -- --run tests/objectiveMetricPropagation.test.ts -t "marker fields|baseline flags|condition-array rows"` passed on 2026-05-13.
+  - Build regression: `npm run build` passed on 2026-05-13.
+  - Same-flow revalidation: passed for the marker-projection boundary on 2026-05-13. Rerunning `analyze_results` on run `3bc89107-909f-4315-9340-d75ce02eb0e0` produced non-null `result_table.json` baseline/comparator rows, `baseline_comparison.json` with `status=available`, and `evidence_scale_assessment.json` with `baseline_count=1`. The run now pauses for the governed evidence gate (`accuracy_delta_vs_baseline=0`, `confidence_interval_count=0`) and recommends `backtrack_to_design -> design_experiments`, rather than failing with `incomplete_results_table`.
+
+- Follow-up risks:
+  - Fixing result-table projection does not by itself make the work paper-ready; the live result still has `accuracy_delta_vs_baseline=0`, no confidence intervals, and no supplemental robustness runs. After the projection repair, the governed paper gate may still require downgrade or design backtracking.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/metrics.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/analysis/result_table.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/analysis/baseline_comparison.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/analysis/evidence_scale_assessment.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`
+
+---
+
+## Issue: LV-423
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-424 on 2026-05-12
+- Validation target: P6 `run_experiments` metrics payload should aggregate nested completed per-seed records into top-level objective metrics instead of reporting completed placeholder rows with null metrics.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-422 helper handoff repair and same-flow retry of `run_experiments`.
+
+- Reproduction steps:
+  1. Run the P6 helper against run `3bc89107-909f-4315-9340-d75ce02eb0e0` with `AUTOLABOS_P6_WORKSPACE=<validation-workspace>` and command `/agent retry run_experiments <run-id>`.
+  2. Let the generated LoRA runner execute from the workflow-owned `run_experiments` node.
+  3. Inspect `metrics.json`, `run_experiments_verify_report.json`, and public `study_outputs`.
+
+- Expected behavior:
+  - If the generated runner returns wrapper records whose `raw_result.value` contains real per-seed rows, aggregation should flatten those nested rows before computing condition summaries.
+  - Top-level `metrics.json` should expose a numeric `accuracy_delta_vs_baseline`, completed condition summaries, baseline/comparator metrics, and per-seed rows with `condition_marker`, `seed`, and task accuracies.
+  - The repair must project real node-owned rows; it must not synthesize metrics or mark missing evidence as complete.
+
+- Actual behavior:
+  - The prior `The operation was aborted` failure did not recur.
+  - `metrics.json` was written and the runner exited with code 0.
+  - `metrics.json` top-level includes `accuracy_delta_vs_baseline` but its value is `null`.
+  - `completed_run_count` is 26, while all condition summaries are `status=missing` with no metric-complete rows.
+  - Public `study_outputs/.../latest_summary.json` contains wrapper `per_run_results` where nested `raw_result.value` includes the real completed per-seed rows with `condition_marker`, `seed`, `accuracy`, and `accuracy_delta_vs_baseline`.
+  - `run_experiments` correctly failed the node with `Objective metric "accuracy_delta_vs_baseline" was not found in metrics.json.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation attached to the existing persisted run.
+  - Existing session: the existing run retried `run_experiments`, executed the generated runner, wrote metrics, and failed at the objective-metric contract.
+  - Divergence: no session divergence observed.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: this generated runner aggregates `run_results` through `aggregate_seed_run_results(...)` and `normalize_run_result(...)`, but does not flatten wrapper records whose `raw_result.value` contains the real seed-level rows. The earlier `_finalize_extract_run_records(...)` repair does not apply because this script shape has no such function.
+
+- Code/test changes:
+  - Added a generated-runner repair for `aggregate_seed_run_results(...)` that flattens nested seed rows before condition aggregation.
+  - Added a deterministic regression covering nested `raw_result.value` seed rows before aggregate metrics projection.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-11.
+  - Automated regression: `npm test -- --run tests/implementSessionManager.test.ts -t "flattens nested raw_result rows"` passed on 2026-05-11.
+  - Build: `npm run build` passed on 2026-05-11.
+  - Same-flow revalidation: rerunning `implement_experiments` -> `run_experiments` executed the node-owned runner, wrote top-level metrics, and produced a verifier `status=pass` with the honest unmet-objective summary `accuracy_delta_vs_baseline=0 does not satisfy >= 0.01`.
+  - Downstream continuation: approving `run_experiments` advanced to `analyze_results`, which completed and opened LV-424 at the research evidence gate.
+
+- Follow-up risks:
+  - Once metrics projection is repaired, the run may advance to `analyze_results` and expose statistical, figure-audit, review-gate, or manuscript-rendering blockers.
+  - Completed experiment metrics still do not imply paper-ready output until analysis, figure audit, review, and `write_paper` pass with honest evidence linkage.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_experiments_verify_report.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/study_outputs/lora-rank-dropout-20260511-172444/latest_summary.json`
+
+---
+
+## Issue: LV-422
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-423 on 2026-05-11
+- Validation target: P6 unattended live helper should observe an automatic `implement_experiments` -> `run_experiments` handoff without sending `/quit` while the next node's subprocess is starting.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, root workspace `<validation-workspace>` rather than a nested validation folder, after LV-421 repair and same-flow rerun of `implement_experiments`.
+
+- Reproduction steps:
+  1. Run the P6 helper against run `3bc89107-909f-4315-9340-d75ce02eb0e0` with `AUTOLABOS_P6_WORKSPACE=<validation-workspace>` and command `/agent run implement_experiments <run-id>`.
+  2. Let `implement_experiments` regenerate the LoRA runner, pass `py_compile`, apply handoff repairs, and complete.
+  3. Observe the automatic handoff into `run_experiments`.
+  4. Inspect `run_record.json`, `run_experiments_verify_report.json`, and the helper output transcript.
+
+- Expected behavior:
+  - After `implement_experiments` reaches a fresh stop boundary, the helper should allow a short persisted-state grace window for the next node to start.
+  - If `run_experiments` becomes the fresh running node, the helper should observe that node until its own stop boundary instead of quitting the TUI.
+  - The experiment subprocess should only fail because of node-owned runtime behavior, not because the helper closed the session during startup.
+
+- Actual behavior:
+  - `implement_experiments` completed and handed off to `run_experiments`.
+  - The helper sent `/quit` around the handoff boundary and timed out waiting for `Bye`.
+  - Persisted verification for `run_experiments` recorded `status=fail`, `stage=command`, `summary=The operation was aborted`, with no `metrics.json`.
+  - No live `run_lora_rank_dropout_study.py` process remained after the helper exited.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation attached to the existing persisted run.
+  - Existing session: the existing run advanced from `implement_experiments` into `run_experiments`, then aborted during command startup.
+  - Divergence: no session divergence observed; the failure is at the unattended helper's boundary handling.
+
+- Root cause hypothesis:
+  - Type: `race_timing_bug`
+  - Hypothesis: the helper accepts the previous node's fresh stop boundary and immediately quits before the persisted run record reliably exposes the next running node. This closes the TUI while the node-owned subprocess is starting, causing `The operation was aborted`.
+
+- Code/test changes:
+  - Added a short persisted-state handoff grace after a stop boundary so the helper can detect a delayed next-node running record before sending `/quit`.
+  - Added a deterministic self-test that simulates delayed `run_record.json` handoff from `implement_experiments` to `run_experiments`.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-11.
+  - Automated regression: `AUTOLABOS_P6_CONTINUE_SELFTEST=1 python3 scripts/p6-approve-and-run-next.py` passed on 2026-05-11.
+  - Automated regression: `npm test -- --run tests/p6ContinueScript.test.ts` passed on 2026-05-11.
+  - Same-flow revalidation: rerunning `run_experiments` no longer reproduced the helper-induced `The operation was aborted` failure. The generated runner executed, wrote `metrics.json`, and advanced to LV-423 at the metrics projection boundary.
+
+- Follow-up risks:
+  - After the helper race is fixed, `run_experiments` may still expose legitimate runtime, metrics, result-quality, analysis, figure-audit, review, or manuscript-rendering blockers.
+  - This issue is about preserving live validation fidelity; it is not evidence of paper-readiness.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_experiments_verify_report.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/exec_logs/run_experiments.txt`
+  - `<repo-root>/outputs/p6-live-root/p6-continue-analyze_papers-output.txt`
+
+---
+
+## Issue: LV-421
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-422 on 2026-05-11
+- Validation target: P6 generated LoRA runner should resolve the generated baseline-first sweep entrypoint before attempting `run_experiments`.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-420 repair, same-flow rerun of `implement_experiments`, and automatic handoff to `run_experiments`.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-420 single-run executor signature-dispatch repair.
+  2. Rerun the same P6 helper for run `3bc89107-909f-4315-9340-d75ce02eb0e0`.
+  3. Let `implement_experiments` regenerate the runner, pass local `py_compile`, apply handoff repairs, and hand off to `run_experiments`.
+  4. Inspect `run_record.json` and the generated runner's final `main(...)` callable-resolution path.
+
+- Expected behavior:
+  - The final entrypoint should find the existing generated sweep runner, such as `run_locked_baseline_first_sweep(...)`, and execute node-owned experiment work.
+  - The repair must only alias existing generated orchestration helpers; it must not synthesize metrics, completed runs, or successful experiment results.
+
+- Actual behavior:
+  - `implement_experiments` completed and `py_compile` passed.
+  - `run_experiments` failed before writing `metrics.json`.
+  - The generated script defines `run_locked_baseline_first_sweep(args: Any) -> Dict[str, Any]`.
+  - The final entrypoint failed with `RuntimeError: Unable to locate the experiment sweep runner callable in the current module.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation against the existing persisted run.
+  - Existing session: persisted workflow completed `implement_experiments`, handed off to `run_experiments`, and failed at final sweep-runner resolution.
+  - Divergence: no session divergence observed.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the staged generator emitted `run_locked_baseline_first_sweep(...)`, while the final `main(...)` resolver searches a narrower candidate set that omits this generated helper name.
+
+- Code/test changes:
+  - Extended the baseline-first locked sweep study-runner alias repair to cover `run_locked_baseline_first_sweep(...)` and the chunk3b final `main(...)` resolver that raises `Unable to locate the experiment sweep runner callable in the current module`.
+  - Added a deterministic regression that fails before repair with the chunk3b final resolver error, then passes by executing the existing generated locked baseline-first sweep helper.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-11.
+  - Automated regression: targeted `tests/implementSessionManager.test.ts` filter passed on 2026-05-11.
+  - Build: `npm run build` passed on 2026-05-11.
+  - Same-flow revalidation: rerunning the same `implement_experiments` path did not reproduce the prior `Unable to locate the experiment sweep runner callable in the current module` failure. The run advanced to LV-422 at the unattended helper handoff boundary.
+
+- Follow-up risks:
+  - Once the final sweep runner resolves, the next blocker may be single-run execution, model/dataset loading, LoRA training, metrics projection, or evidence quality gates.
+  - This remains a live runner wiring defect, not proof of paper-readiness.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+---
+
+## Issue: LV-419
+
+- Status: repair in progress on 2026-05-11
+- Validation target: P6 `run_experiments` metrics contract should project completed node-owned per-seed runs to top-level fields instead of failing with `success=false`.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-418 repair, forced same-node retry of `implement_experiments`, and automatic handoff to `run_experiments`.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-418 entrypoint result-kwarg alias repair.
+  2. Force rerun `implement_experiments` for run `3bc89107-909f-4315-9340-d75ce02eb0e0` with `AUTOLABOS_P6_FORCE_RUN_ACTIVE=1`.
+  3. Let `implement_experiments` regenerate the public runner, pass `py_compile`, and hand off to `run_experiments`.
+  4. Inspect `metrics.json`, `run_experiments_verify_report.json`, and `exec_logs/run_experiments.txt`.
+
+- Expected behavior:
+  - If the runner completes all 24 planned condition-seed executions, top-level `metrics.json` should expose `status=completed`, `success=true`, `completed_run_count=24`, completed condition summaries, baseline/comparator metrics, and per-run rows.
+  - If execution fails, failed rows must be visible at top level with evidence; failures must not be hidden inside nested metadata.
+
+- Actual behavior:
+  - LV-418's prior `write_study_artifacts() missing 1 required positional argument: 'study_result'` failure did not recur.
+  - `run_experiments` executed the generated runner and returned exit code 0.
+  - The run log shows model loads and trainable-parameter output for the planned LoRA conditions.
+  - Nested payloads contain `observed_run_count=24`, `completed_run_count=24`, `failed_run_count=0`, and per-seed rows with `status=completed`.
+  - Top-level `metrics.json` still reports `status=partial`, `success=false`, `completed_run_count=0`, `completed_condition_count=0`, and every condition as `not_run`.
+  - `run_experiments` correctly failed the node with `Experiment metrics payload reports success=false`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation against the existing persisted run.
+  - Existing session: the forced same-node retry completed implementation, handed off to `run_experiments`, and failed at the top-level metrics projection boundary.
+  - Divergence: no session divergence observed.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `_finalize_extract_run_records(...)` selects the first top-level `per_run_results` list even when it contains placeholder `not_run` wrapper records, then fails to unwrap nested `raw_result.value` / completed run rows before aggregating the public metrics contract.
+
+- Code/test changes:
+  - Added a final extraction repair that unwraps nested completed per-run rows from `raw_result.value` / equivalent nested result arrays when top-level wrapper rows have no `condition_marker`.
+  - Added a deterministic regression that fails before repair with placeholder `not_run` rows, then passes by extracting the nested completed rows.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-11.
+  - Automated regression: targeted `tests/implementSessionManager.test.ts` filter passed on 2026-05-11.
+  - Build: `npm run build` passed on 2026-05-11.
+  - Same-flow revalidation: pending.
+
+- Follow-up risks:
+  - After projection repair, the run may advance to `analyze_results` and expose statistical/evidence-quality blockers rather than implementation failures.
+  - A completed metrics contract is still not paper-ready by itself; review, figure audit, claim-to-evidence linkage, and manuscript rendering remain gated.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_experiments_verify_report.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+---
+
+## Issue: LV-418
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-419 on 2026-05-11
+- Validation target: P6 generated LoRA runner should pass the node-owned study result into the final artifact writer before reporting `run_experiments` success or failure.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-417 repair and same-flow rerun of `implement_experiments` -> `run_experiments`.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-417 stage3b study callable alias repair.
+  2. Rerun the same live helper for run `3bc89107-909f-4315-9340-d75ce02eb0e0`.
+  3. Let `implement_experiments` regenerate the runner, pass local `py_compile`, apply handoff repairs, and hand off to `run_experiments`.
+  4. Inspect `run_experiments_verify_report.json`, `exec_logs/run_experiments.txt`, and the generated runner's `write_study_artifacts(...)` call surface.
+
+- Expected behavior:
+  - The generated runner should execute the node-owned study callable and pass that `study_output`/`study_result` into `write_study_artifacts(...)`.
+  - The repair must bridge only the final call-surface mismatch; it must not synthesize metrics, condition rows, or completed experiment results.
+
+- Actual behavior:
+  - LV-417's previous `Unable to locate the study execution function in the current module state` failure did not recur.
+  - The runner started, emitted its runnable command and context, and then failed at artifact writing.
+  - The generated artifact writer signature is `write_study_artifacts(study_result, args, run_command=None)`.
+  - The final entrypoint invokes generic callable dispatch with `study_output=study_output` and `execution_result=study_output`, but not `study_result=study_output`.
+  - Because the dispatcher filters kwargs by target signature, `write_study_artifacts(...)` receives no `study_result` and raises `TypeError: write_study_artifacts() missing 1 required positional argument: 'study_result'`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation against the existing persisted run.
+  - Existing session: persisted workflow completed `implement_experiments`, handed off to `run_experiments`, and failed at the final artifact writer call boundary.
+  - Divergence: no session divergence observed.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the generated final entrypoint standardized the result variable as `study_output`, while the generated artifact writer kept the older `study_result` parameter name; the generic dispatcher does not alias equivalent result kwargs.
+
+- Code/test changes:
+  - Added an entrypoint callable-dispatch repair that aliases `study_output`/`execution_result` to `study_result` when the target callable explicitly requires `study_result`.
+  - Added a deterministic regression that fails before repair with `write_study_artifacts() missing 1 required positional argument: 'study_result'`, then passes by writing metrics from the real `study_output`.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-11.
+  - Automated regression: targeted `tests/implementSessionManager.test.ts` filter passed on 2026-05-11.
+  - Build: `npm run build` passed on 2026-05-11.
+  - Same-flow revalidation: rerunning the same `implement_experiments` -> `run_experiments` path did not reproduce the prior missing `study_result` argument TypeError. The run advanced to LV-419 at the top-level metrics projection boundary.
+
+- Follow-up risks:
+  - Once the artifact writer receives the real study result, the next blocker may be actual model/dataset execution, condition coverage, runtime budget, metrics projection, or review-gate evidence adequacy.
+  - This remains a live runner wiring defect, not proof of paper-readiness.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_experiments_verify_report.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+---
+
+## Issue: LV-417
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-418 on 2026-05-11
+- Validation target: P6 stage3b generated LoRA runner should resolve the generated `run_baseline_first_locked_sweep(...)` helper through the stage3b study callable resolver.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-416 repair and same-flow rerun of `implement_experiments` -> `run_experiments`.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-416 baseline-first locked sweep study-runner alias repair.
+  2. Rerun the same live helper for run `3bc89107-909f-4315-9340-d75ce02eb0e0`.
+  3. Let `implement_experiments` regenerate the runner, pass local `py_compile`, apply handoff repairs, and hand off to `run_experiments`.
+  4. Inspect the persisted `run_record.json`, `run_experiments_verify_report.json`, and generated runner's `_stage3b_resolve_study_callable(...)`.
+
+- Expected behavior:
+  - `_stage3b_resolve_study_callable(...)` should find the real generated baseline-first locked sweep helper and execute node-owned experiment work.
+  - The repair must only alias or expose existing generated helper functions; it must not synthesize metrics, condition rows, or completed experiment results.
+
+- Actual behavior:
+  - LV-416's previous `Unable to locate a study runner function in the generated script` failure did not recur.
+  - The regenerated runner defines `run_baseline_first_locked_sweep(args, runtime_context=None, trial_runner=None, condition_markers=None, seed_schedule=None)`.
+  - The active entrypoint now uses `_stage3b_resolve_study_callable(...)`, which searches names such as `run_lora_rank_dropout_study`, `execute_lora_rank_dropout_study`, `run_condition_sweep`, `run_study`, `execute_study`, `run_experiment`, and `execute_experiment`.
+  - No searched alias is present, so the run fails with `RuntimeError: Unable to locate the study execution function in the current module state.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation against the existing persisted run.
+  - Existing session: persisted workflow completed `implement_experiments`, handed off to `run_experiments`, and failed at the stage3b study callable resolver boundary.
+  - Divergence: no session divergence observed.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation changed the final entrypoint from `_autolabos_run_study(...)` to the stage3b wrapper, while the repair for LV-416 only targets `_autolabos_run_study(...)` and therefore does not expose `run_baseline_first_locked_sweep(...)` under the stage3b resolver's canonical names.
+
+- Code/test changes:
+  - Extended the baseline-first locked sweep study-runner alias repair to support the `_stage3b_resolve_study_callable(...)` entrypoint and its candidate names.
+  - Added a deterministic regression that fails before repair with the stage3b missing study execution function, then passes by calling the generated baseline-first locked sweep helper.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-11.
+  - Automated regression: targeted `tests/implementSessionManager.test.ts` filter passed on 2026-05-11.
+  - Build: `npm run build` passed on 2026-05-11.
+  - Same-flow revalidation: rerunning the same `implement_experiments` -> `run_experiments` path did not reproduce the prior missing stage3b study callable alias failure. The run advanced to LV-418 at the final artifact writer result-argument boundary.
+
+- Follow-up risks:
+  - Once the stage3b resolver reaches the real helper, the next blocker may be single-condition execution, model/dataset loading, LoRA training, metrics projection, or evidence quality gates.
+  - This remains a live runner wiring defect, not proof of paper-readiness.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_experiments_verify_report.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+---
+
+## Issue: LV-416
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-417 on 2026-05-11
+- Validation target: P6 generated LoRA runner should expose the generated baseline-first locked sweep helper under the final AutoLabOS study runner resolver's approved orchestration names.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-415 repair and same-flow rerun of `implement_experiments` -> `run_experiments`.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-415 locked sweep plan-builder alias repair.
+  2. Rerun the same live helper for run `3bc89107-909f-4315-9340-d75ce02eb0e0`.
+  3. Let `implement_experiments` regenerate the runner, pass local `py_compile`, apply handoff repairs, and hand off to `run_experiments`.
+  4. Inspect `exec_logs/run_experiments.txt` and the generated runner's `_autolabos_run_study(...)` resolver.
+
+- Expected behavior:
+  - `_autolabos_run_study(...)` should find the real generated baseline-first locked sweep helper and execute node-owned trial work.
+  - The repair must only alias existing generated runner functions; it must not synthesize condition rows, metrics, or successful experiment results.
+
+- Actual behavior:
+  - LV-415's previous `Unable to resolve required callable from candidates=['prepare_locked_sweep_plan', ...]` failure did not recur.
+  - The regenerated runner defines `run_baseline_first_locked_sweep(args, runtime_context=None, trial_runner=None, condition_markers=None, seed_schedule=None)`.
+  - `_autolabos_run_study(...)` searches `run_locked_lora_rank_dropout_study`, `run_lora_rank_dropout_study`, `run_locked_rank_dropout_study`, `run_locked_study`, `run_study`, `execute_locked_study`, `execute_study`, `orchestrate_study`, `run_experiment`, and `execute_experiment`.
+  - No searched alias is present, so `run_experiments` fails with `RuntimeError: Unable to locate a study runner function in the generated script. Expected one of the approved orchestration helpers to be defined earlier.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation against the existing persisted run.
+  - Existing session: persisted workflow completed `implement_experiments`, handed off to `run_experiments`, and failed at the final AutoLabOS study-runner resolver boundary.
+  - Divergence: no session divergence observed.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged chunks generated the concrete orchestration helper as `run_baseline_first_locked_sweep(...)`, while the final AutoLabOS CLI entrypoint resolver uses a narrower canonical vocabulary and does not include that generated helper name.
+
+- Code/test changes:
+  - Added a handoff repair that aliases `run_baseline_first_locked_sweep(...)` into the final `_autolabos_run_study(...)` resolver's approved study-runner names.
+  - Added a deterministic regression that fails before repair with the missing approved orchestration helper, then passes by calling the generated baseline-first locked sweep helper.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-11.
+  - Automated regression: targeted `tests/implementSessionManager.test.ts` filter passed on 2026-05-11.
+  - Build: `npm run build` passed on 2026-05-11.
+  - Same-flow revalidation: rerunning the same `implement_experiments` -> `run_experiments` path did not reproduce the prior missing `_autolabos_run_study(...)` study-runner aliases. The run advanced to LV-417 at the stage3b study callable resolver boundary.
+
+- Follow-up risks:
+  - Once the final study runner resolves, the next boundary may be single-condition execution, model/dataset loading, LoRA training, metrics projection, or evidence quality gates.
+  - This remains a live runner wiring defect, not proof of paper-readiness.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_experiments_verify_report.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+---
+
+## Issue: LV-415
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-416 on 2026-05-11
+- Validation target: P6 generated LoRA runner should resolve the generated locked sweep plan builder before executing the 8-condition x 3-seed study.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-414 repair and same-flow rerun of `implement_experiments` -> `run_experiments`.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-414 baseline-first sweep entrypoint alias repair.
+  2. Rerun the same live helper for run `3bc89107-909f-4315-9340-d75ce02eb0e0`.
+  3. Let `implement_experiments` regenerate the runner, pass local `py_compile`, apply handoff repairs, and hand off to `run_experiments`.
+  4. Inspect `exec_logs/run_experiments.txt` and the generated runner's `_resolve_plan_if_needed(...)`.
+
+- Expected behavior:
+  - `run_locked_lora_rank_dropout_sweep(...)` should resolve a generated plan builder such as `prepare_execution_plan(...)` or `expand_locked_sweep_plan(...)`.
+  - The repair must only connect helper aliases; it must not fabricate plan rows, metrics, or completed condition results.
+
+- Actual behavior:
+  - LV-414's previous `No study sweep runner or single-run helper was found in the script` failure did not recur.
+  - `run_experiments` entered `run_locked_lora_rank_dropout_sweep(...)`, proving the final study runner boundary advanced.
+  - The runner defines `expand_locked_sweep_plan(config=None)` and `prepare_execution_plan(config=None)`.
+  - `_resolve_plan_if_needed(...)` searches `prepare_locked_sweep_plan`, `build_prepared_sweep_plan`, `prepare_sweep_plan`, and `build_sweep_plan`, so it raises `RuntimeError: Unable to resolve required callable from candidates=['prepare_locked_sweep_plan', 'build_prepared_sweep_plan', 'prepare_sweep_plan', 'build_sweep_plan']`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation against the existing persisted run.
+  - Existing session: persisted workflow completed `implement_experiments`, handed off to `run_experiments`, and failed at the internal locked sweep plan-builder resolver boundary.
+  - Divergence: no session divergence observed.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged chunks generated plan builders under `expand_locked_sweep_plan(...)` / `prepare_execution_plan(...)`, while the final sweep orchestration chunk's resolver only searches canonical names from another generation pattern.
+
+- Code/test changes:
+  - Added a handoff repair that aliases the available generated plan builder into `prepare_locked_sweep_plan`, `build_prepared_sweep_plan`, `prepare_sweep_plan`, and `build_sweep_plan`.
+  - Added deterministic regression coverage for a generated `_resolve_plan_if_needed(...)` resolver that only searches canonical plan-builder names while the script defines `prepare_execution_plan(...)`.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-11.
+  - Automated regression: targeted `tests/implementSessionManager.test.ts` filter passed on 2026-05-11.
+  - Build: `npm run build` passed on 2026-05-11.
+  - Same-flow revalidation: rerunning the same `implement_experiments` -> `run_experiments` path did not reproduce the prior missing locked sweep plan-builder failure. The run advanced to LV-416 at the final `_autolabos_run_study(...)` study-runner resolver boundary.
+
+- Follow-up risks:
+  - Once the locked sweep plan is resolved, the next boundary may be single-run executor resolution, model/dataset loading, LoRA training, metrics projection, or evidence quality gates.
+  - This remains a live runner wiring defect, not proof of paper-readiness.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/exec_logs/run_experiments.txt`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_experiments_verify_report.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+---
+
+## Issue: LV-414
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-415 on 2026-05-11
+- Validation target: P6 generated LoRA runner should expose its generated baseline-first sweep executor under the final `_execute_study(...)` resolver's expected sweep names.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-413 repair and same-flow rerun of `implement_experiments` -> `run_experiments`.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-413 locked-study-runs entrypoint alias repair.
+  2. Rerun the same `implement_experiments` -> `run_experiments` live path for run `3bc89107-909f-4315-9340-d75ce02eb0e0`.
+  3. Inspect the generated runner's `_execute_study(...)` resolver and latest `run_experiments_verify_report.json`.
+
+- Expected behavior:
+  - `_execute_study(...)` should find the real generated sweep executor, `execute_locked_baseline_first_sweep(...)`.
+  - The repair must only alias the generated sweep function into the resolver's public names; it must not synthesize metrics, condition rows, or paper artifacts.
+
+- Actual behavior:
+  - LV-413's previous missing canonical `execute_study` / `run_study` locked-study-runs resolver failure did not recur.
+  - The regenerated runner defines `execute_locked_baseline_first_sweep(args, *, device=None, device_info=None, model_preflight=None)`.
+  - `_execute_study(...)` searches `run_locked_study`, `run_locked_study_sweep`, `execute_locked_study`, `execute_study`, `run_study`, `run_baseline_first_sweep`, and `orchestrate_locked_study`, but none are aliased to `execute_locked_baseline_first_sweep`.
+  - The fallback single-run helper resolver also misses the available generated executor surface and raises `RuntimeError: No study sweep runner or single-run helper was found in the script.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation against the existing persisted run.
+  - Existing session: persisted workflow advanced from `implement_experiments` to `run_experiments` and failed at the final study sweep/single-run helper resolver boundary.
+  - Divergence: no session divergence observed.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation created the real baseline-first sweep under a descriptive name, `execute_locked_baseline_first_sweep(...)`, while the final entrypoint resolver searches only canonical public sweep names.
+
+- Code/test changes:
+  - Added `repairPythonBaselineFirstSweepEntrypointAliasSurface(...)` to alias `execute_locked_baseline_first_sweep(...)` into `run_locked_study`, `run_locked_study_sweep`, `execute_locked_study`, `execute_study`, `run_study`, `run_baseline_first_sweep`, and `orchestrate_locked_study`.
+  - Wired the repair into the late handoff repair pipeline after the locked-study-runs entrypoint alias repair.
+  - Added a deterministic regression that fails before repair with `No study sweep runner or single-run helper was found`, then passes through the generated baseline-first sweep function.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-11.
+  - Automated regression: pass on 2026-05-11 with `npm test -- --run tests/implementSessionManager.test.ts -t "baseline-first locked sweep executors|locked study run executors|schedule executor condition and seed arguments"`.
+  - Build: pass on 2026-05-11 with `npm run build`.
+  - Same-flow revalidation: rerunning the same `implement_experiments` -> `run_experiments` path did not reproduce the prior `No study sweep runner or single-run helper was found in the script` failure. The run advanced to LV-415 at the internal locked sweep plan-builder resolver boundary.
+
+- Follow-up risks:
+  - Once the final `_execute_study(...)` resolver reaches the real baseline-first sweep, condition execution may expose model loading, dataset loading, LoRA training, timeout, metrics projection, or evidence quality blockers.
+  - The live objective remains paper-generation validation; passing this runner boundary is necessary but not sufficient for paper readiness.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_experiments_verify_report.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+---
+
+## Issue: LV-413
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-414 on 2026-05-11
+- Validation target: P6 generated LoRA runner should expose its real locked-study executor under the final main resolver's expected study entrypoint names.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-412 repair and same-flow rerun of `implement_experiments` -> `run_experiments`.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-412 schedule executor argument bridge.
+  2. Rerun `implement_experiments` for run `3bc89107-909f-4315-9340-d75ce02eb0e0`.
+  3. Let AutoLabOS hand off to `run_experiments`.
+  4. Inspect the generated runner's `_execute_locked_study(...)` resolver and latest metrics failure.
+
+- Expected behavior:
+  - The final `_execute_locked_study(args)` resolver should find the real generated executor, such as `execute_locked_study_runs(...)`.
+  - The repair must only alias or route to generated execution functions; it must not synthesize completed runs or metrics rows.
+
+- Actual behavior:
+  - LV-412's previous `TypeError: 'Namespace' object is not iterable` schedule-expansion failure did not recur.
+  - The regenerated runner defines `execute_locked_study_runs(args, scheduled_runs=None, prepared_data=None, ...)`.
+  - `_execute_locked_study(...)` searches `execute_study`, `run_study`, `run_locked_study`, `execute_experiment`, `run_experiment`, `orchestrate_study`, `execute_locked_plan`, and `run_locked_plan`, but none are aliased to `execute_locked_study_runs`.
+  - `run_experiments` wrote a failed metrics payload with `RuntimeError: No study execution function was found in the script. Expected one of: execute_study, run_study, run_locked_study, execute_experiment, run_experiment, orchestrate_study.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation against the existing persisted run.
+  - Existing session: persisted workflow advanced from `implement_experiments` to `run_experiments` and failed at the final study-entrypoint resolver boundary.
+  - Divergence: no session divergence observed.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation created the real locked study runner under `execute_locked_study_runs(...)`, while the final main entrypoint resolver only searches canonical public names. Existing callable bridge repairs cover several PEFT and rank/dropout shapes but not this exact plural `execute_locked_study_runs` helper.
+
+- Code/test changes:
+  - Added `repairPythonLockedStudyRunsEntrypointAliasSurface(...)` to alias `execute_locked_study_runs(...)` into the final resolver's canonical study names: `execute_study`, `run_study`, `run_locked_study`, `execute_experiment`, `run_experiment`, `orchestrate_study`, `execute_locked_plan`, and `run_locked_plan`.
+  - Wired the repair into the late handoff repair pipeline after the schedule executor argument bridge.
+  - Added a deterministic regression that fails before repair with `No study execution function was found`, then passes after repair by invoking the generated `execute_locked_study_runs(...)` function.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-11.
+  - Automated regression: pass on 2026-05-11 with `npm test -- --run tests/implementSessionManager.test.ts -t "locked study run executors|schedule executor condition and seed arguments|sweep callable resolver"`.
+  - Build: pass on 2026-05-11 with `npm run build`.
+  - Same-flow revalidation: rerunning the same `implement_experiments` -> `run_experiments` path did not reproduce the prior missing canonical locked-study-runs entrypoint failure. The run advanced to LV-414 at the final `_execute_study(...)` sweep/single-run helper resolver boundary.
+
+- Follow-up risks:
+  - Once the final entrypoint reaches the real locked-study executor, the next blocker may be model download/loading, dataset availability, LoRA training, GPU memory, runtime timeout, or metrics projection.
+  - The repair must preserve failed rows and honest evidence rather than hiding failed execution.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_experiments_verify_report.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+---
+
+## Issue: LV-412
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-413 on 2026-05-11
+- Validation target: P6 generated LoRA runner should invoke schedule-expansion helpers without passing parsed CLI/config objects as condition sequences.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-411 repair and same-flow rerun of `implement_experiments` -> `run_experiments`.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-411 sweep callable resolver repair.
+  2. Rerun `implement_experiments` for run `3bc89107-909f-4315-9340-d75ce02eb0e0`.
+  3. Let AutoLabOS hand off to `run_experiments`.
+  4. Inspect the generated runner's `_invoke_schedule_executor(...)` and latest `run_experiments` traceback.
+
+- Expected behavior:
+  - `_invoke_schedule_executor(...)` should pass `config` only to executor parameters that explicitly accept config-like names.
+  - Schedule expansion helpers such as `expand_planned_run_schedule(conditions=None, seed_schedule=None)` should receive no positional config object and should use the locked generated condition/seed constants.
+
+- Actual behavior:
+  - LV-411's previous `StudyConfig.__init__()` callable-selection failure did not recur.
+  - `run_experiments` advanced to `_invoke_schedule_executor(...)`, selected `expand_planned_run_schedule(...)`, and called `executor(config, schedule)` because the helper had two parameters.
+  - `config` is an `argparse.Namespace`, so it landed in the helper's `conditions` parameter and failed inside `tuple(conditions)` with `TypeError: 'Namespace' object is not iterable`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation against the existing persisted run.
+  - Existing session: persisted workflow advanced from `implement_experiments` to `run_experiments` and failed at the generated schedule-executor argument bridge boundary.
+  - Divergence: no session divergence observed.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation created a schedule-expansion helper whose parameters are optional `conditions` / `seed_schedule`, while the generic executor adapter inferred arity rather than semantic names and therefore passed the parsed config as a condition sequence.
+
+- Code/test changes:
+  - Added `repairPythonScheduleExecutorArgumentBridgeSurface(...)` to pass condition/seed schedule parameters by semantic name instead of falling back to `executor(config, schedule)` for schedule expansion helpers.
+  - Wired the repair into the late handoff repair pipeline after the sweep callable class resolver.
+  - Added a deterministic regression that fails before repair by passing an `argparse.Namespace` into `expand_planned_run_schedule(conditions=...)`, then passes after repair with the locked condition and seed schedule.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-11.
+  - Automated regression: pass on 2026-05-11 with `npm test -- --run tests/implementSessionManager.test.ts -t "schedule executor condition and seed arguments|sweep callable resolver|locked sweep per-run model aliases|rank/dropout sweep controller"`.
+  - Build: pass on 2026-05-11 with `npm run build`.
+  - Same-flow revalidation: rerunning the same `implement_experiments` -> `run_experiments` path did not reproduce the prior `TypeError: 'Namespace' object is not iterable` schedule-expansion failure. The run advanced to LV-413 at the final study-entrypoint resolver boundary.
+
+- Follow-up risks:
+  - After schedule expansion is invoked with the correct argument shape, actual condition execution may expose model loading, dataset access, timeout, metrics projection, or paper-scale evidence gates.
+  - The repair must preserve the generated locked schedule and must not synthesize condition results.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+  - `<repo-root>/outputs/p6-live-root/p6-continue-analyze_papers-output.txt`
+
+---
+
+## Issue: LV-411
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-412 on 2026-05-11
+- Validation target: P6 generated LoRA runner should discover the generated baseline-first sweep function, not a configuration class, before `run_experiments` executes the study.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-410 repair and same-flow rerun of `implement_experiments` -> `run_experiments`.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-410 per-run executor bridge repair.
+  2. Rerun `implement_experiments` for run `3bc89107-909f-4315-9340-d75ce02eb0e0`.
+  3. Let AutoLabOS hand off to `run_experiments`.
+  4. Inspect the generated runner's `_discover_sweep_callable()` and latest `run_experiments` traceback.
+
+- Expected behavior:
+  - `_discover_sweep_callable()` should prefer generated sweep entrypoints such as `execute_locked_baseline_first_sweep(...)`.
+  - Heuristic callable fallback should skip classes/dataclasses/config constructors because they are callable but are not executable study runners.
+
+- Actual behavior:
+  - LV-410's previous per-run `model_name` bridge / evidence-row projection failure did not recur.
+  - `run_experiments` advanced to `_invoke_sweep_execution(...)`, but `_discover_sweep_callable()` selected `StudyConfig` from `globals()` because classes are callable and the name contains `study`.
+  - The runner then failed with `TypeError: StudyConfig.__init__() missing 10 required positional arguments: 'output_dir', 'metrics_path', 'cache_dir', 'run_name', 'run_dir', 'logs_dir', 'artifacts_dir', 'per_seed_results_path', 'condition_summary_path', and 'study_summary_path'`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation against the existing persisted run.
+  - Existing session: persisted workflow advanced from `implement_experiments` to `run_experiments` and failed at the generated sweep callable resolver boundary.
+  - Divergence: no session divergence observed.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation created the real sweep runner as `execute_locked_baseline_first_sweep(...)`, but the generic resolver omitted that specific name and used a broad callable heuristic that accepted config classes.
+
+- Code/test changes:
+  - Added `repairPythonSweepCallableClassResolverSurface(...)` to prioritize generated baseline-first sweep names such as `execute_locked_baseline_first_sweep(...)`.
+  - The repair also makes explicit and heuristic callable discovery skip Python classes via `not isinstance(candidate, type)`, so config/dataclass constructors are not selected as study runners.
+  - Wired the repair into the late handoff repair pipeline after the locked-sweep per-run executor bridge.
+  - Added a deterministic regression that fails before repair by selecting `StudyConfig`, then passes after repair by executing `execute_locked_baseline_first_sweep(...)`.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-11.
+  - Automated regression: pass on 2026-05-11 with `npm test -- --run tests/implementSessionManager.test.ts -t "sweep callable resolver|locked sweep per-run model aliases|rank/dropout sweep controller|locked full-sweep executors|rank/dropout sweep callables|planned full-grid|P6 plan prose|repeated LoRA rank/dropout seed contracts|locked baseline"`.
+  - Build: pass on 2026-05-11 with `npm run build`.
+  - Same-flow revalidation: rerunning the same `implement_experiments` -> `run_experiments` path did not reproduce the prior `StudyConfig.__init__()` callable-selection failure. The run advanced to LV-412 at the generated schedule-executor argument bridge boundary.
+
+- Follow-up risks:
+  - After the resolver skips classes and selects the real sweep function, the next boundary may expose missing materialization for required `runtime_context` / `dataset_bundle` inputs.
+  - The repair must only route to generated runner logic; it must not fabricate experiment outputs.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+  - `<repo-root>/outputs/p6-live-root/p6-continue-analyze_papers-output.txt`
+
+---
+
+## Issue: LV-410
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-411 on 2026-05-11
+- Validation target: P6 generated LoRA runner should execute the locked 8-condition x 3-seed sweep and preserve failed per-run evidence in public metrics when a condition cannot run.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-409 repair and same-flow rerun of `implement_experiments` -> `run_experiments`.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-409 sweep-controller resolver repair.
+  2. Rerun `implement_experiments` for run `3bc89107-909f-4315-9340-d75ce02eb0e0`.
+  3. Let AutoLabOS hand off to `run_experiments`.
+  4. Inspect `condition_runs/*/seed_*/result_row.json` and final `per_run_results.json` / `metrics.json`.
+
+- Expected behavior:
+  - The generated `execute_locked_sweep(...)` should call `run_finetune_for_condition_seed(...)` with required model aliases such as `model_name`.
+  - If per-run execution fails, failed rows should remain visible in the final public metrics and run records; they must not be reprojected as `not_run`.
+
+- Actual behavior:
+  - LV-409's previous `Unable to resolve the study sweep controller from module globals` error did not recur.
+  - `run_experiments` invoked the runner and created 24 condition/seed `result_row.json` files.
+  - Every row failed immediately with `TypeError: Executor run_finetune_for_condition_seed requires unsupported parameter 'model_name'.`
+  - The final `per_run_results.json` / `metrics.json` then re-aggregated the execution payload without reading `evidence_rows`, so the 24 failed rows were projected as `not_run`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation against the existing persisted run.
+  - Existing session: persisted workflow advanced from `implement_experiments` to `run_experiments` and failed at the per-run executor argument bridge / evidence projection boundary.
+  - Divergence: no session divergence observed.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation created a per-run executor requiring `model_name`, while the generated invoker only supplied `base_model_override` / related fields and did not alias the selected model into `model_name`. A second aggregation pass then ignored `evidence_rows`, masking failed rows as `not_run`.
+
+- Code/test changes:
+  - Added `repairPythonLockedSweepPerRunExecutorBridgeSurface(...)` to pass selected model aliases (`model_name`, `model_name_or_path`, `base_model_id`, `selected_model_id`) into generated locked-sweep per-run executors.
+  - The repair also teaches `_extract_run_records(...)` to consume `evidence_rows` / `run_rows`, so failed per-run evidence is preserved during final metrics projection instead of being hidden as `not_run`.
+  - Wired the repair into the late handoff repair pipeline.
+  - Added a deterministic regression that fails before repair with unsupported `model_name`, then passes after repair while preserving `evidence_rows`.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-11.
+  - Automated regression: pass on 2026-05-11 with `npm test -- --run tests/implementSessionManager.test.ts -t "locked sweep per-run model aliases|rank/dropout sweep controller|locked full-sweep executors|rank/dropout sweep callables|planned full-grid|P6 plan prose|repeated LoRA rank/dropout seed contracts|locked baseline"`.
+  - Build: pass on 2026-05-11 with `npm run build`.
+  - Same-flow revalidation: rerunning the same `implement_experiments` -> `run_experiments` path did not reproduce the prior per-run `model_name` bridge / evidence-row projection failure. The run advanced to LV-411 at the generated sweep callable resolver boundary.
+
+- Follow-up risks:
+  - After this bridge is repaired, real training/evaluation may still fail due model loading, dataset access, memory, timeout, or LoRA stack compatibility.
+  - The repair must preserve failed rows honestly; it must not convert failed evidence into completed runs.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/condition_runs/rank_8_dropout_0_0/seed_42/result_row.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/per_run_results.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_experiments_verify_report.json`
+
+---
+
+## Issue: LV-409
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-410 on 2026-05-11
+- Validation target: P6 generated LoRA runner should resolve the generated baseline-first rank/dropout sweep controller and execute real condition/seed runs.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-408 repair and same-flow rerun of `implement_experiments`.
+
+- Reproduction steps:
+  1. Rerun `implement_experiments` for run `3bc89107-909f-4315-9340-d75ce02eb0e0`.
+  2. Let AutoLabOS hand off to `run_experiments`.
+  3. Observe the generated runner calling `_resolve_sweep_controller()`.
+
+- Expected behavior:
+  - `_resolve_sweep_controller()` should find the generated rank/dropout sweep controller, such as `execute_locked_rank_dropout_sweep(...)`, `run_locked_rank_dropout_sweep`, or `run_rank_dropout_sweep`.
+  - The runner should then enter the locked 8-condition x 3-seed sweep rather than writing only failure artifacts.
+
+- Actual behavior:
+  - `implement_experiments` completed and local `python3 -m py_compile` passed.
+  - `run_experiments` failed immediately before any condition/seed run with `RuntimeError: Unable to resolve the study sweep controller from module globals.`
+  - The generated runner did define `execute_locked_rank_dropout_sweep(...)`, plus aliases `run_locked_rank_dropout_sweep` and `run_rank_dropout_sweep`, but `_resolve_sweep_controller()` searched only generic names such as `run_locked_sweep`, `execute_locked_study`, and `run_study`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation against the existing persisted run.
+  - Existing session: persisted workflow advanced from `implement_experiments` to `run_experiments` and failed at the sweep-controller resolver boundary.
+  - Divergence: no session divergence observed; this is a generated runner callable resolver specificity issue.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation named the real controller with rank/dropout-specific sweep names, while the generated main resolver only searched generic study/sweep names and missed the more specific controller aliases.
+
+- Code/test changes:
+  - Added `repairPythonRankDropoutSweepControllerResolverSurface(...)` to prioritize generated rank/dropout sweep controller names in `_resolve_sweep_controller()`.
+  - Wired the repair into the late handoff repair pipeline after locked full-sweep executor repair and before single-condition runner bridging.
+  - Added a deterministic regression that fails before repair with `Unable to resolve the study sweep controller from module globals.` and passes after repair by executing `execute_locked_rank_dropout_sweep(...)`.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-11.
+  - Automated regression: pass on 2026-05-11 with `npm test -- --run tests/implementSessionManager.test.ts -t "rank/dropout sweep controller|locked full-sweep executors|rank/dropout sweep callables|planned full-grid|P6 plan prose|repeated LoRA rank/dropout seed contracts|locked baseline"`.
+  - Build: pass on 2026-05-11 with `npm run build`.
+  - Same-flow revalidation: rerunning the same `implement_experiments` -> `run_experiments` path did not reproduce the prior `Unable to resolve the study sweep controller from module globals` failure. The run advanced to LV-410 at the per-run executor argument bridge / evidence projection boundary.
+
+- Follow-up risks:
+  - After this resolver is repaired, the run can still fail during actual model loading, dataset fetch, LoRA training, evaluation, metrics projection, or timeout handling.
+  - The repair must only bridge generated controller names; it must not fabricate completed runs or suppress failed condition evidence.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+---
+
+## Issue: LV-408
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-409 on 2026-05-11
+- Validation target: P6 generated LoRA runner should invoke the real locked full-sweep executor before serializing or assembling study outputs.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-407 repair and same-flow rerun advanced into `run_experiments`.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-407 callable bridge repair.
+  2. Rerun `implement_experiments` for run `3bc89107-909f-4315-9340-d75ce02eb0e0` and let it hand off to `run_experiments`.
+  3. Observe the generated runner executing `_execute_main_study(...)`.
+
+- Expected behavior:
+  - `_execute_main_study(...)` should prefer the generated locked sweep executor, such as `collect_locked_execution_records(...)` or its `run_locked_full_sweep` aliases.
+  - Output assembly functions should not be selected as the primary study executor unless an execution payload is already available.
+  - The fix must preserve node-owned execution and should not synthesize successful condition rows.
+
+- Actual behavior:
+  - `run_experiments` failed immediately before any condition/seed execution.
+  - The generated runner defined `collect_locked_execution_records(...)`, `collect_locked_per_run_records(...)`, `run_locked_full_sweep`, `execute_locked_full_sweep`, and `orchestrate_locked_full_sweep`.
+  - `_execute_main_study(...)` exact-matched only study-named executor variants and then selected `assemble_study_outputs(config, execution_payload)` through the generic `required_fragments=("study",)` heuristic.
+  - Invocation failed with `RuntimeError: Unable to resolve a compatible study execution function from the prepared sections: Unable to satisfy parameter 'execution_payload' when invoking assemble_study_outputs.`
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation against the existing persisted run.
+  - Existing session: persisted workflow advanced to `run_experiments` and failed at the executor selection boundary.
+  - Divergence: no session divergence observed; this is a generated runner callable resolver specificity issue.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation named the real execution payload producer with `locked_full_sweep` / `collect_locked_execution_records` terms, while `_execute_main_study(...)` searched mostly `...study` names and did not exclude assembler/output functions from heuristic study candidates.
+
+- Code/test changes:
+  - Added `repairPythonLockedSweepExecutorResolverSurface(...)` to prioritize generated locked full-sweep executor names before generic study assemblers in `_execute_main_study(...)`.
+  - The repair also excludes `assemble` and `output` names from heuristic study executor selection, so output-shaping helpers are not mistaken for primary execution callables.
+  - Wired the repair into the late handoff repair pipeline.
+  - Added a deterministic regression that fails before repair with `execution_payload` missing on `assemble_study_outputs(...)` and passes after repair by executing `collect_locked_execution_records(...)`.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-11.
+  - Automated regression: pass on 2026-05-11 with `npm test -- --run tests/implementSessionManager.test.ts -t "locked full-sweep executors|rank/dropout sweep callables|planned full-grid|P6 plan prose|repeated LoRA rank/dropout seed contracts|locked baseline"`.
+  - Build: pass on 2026-05-11 with `npm run build`.
+  - Same-flow revalidation: rerunning the same `implement_experiments` -> `run_experiments` path regenerated a canonical runner and did not reproduce the prior `assemble_study_outputs(... execution_payload ...)` resolver failure. The run advanced to LV-409 at the sweep-controller resolver boundary.
+
+- Follow-up risks:
+  - After this boundary is repaired, the same live run can still fail during actual model loading, training, evaluation, timeout handling, metrics projection, or paper-scale review.
+  - The repair should only improve executor discovery; it must not bypass failed runs or convert incomplete evidence into paper-ready output.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+---
+
+## Issue: LV-407
+
+- Status: repair implemented; same-flow revalidation pending on 2026-05-11
+- Validation target: P6 generated LoRA runner should expose a callable study entrypoint that `run_experiments` can invoke, rather than stopping after compile-only verification.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, after LV-406 repair and same-flow rerun of `implement_experiments`.
+
+- Reproduction steps:
+  1. Rerun `implement_experiments` for run `3bc89107-909f-4315-9340-d75ce02eb0e0`.
+  2. Let AutoLabOS hand off to `run_experiments`.
+  3. Observe the generated runner executing `_autolabos_run_study(...)`.
+
+- Expected behavior:
+  - The generated runner should expose a top-level study callable discoverable by `_autolabos_run_study(...)`.
+  - If the generated high-level sweep function uses a different name, handoff repair should bridge it without fabricating rows or bypassing node-owned execution.
+  - The bridge should pass the real output root and selected base model id into the existing generated sweep function.
+
+- Actual behavior:
+  - `implement_experiments` completed after compile-only verification.
+  - `run_experiments` failed immediately before any train/eval run with:
+    - `RuntimeError: No study execution callable was found in the script. Tried ('run_locked_lora_rank_dropout_study', ... 'perform_study').`
+  - The generated runner did define `run_locked_lora_rank_dropout_sweep(...)`, but `_autolabos_run_study(...)` did not include that name in its candidate list and did not pass `output_root` / `base_model_id` context aliases required by that callable.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; observed through a fresh helper invocation against the existing persisted run.
+  - Existing session: persisted workflow advanced to `run_experiments` and failed at the callable resolver boundary.
+  - Divergence: no session divergence observed; this is a generated entrypoint/callable projection issue.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged generation created the actual sweep callable as `run_locked_lora_rank_dropout_sweep(...)`, while the AutoLabOS entrypoint facade searched only `..._study` and generic `..._sweep` names that did not include the rank/dropout-specific callable. Compile-only local verification could not catch this runtime resolver miss.
+
+- Code/test changes:
+  - Added `repairPythonRankDropoutStudyCallableBridgeSurface(...)` to bridge generated `run_locked_lora_rank_dropout_sweep(...)` functions into the AutoLabOS `_autolabos_run_study(...)` resolver candidate list.
+  - The repair also passes `output_root=cli_paths.output_dir` and the selected `base_model_id` into `_autolabos_invoke_callable(...)`, so the existing generated sweep callable can run without fabricating condition rows.
+  - Wired the repair into the late handoff repair pipeline.
+  - Added a deterministic regression test that fails before the bridge with `No study execution callable was found` and passes after the bridge by executing the existing generated sweep callable.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-11.
+  - Automated regression: pass on 2026-05-11 with `npm test -- --run tests/implementSessionManager.test.ts -t "rank/dropout sweep callables|planned full-grid|P6 plan prose|repeated LoRA rank/dropout seed contracts|locked baseline"`.
+  - Build: pass on 2026-05-11 with `npm run build`.
+  - Same-flow revalidation: pending; rerun the same `implement_experiments` -> `run_experiments` path after the repair.
+
+- Follow-up risks:
+  - After this boundary is fixed, execution may still fail during model download, training, benchmark evaluation, metrics aggregation, or paper-scale review.
+  - The repair must bridge existing generated callables only; it must not synthesize successful condition rows.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+---
+
+## Issue: LV-406
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-407 on 2026-05-11
+- Validation target: P6 full-grid live runner should preserve the locked baseline as the first planned condition after `implement_experiments`, so `run_experiments` does not fail on an avoidable condition-order mismatch.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, immediately after the LV-405 revalidation regenerated an 8-condition x 3-seed runner and auto-handed off to `run_experiments`.
+
+- Reproduction steps:
+  1. Rebuild AutoLabOS with the LV-405 planned-condition contract projection repair.
+  2. Rerun `implement_experiments` for run `3bc89107-909f-4315-9340-d75ce02eb0e0` through `scripts/p6-approve-and-run-next.py`.
+  3. Let the generated runner hand off to `run_experiments`.
+  4. Inspect `metrics.json` and the generated `run_lora_rank_dropout_study.py` condition order.
+
+- Expected behavior:
+  - The generated `PLANNED_CONDITION_MARKERS` order should put the locked baseline `rank_8_dropout_0_0` first when the approved plan names `Baseline condition: rank=8, dropout=0.0`.
+  - The implementation validator should block handoff before `run_experiments` if a runner declares the full grid but exposes a different first planned condition.
+
+- Actual behavior:
+  - The regenerated runner preserved the 8 planned condition markers and seed schedule `[42, 43, 44]`, so the original 5-condition contraction did not recur.
+  - The runner declared `PLANNED_CONDITION_MARKERS` with `rank_4_dropout_0_0` first.
+  - `run_experiments` failed immediately because the runner's baseline-first normalization moved `rank_8_dropout_0_0` first and then detected a mismatch with the declared planned marker order.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; this was observed through a fresh helper invocation against the existing persisted run.
+  - Existing session: the persisted run advanced from `implement_experiments` to `run_experiments` and failed at the baseline-order boundary.
+  - Divergence: no session divergence observed; the failure is a plan-contract projection gap in the implementation prompt/validator surface.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the planned-condition contract parser could infer full-grid markers and seed schedule, but either missed the explicit baseline marker or did not require generated runner condition declarations to preserve baseline-first order.
+
+- Code/test changes:
+  - Added `baseline_condition_marker` extraction for LoRA rank/dropout plan prose and moved the baseline marker to the front of the derived required marker list.
+  - Added planned-condition validator coverage for `PLANNED_BASELINE_ORDER_MISMATCH`.
+  - Added deterministic tests for compressed full-grid contracts, P6 plan prose, repeated-cell contracts, and locked-baseline condition order.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-11.
+  - Automated regression: pass on 2026-05-11 with `npm test -- --run tests/designImplementationValidator.test.ts tests/implementSessionManager.test.ts -t "planned full-grid|P6 plan prose|repeated LoRA rank/dropout seed contracts|compacted to the highest-signal|locked baseline"`.
+  - Build: pass on 2026-05-11 with `npm run build`.
+  - Same-flow revalidation: rerunning `implement_experiments` on the same live run regenerated a runner whose `required_condition_markers` begins with `rank_8_dropout_0_0`; the previous full-sweep/baseline-order failure did not recur. The run advanced to LV-407 at the study-callable resolver boundary.
+
+- Follow-up risks:
+  - A runner can preserve all planned cells but still fail scientific or runtime gates later; this issue only covers the condition-order contract.
+  - If the model repeatedly emits rank-sorted condition lists despite prompt constraints, the validator should continue blocking rather than silently rewriting node-owned artifacts.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+---
+
+## Issue: LV-405
+
+- Status: repair implemented; same-flow live revalidation advanced to LV-406 on 2026-05-11
+- Validation target: P6 same-flow live validation should not approve `implement_experiments` when the generated runner compresses the approved 8-condition x 3-seed design into a smaller pilot.
+- Environment/session context: existing live run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, continued from the cleaned validation workspace root through `scripts/p6-approve-and-run-next.py` after LV-404.
+
+- Reproduction steps:
+  1. Approve the completed `design_experiments` gate for run `3bc89107-909f-4315-9340-d75ce02eb0e0`.
+  2. Let `implement_experiments` regenerate the public runner at `outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`.
+  3. Inspect the approved design in `experiment/experiment_plan.yaml` and the generated runner before approving handoff to `run_experiments`.
+
+- Expected behavior:
+  - The implementation should preserve the approved design contract: LoRA ranks `{4, 8, 16, 32}` x dropout `{0.0, 0.05}`, seeds `42`, `43`, and `44`, and 24 planned train/eval jobs.
+  - If the implementation cannot execute the full contract, it should preserve missing rows as visible failed/incomplete conditions or block handoff, not silently substitute a smaller condition set.
+  - Compile-only verification should not be enough to approve a runner that violates the approved design scope.
+
+- Actual behavior:
+  - `implement_experiments` completed with `verifyStatus=pass` because `python3 -m py_compile` succeeded.
+  - The generated runner declares `REQUIRED_CONDITION_COUNT = 5`, omits rank `4` and dropout `0.05` cells required by the approved plan, and defaults to seed `17` instead of the requested seed schedule `42, 43, 44`.
+  - The design-to-implementation validation report returned `verdict=allow` because it checked path, metrics, and baseline-signal bindings but not planned condition/seed/run-count preservation.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; this issue was observed in the same resumed live validation run after a fresh helper invocation from the workspace root.
+  - Existing session: the persisted run paused at `implement_experiments needs_approval` with the compressed runner.
+  - Divergence: no session divergence observed; the failure is a plan-contract projection gap in the implementation validator and prompt-derived condition contract.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `derivePlannedConditionContract(...)` did not parse grid syntax such as `rank in {4, 8, 16, 32} x dropout in {0.0, 0.05}` or prose seed schedules such as `seeds 42, 43, and 44`, and `validateDesignImplementationAlignment(...)` did not compare generated runner content against planned condition markers, seed schedule, or required run count.
+
+- Code/test changes:
+  - Added parsing for LoRA rank/dropout full-grid syntax such as `rank in {4, 8, 16, 32} x dropout in {0.0, 0.05}`.
+  - Added seed-schedule parsing for prose such as `seeds 42, 43, and 44`.
+  - Added derived required run-count projection from condition count x seed schedule.
+  - Passed the derived `planned_condition_contract` into `validateDesignImplementationAlignment(...)`.
+  - Added validator findings for missing planned markers, contracted condition count, missing seeds, contracted run count, and planned-condition baseline-order mismatch.
+  - Added deterministic regression tests for compact prompt preservation, P6 full-grid plan prose, and planned condition/seed/run-count contraction.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-11.
+  - Automated regression: pass on 2026-05-11 with `npm test -- --run tests/designImplementationValidator.test.ts tests/implementSessionManager.test.ts -t "planned full-grid|P6 plan prose|repeated LoRA rank/dropout seed contracts|compacted to the highest-signal|locked baseline"`.
+  - Build: pass on 2026-05-11 with `npm run build`.
+  - Same-flow revalidation: rerunning `implement_experiments` on the same live run no longer reproduced the original 5-condition contraction; the regenerated runner preserved all 8 condition markers and 3 planned seeds. The run then advanced to LV-406 because the full-grid marker order did not put the locked baseline first.
+
+- Follow-up risks:
+  - A runner can still be syntactically valid while scientifically underpowered; design-to-implementation validation must treat condition/seed contraction as a blocker for paper-scale progression.
+  - If a future implementation intentionally downscales due to resource limits, the output genre and claim ceiling must be downgraded explicitly rather than presented as the selected full-grid plan.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_experiments/status.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/implement_result.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/experiment_plan.yaml`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
+
+## Issue: LV-404
+
+- Status: repair implemented; automated regression/build passed and same-flow live revalidation completed `generate_hypotheses` with LLM-selected operational hypotheses on 2026-05-11.
+- Validation target: same-flow P6 live validation after review backtracked to `generate_hypotheses`.
+- Environment/session context:
+  - real validation workspace: `<validation-workspace>`
+  - run: `3bc89107-909f-4315-9340-d75ce02eb0e0`
+  - node: `generate_hypotheses`
+
+- Reproduction steps:
+  1. Force-jump the persisted P6 run back to `generate_hypotheses`.
+  2. Let the staged hypothesis pipeline run.
+  3. Observe staged candidates hard-gated for weak grounding or missing measurement detail.
+  4. Observe single-pass fallback terminate, then deterministic fallback select 2 hypotheses.
+  5. Inspect `hypothesis_generation/selection.json` and `hypothesis_generation/drafts.jsonl`.
+
+- Expected behavior:
+  - If staged and single-pass hypothesis generation cannot produce operational candidates, deterministic fallback must not approve untestable or off-topic candidates for experiment design.
+  - Fallback hypotheses must still satisfy a minimal dataset/metric/testability contract before `design_experiments` can proceed.
+  - A fallback should block with a clear evidence-quality message rather than producing a superficially completed hypothesis node.
+
+- Actual behavior:
+  - `generate_hypotheses` completed with `needs_approval`.
+  - The node summary reported: `Fallback generated 6 hypothesis candidate(s). Falling back after: no_selected_hypotheses; single_pass=terminated`.
+  - The selected candidates were deterministic fallback items with `testability=0`, missing dataset/metric contracts, and unrelated evidence themes such as stroke and genetic algorithm review.
+  - This would allow downstream experiment design to optimize around non-operational hypotheses instead of repairing the evidence gap identified by review.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started for this boundary.
+  - Existing session: reproduced through same-flow continuation of the persisted P6 validation run.
+  - Divergence: none observed; this is a fallback selection gate issue exposed after the governed review backtrack.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: staged and single-pass candidates pass through `applyHypothesisHardGates(...)`, but the deterministic fallback catch path builds and selects fallback candidates without applying an equivalent operational dataset/metric/testability gate. The existing node-level fallback quality block only catches single-paper, caveated fallback support, so multi-paper but non-operational fallback selections can pass.
+
+- Code/test changes:
+  - Code: updated the `generate_hypotheses` node-level fallback quality block in `src/core/nodes/generateHypotheses.ts` to reject selected deterministic fallback hypotheses when they lack an operational dataset/metric/testability contract.
+  - Tests: added deterministic regression in `tests/generateHypothesesNode.test.ts`.
+
+- Regression status:
+  - Reproduced in same-flow live validation on 2026-05-11.
+  - Automated regression: pass with `npm test -- --run tests/generateHypothesesNode.test.ts -t "fallback hypotheses"`.
+  - Build: pass with `npm run build`.
+  - Same-flow live revalidation: pass; after force-jumping and rerunning `generate_hypotheses`, the node completed with `source=llm`, `pipeline=staged`, and selected 2 operational hypotheses from 3 candidates instead of approving the non-operational deterministic fallback selection.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/hypothesis_generation/selection.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/hypothesis_generation/drafts.jsonl`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/hypothesis_generation/status.json`
 
 ## Issue: LV-403
 
@@ -11496,6 +13401,64 @@ The resolved entries below are kept as recent validation history and regression 
   - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
   - `<validation-workspace>/.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
   - `<validation-workspace>/outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-420
+
+- Status: reproduced in same-flow live validation on 2026-05-11; repair in progress
+- Validation target: regenerated P6 LoRA rank/dropout runners should invoke the selected single-run executor with the executor's actual signature, preserving `condition`, `seed`, `args`, output path, and model-bundle inputs instead of trying unsafe positional permutations.
+- Environment/session context: existing run `3bc89107-909f-4315-9340-d75ce02eb0e0` in `<validation-workspace>`, cycle 24, rerun through `scripts/p6-approve-and-run-next.py` after the LV-419 nested-result projection repair.
+
+- Reproduction steps:
+  1. Build AutoLabOS with LV-419 repairs.
+  2. Rerun the existing P6 validation run with `AUTOLABOS_P6_RUN_ID=3bc89107-909f-4315-9340-d75ce02eb0e0`.
+  3. Allow `implement_experiments` to regenerate `run_lora_rank_dropout_study.py` and hand off to `run_experiments`.
+  4. Observe `run_experiments` executing the generated locked 8-condition x 3-seed sweep.
+
+- Expected behavior:
+  - `_invoke_single_run_executor(...)` should call the selected executor with a signature-compatible argument set.
+  - If the selected executor requires a generated model bundle, the invocation bridge should materialize it through an existing generated loader rather than swapping positional arguments.
+  - Failed runs must remain visible, but valid generated executor signatures should not be converted into false failures by argument-order drift.
+
+- Actual behavior:
+  - The regenerated script selected `run_single_condition_seed(condition, seed, loaded_bundle, args, run_output_root=None, ...)`.
+  - `_invoke_single_run_executor(...)` first tried incompatible keyword variants, then tried `executor(args, condition, seed, run_output_dir)`.
+  - That positional retry satisfied Python arity but shifted values into the wrong parameters, so `condition` became an `argparse.Namespace`.
+  - All 24 planned runs failed immediately with:
+    - `AttributeError: 'Namespace' object has no attribute 'marker'`
+  - The metrics payload correctly reported `success=false`, `completed_run_count=0`, and `failed_run_count=24`; this is a genuine live blocker, not a hidden success.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not started; this iteration reused the existing long-running P6 validation workspace and persisted run id.
+  - Existing session: the same persisted run advanced past `implement_experiments` and failed in `run_experiments` at the single-run executor invocation boundary.
+  - Divergence: not assessed in a separate fresh run; the failure is deterministic inside the regenerated runner's persisted artifacts.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the final locked-sweep invocation helper uses broad positional fallback permutations. A candidate executor can accept the wrong positional arity without raising `TypeError`, causing semantic argument corruption that compile-time verification cannot catch.
+
+- Code/test changes:
+  - Code:
+    - `src/core/agents/implementSessionManager.ts`
+      - added `repairPythonSingleRunExecutorSignatureDispatchSurface(...)` and wired it into late handoff repairs.
+      - before unsafe positional fallbacks, generated `_invoke_single_run_executor(...)` now inspects the selected executor signature and binds known semantic parameters by name: `condition`, `seed`, parsed `args`, run output path, and generated model-bundle aliases.
+      - when a selected executor requires `loaded_bundle`/`model_bundle`, the bridge materializes it through an existing generated model-bundle loader such as `_load_fresh_model_bundle_for_training_run(...)`.
+  - Tests:
+    - `tests/implementSessionManager.test.ts`
+      - added a deterministic regression where the unrepaired generated helper calls `executor(args, condition, seed, run_output_dir)` and corrupts `condition`, while the repaired helper dispatches by signature and writes a valid per-run result.
+
+- Regression status:
+  - Same-flow live reproduction: failed on 2026-05-11 at `run_experiments`.
+  - Deterministic regression: pass on 2026-05-11 with `npm test -- --run tests/implementSessionManager.test.ts -t "single-run executors by signature|nested raw_result value rows|study_result artifact writers"`.
+  - Build: pass on 2026-05-11 with `npm run build`.
+  - Same-flow revalidation: pending after repair.
+
+- Follow-up risks:
+  - After the invocation-order bridge is fixed, execution may advance into actual model loading/training, dependency/runtime limits, benchmark evaluation failures, or metrics aggregation gaps.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_record.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/run_lora_rank_dropout_study.py`
 
 ## Issue: LV-270
 
