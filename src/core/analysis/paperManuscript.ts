@@ -1536,6 +1536,7 @@ export function renderSubmissionPaperTex(input: {
   const docClassOptions = columnCount === 2 ? "[twocolumn]" : "";
   const renderedAuthor = renderAuthorCommand(input.authorMetadata);
   const supportPackages = buildSubmissionSupportPackages(input.parsedTemplate);
+  const renderedAbstract = sanitizePaperNarrativeText(input.manuscript.abstract);
 
   const lines = input.parsedTemplate
     ? [
@@ -1549,7 +1550,7 @@ export function renderSubmissionPaperTex(input: {
         "\\begin{document}",
         "\\maketitle",
         "\\begin{abstract}",
-        latexEscape(input.manuscript.abstract),
+        latexEscape(renderedAbstract),
         "\\end{abstract}"
       ]
     : [
@@ -1566,7 +1567,7 @@ export function renderSubmissionPaperTex(input: {
         "\\begin{document}",
         "\\maketitle",
         "\\begin{abstract}",
-        latexEscape(input.manuscript.abstract),
+        latexEscape(renderedAbstract),
         "\\end{abstract}"
       ];
 
@@ -1583,7 +1584,7 @@ export function renderSubmissionPaperTex(input: {
       const citationPaperIds = shouldRenderSubmissionCitationsForParagraph(section.heading, paragraph, index)
         ? sectionCitationMap.get(buildTraceabilityKey(section.heading, index)) || []
         : [];
-      lines.push(renderSubmissionParagraph(paragraph, citationPaperIds, input.citationKeysByPaperId));
+      lines.push(renderSubmissionParagraph(sanitizePaperNarrativeText(paragraph), citationPaperIds, input.citationKeysByPaperId));
       lines.push("");
     }
 
@@ -1609,7 +1610,7 @@ export function renderSubmissionPaperTex(input: {
     for (const section of input.manuscript.appendix_sections || []) {
       lines.push(`\\section{${latexEscape(section.heading)}}`);
       for (const paragraph of section.paragraphs) {
-        lines.push(latexEscape(paragraph));
+        lines.push(latexEscape(sanitizePaperNarrativeText(paragraph)));
         lines.push("");
       }
     }
@@ -2222,7 +2223,8 @@ function humanizeMetricLabel(label: string): string {
 
 function shouldRenderSubmissionCitationsForParagraph(heading: string, paragraph: string, paragraphIndex: number): boolean {
   const key = normalizeHeadingKey(heading);
-  if (key === "related_work") {
+  const sectionSlug = key.replace(/[^a-z0-9]+/gu, "_").replace(/^_+|_+$/gu, "");
+  if (sectionSlug === "related_work") {
     return true;
   }
   if (key === "method") {
@@ -2234,10 +2236,7 @@ function shouldRenderSubmissionCitationsForParagraph(heading: string, paragraph:
   if (key !== "introduction") {
     return false;
   }
-  if (paragraphIndex > 1) {
-    return false;
-  }
-  return !/\b(?:prespecified|threshold|endpoint|arc-challenge|hellaswag|completed-run|secondary outcomes?|train-and-evaluate|study objective|run metadata|optimizer|gradient|training examples?)\b/iu.test(paragraph);
+  return false;
 }
 
 function renderSubmissionParagraph(

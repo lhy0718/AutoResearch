@@ -1169,7 +1169,6 @@ export function buildManuscriptRepairVerificationArtifact(input: {
     )
   );
   const changedLocationKeys = collectChangedLocationKeys(input.before, input.after);
-  const outOfScopeChanges = changedLocationKeys.filter((locationKey) => !allowedLocationKeys.includes(locationKey));
   const afterIssueAnchorIds = new Set(
     input.reviewAfter.issues.flatMap((issue) =>
       issue.supporting_spans
@@ -1179,13 +1178,11 @@ export function buildManuscriptRepairVerificationArtifact(input: {
   );
   const stillFailingAnchorIds = targetAnchorIds.filter((anchorId) => afterIssueAnchorIds.has(anchorId));
   const resolvedAnchorIds = targetAnchorIds.filter((anchorId) => !afterIssueAnchorIds.has(anchorId));
-  const unexpectedChangedSections = uniqueStrings(outOfScopeChanges.map(locationKeyToSection));
   const scopeDowngradedTargets = uniqueStrings(
     input.repairPlan.targets
       .filter((target) => Boolean(target.scope_downgraded))
       .map((target) => target.location_key)
   );
-  const scopeRespected = outOfScopeChanges.length === 0;
   const visualCaptionChecks = buildVisualCaptionChecks(input.after, changedLocationKeys);
   const visualLabelChecks = buildVisualLabelChecks(input.after, changedLocationKeys);
   const visualCaptionConservatismOk = visualCaptionChecks.every((check) => check.conservative);
@@ -1197,6 +1194,17 @@ export function buildManuscriptRepairVerificationArtifact(input: {
   const overclaimingLabelLocations = visualLabelChecks
     .filter((check) => !check.conservative)
     .map((check) => check.location_key);
+  const outOfScopeChanges = changedLocationKeys.filter((locationKey) =>
+    !allowedLocationKeys.includes(locationKey) &&
+    !isToleratedConservativeVisualRedundancyChange({
+      locationKey,
+      repairPlan: input.repairPlan,
+      visualCaptionChecks,
+      visualLabelChecks
+    })
+  );
+  const unexpectedChangedSections = uniqueStrings(outOfScopeChanges.map(locationKeyToSection));
+  const scopeRespected = outOfScopeChanges.length === 0;
 
   return {
     pass_index: input.passIndex,
@@ -1222,6 +1230,23 @@ export function buildManuscriptRepairVerificationArtifact(input: {
         : `Repair verification ${input.passIndex} observed only allowed bounded-local changes, but changed visual surfaces at ${uniqueStrings([...overclaimingCaptionLocations, ...overclaimingLabelLocations]).join(", ")} still overstate the takeaway.`
       : `Repair verification ${input.passIndex} found out-of-scope changes in ${unexpectedChangedSections.join(", ") || "unknown sections"}.`
   };
+}
+
+function isToleratedConservativeVisualRedundancyChange(input: {
+  locationKey: string;
+  repairPlan: ManuscriptRepairPlanArtifact;
+  visualCaptionChecks: Array<{ location_key: string; conservative: boolean }>;
+  visualLabelChecks: Array<{ location_key: string; conservative: boolean }>;
+}): boolean {
+  if (!/^(?:table|figure):\d+$/u.test(input.locationKey)) {
+    return false;
+  }
+  if (!input.repairPlan.targets.some((target) => target.issue_code === "visual_redundancy")) {
+    return false;
+  }
+  const captionCheck = input.visualCaptionChecks.find((check) => check.location_key === input.locationKey);
+  const labelCheck = input.visualLabelChecks.find((check) => check.location_key === input.locationKey);
+  return (!captionCheck || captionCheck.conservative) && (!labelCheck || labelCheck.conservative);
 }
 
 function lintRepeatedSentences(manuscript: PaperManuscript): ManuscriptStyleLintIssue[] {

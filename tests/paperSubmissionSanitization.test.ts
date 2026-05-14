@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   buildPaperBibtex,
   buildFallbackPaperDraft,
-  PaperWritingBundle
+  normalizePaperDraft,
+  PaperWritingBundle,
+  sanitizePaperNarrativeText
 } from "../src/core/analysis/paperWriting.js";
 import {
   buildFallbackPaperManuscript,
@@ -16,6 +18,91 @@ import {
 } from "../src/core/analysis/paperManuscript.js";
 
 describe("paper submission sanitization", () => {
+  it("cleans brief-derived study prompts before they reach reader-facing manuscript text", () => {
+    const text = sanitizePaperNarrativeText(
+      "This study addresses Study how LoRA rank and dropout interact during parameter-efficient instruction tuning under a fixed local compute budget. The study is framed as a local preflight. This paper studies Study how LoRA rank and dropout interact during parameter-efficient instruction tuning under a fixed local compute budget. under an explicitly bounded evidence ceiling."
+    );
+
+    expect(text).toContain("This study addresses how LoRA rank and dropout interact");
+    expect(text).toContain("This paper studies how LoRA rank and dropout interact");
+    expect(text).not.toContain("addresses Study how");
+    expect(text).not.toContain("studies Study how");
+    expect(text).not.toContain("clean. under");
+    expect(text).not.toContain("budget. under");
+  });
+
+  it("sanitizes LLM paper draft paragraphs during normalization", () => {
+    const draft = normalizePaperDraft({
+      raw: {
+        title: "A Reader Facing Study",
+        abstract: "This paper studies Study how LoRA rank and dropout interact.",
+        sections: [
+          {
+            heading: "Introduction",
+            paragraphs: [
+              {
+                text: "This study addresses Study how LoRA rank and dropout interact. This paper studies Study how LoRA rank and dropout interact. under an explicitly bounded evidence ceiling.",
+                evidence_ids: [],
+                citation_paper_ids: []
+              }
+            ]
+          }
+        ],
+        claims: []
+      } as any,
+      bundle: {
+        runTitle: "LoRA run",
+        topic: "LoRA rank and dropout",
+        objectiveMetric: "accuracy",
+        constraints: [],
+        paperSummaries: [],
+        evidenceRows: [],
+        hypotheses: [],
+        corpus: []
+      }
+    });
+
+    const serialized = JSON.stringify(draft);
+    expect(serialized).toContain("This study addresses how LoRA rank and dropout interact");
+    expect(serialized).toContain("This paper studies how LoRA rank and dropout interact under an explicitly bounded evidence ceiling");
+    expect(serialized).not.toContain("Study how");
+    expect(serialized).not.toContain(". under an explicitly");
+  });
+
+  it("sanitizes final submission TeX even when restored manuscripts contain raw draft phrasing", () => {
+    const tex = renderSubmissionPaperTex({
+      manuscript: {
+        title: "Reader Surface Guard",
+        abstract: "This paper studies Study how LoRA rank and dropout interact.",
+        keywords: [],
+        sections: [
+          {
+            heading: "Introduction",
+            paragraphs: [
+              "This study addresses Study how LoRA rank and dropout interact. under an explicitly bounded evidence ceiling."
+            ]
+          }
+        ],
+        appendix_sections: [
+          {
+            heading: "Supplementary Notes",
+            paragraphs: ["This paper studies Study how LoRA rank and dropout interact."]
+          }
+        ],
+        tables: [],
+        figures: []
+      },
+      traceability: { paragraphs: [] },
+      citationKeysByPaperId: new Map(),
+      includeKeywords: false
+    });
+
+    expect(tex).toContain("This paper studies how LoRA rank and dropout interact");
+    expect(tex).toContain("This study addresses how LoRA rank and dropout interact under an explicitly bounded evidence ceiling");
+    expect(tex).not.toContain("Study how");
+    expect(tex).not.toContain(". under an explicitly");
+  });
+
   it("preserves ACL template surface while using Python-rendered figure assets and omitting non-template keywords", () => {
     const manuscript = {
       title: "Template-faithful paper",
@@ -62,6 +149,66 @@ describe("paper submission sanitization", () => {
     expect(tex).not.toContain("\\textbf{Keywords:}");
     expect(tex).toContain("\\includegraphics[width=\\columnwidth]{figures/main-result-figure-1.pdf}");
     expect(tex).not.toContain("\\makebox[4.2em][l]");
+  });
+
+  it("does not attach literature citations to paper-specific Introduction framing", () => {
+    const manuscript = {
+      title: "Citation hygiene paper",
+      abstract: "A concise abstract.",
+      keywords: [],
+      sections: [
+        {
+          heading: "Introduction",
+          paragraphs: [
+            "Parameter-efficient fine-tuning is often used when memory and available hardware are fixed in advance.",
+            "Against that background, this paper asks a narrow question and treats the experiment as a governed preflight whose primary comparator is the locked internal baseline."
+          ]
+        },
+        {
+          heading: "Related Work",
+          paragraphs: [
+            "Prior PEFT literature motivates memory-aware finetuning and task-sensitive evaluation."
+          ]
+        }
+      ]
+    };
+    const tex = renderSubmissionPaperTex({
+      manuscript,
+      traceability: {
+        paragraphs: [
+          {
+            manuscript_section: "Introduction",
+            paragraph_index: 0,
+            source_draft_section: "Introduction",
+            evidence_ids: [],
+            citation_paper_ids: ["paper_a"]
+          },
+          {
+            manuscript_section: "Introduction",
+            paragraph_index: 1,
+            source_draft_section: "Introduction",
+            evidence_ids: [],
+            citation_paper_ids: ["paper_b"]
+          },
+          {
+            manuscript_section: "Related Work",
+            paragraph_index: 0,
+            source_draft_section: "Related Work",
+            evidence_ids: [],
+            citation_paper_ids: ["paper_a"]
+          }
+        ]
+      },
+      citationKeysByPaperId: new Map([
+        ["paper_a", "paperA"],
+        ["paper_b", "paperB"]
+      ])
+    });
+
+    expect(tex).toContain("Parameter-efficient fine-tuning is often used");
+    expect(tex).not.toContain("fixed in advance. \\cite{paperA}");
+    expect(tex).not.toContain("locked internal baseline. \\cite{paperB}");
+    expect(tex).toContain("Prior PEFT literature motivates memory-aware finetuning and task-sensitive evaluation. \\cite{paperA}");
   });
 
   it("removes internal run paths from fallback paper drafting before submission validation", () => {

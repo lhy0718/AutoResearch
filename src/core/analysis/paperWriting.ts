@@ -673,7 +673,7 @@ export function normalizePaperDraft(input: {
       runTitle: input.bundle.runTitle,
       fallbackTitle: fallback.title
     }),
-    abstract: cleanString(raw?.abstract) || fallback.abstract,
+    abstract: sanitizePaperNarrativeText(raw?.abstract) || fallback.abstract,
     keywords:
       normalizeStringArray(raw?.keywords).slice(0, 6).length > 0
         ? normalizeStringArray(raw?.keywords).slice(0, 6)
@@ -2002,7 +2002,7 @@ function buildDraftParagraph(
   citationPaperIds: string[]
 ): PaperDraftParagraph {
   return {
-    text,
+    text: sanitizePaperNarrativeText(text),
     evidence_ids: uniqueStrings(evidenceIds).slice(0, 4),
     citation_paper_ids: uniqueStrings(citationPaperIds).slice(0, 4)
   };
@@ -2035,7 +2035,7 @@ function normalizeParagraph(
   evidenceToPaper: Map<string, string>
 ): PaperDraftParagraph | undefined {
   if (typeof paragraph === "string") {
-    const text = cleanString(paragraph);
+    const text = sanitizePaperNarrativeText(paragraph);
     if (!text) {
       return undefined;
     }
@@ -2054,7 +2054,7 @@ function normalizeParagraph(
   }
 
   const raw = paragraph as RawPaperDraftParagraph;
-  const text = cleanString(raw.text);
+  const text = sanitizePaperNarrativeText(raw.text);
   if (!text) {
     return undefined;
   }
@@ -2593,6 +2593,12 @@ export function sanitizePaperNarrativeText(value: unknown): string {
   }
 
   return rewriteReaderFacingProvenancePhrases(cleaned)
+    .replace(/\bThis study addresses\s+Study\s+how\b/giu, "This study addresses how")
+    .replace(/\bThis paper studies\s+Study\s+how\b/giu, "This paper studies how")
+    .replace(/\bfor\s+Study\s+how\b/giu, "for how")
+    .replace(/\babout\s+Study\s+how\b/giu, "about how")
+    .replace(/\bStudy\s+how\b/gu, "how")
+    .replace(/\.\s+under an explicitly bounded evidence ceiling\b/giu, " under an explicitly bounded evidence ceiling")
     .replace(/`[^`]*\.autolabos\/[^`]*`/giu, "the governed run artifact directory")
     .replace(/`[^`]*test\/outputs?\/[^`]*`/giu, "the public output directory")
     .replace(/`[^`]*outputs\/[^`]*`/giu, "the public output bundle")
