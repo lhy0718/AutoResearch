@@ -714,6 +714,52 @@ function buildSectionTransitionAdjacentRepairResponses(): string[] {
   ];
 }
 
+function buildSectionTransitionRepairWithGlobalCleanupNoiseResponses(): string[] {
+  const initial = JSON.parse(buildPolishedManuscriptResponse()) as any;
+  initial.sections[2].paragraphs[2] =
+    "The executed run used Qwen/Qwen2.5-1.5B as the selected backbone. Extra method details remain conservative.";
+  initial.sections[3].paragraphs[0] =
+    "The thread-backed condition improves revision stability by 0.05 relative to the stateless baseline on AgentBench-mini, using the same evaluation setup as the baseline.";
+  initial.sections[3].paragraphs[1] =
+    "The next results paragraph repeats setup details instead of moving into interpretation, so the local transition currently feels abrupt.";
+  const repaired = structuredClone(initial);
+  repaired.sections[3].paragraphs[0] =
+    "The thread-backed condition improves revision stability by 0.05 relative to the stateless baseline on AgentBench-mini, establishing the quantitative comparison before interpretation.";
+  repaired.sections[3].paragraphs[1] =
+    "This local transition matters because the next paragraph can now interpret the modest gain without reintroducing the setup.";
+  return [
+    ...buildSessionResponses(),
+    JSON.stringify(initial),
+    buildManuscriptReviewResponse({
+      decision: "repair",
+      issues: [
+        {
+          code: "section_transition",
+          severity: "warning",
+          section: "Results",
+          repairable: true,
+          message: "The results opening does not transition naturally into the following interpretation paragraph.",
+          fix_recommendation: "Revise the local bridge between the two results paragraphs without rewriting the section.",
+          supporting_spans: [
+            {
+              section: "Results",
+              paragraph_index: 0,
+              excerpt: initial.sections[3].paragraphs[0],
+              reason: "This paragraph needs a cleaner bridge into the next results paragraph."
+            }
+          ]
+        }
+      ]
+    }),
+    buildManuscriptReviewAuditResponse(),
+    buildWrappedRepairResponse(repaired, {
+      changed_location_keys: ["paragraph:results:0", "paragraph:results:1"]
+    }),
+    buildManuscriptReviewResponse({ decision: "pass" }),
+    buildManuscriptReviewAuditResponse()
+  ];
+}
+
 function buildIntroductionAlignmentAdjacentRepairResponses(): string[] {
   const initial = JSON.parse(buildPolishedManuscriptResponse()) as any;
   initial.sections[0].paragraphs[0] =
@@ -3945,6 +3991,41 @@ describe("writePaper PDF build", () => {
     ) as { locality_ok: boolean; scope_respected: boolean; changed_location_keys: string[] };
     expect(verification.locality_ok).toBe(true);
     expect(verification.scope_respected).toBe(true);
+    expect(verification.changed_location_keys).toEqual(
+      expect.arrayContaining(["paragraph:results:0", "paragraph:results:1"])
+    );
+  });
+
+  it("does not count deterministic final cleanup as an out-of-scope repair change", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-cleanup-locality-"));
+    process.chdir(root);
+
+    const run = makeRun("run-manuscript-cleanup-locality");
+    const runDir = await seedRun(root, run);
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient(buildSectionTransitionRepairWithGlobalCleanupNoiseResponses()),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const verification = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_repair_verification_1.json"), "utf8")
+    ) as { locality_ok: boolean; out_of_scope_changes: string[]; changed_location_keys: string[] };
+    expect(verification.locality_ok).toBe(true);
+    expect(verification.out_of_scope_changes).toHaveLength(0);
+    expect(verification.changed_location_keys).not.toContain("paragraph:method:2");
     expect(verification.changed_location_keys).toEqual(
       expect.arrayContaining(["paragraph:results:0", "paragraph:results:1"])
     );

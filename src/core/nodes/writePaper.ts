@@ -55,6 +55,7 @@ import {
   type PaperManuscript,
   type PaperAuthorMetadata,
   type PaperManuscriptFigure,
+  type PaperManuscriptStabilizationOptions,
   type PaperManuscriptVisualRow,
   type PaperSubmissionValidationReport,
   type PaperTraceabilityReport,
@@ -2627,6 +2628,13 @@ function sanitizeReaderFacingRepairTargets(
   return compactReaderFacingRepairedManuscript(merged);
 }
 
+function normalizeManuscriptForRepairLocalityComparison(
+  manuscript: PaperManuscript,
+  options: PaperManuscriptStabilizationOptions = {}
+): PaperManuscript {
+  return stabilizePaperManuscriptForSubmission(compactReaderFacingRepairedManuscript(manuscript), options);
+}
+
 function compactReaderFacingRepairedManuscript(manuscript: PaperManuscript): PaperManuscript {
   return {
     ...manuscript,
@@ -3350,7 +3358,7 @@ let currentManuscript = input.initialManuscript;
       sanitizeReaderFacingRepairTargets(manuscriptBeforeRepair, repairResult.manuscript, repairPlan),
       { conditionSummaries: context.results.condition_summaries }
     );
-    const verificationBaselineManuscript = stabilizePaperManuscriptForSubmission(manuscriptBeforeRepair, {
+    const verificationBaselineManuscript = normalizeManuscriptForRepairLocalityComparison(manuscriptBeforeRepair, {
       conditionSummaries: context.results.condition_summaries
     });
     evaluation = evaluateCandidate(currentManuscript);
