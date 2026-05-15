@@ -563,14 +563,20 @@ function buildTaskLevelLeadingConditionFigure(
     { label: "Baseline ARC-Challenge", value: baseline.arc_challenge_accuracy },
     { label: "Leading ARC-Challenge", value: leading.arc_challenge_accuracy },
     { label: "Baseline HellaSwag", value: baseline.hellaswag_accuracy },
-    { label: "Leading HellaSwag", value: leading.hellaswag_accuracy }
+    { label: "Leading HellaSwag", value: leading.hellaswag_accuracy },
+    ...(typeof baseline.average_accuracy_mean === "number" && typeof leading.average_accuracy_mean === "number"
+      ? [
+          { label: "Baseline Average", value: baseline.average_accuracy_mean },
+          { label: "Leading Average", value: leading.average_accuracy_mean }
+        ]
+      : [])
   ];
   if (!visualRowsMeetQualityGate(bars)) {
     return undefined;
   }
   return {
     caption:
-      "Task-level accuracy split for the leading condition; bars compare the locked baseline with the best observed rank/dropout cell.",
+      "Task-level and average accuracy for the leading condition; paired bars compare the locked baseline with the best observed rank/dropout cell.",
     bars,
     source_refs: [
       { kind: "artifact", id: DERIVED_MAIN_FIGURE_SOURCE_REF_ID },
@@ -614,7 +620,7 @@ function isTaskLevelLeadingConditionFigure(figure: PaperManuscriptFigure): boole
   const caption = cleanString(figure.caption);
   const labels = figure.bars.map((bar) => cleanString(bar.label)).join(" ");
   return (
-    /\btask-level accuracy split\b/iu.test(caption)
+    /\btask-level (?:and average )?accuracy(?: split)?\b/iu.test(caption)
     || /\bBaseline ARC[- ]Challenge\b.*\bLeading HellaSwag\b/iu.test(labels)
   );
 }

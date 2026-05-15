@@ -989,12 +989,14 @@ describe("paper submission sanitization", () => {
 
     const text = JSON.stringify(manuscript);
     expect(manuscript.figures).toHaveLength(1);
-    expect(manuscript.figures?.[0]?.caption).toContain("Task-level accuracy split");
+    expect(manuscript.figures?.[0]?.caption).toContain("Task-level and average accuracy");
     expect(manuscript.figures?.[0]?.bars).toEqual([
       { label: "Baseline ARC-Challenge", value: 0.5 },
       { label: "Leading ARC-Challenge", value: 0.5 },
       { label: "Baseline HellaSwag", value: 0.1667 },
-      { label: "Leading HellaSwag", value: 0.3333 }
+      { label: "Leading HellaSwag", value: 0.3333 },
+      { label: "Baseline Average", value: 0.3333 },
+      { label: "Leading Average", value: 0.4167 }
     ]);
     expect(text).toContain("prespecified baseline-relative accuracy target was met");
     expect(text).toContain("mean accuracy was 0.4167 versus 0.3333");
@@ -1041,12 +1043,14 @@ describe("paper submission sanitization", () => {
           },
           {
             caption:
-              "Task-level accuracy split for the leading condition; bars compare the locked baseline with the best observed rank/dropout cell.",
+              "Task-level and average accuracy for the leading condition; paired bars compare the locked baseline with the best observed rank/dropout cell.",
             bars: [
               { label: "Baseline ARC Challenge", value: 0.5 },
               { label: "Leading ARC Challenge", value: 0.5 },
               { label: "Baseline HellaSwag", value: 0.1667 },
-              { label: "Leading HellaSwag", value: 0.3333 }
+              { label: "Leading HellaSwag", value: 0.3333 },
+              { label: "Baseline Average", value: 0.3333 },
+              { label: "Leading Average", value: 0.4167 }
             ]
           }
         ]
@@ -1084,12 +1088,14 @@ describe("paper submission sanitization", () => {
     );
 
     expect(stabilized.figures).toHaveLength(1);
-    expect(stabilized.figures?.[0]?.caption).toContain("Task-level accuracy split");
+    expect(stabilized.figures?.[0]?.caption).toContain("Task-level and average accuracy");
     expect(stabilized.figures?.[0]?.bars).toEqual([
       { label: "Baseline ARC-Challenge", value: 0.5 },
       { label: "Leading ARC-Challenge", value: 0.5 },
       { label: "Baseline HellaSwag", value: 0.1667 },
-      { label: "Leading HellaSwag", value: 0.3333 }
+      { label: "Leading HellaSwag", value: 0.3333 },
+      { label: "Baseline Average", value: 0.3333 },
+      { label: "Leading Average", value: 0.4167 }
     ]);
   });
 });

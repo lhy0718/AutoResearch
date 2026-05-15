@@ -5073,8 +5073,36 @@ function buildPythonVectorFigureRendererScript(): string {
   return String.raw`#!/usr/bin/env python3
 import json
 import math
+import re
 import textwrap
 from pathlib import Path
+
+def build_paired_accuracy_rows(bars):
+    grouped = {}
+    order = []
+    for row in bars:
+        label = str(row.get("label", "")).strip()
+        match = re.match(r"^(Baseline|Leading)\s+(.+)$", label, flags=re.IGNORECASE)
+        if not match:
+            return None
+        series = match.group(1).lower()
+        metric = match.group(2).strip().replace("ARC Challenge", "ARC-Challenge")
+        if metric not in grouped:
+            grouped[metric] = {}
+            order.append(metric)
+        grouped[metric][series] = float(row.get("value", 0) or 0)
+    rows = []
+    for metric in order:
+        values = grouped.get(metric, {})
+        if "baseline" not in values or "leading" not in values:
+            return None
+        rows.append({
+            "metric": metric,
+            "baseline": values["baseline"],
+            "leading": values["leading"],
+            "delta": values["leading"] - values["baseline"],
+        })
+    return rows if len(rows) >= 2 else None
 
 def render_with_matplotlib(figure):
     try:
@@ -5089,6 +5117,42 @@ def render_with_matplotlib(figure):
     values = [float(row.get("value", 0) or 0) for row in bars]
     if not labels:
         return None
+
+    paired_rows = build_paired_accuracy_rows(bars)
+    if paired_rows:
+        metric_labels = ["\n".join(textwrap.wrap(row["metric"], width=18)) for row in paired_rows]
+        y_positions = list(range(len(paired_rows)))
+        baseline_values = [row["baseline"] for row in paired_rows]
+        leading_values = [row["leading"] for row in paired_rows]
+        max_value = max(baseline_values + leading_values + [1.0])
+        x_limit = max(1.0, math.ceil(max_value * 4) / 4)
+
+        fig_height = max(2.05, 0.42 * len(paired_rows) + 1.25)
+        fig, ax = plt.subplots(figsize=(3.35, fig_height))
+        offset = 0.16
+        ax.barh([y + offset for y in y_positions], baseline_values, height=0.26, color="#5E6A71", label="Baseline")
+        ax.barh([y - offset for y in y_positions], leading_values, height=0.26, color="#2F6DB5", label="Leading")
+        ax.set_yticks(y_positions, labels=metric_labels)
+        ax.invert_yaxis()
+        ax.set_xlim(0, x_limit)
+        ax.set_xlabel("Accuracy", fontsize=8)
+        ax.set_title("Task-level and average accuracy", fontsize=9, pad=6)
+        ax.grid(axis="x", color="#d9d9d9", linewidth=0.6)
+        ax.set_axisbelow(True)
+        for spine in ["top", "right"]:
+            ax.spines[spine].set_visible(False)
+        ax.spines["left"].set_linewidth(0.6)
+        ax.spines["bottom"].set_linewidth(0.6)
+        ax.tick_params(axis="both", labelsize=7, length=2.5, width=0.6)
+        ax.legend(loc="lower right", frameon=False, fontsize=7, handlelength=1.2, borderaxespad=0.2)
+        for y, row in zip(y_positions, paired_rows):
+            label = f"{row['leading']:.3f} ({row['delta']:+.3f})"
+            ax.text(min(row["leading"] + x_limit * 0.018, x_limit * 0.86), y - offset, label, va="center", fontsize=6.6)
+        fig.tight_layout(pad=0.35)
+        output = figure["output_pdf"]
+        fig.savefig(output, format="pdf", bbox_inches="tight")
+        plt.close(fig)
+        return output
 
     wrapped_labels = ["\n".join(textwrap.wrap(label, width=24)) for label in labels]
     max_abs = max([abs(v) for v in values] + [1.0])
