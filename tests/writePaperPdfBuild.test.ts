@@ -1216,10 +1216,17 @@ function buildVisualLabelOverclaimStopResponses(): string[] {
 function buildPartiallyGroundedRepairStopResponses(options?: {
   auditIssueCode?: "unsupported_issue" | "missing_major_issue" | "check_issue_mismatch" | "insufficient_grounding";
   auditIssueSeverity?: "warning" | "fail";
+  followupIssueSeverity?: "warning" | "fail";
 }): string[] {
   const repair1 = JSON.parse(buildPolishedManuscriptResponse()) as any;
   repair1.sections[0].paragraphs[1] =
     "The introduction now frames the contribution around revision stability in the tested workflow setting.";
+  const repair2 = JSON.parse(buildPolishedManuscriptResponse()) as any;
+  repair2.sections[0].paragraphs[1] = repair1.sections[0].paragraphs[1];
+  repair2.sections[1].paragraphs = [
+    "Prior work studies revision stability and workflow benchmarking as separate concerns.",
+    "Compared with those strands, this study isolates the persistent drafting-state comparison within one workflow setting, making the comparison axis explicit."
+  ];
   const auditIssueCode = options?.auditIssueCode ?? "insufficient_grounding";
   return [
     ...buildSessionResponses(),
@@ -1254,7 +1261,7 @@ function buildPartiallyGroundedRepairStopResponses(options?: {
       issues: [
         {
           code: "related_work_quality",
-          severity: "warning",
+          severity: options?.followupIssueSeverity ?? "warning",
           section: "Related Work",
           repairable: true,
           message: "Related Work still needs a sharper comparison axis.",
@@ -1284,6 +1291,18 @@ function buildPartiallyGroundedRepairStopResponses(options?: {
           fix_recommendation: "Do not spend a second repair pass on a partially grounded review artifact."
         }
       ]
+    }),
+    buildWrappedRepairResponse(repair2, {
+      changed_location_keys: ["paragraph:related_work:1"]
+    }),
+    buildManuscriptReviewResponse({
+      decision: "pass",
+      issues: []
+    }),
+    buildManuscriptReviewAuditResponse({
+      ok: true,
+      artifact_reliability: "grounded",
+      issues: []
     })
   ];
 }
@@ -4608,6 +4627,43 @@ describe("writePaper PDF build", () => {
     expect(gate.stop_or_continue_reason).toMatch(/partially grounded|second manuscript repair is not allowed/i);
     expect(gate.decision_digest.stop_reason_category).toBe("review_reliability");
     expect(gate.decision_digest.review_reliability).toBe("partially_grounded");
+  });
+
+  it("allows a second repair when a partially grounded follow-up audit has only warning-level grounding gaps", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-partially-grounded-repair2-"));
+    process.chdir(root);
+
+    const run = makeRun("run-manuscript-partially-grounded-repair2");
+    const runDir = await seedRun(root, run);
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: false
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient(buildPartiallyGroundedRepairStopResponses({
+        auditIssueSeverity: "warning",
+        followupIssueSeverity: "fail"
+      })),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(await exists(path.join(runDir, "paper", "manuscript_repair_2_report.json"))).toBe(true);
+
+    const round1Gate = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript_quality_gate_round_1.json"), "utf8")
+    ) as { action: string; stop_or_continue_reason: string; allowed_max_passes: number };
+    expect(round1Gate.action, round1Gate.stop_or_continue_reason).toBe("repair");
+    expect(round1Gate.allowed_max_passes).toBe(2);
+    expect(round1Gate.stop_or_continue_reason).toMatch(/partially grounded|second and final manuscript repair/i);
   });
 
   it("allows a warning-only partially grounded follow-up review when deterministic gates pass", async () => {

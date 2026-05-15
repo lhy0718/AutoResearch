@@ -1956,6 +1956,9 @@ function lintNumericConsistency(input: {
     if (comparableFacts.some((candidate) => areFactValuesEquivalent(observedFact, candidate))) {
       continue;
     }
+    if (isBenignFromToStructuredComparison(observedFact, comparableFacts)) {
+      continue;
+    }
     const appendixMatch = appendixFacts.find(
       (candidate) =>
         candidate.fact_id !== observedFact.fact_id
@@ -2010,6 +2013,30 @@ function lintNumericConsistency(input: {
   }
 
   return dedupeConsistencyIssues(issues);
+}
+
+function isBenignFromToStructuredComparison(
+  observedFact: NormalizedNumericFact,
+  comparableFacts: NormalizedNumericFact[]
+): boolean {
+  if (
+    observedFact.fact_kind !== "metric"
+    || observedFact.unit !== "score"
+    || (observedFact.metric_key !== "accuracy" && observedFact.metric_key !== "train_loss")
+  ) {
+    return false;
+  }
+  const hasFromToFragment =
+    (observedFact.metric_key === "accuracy" && isFromToAccuracyScoreFragment(observedFact.raw_text))
+    || (observedFact.metric_key === "train_loss" && isFromToTrainLossFragment(observedFact.raw_text));
+  if (!hasFromToFragment || !rawTextContainsApproxValue(observedFact.raw_text, observedFact.normalized_value, observedFact.unit)) {
+    return false;
+  }
+  return comparableFacts.some((candidate) =>
+    candidate.metric_key === observedFact.metric_key
+    && candidate.unit === observedFact.unit
+    && rawTextContainsApproxValue(observedFact.raw_text, candidate.normalized_value, observedFact.unit)
+  );
 }
 
 function lintStrongClaimWording(input: {
@@ -2719,6 +2746,9 @@ function buildObservedFactDriftIssues(
     if (fact.unit === "ci_lower" || fact.unit === "ci_upper") {
       continue;
     }
+    if (fact.fact_kind === "metric" && isConditionClusterStatement(fact.raw_text)) {
+      continue;
+    }
     if (!fact.metric_key && !fact.count_kind) {
       continue;
     }
@@ -2789,11 +2819,34 @@ function isBenignFromToMetricScoreDrift(
       )
   );
   if (fromToFacts.length < 2) {
-    return false;
+    const fromToTextFacts = facts.filter(
+      (fact) =>
+        fact.fact_kind === "metric"
+        && (fact.metric_key === "accuracy" || fact.metric_key === "train_loss")
+        && fact.unit === "score"
+        && (
+          (fact.metric_key === "accuracy" && isFromToAccuracyScoreFragment(fact.raw_text))
+          || (fact.metric_key === "train_loss" && isFromToTrainLossFragment(fact.raw_text))
+        )
+    );
+    return fromToTextFacts.some((fact) =>
+      distinctValues.every((value) => rawTextContainsApproxValue(fact.raw_text, value, fact.unit))
+    );
   }
   return distinctValues.every((value) =>
     fromToFacts.some((fact) => areApproxEqual(value, fact.normalized_value, fact.unit))
   );
+}
+
+function rawTextContainsApproxValue(text: string, value: number, unit: NumericFactUnit | undefined): boolean {
+  const numericMatches = cleanString(text).matchAll(/-?\d+(?:,\d{3})*(?:\.\d+)?/gu);
+  for (const match of numericMatches) {
+    const parsed = Number(match[0].replace(/,/gu, ""));
+    if (Number.isFinite(parsed) && areApproxEqual(parsed, value, unit)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function isBenignBaselineLeadingVisualDrift(
@@ -2814,7 +2867,13 @@ function isBenignBaselineLeadingVisualDrift(
   ) {
     return false;
   }
-  return facts.some((fact) => fact.source === "figure") && facts.some((fact) => /from\s+-?\d/iu.test(fact.raw_text));
+  const hasFigurePair = facts.some((fact) => fact.source === "figure");
+  const hasComparativeResultText = facts.some(
+    (fact) =>
+      ["abstract", "results", "discussion", "conclusion"].includes(fact.source)
+      && /\b(?:from\s+-?\d|versus|vs\.?|compared with|relative to)\b/iu.test(fact.raw_text)
+  );
+  return hasFigurePair && hasComparativeResultText;
 }
 
 function extractCountFactsFromText(input: {
@@ -3370,6 +3429,9 @@ function inferDatasetScope(
   }
   const mentionsArcChallenge = /\barc[-_\s]?challenge\b/iu.test(cleaned);
   const mentionsHellaSwag = /\bhella\s*swag\b|\bhellaswag\b/iu.test(cleaned);
+  if (/\b(?:peak\s+)?(?:gpu\s+|cuda\s+)?memory\b|\bvram\b|\bgb\b|\bmb\b|\bruntime\b|\bwall[-\s]?clock\b|\bseconds?\b|\btimeout\b/iu.test(cleaned)) {
+    return "aggregate";
+  }
   if (
     mentionsArcChallenge
     && mentionsHellaSwag
@@ -3577,6 +3639,9 @@ function inferMetricKeyNearNumber(
   rawIndex: number,
   paragraphMetricKey: string | undefined
 ): string | undefined {
+  if (isSequenceLengthValue(fragment, rawIndex)) {
+    return undefined;
+  }
   if (isFromToAccuracyScoreValue(fragment, rawIndex) || isVersusAccuracyScoreValue(fragment, rawIndex)) {
     return "accuracy";
   }
@@ -3591,6 +3656,11 @@ function inferMetricKeyNearNumber(
     return paragraphMetricKey;
   }
   return undefined;
+}
+
+function isSequenceLengthValue(text: string, rawIndex: number): boolean {
+  const window = cleanString(text.slice(Math.max(0, rawIndex - 48), Math.min(text.length, rawIndex + 48))).toLowerCase();
+  return /\b(?:max(?:imum)?\s+)?sequence length\b|\bcontext length\b|\bmax(?:imum)? length\b/iu.test(window);
 }
 
 function nearestKeywordDistance(text: string, rawIndex: number, keywords: string[]): number | undefined {
@@ -3909,7 +3979,9 @@ function inferConditionComparisonTarget(text: string, rawIndex?: number): string
 function isConditionClusterMetricValue(text: string, rawIndex: number): boolean {
   const patterns = [
     /\b(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+)?(?:conditions?|cells|rows)\s+(?:clustered|sat|were|remained)\s+at\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu,
-    /\b(?:conditions?|cells|rows)\b[^.!?]{0,80}\b(?:clustered|sat|were|remained)\s+at\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu
+    /\b(?:conditions?|cells|rows)\b[^.!?]{0,80}\b(?:clustered|sat|were|remained)\s+at\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu,
+    /\b(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+)?(?:conditions?|cells|rows)\s+(?:tied|clustered|sat|were|remained)\s+at\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu,
+    /\b(?:conditions?|cells|rows)\b[^.!?]{0,80}\b(?:tied|clustered|sat|were|remained)\s+at\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu
   ];
   for (const pattern of patterns) {
     for (const match of text.matchAll(pattern)) {
@@ -3925,7 +3997,9 @@ function isConditionClusterMetricValue(text: string, rawIndex: number): boolean 
 
 function isConditionClusterStatement(text: string): boolean {
   return /\b(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+)?(?:conditions?|cells|rows)\s+(?:clustered|sat|were|remained)\s+at\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(text)
-    || /\b(?:conditions?|cells|rows)\b[^.!?]{0,80}\b(?:clustered|sat|were|remained)\s+at\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(text);
+    || /\b(?:conditions?|cells|rows)\b[^.!?]{0,80}\b(?:clustered|sat|were|remained)\s+at\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(text)
+    || /\b(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+)?(?:conditions?|cells|rows)\s+(?:tied|clustered|sat|were|remained)\s+at\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(text)
+    || /\b(?:conditions?|cells|rows)\b[^.!?]{0,80}\b(?:tied|clustered|sat|were|remained)\s+at\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(text);
 }
 
 function inferExplicitConditionValueTarget(text: string, rawIndex: number | undefined): string | undefined {
@@ -4176,7 +4250,7 @@ function shouldSkipMetricToken(fragment: string, rawToken: string, index: number
   ) {
     return true;
   }
-  if (/\b(?:max(?:imum)?\s+sequence\s+length|sequence\s+length|max[_\s-]?seq(?:uence)?[_\s-]?length)\s*$/iu.test(previousWindow)) {
+  if (/\b(?:max(?:imum)?\s+sequence\s+length|sequence\s+length|max[_\s-]?seq(?:uence)?[_\s-]?length)\s*(?:of|=|:)?\s*$/iu.test(previousWindow)) {
     return true;
   }
   if (/\b(?:runtime\s+limit|timeout|time\s+budget|budget)\s*(?:of|=|:)?\s*$/iu.test(previousWindow)) {
@@ -5571,6 +5645,10 @@ function replaceMissingExecutedProtocolClaim(paragraph: string, detailParagraph:
     [
       /\bThe reader-visible summary does not identify the instantiated checkpoint or disclose optimizer configuration,\s*batch size,\s*learning rate,\s*epoch count,\s*or adapter target modules,\s*so the study should be interpreted as a bounded pilot comparison rather than a fully specified benchmark reproduction\./giu,
       `${detail} A camera-ready reproduction appendix should still preserve lower-level trainer defaults and adapter-placement details, so the study remains a bounded pilot comparison.`
+    ],
+    [
+      /\bThe reported summary does not reveal the resolved base-model identifier,\s*optimizer,\s*scheduler,\s*batch size,\s*learning-rate schedule,\s*or prompt template,\s*so those details cannot be reconstructed responsibly from the available evidence and are therefore not claimed here\./giu,
+      `${detail} Optimizer family, scheduler shape, prompt-template wording, and adapter-placement fields still need a fuller reproduction appendix, so the manuscript keeps the comparison scoped to the archived pilot rather than a final benchmark recipe.`
     ]
   ];
   return replacements.reduce((current, [pattern, replacement]) => current.replace(pattern, replacement), paragraph);

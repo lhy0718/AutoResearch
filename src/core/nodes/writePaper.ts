@@ -3753,6 +3753,32 @@ function buildFollowupManuscriptRepairDecision(input: {
     const hasBlockingAuditIssue = input.reviewAudit.issues.some((issue) =>
       issue.severity === "fail"
     );
+    const narrowRepairableRemainingScope =
+      input.passIndex < 2 &&
+      !hasBlockingAuditIssue &&
+      improvement &&
+      remainingFailCount > 0 &&
+      input.issuesAfter.every((issue) => issue.repairable) &&
+      input.issuesAfter.length <= 4 &&
+      uniqueStrings(input.issuesAfter.map((issue) => `${issue.source}:${issue.code}`)).length <= 4 &&
+      input.gateDecision.status !== "fail" &&
+      input.submissionValidation.ok &&
+      input.reviewValidation.ok &&
+      input.review.overall_decision !== "stop";
+    if (narrowRepairableRemainingScope) {
+      return finalizeManuscriptRepairDecision({
+        action: "repair",
+        pass_index: input.passIndex,
+        triggered_by: uniqueStrings(input.issuesAfter.map((issue) => issue.code)),
+        allowed_max_passes: 2,
+        remaining_allowed_repairs: 1,
+        issues_before: input.previousIssues,
+        issues_after: input.issuesAfter,
+        improvement_detected: improvement,
+        stop_or_continue_reason:
+          "A second and final manuscript repair is allowed because the partially grounded follow-up audit has no blocking grounding failure and the remaining issues are narrow, repairable, and improved after pass 1."
+      }, reviewReliability);
+    }
     if (
       !hasBlockingAuditIssue
       && remainingFailCount === 0
