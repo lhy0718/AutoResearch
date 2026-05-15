@@ -3228,7 +3228,7 @@ describe("scientificWriting", () => {
     const candidate: PaperManuscript = {
       title: "LoRA Rank-Dropout Preflight",
       abstract:
-        "The best condition improves average accuracy from 0.3333 to 0.4167, an increase of 0.0833 over the baseline. The run is operationally lightweight, reporting 8 of 8 requested conditions completed, 45.687 s wall-clock time, and about 4.28 GB peak CUDA allocation. The sweep completed in 45.687 s with 4.28 GB peak CUDA allocation.",
+        "The best condition improves average accuracy from 0.3333 to 0.4167, an increase of 0.0833 over the baseline. The run is operationally lightweight, reporting 8 of 8 requested conditions completed, 45.687 s wall-clock time, and about 4.28 GB peak CUDA allocation. The sweep completed in 45.687 s with 4.28 GB peak CUDA allocation. Condition-level 95% intervals overlap substantially, and each interval is based on only 12 predictions.",
       keywords: ["LoRA"],
       sections: [
         {
@@ -3286,8 +3286,10 @@ describe("scientificWriting", () => {
           || /cites 0\.4167, but the comparable structured results support .*accuracy_delta_vs_baseline/iu.test(issue.message)
           || /cites 1\.462, but the comparable structured results support .*accuracy_delta_vs_baseline/iu.test(issue.message)
           || /cites (?:8|45\.687), but the comparable structured results support .*runtime_seconds/iu.test(issue.message)
+          || /Abstract cites 12, but the comparable structured results support .*runtime_seconds/iu.test(issue.message)
           || /cites 4278951936, but the comparable structured results support .*runtime_seconds/iu.test(issue.message)
           || /cites (?:24|48|256), but the comparable structured results support .*peak_memory_mb/iu.test(issue.message)
+          || /Results cites (?:0\.138|0\.609|0\.1381|0\.6094), but the comparable structured results support .*peak_memory_mb/iu.test(issue.message)
           || /cites 1\.5242, but the current artifacts do not expose a comparable structured numeric fact for train_loss/iu.test(issue.message)
           || /cites 1\.462, but the current artifacts do not expose a comparable structured numeric fact for train_loss/iu.test(issue.message)
           || /cites 1\.5242, but the comparable structured results support .*accuracy/iu.test(issue.message)

@@ -1098,4 +1098,46 @@ describe("paper submission sanitization", () => {
       { label: "Leading Average", value: 0.4167 }
     ]);
   });
+
+  it("repairs reader-facing manuscript quality residues after LLM manuscript repair", () => {
+    const stabilized = stabilizePaperManuscriptForSubmission({
+      title: "A LoRA Benchmark",
+      abstract: "A cautious benchmark.",
+      keywords: ["LoRA"],
+      sections: [
+        {
+          heading: "Related Work",
+          paragraphs: [
+            "The cited work therefore motivates the design and claim ceiling, but it is not treated as a condition-matched baseline for the local 4x2 rank/dropout preflight."
+          ]
+        },
+        {
+          heading: "Results",
+          paragraphs: [
+            "No broader replication is reported in the compact main record, and supplementary No broader replication is reported here, so the main gain remains a single-run preflight observation. The documented gain therefore remains a single-run preflight observation.",
+            "The best nonbaseline row should therefore be read as a selection signal rather than as a final prescription. rank 32 / dropout 0.05 is the most useful candidate for follow-up because it combines a favorable mean with complete execution coverage.",
+            "The rank-32 rows carry the strongest follow-up signal because they combine the largest nonbaseline mean with the same condition-completion accounting used for the rest of the grid.",
+            "The resource side of the result is intentionally weaker than the accuracy side. Runtime and memory instrumentation show that the study was feasible at the selected local scale.",
+            "Resource reporting is therefore separated from accuracy reporting. wall-clock runtime was 45.687 seconds, with peak CUDA allocation recorded as a secondary resource diagnostic."
+          ]
+        },
+        {
+          heading: "Limitations",
+          paragraphs: [
+            "The compact record also omits several implementation details that would normally be standard in an empirical paper, including optimizer choice, learning-rate schedule, batch size, and an unambiguous statement of the executed base model. These omissions materially narrow reproducibility and interpretability."
+          ]
+        }
+      ]
+    });
+
+    const text = JSON.stringify(stabilized);
+    expect(text).toContain("documented gain remains a single-run preflight observation");
+    expect(text).toContain("scheduler details beyond the scalar learning rate");
+    expect(text).toContain("Runtime and memory records support feasibility");
+    expect(text).not.toContain("supplementary No broader replication");
+    expect(text).not.toContain("The best nonbaseline row should");
+    expect(text).not.toContain("The rank-32 rows carry");
+    expect(text).not.toContain("Resource reporting is therefore separated");
+    expect(text).not.toContain("batch size, and an unambiguous statement of the executed base model");
+  });
 });

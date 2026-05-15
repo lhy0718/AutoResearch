@@ -709,11 +709,15 @@ function repairReaderVisibleManuscriptCoherence(sections: PaperManuscriptSection
       paragraphs = removeRepeatedPracticalAdoptionClose(paragraphs);
       paragraphs = removeRepeatedDiscussionScreeningRestatements(paragraphs);
     }
+    if (headingKey === "results") {
+      paragraphs = repairResultsSectionReaderFlow(paragraphs);
+    }
     if (headingKey === "related work" || headingKey === "related_work") {
       paragraphs = repairRelatedWorkComparatorRedundancy(paragraphs);
     }
     if (headingKey === "limitations") {
       paragraphs = removeRepeatedScaleLimitations(paragraphs);
+      paragraphs = repairLimitationsKnownExecutionDetails(paragraphs);
     }
     return {
       ...section,
@@ -739,6 +743,14 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
     .replace(
       /\b(?:In addition,\s*)?(?:supplemental|confirmatory|supplemental confirmatory|follow-up)\s+profiles?[^.]*did not reproduce[^.]*\./giu,
       "No broader replication is reported here, so the main gain remains a single-run preflight observation."
+    )
+    .replace(
+      /\bNo broader replication is reported in the compact main record,\s*and supplementary No broader replication is reported here,\s*so the main gain remains a single-run preflight observation\.\s*The documented gain therefore remains a single-run preflight observation\./giu,
+      "No broader replication is reported here, so the documented gain remains a single-run preflight observation."
+    )
+    .replace(
+      /\bNo broader replication is reported here,\s*so the main gain remains a single-run preflight observation\.\s*The documented gain therefore remains a single-run preflight observation\./giu,
+      "No broader replication is reported here, so the documented gain remains a single-run preflight observation."
     )
     .replace(
       /\b(?:negative|non-confirmatory)\s+(?:follow-up|supplemental)\s+evidence\b/giu,
@@ -927,6 +939,9 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       /\bomits optimizer settings,\s*batch size,\s*LoRA target modules,\s*a full per-condition score table,\s*and the exact interval-construction procedure\b/giu,
       "omits optimizer settings, LoRA target modules, adapter scaling, and the exact interval-construction procedure while Table 1 provides the condition-level mean accuracy table"
     ).replace(
+      /\bThe compact record also omits several implementation details that would normally be standard in an empirical paper,\s*including optimizer choice,\s*learning-rate schedule,\s*batch size,\s*and an unambiguous statement of the executed base model\.\s*These omissions materially narrow reproducibility and interpretability\./giu,
+      "The compact record still omits several implementation details that would normally be standard in an empirical paper, including optimizer family, scheduler details beyond the scalar learning rate, LoRA target modules, adapter scaling, and interval-construction details. These omissions materially narrow reproducibility and interpretability."
+    ).replace(
       /\bIn addition,\s*some of the surrounding related-work material available to this paper came from abstract-level or timeout-limited extraction rather than full-text comparative review\./giu,
       "In addition, the related-work comparison remains narrower than a full survey of PEFT rank and regularization studies."
     ).replace(
@@ -992,6 +1007,51 @@ function removeRepeatedDiscussionScreeningRestatements(paragraphs: string[]): st
   return uniqueStrings(result);
 }
 
+function repairResultsSectionReaderFlow(paragraphs: string[]): string[] {
+  const result: string[] = [];
+  let sawSelectionSignal = false;
+  let sawResourceFeasibility = false;
+  for (const paragraph of paragraphs) {
+    const cleaned = cleanString(paragraph);
+    if (!cleaned) {
+      continue;
+    }
+    if (
+      /\bNo broader replication is reported\b/iu.test(cleaned) &&
+      /\bdocumented gain therefore remains a single-run preflight observation\b/iu.test(cleaned)
+    ) {
+      result.push("No broader replication is reported here, so the documented gain remains a single-run preflight observation.");
+      continue;
+    }
+    if (
+      /^The best nonbaseline row should therefore be read as a selection signal\b/iu.test(cleaned)
+      || /^The rank-32 rows carry the strongest follow-up signal\b/iu.test(cleaned)
+    ) {
+      if (!sawSelectionSignal) {
+        result.push(
+          "The condition grid should therefore be read as a screening result: rank 32 with dropout 0.05 is the strongest observed cell, but the wide intervals keep it a follow-up candidate rather than a settled prescription."
+        );
+        sawSelectionSignal = true;
+      }
+      continue;
+    }
+    if (
+      /^The resource side of the result is intentionally weaker than the accuracy side\b/iu.test(cleaned)
+      || /^Resource reporting is therefore separated from accuracy reporting\b/iu.test(cleaned)
+    ) {
+      if (!sawResourceFeasibility) {
+        result.push(
+          "Runtime and memory records support feasibility for the executed local preflight, but the available evidence does not support a condition-level efficiency ranking."
+        );
+        sawResourceFeasibility = true;
+      }
+      continue;
+    }
+    result.push(cleaned);
+  }
+  return uniqueStrings(result);
+}
+
 function repairRelatedWorkComparatorRedundancy(paragraphs: string[]): string[] {
   const result: string[] = [];
   let insertedInternalComparatorSynthesis = false;
@@ -1022,6 +1082,20 @@ function repairRelatedWorkComparatorRedundancy(paragraphs: string[]): string[] {
     result.push(paragraph);
   }
   return uniqueStrings(result);
+}
+
+function repairLimitationsKnownExecutionDetails(paragraphs: string[]): string[] {
+  return paragraphs.map((paragraph) =>
+    cleanString(paragraph)
+      .replace(
+        /\bThe compact record also omits several implementation details that would normally be standard in an empirical paper,\s*including optimizer choice,\s*learning-rate schedule,\s*batch size,\s*and an unambiguous statement of the executed base model\.\s*These omissions materially narrow reproducibility and interpretability\./giu,
+        "The compact record still omits several implementation details that would normally be standard in an empirical paper, including optimizer family, scheduler details beyond the scalar learning rate, LoRA target modules, adapter scaling, and interval-construction details. These omissions materially narrow reproducibility and interpretability."
+      )
+      .replace(
+        /\bthe compact record also omits several implementation details that would normally be standard in an empirical paper,\s*including optimizer choice,\s*learning-rate schedule,\s*batch size,\s*and an unambiguous statement of the executed base model\b/giu,
+        "the compact record still omits optimizer family, scheduler details beyond the scalar learning rate, LoRA target modules, adapter scaling, and interval-construction details"
+      )
+  );
 }
 
 function repairAppendixSections(sections: PaperManuscriptSection[]): PaperManuscriptSection[] | undefined {

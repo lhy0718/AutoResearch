@@ -2689,6 +2689,23 @@ function sanitizeFinalPaperParagraph(heading: string, paragraph: string, index: 
     .replace(/\bmachine-readable result reporting\b/giu, "transparent result reporting")
     .replace(/\s+/gu, " ")
     .trim();
+  if (/^results$/iu.test(heading)) {
+    if (
+      /\bNo broader replication is reported\b/iu.test(paragraph) &&
+      /\bdocumented gain therefore remains a single-run preflight observation\b/iu.test(paragraph)
+    ) {
+      return "No broader replication is reported here, so the documented gain remains a single-run preflight observation.";
+    }
+    if (
+      /^The best nonbaseline row should therefore be read as a selection signal\b/iu.test(paragraph)
+      || /^The rank-32 rows carry the strongest follow-up signal\b/iu.test(paragraph)
+    ) {
+      return "";
+    }
+    if (/^Resource reporting is therefore separated from accuracy reporting\b/iu.test(paragraph)) {
+      return "";
+    }
+  }
   if (/^method$/iu.test(heading) && /^Evaluation spans ARC-Challenge and HellaSwag\.?/iu.test(paragraph)) {
     return "";
   }
@@ -2789,6 +2806,10 @@ function repairFinalClaimCeilingAndInternalLanguage(heading: string, paragraph: 
     .replace(
       /\bIn that narrow sense,\s*the observed comparison supports the same motivation for explicit rank sweeps that appears in prior low-budget LoRA reports,\s*although the present evidence remains limited to one compact record\./giu,
       "In that narrow sense, the observed comparison supports explicit rank sweeps in the next experiment, although the present evidence remains limited to one compact record."
+    )
+    .replace(
+      /\bThe compact record also omits several implementation details that would normally be standard in an empirical paper,\s*including optimizer choice,\s*learning-rate schedule,\s*batch size,\s*and an unambiguous statement of the executed base model\.\s*These omissions materially narrow reproducibility and interpretability\./giu,
+      "The compact record still omits several implementation details that would normally be standard in an empirical paper, including optimizer family, scheduler details beyond the scalar learning rate, LoRA target modules, adapter scaling, and interval-construction details. These omissions materially narrow reproducibility and interpretability."
     );
 
   if (/^results$/iu.test(heading)) {

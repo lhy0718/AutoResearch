@@ -3596,18 +3596,18 @@ function inferMetricUnit(
   const cleaned = cleanString(text).toLowerCase();
   const normalized = normalizeMetricText(text);
   const searchText = normalizeMetricSearchText(text);
-  if (metricKey === "train_loss") {
-    return "score";
-  }
   const tokenWindow =
     typeof rawIndex === "number"
       ? cleanString(text.slice(rawIndex, Math.min(text.length, rawIndex + 32))).toLowerCase()
       : "";
-  if (tokenWindow && /\b\d+(?:,\d{3})*(?:\.\d+)?\s*(?:s|sec|secs|second|seconds)\b/iu.test(tokenWindow)) {
+  if (tokenWindow && /^\s*\d+(?:,\d{3})*(?:\.\d+)?\s*(?:s|sec|secs|second|seconds)\b/iu.test(tokenWindow)) {
     return "seconds";
   }
-  if (tokenWindow && /\b\d+(?:,\d{3})*(?:\.\d+)?\s*(?:bytes?|gb|gib|mb|mib)\b/iu.test(tokenWindow)) {
+  if (tokenWindow && /^\s*\d+(?:,\d{3})*(?:\.\d+)?\s*(?:bytes?|gb|gib|mb|mib)\b/iu.test(tokenWindow)) {
     return "mb";
+  }
+  if (metricKey === "train_loss") {
+    return "score";
   }
   if (
     (metricKey === "accuracy" || metricKey === "accuracy_delta_vs_baseline")
@@ -3625,6 +3625,12 @@ function inferMetricUnit(
   }
   if (metricKey?.includes("delta")) {
     return "delta";
+  }
+  if (/\bci\b|\bconfidence interval\b|\bintervals?\b|\binterval\b.*\bspan/iu.test(normalized) || cleaned.includes("95%")) {
+    if (totalMatches >= 2) {
+      return index % 2 === 0 ? "ci_lower" : "ci_upper";
+    }
+    return "score";
   }
   const memoryDistance =
     typeof rawIndex === "number"
@@ -3646,12 +3652,6 @@ function inferMetricUnit(
   }
   if (metricKey === "peak_memory_mb" || /\bmemory\b|\bram\b|\bmb\b|\bgib\b/iu.test(normalized)) {
     return "mb";
-  }
-  if (/\bci\b|\bconfidence interval\b|\bintervals?\b|\binterval\b.*\bspan/iu.test(normalized) || cleaned.includes("95%")) {
-    if (totalMatches >= 2) {
-      return index % 2 === 0 ? "ci_lower" : "ci_upper";
-    }
-    return "score";
   }
   if (
     (metricKey === "accuracy" || metricKey === "accuracy_delta_vs_baseline")
@@ -4395,6 +4395,12 @@ function shouldSkipMetricToken(fragment: string, rawToken: string, index: number
     return true;
   }
   if (/^\s*(?:training\s+)?examples?\b|^\s*train\s+dataset\s+tokens?\b/iu.test(nextWindow)) {
+    return true;
+  }
+  if (/^\s*(?:prediction|predictions|records?|samples?)\b/iu.test(nextWindow)) {
+    return true;
+  }
+  if (/\b(?:n\s*=\s*)?$/iu.test(previousWindow) && /^\s*(?:prediction|predictions|records?|samples?)\b/iu.test(nextWindow)) {
     return true;
   }
   if (/^\s*tokens?\b/iu.test(nextWindow)) {
