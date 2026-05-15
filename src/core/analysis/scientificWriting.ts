@@ -600,17 +600,27 @@ export function experimentArtifactLoader(input: {
 
   const relatedWorkNotes = input.bundle.relatedWorkNotes || [];
   const comparisonAxes = input.bundle.relatedWorkScout?.papers?.length
-    ? uniqueStrings(input.bundle.relatedWorkScout.papers.map((item) => firstSentence(item.summary)).filter(Boolean))
+    ? uniqueStrings(
+        input.bundle.relatedWorkScout.papers
+          .map((item) => sanitizeRelatedWorkAxisForNarrative(firstSentence(item.summary), protocolKind))
+          .filter(Boolean)
+      )
     : [];
   const positioningNotes = relatedWorkNotes.filter((item) => isPositioningRelatedWorkNote(item));
+  const safeRelatedWorkAxes = uniqueStrings([
+    ...(input.bundle.relatedWorkNotes || []).map((item) => sanitizeRelatedWorkAxisForNarrative(item.problem_focus, protocolKind)),
+    ...comparisonAxes
+  ]).slice(0, 4);
+  const rawClusters = uniqueStrings(
+    relatedWorkNotes
+      .map((item) => sanitizeRelatedWorkAxisForNarrative(item.method_family, protocolKind))
+      .filter(Boolean)
+  );
+  const safeClusters = completeRelatedWorkClustersForProtocol(rawClusters, protocolKind);
   const relatedWork = {
-    clusters: uniqueStrings(relatedWorkNotes.map((item) => item.method_family).filter(Boolean)),
-    closest_titles: positioningNotes.map((item) => item.title).slice(0, 3),
-    comparison_axes:
-      uniqueStrings([
-        ...(input.bundle.relatedWorkNotes || []).map((item) => item.problem_focus),
-        ...comparisonAxes
-      ]).slice(0, 4),
+    clusters: safeClusters,
+    closest_titles: positioningNotes.map((item) => sanitizeRelatedWorkTitleForNarrative(item.title, protocolKind)).filter(Boolean).slice(0, 3),
+    comparison_axes: safeRelatedWorkAxes.length > 0 ? safeRelatedWorkAxes : ["method family, resource budget, and evaluation-scope differences"],
     note_count: relatedWorkNotes.length,
     positioning_available: positioningNotes.length > 0
   };
@@ -2506,12 +2516,13 @@ function collectObservedMetricFacts(
       sourceRefs: undefined
     }),
     ...sections.flatMap((section) =>
-      section.paragraphs.flatMap((paragraph) =>
+      section.paragraphs.flatMap((paragraph, paragraphIndex) =>
         extractMetricFactsFromText({
           text: paragraph,
           source: mapSectionHeadingToNumericFactSource(section.heading),
           location: section.heading,
           context,
+          previousText: paragraphIndex > 0 ? section.paragraphs[paragraphIndex - 1] : undefined,
           sourceRefs: section.source_refs
         })
       )
@@ -2611,6 +2622,9 @@ function buildObservedFactDriftIssues(
     if (mainSectionFacts.length < 2 || distinctLocations.length < 2 || distinctValues.length < 2) {
       continue;
     }
+    if (isBenignFromToAccuracyScoreDrift(mainSectionFacts, distinctValues)) {
+      continue;
+    }
     // When distinct values span a very wide range, it's likely a scope/key
     // mismatch (e.g. aggregate vs per-condition) rather than a real contradiction.
     const minDV = Math.min(...distinctValues.map(Math.abs));
@@ -2630,6 +2644,28 @@ function buildObservedFactDriftIssues(
     });
   }
   return issues;
+}
+
+function isBenignFromToAccuracyScoreDrift(
+  facts: NormalizedNumericFact[],
+  distinctValues: number[]
+): boolean {
+  if (distinctValues.length !== 2) {
+    return false;
+  }
+  const fromToFacts = facts.filter(
+    (fact) =>
+      fact.fact_kind === "metric"
+      && fact.metric_key === "accuracy"
+      && fact.unit === "score"
+      && isFromToAccuracyScoreFragment(fact.raw_text)
+  );
+  if (fromToFacts.length < 2) {
+    return false;
+  }
+  return distinctValues.every((value) =>
+    fromToFacts.some((fact) => areApproxEqual(value, fact.normalized_value, fact.unit))
+  );
 }
 
 function extractCountFactsFromText(input: {
@@ -2686,6 +2722,7 @@ function extractMetricFactsFromText(input: {
   source: NumericFactSource;
   location: string;
   context: ExperimentArtifactContext;
+  previousText?: string;
   sourceRefs?: PaperSourceRef[];
 }): NormalizedNumericFact[] {
   const cleaned = cleanString(input.text);
@@ -2699,7 +2736,9 @@ function extractMetricFactsFromText(input: {
     .map((fragment) => cleanString(fragment))
     .filter(Boolean);
   const facts: NormalizedNumericFact[] = [];
-  for (const fragment of fragments) {
+  for (let fragmentIndex = 0; fragmentIndex < fragments.length; fragmentIndex += 1) {
+    const fragment = fragments[fragmentIndex];
+    const previousFragment = fragmentIndex > 0 ? fragments[fragmentIndex - 1] : input.previousText;
     if (isObjectiveThresholdFragment(fragment)) {
       continue;
     }
@@ -2764,7 +2803,7 @@ function extractMetricFactsFromText(input: {
           value,
           metricKey: normalizedMetricKey,
           metricLabel: humanizeToken(normalizedMetricKey),
-          comparisonTarget: inferConditionComparisonTargetNearNumber(fragment, match.index),
+          comparisonTarget: inferConditionComparisonTargetNearNumber(fragment, match.index, previousFragment),
           datasetScope,
           aggregationLevel,
           unit,
@@ -3206,10 +3245,43 @@ function inferMetricUnit(
     }
     return "score";
   }
+  if (metricKey === "accuracy" && typeof rawIndex === "number" && isFromToAccuracyScoreValue(text, rawIndex)) {
+    return "score";
+  }
   if (metricKey?.includes("delta") || /\bdeltas?\b|\bimprov(?:e|ed|es|ement)\b|\bgain\b|\bvs\b|\bby\b/iu.test(normalized)) {
     return "delta";
   }
   return metricKey ? "score" : undefined;
+}
+
+function isFromToAccuracyScoreValue(text: string, rawIndex: number): boolean {
+  const cleaned = cleanString(text);
+  const patterns = [
+    /\b(?:average\s+)?accuracy\b[^.!?]{0,80}\b(?:improved|increased|rose|changed|raises?|raised|raising)\b[^.!?]{0,80}\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:to|up to)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu,
+    /\b(?:improved|increased|rose|changed|raises?|raised|raising)\b[^.!?]{0,80}\b(?:average\s+)?accuracy\b[^.!?]{0,80}\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:to|up to)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu,
+    /\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:to|up to)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)[^.!?]{0,80}\b(?:average\s+)?accuracy\b/giu
+  ];
+  for (const pattern of patterns) {
+    for (const match of cleaned.matchAll(pattern)) {
+      const values = [match[1], match[2]].filter(Boolean);
+      for (const value of values) {
+        const valueIndex = (match.index || 0) + match[0].indexOf(value);
+        if (rawIndex >= valueIndex && rawIndex <= valueIndex + value.length) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function isFromToAccuracyScoreFragment(text: string): boolean {
+  const cleaned = cleanString(text);
+  return (
+    /\b(?:average\s+)?accuracy\b[^.!?]{0,80}\b(?:improved|increased|rose|changed|raises?|raised|raising)\b[^.!?]{0,80}\bfrom\s+-?\d+(?:,\d{3})*(?:\.\d+)?\s+(?:to|up to)\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(cleaned)
+    || /\b(?:improved|increased|rose|changed|raises?|raised|raising)\b[^.!?]{0,80}\b(?:average\s+)?accuracy\b[^.!?]{0,80}\bfrom\s+-?\d+(?:,\d{3})*(?:\.\d+)?\s+(?:to|up to)\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(cleaned)
+    || /\bfrom\s+-?\d+(?:,\d{3})*(?:\.\d+)?\s+(?:to|up to)\s+-?\d+(?:,\d{3})*(?:\.\d+)?[^.!?]{0,80}\b(?:average\s+)?accuracy\b/iu.test(cleaned)
+  );
 }
 
 function inferMetricKeyNearNumber(
@@ -3456,10 +3528,19 @@ function specializeMetricKeyForNumber(
   return specializeMetricKeyForFragment(metricKey, fragment, unit);
 }
 
-function inferConditionComparisonTargetNearNumber(fragment: string, rawIndex: number): string | undefined {
+function inferConditionComparisonTargetNearNumber(
+  fragment: string,
+  rawIndex: number,
+  previousFragment?: string
+): string | undefined {
   const window = fragment.slice(Math.max(0, rawIndex - 120), Math.min(fragment.length, rawIndex + 120));
   const offset = Math.max(0, rawIndex - 120);
-  return inferConditionComparisonTarget(window, rawIndex - offset);
+  const currentTarget = inferConditionComparisonTarget(window, rawIndex - offset);
+  const anaphoricTarget = inferAnaphoricConditionComparisonTarget(fragment, rawIndex, previousFragment);
+  if (anaphoricTarget && (!currentTarget || shouldPreferAnaphoricConditionTarget(fragment, rawIndex, currentTarget))) {
+    return anaphoricTarget;
+  }
+  return currentTarget;
 }
 
 function inferConditionComparisonTarget(text: string, rawIndex?: number): string | undefined {
@@ -3470,6 +3551,10 @@ function inferConditionComparisonTarget(text: string, rawIndex?: number): string
   const explicitBaselineTarget = inferBaselineComparisonTarget(cleaned, rawIndex);
   if (explicitBaselineTarget) {
     return explicitBaselineTarget;
+  }
+  const explicitValueTarget = inferExplicitConditionValueTarget(cleaned, rawIndex);
+  if (explicitValueTarget) {
+    return explicitValueTarget;
   }
   const candidates: Array<{ target: string; distance: number }> = [];
   const patterns = [
@@ -3494,6 +3579,107 @@ function inferConditionComparisonTarget(text: string, rawIndex?: number): string
     }
   }
   return candidates.sort((left, right) => left.distance - right.distance)[0]?.target;
+}
+
+function inferExplicitConditionValueTarget(text: string, rawIndex: number | undefined): string | undefined {
+  if (typeof rawIndex !== "number") {
+    return undefined;
+  }
+  const comparedPattern =
+    /\branks?\s*(\d+(?:\.\d+)?)\s+(?:with|and|\/)?\s*dropout\s*(\d+(?:\.\d+)?)[^!?]{0,160}?\b(?:average\s+)?accuracy\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:compared with|versus|vs\.?)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu;
+  for (const match of text.matchAll(comparedPattern)) {
+    const target = formatConditionComparisonTarget(match[1] || "", match[2] || "");
+    const value = match[3] || "";
+    if (!target || !value) {
+      continue;
+    }
+    const valueIndex = (match.index || 0) + match[0].indexOf(value);
+    if (rawIndex >= valueIndex && rawIndex <= valueIndex + value.length) {
+      return target;
+    }
+  }
+  const comparativeFromToPattern =
+    /\branks?\s*(\d+(?:\.\d+)?)\s+(?:with|and|\/)?\s*dropout\s*(\d+(?:\.\d+)?)[^!?]{0,120}?\b(?:versus|vs\.?|compared with)\s+ranks?\s*(\d+(?:\.\d+)?)\s+(?:with|and|\/)?\s*dropout\s*(\d+(?:\.\d+)?)[^!?]{0,120}?\b(?:average\s+)?accuracy\s+(?:increased|improved|rose|changed|raises?|raised|rising|raising)\s+from\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+to\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu;
+  for (const match of text.matchAll(comparativeFromToPattern)) {
+    const leadingTarget = formatConditionComparisonTarget(match[1] || "", match[2] || "");
+    const baselineTarget = formatConditionComparisonTarget(match[3] || "", match[4] || "");
+    const fromValue = match[5] || "";
+    const toValue = match[6] || "";
+    if (!leadingTarget || !baselineTarget || !fromValue || !toValue) {
+      continue;
+    }
+    const fromIndex = (match.index || 0) + match[0].indexOf(fromValue);
+    const toIndex = (match.index || 0) + match[0].lastIndexOf(toValue);
+    if (rawIndex >= fromIndex && rawIndex <= fromIndex + fromValue.length) {
+      return baselineTarget;
+    }
+    if (rawIndex >= toIndex && rawIndex <= toIndex + toValue.length) {
+      return leadingTarget;
+    }
+  }
+  const fromToPattern =
+    /\branks?\s*(\d+(?:\.\d+)?)\s+(?:with|and|\/)?\s*dropout\s*(\d+(?:\.\d+)?)[^!?]{0,160}?\b(?:increased|improved|rose|changed|raises?|raised|rising|raising)\b[^!?]{0,80}\b(?:average\s+)?accuracy\s+from\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+to\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu;
+  for (const match of text.matchAll(fromToPattern)) {
+    const target = formatConditionComparisonTarget(match[1] || "", match[2] || "");
+    const value = match[4] || "";
+    if (!target || !value) {
+      continue;
+    }
+    const valueIndex = (match.index || 0) + match[0].lastIndexOf(value);
+    if (rawIndex >= valueIndex && rawIndex <= valueIndex + value.length) {
+      return target;
+    }
+  }
+  return undefined;
+}
+
+function inferAnaphoricConditionComparisonTarget(
+  fragment: string,
+  rawIndex: number,
+  previousFragment?: string
+): string | undefined {
+  if (!previousFragment) {
+    return undefined;
+  }
+  const current = cleanString(fragment);
+  if (!/\b(?:its|this|that|leading|best)\b[^.!?]{0,80}\b(?:average\s+)?accuracy\b/iu.test(current)) {
+    return undefined;
+  }
+  const prefix = current.slice(0, Math.max(0, rawIndex));
+  const suffix = current.slice(Math.max(0, rawIndex));
+  if (!/\b(?:average\s+)?accuracy\b/iu.test(prefix) || !/\b(?:compared with|versus|vs\.?)\b[^!?]{0,100}\bbaseline\b/iu.test(suffix)) {
+    return undefined;
+  }
+  return extractConditionTargetFromText(previousFragment);
+}
+
+function extractConditionTargetFromText(text: string): string | undefined {
+  const cleaned = cleanString(text);
+  const patterns = [
+    /\branks?\s*(\d+(?:\.\d+)?)\b[^.!?;,]{0,80}\bdropout\s*(?:values?|levels?|settings?|of|=|:|is|was|with)?\s*(\d+(?:\.\d+)?)/iu,
+    /\bdropout\s*(?:values?|levels?|settings?|of|=|:|is|was|with)?\s*(\d+(?:\.\d+)?)\b[^.!?;,]{0,80}\branks?\s*(\d+(?:\.\d+)?)/iu
+  ];
+  for (const pattern of patterns) {
+    const match = cleaned.match(pattern);
+    if (!match) {
+      continue;
+    }
+    const rank = pattern.source.startsWith("\\branks?") ? match[1] : match[2];
+    const dropout = pattern.source.startsWith("\\branks?") ? match[2] : match[1];
+    const target = formatConditionComparisonTarget(rank || "", dropout || "");
+    if (target) {
+      return target;
+    }
+  }
+  return undefined;
+}
+
+function shouldPreferAnaphoricConditionTarget(fragment: string, rawIndex: number, currentTarget: string): boolean {
+  if (!/^rank_\d+(?:_\d+)?_dropout_/u.test(currentTarget)) {
+    return false;
+  }
+  const suffix = fragment.slice(Math.max(0, rawIndex));
+  return /\b(?:compared with|versus|vs\.?)\b[^!?]{0,120}\bbaseline\b[^!?]{0,80}\branks?\b/iu.test(suffix);
 }
 
 function inferBaselineComparisonTarget(text: string, rawIndex: number | undefined): string | undefined {
@@ -4207,7 +4393,7 @@ export function materializeScientificManuscript(input: {
     appendix_tables: appendixTables,
     appendix_figures: appendixFigures
   };
-  manuscript = compactReaderFacingScientificManuscript(manuscript);
+  manuscript = compactReaderFacingScientificManuscript(manuscript, context);
   attachAppendixCrossReferences(manuscript, input.appendixPlan);
 
   const consistency = manuscriptConsistencyLinter({
@@ -4329,9 +4515,15 @@ export function strengthenPaperScaleManuscript(
   };
 }
 
-function compactReaderFacingScientificManuscript(manuscript: PaperManuscript): PaperManuscript {
+function compactReaderFacingScientificManuscript(
+  manuscript: PaperManuscript,
+  context?: ExperimentArtifactContext
+): PaperManuscript {
   return {
     ...manuscript,
+    title: context?.protocol_kind === "lm_benchmark"
+      ? softenLmBenchmarkPilotTitle(manuscript.title)
+      : manuscript.title,
     sections: manuscript.sections.map((section) => {
       const normalized = cleanString(section.heading).toLowerCase();
       if (normalized === "method") {
@@ -4352,6 +4544,20 @@ function compactReaderFacingScientificManuscript(manuscript: PaperManuscript): P
       };
     })
   };
+}
+
+function softenLmBenchmarkPilotTitle(title: string): string {
+  const cleaned = cleanString(title);
+  if (!cleaned) {
+    return title;
+  }
+  if (/\btrade[- ]?offs?\b/iu.test(cleaned) && /\b(rank|dropout|LoRA|parameter-efficient)\b/iu.test(cleaned)) {
+    return "A Fixed-Budget Pilot Study of LoRA Rank and Dropout for Local Instruction Tuning";
+  }
+  if (/\bbenchmarking\b/iu.test(cleaned) && /\bfixed local budget\b/iu.test(cleaned)) {
+    return cleaned.replace(/\bBenchmarking\b/iu, "A Pilot Study of");
+  }
+  return title;
 }
 
 function compactReaderFacingMethodParagraphs(paragraphs: string[]): string[] {
@@ -4537,6 +4743,7 @@ function isInternalIntroductionParagraph(paragraph: string): boolean {
   return (
     /\bThis study addresses Study\b/iu.test(paragraph)
     || /\bP6 run\b|\breview gating\b|\bpaper-readiness audit\b|\bresult-table integrity\b/iu.test(paragraph)
+    || /\bresult-table consistency\b|\bbounded claim ceiling\b|\bclaim-downgrade\b|\bpre-registered result-gating\b|\bcurrent artifacts\b/iu.test(paragraph)
     || /\bObjective metric met\s*:/iu.test(paragraph)
     || /\bThe paper is scoped around\s*-/iu.test(paragraph)
     || /\bPrimary metric\s*:/iu.test(paragraph)
@@ -4605,8 +4812,9 @@ function strengthenResultsSectionWithConditionNarrative(
   section: PaperManuscriptSection,
   context: ExperimentArtifactContext
 ): PaperManuscriptSection {
+  const detailParagraph = buildExecutedProtocolDetailParagraph(context);
   const paragraphs = section.paragraphs
-    .map((paragraph) => sanitizeHumanFacingManuscriptText(paragraph))
+    .map((paragraph) => replaceMissingExecutedProtocolClaim(sanitizeHumanFacingManuscriptText(paragraph), detailParagraph))
     .filter((paragraph) => paragraph && !isRawMetricDumpParagraph(paragraph));
   if (context.results.condition_summaries.length < 2) {
     return {
@@ -4852,8 +5060,9 @@ function strengthenLimitationsSectionWithScope(
   section: PaperManuscriptSection,
   context: ExperimentArtifactContext
 ): PaperManuscriptSection {
+  const detailParagraph = buildExecutedProtocolDetailParagraph(context);
   const paragraphs = section.paragraphs
-    .map((paragraph) => sanitizeHumanFacingManuscriptText(paragraph))
+    .map((paragraph) => replaceMissingExecutedProtocolClaim(sanitizeHumanFacingManuscriptText(paragraph), detailParagraph))
     .filter((paragraph) => paragraph && !isRawMetricDumpParagraph(paragraph));
   const existingText = paragraphs.join(" ");
   const additions = [
@@ -4876,7 +5085,7 @@ function buildRelatedWorkContrastSentence(
   titles: string[],
   context: ExperimentArtifactContext
 ): string {
-  const axis = context.related_work.comparison_axes[0] || "evaluation scope";
+  const axis = firstSafeRelatedWorkAxis(context) || "evaluation scope";
   const clauses = titles.map((title, index) => {
     if (index === 0) {
       return `${title} anchors the closest resource-aware adaptation context`;
@@ -4936,23 +5145,26 @@ function strengthenMethodSectionWithArtifactDetails(
     return section;
   }
   const paragraphs = section.paragraphs.map((paragraph) =>
-    sanitizeHumanFacingManuscriptText(
-      rewriteMethodDataBudgetCapSentence(
-        paragraph
-          .replace(
-            /\s*although\s+the\s+compact\s+study\s+summary\s+does\s+not\s+surface\s+their\s+exact\s+numeric\s+values\s+in\s+the\s+manuscript-facing\s+record\.?/giu,
-            "."
-          )
-          .replace(
-            /\s*although\s+the\s+condensed\s+materials\s+do\s+not\s+yet\s+expose\s+[^.]*exact\s+numeric\s+training\s+hyperparameters[^.]*\.?/giu,
-            "."
-          ),
-        context
-      )
+    replaceMissingExecutedProtocolClaim(
+      sanitizeHumanFacingManuscriptText(
+        rewriteMethodDataBudgetCapSentence(
+          paragraph
+            .replace(
+              /\s*although\s+the\s+compact\s+study\s+summary\s+does\s+not\s+surface\s+their\s+exact\s+numeric\s+values\s+in\s+the\s+manuscript-facing\s+record\.?/giu,
+              "."
+            )
+            .replace(
+              /\s*although\s+the\s+condensed\s+materials\s+do\s+not\s+yet\s+expose\s+[^.]*exact\s+numeric\s+training\s+hyperparameters[^.]*\.?/giu,
+              "."
+            ),
+          context
+        )
+      ),
+      detailParagraph
     )
   );
   const sectionText = paragraphs.join(" ");
-  if (/learning rate|per-device train batch size|gradient accumulation|optimizer steps/iu.test(sectionText)) {
+  if (hasExecutedTrainingHyperparameterValues(sectionText)) {
     return {
       ...section,
       paragraphs: compactMethodProtocolParagraphs(paragraphs)
@@ -4967,6 +5179,39 @@ function strengthenMethodSectionWithArtifactDetails(
       ...paragraphs.slice(insertIndex)
     ])
   };
+}
+
+function hasExecutedTrainingHyperparameterValues(text: string): boolean {
+  return (
+    /\blearning rate\s+[0-9.]+/iu.test(text)
+    || /\bper-device (?:train )?batch size\s+\d+/iu.test(text)
+    || /\bgradient accumulation\s+\d+/iu.test(text)
+    || /\bmaximum sequence length\s+\d+/iu.test(text)
+    || /\b\d+\s+optimizer steps?\b/iu.test(text)
+    || /\bLoRA target modules were\s+(?:q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)\b/iu.test(text)
+  );
+}
+
+function replaceMissingExecutedProtocolClaim(paragraph: string, detailParagraph: string): string {
+  if (!detailParagraph) {
+    return paragraph;
+  }
+  const detail = detailParagraph.replace(/\.$/u, ".");
+  const replacements: Array<[RegExp, string]> = [
+    [
+      /\bThe reported summary provided for writing does not disclose the instantiated checkpoint,\s*optimizer,\s*batch size,\s*learning rate,\s*epoch count,\s*or LoRA target modules,\s*so the paper treats the reported run as a pilot-scale realization of the design rather than as a fully specified benchmark reproduction\./giu,
+      `${detail} The manuscript treats the run as a pilot-scale realization of the design rather than as a fully specified benchmark reproduction.`
+    ],
+    [
+      /\bThe reader-visible summary identifies the realized run as 48 training samples,\s*maximum sequence length 256,\s*and seed 17,\s*but it does not disclose the instantiated checkpoint,\s*optimizer,\s*batch size,\s*learning rate,\s*epoch count,\s*or LoRA target modules;\s*the comparison is therefore bounded to the executed pilot record rather than a fully specified benchmark reproduction\./giu,
+      `${detail} The comparison is therefore bounded to the executed pilot record rather than a full reproduction appendix.`
+    ],
+    [
+      /\bThe reader-visible summary does not identify the instantiated checkpoint or disclose optimizer configuration,\s*batch size,\s*learning rate,\s*epoch count,\s*or adapter target modules,\s*so the study should be interpreted as a bounded pilot comparison rather than a fully specified benchmark reproduction\./giu,
+      `${detail} A camera-ready reproduction appendix should still preserve lower-level trainer defaults and adapter-placement details, so the study remains a bounded pilot comparison.`
+    ]
+  ];
+  return replacements.reduce((current, [pattern, replacement]) => current.replace(pattern, replacement), paragraph);
 }
 
 function compactMethodProtocolParagraphs(paragraphs: string[]): string[] {
@@ -5407,6 +5652,156 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
     .replace(/\.{2,}/gu, ".")
     .replace(/\s+/gu, " ")
     .trim();
+}
+
+function sanitizeRelatedWorkAxisForNarrative(value: string | undefined, protocolKind?: ExperimentProtocolKind): string {
+  const cleaned = sanitizeHumanFacingManuscriptText(cleanString(value))
+    .replace(/\.{2,}/gu, ".")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (!cleaned || isBibliographicSpilloverText(cleaned)) {
+    return "";
+  }
+  if (protocolKind === "lm_benchmark" && isOffTopicLmBenchmarkRelatedWorkAxis(cleaned)) {
+    return "";
+  }
+  if (cleaned.length > 150) {
+    return firstSentence(cleaned).slice(0, 150).replace(/\s+\S*$/u, "").trim();
+  }
+  return cleaned;
+}
+
+function sanitizeRelatedWorkTitleForNarrative(value: string | undefined, protocolKind?: ExperimentProtocolKind): string {
+  const cleaned = cleanString(value)
+    .replace(/\.{2,}/gu, ".")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (!cleaned || isBibliographicSpilloverText(cleaned)) {
+    return "";
+  }
+  if (protocolKind === "lm_benchmark" && isOffTopicLmBenchmarkRelatedWorkAxis(cleaned)) {
+    return "";
+  }
+  const words = cleaned.split(/\s+/u);
+  return words.length > 12 ? `${words.slice(0, 12).join(" ")}...` : cleaned;
+}
+
+function isBibliographicSpilloverText(value: string): boolean {
+  const text = cleanString(value);
+  if (!text) {
+    return false;
+  }
+  if (/\s-\s(?:Primary metric|Secondary metrics|Meaningful improvement|No-signal boundary)\s*:/iu.test(text)) {
+    return true;
+  }
+  if (/\bThe present paper positions itself around\s*-\s*Primary metric\b/iu.test(text)) {
+    return true;
+  }
+  if (/\bThe most relevant comparison axes concern\s+Recently,/iu.test(text)) {
+    return true;
+  }
+  if (/^(?:Recently,|This paper proposes\b)/iu.test(text)) {
+    return true;
+  }
+  if (/^Published as a conference paper\b/iu.test(text)) {
+    return true;
+  }
+  if (/\b[A-Z](?:\s+[A-Z]){3,}\b.*\b(?:conference paper|ICLR|ACL|EMNLP|NeurIPS|ICML)\b/iu.test(text)) {
+    return true;
+  }
+  if (/\b(?:ICLR|ACL|EMNLP|NeurIPS|ICML)\s+\d{4}\b.*\b[A-Z][a-z]+\s+[A-Z][a-z]+/u.test(text)) {
+    return true;
+  }
+  if (/\b(?:The University of|Department of|Institute of)\b.*\b(?:The University of|Department of|Institute of)\b/iu.test(text)) {
+    return true;
+  }
+  if (/\b[A-Z][a-z]+ [A-Z][a-z]+ [A-Z][a-z]+\b.*\b(?:University|Department|Institute)\b/u.test(text)) {
+    return true;
+  }
+  if (/\.\.\./u.test(text) && /\b(?:University|Department|Institute|This paper proposes|Recently,)\b/iu.test(text)) {
+    return true;
+  }
+  return false;
+}
+
+function isOffTopicLmBenchmarkRelatedWorkAxis(value: string): boolean {
+  const text = cleanString(value);
+  if (!text) {
+    return false;
+  }
+  if (
+    /\b(?:literature discovery|retrieval-only|stateful coordination|agent coordination|genetic algorithm|abstract-only fallback)\b/iu.test(
+      text
+    ) ||
+    /^GIFT is\b/iu.test(text)
+  ) {
+    return true;
+  }
+  return !/\b(?:LoRA|PEFT|adapter|parameterization|low-rank|instruction|fine[- ]?tun(?:e|ing)?|quantization|benchmark|evaluation|resource|memory|dropout|rank|prompting|control)\b/iu.test(
+    text
+  );
+}
+
+function completeRelatedWorkClustersForProtocol(
+  clusters: string[],
+  protocolKind: ExperimentProtocolKind
+): string[] {
+  if (protocolKind !== "lm_benchmark" || clusters.length >= 3) {
+    return clusters;
+  }
+  return uniqueStrings([
+    ...clusters,
+    "PEFT and LoRA adapter design",
+    "resource-budgeted instruction tuning",
+    "benchmark evaluation and claim calibration"
+  ]).slice(0, 4);
+}
+
+function buildRelatedWorkAxisSentence(context: ExperimentArtifactContext): string {
+  const axes = context.related_work.comparison_axes
+    .map((axis) => sanitizeRelatedWorkAxisForNarrative(axis, context.protocol_kind))
+    .filter(Boolean)
+    .slice(0, 3);
+  if (axes.length === 0) {
+    return "The most relevant comparison axes concern method family, resource budget, and evaluation scope.";
+  }
+  return `The most relevant comparison axes concern ${joinHumanList(axes)}.`;
+}
+
+function firstSafeRelatedWorkAxis(context: ExperimentArtifactContext): string {
+  return (
+    context.related_work.comparison_axes
+      .map((axis) => sanitizeRelatedWorkAxisForNarrative(axis, context.protocol_kind))
+      .find(Boolean) || ""
+  );
+}
+
+function safeRelatedWorkClusters(context: ExperimentArtifactContext): string[] {
+  return context.related_work.clusters
+    .map((cluster) => sanitizeRelatedWorkAxisForNarrative(cluster, context.protocol_kind))
+    .filter(Boolean);
+}
+
+function buildClosestCitedWorkSentence(context: ExperimentArtifactContext): string {
+  const clusters = safeRelatedWorkClusters(context).slice(0, 3);
+  if (clusters.length > 0) {
+    return `The closest cited work frames ${joinHumanList(clusters)} rather than a condition-matched reproduction of the present run.`;
+  }
+  return "The closest cited work frames the empirical design rather than a condition-matched reproduction of the present run.";
+}
+
+function describeScientificObjectiveForNarrative(value: string | undefined): string {
+  const cleaned = sanitizeHumanFacingManuscriptText(cleanString(value));
+  if (!cleaned || isBibliographicSpilloverText(cleaned)) {
+    return "the stated empirical objective";
+  }
+  if (/accuracy|arc|hellaswag|baseline|delta/iu.test(cleaned)) {
+    return "baseline-relative task accuracy under the declared local budget";
+  }
+  if (/f1|classification|logreg|tree|tabular/iu.test(cleaned)) {
+    return "baseline-relative predictive performance under the declared evaluation protocol";
+  }
+  return cleaned.length > 120 ? "the stated empirical objective" : cleaned;
 }
 
 function rewriteReaderFacingProvenancePhrases(value: string): string {
@@ -6067,7 +6462,6 @@ function buildBudgetFloorParagraph(
 ): PaperDraftParagraph | undefined {
   const conditionCount = context.results.condition_summaries.length;
   const datasetNames = joinHumanList(context.method.dataset_names.slice(0, 4));
-  const closestTitles = joinHumanList(context.related_work.closest_titles.slice(0, 3));
   const conditionSurface =
     conditionCount > 0
       ? `${conditionCount} structured condition summaries`
@@ -6109,13 +6503,13 @@ function buildBudgetFloorParagraph(
     ],
     "related work": [
       [
-        closestTitles ? `The closest cited work includes ${closestTitles}.` : "The closest cited work frames the empirical design.",
+        buildClosestCitedWorkSentence(context),
         "These papers motivate the axes of comparison but do not replace a direct baseline in the current run.",
         "The manuscript therefore uses citations for positioning and the run artifacts for numerical support."
       ],
       [
-        context.related_work.comparison_axes[0]
-          ? `The most relevant prior-work axis is ${context.related_work.comparison_axes[0]}.`
+        firstSafeRelatedWorkAxis(context)
+          ? `The most relevant prior-work axis is ${firstSafeRelatedWorkAxis(context)}.`
           : "The most relevant prior-work axis is the relationship between evaluation design and defensible empirical claims.",
         "The current paper narrows that axis to the available budget and reports what can be tested locally.",
         "This makes the contribution a bounded evidence filter rather than a claim to supersede broader prior studies."
@@ -6223,18 +6617,14 @@ function buildSectionParagraphCandidates(
       return buildParagraphsFromSentences(
         [
           [
-            context.related_work.clusters.length > 0
-              ? `Related work clusters around ${joinHumanList(context.related_work.clusters.slice(0, 4))}.`
+            safeRelatedWorkClusters(context).length > 0
+              ? `Related work clusters around ${joinHumanList(safeRelatedWorkClusters(context).slice(0, 4))}.`
               : "Related work spans multiple nearby empirical and systems-oriented strands.",
-            context.related_work.comparison_axes.length > 0
-              ? `The most relevant comparison axes concern ${joinHumanList(context.related_work.comparison_axes.slice(0, 3))}.`
-              : ""
+            buildRelatedWorkAxisSentence(context)
           ],
           [
-            context.related_work.closest_titles.length > 0
-              ? `The closest prior work includes ${joinHumanList(context.related_work.closest_titles)}.`
-              : "The closest prior work still leaves open a direct positioning gap for the current study.",
-            `${bundle.objectiveMetric ? `The present paper positions itself around ${bundle.objectiveMetric}` : "The present paper positions itself around the stated empirical objective"} while keeping claims limited to the available artifacts.`
+            buildClosestCitedWorkSentence(context),
+            `The present paper positions itself around ${describeScientificObjectiveForNarrative(bundle.objectiveMetric)} while keeping claims limited to the available artifacts.`
           ],
           expanded
             ? [

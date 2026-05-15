@@ -596,6 +596,116 @@ describe("scientificWriting", () => {
     ).toBe(scientific.auto_repairs.expanded_sections.length);
   });
 
+  it("keeps related-work expansion from turning raw abstracts, authors, or metric bullets into prose", () => {
+    const bundle = makeRichBundle();
+    bundle.experimentPlan = {
+      ...(bundle.experimentPlan || {}),
+      selectedTitle: "LoRA rank and dropout under fixed budget instruction tuning",
+      selectedSummary: "Compare LoRA rank and dropout cells on ARC-Challenge and HellaSwag with a Qwen instruction-tuning backbone.",
+      rawText: [
+        "selected_design:",
+        '  title: "LoRA rank and dropout under fixed budget instruction tuning"',
+        '  model: "Qwen/Qwen2.5-1.5B"',
+        '  method: "LoRA PEFT instruction tuning"',
+        "  datasets:",
+        '    - "ARC-Challenge"',
+        '    - "HellaSwag"'
+      ].join("\n")
+    };
+    bundle.objectiveMetric = [
+      "- Primary metric: average accuracy across ARC-Challenge and HellaSwag.",
+      "- Secondary metrics: per-task accuracy, train loss, wall-clock runtime.",
+      "- Meaningful improvement: at least +1.0 percentage point."
+    ].join(" ");
+    bundle.relatedWorkNotes = [
+      {
+        paper_id: "paper_1",
+        title: "Chain-of-LoRA: Enhancing Instruction Fine-Tuning",
+        source_type: "analyzed_paper",
+        comparison_role: "closest",
+        method_family: "prompting and control",
+        problem_focus:
+          "Recently, large language models with conversational-style interaction, such as ChatGPT and Claude, have gained significant importance in the advancement of artificial gen...",
+        setting_focus: "instruction tuning",
+        contribution_focus: "LoRA instruction tuning comparison",
+        limitation_or_caveat: "Small empirical scope",
+        relation_to_study: "Provides a nearby comparison point."
+      },
+      {
+        paper_id: "paper_2",
+        title: "From Base to Conversational: Japanese Instruction Dataset and Tuning Large Language Models",
+        source_type: "analyzed_paper",
+        comparison_role: "supporting",
+        method_family: "prompting and control",
+        problem_focus:
+          "From Base to Conversational: Japanese Instruction Dataset and Tuning Large Language Models Masahiro Suzuki Masanori Hirano Hiroki Sakaji The University of Tokyo The University o...",
+        setting_focus: "instruction tuning",
+        contribution_focus: "Instruction dataset construction",
+        limitation_or_caveat: "Metadata-only support",
+        relation_to_study: "Provides background."
+      },
+      {
+        paper_id: "paper_3",
+        title: "Abstract-only fallback for A review on genetic algorithm: past, present, and future",
+        source_type: "analyzed_paper",
+        comparison_role: "supporting",
+        method_family: "literature discovery and retrieval",
+        problem_focus: "This paper proposes a low-cost educational advising LLM for study-abroad contexts.",
+        setting_focus: "resource-constrained deployment",
+        contribution_focus: "Resource-constrained LoRA application",
+        limitation_or_caveat: "Different task setting",
+        relation_to_study: "Provides background."
+      },
+      {
+        paper_id: "paper_4",
+        title: "GIFT: A Framework for Tool Coordination",
+        source_type: "analyzed_paper",
+        comparison_role: "supporting",
+        method_family: "stateful coordination",
+        problem_focus: "GIFT is a framework for stateful coordination across external tools.",
+        setting_focus: "agent orchestration",
+        contribution_focus: "Agent coordination",
+        limitation_or_caveat: "Different task setting",
+        relation_to_study: "Provides background."
+      }
+    ];
+    bundle.relatedWorkScout = {
+      query: "LoRA adapter rank",
+      rationale: "Exercise bibliographic spillover filtering.",
+      papers: [
+        {
+          paper_id: "paper_scout_1",
+          title: "DELORA",
+          summary:
+            "Published as a conference paper at ICLR 2025 D E L O RA: D ECOUPLING A NGLES AND S TRENGTH IN L OW- RANK A DAPTATION Massimo Bini1,2,3,†, Leander.",
+          source_type: "semantic_scholar_scout",
+          venue: "ICLR",
+          year: 2025,
+          citation_count: 12
+        }
+      ]
+    };
+
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle,
+      profile: PAPER_PROFILE
+    });
+    const context = experimentArtifactLoader({ bundle });
+    expect(context.related_work.clusters.length).toBeGreaterThanOrEqual(3);
+    expect(context.related_work.clusters.join(" ")).not.toMatch(/literature discovery|stateful coordination|genetic algorithm/i);
+
+    const relatedText = scientific.draft.sections.find((section) => section.heading === "Related Work")?.paragraphs
+      .map((paragraph) => paragraph.text)
+      .join(" ") || "";
+    expect(relatedText).not.toContain("Masahiro Suzuki");
+    expect(relatedText).not.toContain("The University of Tokyo");
+    expect(relatedText).not.toContain("- Primary metric:");
+    expect(relatedText).not.toMatch(/comparison axes concern Recently,/i);
+    expect(relatedText).not.toMatch(/literature discovery|stateful coordination|GIFT is|genetic algorithm|Published as a conference paper|D E L O RA|Massimo Bini/i);
+    expect(relatedText).toMatch(/method family|resource budget|evaluation scope|prompting and control/i);
+  });
+
   it("restores scientific draft paragraphs when final manuscript repair compresses below the page floor", () => {
     const scientific = applyScientificWritingPolicy({
       draft: makeTerseDraft(),
@@ -1108,6 +1218,108 @@ describe("scientificWriting", () => {
     ).toHaveLength(0);
     expect(methodText).not.toMatch(/5068 train dataset tokens|5068 dataset tokens/i);
     expect(methodText).toMatch(/training-token count of 5068/i);
+  });
+
+  it("does not treat missing-setting prose as executed method detail coverage", () => {
+    const bundle = makeRichBundle();
+    bundle.runTitle = "LoRA rank-dropout fixed-budget pilot";
+    bundle.topic = "LoRA rank and dropout interaction for a small LLM benchmark";
+    bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    bundle.experimentPlan = {
+      selectedTitle: "LoRA rank/dropout grid under a fixed local budget",
+      selectedSummary: "Compare LoRA rank/dropout cells on ARC-Challenge and HellaSwag.",
+      rawText: [
+        "selected_design:",
+        '  title: "LoRA rank/dropout grid under a fixed local budget"',
+        "  datasets:",
+        '    - "Alpaca Clean subset"',
+        '    - "ARC-Challenge"',
+        '    - "HellaSwag"',
+        "  implementation_notes:",
+        '    - "Preferred base model: Qwen/Qwen2.5-1.5B."',
+        '    - "LoRA conditions: rank in {4, 8, 16, 32} x dropout in {0.0, 0.05}."'
+      ].join("\n")
+    };
+    bundle.latestResults = {};
+    bundle.resultAnalysis = {
+      metrics: {
+        selected_model_id: "Qwen/Qwen2.5-1.5B",
+        run_config: {
+          learning_rate: 0.0002,
+          per_device_batch_size: 1,
+          gradient_accumulation_steps: 4,
+          max_seq_length: 256,
+          max_steps: 4,
+          timeout_sec: 1800,
+          train_samples: 48
+        },
+        data: {
+          train: { count: 48 }
+        }
+      },
+      metric_table: [{ key: "accuracy_delta_vs_baseline", value: 0.083332 }],
+      condition_comparisons: [],
+      primary_findings: [],
+      limitations: [],
+      statistical_summary: { confidence_intervals: [] }
+    } as any;
+
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle,
+      profile: PAPER_PROFILE
+    });
+    const candidate: PaperManuscript = {
+      title: "Benchmarking Rank-Dropout Tradeoffs in Parameter-Efficient Instruction Tuning Under a Fixed Local Budget",
+      abstract: "This paper reports a fixed-budget pilot benchmark of how LoRA rank and dropout interacted during a realized local instruction-tuning run.",
+      keywords: ["LoRA", "instruction tuning"],
+      sections: [
+        {
+          heading: "Method",
+          paragraphs: [
+            "The intended training scope was an Alpaca Clean subset capped at 10,000 examples, with Qwen/Qwen2.5-1.5B named as the preferred base model and TinyLlama-1.1B-Chat as a fallback if preflight failed. The realized summary, however, documents a much smaller run: 48 training samples, maximum sequence length 256, and seed 17 instead of the design default of 42. The reported summary provided for writing does not disclose the instantiated checkpoint, optimizer, batch size, learning rate, epoch count, or LoRA target modules, so the paper treats the reported run as a pilot-scale realization of the design rather than as a fully specified benchmark reproduction."
+          ]
+        },
+        {
+          heading: "Results",
+          paragraphs: [
+            "The reader-visible summary identifies the realized run as 48 training samples, maximum sequence length 256, and seed 17, but it does not disclose the instantiated checkpoint, optimizer, batch size, learning rate, epoch count, or LoRA target modules; the comparison is therefore bounded to the executed pilot record rather than a fully specified benchmark reproduction."
+          ]
+        },
+        {
+          heading: "Limitations",
+          paragraphs: [
+            "The reader-visible summary does not identify the instantiated checkpoint or disclose optimizer configuration, batch size, learning rate, epoch count, or adapter target modules, so the study should be interpreted as a bounded pilot comparison rather than a fully specified benchmark reproduction."
+          ]
+        }
+      ]
+    };
+
+    const result = materializeScientificManuscript({
+      candidate,
+      draft: scientific.draft,
+      bundle,
+      profile: PAPER_PROFILE,
+      appendixPlan: scientific.appendix_plan,
+      pageBudget: scientific.page_budget
+    });
+    const allText = [
+      result.manuscript.title,
+      result.manuscript.abstract,
+      ...result.manuscript.sections.flatMap((section) => section.paragraphs)
+    ].join(" ");
+    const methodText = result.manuscript.sections.find((section) => section.heading === "Method")?.paragraphs.join(" ") || "";
+
+    expect(result.manuscript.title).toBe("A Fixed-Budget Pilot Study of LoRA Rank and Dropout for Local Instruction Tuning");
+    expect(methodText).toMatch(/Qwen\/Qwen2\.5-1\.5B/);
+    expect(methodText).toMatch(/learning rate 0\.0002/);
+    expect(methodText).toMatch(/per-device train batch size 1/);
+    expect(methodText).toMatch(/gradient accumulation 4/);
+    expect(methodText).toMatch(/maximum sequence length 256/);
+    expect(methodText).toMatch(/4 optimizer steps/);
+    expect(allText).not.toMatch(/does not disclose the instantiated checkpoint/i);
+    expect(allText).not.toMatch(/does not identify the instantiated checkpoint/i);
+    expect(allText).not.toMatch(/Benchmarking Rank-Dropout Tradeoffs/i);
   });
 
   it("prefers the deterministic condition-level table and preserves condition figures for paper render audit", () => {
@@ -2472,7 +2684,7 @@ describe("scientificWriting", () => {
     const candidate: PaperManuscript = {
       title: "LoRA Rank-Dropout Preflight",
       abstract:
-        "Within this realized run, the best exposed condition, rank 32 with dropout 0.05, achieved 0.416666 average accuracy versus 0.333334 for the baseline.",
+        "Within this realized run, the best exposed condition, rank 32 with dropout 0.05, raises mean accuracy from 0.333334 to 0.416666 relative to the baseline.",
       keywords: ["LoRA"],
       sections: [
         { heading: "Introduction", paragraphs: ["We study a fixed-budget LoRA rank/dropout preflight."] },
@@ -2480,7 +2692,7 @@ describe("scientificWriting", () => {
         {
           heading: "Results",
           paragraphs: [
-            "Average accuracy increased from 0.333334 for rank 8 with dropout 0.0 to 0.416666 for rank 32 with dropout 0.05."
+            "The reported results identifies rank 32 with dropout 0.05 as the strongest observed condition, with average accuracy 0.416666 compared with 0.333334 for the locked baseline at rank 8 and dropout 0.0."
           ]
         },
         { heading: "Discussion", paragraphs: ["The comparison supports a narrow follow-up candidate."] },
@@ -2501,10 +2713,160 @@ describe("scientificWriting", () => {
       (issue) =>
         issue.kind === "numeric_inconsistency"
         && issue.severity === "error"
-        && /rank_32_dropout_0_05/.test(JSON.stringify(issue.normalized_facts || []))
+        && /accuracy_delta_vs_baseline|rank_32_dropout_0_05/.test(JSON.stringify(issue.normalized_facts || []))
         && /0\.333334/.test(JSON.stringify(issue.normalized_facts || []))
     );
     expect(targetErrors).toHaveLength(0);
+    expect(
+      result.consistency_lint.issues.filter(
+        (issue) => issue.kind === "numeric_inconsistency" && issue.severity === "error"
+      )
+    ).toHaveLength(0);
+  });
+
+  it("keeps anaphoric best-condition accuracy separate from a following baseline comparison", () => {
+    const bundle = makeRichBundle();
+    bundle.runTitle = "LoRA rank-dropout preflight";
+    bundle.topic = "LoRA rank and dropout interaction for a small LLM benchmark";
+    bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    bundle.latestResults = {
+      baseline_marker: "rank_8_dropout_0_0",
+      condition_summaries: [
+        {
+          condition_marker: "rank_8_dropout_0_0",
+          lora_rank: 8,
+          lora_dropout: 0,
+          completed_seed_count: 1,
+          average_accuracy_mean: 0.333334,
+          accuracy_delta_vs_baseline_mean: 0
+        },
+        {
+          condition_marker: "rank_32_dropout_0_05",
+          lora_rank: 32,
+          lora_dropout: 0.05,
+          completed_seed_count: 1,
+          average_accuracy_mean: 0.416666,
+          accuracy_delta_vs_baseline_mean: 0.083332
+        }
+      ]
+    } as any;
+    bundle.resultAnalysis = {
+      ...(bundle.resultAnalysis as any),
+      metric_table: [
+        { key: "average_accuracy", value: 0.416666 },
+        { key: "accuracy_delta_vs_baseline", value: 0.083332 }
+      ]
+    } as any;
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle,
+      profile: PAPER_PROFILE
+    });
+    const candidate: PaperManuscript = {
+      title: "LoRA Rank-Dropout Preflight",
+      abstract:
+        "The best reported condition combines rank 32 with dropout 0.05. Its average accuracy across ARC-Challenge and HellaSwag is 0.4167, compared with 0.3333 for the locked baseline at rank 8 and dropout 0.0.",
+      keywords: ["LoRA"],
+      sections: [
+        { heading: "Introduction", paragraphs: ["We study a fixed-budget LoRA rank/dropout preflight."] },
+        { heading: "Method", paragraphs: ["Rank 8 with dropout 0.0 served as the locked baseline."] },
+        {
+          heading: "Results",
+          paragraphs: [
+            "Within that analyzed configuration, the best reported condition combines rank 32 with dropout 0.05.",
+            "Its average accuracy across ARC-Challenge and HellaSwag is 0.4167, compared with 0.3333 for the locked baseline at rank 8 and dropout 0.0."
+          ]
+        },
+        { heading: "Discussion", paragraphs: ["The comparison supports a narrow follow-up candidate."] },
+        { heading: "Conclusion", paragraphs: ["The result remains a local preflight signal."] }
+      ]
+    };
+
+    const result = materializeScientificManuscript({
+      candidate,
+      draft: scientific.draft,
+      bundle,
+      profile: PAPER_PROFILE,
+      appendixPlan: scientific.appendix_plan,
+      pageBudget: scientific.page_budget
+    });
+
+    const blockingErrors = result.consistency_lint.issues.filter(
+      (issue) => issue.kind === "numeric_inconsistency" && issue.severity === "error"
+    );
+    expect(blockingErrors).toHaveLength(0);
+  });
+
+  it("keeps from-to accuracy values aligned with both named rank/dropout sides", () => {
+    const bundle = makeRichBundle();
+    bundle.runTitle = "LoRA rank-dropout preflight";
+    bundle.topic = "LoRA rank and dropout interaction for a small LLM benchmark";
+    bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    bundle.latestResults = {
+      baseline_marker: "rank_8_dropout_0_0",
+      condition_summaries: [
+        {
+          condition_marker: "rank_8_dropout_0_0",
+          lora_rank: 8,
+          lora_dropout: 0,
+          completed_seed_count: 1,
+          average_accuracy_mean: 0.333334,
+          accuracy_delta_vs_baseline_mean: 0
+        },
+        {
+          condition_marker: "rank_32_dropout_0_05",
+          lora_rank: 32,
+          lora_dropout: 0.05,
+          completed_seed_count: 1,
+          average_accuracy_mean: 0.416666,
+          accuracy_delta_vs_baseline_mean: 0.083332
+        }
+      ]
+    } as any;
+    bundle.resultAnalysis = {
+      ...(bundle.resultAnalysis as any),
+      metric_table: [
+        { key: "average_accuracy", value: 0.416666 },
+        { key: "accuracy_delta_vs_baseline", value: 0.083332 }
+      ]
+    } as any;
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle,
+      profile: PAPER_PROFILE
+    });
+    const candidate: PaperManuscript = {
+      title: "LoRA Rank-Dropout Preflight",
+      abstract:
+        "The explicit comparison is rank 32 with dropout 0.05 versus rank 8 with dropout 0.0, with average accuracy rising from 0.333334 to 0.416666.",
+      keywords: ["LoRA"],
+      sections: [
+        { heading: "Introduction", paragraphs: ["We study a fixed-budget LoRA rank/dropout preflight."] },
+        { heading: "Method", paragraphs: ["Rank 8 with dropout 0.0 served as the locked baseline."] },
+        {
+          heading: "Results",
+          paragraphs: [
+            "The explicit comparison reported in the summary is rank 32 with dropout 0.05 versus rank 8 with dropout 0.0, with average accuracy rising from 0.333334 to 0.416666."
+          ]
+        },
+        { heading: "Discussion", paragraphs: ["The comparison supports a narrow follow-up candidate."] },
+        { heading: "Conclusion", paragraphs: ["The result remains a local preflight signal."] }
+      ]
+    };
+
+    const result = materializeScientificManuscript({
+      candidate,
+      draft: scientific.draft,
+      bundle,
+      profile: PAPER_PROFILE,
+      appendixPlan: scientific.appendix_plan,
+      pageBudget: scientific.page_budget
+    });
+
+    const blockingErrors = result.consistency_lint.issues.filter(
+      (issue) => issue.kind === "numeric_inconsistency" && issue.severity === "error"
+    );
+    expect(blockingErrors).toHaveLength(0);
   });
 
   it("can re-apply evidence-grounded paper-scale strengthening after manuscript repair", () => {

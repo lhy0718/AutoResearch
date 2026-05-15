@@ -1094,18 +1094,21 @@ export function buildRelatedWorkNotes(bundle: PaperWritingBundle): RelatedWorkNo
       ...summary.metrics
     ].join(" ");
     const score = scoreRelatedWorkMatch(studyKeywords, combinedText);
+    const methodFamily = inferMethodFamily(combinedText);
+    const problemFocus = cleanRelatedWorkFocus(firstSentence(summary.summary) || summary.title, methodFamily);
+    const contributionFocus = cleanRelatedWorkFocus(
+      summary.novelty || summary.key_findings[0] || firstSentence(summary.summary) || summary.title,
+      methodFamily
+    );
     ranked.push({
       paper_id: summary.paper_id,
       title: summary.title,
       source_type: "analyzed_paper",
       comparison_role: classifyRelatedWorkRole(score, true),
-      method_family: inferMethodFamily(combinedText),
-      problem_focus: truncateText(firstSentence(summary.summary) || summary.title, 180),
+      method_family: methodFamily,
+      problem_focus: truncateText(problemFocus, 180),
       setting_focus: buildSettingFocus(summary.datasets, summary.metrics, corpusRow),
-      contribution_focus: truncateText(
-        summary.novelty || summary.key_findings[0] || firstSentence(summary.summary) || summary.title,
-        180
-      ),
+      contribution_focus: truncateText(contributionFocus, 180),
       limitation_or_caveat: truncateText(
         summary.limitations[0]
           || summary.reproducibility_notes[0]
@@ -1124,20 +1127,22 @@ export function buildRelatedWorkNotes(bundle: PaperWritingBundle): RelatedWorkNo
   for (const scout of bundle.relatedWorkScout?.papers || []) {
     const combinedText = [scout.title, scout.summary].join(" ");
     const score = scoreRelatedWorkMatch(studyKeywords, combinedText);
+    const methodFamily = inferMethodFamily(combinedText);
+    const scoutFocus = cleanRelatedWorkFocus(firstSentence(scout.summary) || scout.title, methodFamily);
     ranked.push({
       paper_id: scout.paper_id,
       title: scout.title,
       source_type: "semantic_scholar_scout",
       comparison_role: classifyRelatedWorkRole(score, false),
-      method_family: inferMethodFamily(combinedText),
-      problem_focus: truncateText(firstSentence(scout.summary) || scout.title, 180),
+      method_family: methodFamily,
+      problem_focus: truncateText(scoutFocus, 180),
       setting_focus: buildSettingFocus([], [], {
         paper_id: scout.paper_id,
         title: scout.title,
         venue: scout.venue,
         year: scout.year
       } as StoredCorpusRow),
-      contribution_focus: truncateText(firstSentence(scout.summary) || scout.title, 180),
+      contribution_focus: truncateText(scoutFocus, 180),
       limitation_or_caveat:
         "Only scout-level metadata is available, so this paper should provide broad framing rather than detailed claim matching.",
       relation_to_study: describeRelationToStudy(score, false),
@@ -1262,6 +1267,24 @@ function applyRelatedWorkQualityControls(input: {
   const sections = [...input.sections];
   const relatedSection = sections[relatedIndex];
   let paragraphs = relatedSection.paragraphs.map((item) => ({ ...item }));
+  const originalParagraphCount = paragraphs.length;
+  let removedLowQualityParagraph = false;
+  paragraphs = paragraphs.filter((paragraph, index) => {
+    if (!isReaderHostileRelatedWorkParagraph(paragraph.text)) {
+      return true;
+    }
+    removedLowQualityParagraph = true;
+    input.issues.push({
+      kind: "paragraph",
+      severity: "warning",
+      message: "Related Work paragraph was replaced because it contained raw bibliographic, abstract, or metric-list spillover.",
+      section_heading: relatedSection.heading,
+      paragraph_index: index,
+      evidence_ids: paragraph.evidence_ids,
+      citation_paper_ids: paragraph.citation_paper_ids
+    });
+    return false;
+  });
   if (paragraphs.length === 0) {
     paragraphs = fallbackSection.paragraphs;
     input.issues.push({
@@ -1272,12 +1295,21 @@ function applyRelatedWorkQualityControls(input: {
       evidence_ids: fallbackSection.evidence_ids,
       citation_paper_ids: fallbackSection.citation_paper_ids
     });
-  } else if (paragraphs.length < fallbackSection.paragraphs.length) {
-    paragraphs = [...paragraphs, ...fallbackSection.paragraphs.slice(paragraphs.length)];
+  } else if (paragraphs.length < fallbackSection.paragraphs.length || removedLowQualityParagraph) {
+    const existingText = new Set(paragraphs.map((paragraph) => normalizeNarrativeForDedupe(paragraph.text)));
+    const additions = fallbackSection.paragraphs.filter(
+      (paragraph) => !existingText.has(normalizeNarrativeForDedupe(paragraph.text))
+    );
+    paragraphs = [...paragraphs, ...additions].slice(
+      0,
+      Math.max(originalParagraphCount, fallbackSection.paragraphs.length, paragraphs.length)
+    );
     input.issues.push({
       kind: "section",
       severity: "warning",
-      message: "Related Work gained a positioning paragraph because enough literature was available to compare strands and position the current study.",
+      message: removedLowQualityParagraph
+        ? "Related Work recovered structured comparison paragraphs after removing low-quality bibliographic spillover."
+        : "Related Work gained a positioning paragraph because enough literature was available to compare strands and position the current study.",
       section_heading: relatedSection.heading,
       evidence_ids: relatedSection.evidence_ids,
       citation_paper_ids: fallbackSection.citation_paper_ids
@@ -1354,6 +1386,47 @@ function applyRelatedWorkQualityControls(input: {
     ]).slice(0, 6)
   };
   return sections;
+}
+
+function cleanRelatedWorkFocus(value: string, fallbackMethodFamily: string): string {
+  const cleaned = sanitizePaperNarrativeText(value)
+    .replace(/\.{2,}/gu, ".")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (!cleaned || isReaderHostileRelatedWorkParagraph(cleaned)) {
+    return `work on ${fallbackMethodFamily}`;
+  }
+  return cleaned;
+}
+
+function isReaderHostileRelatedWorkParagraph(value: string): boolean {
+  const text = cleanString(value);
+  if (!text) {
+    return false;
+  }
+  if (/\s-\s(?:Primary metric|Secondary metrics|Meaningful improvement|No-signal boundary)\s*:/iu.test(text)) {
+    return true;
+  }
+  if (/\bThe present paper positions itself around\s*-\s*Primary metric\b/iu.test(text)) {
+    return true;
+  }
+  if (/\bThe most relevant comparison axes concern\s+Recently,/iu.test(text)) {
+    return true;
+  }
+  if (/\b(?:The University of|Department of|Institute of)\b.*\b(?:The University of|Department of|Institute of)\b/iu.test(text)) {
+    return true;
+  }
+  if (/\b[A-Z][a-z]+ [A-Z][a-z]+ [A-Z][a-z]+\b.*\b(?:University|Department|Institute)\b/u.test(text)) {
+    return true;
+  }
+  if (/\.\.\./u.test(text) && /\b(?:University|Department|Institute|This paper proposes|Recently,)\b/iu.test(text)) {
+    return true;
+  }
+  return false;
+}
+
+function normalizeNarrativeForDedupe(value: string): string {
+  return cleanString(value).toLowerCase().replace(/[^a-z0-9]+/gu, " ").trim();
 }
 
 function buildFallbackRelatedWorkSection(

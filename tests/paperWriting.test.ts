@@ -321,4 +321,61 @@ describe("paperWriting related-work support", () => {
     );
     expect(validation.issues.some((item) => /reconstructed from related-work notes/i.test(item.message))).toBe(true);
   });
+
+  it("replaces related-work paragraphs that leak bibliography text or metric bullet lists", () => {
+    const bundle = makeBundle();
+    bundle.relatedWorkScout = {
+      query: "LoRA instruction tuning",
+      rationale: "Exercise bibliography spillover filtering.",
+      papers: [
+        {
+          paper_id: "paper_scout_1",
+          title: "From Base to Conversational: Japanese Instruction Dataset and Tuning Large Language Models",
+          summary:
+            "From Base to Conversational: Japanese Instruction Dataset and Tuning Large Language Models Masahiro Suzuki Masanori Hirano Hiroki Sakaji The University of Tokyo The University o...",
+          source_type: "semantic_scholar_scout",
+          venue: "BigData",
+          year: 2023,
+          citation_count: 18
+        }
+      ]
+    };
+
+    const validation = validatePaperDraft({
+      bundle,
+      draft: {
+        title: "Bibliography Spillover Draft",
+        abstract: "A minimal draft.",
+        keywords: ["agent collaboration"],
+        sections: [
+          {
+            heading: "Related Work",
+            paragraphs: [
+              {
+                text: "Related work clusters around prompting and control. The most relevant comparison axes concern Recently, large language models with conversational-style interaction, such as ChatGPT and Claude, have gained significant importance in the advancement of artificial gen..., From Base to Conversational: Japanese Instruction Dataset and Tuning Large Language Models Masahiro Suzuki Masanori Hirano Hiroki Sakaji The University of Tokyo The University o..., and This paper proposes a low-cost educational advising LLM for study-abroad contexts.",
+                evidence_ids: ["ev_1"],
+                citation_paper_ids: ["paper_1"]
+              },
+              {
+                text: "The closest prior work includes Chain-of-LoRA. The present paper positions itself around - Primary metric: average accuracy across ARC-Challenge and HellaSwag. - Secondary metrics: per-task accuracy and runtime. while keeping claims limited to the available artifacts.",
+                evidence_ids: ["ev_1"],
+                citation_paper_ids: ["paper_2"]
+              }
+            ],
+            evidence_ids: ["ev_1"],
+            citation_paper_ids: ["paper_1", "paper_2"]
+          }
+        ],
+        claims: []
+      }
+    });
+
+    const relatedWork = validation.draft.sections.find((item) => item.heading === "Related Work");
+    const serialized = JSON.stringify(relatedWork);
+    expect(serialized).not.toContain("Masahiro Suzuki");
+    expect(serialized).not.toContain("The University of Tokyo");
+    expect(serialized).not.toContain("- Primary metric:");
+    expect(serialized).toContain("Prior work");
+    expect(validation.issues.some((item) => /bibliographic.*spillover/i.test(item.message))).toBe(true);
+  });
 });
