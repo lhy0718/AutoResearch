@@ -225,8 +225,11 @@ export interface ConditionResultSummary {
   arc_challenge_accuracy?: number;
   hellaswag_accuracy?: number;
   train_loss?: number;
+  train_loss_mean?: number;
   runtime_seconds?: number;
+  runtime_seconds_mean?: number;
   peak_memory_mb?: number;
+  peak_memory_mb_mean?: number;
 }
 
 export interface SectionBudgetEntry {
@@ -1938,6 +1941,9 @@ function lintNumericConsistency(input: {
     if (isUncertaintyIntervalMetricFact(observedFact)) {
       continue;
     }
+    if (isConditionClusterStatement(observedFact.raw_text)) {
+      continue;
+    }
     if (isRuntimeBudgetFact(observedFact)) {
       continue;
     }
@@ -1948,6 +1954,9 @@ function lintNumericConsistency(input: {
     );
     if (comparableFacts.length === 0) {
       if (isCitationSupportedIntervalBound(observedFact)) {
+        continue;
+      }
+      if (hasLooseEquivalentMetricFact(observedFact, expectedFacts)) {
         continue;
       }
       if (shouldWarnOnUnverifiableFact(observedFact.source)) {
@@ -2023,6 +2032,22 @@ function lintNumericConsistency(input: {
   }
 
   return dedupeConsistencyIssues(issues);
+}
+
+function hasLooseEquivalentMetricFact(
+  observedFact: NormalizedNumericFact,
+  expectedFacts: NormalizedNumericFact[]
+): boolean {
+  if (observedFact.fact_kind !== "metric" || !observedFact.metric_key) {
+    return false;
+  }
+  return expectedFacts.some(
+    (candidate) =>
+      candidate.fact_kind === "metric"
+      && candidate.metric_key === observedFact.metric_key
+      && (candidate.unit || "score") === (observedFact.unit || "score")
+      && areFactValuesEquivalent(observedFact, candidate)
+  );
 }
 
 function isBenignFromToStructuredComparison(
@@ -2616,14 +2641,15 @@ function collectConditionMetricFacts(context: ExperimentArtifactContext): Normal
           })
         );
       }
-      if (typeof condition.train_loss === "number") {
+      const trainLoss = firstNumber(condition.train_loss, condition.train_loss_mean);
+      if (typeof trainLoss === "number") {
         facts.push(
           buildStructuredNumericFact({
             factKind: "metric",
             source: "artifact",
             location: `artifact.condition.${cleanString(condition.label) || cleanString(condition.condition)}.train_loss`,
-            rawText: `${condition.label} training loss ${formatNumber(condition.train_loss)}`,
-            value: condition.train_loss,
+            rawText: `${condition.label} training loss ${formatNumber(trainLoss)}`,
+            value: trainLoss,
             metricKey: "train_loss",
             metricLabel: "training loss",
             datasetScope: conditionScope,
@@ -2633,14 +2659,15 @@ function collectConditionMetricFacts(context: ExperimentArtifactContext): Normal
           })
         );
       }
-      if (typeof condition.runtime_seconds === "number") {
+      const runtimeSeconds = firstNumber(condition.runtime_seconds, condition.runtime_seconds_mean);
+      if (typeof runtimeSeconds === "number") {
         facts.push(
           buildStructuredNumericFact({
             factKind: "metric",
             source: "artifact",
             location: `artifact.condition.${cleanString(condition.label) || cleanString(condition.condition)}.runtime_seconds`,
-            rawText: `${condition.label} runtime ${formatNumber(condition.runtime_seconds)} seconds`,
-            value: condition.runtime_seconds,
+            rawText: `${condition.label} runtime ${formatNumber(runtimeSeconds)} seconds`,
+            value: runtimeSeconds,
             metricKey: "runtime_seconds",
             metricLabel: "runtime",
             datasetScope: conditionScope,
@@ -2650,14 +2677,15 @@ function collectConditionMetricFacts(context: ExperimentArtifactContext): Normal
           })
         );
       }
-      if (typeof condition.peak_memory_mb === "number") {
+      const peakMemoryMb = firstNumber(condition.peak_memory_mb, condition.peak_memory_mb_mean);
+      if (typeof peakMemoryMb === "number") {
         facts.push(
           buildStructuredNumericFact({
             factKind: "metric",
             source: "artifact",
             location: `artifact.condition.${cleanString(condition.label) || cleanString(condition.condition)}.peak_memory_mb`,
-            rawText: `${condition.label} peak memory ${formatNumber(condition.peak_memory_mb)} MB`,
-            value: condition.peak_memory_mb,
+            rawText: `${condition.label} peak memory ${formatNumber(peakMemoryMb)} MB`,
+            value: peakMemoryMb,
             metricKey: "peak_memory_mb",
             metricLabel: "peak memory",
             datasetScope: conditionScope,
@@ -3036,7 +3064,10 @@ function extractMetricFactsFromText(input: {
       if (!normalizedMetricKey) {
         continue;
       }
-      if (shouldSkipAmbiguousMetricFact(fragment, normalizedMetricKey, datasetScope, input.source)) {
+      const numberDatasetScope = inferDatasetScopeNearNumber(fragment, match.index, datasetScope);
+      const numberAggregationLevel =
+        numberDatasetScope !== datasetScope ? inferAggregationLevel(fragment, numberDatasetScope) : aggregationLevel;
+      if (shouldSkipAmbiguousMetricFact(fragment, normalizedMetricKey, numberDatasetScope, input.source)) {
         continue;
       }
       facts.push(
@@ -3049,8 +3080,8 @@ function extractMetricFactsFromText(input: {
           metricKey: normalizedMetricKey,
           metricLabel: humanizeToken(normalizedMetricKey),
           comparisonTarget: inferConditionComparisonTargetNearNumber(fragment, match.index, previousFragment),
-          datasetScope,
-          aggregationLevel,
+          datasetScope: numberDatasetScope,
+          aggregationLevel: numberAggregationLevel,
           unit,
           sourceRefs: input.sourceRefs
         })
@@ -3507,6 +3538,26 @@ function inferDatasetScope(
   return ["abstract", "results", "discussion", "conclusion", "appendix_section"].includes(source) ? "aggregate" : "unknown";
 }
 
+function inferDatasetScopeNearNumber(
+  text: string,
+  rawIndex: number,
+  fallback: string | "aggregate" | "unknown"
+): string | "aggregate" | "unknown" {
+  const searchText = normalizeMetricSearchText(text);
+  const arcDistance = nearestKeywordDistance(searchText, rawIndex, ["arc challenge", "arc-challenge", "arc_challenge"]);
+  const hellaswagDistance = nearestKeywordDistance(searchText, rawIndex, ["hellaswag", "hella swag"]);
+  if (typeof arcDistance === "number" || typeof hellaswagDistance === "number") {
+    if (typeof arcDistance !== "number") {
+      return "HellaSwag";
+    }
+    if (typeof hellaswagDistance !== "number") {
+      return "ARC-Challenge";
+    }
+    return hellaswagDistance < arcDistance ? "HellaSwag" : "ARC-Challenge";
+  }
+  return fallback;
+}
+
 function inferAggregationLevel(text: string, datasetScope: string | "aggregate" | "unknown"): NumericFactAggregation {
   const cleaned = cleanString(text).toLowerCase();
   if (datasetScope !== "aggregate" && datasetScope !== "unknown") {
@@ -3555,7 +3606,7 @@ function inferMetricUnit(
   if (tokenWindow && /\b\d+(?:,\d{3})*(?:\.\d+)?\s*(?:s|sec|secs|second|seconds)\b/iu.test(tokenWindow)) {
     return "seconds";
   }
-  if (tokenWindow && /\b\d+(?:,\d{3})*(?:\.\d+)?\s*(?:gb|gib|mb|mib)\b/iu.test(tokenWindow)) {
+  if (tokenWindow && /\b\d+(?:,\d{3})*(?:\.\d+)?\s*(?:bytes?|gb|gib|mb|mib)\b/iu.test(tokenWindow)) {
     return "mb";
   }
   if (
@@ -3570,7 +3621,7 @@ function inferMetricUnit(
   }
   const memoryDistance =
     typeof rawIndex === "number"
-      ? nearestKeywordDistance(searchText, rawIndex, ["memory", "cuda memory", "peak memory", "mb", "gb", "gib", "ram"])
+      ? nearestKeywordDistance(searchText, rawIndex, ["memory", "cuda memory", "peak memory", "allocated", "bytes", "mb", "gb", "gib", "ram"])
       : undefined;
   const runtimeDistance =
     typeof rawIndex === "number"
@@ -3703,6 +3754,9 @@ function inferMetricKeyNearNumber(
     return "train_loss";
   }
   const localMetricWindow = normalizeMetricText(fragment.slice(Math.max(0, rawIndex - 56), Math.min(fragment.length, rawIndex + 56)));
+  if (/\btrain(?:ing)? loss\b/iu.test(localMetricWindow)) {
+    return "train_loss";
+  }
   if (/\baccuracy\s+delta\b|\bdelta\b[^.!?]{0,40}\bbaseline\b|\bbaseline\b[^.!?]{0,40}\bdelta\b/iu.test(localMetricWindow)) {
     return "accuracy_delta_vs_baseline";
   }
@@ -8336,7 +8390,9 @@ function collectConditionResultSummaries(
       const peakMemoryBytes = firstNumber(item.peak_cuda_memory_bytes, item.peak_memory_bytes);
       const peakMemoryMb = firstNumber(
         item.peak_memory_mb,
+        item.peak_memory_mb_mean,
         item.peak_cuda_memory_mb,
+        item.peak_cuda_memory_mb_mean,
         typeof peakMemoryBytes === "number" ? peakMemoryBytes / 1_000_000 : undefined
       );
       return {
@@ -8363,9 +8419,11 @@ function collectConditionResultSummaries(
         ...(typeof firstNumber(item.hellaswag_accuracy, hellaswagTask.accuracy) === "number"
           ? { hellaswag_accuracy: firstNumber(item.hellaswag_accuracy, hellaswagTask.accuracy) }
           : {}),
-        ...(typeof asNumber(item.train_loss) === "number" ? { train_loss: asNumber(item.train_loss) } : {}),
-        ...(typeof firstNumber(item.runtime_seconds, item.runtime_sec) === "number"
-          ? { runtime_seconds: firstNumber(item.runtime_seconds, item.runtime_sec) }
+        ...(typeof firstNumber(item.train_loss, item.train_loss_mean) === "number"
+          ? { train_loss: firstNumber(item.train_loss, item.train_loss_mean) }
+          : {}),
+        ...(typeof firstNumber(item.runtime_seconds, item.runtime_seconds_mean, item.runtime_sec, item.runtime_sec_mean) === "number"
+          ? { runtime_seconds: firstNumber(item.runtime_seconds, item.runtime_seconds_mean, item.runtime_sec, item.runtime_sec_mean) }
           : {}),
         ...(typeof peakMemoryMb === "number" ? { peak_memory_mb: peakMemoryMb } : {})
       };

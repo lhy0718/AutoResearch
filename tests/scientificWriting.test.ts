@@ -3198,7 +3198,10 @@ describe("scientificWriting", () => {
           average_accuracy_mean: 0.3333,
           accuracy_delta_vs_baseline_mean: 0,
           train_loss_mean: 1.462,
-          runtime_seconds_mean: 5.339
+          runtime_seconds_mean: 5.339,
+          peak_memory_mb_mean: 4278.951936,
+          arc_challenge_accuracy: 0.5,
+          hellaswag_accuracy: 0.166667
         },
         {
           condition_marker: "rank_32_dropout_0_05",
@@ -3210,7 +3213,10 @@ describe("scientificWriting", () => {
           average_accuracy_mean: 0.4167,
           accuracy_delta_vs_baseline_mean: 0.0833,
           train_loss_mean: 1.5242,
-          runtime_seconds_mean: 5.339
+          runtime_seconds_mean: 5.339,
+          peak_memory_mb_mean: 4278.951936,
+          arc_challenge_accuracy: 0.5,
+          hellaswag_accuracy: 0.333333
         }
       ]
     } as any;
@@ -3242,7 +3248,10 @@ describe("scientificWriting", () => {
           paragraphs: [
             "The best recorded condition was rank 32 with dropout 0.05, which improved average accuracy from 0.3333 in the locked baseline to 0.4167.",
             "Reported training loss did not improve in parallel: the baseline loss was 1.4620, whereas the best-accuracy condition reported 1.5242.",
+            "The higher-accuracy condition did not coincide with lower training loss: the baseline is reported at 1.4620, whereas the best-accuracy setting is reported at 1.5242.",
+            "ARC-Challenge accuracy remained unchanged at 0.50 in both the best condition and the baseline, while HellaSwag accuracy increased from 0.166667 to 0.333333.",
             "The artifact reports 8 requested and 8 completed conditions, 45.687 s wall-clock runtime, and peak CUDA allocation of approximately 4.28 GB.",
+            "At this preflight scale, the execution reports 45.687 seconds of wall-clock time and 4,278,951,936 bytes of peak allocated CUDA memory.",
             "For most conditions, the reported 95% intervals for average accuracy span approximately 0.138 to 0.609 over 12 predictions, and the best observed cell spans approximately 0.193 to 0.680."
           ]
         },
@@ -3277,9 +3286,15 @@ describe("scientificWriting", () => {
           || /cites 0\.4167, but the comparable structured results support .*accuracy_delta_vs_baseline/iu.test(issue.message)
           || /cites 1\.462, but the comparable structured results support .*accuracy_delta_vs_baseline/iu.test(issue.message)
           || /cites (?:8|45\.687), but the comparable structured results support .*runtime_seconds/iu.test(issue.message)
+          || /cites 4278951936, but the comparable structured results support .*runtime_seconds/iu.test(issue.message)
           || /cites (?:24|48|256), but the comparable structured results support .*peak_memory_mb/iu.test(issue.message)
+          || /cites 1\.5242, but the current artifacts do not expose a comparable structured numeric fact for train_loss/iu.test(issue.message)
+          || /cites 1\.462, but the current artifacts do not expose a comparable structured numeric fact for train_loss/iu.test(issue.message)
+          || /cites 1\.5242, but the comparable structured results support .*accuracy/iu.test(issue.message)
+          || /cites 1\.462, but the comparable structured results support .*accuracy/iu.test(issue.message)
           || /cites 1,?800, but the comparable structured results support .*runtime_seconds/iu.test(issue.message)
           || /cites 0\.138, but the comparable structured results support .*accuracy/iu.test(issue.message)
+          || /Results and Figure 1 report conflicting ARC-Challenge accuracy values/iu.test(issue.message)
         )
         .map((issue) => issue.message)
     ).toEqual([]);
@@ -3377,6 +3392,11 @@ describe("scientificWriting", () => {
     expect(
       result.consistency_lint.issues.filter((issue) =>
         /Results and Table 1 report conflicting aggregate accuracy values/iu.test(issue.message)
+      )
+    ).toHaveLength(0);
+    expect(
+      result.consistency_lint.issues.filter((issue) =>
+        /Results cites 0\.3333, but the comparable structured results support/iu.test(issue.message)
       )
     ).toHaveLength(0);
     expect(
