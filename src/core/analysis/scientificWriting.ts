@@ -163,6 +163,7 @@ export interface ExperimentArtifactContext {
   results: {
     aggregate_summary: string[];
     aggregate_metric_facts: NormalizedNumericFact[];
+    confidence_interval_facts: NormalizedNumericFact[];
     dataset_summaries: DatasetResultSummary[];
     condition_summaries: ConditionResultSummary[];
     dispersion_notes: string[];
@@ -585,6 +586,7 @@ export function experimentArtifactLoader(input: {
       input.objectiveMetricProfile
     ),
     aggregate_metric_facts: collectAggregateMetricFacts(resultAnalysis),
+    confidence_interval_facts: collectConfidenceIntervalMetricFacts(resultAnalysis),
     dataset_summaries: datasetSummaries,
     condition_summaries: conditionSummaries,
     dispersion_notes: dispersionNotes,
@@ -2222,6 +2224,7 @@ function inferDatasetDeltaMetricKey(
 function collectExpectedMetricFacts(context: ExperimentArtifactContext): NormalizedNumericFact[] {
   return dedupeNumericFacts([
     ...context.results.aggregate_metric_facts,
+    ...context.results.confidence_interval_facts,
     ...collectConditionMetricFacts(context),
     ...context.results.dataset_summaries.flatMap((item) => {
       const datasetScope = cleanString(item.dataset) || "unknown";
@@ -2395,6 +2398,49 @@ function collectExpectedMetricFacts(context: ExperimentArtifactContext): Normali
       return facts;
     })
   ]);
+}
+
+function collectConfidenceIntervalMetricFacts(resultAnalysis: ResultAnalysisArtifact | undefined): NormalizedNumericFact[] {
+  const confidenceIntervals = resultAnalysis?.statistical_summary?.confidence_intervals || [];
+  return dedupeNumericFacts(
+    confidenceIntervals.flatMap((item) => {
+      const metricKey = normalizeMetricIdentifier(item.metric_key || item.label || "");
+      const lower = typeof item.lower === "number" && Number.isFinite(item.lower) ? item.lower : undefined;
+      const upper = typeof item.upper === "number" && Number.isFinite(item.upper) ? item.upper : undefined;
+      if (!metricKey || typeof lower !== "number" || typeof upper !== "number") {
+        return [];
+      }
+      const rawMetricLabel = cleanString(item.label) || cleanString(item.metric_key) || humanizeToken(metricKey);
+      return [
+        buildStructuredNumericFact({
+          factKind: "metric",
+          source: "artifact",
+          location: `artifact.result_analysis.confidence_interval.${metricKey}.lower`,
+          rawText: `${rawMetricLabel} CI lower ${formatNumber(lower)}`,
+          value: lower,
+          metricKey,
+          metricLabel: `${rawMetricLabel} CI lower`,
+          datasetScope: "aggregate",
+          aggregationLevel: "aggregate",
+          unit: "ci_lower",
+          sourceRefs: buildArtifactSourceRefs(["result_analysis.statistical_summary.confidence_intervals"])
+        }),
+        buildStructuredNumericFact({
+          factKind: "metric",
+          source: "artifact",
+          location: `artifact.result_analysis.confidence_interval.${metricKey}.upper`,
+          rawText: `${rawMetricLabel} CI upper ${formatNumber(upper)}`,
+          value: upper,
+          metricKey,
+          metricLabel: `${rawMetricLabel} CI upper`,
+          datasetScope: "aggregate",
+          aggregationLevel: "aggregate",
+          unit: "ci_upper",
+          sourceRefs: buildArtifactSourceRefs(["result_analysis.statistical_summary.confidence_intervals"])
+        })
+      ];
+    })
+  );
 }
 
 function collectConditionMetricFacts(context: ExperimentArtifactContext): NormalizedNumericFact[] {
@@ -3198,10 +3244,19 @@ function inferDatasetScope(
   source: NumericFactSource
 ): string | "aggregate" | "unknown" {
   const cleaned = cleanString(text).toLowerCase();
-  if (/\barc[-_\s]?challenge\b/iu.test(cleaned)) {
+  const mentionsArcChallenge = /\barc[-_\s]?challenge\b/iu.test(cleaned);
+  const mentionsHellaSwag = /\bhella\s*swag\b|\bhellaswag\b/iu.test(cleaned);
+  if (
+    mentionsArcChallenge
+    && mentionsHellaSwag
+    && /\bacross\b|\baverage\b|\bmean\b|\bunweighted\b|\boverall\b|\baggregate\b|\btask[-\s]?average\b/iu.test(cleaned)
+  ) {
+    return "aggregate";
+  }
+  if (mentionsArcChallenge) {
     return "ARC-Challenge";
   }
-  if (/\bhella\s*swag\b|\bhellaswag\b/iu.test(cleaned)) {
+  if (mentionsHellaSwag) {
     return "HellaSwag";
   }
   const matchedDatasets = datasetNames.filter((dataset) => cleaned.includes(cleanString(dataset).toLowerCase()));
@@ -3371,13 +3426,29 @@ function inferMetricKeyByDistance(text: string, rawIndex: number): string | unde
       candidates.push({ key: spec.key, distance });
     }
   }
-  return candidates.sort((left, right) => left.distance - right.distance || right.key.length - left.key.length)[0]?.key;
+  const best = candidates.sort((left, right) => left.distance - right.distance || right.key.length - left.key.length)[0];
+  if (!best) {
+    return undefined;
+  }
+  const maximumDistance = /^(?:runtime_seconds|peak_memory_mb|accuracy)$/u.test(best.key) ? 45 : 90;
+  return best.distance <= maximumDistance ? best.key : undefined;
 }
 
 function normalizeMetricIdentifier(value: string): string | undefined {
   const cleaned = normalizeMetricText(value);
   if (!cleaned) {
     return undefined;
+  }
+  if (
+    /\baccuracy\b.*\bdelta\b.*\b(?:vs|versus)\b.*\bbaseline\b|\baccuracy_delta_vs_baseline\b|\bbest_accuracy_delta_vs_baseline\b/iu.test(cleaned)
+  ) {
+    return "accuracy_delta_vs_baseline";
+  }
+  if (/\btimeout\b|\bwall clock runtime\b|\bruntime sec\b|\bruntime seconds\b/iu.test(cleaned)) {
+    return "runtime_seconds";
+  }
+  if (/\bcuda max memory allocated bytes\b|\bpeak memory\b|\bpeak vram\b|\bmemory allocated\b/iu.test(cleaned)) {
+    return "peak_memory_mb";
   }
   if (/\bmacro f1\b.*\bdeltas?\b.*\blogistic regression\b|\bmacro f1 delta vs logreg\b|\bmacro_f1_delta_vs_logreg\b/iu.test(cleaned)) {
     return "macro_f1_delta_vs_logreg";
@@ -7217,12 +7288,16 @@ function collectAggregateMetricFacts(
         if (!metricKey || typeof entry.value !== "number" || !Number.isFinite(entry.value)) {
           return undefined;
         }
+        const value =
+          metricKey === "peak_memory_mb" && /\bbytes?\b/iu.test(entry.key)
+            ? entry.value / 1_000_000_000
+            : entry.value;
         return buildStructuredNumericFact({
           factKind: "metric",
           source: "artifact",
           location: "artifact.result_analysis.metric_table",
-          rawText: `${entry.key}=${formatNumber(entry.value)}`,
-          value: entry.value,
+          rawText: `${entry.key}=${formatNumber(value)}`,
+          value,
           metricKey,
           metricLabel: entry.key,
           datasetScope: "aggregate",
