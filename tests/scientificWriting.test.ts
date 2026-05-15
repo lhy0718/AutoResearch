@@ -3228,7 +3228,7 @@ describe("scientificWriting", () => {
     const candidate: PaperManuscript = {
       title: "LoRA Rank-Dropout Preflight",
       abstract:
-        "The best condition improves average accuracy from 0.3333 to 0.4167, an increase of 0.0833 over the baseline. The run is operationally lightweight, reporting 8 of 8 requested conditions completed, 45.687 s wall-clock time, and about 4.28 GB peak CUDA allocation. The sweep completed in 45.687 s with 4.28 GB peak CUDA allocation. Condition-level 95% intervals overlap substantially, and each interval is based on only 12 predictions.",
+        "The intended sweep crossed ranks {4, 8, 16, 32} and dropout {0.0, 0.05}, with average accuracy as the endpoint. The best condition improves average accuracy from 0.3333 to 0.4167, an increase of 0.0833 over the baseline. The run is operationally lightweight, reporting 8 of 8 requested conditions completed, 45.687 s wall-clock time, and about 4.28 GB peak CUDA allocation. The sweep completed in 45.687 s with 4.28 GB peak CUDA allocation. Condition-level 95% intervals overlap substantially, and each interval is based on only 12 predictions.",
       keywords: ["LoRA"],
       sections: [
         {
@@ -3297,6 +3297,7 @@ describe("scientificWriting", () => {
           || /cites 1,?800, but the comparable structured results support .*runtime_seconds/iu.test(issue.message)
           || /cites 0\.138, but the comparable structured results support .*accuracy/iu.test(issue.message)
           || /cites 0\.5, but the current artifacts do not expose a comparable structured numeric fact for accuracy_delta/iu.test(issue.message)
+          || /Abstract cites 0\.05, but the comparable structured results support .*accuracy/iu.test(issue.message)
           || /Results and Figure 1 report conflicting ARC-Challenge accuracy values/iu.test(issue.message)
         )
         .map((issue) => issue.message)

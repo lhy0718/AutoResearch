@@ -4384,6 +4384,11 @@ function shouldSkipMetricToken(fragment: string, rawToken: string, index: number
   if (
     /\b(?:rank|dropout|lora\s+rank|lora\s+dropout)\s*(?:values?|levels?|settings?|of|=|:|,|and|or)?\s*$/iu.test(previousWindow)
     || /^\s*(?:rank|dropout)\b/iu.test(nextWindow)
+    || /\b(?:rank|dropout|lora\s+rank|lora\s+dropout)\s*\\?\{[^}]*$/iu.test(previousWindow)
+    || (
+      /^\s*\\?\}/u.test(nextWindow)
+      && /\b(?:rank|dropout|lora\s+rank|lora\s+dropout)\s*\\?\{[^.!?]*$/iu.test(localDesignWindow)
+    )
     || (
       /\b(?:rank|dropout|factorial|grid|condition|cell)\b/iu.test(localDesignWindow)
       && !/\b(?:accuracy|delta|gain|improvement|loss|runtime|latency|memory)\b/iu.test(localMetricWindow)
