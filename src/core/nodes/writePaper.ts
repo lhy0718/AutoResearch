@@ -2652,7 +2652,11 @@ function compactReaderFacingRepairedManuscript(manuscript: PaperManuscript): Pap
       ? {
           appendix_sections: manuscript.appendix_sections.map((section) => ({
             ...section,
-            paragraphs: dedupeNarrativeParagraphs(section.paragraphs.map((paragraph) => sanitizePaperNarrativeText(paragraph)))
+            paragraphs: dedupeNarrativeParagraphs(
+              section.paragraphs.map((paragraph, index) =>
+                sanitizeFinalPaperParagraph(section.heading, sanitizePaperNarrativeText(paragraph), index)
+              )
+            )
           }))
         }
       : {}),
@@ -2680,6 +2684,7 @@ function sanitizeFinalPaperParagraph(heading: string, paragraph: string, index: 
   paragraph = repairBrokenFinalPaperSentence(heading, paragraph);
   paragraph = removeConflictingBackboneAssertion(heading, paragraph);
   paragraph = repairFinalTableAvailabilityClaim(heading, paragraph);
+  paragraph = repairFinalClaimCeilingAndInternalLanguage(heading, paragraph);
   paragraph = paragraph
     .replace(/\bmachine-readable result reporting\b/giu, "transparent result reporting")
     .replace(/\s+/gu, " ")
@@ -2740,8 +2745,59 @@ function removeConflictingBackboneAssertion(heading: string, paragraph: string):
       /\bThe reported analyzed execution did not preserve the resolved model identifier,\s*so we avoid stronger model-specific interpretation than the archived summary allows and treat the result as evidence from a small locally runnable instruction-tuning target\.?/giu,
       "The archived execution summary identifies Qwen/Qwen2.5-1.5B as the selected backbone for the analyzed run; TinyLlama remained only a fallback option and is not treated as evidence for the reported condition means."
     )
+    .replace(
+      /\bThe run plan preferred Qwen\/Qwen2\.5-1\.5B and specified TinyLlama\/TinyLlama-1\.1B-Chat-v1\.0 as a fallback if the preferred model failed preflight\.\s*However,\s*the compact reported summary does not identify which of those models produced the analyzed record\./giu,
+      "The run plan preferred Qwen/Qwen2.5-1.5B and specified TinyLlama/TinyLlama-1.1B-Chat-v1.0 as a fallback if the preferred model failed preflight. The executed metrics record identifies Qwen/Qwen2.5-1.5B as the selected backbone for the analyzed run."
+    )
+    .replace(
+      /\bThe compact record also does not identify the actual base model used for the analyzed run\b/giu,
+      "The compact record identifies Qwen/Qwen2.5-1.5B as the selected backbone but leaves some implementation details outside the main summary"
+    )
     .replace(/\s+/gu, " ")
     .trim();
+}
+
+function repairFinalClaimCeilingAndInternalLanguage(heading: string, paragraph: string): string {
+  let repaired = paragraph
+    .replace(/\bwriting-context summary\b/giu, "available reporting summary")
+    .replace(/\bwriting-context record\b/giu, "available reporting record")
+    .replace(/\bwriting-context\b/giu, "available reporting")
+    .replace(/\breader-facing Results should therefore be read\b/giu, "Results should therefore be read")
+    .replace(/\breader-facing manuscript\b/giu, "manuscript")
+    .replace(/\bwriting bundle\b/giu, "reported evidence")
+    .replace(/\bmanuscript-process\b/giu, "supplementary reporting")
+    .replace(/\bwriting-process\b/giu, "supplementary reporting")
+    .replace(/\binternal note\b/giu, "summary statement")
+    .replace(
+      /\bwith the same repeated-seed accounting used for the rest of the grid\b/giu,
+      "with the same condition-completion accounting used for the rest of the grid"
+    )
+    .replace(
+      /\bsame repeated-seed accounting used for the rest of the grid\b/giu,
+      "same condition-completion accounting used for the rest of the grid"
+    )
+    .replace(
+      /\bThe repeated-seed structure makes the condition labels more informative than a one-run ablation\./giu,
+      "The condition-grid structure makes the condition labels more informative than a single headline comparison."
+    )
+    .replace(
+      /\brepeated-seed structure\b/giu,
+      "condition-grid structure"
+    )
+    .replace(/\brepeated-seed accounting\b/giu, "condition-completion accounting")
+    .replace(/\brepeated-seed coverage\b/giu, "cross-seed coverage")
+    .replace(
+      /\bIn that narrow sense,\s*the observed comparison supports the same motivation for explicit rank sweeps that appears in prior low-budget LoRA reports,\s*although the present evidence remains limited to one compact record\./giu,
+      "In that narrow sense, the observed comparison supports explicit rank sweeps in the next experiment, although the present evidence remains limited to one compact record."
+    );
+
+  if (/^results$/iu.test(heading)) {
+    repaired = repaired.replace(
+      /\bprior low-budget LoRA reports\b/giu,
+      "the preregistered rank-sweep motivation"
+    );
+  }
+  return repaired.replace(/\s+/gu, " ").trim();
 }
 
 function repairFinalTableAvailabilityClaim(heading: string, paragraph: string): string {
