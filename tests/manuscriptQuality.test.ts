@@ -418,11 +418,11 @@ describe("manuscriptQuality style lint", () => {
         summary: "One citation warning lacks a local span.",
         issues: [
           {
-            code: "citation_hygiene",
+            code: "section_completeness",
             severity: "warning",
             section: "Results and Conclusion",
             repairable: true,
-            message: "Citation placement should be checked in Results and Conclusion.",
+            message: "Section completeness should be checked in Results and Conclusion.",
             fix_recommendation: "Add a concrete span before attempting local repair.",
             supporting_spans: []
           }
@@ -444,11 +444,11 @@ describe("manuscriptQuality style lint", () => {
       mustImproveIssues: [
         {
           source: "review",
-          code: "citation_hygiene",
+          code: "section_completeness",
           severity: "warning",
           section: "Results and Conclusion",
           repairable: true,
-          message: "Citation placement should be checked in Results and Conclusion."
+          message: "Section completeness should be checked in Results and Conclusion."
         }
       ]
     });
@@ -457,11 +457,81 @@ describe("manuscriptQuality style lint", () => {
     expect(repairPlan.blocked_targets).toEqual([
       expect.objectContaining({
         source: "review",
-        issue_code: "citation_hygiene",
+        issue_code: "section_completeness",
         severity: "warning",
         section: "Results and Conclusion"
       })
     ]);
+  });
+
+  it("keeps paragraph spans targetable when review issues also name a visual target", () => {
+    const manuscript = makeCleanManuscript();
+    const review = normalizeManuscriptReview(
+      {
+        overall_decision: "repair",
+        summary: "The table caption and local Results prose should be aligned together.",
+        issues: [
+          {
+            code: "alignment",
+            severity: "warning",
+            section: "Results",
+            repairable: true,
+            message: "The table caption and Results paragraph disagree about what evidence is exposed.",
+            fix_recommendation: "Revise the local Results paragraph and the named table caption.",
+            supporting_spans: [
+              {
+                section: "Results",
+                paragraph_index: 1,
+                excerpt: "The main table preserves the exact comparison, and the result remains modest rather than dramatic.",
+                reason: "This paragraph states how the table should be interpreted."
+              }
+            ],
+            visual_targets: [
+              {
+                kind: "table",
+                index: 0,
+                rationale: "The table caption is part of the alignment issue."
+              }
+            ]
+          }
+        ]
+      },
+      manuscript
+    );
+    const validated = validateManuscriptReviewArtifact({
+      review,
+      manuscript,
+      traceability: makeTraceability(manuscript)
+    });
+
+    const repairPlan = buildManuscriptRepairPlan({
+      passIndex: 1,
+      manuscript,
+      review: validated.review,
+      lint: buildManuscriptStyleLint({ manuscript, traceability: makeTraceability(manuscript) }),
+      mustImproveIssues: [
+        {
+          source: "review",
+          code: "alignment",
+          severity: "warning",
+          section: "Results",
+          repairable: true,
+          message: "The table caption and Results paragraph disagree about what evidence is exposed.",
+          anchor_ids: validated.review.issues[0]?.supporting_spans.map((span) => span.anchor_id).filter(Boolean) as string[]
+        }
+      ]
+    });
+
+    expect(repairPlan.targets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "table", location_key: "table:0", allowed_location_keys: ["table:0"] }),
+        expect.objectContaining({
+          kind: "paragraph",
+          location_key: "paragraph:results:1",
+          allowed_location_keys: ["paragraph:results:1"]
+        })
+      ])
+    );
   });
 
   it("builds section-bounded targets for anchorless blocking citation hygiene issues", () => {

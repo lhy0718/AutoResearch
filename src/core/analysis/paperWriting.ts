@@ -2740,6 +2740,10 @@ export function sanitizePaperNarrativeText(value: unknown): string {
       "The preserved pilot record exposes selected implementation details: Qwen/Qwen2.5-1.5B as the selected backbone, learning rate 0.0002, per-device batch size 1, gradient accumulation 4, maximum sequence length 256, 4 optimizer steps, and a 1,800-second timeout. Prompt formatting and some evaluation-harness details remain outside the compact record, so the manuscript confines its claims to directly supported benchmark comparisons."
     )
     .replace(
+      /\b(?:the\s+)?(?:reported\s+)?(?:summary|result summary|compact record|analysis)\s+does not expose several (?:training|implementation) details(?:\s+that would normally appear in a full appendix)?,?\s*including optimizer choice,\s*learning rate,\s*(?:effective\s+)?batch size,\s*(?:step or epoch counts|step or epoch accounting|update count),\s*and LoRA target modules\./giu,
+      "The preserved pilot record exposes learning rate, per-device batch size, gradient accumulation, optimizer-step count, sequence length, timeout, seed, and training-example counts; optimizer choice and LoRA target-module placement remain insufficiently exposed for a fully conventional implementation appendix."
+    )
+    .replace(
       /\bThe study-level accuracy delta reported in Results is the arithmetic mean of the non-baseline condition mean deltas relative to the locked baseline;\s*Table 1 reports the corresponding condition mean accuracies and identifies the locked baseline row\./giu,
       "Results reports the best observed cell against the locked rank-8, dropout-0 baseline; Table 1 reports condition mean accuracies and identifies only that locked row as the baseline."
     )

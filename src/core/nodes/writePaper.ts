@@ -3350,6 +3350,9 @@ let currentManuscript = input.initialManuscript;
       sanitizeReaderFacingRepairTargets(manuscriptBeforeRepair, repairResult.manuscript, repairPlan),
       { conditionSummaries: context.results.condition_summaries }
     );
+    const verificationBaselineManuscript = stabilizePaperManuscriptForSubmission(manuscriptBeforeRepair, {
+      conditionSummaries: context.results.condition_summaries
+    });
     evaluation = evaluateCandidate(currentManuscript);
     reviewCycle = await runGroundedReviewCycle({
       evaluation,
@@ -3375,7 +3378,7 @@ let currentManuscript = input.initialManuscript;
     };
     const repairVerification = buildManuscriptRepairVerificationArtifact({
       passIndex,
-      before: manuscriptBeforeRepair,
+      before: verificationBaselineManuscript,
       after: currentManuscript,
       repairPlan,
       reviewAfter: review

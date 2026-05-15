@@ -1049,7 +1049,9 @@ export function buildManuscriptRepairPlan(input: {
       const visualTargets = buildVisualRepairTargetsFromReviewIssue(input.manuscript, issue);
       if (visualTargets.length > 0) {
         targets.push(...visualTargets);
-        continue;
+        if (issue.supporting_spans.length === 0) {
+          continue;
+        }
       }
     }
     if (issue.supporting_spans.length === 0) {

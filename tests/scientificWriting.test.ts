@@ -1609,7 +1609,6 @@ describe("scientificWriting", () => {
         }
       ]
     };
-
     const scientific = applyScientificWritingPolicy({
       draft: makeTerseDraft(),
       bundle,
@@ -1726,6 +1725,113 @@ describe("scientificWriting", () => {
           && (issue.involved_sections || []).some((section) => /Table/i.test(section))
       )
     ).toHaveLength(0);
+  });
+
+  it("keeps LoRA auxiliary metrics and CI bounds under their own numeric keys", () => {
+    const bundle = makeRichBundle();
+    bundle.runTitle = "LoRA rank-dropout live validation";
+    bundle.topic = "LoRA rank and dropout under a fixed-budget instruction tuning sweep";
+    bundle.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    bundle.latestResults = {
+      summary: {
+        baseline_condition_marker: "rank_8_dropout_0_0",
+        completed_condition_count: 2,
+        best_condition_marker: "rank_32_dropout_0_05",
+        best_average_accuracy: 0.416666,
+        best_accuracy_delta_vs_baseline: 0.083332
+      },
+      conditions: [
+        {
+          marker: "rank_8_dropout_0_0",
+          rank: 8,
+          dropout: 0,
+          status: "ok",
+          average_accuracy: 0.333334,
+          train_loss: 1.462,
+          runtime_sec: 45.687,
+          peak_cuda_memory_bytes: 4278951936,
+          accuracy_delta_vs_baseline: 0
+        },
+        {
+          marker: "rank_32_dropout_0_05",
+          rank: 32,
+          dropout: 0.05,
+          status: "ok",
+          average_accuracy: 0.416666,
+          train_loss: 1.524,
+          runtime_sec: 45.687,
+          peak_cuda_memory_bytes: 4278951936,
+          accuracy_delta_vs_baseline: 0.083332
+        }
+      ]
+    };
+    bundle.resultAnalysis = {
+      ...(bundle.resultAnalysis as any),
+      dataset_summaries: [],
+      metric_table: [
+        { key: "device.cuda_max_memory_allocated_bytes", value: 4278951936 },
+        { key: "wall_clock_runtime_sec", value: 45.687 },
+        { key: "run_config.timeout_sec", value: 1800 },
+        { key: "run_config.max_seq_length", value: 256 }
+      ]
+    };
+    const scientific = applyScientificWritingPolicy({
+      draft: makeTerseDraft(),
+      bundle,
+      profile: PAPER_PROFILE
+    });
+    const candidate: PaperManuscript = {
+      title: "LoRA Rank and Dropout under Fixed Budget",
+      abstract:
+        "The best observed cell improved mean accuracy from 0.333 to 0.417, an absolute gain of 8.3 percentage points. Training loss changed from 1.462 to 1.524, with 45.687 s wall-clock time and about 4.28 GB peak CUDA memory.",
+      keywords: ["LoRA", "instruction tuning"],
+      sections: scientific.draft.sections.map((section) => ({
+        heading: section.heading,
+        paragraphs:
+          section.heading === "Results"
+            ? [
+                "The best observed cell improved mean accuracy from 0.333 to 0.417, with training loss 1.524 versus 1.462 for the baseline and a cost profile of 45.687 s wall-clock time and about 4.28 GB peak CUDA memory."
+              ]
+            : section.paragraphs.map((paragraph) => paragraph.text)
+      })),
+      tables: [
+        {
+          caption: "Condition-level mean accuracy interval for the rank-32 dropout-0.05 cell.",
+          rows: [
+            { label: "Mean Accuracy", value: 0.416666 },
+            { label: "Lower 95% Bound", value: 0.193 },
+            { label: "Upper 95% Bound", value: 0.68 }
+          ]
+        }
+      ]
+    };
+
+    const result = materializeScientificManuscript({
+      candidate,
+      draft: scientific.draft,
+      bundle,
+      profile: PAPER_PROFILE,
+      appendixPlan: scientific.appendix_plan,
+      pageBudget: scientific.page_budget
+    });
+
+    const problematicErrors = result.consistency_lint.issues
+      .filter(
+        (issue) =>
+          issue.kind === "numeric_inconsistency"
+          && issue.severity === "error"
+          && /train loss|training loss|runtime seconds|peak memory mb|accuracy_delta_vs_baseline|lower 95|upper 95/i.test(issue.message)
+      )
+      .map((issue) => issue.message);
+    expect(problematicErrors).toEqual([]);
+    const problematicMessages = result.consistency_lint.issues
+      .filter(
+        (issue) =>
+          ["numeric_inconsistency", "numeric_unverifiable"].includes(issue.kind)
+          && /train loss|training loss|45\.687|4\.28|4278951936|256|1800|peak memory mb/i.test(issue.message)
+      )
+      .map((issue) => issue.message);
+    expect(problematicMessages).toEqual([]);
   });
 
   it("recovers LoRA condition rows from result analysis metrics when latest results are absent", () => {

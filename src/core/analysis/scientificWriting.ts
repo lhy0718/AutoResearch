@@ -1990,8 +1990,8 @@ function lintNumericConsistency(input: {
     // it's more likely a scope/key mismatch than a transcription error.
     // A real typo would be close to at least one expected value.
     const minRelDelta = comparableFacts.reduce((best, cf) => {
-      const m = Math.max(Math.abs(observedFact.value), Math.abs(cf.value));
-      return m > 0 ? Math.min(best, Math.abs(observedFact.value - cf.value) / m) : best;
+      const m = Math.max(Math.abs(observedFact.normalized_value), Math.abs(cf.normalized_value));
+      return m > 0 ? Math.min(best, Math.abs(observedFact.normalized_value - cf.normalized_value) / m) : best;
     }, 1.0);
     const farFromAll = minRelDelta > 0.15;
     const likelyMismatch = largeDelta || crossMetricMatch || farFromAll;
@@ -1999,7 +1999,7 @@ function lintNumericConsistency(input: {
       kind: "numeric_inconsistency",
       severity: likelyMismatch ? "warning" : "error",
       finding: likelyMismatch ? "unverifiable" : "contradiction",
-      message: `${observedFact.location} cites ${formatNumber(observedFact.value)}, but the comparable structured results support ${formatNumber(comparableFacts[0]?.value)} for ${observedFact.metric_key || "that metric"}.`,
+      message: `${observedFact.location} cites ${formatNumber(observedFact.value)}, but the comparable structured results support ${formatNumber(comparableFacts[0]?.normalized_value)} for ${observedFact.metric_key || "that metric"}.`,
       involved_sections: [observedFact.location],
       normalized_facts: [observedFact, ...comparableFacts.slice(0, 2)],
       reason: likelyMismatch
@@ -2567,6 +2567,57 @@ function collectConditionMetricFacts(context: ExperimentArtifactContext): Normal
           })
         );
       }
+      if (typeof condition.train_loss === "number") {
+        facts.push(
+          buildStructuredNumericFact({
+            factKind: "metric",
+            source: "artifact",
+            location: `artifact.condition.${cleanString(condition.label) || cleanString(condition.condition)}.train_loss`,
+            rawText: `${condition.label} training loss ${formatNumber(condition.train_loss)}`,
+            value: condition.train_loss,
+            metricKey: "train_loss",
+            metricLabel: "training loss",
+            datasetScope: conditionScope,
+            aggregationLevel: "repeat",
+            unit: "score",
+            sourceRefs: buildArtifactSourceRefs(["latest_results.condition_summaries"])
+          })
+        );
+      }
+      if (typeof condition.runtime_seconds === "number") {
+        facts.push(
+          buildStructuredNumericFact({
+            factKind: "metric",
+            source: "artifact",
+            location: `artifact.condition.${cleanString(condition.label) || cleanString(condition.condition)}.runtime_seconds`,
+            rawText: `${condition.label} runtime ${formatNumber(condition.runtime_seconds)} seconds`,
+            value: condition.runtime_seconds,
+            metricKey: "runtime_seconds",
+            metricLabel: "runtime",
+            datasetScope: conditionScope,
+            aggregationLevel: "repeat",
+            unit: "seconds",
+            sourceRefs: buildArtifactSourceRefs(["latest_results.condition_summaries"])
+          })
+        );
+      }
+      if (typeof condition.peak_memory_mb === "number") {
+        facts.push(
+          buildStructuredNumericFact({
+            factKind: "metric",
+            source: "artifact",
+            location: `artifact.condition.${cleanString(condition.label) || cleanString(condition.condition)}.peak_memory_mb`,
+            rawText: `${condition.label} peak memory ${formatNumber(condition.peak_memory_mb)} MB`,
+            value: condition.peak_memory_mb,
+            metricKey: "peak_memory_mb",
+            metricLabel: "peak memory",
+            datasetScope: conditionScope,
+            aggregationLevel: "repeat",
+            unit: "mb",
+            sourceRefs: buildArtifactSourceRefs(["latest_results.condition_summaries"])
+          })
+        );
+      }
       return facts;
     })
   );
@@ -2693,7 +2744,10 @@ function buildObservedFactDriftIssues(
     if (mainSectionFacts.length < 2 || distinctLocations.length < 2 || distinctValues.length < 2) {
       continue;
     }
-    if (isBenignFromToAccuracyScoreDrift(mainSectionFacts, distinctValues)) {
+    if (isBenignFromToMetricScoreDrift(mainSectionFacts, distinctValues)) {
+      continue;
+    }
+    if (isBenignBaselineLeadingVisualDrift(mainSectionFacts, distinctValues)) {
       continue;
     }
     // When distinct values span a very wide range, it's likely a scope/key
@@ -2717,7 +2771,7 @@ function buildObservedFactDriftIssues(
   return issues;
 }
 
-function isBenignFromToAccuracyScoreDrift(
+function isBenignFromToMetricScoreDrift(
   facts: NormalizedNumericFact[],
   distinctValues: number[]
 ): boolean {
@@ -2727,9 +2781,12 @@ function isBenignFromToAccuracyScoreDrift(
   const fromToFacts = facts.filter(
     (fact) =>
       fact.fact_kind === "metric"
-      && fact.metric_key === "accuracy"
+      && (fact.metric_key === "accuracy" || fact.metric_key === "train_loss")
       && fact.unit === "score"
-      && isFromToAccuracyScoreFragment(fact.raw_text)
+      && (
+        (fact.metric_key === "accuracy" && isFromToAccuracyScoreFragment(fact.raw_text))
+        || (fact.metric_key === "train_loss" && isFromToTrainLossFragment(fact.raw_text))
+      )
   );
   if (fromToFacts.length < 2) {
     return false;
@@ -2737,6 +2794,27 @@ function isBenignFromToAccuracyScoreDrift(
   return distinctValues.every((value) =>
     fromToFacts.some((fact) => areApproxEqual(value, fact.normalized_value, fact.unit))
   );
+}
+
+function isBenignBaselineLeadingVisualDrift(
+  facts: NormalizedNumericFact[],
+  distinctValues: number[]
+): boolean {
+  if (distinctValues.length !== 2) {
+    return false;
+  }
+  if (
+    !facts.every(
+      (fact) =>
+        fact.fact_kind === "metric"
+        && fact.metric_key === "accuracy"
+        && fact.unit === "score"
+        && /\b(?:baseline|leading|best)\b/iu.test(fact.raw_text)
+    )
+  ) {
+    return false;
+  }
+  return facts.some((fact) => fact.source === "figure") && facts.some((fact) => /from\s+-?\d/iu.test(fact.raw_text));
 }
 
 function extractCountFactsFromText(input: {
@@ -2912,6 +2990,25 @@ function inferVisualMetricDescriptor(input: {
   unit?: NumericFactUnit;
   aggregationLevel?: NumericFactAggregation;
 } {
+  const visualText = `${input.caption} ${input.row.label}`;
+  const normalizedVisualText = normalizeMetricText(visualText);
+  const explicitCiUnit: NumericFactUnit | undefined =
+    /\blower\b[^.!?]{0,40}\b(?:95|ci|confidence|bound)\b|\b(?:95|ci|confidence)\b[^.!?]{0,40}\blower\b/iu.test(normalizedVisualText)
+      ? "ci_lower"
+      : /\bupper\b[^.!?]{0,40}\b(?:95|ci|confidence|bound)\b|\b(?:95|ci|confidence)\b[^.!?]{0,40}\bupper\b/iu.test(normalizedVisualText)
+        ? "ci_upper"
+        : undefined;
+  if (explicitCiUnit) {
+    const metricKey = inferVisualMetricKey(visualText);
+    if (metricKey) {
+      return {
+        metricKey,
+        metricLabel: input.row.label,
+        unit: explicitCiUnit,
+        aggregationLevel: input.datasetScope === "aggregate" || input.datasetScope === "unknown" ? "repeat" : "dataset"
+      };
+    }
+  }
   const conditionSummary = findConditionSummaryForVisualRow(input.context, input.row.label);
   if (
     conditionSummary
@@ -3074,7 +3171,8 @@ function buildStructuredNumericFact(input: {
   unit?: NumericFactUnit;
   sourceRefs?: PaperSourceRef[];
 }): NormalizedNumericFact {
-  const normalizedValue = roundMetric(input.value);
+  const rawText = cleanString(input.rawText);
+  const normalizedValue = roundMetric(normalizeObservedMetricValue(input.value, input.unit, rawText));
   const metricKey =
     input.metricKey && /^[a-z][a-z0-9_]*$/iu.test(input.metricKey)
       ? input.metricKey
@@ -3084,7 +3182,6 @@ function buildStructuredNumericFact(input: {
   const semantics = inferMetricSemantics(metricKey);
   const comparisonTarget =
     input.comparisonTarget || inferConditionComparisonTarget(input.rawText) || semantics.comparisonTarget;
-  const rawText = cleanString(input.rawText);
   const location = cleanString(input.location);
   return {
     fact_id: [
@@ -3210,6 +3307,16 @@ function areApproxEqual(left: number, right: number, unit: NumericFactUnit | und
   return Math.abs(left - right) <= tolerance;
 }
 
+function normalizeObservedMetricValue(value: number, unit: NumericFactUnit | undefined, rawText: string): number {
+  if (unit === "mb" && /\b(?:gb|gib)\b/iu.test(rawText) && !/\b(?:mb|mib)\b/iu.test(rawText)) {
+    return value * 1000;
+  }
+  if (unit === "mb" && /\bbytes?\b/iu.test(normalizeMetricText(rawText)) && Math.abs(value) > 1_000_000) {
+    return value / 1_000_000;
+  }
+  return value;
+}
+
 function dedupeNumericFacts(facts: NormalizedNumericFact[]): NormalizedNumericFact[] {
   const seen = new Set<string>();
   const unique: NormalizedNumericFact[] = [];
@@ -3313,13 +3420,25 @@ function inferMetricUnit(
   const cleaned = cleanString(text).toLowerCase();
   const normalized = normalizeMetricText(text);
   const searchText = normalizeMetricSearchText(text);
-  const memoryDistance = typeof rawIndex === "number" ? nearestKeywordDistance(searchText, rawIndex, ["memory", "mb", "ram", "gib"]) : undefined;
+  if (metricKey === "train_loss") {
+    return "score";
+  }
+  const memoryDistance =
+    typeof rawIndex === "number"
+      ? nearestKeywordDistance(searchText, rawIndex, ["memory", "cuda memory", "peak memory", "mb", "gb", "gib", "ram"])
+      : undefined;
   const runtimeDistance =
-    typeof rawIndex === "number" ? nearestKeywordDistance(searchText, rawIndex, ["runtime", "latency", "second", "seconds", "sec"]) : undefined;
-  if (typeof memoryDistance === "number" && (typeof runtimeDistance !== "number" || memoryDistance < runtimeDistance)) {
+    typeof rawIndex === "number"
+      ? nearestKeywordDistance(searchText, rawIndex, ["runtime", "latency", "wall clock", "wall-clock", "seconds", "second", "sec"])
+      : undefined;
+  if (
+    typeof memoryDistance === "number"
+    && memoryDistance <= 45
+    && (typeof runtimeDistance !== "number" || memoryDistance < runtimeDistance || runtimeDistance > 45)
+  ) {
     return "mb";
   }
-  if (typeof runtimeDistance === "number" || metricKey === "runtime_seconds") {
+  if ((typeof runtimeDistance === "number" && runtimeDistance <= 45) || metricKey === "runtime_seconds") {
     return "seconds";
   }
   if (metricKey === "peak_memory_mb" || /\bmemory\b|\bram\b|\bmb\b|\bgib\b/iu.test(normalized)) {
@@ -3331,7 +3450,11 @@ function inferMetricUnit(
     }
     return "score";
   }
-  if (metricKey === "accuracy" && typeof rawIndex === "number" && isFromToAccuracyScoreValue(text, rawIndex)) {
+  if (
+    (metricKey === "accuracy" || metricKey === "accuracy_delta_vs_baseline")
+    && typeof rawIndex === "number"
+    && isFromToAccuracyScoreValue(text, rawIndex)
+  ) {
     return "score";
   }
   if (metricKey?.includes("delta") || /\bdeltas?\b|\bimprov(?:e|ed|es|ement)\b|\bgain\b|\bvs\b|\bby\b/iu.test(normalized)) {
@@ -3370,11 +3493,45 @@ function isFromToAccuracyScoreFragment(text: string): boolean {
   );
 }
 
+function isFromToTrainLossValue(text: string, rawIndex: number): boolean {
+  const cleaned = cleanString(text);
+  const patterns = [
+    /\btrain(?:ing)? loss\b[^.!?]{0,80}\b(?:changed|moved|rose|increased|decreased|fell|shifted)?\b[^.!?]{0,80}\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:to|up to)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu,
+    /\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:to|up to)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)[^.!?]{0,80}\btrain(?:ing)? loss\b/giu
+  ];
+  for (const pattern of patterns) {
+    for (const match of cleaned.matchAll(pattern)) {
+      const values = [match[1], match[2]].filter(Boolean);
+      for (const value of values) {
+        const valueIndex = (match.index || 0) + match[0].indexOf(value);
+        if (rawIndex >= valueIndex && rawIndex <= valueIndex + value.length) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function isFromToTrainLossFragment(text: string): boolean {
+  const cleaned = cleanString(text);
+  return (
+    /\btrain(?:ing)? loss\b[^.!?]{0,80}\b(?:changed|moved|rose|increased|decreased|fell|shifted)?\b[^.!?]{0,80}\bfrom\s+-?\d+(?:,\d{3})*(?:\.\d+)?\s+(?:to|up to)\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(cleaned)
+    || /\bfrom\s+-?\d+(?:,\d{3})*(?:\.\d+)?\s+(?:to|up to)\s+-?\d+(?:,\d{3})*(?:\.\d+)?[^.!?]{0,80}\btrain(?:ing)? loss\b/iu.test(cleaned)
+  );
+}
+
 function inferMetricKeyNearNumber(
   fragment: string,
   rawIndex: number,
   paragraphMetricKey: string | undefined
 ): string | undefined {
+  if (isFromToAccuracyScoreValue(fragment, rawIndex)) {
+    return "accuracy";
+  }
+  if (isFromToTrainLossValue(fragment, rawIndex)) {
+    return "train_loss";
+  }
   const nearestMetricKey = inferMetricKeyByDistance(fragment, rawIndex);
   if (nearestMetricKey) {
     return nearestMetricKey;
@@ -3415,8 +3572,9 @@ function inferMetricKeyByDistance(text: string, rawIndex: number): string | unde
     { key: "macro_f1", patterns: ["macro f1"] },
     { key: "pairwise_ranking_agreement", patterns: ["pairwise ranking agreement", "ranking agreement"] },
     { key: "winner_consistency", patterns: ["winner consistency"] },
-    { key: "runtime_seconds", patterns: ["runtime", "latency", "second", "seconds", "sec"] },
-    { key: "peak_memory_mb", patterns: ["peak memory", "memory", "ram", "mb"] },
+    { key: "train_loss", patterns: ["train loss", "training loss"] },
+    { key: "runtime_seconds", patterns: ["runtime", "latency", "wall clock", "wall-clock", "seconds", "second", "sec"] },
+    { key: "peak_memory_mb", patterns: ["peak memory", "cuda memory", "memory", "ram", "mb", "gb", "gib"] },
     { key: "top1_accuracy", patterns: ["top 1 accuracy", "top-1 accuracy"] },
     { key: "accuracy", patterns: ["accuracy"] }
   ];
@@ -3449,6 +3607,9 @@ function normalizeMetricIdentifier(value: string): string | undefined {
   }
   if (/\bcuda max memory allocated bytes\b|\bpeak memory\b|\bpeak vram\b|\bmemory allocated\b/iu.test(cleaned)) {
     return "peak_memory_mb";
+  }
+  if (/\btrain(?:ing)? loss\b|\btrain_loss\b/iu.test(cleaned)) {
+    return "train_loss";
   }
   if (/\bmacro f1\b.*\bdeltas?\b.*\blogistic regression\b|\bmacro f1 delta vs logreg\b|\bmacro_f1_delta_vs_logreg\b/iu.test(cleaned)) {
     return "macro_f1_delta_vs_logreg";
@@ -3500,8 +3661,9 @@ function inferPrimaryMetricKeyFromText(value: string): string | undefined {
     { key: "accuracy", index: cleaned.search(/\baccuracy\b/u) },
     { key: "pairwise_ranking_agreement", index: cleaned.search(/\bpairwise ranking agreement\b/u) },
     { key: "winner_consistency", index: cleaned.search(/\bwinner consistency\b/u) },
-    { key: "runtime_seconds", index: cleaned.search(/\bruntime\b|\blatency\b/u) },
-    { key: "peak_memory_mb", index: cleaned.search(/\bmemory\b|\bram\b/u) }
+    { key: "train_loss", index: cleaned.search(/\btrain(?:ing)? loss\b|\btrain_loss\b/u) },
+    { key: "runtime_seconds", index: cleaned.search(/\bruntime\b|\blatency\b|\bwall clock\b|\bwall-clock\b/u) },
+    { key: "peak_memory_mb", index: cleaned.search(/\bmemory\b|\bram\b|\bgb\b|\bgib\b/u) }
   ].filter((candidate) => candidate.index >= 0);
   return candidates.sort((left, right) => left.index - right.index)[0]?.key;
 }
@@ -3617,6 +3779,9 @@ function specializeMetricKeyForNumber(
   unit: NumericFactUnit,
   rawIndex: number
 ): string | undefined {
+  if (metricKey === "accuracy_delta_vs_baseline" && unit === "score" && isFromToAccuracyScoreValue(fragment, rawIndex)) {
+    return "accuracy";
+  }
   if (!metricKey || unit !== "delta" || metricKey !== "accuracy_delta") {
     return specializeMetricKeyForFragment(metricKey, fragment, unit);
   }
@@ -3920,6 +4085,12 @@ function shouldSkipMetricToken(fragment: string, rawToken: string, index: number
     return true;
   }
   if (/^\s*(?:training\s+)?examples?\b|^\s*train\s+dataset\s+tokens?\b/iu.test(nextWindow)) {
+    return true;
+  }
+  if (/\b(?:max(?:imum)?\s+sequence\s+length|sequence\s+length|max[_\s-]?seq(?:uence)?[_\s-]?length)\s*$/iu.test(previousWindow)) {
+    return true;
+  }
+  if (/\b(?:runtime\s+limit|timeout|time\s+budget|budget)\s*(?:of|=|:)?\s*$/iu.test(previousWindow)) {
     return true;
   }
   if (/^\s*datasets?\b/iu.test(nextWindow)) {
@@ -5489,6 +5660,10 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
     .replace(
       /\bAt the same time,\s*the reported result summary does not expose several training details that would normally appear in a full appendix,\s*including optimizer choice,\s*learning rate,\s*batch size,\s*update count,\s*LoRA target modules,\s*and the realized model identifier\.\s*Accordingly,\s*the manuscript confines its claims to what is directly supported by the available execution record\./giu,
       "The preserved pilot record exposes selected implementation details: Qwen/Qwen2.5-1.5B as the selected backbone, learning rate 0.0002, per-device batch size 1, gradient accumulation 4, maximum sequence length 256, 4 optimizer steps, and a 1,800-second timeout. Prompt formatting and some evaluation-harness details remain outside the compact record, so the manuscript confines its claims to directly supported benchmark comparisons."
+    )
+    .replace(
+      /\b(?:the\s+)?(?:reported\s+)?(?:summary|result summary|compact record|analysis)\s+does not expose several (?:training|implementation) details(?:\s+that would normally appear in a full appendix)?,?\s*including optimizer choice,\s*learning rate,\s*(?:effective\s+)?batch size,\s*(?:step or epoch counts|step or epoch accounting|update count),\s*and LoRA target modules\./giu,
+      "The preserved pilot record exposes learning rate, per-device batch size, gradient accumulation, optimizer-step count, sequence length, timeout, seed, and training-example counts; optimizer choice and LoRA target-module placement remain insufficiently exposed for a fully conventional implementation appendix."
     )
     .replace(
       /\bcondition summaries\s*\/\s*rank\s+16\s+dropout\s+0\s+0\s*\/\s*accuracy delta vs baseline 95% CI \[([^\]]+)\] over n=(\d+)\./giu,
@@ -7289,8 +7464,8 @@ function collectAggregateMetricFacts(
           return undefined;
         }
         const value =
-          metricKey === "peak_memory_mb" && /\bbytes?\b/iu.test(entry.key)
-            ? entry.value / 1_000_000_000
+          metricKey === "peak_memory_mb" && /\bbytes?\b/iu.test(normalizeMetricText(entry.key))
+            ? entry.value / 1_000_000
             : entry.value;
         return buildStructuredNumericFact({
           factKind: "metric",
@@ -7895,7 +8070,7 @@ function collectConditionResultSummaries(
       const peakMemoryMb = firstNumber(
         item.peak_memory_mb,
         item.peak_cuda_memory_mb,
-        typeof peakMemoryBytes === "number" ? peakMemoryBytes / (1024 * 1024) : undefined
+        typeof peakMemoryBytes === "number" ? peakMemoryBytes / 1_000_000 : undefined
       );
       return {
         condition: condition || label,
