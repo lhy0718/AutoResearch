@@ -2176,6 +2176,7 @@ async function seedMediumScientificRun(run: RunRecord): Promise<void> {
 function createPdfBuildAci(options?: {
   failFirstCompile?: boolean;
   failAllCompiles?: boolean;
+  failFigureRender?: boolean;
   pdfPageCount?: number;
   pdfText?: string;
 }) {
@@ -2191,6 +2192,15 @@ function createPdfBuildAci(options?: {
           throw new Error("Expected cwd for paper compilation.");
         }
         if (command === "python3 render_paper_figures.py") {
+          if (options?.failFigureRender) {
+            return {
+              status: "error" as const,
+              stdout: "",
+              stderr: "figure render aborted",
+              exit_code: 1,
+              duration_ms: 3
+            };
+          }
           await writeFile(path.join(cwd, "main-result-figure-1.pdf"), "%PDF-1.4 mock figure\n", "utf8");
           return {
             status: "ok" as const,
@@ -5035,6 +5045,84 @@ describe("writePaper PDF build", () => {
     expect(renderValidation.status).toBe("pass");
     expect(renderValidation.metrics.final_tex_preserves_template).toBe(true);
     expect(renderValidation.metrics.rendered_figure_asset_count).toBeGreaterThan(0);
+  });
+
+  it("does not fall back to inline LaTeX bars when Python figure rendering fails for a compiled template paper", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-write-paper-figure-render-fail-"));
+    process.chdir(root);
+
+    const run = makeRun("run-write-paper-figure-render-fail");
+    const runDir = await seedRun(root, run);
+    await writeFile(
+      path.join(root, "template.tex"),
+      [
+        "\\pdfoutput=1",
+        "\\documentclass[11pt]{article}",
+        "\\usepackage[review]{ACL2023}",
+        "\\begin{document}",
+        "\\section{Introduction}",
+        "\\section{Results}",
+        "\\end{document}"
+      ].join("\n"),
+      "utf8"
+    );
+    await writeFile(path.join(root, "ACL2023.sty"), "% mock ACL style\n", "utf8");
+    await seedMediumScientificRun(run);
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put(
+      "run_brief.raw",
+      [
+        "# Research Brief",
+        "",
+        "## Topic",
+        "Template-faithful paper writing",
+        "",
+        "## Manuscript Authors",
+        "- authors: AutoLabOS Validation Team",
+        "- affiliations: Local Validation Workspace"
+      ].join("\n")
+    );
+    const aci = createPdfBuildAci({ failFigureRender: true });
+
+    const node = createWritePaperNode({
+      config: {
+        paper: {
+          build_pdf: true,
+          latex_engine: "auto_install"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequencedLLMClient([
+        ...buildSessionResponses(),
+        buildPolishedManuscriptResponse({
+          figures: [
+            {
+              caption: "Python-rendered comparison of revision stability.",
+              bars: [
+                { label: "Stateless baseline", value: 0.71 },
+                { label: "Thread-backed drafting", value: 0.76 }
+              ]
+            }
+          ]
+        }),
+        buildManuscriptReviewResponse({ decision: "pass" }),
+        buildManuscriptReviewAuditResponse()
+      ]),
+      codex: {} as any,
+      aci: aci.api as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    const tex = await readFile(path.join(runDir, "paper", "main.tex"), "utf8");
+    expect(tex).toContain("\\usepackage[review]{ACL2023}");
+    expect(tex).not.toContain("\\textbf{Keywords:}");
+    expect(tex).toContain("\\includegraphics[width=\\columnwidth]{figures/main-result-figure-1.pdf}");
+    expect(tex).not.toContain("\\makebox[4.2em][l]");
+    expect(result.error).toContain("Main-body result figures must be rendered as Python-generated vector PDF assets");
   });
 
   it("uses the brief Manuscript Template path when provided", async () => {

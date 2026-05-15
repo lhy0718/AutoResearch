@@ -867,7 +867,10 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       const renderedFigureAssetCount = figureManifest.figures.filter(
         (entry) => entry.kind === "result_chart" && entry.render_status === "pass" && entry.path
       ).length;
-      if ((manuscript.figures || []).length > 0 && renderedFigureAssetCount > 0) {
+      const manuscriptFigureCount = (manuscript.figures || []).length;
+      const shouldUseExternalFigureAssets =
+        manuscriptFigureCount > 0 && deps.config?.paper?.build_pdf === true;
+      if (manuscriptFigureCount > 0 && (renderedFigureAssetCount > 0 || shouldUseExternalFigureAssets)) {
         tex = renderSubmissionPaperTex({
           manuscript,
           traceability,
