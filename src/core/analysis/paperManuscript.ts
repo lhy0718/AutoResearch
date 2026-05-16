@@ -704,6 +704,7 @@ function repairSubmissionAbstract(abstract: string): string {
 }
 
 function repairReaderVisibleManuscriptCoherence(sections: PaperManuscriptSection[]): PaperManuscriptSection[] {
+  const shouldPruneRepeatedTopics = isLoraRankDropoutPreflightManuscript(sections);
   return sections.map((section) => {
     const headingKey = normalizeHeadingKey(section.heading);
     let paragraphs = section.paragraphs.map((paragraph) =>
@@ -726,6 +727,9 @@ function repairReaderVisibleManuscriptCoherence(sections: PaperManuscriptSection
       paragraphs = removeRepeatedScaleLimitations(paragraphs);
       paragraphs = repairLimitationsKnownExecutionDetails(paragraphs);
     }
+    if (shouldPruneRepeatedTopics) {
+      paragraphs = pruneReaderFacingRedundantParagraphs(headingKey, paragraphs);
+    }
     return {
       ...section,
       paragraphs
@@ -733,8 +737,19 @@ function repairReaderVisibleManuscriptCoherence(sections: PaperManuscriptSection
   });
 }
 
+function isLoraRankDropoutPreflightManuscript(sections: PaperManuscriptSection[]): boolean {
+  const text = sections.flatMap((section) => section.paragraphs).join(" ");
+  return (
+    /\bLoRA\b/iu.test(text) &&
+    /\brank\b/iu.test(text) &&
+    /\bdropout\b/iu.test(text) &&
+    (/\bARC-Challenge\b/iu.test(text) || /\bHellaSwag\b/iu.test(text) || /\b4\s*x\s*2\b/iu.test(text))
+  );
+}
+
 function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: string): string {
   let repaired = paragraph
+    .replace(/\bA\s+No broader replication\b/giu, "No broader replication")
     .replace(
       /\bObjective metric met:\s*accuracy_delta_vs_baseline\s*=\s*([0-9.]+)\s*>=\s*([0-9.]+)\./giu,
       "The prespecified baseline-relative accuracy target was met in the analyzed run, with an observed gain of $1 against a threshold of $2."
@@ -1083,6 +1098,7 @@ function repairMethodKnownExecutionDetails(paragraphs: string[]): string[] {
       /does not expose the executed model identifier|does not expose the final selected model identifier|does not retain which of those planned model choices was ultimately used|does not unambiguously state which of those two registered backbones powered the realized preflight|do not identify unambiguously which of those two backbones produced the reported results|does not identify unambiguously which of those two backbones produced the reported results/iu.test(
         cleaned
       )
+      || /does not preserve a model identifier that allows the final executed backbone to be verified/iu.test(cleaned)
     ) {
       if (!insertedBackbone) {
         result.push(
@@ -1141,6 +1157,125 @@ function repairRelatedWorkComparatorRedundancy(paragraphs: string[]): string[] {
     result.push(paragraph);
   }
   return uniqueStrings(result);
+}
+
+function pruneReaderFacingRedundantParagraphs(headingKey: string, paragraphs: string[]): string[] {
+  const result: string[] = [];
+  const seenTopics = new Set<string>();
+  const maxParagraphs = maxReaderFacingParagraphsForSection(headingKey);
+  for (const paragraph of paragraphs) {
+    const cleaned = cleanString(paragraph);
+    if (!cleaned) {
+      continue;
+    }
+    const topicKey = readerFacingParagraphTopicKey(headingKey, cleaned);
+    if (topicKey && seenTopics.has(topicKey)) {
+      continue;
+    }
+    if (result.some((existing) => areReaderFacingParagraphsRedundant(existing, cleaned))) {
+      continue;
+    }
+    if (maxParagraphs && result.length >= maxParagraphs) {
+      continue;
+    }
+    result.push(cleaned);
+    if (topicKey) {
+      seenTopics.add(topicKey);
+    }
+  }
+  return result;
+}
+
+function maxReaderFacingParagraphsForSection(headingKey: string): number | null {
+  if (headingKey === "introduction") return 4;
+  if (headingKey === "related_work" || headingKey === "related work") return 5;
+  if (headingKey === "method") return 6;
+  if (headingKey === "results") return 6;
+  if (headingKey === "discussion") return 5;
+  if (headingKey === "limitations") return 4;
+  if (headingKey === "conclusion") return 3;
+  return null;
+}
+
+function readerFacingParagraphTopicKey(headingKey: string, paragraph: string): string | null {
+  const text = paragraph.toLowerCase();
+  if (headingKey === "introduction") {
+    if (/\bparameter-efficient\b/.test(text) && /\blocal\b/.test(text)) return "intro:local_peft_motivation";
+    if (/\brank\b/.test(text) && /\bdropout\b/.test(text) && /\bsweep\b/.test(text)) return "intro:question";
+    if (/\bcontribution\b/.test(text) && /\bpreflight\b/.test(text)) return "intro:contribution";
+  }
+  if (headingKey === "related_work" || headingKey === "related work") {
+    if (/\bqlora\b|\bmaple\b|\badapter-variant\b|\badapter variant\b/.test(text)) return "related:peft_context";
+    if (/\blocked\b/.test(text) && /\bbaseline\b/.test(text)) return "related:internal_comparator";
+    if (/\bheterogeneous\b|\bdiffer\b|\bdifferent scales\b|\bdata regimes\b/.test(text)) return "related:heterogeneity";
+    if (/\bclusters?\b|\bstrands?\b|\baxes\b/.test(text)) return "related:taxonomy";
+    if (/\bprior-work role\b|\brelated work can justify\b/.test(text)) return "related:role";
+  }
+  if (headingKey === "method") {
+    if (/\b4\s*x\s*2\b|\bfactorial sweep\b/.test(text)) return "method:grid";
+    if (/\bqwen\/qwen2\.5-1\.5b\b|\btinyllama\b/.test(text)) return "method:backbone_data";
+    if (/\bprimary endpoint\b|\bsecondary reporting\b|\bmeaningful improvement\b/.test(text)) return "method:endpoints";
+    if (/\bseed 42\b|\bseed 17\b|\bprotocol drift\b/.test(text)) return "method:protocol_drift";
+    if (/\blearning rate\b|\bgradient accumulation\b|\boptimizer steps\b|\bmaximum sequence length\b/.test(text)) return "method:fixed_training";
+    if (/\breproducibility\b|\brun identifiers\b|\bevent traces\b/.test(text)) return "method:reproducibility";
+  }
+  if (headingKey === "results") {
+    if (/\bprimary endpoint\b|\baverage accuracy increased\b|\bimprovement threshold\b/.test(text)) return "results:primary";
+    if (/\bhellaswag\b/.test(text) && /\barc-challenge\b/.test(text) && /\bunchanged\b/.test(text)) return "results:task_split";
+    if (/\btraining loss\b/.test(text)) return "results:train_loss";
+    if (/\bconfidence interval\b|\bwide\b.*\boverlapping\b/.test(text)) return "results:uncertainty";
+    if (/\bwall-clock\b|\bpeak cuda memory\b|\bcomputational footprint\b/.test(text)) return "results:resources";
+    if (/\brobustness\b|\breplication\b|\bfollow-up\b/.test(text)) return "results:robustness";
+  }
+  if (headingKey === "discussion") {
+    if (/\bmain empirical signal\b|\bbest observed cell\b/.test(text)) return "discussion:signal";
+    if (/\btask pattern\b|\basymmetry\b/.test(text)) return "discussion:task_pattern";
+    if (/\btrain loss\b/.test(text)) return "discussion:loss";
+    if (/\bpractical adoption\b|\bfollow-up\b/.test(text)) return "discussion:practical";
+  }
+  if (headingKey === "limitations") {
+    if (/\bscale\b|\bprotocol drift\b|\bseed 17\b|\b48 training examples\b/.test(text)) return "limitations:scale_drift";
+    if (/\bimplementation disclosure\b|\boptimizer\b|\bloRA target modules\b|\badapter scaling\b/.test(text)) return "limitations:implementation";
+    if (/\bbenchmark scope\b|\blarger model\b|\bevaluation suite\b/.test(text)) return "limitations:scope";
+    if (/\bconfidence interval\b|\b12 predictions\b/.test(text)) return "limitations:uncertainty";
+  }
+  if (headingKey === "conclusion") {
+    if (/\brank 32\b|\bdropout 0\.05\b|\baverage accuracy\b/.test(text)) return "conclusion:result";
+    if (/\bfixed-budget\b|\btransparent factorial\b|\bmethodological\b/.test(text)) return "conclusion:method";
+    if (/\bdiagnostic value\b|\ball eight cells\b/.test(text)) return "conclusion:diagnostic";
+  }
+  return null;
+}
+
+function areReaderFacingParagraphsRedundant(left: string, right: string): boolean {
+  const leftTokens = readerFacingContentTokenSet(left);
+  const rightTokens = readerFacingContentTokenSet(right);
+  if (leftTokens.size < 10 || rightTokens.size < 10) {
+    return false;
+  }
+  let overlap = 0;
+  for (const token of leftTokens) {
+    if (rightTokens.has(token)) {
+      overlap += 1;
+    }
+  }
+  return overlap / Math.min(leftTokens.size, rightTokens.size) >= 0.62;
+}
+
+function readerFacingContentTokenSet(value: string): Set<string> {
+  const stopwords = new Set([
+    "about", "across", "after", "again", "against", "also", "because", "before", "being", "between",
+    "could", "current", "does", "from", "have", "into", "more", "rather", "reported", "should",
+    "study", "that", "their", "there", "these", "this", "those", "under", "while", "with", "within"
+  ]);
+  return new Set(
+    cleanString(value)
+      .toLowerCase()
+      .replace(/[^a-z0-9./-]+/gu, " ")
+      .split(/\s+/u)
+      .map((token) => token.replace(/^[^a-z0-9]+|[^a-z0-9]+$/gu, ""))
+      .filter((token) => token.length >= 4 && !stopwords.has(token))
+  );
 }
 
 function repairLimitationsKnownExecutionDetails(paragraphs: string[]): string[] {

@@ -587,8 +587,8 @@ describe("paper submission sanitization", () => {
     expect(text).toContain("complete per-cell uncertainty and auxiliary-metric tables");
     expect(text).toContain("Table 1 reports the condition-level mean accuracies");
     expect(text).toContain("the reported analyses do not report optimizer choice, LoRA target modules");
-    expect(text).toContain("Table 1 provides the condition-level mean accuracy table");
-    expect(text).toContain("The numerical comparator in this manuscript is the locked rank-8");
+    expect(text).toContain("Table 1 reports all eight condition mean accuracies");
+    expect(text).toContain("The comparison to external PEFT methods is therefore one of scope and experimental role");
     expect(text).toContain("executed metrics identify Qwen/Qwen2.5-1.5B");
     expect(text).toContain("The fixed search space held LoRA rank and dropout as the manipulated factors");
     expect(text).toContain("Relative to memory-efficient finetuning work");
@@ -688,6 +688,54 @@ describe("paper submission sanitization", () => {
       citationKeysByPaperId: new Map([["paper_arc", "doe_2025_benchmark"]])
     });
     expect(tex).toContain("\\cite{doe_2025_benchmark}");
+  });
+
+  it("prunes reader-facing repeated topics after page-floor restoration", () => {
+    const manuscript = stabilizePaperManuscriptForSubmission({
+      title: "A LoRA Benchmark",
+      abstract: "A cautious benchmark.",
+      keywords: [],
+      sections: [
+        {
+          heading: "Method",
+          paragraphs: [
+            "The study was designed as a 4 x 2 factorial sweep over LoRA rank and dropout under a fixed local compute budget. Rank took values {4, 8, 16, 32}, dropout took values {0.0, 0.05}, and rank 8 with dropout 0.0 was locked in advance as the baseline condition.",
+            "The study was designed as a fixed-budget 4 x 2 factorial sweep over LoRA rank {4, 8, 16, 32} and dropout {0.0, 0.05}, with rank 8 and dropout 0.0 designated in advance as the locked baseline.",
+            "The planned backbone preference was Qwen/Qwen2.5-1.5B, with TinyLlama/TinyLlama-1.1B-Chat-v1.0 reserved as a fallback if the preferred model failed preflight. The retained run summary used for manuscript preparation does not preserve a model identifier that allows the final executed backbone to be verified.",
+            "The realized record preserves the data and evaluation settings: training data from the yahma/alpaca-cleaned train split, 48 training examples, evaluation on ARC-Challenge and HellaSwag validation slices, and seed 17.",
+            "The primary endpoint was average accuracy across ARC-Challenge and HellaSwag. Secondary reporting included per-task accuracy, train loss, wall-clock runtime, peak VRAM, and complete accounting of requested conditions.",
+            "The primary endpoint was average accuracy across ARC-Challenge and HellaSwag. Secondary reporting covered per-task accuracy, train loss, wall-clock runtime, peak VRAM, completed-condition count, failed-run visibility, and correctness of claim downgrades."
+          ]
+        },
+        {
+          heading: "Results",
+          paragraphs: [
+            "On the primary endpoint, average accuracy increased from 0.333334 for the baseline condition to 0.416666 for the best observed comparator, yielding an absolute improvement of 0.083332.",
+            "On the study's primary endpoint, average accuracy increased from 0.333334 for the locked baseline to 0.416666 for the best reported comparator, corresponding to a gain of 0.083332 in absolute accuracy.",
+            "Robustness remains unresolved. A No broader replication is reported here, so the main gain remains a single-run preflight observation."
+          ]
+        },
+        {
+          heading: "Related Work",
+          paragraphs: [
+            "Prior PEFT work establishes the broader feasibility and comparison context but not a directly transferable answer to the present rank/dropout question. QLoRA and adapter-variant studies motivate the design.",
+            "The closest cited work frames prompting and control, evaluation and benchmarking, and PEFT and LoRA adapter design rather than a condition-matched reproduction of the present run.",
+            "Accordingly, the manuscript's numerical comparator is internal rather than external: rank 8 with dropout 0.0 is the locked baseline inside the completed run."
+          ]
+        }
+      ]
+    } as any);
+
+    const method = manuscript.sections.find((section) => section.heading === "Method")!;
+    const results = manuscript.sections.find((section) => section.heading === "Results")!;
+    const text = JSON.stringify(manuscript);
+
+    expect(method.paragraphs.filter((paragraph) => /4 x 2 factorial sweep/iu.test(paragraph))).toHaveLength(1);
+    expect(method.paragraphs.filter((paragraph) => /primary endpoint was average accuracy/iu.test(paragraph))).toHaveLength(1);
+    expect(text).toContain("executed metrics identify Qwen/Qwen2.5-1.5B");
+    expect(text).not.toContain("does not preserve a model identifier");
+    expect(results.paragraphs.filter((paragraph) => /average accuracy increased/iu.test(paragraph))).toHaveLength(1);
+    expect(text).not.toContain("A No broader replication");
   });
 
   it("renders reader-visible citations for method resource paragraphs and related discussion claims", () => {

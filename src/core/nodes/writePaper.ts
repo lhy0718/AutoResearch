@@ -2736,14 +2736,12 @@ function sanitizeFinalPaperParagraph(heading: string, paragraph: string, index: 
 }
 
 function repairBrokenFinalPaperSentence(heading: string, paragraph: string): string {
-  if (!/^conclusion$/iu.test(heading)) {
-    return paragraph;
-  }
   return paragraph
     .replace(
       /\bsupplemental\s+No\s+broader\s+replication\b/giu,
       "no broader replication"
     )
+    .replace(/\bA\s+No broader replication\b/giu, "No broader replication")
     .replace(/\s+/gu, " ")
     .trim();
 }
