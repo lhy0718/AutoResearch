@@ -712,6 +712,9 @@ function repairReaderVisibleManuscriptCoherence(sections: PaperManuscriptSection
     if (headingKey === "results") {
       paragraphs = repairResultsSectionReaderFlow(paragraphs);
     }
+    if (headingKey === "method") {
+      paragraphs = repairMethodKnownExecutionDetails(paragraphs);
+    }
     if (headingKey === "related work" || headingKey === "related_work") {
       paragraphs = repairRelatedWorkComparatorRedundancy(paragraphs);
     }
@@ -1010,7 +1013,6 @@ function removeRepeatedDiscussionScreeningRestatements(paragraphs: string[]): st
 function repairResultsSectionReaderFlow(paragraphs: string[]): string[] {
   const result: string[] = [];
   let sawSelectionSignal = false;
-  let sawResourceFeasibility = false;
   for (const paragraph of paragraphs) {
     const cleaned = cleanString(paragraph);
     if (!cleaned) {
@@ -1026,6 +1028,7 @@ function repairResultsSectionReaderFlow(paragraphs: string[]): string[] {
     if (
       /^The best nonbaseline row should therefore be read as a selection signal\b/iu.test(cleaned)
       || /^The rank-32 rows carry the strongest follow-up signal\b/iu.test(cleaned)
+      || /^The condition grid should therefore be read as a screening result\b/iu.test(cleaned)
     ) {
       if (!sawSelectionSignal) {
         result.push(
@@ -1038,18 +1041,63 @@ function repairResultsSectionReaderFlow(paragraphs: string[]): string[] {
     if (
       /^The baseline row also changes the interpretation\b/iu.test(cleaned)
       || /^The rank-16 rows are useful mainly as a calibration point\b/iu.test(cleaned)
+      || /^Table 1 is part of the evidential core\b/iu.test(cleaned)
     ) {
       continue;
     }
     if (
       /^The resource side of the result is intentionally weaker than the accuracy side\b/iu.test(cleaned)
       || /^Resource reporting is therefore separated from accuracy reporting\b/iu.test(cleaned)
+      || /^Runtime and memory records support feasibility\b/iu.test(cleaned)
+      || /^wall-clock runtime was\b/iu.test(cleaned)
     ) {
-      if (!sawResourceFeasibility) {
+      continue;
+    }
+    result.push(cleaned);
+  }
+  return uniqueStrings(result);
+}
+
+function repairMethodKnownExecutionDetails(paragraphs: string[]): string[] {
+  const methodText = paragraphs.join(" ");
+  const hasQwenPlan =
+    /Qwen\/Qwen2\.5-1\.5B/iu.test(methodText)
+    && /TinyLlama\/TinyLlama-1\.1B-Chat-v1\.0|TinyLlama/iu.test(methodText);
+  if (!hasQwenPlan) {
+    return paragraphs;
+  }
+
+  const result: string[] = [];
+  let insertedBackbone = false;
+  let insertedSettings = false;
+  for (const paragraph of paragraphs) {
+    const cleaned = cleanString(paragraph);
+    if (!cleaned) {
+      continue;
+    }
+    if (
+      /does not expose the executed model identifier|does not retain which of those planned model choices was ultimately used|does not unambiguously state which of those two registered backbones powered the realized preflight/iu.test(
+        cleaned
+      )
+    ) {
+      if (!insertedBackbone) {
         result.push(
-          "Runtime and memory records support feasibility for the executed local preflight, but the available evidence does not support a condition-level efficiency ranking."
+          "The executed metrics identify Qwen/Qwen2.5-1.5B as the selected backbone for the analyzed run; TinyLlama/TinyLlama-1.1B-Chat-v1.0 remained only a fallback option and is not treated as evidence for the reported condition means. The realized data and evaluation settings were yahma/alpaca-cleaned train split, 48 training examples, ARC-Challenge and HellaSwag validation slices with 6 examples per task, and seed 17."
         );
-        sawResourceFeasibility = true;
+        insertedBackbone = true;
+      }
+      continue;
+    }
+    if (
+      /compact artifact bundle provides only partial training detail|does not surface optimizer settings,\s*scheduler,\s*batch size,\s*target modules,\s*epoch count,\s*or stopping rule|does not surface optimizer choice,\s*learning rate,\s*batch size,\s*epochs or steps/iu.test(
+        cleaned
+      )
+    ) {
+      if (!insertedSettings) {
+        result.push(
+          "The fixed training settings visible in the available artifacts were learning rate 0.0002, per-device train batch size 1, gradient accumulation 4, 4 optimizer steps, maximum sequence length 256, and a 1,800 s timeout. Lower-level scheduler, adapter target-module, epoch-count, and stopping-rule details still need a fuller reproduction appendix, so the claim remains preflight-scale."
+        );
+        insertedSettings = true;
       }
       continue;
     }

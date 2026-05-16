@@ -1136,6 +1136,13 @@ describe("paper submission sanitization", () => {
       keywords: ["LoRA"],
       sections: [
         {
+          heading: "Method",
+          paragraphs: [
+            "The run specification named Qwen/Qwen2.5-1.5B as the preferred base model and TinyLlama/TinyLlama-1.1B-Chat-v1.0 as fallback, but the manuscript-ready reported summary does not expose the executed model identifier, so the present paper reports the intended configuration without claiming model-level verification.",
+            "The compact artifact bundle provides only partial training detail. It reports command provenance, runtime, memory, completed-condition counts, and condition-level confidence intervals, but it does not surface optimizer settings, scheduler, batch size, target modules, epoch count, or stopping rule in manuscript-readable form. Rather than reconstructing missing configuration by inference, we treat the study as a transparent but incomplete preflight protocol."
+          ]
+        },
+        {
           heading: "Related Work",
           paragraphs: [
             "The cited work therefore motivates the design and claim ceiling, but it is not treated as a condition-matched baseline for the local 4x2 rank/dropout preflight."
@@ -1150,7 +1157,10 @@ describe("paper submission sanitization", () => {
             "The baseline row also changes the interpretation of the high-rank rows. The study does not ask whether every LoRA configuration is better than every other configuration.",
             "The rank-16 rows are useful mainly as a calibration point for the interpretation. They show that adding dropout at a higher rank did not create a clean, decisive gain under the current budget.",
             "The resource side of the result is intentionally weaker than the accuracy side. Runtime and memory instrumentation show that the study was feasible at the selected local scale.",
-            "Resource reporting is therefore separated from accuracy reporting. wall-clock runtime was 45.687 seconds, with peak CUDA allocation recorded as a secondary resource diagnostic."
+            "Resource reporting is therefore separated from accuracy reporting. wall-clock runtime was 45.687 seconds, with peak CUDA allocation recorded as a secondary resource diagnostic.",
+            "Table 1 is part of the evidential core of the paper because it preserves the executed comparison set.",
+            "Runtime and memory records support feasibility for the executed local preflight, but the available evidence does not support a condition-level efficiency ranking.",
+            "wall-clock runtime was 45.687. seconds. They support the claim that the comparison was run under the declared budget, but they do not by themselves prove that the strongest accuracy setting is the most efficient setting."
           ]
         },
         {
@@ -1165,13 +1175,19 @@ describe("paper submission sanitization", () => {
     const text = JSON.stringify(stabilized);
     expect(text).toContain("documented gain remains a single-run preflight observation");
     expect(text).toContain("scheduler details beyond the scalar learning rate");
-    expect(text).toContain("Runtime and memory records support feasibility");
+    expect(text).toContain("executed metrics identify Qwen/Qwen2.5-1.5B");
+    expect(text).toContain("learning rate 0.0002");
     expect(text).not.toContain("supplementary No broader replication");
+    expect(text).not.toContain("does not expose the executed model identifier");
+    expect(text).not.toContain("does not surface optimizer settings");
     expect(text).not.toContain("The best nonbaseline row should");
     expect(text).not.toContain("The rank-32 rows carry");
     expect(text).not.toContain("The baseline row also changes");
     expect(text).not.toContain("The rank-16 rows are useful mainly");
     expect(text).not.toContain("Resource reporting is therefore separated");
+    expect(text).not.toContain("Table 1 is part of the evidential core");
+    expect(text).not.toContain("Runtime and memory records support feasibility");
+    expect(text).not.toContain("45.687. seconds");
     expect(text).not.toContain("batch size, and an unambiguous statement of the executed base model");
   });
 });
