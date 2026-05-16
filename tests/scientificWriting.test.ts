@@ -3058,7 +3058,8 @@ describe("scientificWriting", () => {
         {
           heading: "Results",
           paragraphs: [
-            "For the leading rank-32/dropout-0.05 condition, mean accuracy was 0.4167 versus 0.3333 for the locked baseline, a gain of 0.0833."
+            "For the leading rank-32/dropout-0.05 condition, mean accuracy was 0.4167 versus 0.3333 for the locked baseline, a gain of 0.0833.",
+            "Its average accuracy was 0.416666, compared with 0.333334 for the preregistered rank-8, no-dropout reference, for an absolute gain of 0.083332."
           ]
         },
         { heading: "Discussion", paragraphs: ["The comparison supports a narrow follow-up candidate."] },
@@ -3252,6 +3253,7 @@ describe("scientificWriting", () => {
             "ARC-Challenge accuracy remained unchanged at 0.50 in both the best condition and the baseline, while HellaSwag accuracy increased from 0.166667 to 0.333333.",
             "The artifact reports 8 requested and 8 completed conditions, 45.687 s wall-clock runtime, and peak CUDA allocation of approximately 4.28 GB.",
             "At this preflight scale, the execution reports 45.687 seconds of wall-clock time and 4,278,951,936 bytes of peak allocated CUDA memory.",
+            "The summarized run finished in 45.687 s, remained within the 1,800 s timeout, and reached a peak CUDA allocation of 4,278,951,936 bytes, or about 4.0 GiB.",
             "For most conditions, the reported 95% intervals for average accuracy span approximately 0.138 to 0.609 over 12 predictions, and the best observed cell spans approximately 0.193 to 0.680."
           ]
         },

@@ -1117,6 +1117,8 @@ describe("paper submission sanitization", () => {
             "No broader replication is reported in the compact main record, and supplementary No broader replication is reported here, so the main gain remains a single-run preflight observation. The documented gain therefore remains a single-run preflight observation.",
             "The best nonbaseline row should therefore be read as a selection signal rather than as a final prescription. rank 32 / dropout 0.05 is the most useful candidate for follow-up because it combines a favorable mean with complete execution coverage.",
             "The rank-32 rows carry the strongest follow-up signal because they combine the largest nonbaseline mean with the same condition-completion accounting used for the rest of the grid.",
+            "The baseline row also changes the interpretation of the high-rank rows. The study does not ask whether every LoRA configuration is better than every other configuration.",
+            "The rank-16 rows are useful mainly as a calibration point for the interpretation. They show that adding dropout at a higher rank did not create a clean, decisive gain under the current budget.",
             "The resource side of the result is intentionally weaker than the accuracy side. Runtime and memory instrumentation show that the study was feasible at the selected local scale.",
             "Resource reporting is therefore separated from accuracy reporting. wall-clock runtime was 45.687 seconds, with peak CUDA allocation recorded as a secondary resource diagnostic."
           ]
@@ -1137,6 +1139,8 @@ describe("paper submission sanitization", () => {
     expect(text).not.toContain("supplementary No broader replication");
     expect(text).not.toContain("The best nonbaseline row should");
     expect(text).not.toContain("The rank-32 rows carry");
+    expect(text).not.toContain("The baseline row also changes");
+    expect(text).not.toContain("The rank-16 rows are useful mainly");
     expect(text).not.toContain("Resource reporting is therefore separated");
     expect(text).not.toContain("batch size, and an unambiguous statement of the executed base model");
   });

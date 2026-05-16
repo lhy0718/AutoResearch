@@ -1036,6 +1036,12 @@ function repairResultsSectionReaderFlow(paragraphs: string[]): string[] {
       continue;
     }
     if (
+      /^The baseline row also changes the interpretation\b/iu.test(cleaned)
+      || /^The rank-16 rows are useful mainly as a calibration point\b/iu.test(cleaned)
+    ) {
+      continue;
+    }
+    if (
       /^The resource side of the result is intentionally weaker than the accuracy side\b/iu.test(cleaned)
       || /^Resource reporting is therefore separated from accuracy reporting\b/iu.test(cleaned)
     ) {

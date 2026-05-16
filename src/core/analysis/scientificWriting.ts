@@ -2833,6 +2833,9 @@ function buildObservedFactDriftIssues(
     if (isBenignBaselineLeadingVisualDrift(mainSectionFacts, distinctValues)) {
       continue;
     }
+    if (isBenignApproximateMemoryDrift(mainSectionFacts)) {
+      continue;
+    }
     // When distinct values span a very wide range, it's likely a scope/key
     // mismatch (e.g. aggregate vs per-condition) rather than a real contradiction.
     const minDV = Math.min(...distinctValues.map(Math.abs));
@@ -2915,7 +2918,7 @@ function isBenignBaselineLeadingVisualDrift(
         fact.fact_kind === "metric"
         && fact.metric_key === "accuracy"
         && fact.unit === "score"
-        && /\b(?:baseline|leading|best)\b/iu.test(fact.raw_text)
+        && /\b(?:baseline|leading|best|reference)\b/iu.test(fact.raw_text)
     )
   ) {
     return false;
@@ -2927,6 +2930,46 @@ function isBenignBaselineLeadingVisualDrift(
       && /\b(?:from\s+-?\d|versus|vs\.?|compared with|relative to)\b/iu.test(fact.raw_text)
   );
   return hasFigurePair && hasComparativeResultText;
+}
+
+function isBenignApproximateMemoryPair(left: NormalizedNumericFact, right: NormalizedNumericFact): boolean {
+  if (
+    left.fact_kind !== "metric"
+    || right.fact_kind !== "metric"
+    || (left.base_metric_key || left.metric_key) !== "peak_memory_mb"
+    || (right.base_metric_key || right.metric_key) !== "peak_memory_mb"
+  ) {
+    return false;
+  }
+  const maxVal = Math.max(Math.abs(left.normalized_value), Math.abs(right.normalized_value));
+  if (maxVal <= 0) {
+    return false;
+  }
+  const relativeDelta = Math.abs(left.normalized_value - right.normalized_value) / maxVal;
+  return relativeDelta <= 0.08 && (isApproximateMemoryFact(left) || isApproximateMemoryFact(right));
+}
+
+function isBenignApproximateMemoryDrift(facts: NormalizedNumericFact[]): boolean {
+  const memoryFacts = facts.filter(
+    (fact) =>
+      fact.fact_kind === "metric"
+      && (fact.base_metric_key || fact.metric_key) === "peak_memory_mb"
+      && fact.unit === "mb"
+  );
+  if (memoryFacts.length < 2 || memoryFacts.length !== facts.length) {
+    return false;
+  }
+  const values = memoryFacts.map((fact) => Math.abs(fact.normalized_value));
+  const maxVal = Math.max(...values);
+  const minVal = Math.min(...values);
+  if (maxVal <= 0 || (maxVal - minVal) / maxVal > 0.08) {
+    return false;
+  }
+  return memoryFacts.some(isApproximateMemoryFact);
+}
+
+function isApproximateMemoryFact(fact: NormalizedNumericFact): boolean {
+  return /\b(?:about|approx(?:imately)?|roughly)\b|\b(?:gb|gib)\b/iu.test(fact.raw_text);
 }
 
 function extractCountFactsFromText(input: {
@@ -3421,7 +3464,11 @@ function areComparableNumericFacts(left: NormalizedNumericFact, right: Normalize
 }
 
 function areFactValuesEquivalent(left: NormalizedNumericFact, right: NormalizedNumericFact): boolean {
-  return areApproxEqual(left.normalized_value, right.normalized_value, left.unit || right.unit);
+  const unit = left.unit || right.unit;
+  if (unit === "mb" && isBenignApproximateMemoryPair(left, right)) {
+    return true;
+  }
+  return areApproxEqual(left.normalized_value, right.normalized_value, unit);
 }
 
 function areApproxEqual(left: number, right: number, unit: NumericFactUnit | undefined): boolean {

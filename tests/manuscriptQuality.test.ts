@@ -164,6 +164,29 @@ describe("manuscriptQuality style lint", () => {
     expect(prompt).toContain("judge citation_hygiene from reader_visible_manuscript");
   });
 
+  it("shows reader-visible citations for Method protocol and dataset claims", () => {
+    const manuscript = makeCleanManuscript();
+    manuscript.sections = manuscript.sections.map((section) =>
+      section.heading === "Method"
+        ? {
+            ...section,
+            paragraphs: [
+              "The planned protocol targeted Qwen/Qwen2.5-1.5B as the base model, allowed TinyLlama/TinyLlama-1.1B-Chat-v1.0 only as a fallback, and capped the source dataset at 10,000 Alpaca Clean examples."
+            ]
+          }
+        : section
+    );
+    const readerVisible = buildReaderVisibleManuscript({
+      manuscript,
+      traceability: makeTraceability(manuscript),
+      citationKeysByPaperId: new Map([["paper_1", "smith2024threaded"]])
+    });
+
+    expect(readerVisible.sections.find((section) => section.heading === "Method")?.paragraphs[0]?.text).toContain(
+      "(Smith et al., 2024)"
+    );
+  });
+
   it("normalizes valid supporting spans and drops malformed ones", () => {
     const manuscript = makeCleanManuscript();
 

@@ -426,6 +426,12 @@ function shouldShowReaderVisibleCitations(section: string, paragraph: string, pa
   if (/\b(?:QLoRA|MAPLE|PEFT|prior work|literature|cited work|adapter-variant|benchmarking papers)\b/iu.test(paragraph)) {
     return true;
   }
+  if (
+    key === "method" &&
+    /\b(?:planned protocol|targeted|preferred|fallback|capped|dataset|model documentation|source|Qwen|TinyLlama|Alpaca|ARC-Challenge|HellaSwag)\b/iu.test(paragraph)
+  ) {
+    return true;
+  }
   if (key !== "introduction") {
     return false;
   }
