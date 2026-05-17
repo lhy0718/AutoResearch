@@ -184,16 +184,21 @@ export function deriveLatexTemplatePolicy(parsedTemplate: ParsedLatexTemplate | 
       parsedTemplate.columnLayout === null
       && /\\documentclass(?:\[[^\]]*\])?\{(?:neurips|icml|iclr|aaai|acl)[^}]*\}/i.test(parsedTemplate.documentClass)
     );
+  const usesAclPackage = parsedTemplate.packages.some((packageLine) =>
+    /\\usepackage(?:\[[^\]]*\])?\{ACL20\d{2}\}/u.test(packageLine)
+  );
   return {
     appendixFormat:
       parsedTemplate.columnLayout === 1
         ? "single_column"
-        : inferredTwoColumnDefault
+        : inferredTwoColumnDefault || usesAclPackage
           ? "double_column"
           : null,
     estimatedWordsPerPage:
       parsedTemplate.columnLayout === 1
         ? 700
+        : usesAclPackage
+          ? 930
         : inferredTwoColumnDefault
           ? 650
           : null

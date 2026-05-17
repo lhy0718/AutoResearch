@@ -1261,18 +1261,45 @@ function isToleratedAdjacentRepairCompactionChange(input: {
   const afterSection = input.after.sections.find(
     (section) => normalizeHeadingKeyForLocation(section.heading) === changed.section
   );
-  if (!beforeSection || !afterSection || beforeSection.paragraphs.length <= afterSection.paragraphs.length) {
+  if (!beforeSection || !afterSection || beforeSection.paragraphs.length < afterSection.paragraphs.length) {
     return false;
   }
-  if (changed.index < afterSection.paragraphs.length) {
+  const removedTrailingParagraph = beforeSection.paragraphs.length > afterSection.paragraphs.length;
+  if (removedTrailingParagraph && changed.index < afterSection.paragraphs.length) {
     return false;
+  }
+  if (
+    removedTrailingParagraph &&
+    changed.index >= afterSection.paragraphs.length &&
+    isNearDuplicateOfRetainedParagraph(
+      beforeSection.paragraphs[changed.index],
+      afterSection.paragraphs
+    )
+  ) {
+    return input.repairPlan.targets.some((target) => {
+      if (target.kind !== "paragraph") {
+        return false;
+      }
+      const targetKey = parseParagraphLocationKey(target.location_key);
+      return Boolean(targetKey && targetKey.kind === "paragraph" && targetKey.section === changed.section);
+    });
   }
   return input.repairPlan.targets.some((target) => {
+    if (target.kind !== "paragraph" || !["alignment", "paragraph_redundancy"].includes(target.issue_code)) {
+      return false;
+    }
+    const targetKey = parseParagraphLocationKey(target.location_key);
+    if (!targetKey || targetKey.kind !== "paragraph" || targetKey.section !== changed.section) {
+      return false;
+    }
     if (
-      target.kind !== "paragraph" ||
-      target.edit_scope !== "adjacent_two_paragraphs" ||
-      !["alignment", "paragraph_redundancy"].includes(target.issue_code)
+      target.issue_code === "paragraph_redundancy" &&
+      target.edit_scope === "paragraph_local" &&
+      beforeSection.paragraphs.length === afterSection.paragraphs.length
     ) {
+      return changed.index > targetKey.index && changed.index <= targetKey.index + 3;
+    }
+    if (target.edit_scope !== "adjacent_two_paragraphs") {
       return false;
     }
     const targetKeys = (target.allowed_location_keys.length > 0 ? target.allowed_location_keys : [target.location_key])
@@ -1288,7 +1315,37 @@ function isToleratedAdjacentRepairCompactionChange(input: {
     const minIndex = Math.min(...indices);
     const maxIndex = Math.max(...indices);
     const coversAdjacentSpan = indices.length === maxIndex - minIndex + 1;
-    return coversAdjacentSpan && changed.index === maxIndex + 1;
+    if (coversAdjacentSpan && changed.index === maxIndex + 1) {
+      return true;
+    }
+    if (target.issue_code !== "paragraph_redundancy") {
+      return false;
+    }
+    const isForwardLocalCluster = changed.index > targetKey.index && changed.index <= targetKey.index + 3;
+    return isForwardLocalCluster && beforeSection.paragraphs.length === afterSection.paragraphs.length;
+  });
+}
+
+function isNearDuplicateOfRetainedParagraph(removedParagraph: unknown, retainedParagraphs: string[]): boolean {
+  const removed = normalizeParagraphForLocalityComparison(removedParagraph).toLowerCase();
+  if (!removed) {
+    return false;
+  }
+  return retainedParagraphs.some((paragraph) => {
+    const retained = normalizeParagraphForLocalityComparison(paragraph).toLowerCase();
+    if (!retained) {
+      return false;
+    }
+    if (removed === retained || removed.includes(retained) || retained.includes(removed)) {
+      return true;
+    }
+    const removedTokens = new Set(removed.split(/[^a-z0-9]+/u).filter((token) => token.length > 3));
+    const retainedTokens = new Set(retained.split(/[^a-z0-9]+/u).filter((token) => token.length > 3));
+    if (removedTokens.size === 0 || retainedTokens.size === 0) {
+      return false;
+    }
+    const sharedCount = [...removedTokens].filter((token) => retainedTokens.has(token)).length;
+    return sharedCount / Math.min(removedTokens.size, retainedTokens.size) >= 0.8;
   });
 }
 

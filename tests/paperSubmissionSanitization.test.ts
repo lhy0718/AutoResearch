@@ -468,7 +468,7 @@ describe("paper submission sanitization", () => {
     const raw = parsePaperManuscriptJson(JSON.stringify({
       revised_manuscript: {
         title: "A LoRA Benchmark",
-        abstract: "A cautious benchmark.",
+        abstract: "A cautious benchmark reports accuracy\\_delta\\_vs\\_baseline as a screening metric.",
         sections: [
           {
             heading: "Related Work",
@@ -1075,7 +1075,10 @@ describe("paper submission sanitization", () => {
           {
             heading: "Results",
             paragraphs: [
-              "rank 32 dropout 0 05 vs rank 8 dropout 0 0: accuracy_delta_vs_baseline: 0.0833 vs 0 (delta 0.0833), average_accuracy: 0.4167 vs 0.3333 (delta 0.0833), arc_challenge_accuracy: 0.5 vs 0.5 (delta 0), hellaswag_accuracy: 0.3333 vs 0.1667 (delta 0.1667)."
+              "rank 32 dropout 0 05 vs rank 8 dropout 0 0: accuracy_delta_vs_baseline: 0.0833 vs 0 (delta 0.0833), average_accuracy: 0.4167 vs 0.3333 (delta 0.0833), arc_challenge_accuracy: 0.5 vs 0.5 (delta 0), hellaswag_accuracy: 0.3333 vs 0.1667 (delta 0.1667).",
+              "In the analyzed run record, the strongest reported cell corresponded to an accuracy\\_delta\\_vs\\_baseline of 0.083332.",
+              "Within that sweep, the strongest reported comparison is rank 32 with dropout 0.05 against the locked baseline of rank 8 with dropout 0.0. Average accuracy increases from 0.333334 to 0.416666, yielding an absolute improvement of 0.083332. By the study's own decision rule, this exceeds the predeclared +0.01 objective threshold.",
+              "The best reported cell is rank 32 with dropout 0.05, which increases average accuracy from 0.3333 in the locked baseline to 0.4167, for an absolute gain of 0.0833."
             ]
           }
         ],
@@ -1140,10 +1143,49 @@ describe("paper submission sanitization", () => {
     ]);
     expect(text).toContain("prespecified baseline-relative accuracy target was met");
     expect(text).toContain("mean accuracy was 0.4167 versus 0.3333");
+    expect(text).toContain("observed baseline-relative average-accuracy gain is 0.083332");
+    expect(text).toContain("Its mean accuracy was 0.4167 versus 0.3333");
+    expect(text).not.toContain("Average accuracy increases from 0.333334 to 0.416666");
+    expect(text).not.toContain("increases average accuracy from 0.3333");
     expect(text).not.toContain("accuracy_delta_vs_baseline");
+    expect(text).not.toContain("accuracy\\_delta\\_vs\\_baseline");
     expect(text).not.toContain("average_accuracy");
     expect(text).not.toContain("arc_challenge_accuracy");
     expect(text).not.toContain("hellaswag_accuracy");
+
+    const tex = renderSubmissionPaperTex({
+      manuscript: {
+        ...manuscript,
+        sections: [
+          ...manuscript.sections,
+          {
+            heading: "Limitations",
+            paragraphs: [
+              "[warning] consistency: Results cites 0.0833, but the comparable structured results support 0 for accuracy_delta_vs_baseline.",
+              "Objective metric met: accuracy_delta_vs_baseline=0.083332 >= 0.01.",
+              "rank 32 dropout 0 05 vs rank 8 dropout 0 0: accuracy_delta_vs_baseline: 0.0833 vs 0 (delta 0.0833), average_accuracy: 0.4167 vs 0.3333 (delta 0.0833), arc_challenge_accuracy: 0.5 vs 0.5 (delta 0), hellaswag_accuracy: 0.3333 vs 0.1667 (delta 0)."
+            ]
+          }
+        ]
+      },
+      traceability: { paragraphs: [] },
+      citationKeysByPaperId: new Map()
+    });
+    const validation = buildPaperSubmissionValidation({
+      manuscript,
+      tex,
+      traceability: { paragraphs: [] },
+      citationKeysByPaperId: new Map()
+    });
+    expect(validation.ok).toBe(true);
+    expect(tex).toContain("The prespecified baseline-relative accuracy target was met");
+    expect(tex).toContain("The leading condition was rank 32 with dropout 0.05");
+    expect(tex).not.toContain("[warning]");
+    expect(tex).not.toContain("accuracy_delta_vs_baseline");
+    expect(tex).not.toContain("accuracy\\_delta\\_vs\\_baseline");
+    expect(tex).not.toContain("average_accuracy");
+    expect(tex).not.toContain("arc_challenge_accuracy");
+    expect(tex).not.toContain("hellaswag_accuracy");
   });
 
   it("replaces redundant condition-delta figures with a task-level split when condition summaries are available", () => {
@@ -1239,10 +1281,89 @@ describe("paper submission sanitization", () => {
     ]);
   });
 
+  it("re-applies verified backbone metadata after manuscript repair stabilization", () => {
+    const stabilized = stabilizePaperManuscriptForSubmission(
+      {
+        title: "A LoRA Benchmark",
+        abstract: "A cautious benchmark.",
+        keywords: ["LoRA"],
+        sections: [
+          {
+            heading: "Method",
+            paragraphs: [
+              "The protocol preferred Qwen/Qwen2.5-1.5B (cited model source) and allowed TinyLlama/TinyLlama-1.1B-Chat-v1.0 only as a fallback.",
+              "Although the broader protocol preferred Qwen/Qwen2.5-1.5B and allowed TinyLlama/TinyLlama-1.1B-Chat-v1.0 only as a fallback, the compact realized summary does not clearly expose the final instantiated backbone."
+            ]
+          }
+        ]
+      },
+      {
+        resultAnalysis: {
+          metrics: {
+            selected_model_id: "Qwen/Qwen2.5-1.5B",
+            fallback_model_id: "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+            run_config: {
+              learning_rate: 0.0002,
+              per_device_train_batch_size: 1,
+              gradient_accumulation_steps: 4,
+              max_steps: 4,
+              max_seq_length: 256,
+              timeout_sec: 1800,
+              seed: 17,
+              max_train_samples: 48,
+              max_eval_samples_per_task: 6
+            },
+            data: {
+              train: { dataset: { path: "yahma/alpaca-cleaned" } },
+              eval: {
+                arc_challenge: { dataset: { path: "allenai/ai2_arc", name: "ARC-Challenge", split: "validation" } },
+                hellaswag: { dataset: { path: "hellaswag", split: "validation" } }
+              }
+            }
+          },
+          statistical_summary: {
+            confidence_intervals: [{ level: 0.95, sample_size: 12 }]
+          }
+        } as any
+      }
+    );
+
+    const methodText = stabilized.sections.find((section) => section.heading === "Method")?.paragraphs.join(" ") || "";
+    expect(methodText).toContain("The executed run used Qwen/Qwen2.5-1.5B as the selected backbone");
+    expect(methodText).toContain("TinyLlama/TinyLlama-1.1B-Chat-v1.0 retained only as the fallback candidate");
+    expect(methodText).not.toContain("cited model source");
+    expect(methodText).not.toContain("does not clearly expose the final instantiated backbone");
+  });
+
+  it("uses method model names when result-analysis metadata is unavailable during repair stabilization", () => {
+    const stabilized = stabilizePaperManuscriptForSubmission(
+      {
+        title: "A LoRA Benchmark",
+        abstract: "A cautious benchmark.",
+        keywords: ["LoRA"],
+        sections: [
+          {
+            heading: "Method",
+            paragraphs: [
+              "The compact realized summary does not clearly expose the final instantiated backbone."
+            ]
+          }
+        ]
+      },
+      {
+        methodModelNames: ["Qwen/Qwen2.5-1.5B", "TinyLlama/TinyLlama-1.1B-Chat-v1.0"]
+      }
+    );
+
+    const methodText = stabilized.sections.find((section) => section.heading === "Method")?.paragraphs.join(" ") || "";
+    expect(methodText).toContain("The executed run used Qwen/Qwen2.5-1.5B as the selected backbone");
+    expect(methodText).not.toContain("does not clearly expose the final instantiated backbone");
+  });
+
   it("repairs reader-facing manuscript quality residues after LLM manuscript repair", () => {
     const stabilized = stabilizePaperManuscriptForSubmission({
       title: "A LoRA Benchmark",
-      abstract: "A cautious benchmark. The strongest contribution of the study is a reproducible and conservative protocol for comparing LoRA settings under explicit budget, reporting, and uncertainty constraints.",
+      abstract: "A cautious benchmark. The protocol targeted a 4 x 2 factorial sweep over ranks {4, 8, 16, 32} and dropout values {0.0, 0.05}, with average accuracy across ARC-Challenge and HellaSwag as the primary performance measure and rank 8 with no dropout as the locked in-grid baseline. Within that reviewed artifact, the best reported condition, rank 32 with dropout 0.05, improved average accuracy from 0.333334 to 0.416666, a gain of 0.083332 over baseline. The same artifact completed all eight requested conditions, reported 45.687 s wall-clock time, and used approximately 4.28 GB of peak allocated GPU memory. The run also remained inexpensive, completing the eight planned conditions in 45.687 s with about 4.28 GB of peak allocated CUDA memory. The sweep was also lightweight, with 45.687 s wall-clock runtime and 4,278,951,936 bytes of peak allocated memory. The strongest contribution of the study is a reproducible and conservative protocol for comparing LoRA settings under explicit budget, reporting, and uncertainty constraints.",
       keywords: ["LoRA"],
       sections: [
         {
@@ -1268,16 +1389,26 @@ describe("paper submission sanitization", () => {
             "The baseline row also changes the interpretation of the high-rank rows. The study does not ask whether every LoRA configuration is better than every other configuration.",
             "The rank-16 rows are useful mainly as a calibration point for the interpretation. They show that adding dropout at a higher rank did not create a clean, decisive gain under the current budget.",
             "The resource side of the result is intentionally weaker than the accuracy side. Runtime and memory instrumentation show that the study was feasible at the selected local scale.",
+            "Operationally, the run was inexpensive and clean. The summarized record reports completion of all eight planned conditions, a wall-clock runtime of 45.687 s, and peak allocated CUDA memory of 4,278,951,936 bytes, or about 4.28 GB. The runtime stayed far below the configured 1,800 s limit.",
+            "From a systems perspective, the sweep was small but operationally complete. The record reports 8 requested conditions, 8 recorded conditions, and 8 completed conditions, together with wall-clock runtime of 45.687 s, peak allocated CUDA memory of 4,278,951,936 bytes, and a timeout budget of 1,800 s. No failed or hidden condition is visible in the compact tables.",
             "Resource reporting is therefore separated from accuracy reporting. wall-clock runtime was 45.687 seconds, with peak CUDA allocation recorded as a secondary resource diagnostic.",
             "Table 1 is part of the evidential core of the paper because it preserves the executed comparison set.",
             "Runtime and memory records support feasibility for the executed local preflight, but the available evidence does not support a condition-level efficiency ranking.",
-            "wall-clock runtime was 45.687. seconds. They support the claim that the comparison was run under the declared budget, but they do not by themselves prove that the strongest accuracy setting is the most efficient setting."
+            "wall-clock runtime was 45.687. seconds. They support the claim that the comparison was run under the declared budget, but they do not by themselves prove that the strongest accuracy setting is the most efficient setting.",
+            "However, the currently exposed record does not provide the adjacent-cell contrasts needed for a formal interaction estimate, such as direct numerical comparisons of rank 32 with and without dropout or rank 8 with and without dropout."
           ]
         },
         {
           heading: "Limitations",
           paragraphs: [
-            "The compact record also omits several implementation details that would normally be standard in an empirical paper, including optimizer choice, learning-rate schedule, batch size, and an unambiguous statement of the executed base model. These omissions materially narrow reproducibility and interpretability."
+            "The compact record also omits several implementation details that would normally be standard in an empirical paper, including optimizer choice, learning-rate schedule, batch size, and an unambiguous statement of the executed base model. These omissions materially narrow reproducibility and interpretability.",
+            "In addition, the reported result summary provides detailed numbers for the best-versus-baseline comparison rather than a fully exposed table of all eight cells, which limits direct assessment of interaction structure across the grid."
+          ]
+        },
+        {
+          heading: "Conclusion",
+          paragraphs: [
+            "Replication with multiple seeds, a fully exposed per-condition table, and reconciled model metadata would be the natural next steps before any scale-up claim. Further multi-seed replication, a full per-condition numerical table, and reconciled metadata are needed before treating the result as guidance for larger-model instruction tuning."
           ]
         }
       ],
@@ -1301,11 +1432,20 @@ describe("paper submission sanitization", () => {
     const text = JSON.stringify(stabilized);
     expect(text).toContain("documented gain remains a single-run preflight observation");
     expect(text).toContain("conservative, auditable pilot protocol");
+    expect(text).toContain("completing all eight planned conditions under the declared time limit");
+    expect(text).toContain("completed all eight planned conditions under the declared time and memory budgets");
+    expect(text).toContain("four LoRA ranks and two dropout settings");
+    expect(text).toContain("rank 32 with nonzero dropout");
+    expect(text).toContain("retained peak allocated GPU memory as a secondary feasibility diagnostic");
+    expect(text).toContain("completion of all eight planned conditions under the configured 1,800 s limit");
+    expect(text).toContain("all eight requested, recorded, and completed conditions under the configured 1,800 s timeout");
     expect(text).toContain("scheduler details beyond the scalar learning rate");
     expect(text).toContain("executed metrics identify Qwen/Qwen2.5-1.5B");
     expect(text).toContain("learning rate 0.0002");
     expect(text).toContain("reports seed 17 with 48 yahma/alpaca-cleaned training examples");
     expect(text).toContain("Table 1 exposes the eight condition means");
+    expect(text).toContain("provides condition means but not complete per-cell uncertainty");
+    expect(text).toContain("complete per-cell uncertainty and resource tables");
     expect(text).not.toContain("supplementary No broader replication");
     expect(text).not.toContain("does not expose the executed model identifier");
     expect(text).not.toContain("do not identify unambiguously which of those two backbones");
@@ -1313,6 +1453,10 @@ describe("paper submission sanitization", () => {
     expect(text).not.toContain("used seed 42");
     expect(text).not.toContain("manuscript source used for writing");
     expect(text).not.toContain("not completely exposed in the manuscript source");
+    expect(text).not.toContain("fully exposed per-condition table");
+    expect(text).not.toContain("fully exposed table of all eight cells");
+    expect(text).not.toContain("full per-condition numerical table");
+    expect(text).not.toContain("does not provide the adjacent-cell contrasts needed");
     expect(text).not.toContain("The best nonbaseline row should");
     expect(text).not.toContain("The rank-32 rows carry");
     expect(text).not.toContain("The baseline row also changes");
@@ -1321,6 +1465,15 @@ describe("paper submission sanitization", () => {
     expect(text).not.toContain("Table 1 is part of the evidential core");
     expect(text).not.toContain("Runtime and memory records support feasibility");
     expect(text).not.toContain("45.687. seconds");
+    expect(text).not.toContain("45.687 s");
+    expect(text).not.toContain("45.687 seconds");
+    expect(text).not.toContain("wall-clock runtime of 45.687");
+    expect(text).not.toContain("45.687 s wall-clock runtime");
+    expect(text).not.toContain("dropout values {0.0, 0.05}, with average accuracy");
+    expect(text).not.toContain("rank 32 with dropout 0.05");
+    expect(text).not.toContain("reported 45.687 s wall-clock time");
+    expect(text).not.toContain("4,278,951,936 bytes of peak allocated memory");
+    expect(text).not.toContain("8 requested conditions, 8 recorded conditions, and 8 completed conditions, together with");
     expect(text).not.toContain("batch size, and an unambiguous statement of the executed base model");
   });
 });

@@ -122,6 +122,29 @@ describe("latexTemplateLoader", () => {
     expect(policy.estimatedWordsPerPage).toBe(650);
   });
 
+  it("uses a conservative page-density estimate for ACL package templates", async () => {
+    const workspace = await createWorkspace();
+    const templatePath = path.join(workspace, "templates", "acl2023.tex");
+    await mkdir(path.dirname(templatePath), { recursive: true });
+    await writeFile(
+      templatePath,
+      [
+        "\\documentclass[11pt]{article}",
+        "\\usepackage[review]{ACL2023}",
+        "\\begin{document}",
+        "\\section{Introduction}",
+        "\\end{document}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const parsed = await loadLatexTemplate(templatePath);
+    const policy = deriveLatexTemplatePolicy(parsed);
+
+    expect(policy.appendixFormat).toBe("double_column");
+    expect(policy.estimatedWordsPerPage).toBe(930);
+  });
+
   it("throws when the template file does not exist", async () => {
     const workspace = await createWorkspace();
     const templatePath = path.join(workspace, "missing.tex");

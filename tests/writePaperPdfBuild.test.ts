@@ -1541,6 +1541,7 @@ function buildOutOfScopeRepairResponses(): string[] {
   initial.sections[4].paragraphs[0] = initial.sections[0].paragraphs[0];
   const overbroad = JSON.parse(buildPolishedManuscriptResponse()) as any;
   overbroad.sections[0].paragraphs[0] = "This unrelated introduction rewrite should violate bounded local repair scope.";
+  overbroad.sections[2].paragraphs[2] = "This unrelated method rewrite should also be dropped before locality verification.";
   overbroad.sections[4].paragraphs[0] =
     "The discussion now interprets the result instead of repeating the introduction framing.";
   return [
@@ -1569,7 +1570,7 @@ function buildOutOfScopeRepairResponses(): string[] {
     }),
     buildManuscriptReviewAuditResponse(),
     buildWrappedRepairResponse(overbroad, {
-      changed_location_keys: ["paragraph:introduction:0", "paragraph:discussion:0"]
+      changed_location_keys: ["paragraph:introduction:0", "paragraph:method:2", "paragraph:discussion:0"]
     }),
     buildManuscriptReviewResponse({ decision: "pass" }),
     buildManuscriptReviewAuditResponse()
@@ -4825,14 +4826,17 @@ describe("writePaper PDF build", () => {
     expect(result.status).toBe("success");
     const verification = JSON.parse(
       await readFile(path.join(runDir, "paper", "manuscript_repair_verification_1.json"), "utf8")
-    ) as { locality_ok: boolean; unexpected_changed_sections: string[] };
+    ) as { locality_ok: boolean; unexpected_changed_sections: string[]; out_of_scope_changes: string[] };
     expect(verification.locality_ok).toBe(true);
     expect(verification.unexpected_changed_sections).not.toContain("introduction");
+    expect(verification.unexpected_changed_sections).not.toContain("method");
+    expect(verification.out_of_scope_changes).not.toContain("paragraph:method:2");
 
     const repaired = JSON.parse(await readFile(path.join(runDir, "paper", "manuscript_repair_1.json"), "utf8")) as {
       sections: Array<{ heading: string; paragraphs: string[] }>;
     };
     expect(repaired.sections[0].paragraphs[0]).not.toMatch(/unrelated introduction rewrite/i);
+    expect(repaired.sections[2].paragraphs[2]).not.toMatch(/unrelated method rewrite/i);
     expect(repaired.sections[4].paragraphs[0]).toMatch(/interprets the result/i);
 
     const gate = JSON.parse(
@@ -5072,6 +5076,16 @@ describe("writePaper PDF build", () => {
       ].join("\n")
     );
     const aci = createPdfBuildAci();
+    const staleRunFigure = path.join(runDir, "paper", "figures", "main-result-figure-2.pdf");
+    const stalePublicFigure = path.join(
+      buildPublicPaperDir(root, run),
+      "figures",
+      "main-result-figure-2.pdf"
+    );
+    await mkdir(path.dirname(staleRunFigure), { recursive: true });
+    await mkdir(path.dirname(stalePublicFigure), { recursive: true });
+    await writeFile(staleRunFigure, "%PDF-1.4 stale run figure\n", "utf8");
+    await writeFile(stalePublicFigure, "%PDF-1.4 stale public figure\n", "utf8");
 
     const node = createWritePaperNode({
       config: {
@@ -5117,6 +5131,8 @@ describe("writePaper PDF build", () => {
     expect(figureRenderer).toContain("matplotlib");
     expect(figureRenderer).toContain("Task-level accuracy");
     expect(await exists(path.join(buildPublicPaperDir(root, run), "figures", "main-result-figure-1.pdf"))).toBe(true);
+    expect(await exists(staleRunFigure)).toBe(false);
+    expect(await exists(stalePublicFigure)).toBe(false);
     const renderValidation = JSON.parse(
       await readFile(path.join(runDir, "paper", "render_validation.json"), "utf8")
     ) as {

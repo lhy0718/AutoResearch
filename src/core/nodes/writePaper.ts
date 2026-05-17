@@ -55,6 +55,7 @@ import {
   type PaperManuscript,
   type PaperAuthorMetadata,
   type PaperManuscriptFigure,
+  type PaperManuscriptSection,
   type PaperManuscriptStabilizationOptions,
   type PaperManuscriptVisualRow,
   type PaperSubmissionValidationReport,
@@ -76,6 +77,7 @@ import {
   experimentArtifactLoader,
   manuscriptConsistencyLinter,
   materializeScientificManuscript,
+  refreshScientificValidationForManuscript,
   resolvePaperProfile
 } from "../analysis/scientificWriting.js";
 import { PaperWriterSessionManager } from "../agents/paperWriterSessionManager.js";
@@ -372,6 +374,7 @@ interface ManuscriptCandidateEvaluation {
   styleLint: ManuscriptStyleLintArtifact;
   consistencyLint: ConsistencyLintReport;
   appendixLint: ConsistencyLintReport;
+  scientificValidation: ReturnType<typeof buildScientificValidationArtifact>;
   gateDecision: ReturnType<typeof buildWritePaperGateDecision>;
 }
 
@@ -827,7 +830,8 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         abortSignal,
         runContextMemory
       });
-      const gateDecision = manuscriptQuality.evaluation.gateDecision;
+      let gateDecision = manuscriptQuality.evaluation.gateDecision;
+      let finalScientificValidationArtifact = manuscriptQuality.evaluation.scientificValidation;
       const nonBlockingWarnings = gateDecision.issues.filter((i) => !i.blocking);
       if (nonBlockingWarnings.length > 0) {
         bundle.gateWarnings = nonBlockingWarnings.map((i) => ({
@@ -839,9 +843,55 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         paperDraft = applyGateWarningsToLimitations(paperDraft, bundle.gateWarnings);
       }
 
-      const manuscript = compactReaderFacingRepairedManuscript(manuscriptQuality.evaluation.manuscript);
-      const traceability = manuscriptQuality.evaluation.traceability;
-      let tex = manuscriptQuality.evaluation.tex;
+      let manuscript = compactReaderFacingRepairedManuscript(manuscriptQuality.evaluation.manuscript);
+      const finalFloor = validationMode === "strict_paper"
+        ? enforceManuscriptPageBudgetFloor({
+            manuscript,
+            draft: paperDraft,
+            pageBudget: scientificDraft.page_budget
+          })
+        : {
+            manuscript,
+            applied: false,
+            minimum_main_words: 0,
+            estimated_main_words_before: 0,
+            estimated_main_words_after: 0,
+            added_paragraph_count: 0,
+            added_sections: []
+          };
+      if (finalFloor.applied) {
+        manuscript = finalFloor.manuscript;
+        emitLog(
+          `Restored ${finalFloor.added_paragraph_count} final manuscript paragraph(s) after render cleanup compressed the main body ` +
+          `from ${finalFloor.estimated_main_words_before} to ${finalFloor.estimated_main_words_after} words ` +
+          `(minimum ${finalFloor.minimum_main_words}).`
+        );
+        finalScientificValidationArtifact = refreshScientificValidationForManuscript({
+          validation: finalScientificValidationArtifact,
+          manuscript,
+          profile: paperProfile
+        });
+        gateDecision = buildWritePaperGateDecision({
+          mode: validationMode,
+          scientificValidation: finalScientificValidationArtifact,
+          consistencyLint: manuscriptQuality.evaluation.consistencyLint,
+          appendixLint: manuscriptQuality.evaluation.appendixLint
+        });
+      }
+      const traceability = buildPaperTraceability({
+        draft: paperDraft,
+        manuscript
+      });
+      let tex = renderSubmissionPaperTex({
+        manuscript,
+        traceability,
+        citationKeysByPaperId: bibtex.citationKeysByPaperId,
+        template: deps.config?.paper?.template,
+        paperProfile,
+        parsedTemplate,
+        authorMetadata,
+        includeKeywords: !parsedTemplate
+      });
       let figureManifest = buildPaperFigureManifest({
         manuscript,
         runTitle: run.title,
@@ -903,7 +953,13 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       const traceabilityJson = `${JSON.stringify(traceability, null, 2)}\n`;
       const manuscriptJson = `${JSON.stringify(manuscript, null, 2)}\n`;
       const provenanceMapJson = `${JSON.stringify(scientificManuscript.provenance_map, null, 2)}\n`;
-      const submissionValidation = manuscriptQuality.evaluation.submissionValidation;
+      const submissionValidation = buildPaperSubmissionValidation({
+        manuscript,
+        tex,
+        traceability,
+        citationKeysByPaperId: bibtex.citationKeysByPaperId,
+        unresolvedCitationPaperIds
+      });
       const claimEvidenceTable = buildClaimEvidenceTableArtifact(evidenceMapObject, bundle);
       const claimStatusTable = buildClaimStatusTableArtifact({
         evidenceMap: evidenceMapObject,
@@ -950,6 +1006,11 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await writeRunArtifact(run, "paper/manuscript.json", manuscriptJson);
       await writeRunArtifact(run, "paper/traceability.json", traceabilityJson);
       await writeRunArtifact(run, "paper/provenance_map.json", provenanceMapJson);
+      await writeRunArtifact(
+        run,
+        "paper/scientific_validation.json",
+        `${JSON.stringify(finalScientificValidationArtifact, null, 2)}\n`
+      );
       await writeRunArtifact(run, "paper/validation.json", `${JSON.stringify(validation, null, 2)}\n`);
       await writeRunArtifact(
         run,
@@ -1016,6 +1077,11 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await fs.writeFile(
         path.join(publicPaperDir, "citation_consistency.json"),
         `${JSON.stringify(citationConsistency, null, 2)}\n`,
+        "utf8"
+      );
+      await fs.writeFile(
+        path.join(publicPaperDir, "scientific_validation.json"),
+        `${JSON.stringify(finalScientificValidationArtifact, null, 2)}\n`,
         "utf8"
       );
       await fs.writeFile(path.join(publicPaperDir, "gate_decision.json"), `${JSON.stringify(gateDecision, null, 2)}\n`, "utf8");
@@ -1108,6 +1174,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await runContextMemory.put("write_paper.evidence_gate_decision", evidenceGateDecision);
       await runContextMemory.put("write_paper.figure_manifest", figureManifest);
       await runContextMemory.put("write_paper.citation_consistency", citationConsistency);
+      await runContextMemory.put("write_paper.scientific_validation", finalScientificValidationArtifact);
       await runContextMemory.put("write_paper.validation", validation);
       await runContextMemory.put("write_paper.consistency_lint", {
         manuscript: manuscriptQuality.evaluation.consistencyLint,
@@ -1191,7 +1258,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       const postDraftCritique = buildPostDraftCritique({
         preDraftCritique,
         gateDecision,
-        scientificValidation: scientificValidationArtifact,
+        scientificValidation: finalScientificValidationArtifact,
         submissionValidation,
         manuscriptSections: manuscript.sections.map((s: { heading: string }) => s.heading),
         validationWarningCount: validation.issues.length,
@@ -2532,11 +2599,7 @@ function sanitizeReaderFacingRepairTargets(
   repairedManuscript: PaperManuscript,
   repairPlan: ManuscriptRepairPlanArtifact
 ): PaperManuscript {
-  const allowedLocationKeys = new Set(
-    repairPlan.targets.flatMap((target) =>
-      target.allowed_location_keys.length > 0 ? target.allowed_location_keys : [target.location_key]
-    )
-  );
+  const allowedLocationKeys = buildAllowedRepairLocationKeySet(repairPlan);
   const selectIfAllowed = (locationKey: string, beforeText: string, repairedText: string | undefined): string =>
     allowedLocationKeys.has(locationKey)
       ? sanitizePaperNarrativeText(repairedText ?? beforeText)
@@ -2644,6 +2707,135 @@ function normalizeManuscriptForRepairLocalityComparison(
   options: PaperManuscriptStabilizationOptions = {}
 ): PaperManuscript {
   return stabilizePaperManuscriptForSubmission(compactReaderFacingRepairedManuscript(manuscript), options);
+}
+
+function buildAllowedRepairLocationKeySet(repairPlan: ManuscriptRepairPlanArtifact): Set<string> {
+  return new Set(
+    repairPlan.targets.flatMap((target) =>
+      target.allowed_location_keys.length > 0 ? target.allowed_location_keys : [target.location_key]
+    )
+  );
+}
+
+function findPaperManuscriptSectionByHeading(
+  sections: PaperManuscriptSection[] | undefined,
+  heading: string,
+  fallbackIndex: number
+): PaperManuscriptSection | undefined {
+  if (!sections || sections.length === 0) {
+    return undefined;
+  }
+  const headingKey = normalizeLocationKeyFragment(heading);
+  return sections.find((section) => normalizeLocationKeyFragment(section.heading) === headingKey) || sections[fallbackIndex];
+}
+
+function enforceRepairPlanLocalityAfterStabilization(
+  baseline: PaperManuscript,
+  candidate: PaperManuscript,
+  repairPlan: ManuscriptRepairPlanArtifact
+): PaperManuscript {
+  const allowedLocationKeys = buildAllowedRepairLocationKeySet(repairPlan);
+  const selectText = (locationKey: string, beforeText: string, candidateText: string | undefined): string =>
+    allowedLocationKeys.has(locationKey) ? candidateText || beforeText : beforeText;
+  const mergeRows = (
+    locationKey: string,
+    beforeRows: PaperManuscriptVisualRow[] | undefined,
+    candidateRows: PaperManuscriptVisualRow[] | undefined
+  ): PaperManuscriptVisualRow[] | undefined => (allowedLocationKeys.has(locationKey) ? candidateRows || beforeRows : beforeRows);
+
+  return {
+    ...candidate,
+    title: selectText("title", baseline.title, candidate.title),
+    abstract: selectText("abstract", baseline.abstract, candidate.abstract),
+    sections: baseline.sections.map((section, sectionIndex) => {
+      const candidateSection = findPaperManuscriptSectionByHeading(candidate.sections, section.heading, sectionIndex);
+      return {
+        ...section,
+        ...candidateSection,
+        heading: section.heading,
+        paragraphs: section.paragraphs.map((paragraph, paragraphIndex) =>
+          selectText(
+            buildMainParagraphLocationKey(section.heading, paragraphIndex),
+            paragraph,
+            candidateSection?.paragraphs[paragraphIndex]
+          )
+        )
+      };
+    }),
+    ...(baseline.appendix_sections
+      ? {
+          appendix_sections: baseline.appendix_sections.map((section, sectionIndex) => {
+            const candidateSection = findPaperManuscriptSectionByHeading(
+              candidate.appendix_sections,
+              section.heading,
+              sectionIndex
+            );
+            return {
+              ...section,
+              ...candidateSection,
+              heading: section.heading,
+              paragraphs: section.paragraphs.map((paragraph, paragraphIndex) =>
+                selectText(
+                  buildAppendixParagraphLocationKey(section.heading, paragraphIndex),
+                  paragraph,
+                  candidateSection?.paragraphs[paragraphIndex]
+                )
+              )
+            };
+          })
+        }
+      : { appendix_sections: candidate.appendix_sections }),
+    ...(baseline.tables
+      ? {
+          tables: baseline.tables.map((table, index) => ({
+            ...table,
+            ...candidate.tables?.[index],
+            caption: selectText(`table:${index}`, table.caption, candidate.tables?.[index]?.caption),
+            rows: mergeRows(`table:${index}`, table.rows, candidate.tables?.[index]?.rows) || table.rows
+          }))
+        }
+      : { tables: candidate.tables }),
+    ...(baseline.figures
+      ? {
+          figures: baseline.figures.map((figure, index) => ({
+            ...figure,
+            ...candidate.figures?.[index],
+            caption: selectText(`figure:${index}`, figure.caption, candidate.figures?.[index]?.caption),
+            bars: mergeRows(`figure:${index}`, figure.bars, candidate.figures?.[index]?.bars) || figure.bars
+          }))
+        }
+      : { figures: candidate.figures }),
+    ...(baseline.appendix_tables
+      ? {
+          appendix_tables: baseline.appendix_tables.map((table, index) => ({
+            ...table,
+            ...candidate.appendix_tables?.[index],
+            caption: selectText(
+              `appendix_table:${index}`,
+              table.caption,
+              candidate.appendix_tables?.[index]?.caption
+            ),
+            rows: mergeRows(`appendix_table:${index}`, table.rows, candidate.appendix_tables?.[index]?.rows) || table.rows
+          }))
+        }
+      : { appendix_tables: candidate.appendix_tables }),
+    ...(baseline.appendix_figures
+      ? {
+          appendix_figures: baseline.appendix_figures.map((figure, index) => ({
+            ...figure,
+            ...candidate.appendix_figures?.[index],
+            caption: selectText(
+              `appendix_figure:${index}`,
+              figure.caption,
+              candidate.appendix_figures?.[index]?.caption
+            ),
+            bars:
+              mergeRows(`appendix_figure:${index}`, figure.bars, candidate.appendix_figures?.[index]?.bars) ||
+              figure.bars
+          }))
+        }
+      : { appendix_figures: candidate.appendix_figures })
+  };
 }
 
 function compactReaderFacingRepairedManuscript(manuscript: PaperManuscript): PaperManuscript {
@@ -2849,6 +3041,26 @@ function repairFinalTableAvailabilityClaim(heading: string, paragraph: string): 
       "Table 1 reports all eight condition mean accuracies, while the compact record does not expose complete per-cell uncertainty, resource, or auxiliary-metric tables"
     )
     .replace(
+      /\bthe currently exposed record does not provide the adjacent-cell contrasts needed for a formal interaction estimate,\s*such as direct numerical comparisons of rank 32 with and without dropout or rank 8 with and without dropout\b/giu,
+      "the currently exposed record provides condition means but not complete per-cell uncertainty, resource, or auxiliary-metric tables needed for a formal interaction estimate"
+    )
+    .replace(
+      /\bReplication with multiple seeds,\s*a fully exposed per-condition table,\s*and reconciled model metadata would be the natural next steps before any scale-up claim\b/giu,
+      "Replication with multiple seeds, complete per-cell uncertainty and resource tables, and reconciled model metadata would be the natural next steps before any scale-up claim"
+    )
+    .replace(
+      /\ba fully exposed per-condition table\b/giu,
+      "complete per-cell uncertainty and resource tables"
+    )
+    .replace(
+      /\ba fully exposed table of all eight cells\b/giu,
+      "complete per-cell uncertainty and resource tables for all eight cells"
+    )
+    .replace(
+      /\ba full per-condition numerical table\b/giu,
+      "complete per-cell uncertainty and resource tables"
+    )
+    .replace(
       /\b(?:does not expose|do not expose|does not provide|do not provide)\s+(?:a|the)\s+(?:complete|full)\s+(?:per-condition|eight-cell|cell-by-cell)\s+(?:mean\s+)?(?:accuracy\s+)?table\b/giu,
       "does not expose complete per-cell uncertainty, resource, or auxiliary-metric tables"
     )
@@ -2994,7 +3206,9 @@ let currentManuscript = input.initialManuscript;
 
   const evaluateCandidate = (manuscript: PaperManuscript): ManuscriptCandidateEvaluation => {
     manuscript = stabilizePaperManuscriptForSubmission(manuscript, {
-      conditionSummaries: context.results.condition_summaries
+      conditionSummaries: context.results.condition_summaries,
+      resultAnalysis: input.bundle.resultAnalysis,
+      methodModelNames: context.method.model_names
     });
     const consistencyLint = manuscriptConsistencyLinter({
       manuscript,
@@ -3005,9 +3219,14 @@ let currentManuscript = input.initialManuscript;
       appendixPlan: input.appendixPlan,
       pageBudget: input.pageBudget
     });
+    const scientificValidation = refreshScientificValidationForManuscript({
+      validation: input.scientificValidationArtifact,
+      manuscript,
+      profile: input.paperProfile
+    });
     const gateDecision = buildWritePaperGateDecision({
       mode: input.validationMode,
-      scientificValidation: input.scientificValidationArtifact,
+      scientificValidation,
       consistencyLint,
       appendixLint
     });
@@ -3043,6 +3262,7 @@ let currentManuscript = input.initialManuscript;
       styleLint,
       consistencyLint,
       appendixLint,
+      scientificValidation,
       gateDecision
     };
   };
@@ -3440,13 +3660,23 @@ let currentManuscript = input.initialManuscript;
     if (repairResult.source !== "fallback") {
       toolCallsUsed += 1;
     }
-    currentManuscript = stabilizePaperManuscriptForSubmission(
-      sanitizeReaderFacingRepairTargets(manuscriptBeforeRepair, repairResult.manuscript, repairPlan),
-      { conditionSummaries: context.results.condition_summaries }
-    );
     const verificationBaselineManuscript = normalizeManuscriptForRepairLocalityComparison(manuscriptBeforeRepair, {
-      conditionSummaries: context.results.condition_summaries
+      conditionSummaries: context.results.condition_summaries,
+      resultAnalysis: input.bundle.resultAnalysis,
+      methodModelNames: context.method.model_names
     });
+    currentManuscript = enforceRepairPlanLocalityAfterStabilization(
+      verificationBaselineManuscript,
+      stabilizePaperManuscriptForSubmission(
+        sanitizeReaderFacingRepairTargets(manuscriptBeforeRepair, repairResult.manuscript, repairPlan),
+        {
+          conditionSummaries: context.results.condition_summaries,
+          resultAnalysis: input.bundle.resultAnalysis,
+          methodModelNames: context.method.model_names
+        }
+      ),
+      repairPlan
+    );
     evaluation = evaluateCandidate(currentManuscript);
     reviewCycle = await runGroundedReviewCycle({
       evaluation,
@@ -3690,6 +3920,9 @@ function buildFollowupManuscriptRepairDecision(input: {
   );
   const remainingFailCount = input.issuesAfter.filter((issue) => issue.severity === "fail").length;
   const remainingNonRepairableFails = input.issuesAfter.filter((issue) => issue.severity === "fail" && !issue.repairable);
+  const gateHasOnlyRepairablePageBudgetFailure = isRepairablePageBudgetOnlyGateFailure(input.gateDecision);
+  const gateAllowsBoundedManuscriptContinuation =
+    input.gateDecision.status !== "fail" || gateHasOnlyRepairablePageBudgetFailure;
   if (!input.repairVerification.locality_ok) {
     return finalizeManuscriptRepairDecision({
       action: "stop",
@@ -3795,7 +4028,7 @@ function buildFollowupManuscriptRepairDecision(input: {
       remainingFailCount <= 2 &&
       input.issuesAfter.length <= 6 &&
       uniqueStrings(input.issuesAfter.map((issue) => `${issue.source}:${issue.code}`)).length <= 6 &&
-      input.gateDecision.status !== "fail" &&
+      gateAllowsBoundedManuscriptContinuation &&
       input.submissionValidation.ok &&
       input.reviewValidation.ok &&
       input.review.overall_decision !== "stop";
@@ -3816,7 +4049,7 @@ function buildFollowupManuscriptRepairDecision(input: {
     if (
       !hasBlockingAuditIssue
       && remainingFailCount === 0
-      && input.gateDecision.status !== "fail"
+      && gateAllowsBoundedManuscriptContinuation
       && input.submissionValidation.ok
       && input.reviewValidation.ok
     ) {
@@ -3837,16 +4070,18 @@ function buildFollowupManuscriptRepairDecision(input: {
       action: "stop",
       pass_index: input.passIndex,
       triggered_by: uniqueStrings(input.issuesAfter.map((issue) => issue.code)),
-      allowed_max_passes: 1,
+      allowed_max_passes: input.passIndex >= 2 ? 2 : 1,
       remaining_allowed_repairs: 0,
       issues_before: input.previousIssues,
       issues_after: input.issuesAfter,
       improvement_detected: improvement,
       stop_or_continue_reason:
-        "The follow-up manuscript review remained only partially grounded, so a second manuscript repair is not allowed."
+        input.passIndex >= 2
+          ? "The second and final manuscript repair did not resolve the partially grounded follow-up review findings."
+          : "The follow-up manuscript review remained only partially grounded, so a second manuscript repair is not allowed."
     }, reviewReliability);
   }
-  if (remainingFailCount === 0 && input.gateDecision.status !== "fail" && input.submissionValidation.ok) {
+  if (remainingFailCount === 0 && gateAllowsBoundedManuscriptContinuation && input.submissionValidation.ok) {
     return finalizeManuscriptRepairDecision({
       action: "pass",
       pass_index: input.passIndex,
@@ -3872,7 +4107,7 @@ function buildFollowupManuscriptRepairDecision(input: {
       stop_or_continue_reason: "A third manuscript repair pass is forbidden."
     }, reviewReliability);
   }
-  if (input.gateDecision.status === "fail" || !input.submissionValidation.ok) {
+  if ((input.gateDecision.status === "fail" && !gateHasOnlyRepairablePageBudgetFailure) || !input.submissionValidation.ok) {
     return finalizeManuscriptRepairDecision({
       action: "stop",
       pass_index: input.passIndex,
@@ -3990,6 +4225,23 @@ function buildFollowupManuscriptRepairDecision(input: {
     improvement_detected: improvement,
     stop_or_continue_reason: "Remaining manuscript issues are too broad for a second local repair pass."
   }, reviewReliability);
+}
+
+function isRepairablePageBudgetOnlyGateFailure(
+  gateDecision: ReturnType<typeof buildWritePaperGateDecision>
+): boolean {
+  if (gateDecision.status !== "fail" || gateDecision.issues.length === 0) {
+    return false;
+  }
+  const blockingIssues = gateDecision.issues.filter((issue) => issue.blocking);
+  if (blockingIssues.length === 0) {
+    return false;
+  }
+  return blockingIssues.every((issue) =>
+    issue.source === "scientific_validation"
+    && issue.category === "page_budget"
+    && issue.finding === "repairable"
+  );
 }
 
 function detectIssueImprovement(
@@ -5101,10 +5353,6 @@ async function maybeRenderPaperFigureAssets(input: {
   emitLog: (text: string) => void;
 }): Promise<PaperFigureManifest> {
   const figures = input.manuscript.figures || [];
-  if (figures.length === 0) {
-    return input.figureManifest;
-  }
-
   const figuresDir = path.join(input.runPaperDir, "figures");
   const publicFiguresDir = path.join(input.publicPaperDir, "figures");
   await ensureDir(figuresDir);
@@ -5121,6 +5369,13 @@ async function maybeRenderPaperFigureAssets(input: {
       }))
     }))
   };
+  const expectedRenderedPdfs = new Set(payload.figures.map((figure) => figure.output_pdf));
+  await pruneGeneratedPaperFigureAssets(figuresDir, expectedRenderedPdfs);
+  await pruneGeneratedPaperFigureAssets(publicFiguresDir, expectedRenderedPdfs);
+  if (figures.length === 0) {
+    return input.figureManifest;
+  }
+
   await fs.writeFile(path.join(figuresDir, "figure_payload.json"), `${JSON.stringify(payload, null, 2)}\n`, "utf8");
   await fs.writeFile(path.join(figuresDir, "render_paper_figures.py"), buildPythonVectorFigureRendererScript(), "utf8");
 
@@ -5183,6 +5438,26 @@ async function maybeRenderPaperFigureAssets(input: {
       };
     })
   };
+}
+
+async function pruneGeneratedPaperFigureAssets(dir: string, expectedFilenames: Set<string>): Promise<void> {
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+
+  await Promise.all(
+    entries
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name)
+      .filter((name) => /^main-result-figure-\d+\.pdf$/u.test(name) && !expectedFilenames.has(name))
+      .map((name) => fs.unlink(path.join(dir, name)))
+  );
 }
 
 function buildPythonVectorFigureRendererScript(): string {

@@ -15,6 +15,7 @@ import {
   materializeScientificManuscript,
   methodCompletenessValidator,
   pageBudgetManager,
+  refreshScientificValidationForManuscript,
   resolvePaperProfile,
   resultsRichnessValidator,
   strengthenPaperScaleManuscript
@@ -728,7 +729,10 @@ describe("scientificWriting", () => {
               paragraphs: [
                 ...section.paragraphs,
                 ...Array.from({ length: 25 }, (_, index) => ({
-                  text: `Restoration note ${index + 1} for ${section.heading}: ${budgetParagraph}`,
+                  text:
+                    index === 0 && section.heading === "Results"
+                      ? "Objective metric met: accuracy_delta_vs_baseline=0.083332 >= 0.01. rank 32 dropout 0 05 vs rank 8 dropout 0 0: accuracy_delta_vs_baseline: 0.0833 vs 0 (delta 0.0833), average_accuracy: 0.4167 vs 0.3333 (delta 0.0833), arc_challenge_accuracy: 0.5 vs 0.5 (delta 0), hellaswag_accuracy: 0.3333 vs 0.1667 (delta 0.1667)."
+                      : `Restoration note ${index + 1} for ${section.heading}: ${budgetParagraph}`,
                   evidence_ids: section.evidence_ids,
                   citation_paper_ids: section.citation_paper_ids
                 }))
@@ -771,6 +775,143 @@ describe("scientificWriting", () => {
     expect(restored.added_paragraph_count).toBeGreaterThan(0);
     expect(restoredWords).toBeGreaterThanOrEqual(pageBudget.minimum_main_words);
     expect(restored.added_sections).toEqual(expect.arrayContaining(["Method", "Results"]));
+    const restoredText = JSON.stringify(restored.manuscript);
+    expect(restoredText).toContain("The prespecified baseline-relative accuracy target was met");
+    expect(restoredText).toContain("The leading condition was rank 32 with dropout 0.05");
+    expect(restoredText).not.toContain("accuracy_delta_vs_baseline");
+    expect(restoredText).not.toContain("average_accuracy");
+    expect(restoredText).not.toContain("arc_challenge_accuracy");
+    expect(restoredText).not.toContain("hellaswag_accuracy");
+  });
+
+  it("refreshes page-budget validation from the repaired manuscript before strict gating", () => {
+    const profile = {
+      ...PAPER_PROFILE,
+      target_main_pages: 6,
+      minimum_main_pages: 6,
+      main_page_limit: 6,
+      estimated_words_per_page: 780
+    };
+    const shortDraft: PaperDraft = {
+      title: "Short draft",
+      abstract: "Short.",
+      keywords: [],
+      sections: ["Introduction", "Related Work", "Method", "Results", "Discussion", "Limitations", "Conclusion"].map((heading) => ({
+        heading,
+        paragraphs: [{ text: "short", evidence_ids: [], citation_paper_ids: [] }],
+        evidence_ids: [],
+        citation_paper_ids: []
+      })),
+      claims: []
+    };
+    const shortBudget = pageBudgetManager({ draft: shortDraft, profile });
+    const complete = {
+      status: "complete" as const,
+      present: [],
+      missing: [],
+      warnings: []
+    };
+    const validation = buildScientificValidationArtifact({
+      draft: shortDraft,
+      page_budget: shortBudget,
+      method_completeness: complete,
+      results_richness: complete,
+      related_work_richness: { ...complete, cluster_count: 3 },
+      discussion_richness: complete,
+      evidence_diagnostics: {
+        expandable_from_existing_evidence: true,
+        missing_evidence_categories: [],
+        thin_sections: shortBudget.auto_expand_headings,
+        blocked_by_evidence_insufficiency: false,
+        section_diagnostics: []
+      },
+      claim_rewrite_report: { rewrites: [] },
+      appendix_plan: { sections: [], tables: [], figures: [], cross_references: [] },
+      auto_repairs: {
+        expanded_sections: [],
+        expansion_recheck: {
+          attempted: false,
+          page_budget_before: shortBudget.status,
+          page_budget_after: shortBudget.status,
+          resolved_headings: [],
+          unresolved_headings: shortBudget.auto_expand_headings
+        }
+      }
+    });
+    const longParagraph = Array.from({ length: 1400 }, (_, index) => `word${index}`).join(" ");
+    const manuscript: PaperManuscript = {
+      title: "Repaired manuscript",
+      abstract: "A repaired abstract.",
+      keywords: [],
+      sections: shortDraft.sections.map((section) => ({
+        heading: section.heading,
+        paragraphs: [longParagraph]
+      }))
+    };
+
+    const refreshed = refreshScientificValidationForManuscript({
+      validation,
+      manuscript,
+      profile
+    });
+    const gateDecision = buildWritePaperGateDecision({
+      mode: "strict_paper",
+      scientificValidation: refreshed,
+      consistencyLint: { ok: true, issues: [] },
+      appendixLint: { ok: true, issues: [] }
+    });
+
+    expect(validation.issues.some((issue) => issue.category === "page_budget")).toBe(true);
+    expect(refreshed.page_budget.status).toBe("ok");
+    expect(refreshed.issues.some((issue) => issue.category === "page_budget")).toBe(false);
+    expect(gateDecision.status).toBe("pass");
+  });
+
+  it("keeps adding bounded fallback paragraphs when repair leaves too few unique draft paragraphs", () => {
+    const draft: PaperDraft = {
+      title: "Compressed draft",
+      abstract: "Short.",
+      keywords: [],
+      sections: ["Method", "Results"].map((heading) => ({
+        heading,
+        paragraphs: [{ text: "A short duplicate paragraph.", evidence_ids: [], citation_paper_ids: [] }],
+        evidence_ids: [],
+        citation_paper_ids: []
+      })),
+      claims: []
+    };
+    const profile = {
+      ...PAPER_PROFILE,
+      target_main_pages: 2,
+      minimum_main_pages: 2,
+      main_page_limit: 2,
+      estimated_words_per_page: 500
+    };
+    const pageBudget = pageBudgetManager({ draft, profile });
+    const compressed: PaperManuscript = {
+      title: "Compressed manuscript",
+      abstract: "Short.",
+      keywords: [],
+      sections: draft.sections.map((section) => ({
+        heading: section.heading,
+        paragraphs: section.paragraphs.map((paragraph) => paragraph.text)
+      }))
+    };
+
+    const restored = enforceManuscriptPageBudgetFloor({
+      manuscript: compressed,
+      draft,
+      pageBudget: {
+        ...pageBudget,
+        minimum_main_words: 1000,
+        maximum_main_words: 1300,
+        estimated_words_per_page: 500
+      }
+    });
+
+    expect(restored.applied).toBe(true);
+    expect(restored.estimated_main_words_after).toBeGreaterThanOrEqual(1000);
+    expect(restored.added_paragraph_count).toBeGreaterThan(2);
   });
 
   it("uses LM benchmark evidence instead of tabular CV requirements when latest_results is absent", () => {
@@ -3075,8 +3216,9 @@ describe("scientificWriting", () => {
         {
           heading: "Results",
           paragraphs: [
-            "For the leading rank-32/dropout-0.05 condition, mean accuracy was 0.4167 versus 0.3333 for the locked baseline, a gain of 0.0833.",
-            "Its average accuracy was 0.416666, compared with 0.333334 for the preregistered rank-8, no-dropout reference, for an absolute gain of 0.083332."
+            "The locked baseline, rank 8 with zero dropout, achieved mean accuracy 0.333334.",
+            "The best observed setting was rank 32 with dropout 0.05, which achieved mean accuracy 0.416666 across ARC-Challenge and HellaSwag.",
+            "The average difference remains a local screening signal rather than a settled prescription."
           ]
         },
         { heading: "Discussion", paragraphs: ["The comparison supports a narrow follow-up candidate."] },

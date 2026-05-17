@@ -1160,6 +1160,250 @@ describe("manuscriptQuality style lint", () => {
     expect(verification.locality_ok).toBe(true);
   });
 
+  it("allows duplicate trailing paragraph compaction in a touched section", () => {
+    const before = makeCleanManuscript();
+    before.sections[4] = {
+      heading: "Discussion",
+      paragraphs: [
+        "The first discussion paragraph has a local citation issue.",
+        "The second discussion paragraph stays unchanged.",
+        "The third discussion paragraph explains the scale-up requirement.",
+        "The third discussion paragraph explains the scale-up requirement."
+      ]
+    };
+    const after = structuredClone(before);
+    after.sections[4] = {
+      heading: "Discussion",
+      paragraphs: [
+        "The first discussion paragraph now has a visible local citation.",
+        "The second discussion paragraph stays unchanged.",
+        "The third discussion paragraph explains the scale-up requirement."
+      ]
+    };
+
+    const verification = buildManuscriptRepairVerificationArtifact({
+      passIndex: 1,
+      before,
+      after,
+      repairPlan: {
+        pass_index: 1,
+        repair_scope: "bounded_local",
+        targets: [
+          {
+            source: "review",
+            issue_code: "citation_hygiene",
+            severity: "warning",
+            kind: "paragraph",
+            section: "Discussion",
+            location_key: "paragraph:discussion:0",
+            paragraph_index: 0,
+            excerpt: before.sections[4]!.paragraphs[0]!,
+            source_refs: [],
+            edit_scope: "paragraph_local",
+            allowed_location_keys: ["paragraph:discussion:0"],
+            scope_reason: "Repair is limited to the targeted manuscript paragraph."
+          }
+        ],
+        blocked_targets: [],
+        preservation_rules: [],
+        summary: "One discussion citation should be repaired."
+      },
+      reviewAfter: buildFallbackManuscriptReview(after)
+    });
+
+    expect(verification.changed_location_keys).toContain("paragraph:discussion:3");
+    expect(verification.out_of_scope_changes).not.toContain("paragraph:discussion:3");
+    expect(verification.locality_ok).toBe(true);
+  });
+
+  it("still flags non-duplicate trailing paragraph deletion in a touched section", () => {
+    const before = makeCleanManuscript();
+    before.sections[4] = {
+      heading: "Discussion",
+      paragraphs: [
+        "The first discussion paragraph has a local citation issue.",
+        "The second discussion paragraph stays unchanged.",
+        "The third discussion paragraph explains the scale-up requirement.",
+        "The fourth discussion paragraph reports a separate limitation that should remain visible."
+      ]
+    };
+    const after = structuredClone(before);
+    after.sections[4] = {
+      heading: "Discussion",
+      paragraphs: [
+        "The first discussion paragraph now has a visible local citation.",
+        "The second discussion paragraph stays unchanged.",
+        "The third discussion paragraph explains the scale-up requirement."
+      ]
+    };
+
+    const verification = buildManuscriptRepairVerificationArtifact({
+      passIndex: 1,
+      before,
+      after,
+      repairPlan: {
+        pass_index: 1,
+        repair_scope: "bounded_local",
+        targets: [
+          {
+            source: "review",
+            issue_code: "citation_hygiene",
+            severity: "warning",
+            kind: "paragraph",
+            section: "Discussion",
+            location_key: "paragraph:discussion:0",
+            paragraph_index: 0,
+            excerpt: before.sections[4]!.paragraphs[0]!,
+            source_refs: [],
+            edit_scope: "paragraph_local",
+            allowed_location_keys: ["paragraph:discussion:0"],
+            scope_reason: "Repair is limited to the targeted manuscript paragraph."
+          }
+        ],
+        blocked_targets: [],
+        preservation_rules: [],
+        summary: "One discussion citation should be repaired."
+      },
+      reviewAfter: buildFallbackManuscriptReview(after)
+    });
+
+    expect(verification.changed_location_keys).toContain("paragraph:discussion:3");
+    expect(verification.out_of_scope_changes).toContain("paragraph:discussion:3");
+    expect(verification.locality_ok).toBe(false);
+  });
+
+  it("allows a bounded forward results paragraph cluster for paragraph-redundancy repair", () => {
+    const before = makeCleanManuscript();
+    before.sections[3] = {
+      heading: "Results",
+      paragraphs: [
+        "The first results paragraph reports the primary comparison.",
+        "The second results paragraph reports the task-level pattern.",
+        "The third results paragraph repeats the same table interpretation.",
+        "The fourth results paragraph repeats the same screening interpretation.",
+        "The fifth results paragraph repeats the same uncertainty framing.",
+        "The sixth results paragraph repeats the same limitations framing.",
+        "The seventh results paragraph is unrelated and should remain untouched."
+      ]
+    };
+    const after = structuredClone(before);
+    after.sections[3] = {
+      heading: "Results",
+      paragraphs: [
+        before.sections[3]!.paragraphs[0]!,
+        before.sections[3]!.paragraphs[1]!,
+        "The third results paragraph now gives the concise table interpretation.",
+        "The fourth results paragraph now gives the scoped screening interpretation.",
+        "The fifth results paragraph now reports uncertainty without repeating the table.",
+        "The sixth results paragraph now frames limitations without repeating the setup.",
+        "The seventh results paragraph is unrelated and should remain untouched."
+      ]
+    };
+
+    const verification = buildManuscriptRepairVerificationArtifact({
+      passIndex: 1,
+      before,
+      after,
+      repairPlan: {
+        pass_index: 1,
+        repair_scope: "bounded_local",
+        targets: [
+          {
+            source: "review",
+            issue_code: "paragraph_redundancy",
+            severity: "warning",
+            kind: "paragraph",
+            section: "Results",
+            location_key: "paragraph:results:2",
+            paragraph_index: 2,
+            excerpt: before.sections[3]!.paragraphs[2]!,
+            source_refs: [],
+            edit_scope: "paragraph_local",
+            allowed_location_keys: ["paragraph:results:2"],
+            scope_reason: "Repair is limited to the targeted manuscript paragraph."
+          }
+        ],
+        blocked_targets: [],
+        preservation_rules: [],
+        summary: "One results paragraph should be de-duplicated."
+      },
+      reviewAfter: buildFallbackManuscriptReview(after)
+    });
+
+    expect(verification.changed_location_keys).toEqual(
+      expect.arrayContaining([
+        "paragraph:results:2",
+        "paragraph:results:3",
+        "paragraph:results:4",
+        "paragraph:results:5"
+      ])
+    );
+    expect(verification.out_of_scope_changes).toEqual([]);
+    expect(verification.locality_ok).toBe(true);
+  });
+
+  it("still flags paragraph-redundancy edits outside the bounded forward cluster", () => {
+    const before = makeCleanManuscript();
+    before.sections[3] = {
+      heading: "Results",
+      paragraphs: [
+        "The first results paragraph reports the primary comparison.",
+        "The second results paragraph reports the task-level pattern.",
+        "The third results paragraph repeats the same table interpretation.",
+        "The fourth results paragraph repeats the same screening interpretation.",
+        "The fifth results paragraph repeats the same uncertainty framing.",
+        "The sixth results paragraph repeats the same limitations framing.",
+        "The seventh results paragraph is unrelated and should remain untouched."
+      ]
+    };
+    const after = structuredClone(before);
+    after.sections[3] = {
+      heading: "Results",
+      paragraphs: [
+        before.sections[3]!.paragraphs[0]!,
+        before.sections[3]!.paragraphs[1]!,
+        "The third results paragraph now gives the concise table interpretation.",
+        before.sections[3]!.paragraphs[3]!,
+        before.sections[3]!.paragraphs[4]!,
+        before.sections[3]!.paragraphs[5]!,
+        "The seventh results paragraph was rewritten even though it is outside the local repair cluster."
+      ]
+    };
+
+    const verification = buildManuscriptRepairVerificationArtifact({
+      passIndex: 1,
+      before,
+      after,
+      repairPlan: {
+        pass_index: 1,
+        repair_scope: "bounded_local",
+        targets: [
+          {
+            source: "review",
+            issue_code: "paragraph_redundancy",
+            severity: "warning",
+            kind: "paragraph",
+            section: "Results",
+            location_key: "paragraph:results:2",
+            paragraph_index: 2,
+            excerpt: before.sections[3]!.paragraphs[2]!,
+            source_refs: [],
+            edit_scope: "paragraph_local",
+            allowed_location_keys: ["paragraph:results:2"],
+            scope_reason: "Repair is limited to the targeted manuscript paragraph."
+          }
+        ],
+        blocked_targets: [],
+        preservation_rules: [],
+        summary: "One results paragraph should be de-duplicated."
+      },
+      reviewAfter: buildFallbackManuscriptReview(after)
+    });
+
+    expect(verification.out_of_scope_changes).toContain("paragraph:results:6");
+    expect(verification.locality_ok).toBe(false);
+  });
+
   it("flags overclaiming changed visual captions in repair verification artifacts", () => {
     const before = makeCleanManuscript();
     before.tables = [

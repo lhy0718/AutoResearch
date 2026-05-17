@@ -2678,6 +2678,7 @@ export function sanitizePaperNarrativeText(value: unknown): string {
     .replace(/\s*\([^()]*\bdoi:\s*10\.[^()]*\)/giu, "")
     .replace(/\s*\([^()]*\barxiv\s*:\s*\d{4}\.\d{4,5}[^()]*\)/giu, "")
     .replace(/\s*\([^()]*\b[a-f0-9]{32,40}\b[^()]*\)/giu, "")
+    .replace(/\s*\(\s*cited\s+(?:dataset|benchmark|model|paper|source|method|evaluation|corpus|resource)[^()]*source(?:s)?\s*\)/giu, "")
     .replace(/\[[^\]]*(?:\bdoi:\s*10\.|\b[a-f0-9]{32,40}\b)[^\]]*\]/giu, "")
     .replace(/\bdoi:\s*10\.\d{4,9}\/[^\s,.;)]+/giu, "")
     .replace(/\barxiv\s*:\s*\d{4}\.\d{4,5}(?:v\d+)?/giu, "")
