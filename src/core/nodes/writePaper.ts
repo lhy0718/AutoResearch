@@ -230,6 +230,8 @@ interface PaperRenderValidationReport {
     expected_bibliography_style: string | null;
     repeated_citation_bundle_count: number;
     max_repeated_citation_bundle_count: number;
+    repeated_long_sentence_count: number;
+    max_repeated_long_sentence_count: number;
   };
   summary: string[];
 }
@@ -5995,6 +5997,21 @@ function buildPaperRenderValidation(input: {
       `The same citation bundle is rendered more than once in ${repeatedCitationBundles[0].section} (${repeatedCitationBundles[0].bundle}); review whether repeated citations are necessary.`
     );
   }
+  const repeatedLongSentences = detectRepeatedLongSentences(input.tex);
+  const maxRepeatedLongSentenceCount = repeatedLongSentences[0]?.count ?? 0;
+  const repeatedLongSentenceCount = repeatedLongSentences.length;
+  if (maxRepeatedLongSentenceCount >= 3) {
+    failOrWarn(
+      "repeated_long_sentence",
+      `A long reader-facing sentence is repeated ${maxRepeatedLongSentenceCount} times in ${repeatedLongSentences[0].section}: ${repeatedLongSentences[0].sample}`,
+      false
+    );
+  } else if (maxRepeatedLongSentenceCount > 1) {
+    failOrWarn(
+      "repeated_long_sentence",
+      `A long reader-facing sentence is repeated in ${repeatedLongSentences[0].section}: ${repeatedLongSentences[0].sample}`
+    );
+  }
 
   const logText = collectCompileLogText(input.compileResult);
   const overfull = extractOverfullHBoxPoints(logText);
@@ -6068,7 +6085,9 @@ function buildPaperRenderValidation(input: {
       final_tex_bibliography_style: bibliographyStylePolicy.actualStyle,
       expected_bibliography_style: bibliographyStylePolicy.expectedStyle,
       repeated_citation_bundle_count: repeatedCitationBundleCount,
-      max_repeated_citation_bundle_count: maxRepeatedCitationBundleCount
+      max_repeated_citation_bundle_count: maxRepeatedCitationBundleCount,
+      repeated_long_sentence_count: repeatedLongSentenceCount,
+      max_repeated_long_sentence_count: maxRepeatedLongSentenceCount
     },
     summary:
       issues.length === 0
@@ -6199,6 +6218,113 @@ function normalizeCitationBundle(raw: string): string {
     )
   ).sort();
   return keys.join(",");
+}
+
+function detectRepeatedLongSentences(tex: string): Array<{ key: string; count: number; section: string; sample: string }> {
+  const chunks = tex.split(/(?=\\section(?:\[[^\]]*\])?\{[^}]+\})/u);
+  const effectiveChunks = chunks.length > 1 ? chunks : [tex];
+  const repeated: Array<{ key: string; count: number; section: string; sample: string }> = [];
+  for (const chunk of effectiveChunks) {
+    const section = chunk.match(/\\section(?:\[[^\]]*\])?\{([^}]+)\}/u)?.[1]?.trim() || "the rendered manuscript";
+    const counts = new Map<string, { count: number; sample: string }>();
+    const plain = stripLatexForSentenceInspection(chunk);
+    for (const sentence of splitRenderedSentences(plain)) {
+      const key = normalizeRenderedSentenceKey(sentence);
+      if (key.length < 80) {
+        continue;
+      }
+      const current = counts.get(key) || { count: 0, sample: sentence };
+      counts.set(key, { count: current.count + 1, sample: current.sample });
+    }
+    repeated.push(
+      ...Array.from(counts.entries())
+        .map(([key, value]) => ({
+          key,
+          count: value.count,
+          section,
+          sample: truncateRenderValidationText(value.sample, 180)
+        }))
+        .filter((item) => item.count > 1)
+    );
+  }
+  const globalCounts = new Map<string, { count: number; sample: string }>();
+  for (const sentence of splitRenderedSentences(stripLatexForSentenceInspection(tex))) {
+    const key = normalizeRenderedSentenceKey(sentence);
+    if (key.length < 80) {
+      continue;
+    }
+    const current = globalCounts.get(key) || { count: 0, sample: sentence };
+    globalCounts.set(key, { count: current.count + 1, sample: current.sample });
+  }
+  repeated.push(
+    ...Array.from(globalCounts.entries())
+      .map(([key, value]) => ({
+        key,
+        count: value.count,
+        section: "multiple sections",
+        sample: truncateRenderValidationText(value.sample, 180)
+      }))
+      .filter((item) => item.count > 2)
+  );
+  return repeated.sort((a, b) => b.count - a.count || a.section.localeCompare(b.section) || a.key.localeCompare(b.key));
+}
+
+function truncateRenderValidationText(text: string, maxLength: number): string {
+  const cleaned = text.replace(/\s+/gu, " ").trim();
+  if (cleaned.length <= maxLength) {
+    return cleaned;
+  }
+  return `${cleaned.slice(0, Math.max(0, maxLength - 3)).trim()}...`;
+}
+
+function stripLatexForSentenceInspection(tex: string): string {
+  return tex
+    .replace(/\\cite[a-zA-Z*]*(?:\[[^\]]*\]){0,2}\{[^}]+\}/gu, " ")
+    .replace(/\\(?:section|subsection|caption|title|author)(?:\[[^\]]*\])?\{([^}]*)\}/gu, "$1. ")
+    .replace(/\\(?:begin|end)\{[^}]+\}/gu, " ")
+    .replace(/\\[a-zA-Z]+(?:\[[^\]]*\])?(?:\{[^}]*\})?/gu, " ")
+    .replace(/[{}_$^&%#~]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function splitRenderedSentences(text: string): string[] {
+  const sentences: string[] = [];
+  let start = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (char !== "." && char !== "!" && char !== "?") {
+      continue;
+    }
+    const previous = index > 0 ? text[index - 1] : "";
+    const next = index + 1 < text.length ? text[index + 1] : "";
+    if (char === "." && /\d/u.test(previous) && /\d/u.test(next)) {
+      continue;
+    }
+    const atEnd = index + 1 >= text.length;
+    const followedByWhitespace = /\s/u.test(next);
+    if (!atEnd && !followedByWhitespace) {
+      continue;
+    }
+    const sentence = text.slice(start, index + 1).trim();
+    if (sentence) {
+      sentences.push(sentence);
+    }
+    start = index + 1;
+  }
+  const tail = text.slice(start).trim();
+  if (tail) {
+    sentences.push(tail);
+  }
+  return sentences.length > 0 ? sentences : [text.trim()].filter(Boolean);
+}
+
+function normalizeRenderedSentenceKey(text: string): string {
+  return text
+    .toLocaleLowerCase()
+    .replace(/[^a-z0-9]+/giu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
 }
 
 function extractOverfullHBoxPoints(text: string): number[] {

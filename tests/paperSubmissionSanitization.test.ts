@@ -532,6 +532,36 @@ describe("paper submission sanitization", () => {
     expect((tex.match(/\\cite\{paperA\}/g) || []).length).toBe(2);
   });
 
+  it("removes repeated long reader-facing sentences within a section", () => {
+    const repeated =
+      "The related work is used to position the experiment, not to substitute for direct evidence.";
+    const tex = renderSubmissionPaperTex({
+      manuscript: {
+        title: "Repeated sentence hygiene paper",
+        abstract: "A concise abstract.",
+        keywords: [],
+        sections: [
+          {
+            heading: "Related Work",
+            paragraphs: [
+              `First positioning sentence. ${repeated} Prior work motivates the comparison axes.`,
+              `Second positioning sentence. ${repeated} The present run supplies the numerical support.`,
+              `Third positioning sentence. ${repeated} The claim ceiling remains bounded.`
+            ]
+          }
+        ],
+        tables: [],
+        figures: []
+      },
+      traceability: { paragraphs: [] },
+      citationKeysByPaperId: new Map()
+    });
+
+    expect((tex.match(new RegExp(repeated.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) || []).length).toBe(1);
+    expect(tex).toContain("Second positioning sentence. The present run supplies the numerical support.");
+    expect(tex).toContain("Third positioning sentence. The claim ceiling remains bounded.");
+  });
+
   it("removes internal run paths from fallback paper drafting before submission validation", () => {
     const bundle: PaperWritingBundle = {
       runTitle: "Budget-aware run",

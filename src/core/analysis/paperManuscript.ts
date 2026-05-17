@@ -620,6 +620,63 @@ function normalizeSubmissionParagraphKey(text: string): string {
     .slice(0, 240);
 }
 
+function normalizeSubmissionSentenceKey(text: string): string {
+  return text
+    .toLocaleLowerCase()
+    .replace(/\\cite\{[^}]*\}/giu, " ")
+    .replace(/[^a-z0-9]+/giu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function splitSubmissionSentences(text: string): string[] {
+  const sentences: string[] = [];
+  let start = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (char !== "." && char !== "!" && char !== "?") {
+      continue;
+    }
+    const previous = index > 0 ? text[index - 1] : "";
+    const next = index + 1 < text.length ? text[index + 1] : "";
+    if (char === "." && /\d/u.test(previous) && /\d/u.test(next)) {
+      continue;
+    }
+    const atEnd = index + 1 >= text.length;
+    const followedByWhitespace = /\s/u.test(next);
+    if (!atEnd && !followedByWhitespace) {
+      continue;
+    }
+    const sentence = text.slice(start, index + 1).trim();
+    if (sentence) {
+      sentences.push(sentence);
+    }
+    start = index + 1;
+  }
+  const tail = text.slice(start).trim();
+  if (tail) {
+    sentences.push(tail);
+  }
+  return sentences.length > 0 ? sentences : [text.trim()].filter(Boolean);
+}
+
+function pruneRepeatedSubmissionSentences(text: string, seenSentenceKeys: Set<string>): string {
+  const sentences = splitSubmissionSentences(text);
+  const retained: string[] = [];
+  for (const sentence of sentences) {
+    const key = normalizeSubmissionSentenceKey(sentence);
+    const shouldTrack = key.length >= 80;
+    if (shouldTrack && seenSentenceKeys.has(key)) {
+      continue;
+    }
+    retained.push(sentence);
+    if (shouldTrack) {
+      seenSentenceKeys.add(key);
+    }
+  }
+  return cleanString(retained.join(" "));
+}
+
 function ensureMainBodyResultFigure(input: {
   tables?: PaperManuscriptTable[];
   figures?: PaperManuscriptFigure[];
@@ -2204,6 +2261,7 @@ export function renderSubmissionPaperTex(input: {
   }
 
   let visualsRendered = false;
+  const renderedDocumentSentences = new Set<string>();
   for (const section of input.manuscript.sections) {
     lines.push(`\\section{${latexEscape(section.heading)}}`);
     const renderedSectionParagraphs = new Set<string>();
@@ -2223,7 +2281,10 @@ export function renderSubmissionPaperTex(input: {
           renderedSectionCitationBundles.set(citationBundleKey, previousCount + 1);
         }
       }
-      const renderedParagraph = sanitizeSubmissionSurfaceText(paragraph, { sectionHeading: section.heading });
+      const renderedParagraph = pruneRepeatedSubmissionSentences(
+        sanitizeSubmissionSurfaceText(paragraph, { sectionHeading: section.heading }),
+        renderedDocumentSentences
+      );
       if (!renderedParagraph) {
         continue;
       }
