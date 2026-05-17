@@ -758,7 +758,7 @@ describe("paper submission sanitization", () => {
     expect(text).toContain("Table 1 provides a mean-performance row for every factorial cell");
     expect(text).toContain("visible table reports condition-level mean accuracies without complete per-cell uncertainty");
     expect(text).toContain("complete per-cell uncertainty and auxiliary-metric tables");
-    expect(text).toContain("Table 1 reports the condition-level mean accuracies");
+    expect(text).toContain("Table 1 reports all eight condition mean accuracies");
     expect(text).toContain("the reported analyses do not report optimizer choice, LoRA target modules");
     expect(text).toContain("Table 1 reports all eight condition mean accuracies");
     expect(text).toContain("The comparison to external PEFT methods is therefore one of scope and experimental role");
@@ -1256,9 +1256,9 @@ describe("paper submission sanitization", () => {
       { label: "Leading Average", value: 0.4167 }
     ]);
     expect(text).toContain("prespecified baseline-relative accuracy target was met");
-    expect(text).toContain("mean accuracy was 0.4167 versus 0.3333");
+    expect(text).toContain("Table 1 reports the condition-level values");
     expect(text).toContain("observed baseline-relative average-accuracy gain is 0.083332");
-    expect(text).toContain("Its mean accuracy was 0.4167 versus 0.3333");
+    expect(text).toContain("Table 1 reports the corresponding mean values");
     expect(text).not.toContain("Average accuracy increases from 0.333334 to 0.416666");
     expect(text).not.toContain("increases average accuracy from 0.3333");
     expect(text).not.toContain("accuracy_delta_vs_baseline");
@@ -1293,8 +1293,10 @@ describe("paper submission sanitization", () => {
     });
     expect(validation.ok).toBe(true);
     expect(tex).toContain("The prespecified baseline-relative accuracy target was met");
-    expect(tex).toContain("The leading condition was rank 32 with dropout 0.05");
+    expect(tex).toContain("The leading rank-32/dropout-0.05 condition");
+    expect(tex).toContain("Table 1 reports the condition-level values");
     expect(tex).not.toContain("[warning]");
+    expect(tex).not.toContain("average accuracy was 0.4167 versus 0.3333");
     expect(tex).not.toContain("accuracy_delta_vs_baseline");
     expect(tex).not.toContain("accuracy\\_delta\\_vs\\_baseline");
     expect(tex).not.toContain("average_accuracy");

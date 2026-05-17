@@ -6647,7 +6647,7 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
     )
     .replace(
       /\brank\s+32\s+dropout\s+0\s+05\s+vs\s+rank\s+8\s+dropout\s+0\s+0:\s*accuracy_delta_vs_baseline:\s*([0-9.]+)\s+vs\s+0\s+\(delta\s+([0-9.]+)\),\s*average_accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\),\s*arc_challenge_accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\),\s*hellaswag_accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\)\.?/giu,
-      "The leading condition was rank 32 with dropout 0.05, compared with the locked rank 8 dropout 0.0 baseline; the observed baseline-relative average-accuracy gain was $1, average accuracy was $3 versus $4, ARC-Challenge accuracy was $5 versus $6, and HellaSwag accuracy was $7 versus $8."
+      "The leading rank-32/dropout-0.05 condition is the follow-up candidate. Table 1 reports the condition-level values for that cell and the locked baseline; the baseline-relative average-accuracy gain was $1."
     )
     .replace(
       /\bwall clock runtime sec\s*=\s*([0-9.]+)\.\s*device cuda max memory allocated bytes\s*=\s*(\d+)\.?/giu,

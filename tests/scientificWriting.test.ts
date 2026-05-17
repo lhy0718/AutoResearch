@@ -779,7 +779,7 @@ describe("scientificWriting", () => {
     expect(restored.added_sections).toEqual(expect.arrayContaining(["Method", "Results"]));
     const restoredText = JSON.stringify(restored.manuscript);
     expect(restoredText).toContain("The prespecified baseline-relative accuracy target was met");
-    expect(restoredText).toContain("The leading condition was rank 32 with dropout 0.05");
+    expect(restoredText).toContain("The leading rank-32/dropout-0.05 condition");
     expect(restoredText).not.toContain("accuracy_delta_vs_baseline");
     expect(restoredText).not.toContain("average_accuracy");
     expect(restoredText).not.toContain("arc_challenge_accuracy");

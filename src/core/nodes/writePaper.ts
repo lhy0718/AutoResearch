@@ -5660,7 +5660,7 @@ def render_with_matplotlib(figure):
         ax.set_ylim(y_min, y_max if y_max > y_min else y_min + 0.1)
         ax.set_xticks(ranks, labels=[f"{rank:g}" for rank in ranks])
         ax.set_xlabel("LoRA rank", fontsize=8)
-        ax.set_ylabel("Average accuracy", fontsize=8)
+        ax.set_ylabel("Average\naccuracy", fontsize=8, rotation=0, labelpad=30, va="center")
         ax.set_title("Accuracy across rank/dropout grid", fontsize=9, pad=6)
         ax.grid(axis="y", color="#d9d9d9", linewidth=0.6)
         ax.set_axisbelow(True)
@@ -5670,6 +5670,7 @@ def render_with_matplotlib(figure):
         ax.spines["bottom"].set_linewidth(0.6)
         ax.tick_params(axis="both", labelsize=7, length=2.5, width=0.6)
         ax.legend(loc="upper left", frameon=False, fontsize=7, handlelength=1.4, borderaxespad=0.2)
+        fig.subplots_adjust(left=0.24, right=0.98, bottom=0.22, top=0.82)
         fig.tight_layout(pad=0.35)
         output = figure["output_pdf"]
         fig.savefig(output, format="pdf", bbox_inches="tight")
@@ -5774,7 +5775,7 @@ def render_figure(figure):
     plot_w = width - margin_l - margin_r
     plot_h = height - margin_t - margin_b
     if condition_rows:
-        margin_l, margin_r, margin_t, margin_b = 48, 20, 32, 36
+        margin_l, margin_r, margin_t, margin_b = 56, 20, 32, 36
         plot_w = width - margin_l - margin_r
         plot_h = height - margin_t - margin_b
         ranks = sorted(set(row["rank"] for row in condition_rows))
@@ -5796,8 +5797,7 @@ def render_figure(figure):
         content.append("1 1 1 rg 0 0 306 190 re f\n")
         content.append(text_cmd(10, 176, "Accuracy across rank/dropout grid", 8.5))
         content.append(text_cmd(130, 8, "LoRA rank", 6, (0.12, 0.12, 0.12)))
-        content.append(text_cmd(6, 103, "Average", 5.8, (0.12, 0.12, 0.12)))
-        content.append(text_cmd(6, 95, "accuracy", 5.8, (0.12, 0.12, 0.12)))
+        content.append(text_cmd(margin_l, 158, "Mean accuracy", 5.8, (0.12, 0.12, 0.12)))
         content.append(line_cmd(margin_l, margin_b, margin_l + plot_w, margin_b))
         content.append(line_cmd(margin_l, margin_b, margin_l, margin_b + plot_h))
         for tick in [0.0, 0.5, 1.0]:

@@ -539,7 +539,31 @@ function sanitizeSubmissionSurfaceText(text: string, context: { sectionHeading?:
     )
     .replace(
       /\brank\s+32\s+dropout\s+0\s+05\s+vs\s+rank\s+8\s+dropout\s+0\s+0:\s*baseline-relative accuracy gain:\s*([0-9.]+)\s+vs\s+0\s+\(delta\s+([0-9.]+)\),\s*average accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\),\s*ARC-Challenge accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\),\s*HellaSwag accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\)\.?/giu,
-      "The leading condition was rank 32 with dropout 0.05, compared with the locked rank 8 dropout 0.0 baseline; the observed baseline-relative average-accuracy gain was $1, average accuracy was $3 versus $4, ARC-Challenge accuracy was $5 versus $6, and HellaSwag accuracy was $7 versus $8."
+      "The leading rank-32/dropout-0.05 condition is the follow-up candidate. Table 1 reports the condition-level values for that cell and the locked baseline; the baseline-relative average-accuracy gain was $1."
+    )
+    .replace(
+      /\bThe leading condition was rank 32 with dropout 0\.05,\s*compared with the locked rank 8 dropout 0\.0 baseline;\s*the observed baseline-relative average-accuracy gain was ([0-9.]+),\s*average accuracy was [0-9.]+ versus [0-9.]+,\s*ARC-Challenge accuracy was [0-9.]+ versus [0-9.]+,\s*and HellaSwag accuracy was [0-9.]+ versus [0-9.]+\.?/giu,
+      "The leading rank-32/dropout-0.05 condition is the follow-up candidate. Table 1 reports the condition-level values for that cell and the locked baseline; the baseline-relative average-accuracy gain was $1."
+    )
+    .replace(
+      /\bIn the reported best comparison,\s*rank 32 with dropout 0\.05 outperformed the baseline rank 8 with dropout 0\.0 by ([0-9.]+) average accuracy;\s*ARC-Challenge stayed at [0-9.]+ while HellaSwag increased from [0-9.]+ to [0-9.]+\.?/giu,
+      "In the reported best comparison, the rank-32/dropout-0.05 cell is the follow-up candidate. Table 1 gives the task-level values, and the baseline-relative average-accuracy gain is $1."
+    )
+    .replace(
+      /\bOperational measurements remain secondary:\s*wall-clock runtime was ([0-9]+(?:\.[0-9]+)?)\.?\s*seconds\.?\s*and peak CUDA allocation was recorded as a secondary resource diagnostic\./giu,
+      "Operational measurements remain secondary: wall-clock runtime was $1 seconds, and peak CUDA allocation was recorded as a secondary resource diagnostic."
+    )
+    .replace(
+      /\bThe 95% interval for conditions rank 16 dropout 0 0 average accuracy spans ([0-9.]+) to ([0-9.]+)\.\s*wall-clock runtime was ([0-9]+(?:\.[0-9]+)?)\.?\s*seconds,\s*with peak CUDA allocation recorded as a secondary resource diagnostic\./giu,
+      "The reported interval summary keeps uncertainty visible: one rank-16/dropout-0.0 average-accuracy interval spans $1 to $2 over the evaluated predictions. Runtime and CUDA allocation remain secondary feasibility diagnostics."
+    )
+    .replace(
+      /\bThe rank-32 dropout-0\.05 cell improved accuracy delta versus the locked baseline by ([0-9.]+) in the reported comparison\./giu,
+      "The rank-32/dropout-0.05 cell provides the clearest follow-up signal: its baseline-relative average-accuracy gain is $1 in the reported comparison."
+    )
+    .replace(
+      /\bThe fixed search space includes Fixed training settings included learning rate 0\.0002,\s*per-device train batch size 1,\s*gradient accumulation 4,\s*maximum sequence length 256,\s*4 optimizer steps,\s*and 1800-second timeout\.?,\s*reported run details records 48 training examples for the reported pilot\.?,\s*and the LoRA rank\/dropout tuning grid\./giu,
+      "The fixed search space held LoRA rank and dropout as the manipulated factors while keeping learning rate 0.0002, per-device train batch size 1, gradient accumulation 4, maximum sequence length 256, 4 optimizer steps, a 1,800-second timeout, and 48 training examples fixed for the reported pilot."
     );
   if (/^\s*\[(?:warning|error|fail|failed|pass|passed)\]\s*[^:]{0,80}:/iu.test(cleaned)) {
     return "";
@@ -561,7 +585,7 @@ function sanitizeSubmissionSurfaceText(text: string, context: { sectionHeading?:
       return "The experimental design uses a fixed 4x2 LoRA grid over ranks 4, 8, 16, and 32 and dropout values 0.0 and 0.05, with rank 8/dropout 0.0 locked as the baseline. The primary reported score is average accuracy across ARC-Challenge and HellaSwag, with per-task accuracy, runtime, memory, and condition completion retained for interpretation.";
     }
     if (/results/iu.test(heading)) {
-      return "The prespecified baseline-relative accuracy target was met by point estimate: the best observed rank-32/dropout-0.05 cell reached 0.4167 average accuracy versus 0.3333 for the locked baseline. The narrow task sample and broad uncertainty keep this result at screening strength.";
+      return "The prespecified baseline-relative accuracy target was met by point estimate. Table 1 reports the locked baseline and leading rank-32/dropout-0.05 cell; the narrow task sample and broad uncertainty keep this result at screening strength.";
     }
     if (/discussion/iu.test(heading)) {
       return "The observed gain supports a targeted follow-up experiment rather than a general tuning recommendation. A stronger study should repeat the leading cell with more examples, multiple seeds, and complete per-cell uncertainty and resource tables.";
@@ -930,7 +954,11 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
     )
     .replace(
       /\brank 32 dropout 0 05 vs rank 8 dropout 0 0:\s*accuracy_delta_vs_baseline:\s*([0-9.]+)\s+vs\s+0\s*\(delta\s+([0-9.]+)\),\s*average_accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s*\(delta\s+([0-9.]+)\),\s*arc_challenge_accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s*\(delta\s+([^)]+)\),\s*hellaswag_accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s*\(delta\s+([^)]+)\)\./giu,
-      "For the leading rank-32/dropout-0.05 condition, mean accuracy was $3 versus $4 for the locked baseline, a gain of $5. ARC-Challenge was unchanged at $6 versus $7, while HellaSwag increased from $10 to $9."
+      "For the leading rank-32/dropout-0.05 condition, Table 1 reports the condition-level values for the cell and the locked baseline; the baseline-relative mean gain is $5."
+    )
+    .replace(
+      /\bIn the reported best comparison,\s*rank 32 with dropout 0\.05 outperformed the baseline rank 8 with dropout 0\.0 by ([0-9.]+) average accuracy;\s*ARC-Challenge stayed at [0-9.]+ while HellaSwag increased from [0-9.]+ to [0-9.]+\.?/giu,
+      "In the reported best comparison, the rank-32/dropout-0.05 cell is the follow-up candidate. Table 1 gives the task-level values, and the baseline-relative average-accuracy gain is $1."
     )
     .replace(
       /\bAverage accuracy increases from ([0-9.]+) to ([0-9.]+),\s*yielding an absolute improvement of ([0-9.]+)\./giu,
@@ -938,7 +966,7 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
     )
     .replace(
       /\bThe best reported cell is rank 32 with dropout 0\.05,\s*which increases average accuracy from ([0-9.]+) in the locked baseline to ([0-9.]+),\s*for an absolute gain of ([0-9.]+)\./giu,
-      "The best reported cell is rank 32 with dropout 0.05. Its mean accuracy was $2 versus $1 for the locked baseline, with a baseline-relative gain of $3."
+      "The best reported cell is rank 32 with dropout 0.05. Table 1 reports the corresponding mean values for that cell and the locked baseline; the baseline-relative gain is $3."
     )
     .replace(
       /\bThe paper is scoped around\s*-\s*Primary metric:\s*average accuracy across ARC-Challenge and HellaSwag\.\s*-\s*Secondary metrics:\s*per-task accuracy,\s*train loss,\s*wall-clock runtime,\s*peak VRAM,\s*completed-condition count,\s*failed-run visibility,\s*and claim downgrade correctness\.\s*-\s*Meaningful improvement:\s*at least \+1\.0 percentage point average accuracy over the baseline with uncertainty reporting that does not clearly contradict the direction of improvement\.\s*-\s*No-signal boundary:\s*maximum condition spread below \+0\.5 percentage points,\s*or confidence intervals that make the comparison inconclusive\./giu,
@@ -1293,7 +1321,7 @@ function repairResultsSectionReaderFlow(paragraphs: string[]): string[] {
     ) {
       if (!sawSelectionSignal) {
         result.push(
-          "The condition grid should therefore be read as a screening result: rank 32 with dropout 0.05 is the strongest observed cell, but the wide intervals keep it a follow-up candidate rather than a settled prescription."
+          "The condition grid should therefore be read as a screening result: the rank-32/dropout-0.05 cell is the strongest observed cell, but the wide intervals keep it a follow-up candidate rather than a settled prescription."
         );
         sawSelectionSignal = true;
       }
@@ -1431,10 +1459,10 @@ function pruneReaderFacingRedundantParagraphs(headingKey: string, paragraphs: st
 function maxReaderFacingParagraphsForSection(headingKey: string): number | null {
   if (headingKey === "introduction") return 4;
   if (headingKey === "related_work" || headingKey === "related work") return 5;
-  if (headingKey === "method") return 6;
-  if (headingKey === "results") return 6;
-  if (headingKey === "discussion") return 5;
-  if (headingKey === "limitations") return 4;
+  if (headingKey === "method") return 7;
+  if (headingKey === "results") return 8;
+  if (headingKey === "discussion") return 6;
+  if (headingKey === "limitations") return 5;
   if (headingKey === "conclusion") return 3;
   return null;
 }
@@ -1462,10 +1490,13 @@ function readerFacingParagraphTopicKey(headingKey: string, paragraph: string): s
     if (/\breproducibility\b|\brun identifiers\b|\bevent traces\b/.test(text)) return "method:reproducibility";
   }
   if (headingKey === "results") {
-    if (/\bprimary endpoint\b|\baverage accuracy increased\b|\bimprovement threshold\b/.test(text)) return "results:primary";
+    if (/\bprimary endpoint\b|\baverage accuracy increased\b|\bimprovement threshold\b|\bprespecified baseline-relative accuracy target\b|\bobserved gain\b/.test(text)) return "results:primary";
+    if (/\bcondition grid\b|\bscreening result\b|\bscreening comparison\b|\bfollow-up candidate\b/.test(text)) return "results:screening";
+    if (/\bcondition table\b|\btable 1\b|\bcomparison surface\b|\bbaseline label\b/.test(text)) return "results:table";
+    if (/\bleading condition\b|\bbaseline-relative average-accuracy gain\b|\brank-32\/dropout-0\.05\b/.test(text)) return "results:leading";
     if (/\bhellaswag\b/.test(text) && /\barc-challenge\b/.test(text) && /\bunchanged\b/.test(text)) return "results:task_split";
     if (/\btraining loss\b/.test(text)) return "results:train_loss";
-    if (/\bconfidence interval\b|\bwide\b.*\boverlapping\b/.test(text)) return "results:uncertainty";
+    if (/\bconfidence interval\b|\bwide\b.*\boverlapping\b|\binterval\b/.test(text)) return "results:uncertainty";
     if (/\bwall-clock\b|\bpeak cuda memory\b|\bcomputational footprint\b/.test(text)) return "results:resources";
     if (/\brobustness\b|\breplication\b|\bfollow-up\b/.test(text)) return "results:robustness";
   }
@@ -1911,6 +1942,33 @@ function mergeSectionSourceRefs(
     }
   }
   return merged;
+}
+
+function selectRenderedSubmissionParagraphs(
+  heading: string,
+  entries: { text: string; citationPaperIds: string[] }[]
+): { text: string; citationPaperIds: string[] }[] {
+  const headingKey = normalizeHeadingKey(heading);
+  const maxParagraphs = maxReaderFacingParagraphsForSection(headingKey);
+  const selected: { text: string; citationPaperIds: string[] }[] = [];
+  const seenTopics = new Set<string>();
+  for (const entry of entries) {
+    const topicKey = readerFacingParagraphTopicKey(headingKey, entry.text);
+    if (topicKey && seenTopics.has(topicKey)) {
+      continue;
+    }
+    if (selected.some((existing) => areReaderFacingParagraphsRedundant(existing.text, entry.text))) {
+      continue;
+    }
+    if (maxParagraphs && selected.length >= maxParagraphs) {
+      continue;
+    }
+    selected.push(entry);
+    if (topicKey) {
+      seenTopics.add(topicKey);
+    }
+  }
+  return selected;
 }
 
 export function buildFallbackPaperManuscript(input: {
