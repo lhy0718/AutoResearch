@@ -14173,20 +14173,6 @@ export function applyRunnerFeedbackLocalizationGuard(
   }
 
   const publicDir = taskSpec.workspace.public_dir;
-  const runnerFocus = dedupeStrings(defaultFocusFiles)
-    .filter((filePath) => /\.(py|sh|js|mjs|cjs)$/iu.test(filePath))
-    .filter((filePath) => filePath.startsWith(publicDir + path.sep));
-  if (runnerFocus.length === 0) {
-    return localization;
-  }
-
-  const selectedHasRunner = localization.selected_files.some(
-    (filePath) => filePath.startsWith(publicDir + path.sep) && /\.(py|sh|js|mjs|cjs)$/iu.test(filePath)
-  );
-  if (selectedHasRunner) {
-    return localization;
-  }
-
   const feedbackText = [
     feedback.summary,
     feedback.stderr_excerpt,
@@ -14196,6 +14182,20 @@ export function applyRunnerFeedbackLocalizationGuard(
   ]
     .filter((value): value is string => Boolean(value))
     .join("\n");
+  const runnerFocus = prioritizeRunnerFeedbackFocus(
+    dedupeStrings([
+      ...defaultFocusFiles,
+      ...localization.selected_files,
+      ...localization.candidates.map((candidate) => candidate.path)
+    ])
+      .filter((filePath) => /\.(py|sh|js|mjs|cjs)$/iu.test(filePath))
+      .filter((filePath) => filePath.startsWith(publicDir + path.sep)),
+    feedbackText
+  );
+  if (runnerFocus.length === 0) {
+    return localization;
+  }
+
   const isExperimentRuntimeFeedback =
     /\bmetrics?\b|\bobjective metric\b|\bcompleted_condition_count\b|\bcommand failed\b|\btraceback\b/iu.test(feedbackText) ||
     /\.(py|sh)(?:["'\s]|$)/iu.test(feedbackText);
@@ -14232,6 +14232,23 @@ export function applyRunnerFeedbackLocalizationGuard(
     ]),
     confidence: Math.max(localization.confidence || 0, 0.95)
   };
+}
+
+function prioritizeRunnerFeedbackFocus(filePaths: string[], feedbackText: string): string[] {
+  const scored = filePaths.map((filePath, index) => {
+    const basename = path.basename(filePath);
+    let score = 0;
+    if (feedbackText.includes(filePath)) score += 100;
+    if (feedbackText.includes(basename)) score += 80;
+    if (/^run_.*\.(py|js|mjs|cjs|sh)$/iu.test(basename)) score += 30;
+    if (/study|experiment|runner/iu.test(basename)) score += 10;
+    if (basename === "experiment.py") score -= 20;
+    if (basename === "run_command.sh") score -= 10;
+    return { filePath, index, score };
+  });
+  return scored
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map((entry) => entry.filePath);
 }
 
 async function listImplementationScripts(publicDir: string): Promise<string[]> {

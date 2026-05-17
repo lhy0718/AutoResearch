@@ -2197,6 +2197,54 @@ describe("ImplementSessionManager", () => {
     expect(guarded.candidates[0]?.path).toBe(runner);
   });
 
+  it("puts the traceback runner before helper scripts for run_experiments feedback localization", () => {
+    const workspace = "/tmp/autolabos-runner-focus";
+    const publicDir = path.join(workspace, "outputs", "study", "experiment");
+    const helper = path.join(publicDir, "experiment.py");
+    const command = path.join(publicDir, "run_command.sh");
+    const runner = path.join(publicDir, "run_lora_rank_dropout_study.py");
+    const guarded = applyRunnerFeedbackLocalizationGuard(
+      {
+        context: {
+          runner_feedback: {
+            source: "run_experiments",
+            status: "fail",
+            trigger: "auto_handoff",
+            stage: "runtime",
+            summary: `Traceback (most recent call last): File "${runner}", line 4231, in run_locked_lora_rank_dropout_study TypeError: _build_model_load_kwargs() missing 1 required positional argument: 'local_files_only'`,
+            command: `bash ${JSON.stringify(command)}`,
+            suggested_next_action: "Repair the experiment runner traceback.",
+            recorded_at: "2026-05-17T20:49:56.189Z"
+          }
+        },
+        workspace: {
+          public_dir: publicDir
+        }
+      } as never,
+      {
+        summary: "Localized to helper first.",
+        strategy: "search",
+        reasoning: "Matched experiment helper.",
+        selected_files: [helper, command, runner],
+        candidates: [
+          {
+            path: helper,
+            reason: "Matched helper."
+          },
+          {
+            path: runner,
+            reason: "Matched traceback."
+          }
+        ],
+        confidence: 0.7
+      },
+      [helper, command, runner]
+    );
+
+    expect(guarded.selected_files[0]).toBe(runner);
+    expect(guarded.candidates[0]?.path).toBe(runner);
+  });
+
   it("ignores stale runner feedback after design_experiments reruns", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-stale-runner-feedback-"));
     tempDirs.push(workspace);
