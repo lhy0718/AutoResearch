@@ -449,6 +449,7 @@ export function stabilizePaperManuscriptForSubmission(
     abstract: repairSubmissionAbstract(manuscript.abstract),
     keywords: repairPaperKeywords(manuscript.keywords),
     sections,
+    ...(manuscript.tables ? { tables: repairMainTableClaims(manuscript.tables) } : {}),
     ...(figures?.length ? { figures } : {}),
     ...(manuscript.appendix_sections ? { appendix_sections: repairAppendixSections(manuscript.appendix_sections) } : {}),
     ...(manuscript.appendix_tables ? { appendix_tables: repairAppendixTableLabels(manuscript.appendix_tables) } : {})
@@ -474,6 +475,50 @@ function repairReaderVisibleMetricNames(text: string): string {
     .replace(/\baverage\\?_accuracy\b/giu, "average accuracy")
     .replace(/\barc\\?_challenge\\?_accuracy\b/giu, "ARC-Challenge accuracy")
     .replace(/\bhellaswag\\?_accuracy\b/giu, "HellaSwag accuracy");
+}
+
+function repairMainTableClaims(
+  tables: PaperManuscriptTable[] | undefined
+): PaperManuscriptTable[] | undefined {
+  if (!tables) {
+    return tables;
+  }
+  return tables.map((table) => {
+    const rowText = table.rows.map((row) => row.label).join(" ");
+    const exposesAllCells =
+      /\brank\s*4\b/iu.test(rowText) &&
+      /\brank\s*8\b/iu.test(rowText) &&
+      /\brank\s*16\b/iu.test(rowText) &&
+      /\brank\s*32\b/iu.test(rowText);
+    const caption = exposesAllCells
+      ? cleanString(table.caption)
+      : cleanString(table.caption)
+          .replace(
+            /\bExecuted sweep summary and key comparison quantities visible in the condensed record\.?/giu,
+            "Baseline and leading-condition comparison quantities visible in the condensed record."
+          )
+          .replace(
+            /\bMean accuracy is shown for all eight rank\/dropout cells;?\s*/giu,
+            ""
+          )
+          .replace(
+            /\badditional rows report the task-level accuracies,\s*interval bounds,\s*training-loss comparison,\s*and execution totals discussed in the main text where those values are explicitly available\.?/giu,
+            "Rows report task-level accuracies, interval bounds, and training-loss values where those quantities are explicitly available."
+          )
+          .replace(
+            /\bexecuted grid\b/giu,
+            "baseline-to-leading comparison"
+          )
+          .replace(
+            /\bexecution totals\b/giu,
+            "run-level execution notes"
+          );
+    return {
+      ...table,
+      caption: cleanString(caption),
+      rows: table.rows
+    };
+  });
 }
 
 function sanitizeSubmissionSurfaceText(text: string): string {
@@ -893,6 +938,22 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
     .replace(
       /\bThe available summary does not expose a full eight-cell accuracy table\./giu,
       "Table 1 reports all eight condition mean accuracies."
+    )
+    .replace(
+      /\bTable 1 therefore serves as the main numeric summary of the executed grid together with the reported task split,\s*uncertainty bounds,\s*training-loss comparison,\s*and execution totals used in the interpretation\./giu,
+      "Table 1 summarizes the baseline-to-leading comparison quantities visible in the condensed record, while execution coverage and resource totals are described in prose from the run metadata."
+    )
+    .replace(
+      /\bThe table supplies the condition-level view,\s*while the figure emphasizes how the locked baseline and leading observed setting behave across the two evaluation tasks\./giu,
+      "The table supplies the baseline-to-leading comparison view, while the figure emphasizes how the locked baseline and leading observed setting behave across the two evaluation tasks."
+    )
+    .replace(
+      /\bTable 1 exposes the eight condition means\b/giu,
+      "Table 1 exposes the baseline-to-leading comparison quantities visible in the condensed record"
+    )
+    .replace(
+      /\bTable 1 reports condition-level mean accuracies\b/giu,
+      "Table 1 reports the visible baseline-to-leading comparison quantities"
     )
     .replace(
       /\bthe currently exposed record does not provide the adjacent-cell contrasts needed for a formal interaction estimate,\s*such as direct numerical comparisons of rank 32 with and without dropout or rank 8 with and without dropout\b/giu,

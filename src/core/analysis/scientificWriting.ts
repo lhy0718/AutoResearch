@@ -5514,7 +5514,7 @@ export function enforceManuscriptPageBudgetFloor(input: {
     {
       heading: "Results",
       text:
-        "The results are therefore organized around comparable rows instead of around a single headline setting. The table supplies the condition-level view, while the figure emphasizes how the locked baseline and leading observed setting behave across the two evaluation tasks. This separation helps readers distinguish a local signal from a broad tuning rule."
+        "The results are therefore organized around comparable rows instead of around a single headline setting. The table supplies the baseline-to-leading comparison view, while the figure emphasizes how the locked baseline and leading observed setting behave across the two evaluation tasks. This separation helps readers distinguish a local signal from a broad tuning rule."
     },
     {
       heading: "Results",
@@ -6704,6 +6704,10 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
     .replace(
       /\bThe table and figure are therefore used as complementary checks:\s*the table anchors the numeric values,\s*while the figure is retained only when it shows a distinct pattern that is not already obvious from the rows\./giu,
       "The table is used as the numeric anchor for the reported comparison; no separate figure is needed when it would only restate the same values."
+    )
+    .replace(
+      /\bThe table supplies the condition-level view,\s*while the figure emphasizes how the locked baseline and leading observed setting behave across the two evaluation tasks\./giu,
+      "The table supplies the baseline-to-leading comparison view, while the figure emphasizes how the locked baseline and leading observed setting behave across the two evaluation tasks."
     )
     .replace(
       /\bthe figure is retained only when it shows a distinct pattern that is not already obvious from the rows\b/giu,
