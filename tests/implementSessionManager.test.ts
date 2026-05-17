@@ -184,6 +184,7 @@ import {
   repairPythonNamespaceGetNoneDefaultSurface,
   repairPythonRankDropoutMarkerParserCollisionSurface,
   repairPythonImportedHelperRunnerResolverSurface,
+  applyRunnerFeedbackLocalizationGuard,
   repairPythonStudyInvokeContractKwargSurface,
   repairPythonEntrypointStudyResultKwargAliasSurface,
   repairPythonNestedRunRecordsProjectionSurface,
@@ -2148,6 +2149,52 @@ describe("ImplementSessionManager", () => {
         String(event.payload.text || "").includes("Loaded runner feedback from run_experiments")
       )
     ).toBe(true);
+  });
+
+  it("prioritizes public runner scripts over paper artifacts for run_experiments feedback localization", () => {
+    const workspace = "/tmp/autolabos-localization-guard";
+    const publicDir = path.join(workspace, "outputs", "study", "experiment");
+    const paperEvidence = path.join(workspace, "outputs", "study", "paper", "evidence_links.json");
+    const runner = path.join(publicDir, "run_lora_rank_dropout_study.py");
+    const guarded = applyRunnerFeedbackLocalizationGuard(
+      {
+        context: {
+          runner_feedback: {
+            source: "run_experiments",
+            status: "fail",
+            trigger: "auto_handoff",
+            stage: "metrics",
+            summary: 'Experiment metrics contract failed: Objective metric "accuracy_delta_vs_baseline" was not found in metrics.json.',
+            command: `python3 ${JSON.stringify(runner)} --metrics-path ${JSON.stringify(path.join(workspace, ".autolabos", "runs", "r1", "metrics.json"))}`,
+            suggested_next_action:
+              "Repair the experiment implementation so completed metrics include the configured objective metric.",
+            recorded_at: "2026-05-17T18:24:48.670Z"
+          }
+        },
+        workspace: {
+          public_dir: publicDir
+        }
+      } as never,
+      {
+        summary: "Localized to paper evidence.",
+        strategy: "search",
+        reasoning: "Matched evidence_links.",
+        selected_files: [paperEvidence],
+        candidates: [
+          {
+            path: paperEvidence,
+            reason: "Matched evidence links."
+          }
+        ],
+        confidence: 0.6
+      },
+      [runner, path.join(publicDir, "experiment.py")]
+    );
+
+    expect(guarded.selected_files[0]).toBe(runner);
+    expect(guarded.selected_files).not.toContain(paperEvidence);
+    expect(guarded.summary).toContain("runner");
+    expect(guarded.candidates[0]?.path).toBe(runner);
   });
 
   it("ignores stale runner feedback after design_experiments reruns", async () => {

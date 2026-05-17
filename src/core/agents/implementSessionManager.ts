@@ -643,8 +643,14 @@ export class ImplementSessionManager {
 
       const attemptStartedAt = new Date().toISOString();
       const branchContextFiles = dedupeStrings([...changedFiles, ...historicalChangedFiles]);
-      const searchLocalization = await this.localizer.localize(
+      const rawSearchLocalization = await this.localizer.localize(
         this.buildLocalizerInput(taskSpec, attemptRecords.at(-1), branchContextFiles)
+      );
+      const defaultFocusFiles = await buildDefaultImplementFocusFiles(taskSpec);
+      const searchLocalization = applyRunnerFeedbackLocalizationGuard(
+        taskSpec,
+        rawSearchLocalization,
+        defaultFocusFiles
       );
       latestSearchLocalization = searchLocalization;
       await writeJsonFile(path.join(runDir, "localization_search_result.json"), latestSearchLocalization || {});
@@ -652,7 +658,7 @@ export class ImplementSessionManager {
         searchLocalization,
         attemptRecords,
         branchContextFiles,
-        await buildDefaultImplementFocusFiles(taskSpec)
+        defaultFocusFiles
       );
       const isolation = await createAttemptIsolationContext({
         config: this.deps.config,
@@ -14154,6 +14160,78 @@ async function buildDefaultImplementFocusFiles(taskSpec: ImplementTaskSpec): Pro
     path.join(taskSpec.workspace.public_dir, "experiment.py"),
     path.join(taskSpec.workspace.run_dir, "experiment_plan.yaml")
   ]);
+}
+
+export function applyRunnerFeedbackLocalizationGuard(
+  taskSpec: ImplementTaskSpec,
+  localization: LocalizationResult,
+  defaultFocusFiles: string[]
+): LocalizationResult {
+  const feedback = taskSpec.context.runner_feedback;
+  if (!feedback || feedback.source !== "run_experiments") {
+    return localization;
+  }
+
+  const publicDir = taskSpec.workspace.public_dir;
+  const runnerFocus = dedupeStrings(defaultFocusFiles)
+    .filter((filePath) => /\.(py|sh|js|mjs|cjs)$/iu.test(filePath))
+    .filter((filePath) => filePath.startsWith(publicDir + path.sep));
+  if (runnerFocus.length === 0) {
+    return localization;
+  }
+
+  const selectedHasRunner = localization.selected_files.some(
+    (filePath) => filePath.startsWith(publicDir + path.sep) && /\.(py|sh|js|mjs|cjs)$/iu.test(filePath)
+  );
+  if (selectedHasRunner) {
+    return localization;
+  }
+
+  const feedbackText = [
+    feedback.summary,
+    feedback.stderr_excerpt,
+    feedback.stdout_excerpt,
+    feedback.command,
+    feedback.suggested_next_action
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join("\n");
+  const isExperimentRuntimeFeedback =
+    /\bmetrics?\b|\bobjective metric\b|\bcompleted_condition_count\b|\bcommand failed\b|\btraceback\b/iu.test(feedbackText) ||
+    /\.(py|sh)(?:["'\s]|$)/iu.test(feedbackText);
+  if (!isExperimentRuntimeFeedback) {
+    return localization;
+  }
+
+  const selectedFiles = dedupeStrings([
+    ...runnerFocus,
+    ...localization.selected_files.filter((filePath) => !filePath.includes(`${path.sep}paper${path.sep}`))
+  ]).slice(0, 6);
+  const runnerCandidates: LocalizationCandidate[] = runnerFocus.map((filePath) => ({
+    path: filePath,
+    reason: "run_experiments feedback targets the runnable experiment command/metrics contract.",
+    confidence: 0.95
+  }));
+
+  return {
+    ...localization,
+    summary: "Localized runner feedback to the public experiment runner.",
+    strategy: dedupeStrings(["runner_feedback_guard", localization.strategy || ""])
+      .filter(Boolean)
+      .join("+"),
+    reasoning: [
+      "run_experiments feedback should repair the runnable experiment script before paper artifacts.",
+      localization.reasoning
+    ]
+      .filter(Boolean)
+      .join(" | "),
+    selected_files: selectedFiles,
+    candidates: mergeLocalizationCandidates([
+      ...runnerCandidates,
+      ...localization.candidates.filter((candidate) => !candidate.path.includes(`${path.sep}paper${path.sep}`))
+    ]),
+    confidence: Math.max(localization.confidence || 0, 0.95)
+  };
 }
 
 async function listImplementationScripts(publicDir: string): Promise<string[]> {
