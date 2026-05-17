@@ -786,6 +786,7 @@ describe("scientificWriting", () => {
     expect(restoredText).not.toContain("hellaswag_accuracy");
     expect(restoredText).not.toContain("P6");
     expect(restoredText).not.toMatch(/review gating|paper-readiness audit|result-table integrity/i);
+    expect(restoredText).not.toMatch(/bounded claim ceiling|claim downgrade correctness/i);
   });
 
   it("refreshes page-budget validation from the repaired manuscript before strict gating", () => {

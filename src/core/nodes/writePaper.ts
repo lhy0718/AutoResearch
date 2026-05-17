@@ -862,9 +862,19 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       if (finalFloor.applied) {
         manuscript = finalFloor.manuscript;
         manuscript = compactReaderFacingRepairedManuscript(manuscript);
+        const postCleanupFloor = enforceManuscriptPageBudgetFloor({
+          manuscript,
+          draft: paperDraft,
+          pageBudget: scientificDraft.page_budget
+        });
+        if (postCleanupFloor.applied) {
+          manuscript = postCleanupFloor.manuscript;
+        }
         emitLog(
           `Restored ${finalFloor.added_paragraph_count} final manuscript paragraph(s) after render cleanup compressed the main body ` +
-          `from ${finalFloor.estimated_main_words_before} to ${finalFloor.estimated_main_words_after} words ` +
+          `from ${finalFloor.estimated_main_words_before} to ${
+            postCleanupFloor.applied ? postCleanupFloor.estimated_main_words_after : finalFloor.estimated_main_words_after
+          } words ` +
           `(minimum ${finalFloor.minimum_main_words}).`
         );
         finalScientificValidationArtifact = refreshScientificValidationForManuscript({
@@ -2844,6 +2854,7 @@ function compactReaderFacingRepairedManuscript(manuscript: PaperManuscript): Pap
     ...manuscript,
     title: softenFinalLmBenchmarkPilotTitle(manuscript.title),
     abstract: sanitizePaperNarrativeText(manuscript.abstract),
+    keywords: sanitizeFinalPaperKeywords(manuscript.keywords),
     sections: manuscript.sections.map((section) => ({
       ...section,
       paragraphs: dedupeNarrativeParagraphs(
@@ -2871,6 +2882,29 @@ function compactReaderFacingRepairedManuscript(manuscript: PaperManuscript): Pap
       ? { appendix_tables: dedupeRepairTables(manuscript.appendix_tables) }
       : {})
   };
+}
+
+function sanitizeFinalPaperKeywords(keywords: string[] | undefined): string[] {
+  const compact: string[] = [];
+  const seen = new Set<string>();
+  for (const keyword of keywords || []) {
+    const cleaned = sanitizePaperNarrativeText(keyword)
+      .replace(/\s+/gu, " ")
+      .trim();
+    if (!cleaned || cleaned.length > 80 || /[.!?]/u.test(cleaned)) {
+      continue;
+    }
+    const key = cleaned.toLocaleLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    compact.push(cleaned);
+    if (compact.length >= 6) {
+      break;
+    }
+  }
+  return compact;
 }
 
 function softenFinalLmBenchmarkPilotTitle(title: string): string {
@@ -2978,6 +3012,12 @@ function removeConflictingBackboneAssertion(heading: string, paragraph: string):
 
 function repairFinalClaimCeilingAndInternalLanguage(heading: string, paragraph: string): string {
   let repaired = paragraph
+    .replace(/\bbounded claim ceiling\b/giu, "bounded interpretation")
+    .replace(/\bclaim downgrade correctness\b/giu, "claim-scope correctness")
+    .replace(/\bclaim-downgrade\b/giu, "claim-scope adjustment")
+    .replace(/\breview gating\b/giu, "review checks")
+    .replace(/\bpaper-readiness audit\b/giu, "paper-scale review")
+    .replace(/\bresult-table integrity\b/giu, "result-table consistency")
     .replace(/\bwriting-context summary\b/giu, "available reporting summary")
     .replace(/\bwriting-context record\b/giu, "available reporting record")
     .replace(/\bwriting-context\b/giu, "available reporting")

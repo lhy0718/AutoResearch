@@ -2677,12 +2677,18 @@ export function sanitizePaperNarrativeText(value: unknown): string {
     .replace(/\bStudy\s+how\b/gu, "how")
     .replace(
       /\bThe (?:first\s+P6|local preflight) run uses a cached(?:,\s*locally runnable small LLM)? target so the validation focuses on real training,\s*result-table integrity,\s*review gating,\s*and paper-readiness audit rather than on new model access\./giu,
-      "The study is framed as a local small-model preflight so that the evidence rests on executed training runs and a bounded claim ceiling rather than on access to a larger target model."
+      "The study is framed as a local small-model preflight so that the evidence rests on executed training runs and a bounded interpretation rather than on access to a larger target model."
     )
     .replace(
       /\bThe (?:first\s+P6|local preflight) run uses a cached,\s*locally runnable small LLM target so the validation focuses on real training,\s*result-table integrity,\s*review gating,\s*and paper-readiness audit rather than on new model access\./giu,
-      "The study is framed as a local small-model preflight so that the evidence rests on executed training runs and a bounded claim ceiling rather than on access to a larger target model."
+      "The study is framed as a local small-model preflight so that the evidence rests on executed training runs and a bounded interpretation rather than on access to a larger target model."
     )
+    .replace(/\bbounded claim ceiling\b/giu, "bounded interpretation")
+    .replace(/\bclaim downgrade correctness\b/giu, "claim-scope correctness")
+    .replace(/\bclaim-downgrade\b/giu, "claim-scope adjustment")
+    .replace(/\breview gating\b/giu, "review checks")
+    .replace(/\bpaper-readiness audit\b/giu, "paper-scale review")
+    .replace(/\bresult-table integrity\b/giu, "result-table consistency")
     .replace(/\b(?:first\s+)?(?:full\s+)?P6\s+run\b/giu, "local preflight run")
     .replace(/\bP6\b/gu, "preflight")
     .replace(/`([^`]+)`/gu, "$1")
