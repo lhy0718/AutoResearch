@@ -5130,6 +5130,8 @@ describe("writePaper PDF build", () => {
     const figureRenderer = await readFile(path.join(runDir, "paper", "figures", "render_paper_figures.py"), "utf8");
     expect(figureRenderer).toContain("matplotlib");
     expect(figureRenderer).toContain("Task-level accuracy");
+    expect(figureRenderer).toContain("Accuracy across rank/dropout grid");
+    expect(figureRenderer).not.toContain("return figure[\"output_pdf\"]");
     expect(await exists(path.join(buildPublicPaperDir(root, run), "figures", "main-result-figure-1.pdf"))).toBe(true);
     expect(await exists(staleRunFigure)).toBe(false);
     expect(await exists(stalePublicFigure)).toBe(false);

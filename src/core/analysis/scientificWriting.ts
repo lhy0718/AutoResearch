@@ -895,7 +895,19 @@ export function conditionResultTableBuilder(context: ExperimentArtifactContext):
     .slice(0, 8)
     .map((item) => ({
       label: buildConditionTableLabel(item),
-      value: item.average_accuracy_mean as number
+      value: item.average_accuracy_mean as number,
+      ...(typeof item.lora_rank === "number" ? { lora_rank: item.lora_rank } : {}),
+      ...(typeof item.lora_dropout === "number" ? { lora_dropout: item.lora_dropout } : {}),
+      ...(typeof item.average_accuracy_mean === "number" ? { average_accuracy: item.average_accuracy_mean } : {}),
+      ...(typeof item.accuracy_delta_vs_baseline_mean === "number"
+        ? { accuracy_delta_vs_baseline: item.accuracy_delta_vs_baseline_mean }
+        : {}),
+      ...(typeof item.arc_challenge_accuracy === "number" ? { arc_challenge_accuracy: item.arc_challenge_accuracy } : {}),
+      ...(typeof item.hellaswag_accuracy === "number" ? { hellaswag_accuracy: item.hellaswag_accuracy } : {}),
+      ...(typeof item.train_loss === "number" ? { train_loss: item.train_loss } : {}),
+      ...(typeof item.runtime_seconds === "number" ? { runtime_seconds: item.runtime_seconds } : {}),
+      ...(typeof item.peak_memory_mb === "number" ? { peak_memory_mb: item.peak_memory_mb } : {}),
+      ...(item.is_baseline ? { is_baseline: true } : {})
     }));
 
   if (rows.length < 2) {
@@ -942,6 +954,28 @@ export function figureSelectorAndCaptionWriter(context: ExperimentArtifactContex
 }
 
 export function conditionFigureSelectorAndCaptionWriter(context: ExperimentArtifactContext): PaperManuscriptFigure[] {
+  const accuracySurfaceBars = context.results.condition_summaries
+    .filter((item) => typeof item.average_accuracy_mean === "number")
+    .slice(0, 8)
+    .map((item) => ({
+      label: buildConditionTableLabel(item),
+      value: item.average_accuracy_mean as number,
+      ...(typeof item.lora_rank === "number" ? { lora_rank: item.lora_rank } : {}),
+      ...(typeof item.lora_dropout === "number" ? { lora_dropout: item.lora_dropout } : {}),
+      ...(typeof item.accuracy_delta_vs_baseline_mean === "number"
+        ? { accuracy_delta_vs_baseline: item.accuracy_delta_vs_baseline_mean }
+        : {}),
+      ...(item.is_baseline ? { is_baseline: true } : {})
+    }));
+  if (accuracySurfaceBars.length >= 4 && conditionGridRowsShowPaperFigureValue(accuracySurfaceBars)) {
+    return [
+      {
+        caption: "Condition-level average accuracy across the executed LoRA rank/dropout grid; lines separate dropout settings and mark the locked baseline.",
+        bars: accuracySurfaceBars
+      }
+    ];
+  }
+
   const bars = context.results.condition_summaries
     .filter((item) => typeof item.accuracy_delta_vs_baseline_mean === "number")
     .slice(0, 8)
@@ -1023,6 +1057,30 @@ function barsShowDistinctPattern(bars: Array<{ label: string; value: number }>):
   const zeroCount = bars.filter((bar) => Math.abs(bar.value) < 0.0005).length;
   const nonZeroCount = bars.length - zeroCount;
   return bars.length >= 3 && zeroCount > 0 && nonZeroCount > 0;
+}
+
+function conditionGridRowsShowPaperFigureValue(
+  bars: Array<{ label: string; value: number; lora_rank?: number; lora_dropout?: number }>
+): boolean {
+  const ranks = new Set<number>();
+  const dropouts = new Set<number>();
+  const values = new Set<number>();
+  for (const bar of bars) {
+    const rank = typeof bar.lora_rank === "number"
+      ? bar.lora_rank
+      : Number(bar.label.match(/\brank\s*([0-9]+)/iu)?.[1]);
+    const dropout = typeof bar.lora_dropout === "number"
+      ? bar.lora_dropout
+      : Number(bar.label.match(/\bdropout\s*([0-9]+(?:\.[0-9]+)?)/iu)?.[1]);
+    if (Number.isFinite(rank)) {
+      ranks.add(rank);
+    }
+    if (Number.isFinite(dropout)) {
+      dropouts.add(dropout);
+    }
+    values.add(Math.round(bar.value * 1000) / 1000);
+  }
+  return ranks.size >= 2 && dropouts.size >= 2 && values.size >= 2;
 }
 
 function hasInternalCaptionToken(caption: string): boolean {

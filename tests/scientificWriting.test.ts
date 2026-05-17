@@ -1796,11 +1796,12 @@ describe("scientificWriting", () => {
     expect(rowLabels).not.toMatch(/HellaSwag 0\.3333/i);
     expect((rowLabels.match(/baseline/g) || [])).toHaveLength(1);
     expect(result.manuscript.tables?.[0]?.rows.map((row) => row.value)).toContain(0.416666);
-    expect(result.manuscript.figures?.[0]?.caption).toMatch(/Task-level delta split/i);
+    expect(result.manuscript.figures?.[0]?.caption).toMatch(/Condition-level average accuracy/i);
     const figureLabels = result.manuscript.figures?.[0]?.bars.map((row) => row.label).join(" ") || "";
-    expect(figureLabels).toMatch(/ARC-Challenge task accuracy delta/i);
-    expect(figureLabels).toMatch(/HellaSwag task accuracy delta/i);
-    expect(result.manuscript.figures?.[0]?.bars.map((row) => row.value)).toEqual([0, 0.166666]);
+    expect(figureLabels).toMatch(/rank 8 \/ dropout 0.*baseline/i);
+    expect(figureLabels).toMatch(/rank 32 \/ dropout 0\.05/i);
+    expect(result.manuscript.figures?.[0]?.bars).toHaveLength(8);
+    expect(result.manuscript.figures?.[0]?.bars.map((row) => row.value)).toContain(0.416666);
   });
 
   it("does not compare baseline and best-cell accuracies as contradictory table facts", () => {

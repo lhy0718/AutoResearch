@@ -103,6 +103,51 @@ describe("paper submission sanitization", () => {
     expect(tex).not.toContain(". under an explicitly");
   });
 
+  it("removes process residue from final rendered TeX paragraphs", () => {
+    const tex = renderSubmissionPaperTex({
+      manuscript: {
+        title: "Reader Surface Guard",
+        abstract: "A concise abstract.",
+        keywords: [],
+        sections: [
+          {
+            heading: "Introduction",
+            paragraphs: [
+              "This draft studies how LoRA rank and dropout interact during parameter-efficient instruction tuning under a fixed local compute budget.",
+              "This study addresses Study how LoRA rank and dropout interact. The paper is scoped around - Primary metric: average accuracy across ARC-Challenge and HellaSwag. - Secondary metrics: per-task accuracy, failed-run visibility, and claim-scope correctness.",
+              "This study addresses Study how LoRA rank and dropout interact. The paper is scoped around - Primary metric: average accuracy across ARC-Challenge and HellaSwag. - Secondary metrics: per-task accuracy, failed-run visibility, and claim-scope correctness."
+            ]
+          },
+          {
+            heading: "Related Work",
+            paragraphs: [
+              "Prior work in this area spans prompting and control, literature discovery and retrieval, and stateful coordination.",
+              "The closest prior studies emphasize not established from abstract-only fallback evidence and planner-timeout fallback evidence."
+            ]
+          }
+        ],
+        tables: [],
+        figures: []
+      },
+      traceability: { paragraphs: [] },
+      citationKeysByPaperId: new Map(),
+      includeKeywords: false
+    });
+
+    expect(tex).toContain("This paper studies how LoRA rank and dropout interact under a fixed local instruction-tuning budget");
+    expect(tex).toContain("The contribution is a cautious LoRA rank/dropout preflight");
+    expect(tex.match(/The contribution is a cautious LoRA rank\/dropout preflight/gu)).toHaveLength(1);
+    expect(tex).toContain("Nearby PEFT, LoRA, and instruction-tuning studies provide context");
+    expect(tex).not.toContain("This draft studies");
+    expect(tex).not.toContain("Primary metric:");
+    expect(tex).not.toContain("failed-run visibility");
+    expect(tex).not.toContain("claim-scope correctness");
+    expect(tex).not.toContain("literature discovery");
+    expect(tex).not.toContain("stateful coordination");
+    expect(tex).not.toContain("abstract-only fallback");
+    expect(tex).not.toContain("planner-timeout");
+  });
+
   it("preserves ACL template surface while using Python-rendered figure assets and omitting non-template keywords", () => {
     const manuscript = {
       title: "Template-faithful paper",
@@ -149,6 +194,75 @@ describe("paper submission sanitization", () => {
     expect(tex).not.toContain("\\textbf{Keywords:}");
     expect(tex).toContain("\\includegraphics[width=\\columnwidth]{figures/main-result-figure-1.pdf}");
     expect(tex).not.toContain("\\makebox[4.2em][l]");
+  });
+
+  it("renders structured condition tables with paper-style experiment columns", () => {
+    const tex = renderSubmissionPaperTex({
+      manuscript: {
+        title: "Condition Grid Paper",
+        abstract: "A concise abstract.",
+        keywords: [],
+        sections: [{ heading: "Results", paragraphs: ["Table 1 reports the executed grid."] }],
+        tables: [
+          {
+            caption: "Condition-level mean accuracy across the executed rank/dropout grid.",
+            rows: [
+              {
+                label: "rank 8 / dropout 0 (baseline)",
+                value: 0.333334,
+                lora_rank: 8,
+                lora_dropout: 0,
+                average_accuracy: 0.333334,
+                accuracy_delta_vs_baseline: 0,
+                arc_challenge_accuracy: 0.5,
+                hellaswag_accuracy: 0.166667,
+                is_baseline: true
+              },
+              {
+                label: "rank 4 / dropout 0",
+                value: 0.333334,
+                lora_rank: 4,
+                lora_dropout: 0,
+                average_accuracy: 0.333334,
+                accuracy_delta_vs_baseline: 0,
+                arc_challenge_accuracy: 0.5,
+                hellaswag_accuracy: 0.166667
+              },
+              {
+                label: "rank 16 / dropout 0.05",
+                value: 0.333334,
+                lora_rank: 16,
+                lora_dropout: 0.05,
+                average_accuracy: 0.333334,
+                accuracy_delta_vs_baseline: 0,
+                arc_challenge_accuracy: 0.5,
+                hellaswag_accuracy: 0.166667
+              },
+              {
+                label: "rank 32 / dropout 0.05",
+                value: 0.416666,
+                lora_rank: 32,
+                lora_dropout: 0.05,
+                average_accuracy: 0.416666,
+                accuracy_delta_vs_baseline: 0.083332,
+                arc_challenge_accuracy: 0.5,
+                hellaswag_accuracy: 0.333333
+              }
+            ]
+          }
+        ],
+        figures: []
+      },
+      traceability: { paragraphs: [] },
+      citationKeysByPaperId: new Map(),
+      includeKeywords: false
+    });
+
+    expect(tex).toContain("\\begin{table*}[t]");
+    expect(tex).toContain("Condition & Rank & Dropout & Avg. acc. & $\\Delta$ avg. & ARC-C & HellaSwag");
+    expect(tex).toContain("Locked baseline & 8 & 0 & 0.3333 & 0 & 0.5 & 0.1667");
+    expect(tex).toContain("rank 32 / dropout 0.05 & 32 & 0.05 & 0.4167 & +0.0833 & 0.5 & 0.3333");
+    expect(tex).not.toContain("Metric & Value");
   });
 
   it("omits keywords by default when rendering through an explicit LaTeX template", () => {

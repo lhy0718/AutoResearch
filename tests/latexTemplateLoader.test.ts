@@ -142,7 +142,7 @@ describe("latexTemplateLoader", () => {
     const policy = deriveLatexTemplatePolicy(parsed);
 
     expect(policy.appendixFormat).toBe("double_column");
-    expect(policy.estimatedWordsPerPage).toBe(930);
+    expect(policy.estimatedWordsPerPage).toBe(520);
   });
 
   it("throws when the template file does not exist", async () => {

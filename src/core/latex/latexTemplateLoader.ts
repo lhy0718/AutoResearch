@@ -198,7 +198,7 @@ export function deriveLatexTemplatePolicy(parsedTemplate: ParsedLatexTemplate | 
       parsedTemplate.columnLayout === 1
         ? 700
         : usesAclPackage
-          ? 930
+          ? 520
         : inferredTwoColumnDefault
           ? 650
           : null
