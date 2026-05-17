@@ -552,9 +552,13 @@ function estimateEvidenceAdjustment(evidence: EvidenceRow): number {
 
 function evaluateFallbackHypothesisQualityBlock(
   hypotheses: Array<{
+    text?: string;
     generator_kind?: string;
+    testability?: number;
     evidence_quality_adjustment?: number;
     evidence_quality_notes?: string[];
+    measurement_hint?: string;
+    measurement_readiness?: number;
     paper_titles?: string[];
   }>
 ): string | undefined {
@@ -564,6 +568,24 @@ function evaluateFallbackHypothesisQualityBlock(
 
   if (!hypotheses.every((hypothesis) => hypothesis.generator_kind === "fallback")) {
     return undefined;
+  }
+
+  const allLackOperationalContract = hypotheses.every((hypothesis) => {
+    const text = (hypothesis.text || "").toLowerCase();
+    const declaresMissingDataset =
+      /dataset=(not specified|not yet structured)/.test(text) ||
+      /abstract-only fallback/.test(text) ||
+      /(structured extraction|full-text extraction|extraction review) did not complete/.test(text);
+    const declaresMissingMetric =
+      /metric=(not specified|not yet structured)/.test(text) ||
+      /abstract-only fallback/.test(text) ||
+      /(structured extraction|full-text extraction|extraction review) did not complete/.test(text);
+    const hasMeasurementHint = Boolean(hypothesis.measurement_hint?.trim());
+    const measurementReady = (hypothesis.measurement_readiness ?? 0) >= 3 || hasMeasurementHint;
+    return !measurementReady && declaresMissingDataset && declaresMissingMetric;
+  });
+  if (allLackOperationalContract) {
+    return "Hypothesis generation blocked: selected deterministic fallback hypotheses lack an operational dataset/metric/testability contract. Strengthen analyze_papers or rerun hypothesis generation before designing experiments.";
   }
 
   const supportingPapers = new Set(

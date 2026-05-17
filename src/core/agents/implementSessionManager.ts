@@ -79,8 +79,8 @@ export class ImplementSessionStopError extends Error {
 
 const IMPLEMENT_DELTA_PROGRESS_MIN_CHARS = 4_000;
 const IMPLEMENT_DELTA_PROGRESS_MIN_MS = 5_000;
-const IMPLEMENT_STAGED_LLM_TRANSIENT_RETRY_MAX_ATTEMPTS = 5;
-const IMPLEMENT_STAGED_LLM_TRANSIENT_RETRY_DELAY_MS = 1_000;
+const IMPLEMENT_STAGED_LLM_TRANSIENT_RETRY_MAX_ATTEMPTS = 12;
+const IMPLEMENT_STAGED_LLM_TRANSIENT_RETRY_DELAY_MS = 5_000;
 
 interface ImplementSessionDeps {
   config: AppConfig;
@@ -302,6 +302,7 @@ interface PlannedConditionContract {
   required_run_count?: number;
   seed_schedule?: number[];
   minimum_seeds_per_condition?: number;
+  baseline_condition_marker?: string;
   tuned_only: boolean;
   required_condition_markers: string[];
   primary_metric_key?: string;
@@ -1076,6 +1077,7 @@ export class ImplementSessionManager {
       const comparisonContract = await loadExperimentComparisonContract(run, runContext);
       const designImplementationValidation = await validateDesignImplementationAlignment({
         comparisonContract,
+        plannedConditionContract: promptTaskSpec.context.planned_condition_contract,
         attempt: {
           runCommand: prepared.runCommand,
           testCommand: prepared.testCommand,
@@ -6093,6 +6095,51 @@ export class ImplementSessionManager {
       }
     }
 
+    const runtimePathPrepareCallableRepair =
+      await repairPythonRuntimePathPrepareCallableSurface(executionScriptPath);
+    if (runtimePathPrepareCallableRepair.repaired) {
+      onProgress?.(
+        runtimePathPrepareCallableRepair.message ||
+          "Guarded runtime path preparation dispatch before handoff.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            runtimePathPrepareCallableRepair.message ||
+            "Guarded runtime path preparation dispatch before handoff."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
     const runtimePathsMappingRepair =
       await repairPythonRuntimePathsMappingRecordSurface(executionScriptPath);
     if (runtimePathsMappingRepair.repaired) {
@@ -8648,6 +8695,16 @@ export class ImplementSessionManager {
       await repairPythonConfigInstanceDataclassFieldAliasSurface(executionScriptPath);
     const studyRuntimeHelperAliasRepair =
       await repairPythonStudyRuntimeHelperAliasSurface(executionScriptPath);
+    const studyCallModelSelectionKwargRepair =
+      await repairPythonStudyCallModelSelectionKwargSurface(executionScriptPath);
+    const modelSelectionPlanScalarFallbackRepair =
+      await repairPythonModelSelectionPlanScalarFallbackSurface(executionScriptPath);
+    const allowModelDownloadDefaultRepair =
+      await repairPythonAllowModelDownloadDefaultSurface(executionScriptPath);
+    const callContextInvokerBridgeRepair =
+      await repairPythonCallContextInvokerBridgeSurface(executionScriptPath);
+    const studyConditionRuntimeInputRepair =
+      await repairPythonStudyConditionRuntimeInputMaterializationSurface(executionScriptPath);
     const trainLossHelperArityRepair =
       await repairPythonTrainLossHelperAritySurface(executionScriptPath);
     const conditionSuccessStatusAliasRepair =
@@ -8742,6 +8799,30 @@ export class ImplementSessionManager {
       await repairPythonRunContextHelperFallbackSurface(executionScriptPath);
     const mainStudyRunnerDeviceBridgeRepair =
       await repairPythonMainStudyRunnerDeviceBridgeSurface(executionScriptPath);
+    const rankDropoutStudyCallableBridgeRepair =
+      await repairPythonRankDropoutStudyCallableBridgeSurface(executionScriptPath);
+    const lockedSweepExecutorResolverRepair =
+      await repairPythonLockedSweepExecutorResolverSurface(executionScriptPath);
+    const rankDropoutSweepControllerResolverRepair =
+      await repairPythonRankDropoutSweepControllerResolverSurface(executionScriptPath);
+    const lockedSweepPerRunExecutorBridgeRepair =
+      await repairPythonLockedSweepPerRunExecutorBridgeSurface(executionScriptPath);
+    const sweepCallableClassResolverRepair =
+      await repairPythonSweepCallableClassResolverSurface(executionScriptPath);
+    const scheduleExecutorArgumentBridgeRepair =
+      await repairPythonScheduleExecutorArgumentBridgeSurface(executionScriptPath);
+    const lockedStudyRunsEntrypointAliasRepair =
+      await repairPythonLockedStudyRunsEntrypointAliasSurface(executionScriptPath);
+    const baselineFirstSweepEntrypointAliasRepair =
+      await repairPythonBaselineFirstSweepEntrypointAliasSurface(executionScriptPath);
+    const lockedSweepPlanBuilderAliasRepair =
+      await repairPythonLockedSweepPlanBuilderAliasSurface(executionScriptPath);
+    const baselineFirstLockedSweepStudyRunnerAliasRepair =
+      await repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurface(executionScriptPath);
+    const fallbackBoundedFinetuningConditionRunnerRepair =
+      await repairPythonFallbackBoundedFinetuningConditionRunnerSurface(executionScriptPath);
+    const orchestrationTrainEvalConditionBridgeRepair =
+      await repairPythonOrchestrationTrainEvalConditionBridgeSurface(executionScriptPath);
     const lockedConditionSingleRunnerBridgeRepair =
       await repairPythonLockedConditionSingleRunnerBridgeSurface(executionScriptPath);
     const multipleChoiceDataclassChoiceAliasRepair =
@@ -8758,6 +8839,8 @@ export class ImplementSessionManager {
       await repairPythonConditionExecutorDeadlineArgumentSurface(executionScriptPath);
     const highLevelConditionSweepDispatchRepair =
       await repairPythonHighLevelConditionSweepDispatchSurface(executionScriptPath);
+    const orderedConditionCollectorRuntimeInputsRepair =
+      await repairPythonOrderedConditionCollectorRuntimeInputsSurface(executionScriptPath);
     const coerceIntDefaultArgumentRepair =
       await repairPythonCoerceIntDefaultArgumentSurface(executionScriptPath);
     const resolveDeviceNameArityRepair =
@@ -8798,6 +8881,14 @@ export class ImplementSessionManager {
       await repairPythonStudyInvokeContractKwargSurface(executionScriptPath);
     const lockedSweepRuntimeKwargBridgeRepair =
       await repairPythonLockedSweepRuntimeKwargBridgeSurface(executionScriptPath);
+    const entrypointStudyResultKwargAliasRepair =
+      await repairPythonEntrypointStudyResultKwargAliasSurface(executionScriptPath);
+    const nestedRunRecordsProjectionRepair =
+      await repairPythonNestedRunRecordsProjectionSurface(executionScriptPath);
+    const aggregateNestedRawResultRowsRepair =
+      await repairPythonAggregateNestedRawResultRowsSurface(executionScriptPath);
+    const singleRunExecutorSignatureDispatchRepair =
+      await repairPythonSingleRunExecutorSignatureDispatchSurface(executionScriptPath);
     const lateHandoffRepairs = [
       autolabosMetricsWriterRepair,
       entrypointMetricsWriterCallOrderRepair,
@@ -8815,6 +8906,11 @@ export class ImplementSessionManager {
       conditionConfigRequiredFieldAliasRepair,
       configInstanceDataclassFieldAliasRepair,
       studyRuntimeHelperAliasRepair,
+      studyCallModelSelectionKwargRepair,
+      modelSelectionPlanScalarFallbackRepair,
+      allowModelDownloadDefaultRepair,
+      callContextInvokerBridgeRepair,
+      studyConditionRuntimeInputRepair,
       trainLossHelperArityRepair,
       conditionSuccessStatusAliasRepair,
       terminalMetricsExistingConditionCountRepair,
@@ -8862,6 +8958,18 @@ export class ImplementSessionManager {
         mainCallableResolverSpecificityRepair,
         runContextHelperFallbackRepair,
         mainStudyRunnerDeviceBridgeRepair,
+        rankDropoutStudyCallableBridgeRepair,
+        lockedSweepExecutorResolverRepair,
+        rankDropoutSweepControllerResolverRepair,
+        lockedSweepPerRunExecutorBridgeRepair,
+        sweepCallableClassResolverRepair,
+        scheduleExecutorArgumentBridgeRepair,
+        lockedStudyRunsEntrypointAliasRepair,
+        baselineFirstSweepEntrypointAliasRepair,
+        lockedSweepPlanBuilderAliasRepair,
+        baselineFirstLockedSweepStudyRunnerAliasRepair,
+        fallbackBoundedFinetuningConditionRunnerRepair,
+        orchestrationTrainEvalConditionBridgeRepair,
         lockedConditionSingleRunnerBridgeRepair,
         multipleChoiceDataclassChoiceAliasRepair,
         mainMetricsRawResultsAliasRepair,
@@ -8870,6 +8978,7 @@ export class ImplementSessionManager {
         planArgumentPathChoicesRepair,
         conditionExecutorDeadlineArgumentRepair,
         highLevelConditionSweepDispatchRepair,
+        orderedConditionCollectorRuntimeInputsRepair,
         coerceIntDefaultArgumentRepair,
         resolveDeviceNameArityRepair,
         loraStudyEntrypointContextRepair,
@@ -8889,7 +8998,11 @@ export class ImplementSessionManager {
         chunk5OrchestrationHelperBridgeRepair,
         buildMetricsPayloadFromOptionsBridgeRepair,
         studyInvokeContractKwargRepair,
-        lockedSweepRuntimeKwargBridgeRepair
+        lockedSweepRuntimeKwargBridgeRepair,
+        entrypointStudyResultKwargAliasRepair,
+        nestedRunRecordsProjectionRepair,
+        aggregateNestedRawResultRowsRepair,
+        singleRunExecutorSignatureDispatchRepair
     ].filter((repair) => repair.repaired);
     if (lateHandoffRepairs.length > 0) {
       for (const repair of lateHandoffRepairs) {
@@ -10677,7 +10790,7 @@ function parseImplementBootstrapContract(value: unknown): ImplementBootstrapCont
   };
 }
 
-function parseImplementBootstrapContractFromText(text: string): ImplementBootstrapContract | undefined {
+export function parseImplementBootstrapContractFromText(text: string): ImplementBootstrapContract | undefined {
   const direct = parseImplementBootstrapContract(parseJsonObject(text));
   if (direct) {
     return direct;
@@ -11226,12 +11339,23 @@ function parseJsonObjectsFromText(text: string): unknown[] {
 
 function extractBalancedJsonObjectStrings(text: string): string[] {
   const results: string[] = [];
-  let start = -1;
+  const seen = new Set<string>();
+  for (let start = text.indexOf("{"); start >= 0; start = text.indexOf("{", start + 1)) {
+    const candidate = extractBalancedJsonObjectStringFrom(text, start);
+    if (candidate && !seen.has(candidate)) {
+      seen.add(candidate);
+      results.push(candidate);
+    }
+  }
+  return results;
+}
+
+function extractBalancedJsonObjectStringFrom(text: string, start: number): string | undefined {
   let depth = 0;
   let inString = false;
   let escaped = false;
 
-  for (let index = 0; index < text.length; index += 1) {
+  for (let index = start; index < text.length; index += 1) {
     const char = text[index];
     if (inString) {
       if (escaped) {
@@ -11249,22 +11373,17 @@ function extractBalancedJsonObjectStrings(text: string): string[] {
       continue;
     }
     if (char === "{") {
-      if (depth === 0) {
-        start = index;
-      }
       depth += 1;
       continue;
     }
     if (char === "}" && depth > 0) {
       depth -= 1;
-      if (depth === 0 && start >= 0) {
-        results.push(text.slice(start, index + 1));
-        start = -1;
+      if (depth === 0) {
+        return text.slice(start, index + 1);
       }
     }
   }
-
-  return results;
+  return undefined;
 }
 
 function normalizeStoredPath(filePath: string | undefined, workspaceRoot: string): string | undefined {
@@ -11321,15 +11440,27 @@ function derivePlannedConditionContract(input: {
   const repeatedRunContract = parseRepeatedSeedRunContract(text);
   const seedSchedule = extractSeedSchedule(text);
   const exactRankDropoutMarkers = rankDropoutMarkers.length > 0 ? rankDropoutMarkers : undefined;
+  const baselineConditionMarker = extractBaselineRankDropoutMarker(text);
   const requiredCount =
     repeatedRunContract?.cellCount ||
     (exactRankDropoutMarkers && exactRankDropoutMarkers.length >= 2 ? exactRankDropoutMarkers.length : undefined) ||
     parsePlannedConditionContractCount(text);
+  const inferredRepeatedRunCount =
+    repeatedRunContract?.runCount ||
+    (requiredCount && seedSchedule.length > 1 ? requiredCount * seedSchedule.length : undefined);
+  const inferredMinimumSeedsPerCondition =
+    repeatedRunContract?.seedsPerCell || (seedSchedule.length > 1 ? seedSchedule.length : undefined);
   const primaryMetricKey = extractPrimaryMetricKey(input.objectiveMetric) || extractPrimaryMetricKey(text);
   if (markers.size === 0 && requiredCount === undefined && !primaryMetricKey) {
     return undefined;
   }
-  const markerList = exactRankDropoutMarkers || [...markers].slice(0, 8);
+  let markerList = exactRankDropoutMarkers || [...markers].slice(0, 8);
+  if (baselineConditionMarker && markerList.includes(baselineConditionMarker)) {
+    markerList = [
+      baselineConditionMarker,
+      ...markerList.filter((marker) => marker !== baselineConditionMarker)
+    ];
+  }
   const notes = [
     "Derived from the governed plan/brief text; implement_experiments must preserve these planned condition semantics.",
     "If a marker cannot run because the installed stack lacks support, record that condition as failed with evidence rather than substituting a different recipe."
@@ -11342,9 +11473,10 @@ function derivePlannedConditionContract(input: {
   }
   return {
     required_condition_count: requiredCount,
-    required_run_count: repeatedRunContract?.runCount,
+    required_run_count: inferredRepeatedRunCount,
     seed_schedule: seedSchedule.length > 0 ? seedSchedule : undefined,
-    minimum_seeds_per_condition: repeatedRunContract?.seedsPerCell,
+    minimum_seeds_per_condition: inferredMinimumSeedsPerCondition,
+    baseline_condition_marker: baselineConditionMarker,
     tuned_only: markerList.some((marker) => marker !== "unmodified_base"),
     required_condition_markers: markerList,
     primary_metric_key: primaryMetricKey,
@@ -11423,11 +11555,21 @@ function parsePlannedConditionContractCount(text: string): number | undefined {
 function parseRepeatedSeedRunContract(
   text: string
 ): { cellCount?: number; seedsPerCell?: number; runCount?: number } | undefined {
-  const explicitRuns = text.match(/\bexecute\s+(\d+)\s+(?:train[-\s]?plus[-\s]?eval|train[-\s]?and[-\s]?eval|training[-\s]?and[-\s]?evaluation)?\s*runs?\s+total\b/iu);
+  const explicitRuns =
+    text.match(/\bexecute\s+(\d+)\s+(?:train[-\s]?plus[-\s]?eval|train[-\s]?and[-\s]?eval|training[-\s]?and[-\s]?evaluation)?\s*runs?\s+total\b/iu) ||
+    text.match(/\btotal\s+planned\s+(?:train\/eval|train[-\s]?eval|train[-\s]?and[-\s]?eval|training[-\s]?and[-\s]?evaluation)\s+jobs?\s*[:=]\s*(\d+)\b/iu) ||
+    text.match(/\b(?:train\/eval|train[-\s]?eval|train[-\s]?and[-\s]?eval|training[-\s]?and[-\s]?evaluation)\s+(?:jobs?|runs?)\s+total\s*[:=]?\s*(\d+)\b/iu);
+  const conditionsPerSeedMatch =
+    text.match(/\btotal\s+training\s+conditions?\s+per\s+seed\s*[:=]\s*(\d+)\b/iu) ||
+    text.match(/\bconditions?\s+per\s+seed\s*[:=]\s*(\d+)\b/iu);
   const cellSeedMatch =
     text.match(/\b(\d+)\s+repeated\s+cells?\s*[x×]\s*(\d+)\s+seeds?\b/iu) ||
     text.match(/\b(\d+)\s+cells?\s*[x×]\s*(\d+)\s+seeds?\b/iu);
-  const cellCount = cellSeedMatch ? Number.parseInt(cellSeedMatch[1] || "", 10) : undefined;
+  const cellCount = cellSeedMatch
+    ? Number.parseInt(cellSeedMatch[1] || "", 10)
+    : conditionsPerSeedMatch
+      ? Number.parseInt(conditionsPerSeedMatch[1] || "", 10)
+      : undefined;
   const seedsPerCell = cellSeedMatch ? Number.parseInt(cellSeedMatch[2] || "", 10) : undefined;
   const runCount = explicitRuns
     ? Number.parseInt(explicitRuns[1] || "", 10)
@@ -11458,6 +11600,20 @@ function extractSeedSchedule(text: string): number[] {
       }
     }
   }
+  for (const match of text.matchAll(
+    /\bseeds?\s*(?:=|:)?\s+(\d+(?:\s*,\s*(?:and\s+)?\d+)+(?:\s*,?\s*and\s+\d+)?|\d+\s+and\s+\d+)/giu
+  )) {
+    const raw = match[1] || "";
+    const parsedSeeds = [...raw.matchAll(/\b\d+\b/gu)]
+      .map((seedMatch) => Number.parseInt(seedMatch[0], 10))
+      .filter((parsed) => Number.isFinite(parsed));
+    if (parsedSeeds.length < 2) {
+      continue;
+    }
+    for (const seed of parsedSeeds) {
+      seeds.add(seed);
+    }
+  }
   return [...seeds].sort((left, right) => left - right);
 }
 
@@ -11465,6 +11621,11 @@ function extractRankDropoutConditionMarkers(text: string): string[] {
   const markers = new Set<string>();
   const repeatedCellsText = extractRepeatedCellsText(text);
   const explicitSearchText = repeatedCellsText || text;
+  if (!repeatedCellsText) {
+    for (const marker of extractRankDropoutGridMarkers(text)) {
+      markers.add(marker);
+    }
+  }
   for (const match of explicitSearchText.matchAll(
     /\brank[\s_=-]*(\d+)[\s,;/:-]*(?:lora[_\s-]*)?(?:dropout|drop)[\s_=-]*([0-9]+(?:[._][0-9]+)?)/giu
   )) {
@@ -11495,9 +11656,54 @@ function extractRankDropoutConditionMarkers(text: string): string[] {
   return [...markers].sort(rankDropoutMarkerSort);
 }
 
+function extractRankDropoutGridMarkers(text: string): string[] {
+  const markers = new Set<string>();
+  for (const match of text.matchAll(
+    /\branks?(?:\s+in)?\s+`?\{([^}]+)\}`?\s*(?:[x×]|and)\s*(?:lora\s+)?dropouts?(?:\s+in)?\s+`?\{([^}]+)\}`?/giu
+  )) {
+    const ranks = parseNumericList(match[1] || "").map((value) => Math.trunc(value));
+    const dropouts = parseNumericList(match[2] || "");
+    for (const rank of ranks) {
+      if (!Number.isFinite(rank) || rank <= 0) {
+        continue;
+      }
+      for (const dropout of dropouts) {
+        markers.add(rankDropoutMarker(rank, dropout));
+      }
+    }
+  }
+  return [...markers].sort(rankDropoutMarkerSort);
+}
+
+function parseNumericList(value: string): number[] {
+  return value
+    .split(/[,;]|\band\b/giu)
+    .map((token) => Number.parseFloat(token.trim().replace(/_/gu, ".")))
+    .filter((parsed) => Number.isFinite(parsed));
+}
+
 function extractRepeatedCellsText(text: string): string | undefined {
   const match = text.match(/\brepeated\s+cells?\s+(?:are|:)\s+([^\n.]+)/iu);
   return match?.[1];
+}
+
+function extractBaselineRankDropoutMarker(text: string): string | undefined {
+  const match =
+    text.match(
+      /\bbaseline\s+condition\s*:\s*rank\s*[=:_-]?\s*(\d+)[^\n;]*?\b(?:dropout|drop)\s*[=:_-]?\s*([0-9]+(?:[._][0-9]+)?)/iu
+    ) ||
+    text.match(
+      /\bbaseline\s+(?:condition|cell|marker)?\s*(?:is|=|:)?\s*rank\s*[=:_-]?\s*(\d+)[^\n,;]*?\b(?:dropout|drop)\s*[=:_-]?\s*([0-9]+(?:[._][0-9]+)?)/iu
+    );
+  if (!match) {
+    return undefined;
+  }
+  const rank = Number.parseInt(match[1] || "", 10);
+  const dropout = parseDropoutNumber(match[2] || "");
+  if (!Number.isFinite(rank) || dropout === undefined) {
+    return undefined;
+  }
+  return rankDropoutMarker(rank, dropout);
 }
 
 function parseDropoutNumber(value: string): number | undefined {
@@ -27034,6 +27240,1645 @@ export async function repairPythonMainStudyRunnerDeviceBridgeSurface(
   };
 }
 
+export async function repairPythonRankDropoutStudyCallableBridgeSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    !source.includes("def _autolabos_run_study(") ||
+    !source.includes("def run_locked_lora_rank_dropout_sweep(") ||
+    source.includes("_autolabos_rank_dropout_study_callable_bridge_marker")
+  ) {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  let nextSource = source;
+
+  const beforeCandidate = nextSource;
+  nextSource = nextSource.replace(
+    /(\s*candidate_names = \(\n)(\s*['"]run_locked_lora_rank_dropout_study['"],)/u,
+    "$1        'run_locked_lora_rank_dropout_sweep',\n$2"
+  );
+  if (nextSource !== beforeCandidate) {
+    repaired = true;
+  }
+
+  const beforeContext = nextSource;
+  nextSource = nextSource.replace(
+    /(\s*return _autolabos_invoke_callable\(\n\s*study_callable,\n\s*args=args,\n\s*cli_paths=cli_paths,\n\s*paths=cli_paths,\n\s*output_dir=cli_paths\.output_dir,\n\s*public_dir=cli_paths\.output_dir,\n)/u,
+    [
+      "$1",
+      "        _autolabos_rank_dropout_study_callable_bridge_marker=True,\n",
+      "        output_root=cli_paths.output_dir,\n",
+      "        base_model_id=getattr(args, 'base_model_id', getattr(args, 'preferred_base_model_id', globals().get('PREFERRED_BASE_MODEL_ID', None))),\n"
+    ].join("")
+  );
+  if (nextSource !== beforeContext) {
+    repaired = true;
+  }
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Bridged rank/dropout study callable resolver in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonLockedSweepExecutorResolverSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    !source.includes("def _execute_main_study(") ||
+    !source.includes("def collect_locked_execution_records(") ||
+    !source.includes("def assemble_study_outputs(") ||
+    source.includes("_autolabos_locked_sweep_executor_resolver_marker")
+  ) {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  let nextSource = source;
+
+  const beforeExactNames = nextSource;
+  nextSource = nextSource.replace(
+    /(\s*exact_names=\(\n)(\s*["']execute_locked_lora_rank_dropout_study["'],)/u,
+    [
+      "$1",
+      "            # _autolabos_locked_sweep_executor_resolver_marker\n",
+      "            \"collect_locked_execution_records\",\n",
+      "            \"run_locked_full_sweep\",\n",
+      "            \"execute_locked_full_sweep\",\n",
+      "            \"orchestrate_locked_full_sweep\",\n",
+      "            \"collect_locked_per_run_records\",\n",
+      "$2"
+    ].join("")
+  );
+  if (nextSource !== beforeExactNames) {
+    repaired = true;
+  }
+
+  const beforeForbiddenFragments = nextSource;
+  nextSource = nextSource.replace(
+    /forbidden_fragments=\((["']write["'],\s*["']serialize["'],\s*["']metric["'],\s*["']config["'],\s*["']arg["'],?)\)/u,
+    "forbidden_fragments=($1, \"assemble\", \"output\")"
+  );
+  if (nextSource !== beforeForbiddenFragments) {
+    repaired = true;
+  }
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Prioritized locked full-sweep executor discovery in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonRankDropoutSweepControllerResolverSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    !source.includes("def _resolve_sweep_controller(") ||
+    !source.includes("def execute_locked_rank_dropout_sweep(") ||
+    source.includes("_autolabos_rank_dropout_sweep_controller_resolver_marker")
+  ) {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  let nextSource = source;
+
+  const beforeControllerNames = nextSource;
+  nextSource = nextSource.replace(
+    /(\s*for name in \(\n)(\s*["']run_locked_sweep["'],)/u,
+    [
+      "$1",
+      "        # _autolabos_rank_dropout_sweep_controller_resolver_marker\n",
+      "        \"execute_locked_rank_dropout_sweep\",\n",
+      "        \"run_locked_rank_dropout_sweep\",\n",
+      "        \"run_rank_dropout_sweep\",\n",
+      "        \"execute_rank_dropout_sweep\",\n",
+      "        \"execute_locked_lora_rank_dropout_sweep\",\n",
+      "        \"run_locked_lora_rank_dropout_sweep\",\n",
+      "$2"
+    ].join("")
+  );
+  if (nextSource !== beforeControllerNames) {
+    repaired = true;
+  }
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Prioritized rank/dropout sweep controller discovery in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonLockedSweepPerRunExecutorBridgeSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    !source.includes("def _invoke_executor_for_run(") ||
+    !source.includes("def _extract_run_records(") ||
+    !source.includes("execute_locked_sweep") ||
+    source.includes("_autolabos_locked_sweep_per_run_executor_bridge_marker")
+  ) {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  let nextSource = source;
+
+  const modelAliasNeedle = [
+    "        \"study_output_dir\": runtime_config.paths.output_dir,",
+    "        \"base_model_override\": runtime_config.base_model_override,"
+  ].join("\n");
+  if (nextSource.includes(modelAliasNeedle)) {
+    nextSource = nextSource.replace(
+      modelAliasNeedle,
+      [
+        "        \"study_output_dir\": runtime_config.paths.output_dir,",
+        "        # _autolabos_locked_sweep_per_run_executor_bridge_marker",
+        "        \"base_model_override\": runtime_config.base_model_override,",
+        "        \"model_name\": runtime_config.base_model_override or globals().get(\"PREFERRED_BASE_MODEL\") or globals().get(\"PREFERRED_BASE_MODEL_ID\") or globals().get(\"DEFAULT_BASE_MODEL\"),",
+        "        \"model_name_or_path\": runtime_config.base_model_override or globals().get(\"PREFERRED_BASE_MODEL\") or globals().get(\"PREFERRED_BASE_MODEL_ID\") or globals().get(\"DEFAULT_BASE_MODEL\"),",
+        "        \"base_model_id\": runtime_config.base_model_override or globals().get(\"PREFERRED_BASE_MODEL\") or globals().get(\"PREFERRED_BASE_MODEL_ID\") or globals().get(\"DEFAULT_BASE_MODEL\"),",
+        "        \"selected_model_id\": runtime_config.base_model_override or globals().get(\"PREFERRED_BASE_MODEL\") or globals().get(\"PREFERRED_BASE_MODEL_ID\") or globals().get(\"DEFAULT_BASE_MODEL\"),"
+      ].join("\n")
+    );
+    repaired = true;
+  }
+
+  const extractorNeedle = [
+    "    for key in (",
+    "        \"run_records\",",
+    "        \"runs\",",
+    "        \"results\",",
+    "        \"records\",",
+    "        \"per_run_results\",",
+    "        \"study_runs\",",
+    "        \"observations\",",
+    "    ):"
+  ].join("\n");
+  if (nextSource.includes(extractorNeedle)) {
+    nextSource = nextSource.replace(
+      extractorNeedle,
+      [
+        "    for key in (",
+        "        \"run_records\",",
+        "        \"runs\",",
+        "        \"results\",",
+        "        \"records\",",
+        "        \"per_run_results\",",
+        "        \"study_runs\",",
+        "        \"observations\",",
+        "        \"evidence_rows\",",
+        "        \"run_rows\",",
+        "    ):"
+      ].join("\n")
+    );
+    repaired = true;
+  }
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Bridged locked sweep per-run executor model arguments and evidence-row projection in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonSweepCallableClassResolverSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    !source.includes("def _discover_sweep_callable(") ||
+    !source.includes("execute_locked_baseline_first_sweep") ||
+    source.includes("_autolabos_sweep_callable_class_resolver_marker")
+  ) {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  let nextSource = source;
+
+  const beforeExplicitNames = nextSource;
+  nextSource = nextSource.replace(
+    /(\s*explicit_names\s*=\s*\[\n)(\s*["']execute_study_sweep["'],)/u,
+    [
+      "$1",
+      "        # _autolabos_sweep_callable_class_resolver_marker\n",
+      "        \"execute_locked_baseline_first_sweep\",\n",
+      "        \"run_locked_baseline_first_sweep\",\n",
+      "        \"execute_baseline_first_sweep\",\n",
+      "        \"run_baseline_first_sweep\",\n",
+      "        \"run_baseline_first_locked_sweep\",\n",
+      "$2"
+    ].join("")
+  );
+  if (nextSource !== beforeExplicitNames) {
+    repaired = true;
+  }
+
+  const beforeExplicitCallable = nextSource;
+  nextSource = nextSource.replace(
+    /(\s*candidate = globals\(\)\.get\(name\)\n\s*)if callable\(candidate\):\n(\s*)return candidate/u,
+    "$1if callable(candidate) and not isinstance(candidate, type):\n$2return candidate"
+  );
+  if (nextSource !== beforeExplicitCallable) {
+    repaired = true;
+  }
+
+  const beforeHeuristicCallable = nextSource;
+  nextSource = nextSource.replace(
+    /(\s*)if name in excluded_names or not callable\(candidate\):\n(\s*)continue/u,
+    "$1if name in excluded_names or not callable(candidate) or isinstance(candidate, type):\n$2continue"
+  );
+  if (nextSource !== beforeHeuristicCallable) {
+    repaired = true;
+  }
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Prioritized generated sweep functions and skipped config classes in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonScheduleExecutorArgumentBridgeSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    !source.includes("def _invoke_schedule_executor(") ||
+    !source.includes("def expand_planned_run_schedule(") ||
+    !source.includes("inspect.signature(executor)") ||
+    source.includes("_autolabos_schedule_executor_argument_bridge_marker")
+  ) {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  let nextSource = source;
+
+  const scheduleKwargsNeedle = [
+    "        elif lowered in {'schedule', 'planned_runs', 'planned_run_specs', 'run_schedule'}:",
+    "            kwargs[name] = schedule"
+  ].join("\n");
+  if (nextSource.includes(scheduleKwargsNeedle)) {
+    nextSource = nextSource.replace(
+      scheduleKwargsNeedle,
+      [
+        "        elif lowered in {'schedule', 'planned_runs', 'planned_run_specs', 'run_schedule'}:",
+        "            kwargs[name] = schedule",
+        "        elif lowered in {'conditions', 'condition_specs', 'locked_conditions', 'planned_conditions'}:",
+        "            # _autolabos_schedule_executor_argument_bridge_marker",
+        "            kwargs[name] = globals().get('LOCKED_CONDITION_SPECS') or globals().get('CONDITION_SPECS')",
+        "        elif lowered in {'seed_schedule', 'seeds', 'required_seed_schedule'}:",
+        "            kwargs[name] = globals().get('REQUIRED_SEED_SCHEDULE') or globals().get('SEEDS')"
+      ].join("\n")
+    );
+    repaired = true;
+  }
+
+  const positionalNeedle = [
+    "    if positional_count >= 2:",
+    "        return executor(config, schedule)"
+  ].join("\n");
+  if (nextSource.includes(positionalNeedle)) {
+    nextSource = nextSource.replace(
+      positionalNeedle,
+      [
+        "    if positional_count >= 2:",
+        "        parameter_names = tuple(name.lower() for name in signature.parameters)",
+        "        schedule_expansion_names = {",
+        "            'conditions',",
+        "            'condition_specs',",
+        "            'locked_conditions',",
+        "            'planned_conditions',",
+        "            'seed_schedule',",
+        "            'seeds',",
+        "            'required_seed_schedule',",
+        "        }",
+        "        if any(name in schedule_expansion_names for name in parameter_names):",
+        "            return executor(**kwargs) if kwargs else executor()",
+        "        return executor(config, schedule)"
+      ].join("\n")
+    );
+    repaired = true;
+  }
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Bridged schedule executor condition/seed arguments in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonLockedStudyRunsEntrypointAliasSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    !source.includes("def execute_locked_study_runs(") ||
+    !source.includes("def _execute_locked_study(") ||
+    !source.includes("No study execution function was found in the script") ||
+    source.includes("_autolabos_locked_study_runs_entrypoint_alias_marker")
+  ) {
+    return { repaired: false };
+  }
+
+  const insertionMatch = source.match(/\ndef\s+_execute_locked_study\s*\(/u);
+  if (!insertionMatch || insertionMatch.index === undefined) {
+    return { repaired: false };
+  }
+
+  const aliasBlock = [
+    "",
+    "# _autolabos_locked_study_runs_entrypoint_alias_marker",
+    "if \"execute_study\" not in globals():",
+    "    execute_study = execute_locked_study_runs",
+    "if \"run_study\" not in globals():",
+    "    run_study = execute_locked_study_runs",
+    "if \"run_locked_study\" not in globals():",
+    "    run_locked_study = execute_locked_study_runs",
+    "if \"execute_experiment\" not in globals():",
+    "    execute_experiment = execute_locked_study_runs",
+    "if \"run_experiment\" not in globals():",
+    "    run_experiment = execute_locked_study_runs",
+    "if \"orchestrate_study\" not in globals():",
+    "    orchestrate_study = execute_locked_study_runs",
+    "if \"execute_locked_plan\" not in globals():",
+    "    execute_locked_plan = execute_locked_study_runs",
+    "if \"run_locked_plan\" not in globals():",
+    "    run_locked_plan = execute_locked_study_runs",
+    ""
+  ].join("\n");
+
+  const nextSource = `${source.slice(0, insertionMatch.index)}${aliasBlock}${source.slice(insertionMatch.index)}`;
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Aliased locked study run executor into final study entrypoint names in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonBaselineFirstSweepEntrypointAliasSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    !source.includes("def execute_locked_baseline_first_sweep(") ||
+    !source.includes("def _execute_study(") ||
+    !source.includes("No study sweep runner or single-run helper was found in the script") ||
+    source.includes("_autolabos_baseline_first_sweep_entrypoint_alias_marker")
+  ) {
+    return { repaired: false };
+  }
+
+  const insertionMatch = source.match(/\ndef\s+_execute_study\s*\(/u);
+  if (!insertionMatch || insertionMatch.index === undefined) {
+    return { repaired: false };
+  }
+
+  const aliasBlock = [
+    "",
+    "# _autolabos_baseline_first_sweep_entrypoint_alias_marker",
+    "if \"run_locked_study\" not in globals():",
+    "    run_locked_study = execute_locked_baseline_first_sweep",
+    "if \"run_locked_study_sweep\" not in globals():",
+    "    run_locked_study_sweep = execute_locked_baseline_first_sweep",
+    "if \"execute_locked_study\" not in globals():",
+    "    execute_locked_study = execute_locked_baseline_first_sweep",
+    "if \"execute_study\" not in globals():",
+    "    execute_study = execute_locked_baseline_first_sweep",
+    "if \"run_study\" not in globals():",
+    "    run_study = execute_locked_baseline_first_sweep",
+    "if \"run_baseline_first_sweep\" not in globals():",
+    "    run_baseline_first_sweep = execute_locked_baseline_first_sweep",
+    "if \"orchestrate_locked_study\" not in globals():",
+    "    orchestrate_locked_study = execute_locked_baseline_first_sweep",
+    ""
+  ].join("\n");
+
+  const nextSource = `${source.slice(0, insertionMatch.index)}${aliasBlock}${source.slice(insertionMatch.index)}`;
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Aliased baseline-first locked sweep executor into final study entrypoint names in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonLockedSweepPlanBuilderAliasSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    !source.includes("def _resolve_plan_if_needed(") ||
+    !source.includes("prepare_locked_sweep_plan") ||
+    !source.includes("build_prepared_sweep_plan") ||
+    (!source.includes("def prepare_execution_plan(") && !source.includes("def expand_locked_sweep_plan(")) ||
+    source.includes("_autolabos_locked_sweep_plan_builder_alias_marker")
+  ) {
+    return { repaired: false };
+  }
+
+  const insertionMatch = source.match(/\ndef\s+_resolve_plan_if_needed\s*\(/u);
+  if (!insertionMatch || insertionMatch.index === undefined) {
+    return { repaired: false };
+  }
+
+  const aliasBlock = [
+    "",
+    "# _autolabos_locked_sweep_plan_builder_alias_marker",
+    "_autolabos_locked_sweep_plan_builder = globals().get(\"prepare_execution_plan\") or globals().get(\"expand_locked_sweep_plan\")",
+    "if callable(_autolabos_locked_sweep_plan_builder):",
+    "    if \"prepare_locked_sweep_plan\" not in globals():",
+    "        prepare_locked_sweep_plan = _autolabos_locked_sweep_plan_builder",
+    "    if \"build_prepared_sweep_plan\" not in globals():",
+    "        build_prepared_sweep_plan = _autolabos_locked_sweep_plan_builder",
+    "    if \"prepare_sweep_plan\" not in globals():",
+    "        prepare_sweep_plan = _autolabos_locked_sweep_plan_builder",
+    "    if \"build_sweep_plan\" not in globals():",
+    "        build_sweep_plan = _autolabos_locked_sweep_plan_builder",
+    ""
+  ].join("\n");
+
+  const nextSource = `${source.slice(0, insertionMatch.index)}${aliasBlock}${source.slice(insertionMatch.index)}`;
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Aliased locked sweep plan builder names in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const hasAutolabosRunnerResolver =
+    source.includes("def _autolabos_run_study(") &&
+    source.includes("Unable to locate a study runner function in the generated script");
+  const hasStage3bRunnerResolver =
+    source.includes("def _stage3b_resolve_study_callable(") &&
+    source.includes("Unable to locate the study execution function in the current module state");
+  const hasChunk3bRunnerResolver =
+    source.includes("def _chunk3b_resolve_global_callable(") &&
+    source.includes("Unable to locate the experiment sweep runner callable in the current module");
+  const hasRuntimeOptionsRunnerResolver =
+    source.includes("def _invoke_study_runner(options: RuntimeOptions)") &&
+    source.includes("Unable to locate the study execution function in the current module");
+  const sweepTargetName = [
+    "run_baseline_first_condition_sweep",
+    "execute_baseline_first_condition_sweep",
+    "run_locked_condition_sweep",
+    "execute_locked_condition_sweep",
+    "run_baseline_first_locked_sweep",
+    "run_locked_baseline_first_sweep",
+    "execute_locked_baseline_first_sweep",
+    "execute_baseline_first_locked_sweep"
+  ].find((name) => source.includes(`def ${name}(`));
+
+  if (
+    (
+      !hasAutolabosRunnerResolver &&
+      !hasStage3bRunnerResolver &&
+      !hasChunk3bRunnerResolver &&
+      !hasRuntimeOptionsRunnerResolver
+    ) ||
+    !sweepTargetName ||
+    source.includes("_autolabos_baseline_first_locked_sweep_study_runner_alias_marker")
+  ) {
+    return { repaired: false };
+  }
+
+  const insertionMatch = hasAutolabosRunnerResolver
+    ? source.match(/\ndef\s+_autolabos_run_study\s*\(/u)
+    : hasStage3bRunnerResolver
+      ? source.match(/\ndef\s+_stage3b_resolve_study_callable\s*\(/u)
+      : hasRuntimeOptionsRunnerResolver
+        ? source.match(/\ndef\s+_invoke_study_runner\s*\(/u)
+        : source.match(/\ndef\s+main\s*\(/u);
+  if (!insertionMatch || insertionMatch.index === undefined) {
+    return { repaired: false };
+  }
+
+  const aliasBlock = [
+    "",
+    "# _autolabos_baseline_first_locked_sweep_study_runner_alias_marker",
+    `def _autolabos_get_baseline_first_locked_sweep_target():`,
+    `    target = globals().get(${JSON.stringify(sweepTargetName)})`,
+    "    if not callable(target):",
+    `        raise RuntimeError(${JSON.stringify(`Unable to locate generated ${sweepTargetName} callable for AutoLabOS handoff.`)})`,
+    "    return target",
+    "",
+    "def _autolabos_call_baseline_first_locked_sweep_target(target, active_args, runtime_context=None, options=None, **context):",
+    "    import inspect as _autolabos_inspect",
+    "    signature = _autolabos_inspect.signature(target)",
+    "    parameters = signature.parameters",
+    "    accepts_var_kwargs = any(param.kind == _autolabos_inspect.Parameter.VAR_KEYWORD for param in parameters.values())",
+    "    _autolabos_torch = globals().get(\"torch\")",
+    "    _autolabos_device = context.get(\"device\")",
+    "    if _autolabos_device is None and options is not None:",
+    "        _autolabos_device = getattr(options, \"device\", None)",
+    "    if _autolabos_device is None and _autolabos_torch is not None:",
+    "        try:",
+    "            _autolabos_device = _autolabos_torch.device(\"cuda\" if _autolabos_torch.cuda.is_available() else \"cpu\")",
+    "        except Exception:",
+    "            _autolabos_device = None",
+    "    candidate_kwargs = {",
+    "        \"options\": options,",
+    "        \"args\": active_args,",
+    "        \"namespace\": active_args,",
+    "        \"parsed_args\": active_args,",
+    "        \"runtime_config\": runtime_context,",
+    "        \"runtime_context\": runtime_context,",
+    "        \"config\": runtime_context,",
+    "        \"output_dir\": context.get(\"output_dir\") or getattr(options, \"output_dir\", None),",
+    "        \"public_dir\": context.get(\"public_dir\") or context.get(\"output_dir\") or getattr(options, \"output_dir\", None),",
+    "        \"metrics_path\": context.get(\"metrics_path\") or getattr(options, \"metrics_path\", None),",
+    "        \"results_json_path\": context.get(\"results_json_path\") or getattr(options, \"results_json_path\", None),",
+    "        \"condition_results_jsonl_path\": context.get(\"condition_results_jsonl_path\") or getattr(options, \"condition_results_jsonl_path\", None),",
+    "        \"condition_results_csv_path\": context.get(\"condition_results_csv_path\") or getattr(options, \"condition_results_csv_path\", None),",
+    "        \"condition_markers\": context.get(\"condition_markers\") or context.get(\"required_condition_markers\"),",
+    "        \"required_condition_markers\": context.get(\"required_condition_markers\") or context.get(\"condition_markers\"),",
+    "        \"seed_schedule\": context.get(\"seed_schedule\") or context.get(\"seeds\"),",
+    "        \"seeds\": context.get(\"seeds\") or context.get(\"seed_schedule\"),",
+    "        \"condition_specs\": context.get(\"condition_specs\"),",
+    "        \"sweep_conditions\": context.get(\"condition_specs\") or context.get(\"sweep_conditions\"),",
+    "        \"device\": _autolabos_device,",
+    "        \"seed\": context.get(\"seed\") if context.get(\"seed\") is not None else getattr(options, \"seed\", None),",
+    "        \"timeout_sec\": context.get(\"timeout_sec\") if context.get(\"timeout_sec\") is not None else getattr(options, \"timeout_sec\", None),",
+    "        \"max_train_samples\": context.get(\"max_train_samples\") if context.get(\"max_train_samples\") is not None else getattr(options, \"max_train_samples\", None),",
+    "        \"max_eval_samples_per_task\": context.get(\"max_eval_samples_per_task\") if context.get(\"max_eval_samples_per_task\") is not None else getattr(options, \"max_eval_samples_per_task\", None),",
+    "        \"max_seq_length\": context.get(\"max_seq_length\") if context.get(\"max_seq_length\") is not None else getattr(options, \"max_seq_length\", None),",
+    "        \"max_generation_tokens\": context.get(\"max_generation_tokens\") if context.get(\"max_generation_tokens\") is not None else getattr(options, \"max_generation_tokens\", None),",
+    "        \"num_train_epochs\": context.get(\"num_train_epochs\") if context.get(\"num_train_epochs\") is not None else getattr(options, \"num_train_epochs\", None),",
+    "        \"learning_rate\": context.get(\"learning_rate\") if context.get(\"learning_rate\") is not None else getattr(options, \"learning_rate\", None),",
+    "        \"weight_decay\": context.get(\"weight_decay\") if context.get(\"weight_decay\") is not None else getattr(options, \"weight_decay\", None),",
+    "        \"train_micro_batch_size\": context.get(\"train_micro_batch_size\") if context.get(\"train_micro_batch_size\") is not None else getattr(options, \"train_micro_batch_size\", None),",
+    "        \"eval_batch_size\": context.get(\"eval_batch_size\") if context.get(\"eval_batch_size\") is not None else getattr(options, \"eval_batch_size\", None),",
+    "        \"gradient_accumulation_steps\": context.get(\"gradient_accumulation_steps\") if context.get(\"gradient_accumulation_steps\") is not None else getattr(options, \"gradient_accumulation_steps\", None),",
+    "        \"warmup_ratio\": context.get(\"warmup_ratio\") if context.get(\"warmup_ratio\") is not None else getattr(options, \"warmup_ratio\", None),",
+    "        \"logging_steps\": context.get(\"logging_steps\") if context.get(\"logging_steps\") is not None else getattr(options, \"logging_steps\", None),",
+    "        \"save_total_limit\": context.get(\"save_total_limit\") if context.get(\"save_total_limit\") is not None else getattr(options, \"save_total_limit\", None),",
+    "        \"logger\": context.get(\"logger\"),",
+    "    }",
+    "    if accepts_var_kwargs:",
+    "        return target(**{key: value for key, value in candidate_kwargs.items() if value is not None})",
+    "    supported_kwargs = {",
+    "        key: value",
+    "        for key, value in candidate_kwargs.items()",
+    "        if key in parameters and value is not None",
+    "    }",
+    "    return target(**supported_kwargs)",
+    "",
+    "def _autolabos_run_baseline_first_locked_sweep_study(options=None, runtime_config=None, args=None, *unused_args, **context):",
+    "    active_args = args if args is not None else context.get(\"args\")",
+    "    if options is None:",
+    "        options = context.get(\"options\")",
+    "    if active_args is None and isinstance(runtime_config, argparse.Namespace):",
+    "        active_args = runtime_config",
+    "    if active_args is None and isinstance(options, argparse.Namespace):",
+    "        active_args = options",
+    "    runtime_context = context.get(\"runtime_context\") or context.get(\"config\") or context.get(\"runtime_config\") or runtime_config or options",
+    "    if active_args is None:",
+    "        active_args = runtime_context",
+    "    target = _autolabos_get_baseline_first_locked_sweep_target()",
+    "    call_context = dict(context)",
+    "    for duplicate_key in (\"options\", \"runtime_context\", \"config\", \"runtime_config\", \"args\", \"namespace\", \"parsed_args\"):",
+    "        call_context.pop(duplicate_key, None)",
+    "    return _autolabos_call_baseline_first_locked_sweep_target(target, active_args, runtime_context=runtime_context, options=options, **call_context)",
+    "",
+    "for _autolabos_study_runner_alias_name in (",
+    "    \"run_locked_lora_rank_dropout_study\",",
+    "    \"run_lora_rank_dropout_study\",",
+    "    \"execute_lora_rank_dropout_study\",",
+    "    \"run_rank_dropout_study\",",
+    "    \"execute_rank_dropout_study\",",
+    "    \"run_lora_study\",",
+    "    \"execute_lora_study\",",
+    "    \"run_governed_study\",",
+    "    \"execute_governed_study\",",
+    "    \"run_locked_rank_dropout_study\",",
+    "    \"run_locked_study\",",
+    "    \"run_condition_sweep\",",
+    "    \"execute_condition_sweep\",",
+    "    \"run_study\",",
+    "    \"execute_locked_study\",",
+    "    \"execute_study\",",
+    "    \"orchestrate_study\",",
+    "    \"run_experiment_sweep\",",
+    "    \"run_experiment\",",
+    "    \"execute_experiment\",",
+    "):",
+    "    if _autolabos_study_runner_alias_name not in globals():",
+    "        globals()[_autolabos_study_runner_alias_name] = _autolabos_run_baseline_first_locked_sweep_study",
+    ""
+  ].join("\n");
+
+  const nextSource = `${source.slice(0, insertionMatch.index)}${aliasBlock}${source.slice(insertionMatch.index)}`;
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Aliased baseline-first locked sweep helper into final AutoLabOS study runner names in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonFallbackBoundedFinetuningConditionRunnerSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_fallback_bounded_finetuning_condition_runner_marker";
+  if (
+    source.includes(marker) ||
+    !source.includes("No per-condition runner helper is available for fallback sweep execution.") ||
+    !source.includes("def _run_locked_study_fallback(") ||
+    !source.includes("def prepare_trainable_condition_model(") ||
+    !source.includes("def prepare_instruction_tuning_data(") ||
+    !source.includes("def prepare_benchmark_evaluation_data(") ||
+    !source.includes("def evaluate_trained_condition(") ||
+    !(
+      source.includes("def run_single_condition_training(") ||
+      source.includes("def train_prepared_condition(") ||
+      source.includes("def run_bounded_single_condition_finetuning(")
+    )
+  ) {
+    return { repaired: false };
+  }
+
+  const insertionMatch = source.match(/\ndef\s+_run_locked_study_fallback\s*\(/u);
+  if (!insertionMatch || insertionMatch.index === undefined) {
+    return { repaired: false };
+  }
+
+  const bridgeBlock = [
+    "",
+    `# ${marker}`,
+    "def _autolabos_fallback_condition_get(source, *names, default=None):",
+    "    for name in names:",
+    "        if source is None:",
+    "            continue",
+    "        if hasattr(source, 'get'):",
+    "            try:",
+    "                value = source.get(name, None)",
+    "            except Exception:",
+    "                value = None",
+    "            if value is not None:",
+    "                return value",
+    "        if hasattr(source, name):",
+    "            value = getattr(source, name)",
+    "            if value is not None:",
+    "                return value",
+    "    return default",
+    "",
+    "def _autolabos_fallback_condition_call_supported(fn, **kwargs):",
+    "    import inspect as _autolabos_inspect",
+    "    signature = _autolabos_inspect.signature(fn)",
+    "    parameters = signature.parameters",
+    "    if any(param.kind == _autolabos_inspect.Parameter.VAR_KEYWORD for param in parameters.values()):",
+    "        return fn(**{key: value for key, value in kwargs.items() if value is not None})",
+    "    supported = {key: value for key, value in kwargs.items() if key in parameters and value is not None}",
+    "    return fn(**supported)",
+    "",
+    "def _autolabos_fallback_condition_int(value, default):",
+    "    try:",
+    "        if value is None:",
+    "            return int(default)",
+    "        return int(value)",
+    "    except Exception:",
+    "        return int(default)",
+    "",
+    "def _autolabos_fallback_condition_bool(value, default):",
+    "    if value is None:",
+    "        return bool(default)",
+    "    if isinstance(value, str):",
+    "        return value.strip().lower() not in {'0', 'false', 'no', 'off'}",
+    "    return bool(value)",
+    "",
+    "def _autolabos_fallback_condition_json(value):",
+    "    json_helper = globals().get('_json_ready') or globals().get('_autolabos_json_safe')",
+    "    if callable(json_helper):",
+    "        try:",
+    "            return json_helper(value)",
+    "        except Exception:",
+    "            pass",
+    "    asdict_helper = globals().get('asdict')",
+    "    if hasattr(value, '__dataclass_fields__') and callable(asdict_helper):",
+    "        try:",
+    "            return asdict_helper(value)",
+    "        except Exception:",
+    "            pass",
+    "    if isinstance(value, dict):",
+    "        return dict(value)",
+    "    return value",
+    "",
+    "def _autolabos_fallback_condition_root(args, output_dir=None, condition_output_dir=None, condition_dir=None, artifact_dir=None):",
+    "    raw_root = _autolabos_fallback_condition_get(args, 'output_dir', 'public_dir', default=None)",
+    "    if raw_root is None:",
+    "        raw_root = output_dir",
+    "    condition_path = condition_output_dir or condition_dir or artifact_dir",
+    "    if condition_path is not None:",
+    "        try:",
+    "            condition_path_obj = Path(condition_path)",
+    "            if raw_root is None:",
+    "                raw_root = condition_path_obj.parent.parent if condition_path_obj.parent.name == DEFAULT_CONDITION_ARTIFACT_DIRNAME else condition_path_obj.parent",
+    "        except Exception:",
+    "            pass",
+    "    if raw_root is None:",
+    "        raw_root = Path('outputs')",
+    "    return Path(raw_root)",
+    "",
+    "def _autolabos_fallback_condition_load_bundle(args, device):",
+    "    loader = globals().get('load_model_bundle_with_fallback')",
+    "    if not callable(loader):",
+    "        raise RuntimeError('Generated load_model_bundle_with_fallback helper is unavailable for fallback condition execution.')",
+    "    return _autolabos_fallback_condition_call_supported(",
+    "        loader,",
+    "        preferred_model_name=_autolabos_fallback_condition_get(args, 'preferred_model_name', 'preferred_model', 'model_name_or_path', 'base_model_id', default=globals().get('PREFERRED_BASE_MODEL')),",
+    "        fallback_model_name=_autolabos_fallback_condition_get(args, 'fallback_model_name', 'fallback_model', default=globals().get('FALLBACK_BASE_MODEL')),",
+    "        device=device,",
+    "        cache_dir=_autolabos_fallback_condition_get(args, 'cache_dir', default=None),",
+    "        allow_remote_model_download=_autolabos_fallback_condition_bool(_autolabos_fallback_condition_get(args, 'allow_remote_model_download', 'allow_model_download', default=True), True),",
+    "        trust_remote_code=_autolabos_fallback_condition_bool(_autolabos_fallback_condition_get(args, 'trust_remote_code', default=True), True),",
+    "        max_seq_length=_autolabos_fallback_condition_int(_autolabos_fallback_condition_get(args, 'max_seq_length', default=globals().get('DEFAULT_MAX_SEQ_LENGTH', 256)), globals().get('DEFAULT_MAX_SEQ_LENGTH', 256)),",
+    "        run_smoke_test=True,",
+    "    )",
+    "",
+    "def _autolabos_fallback_condition_prepare_inputs(args, model_bundle, condition_index=1):",
+    "    tokenizer = _autolabos_fallback_condition_get(model_bundle, 'tokenizer', default=None)",
+    "    if tokenizer is None:",
+    "        raise RuntimeError('Loaded model bundle does not include a tokenizer for fallback condition execution.')",
+    "    seed = _autolabos_fallback_condition_int(_autolabos_fallback_condition_get(args, 'seed', default=globals().get('DEFAULT_GLOBAL_SEED', 17)), globals().get('DEFAULT_GLOBAL_SEED', 17)) + max(0, int(condition_index) - 1)",
+    "    max_train_samples = _autolabos_fallback_condition_int(_autolabos_fallback_condition_get(args, 'max_train_samples', 'train_example_limit', default=globals().get('DEFAULT_MAX_TRAIN_SAMPLES', 8)), globals().get('DEFAULT_MAX_TRAIN_SAMPLES', 8))",
+    "    max_eval_samples = _autolabos_fallback_condition_int(_autolabos_fallback_condition_get(args, 'max_eval_samples_per_task', 'eval_example_limit', default=globals().get('DEFAULT_MAX_EVAL_SAMPLES_PER_TASK', 4)), globals().get('DEFAULT_MAX_EVAL_SAMPLES_PER_TASK', 4))",
+    "    max_seq_length = _autolabos_fallback_condition_int(_autolabos_fallback_condition_get(args, 'max_seq_length', default=globals().get('DEFAULT_MAX_SEQ_LENGTH', 256)), globals().get('DEFAULT_MAX_SEQ_LENGTH', 256))",
+    "    max_context_length = _autolabos_fallback_condition_int(_autolabos_fallback_condition_get(args, 'max_context_length', 'max_eval_context_length', default=globals().get('DEFAULT_EVAL_MAX_CONTEXT_LENGTH', max_seq_length)), globals().get('DEFAULT_EVAL_MAX_CONTEXT_LENGTH', max_seq_length))",
+    "    train_dataset, train_metadata, train_examples = _autolabos_fallback_condition_call_supported(",
+    "        prepare_instruction_tuning_data,",
+    "        tokenizer=tokenizer,",
+    "        max_train_samples=max_train_samples,",
+    "        seed=seed,",
+    "        max_seq_length=max_seq_length,",
+    "    )",
+    "    eval_examples_by_task, eval_metadata = _autolabos_fallback_condition_call_supported(",
+    "        prepare_benchmark_evaluation_data,",
+    "        tokenizer=tokenizer,",
+    "        max_eval_samples_per_task=max_eval_samples,",
+    "        seed=seed + 101,",
+    "        max_context_length=max_context_length,",
+    "    )",
+    "    return train_dataset, train_metadata, train_examples, eval_examples_by_task, eval_metadata, max_context_length",
+    "",
+    "def _autolabos_fallback_bounded_condition_runner(",
+    "    condition=None,",
+    "    args=None,",
+    "    output_dir=None,",
+    "    condition_output_dir=None,",
+    "    condition_dir=None,",
+    "    artifact_dir=None,",
+    "    device=None,",
+    "    condition_index=1,",
+    "    **context,",
+    "):",
+    "    active_args = args or context.get('namespace') or context.get('parsed_args') or context.get('cli_args')",
+    "    if active_args is None:",
+    "        raise RuntimeError('Fallback condition runner requires parsed args.')",
+    "    active_condition = condition or context.get('lora_condition') or context.get('condition_spec')",
+    "    if active_condition is None:",
+    "        raise RuntimeError('Fallback condition runner requires a condition.')",
+    "    root_output_dir = _autolabos_fallback_condition_root(active_args, output_dir=output_dir, condition_output_dir=condition_output_dir, condition_dir=condition_dir, artifact_dir=artifact_dir)",
+    "    runtime_device = device",
+    "    if runtime_device is None and callable(globals().get('resolve_runtime_device')):",
+    "        runtime_device = resolve_runtime_device()",
+    "    model_bundle = None",
+    "    try:",
+    "        model_bundle = _autolabos_fallback_condition_load_bundle(active_args, runtime_device)",
+    "        train_dataset, train_metadata, train_examples, eval_examples_by_task, eval_metadata, max_context_length = _autolabos_fallback_condition_prepare_inputs(active_args, model_bundle, condition_index=condition_index)",
+    "        prepared_condition = _autolabos_fallback_condition_call_supported(",
+    "            prepare_trainable_condition_model,",
+    "            args=active_args,",
+    "            condition=active_condition,",
+    "            model_bundle=model_bundle,",
+    "            tokenized_train_dataset=train_dataset,",
+    "            output_dir=root_output_dir,",
+    "        )",
+    "        train_runner = globals().get('run_single_condition_training') or globals().get('train_prepared_condition') or globals().get('run_bounded_single_condition_finetuning')",
+    "        if not callable(train_runner):",
+    "            raise RuntimeError('Generated prepared-condition training helper is unavailable for fallback condition execution.')",
+    "        training_summary = _autolabos_fallback_condition_call_supported(",
+    "            train_runner,",
+    "            prepared_condition=prepared_condition,",
+    "            args=active_args,",
+    "        )",
+    "        model_state = {",
+    "            'model': _autolabos_fallback_condition_get(prepared_condition, 'model', default=_autolabos_fallback_condition_get(model_bundle, 'model', default=None)),",
+    "            'tokenizer': _autolabos_fallback_condition_get(prepared_condition, 'tokenizer', default=_autolabos_fallback_condition_get(model_bundle, 'tokenizer', default=None)),",
+    "            'device': _autolabos_fallback_condition_get(prepared_condition, 'runtime_device', 'device', default=_autolabos_fallback_condition_get(model_bundle, 'device', default=runtime_device)),",
+    "            'input_device': _autolabos_fallback_condition_get(prepared_condition, 'input_device', default=_autolabos_fallback_condition_get(model_bundle, 'input_device', default=runtime_device)),",
+    "            'model_name': _autolabos_fallback_condition_get(prepared_condition, 'base_model_name', default=_autolabos_fallback_condition_get(model_bundle, 'model_name', default=None)),",
+    "            'training': training_summary,",
+    "            'training_metrics': training_summary,",
+    "            'adapter_output_dir': _autolabos_fallback_condition_get(training_summary, 'adapter_artifact_dir', default=_autolabos_fallback_condition_get(prepared_condition, 'adapter_artifact_dir', default=None)),",
+    "            'artifacts_dir': _autolabos_fallback_condition_get(prepared_condition, 'artifact_dir', default=condition_output_dir or condition_dir or artifact_dir),",
+    "        }",
+    "        evaluation_payload = _autolabos_fallback_condition_call_supported(",
+    "            evaluate_trained_condition,",
+    "            condition=active_condition,",
+    "            bundle_or_state=model_state,",
+    "            eval_examples_by_task=eval_examples_by_task,",
+    "            max_context_length=max_context_length,",
+    "        )",
+    "        result = dict(evaluation_payload) if isinstance(evaluation_payload, dict) else {'evaluation': evaluation_payload}",
+    "        training_payload = _autolabos_fallback_condition_json(training_summary)",
+    "        result.setdefault('status', 'completed')",
+    "        result.setdefault('success', True)",
+    "        result.setdefault('condition', active_condition)",
+    "        result.setdefault('marker', _autolabos_fallback_condition_get(active_condition, 'marker', default=None))",
+    "        result.setdefault('rank', _autolabos_fallback_condition_get(active_condition, 'rank', default=None))",
+    "        result.setdefault('dropout', _autolabos_fallback_condition_get(active_condition, 'dropout', default=None))",
+    "        result.setdefault('training', training_payload)",
+    "        result.setdefault('train_metrics', training_payload)",
+    "        result.setdefault('training_metadata', train_metadata)",
+    "        result.setdefault('train_examples_count', len(train_examples) if train_examples is not None else None)",
+    "        result.setdefault('evaluation_metadata', eval_metadata)",
+    "        result.setdefault('condition_output_dir', str(condition_output_dir or condition_dir or artifact_dir or _autolabos_fallback_condition_get(prepared_condition, 'artifact_dir', default=root_output_dir)))",
+    "        if isinstance(training_payload, dict):",
+    "            result.setdefault('train_loss', training_payload.get('final_train_loss') or training_payload.get('average_train_loss'))",
+    "            result.setdefault('runtime_sec', training_payload.get('runtime_sec'))",
+    "            result.setdefault('selected_model', training_payload.get('model_name') or _autolabos_fallback_condition_get(model_bundle, 'model_name', default=None))",
+    "        return result",
+    "    finally:",
+    "        cleanup = globals().get('clear_torch_memory')",
+    "        if callable(cleanup):",
+    "            try:",
+    "                cleanup()",
+    "            except Exception:",
+    "                pass",
+    "",
+    "run_single_condition = _autolabos_fallback_bounded_condition_runner",
+    "_run_single_condition = _autolabos_fallback_bounded_condition_runner",
+    "run_condition = _autolabos_fallback_bounded_condition_runner",
+    "_run_condition = _autolabos_fallback_bounded_condition_runner",
+    "execute_condition = _autolabos_fallback_bounded_condition_runner",
+    "_execute_condition = _autolabos_fallback_bounded_condition_runner",
+    "run_lora_condition = _autolabos_fallback_bounded_condition_runner",
+    "_run_lora_condition = _autolabos_fallback_bounded_condition_runner",
+    "execute_lora_condition = _autolabos_fallback_bounded_condition_runner",
+    "_run_one_condition = _autolabos_fallback_bounded_condition_runner",
+    ""
+  ].join("\n");
+
+  const nextSource = `${source.slice(0, insertionMatch.index)}${bridgeBlock}${source.slice(insertionMatch.index)}`;
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Bridged generated bounded condition training helpers into fallback sweep execution in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonOrchestrationTrainEvalConditionBridgeSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_orchestration_train_eval_condition_bridge_marker";
+  if (
+    source.includes(marker) ||
+    !source.includes("def run_locked_lora_rank_dropout_study(") ||
+    !source.includes("def _orchestration_find_helper(") ||
+    !source.includes("class StudyCondition") ||
+    !source.includes("def preflight_and_select_model(") ||
+    !source.includes("def prepare_study_data(") ||
+    !source.includes("def execute_condition_training(") ||
+    !source.includes("def evaluate_condition_on_tasks(") ||
+    !source.includes("def build_condition_result_record(")
+  ) {
+    return { repaired: false };
+  }
+
+  const insertionMatch = source.match(/\ndef\s+run_locked_lora_rank_dropout_study\s*\(/u);
+  if (!insertionMatch || insertionMatch.index === undefined) {
+    return { repaired: false };
+  }
+
+  const bridgeBlock = [
+    "",
+    `# ${marker}`,
+    "def _autolabos_orchestration_bridge_get(source, *names, default=None):",
+    "    for name in names:",
+    "        if source is None:",
+    "            continue",
+    "        if hasattr(source, 'get'):",
+    "            try:",
+    "                value = source.get(name, None)",
+    "            except Exception:",
+    "                value = None",
+    "            if value is not None:",
+    "                return value",
+    "        if hasattr(source, name):",
+    "            value = getattr(source, name)",
+    "            if value is not None:",
+    "                return value",
+    "    return default",
+    "",
+    "def _autolabos_orchestration_bridge_call(fn, **kwargs):",
+    "    import inspect as _autolabos_inspect",
+    "    signature = _autolabos_inspect.signature(fn)",
+    "    parameters = signature.parameters",
+    "    if any(param.kind == _autolabos_inspect.Parameter.VAR_KEYWORD for param in parameters.values()):",
+    "        return fn(**{key: value for key, value in kwargs.items() if value is not None})",
+    "    return fn(**{key: value for key, value in kwargs.items() if key in parameters and value is not None})",
+    "",
+    "def _autolabos_orchestration_active_args(args=None, namespace=None, **context):",
+    "    active_args = args or namespace or context.get('parsed_args') or context.get('cli_args')",
+    "    if active_args is None:",
+    "        active_args = globals().get('argparse').Namespace() if globals().get('argparse') is not None else None",
+    "    return active_args",
+    "",
+    "def preflight_model_and_runtime(args=None, namespace=None, **context):",
+    "    active_args = _autolabos_orchestration_active_args(args=args, namespace=namespace, **context)",
+    "    return preflight_and_select_model(active_args)",
+    "",
+    "def prepare_datasets(args=None, namespace=None, **context):",
+    "    active_args = _autolabos_orchestration_active_args(args=args, namespace=namespace, **context)",
+    "    return prepare_study_data(active_args)",
+    "",
+    "def _autolabos_orchestration_condition_output_root(condition, output_dir=None, condition_output_dir=None, condition_dir=None, artifact_dir=None):",
+    "    root = condition_output_dir or condition_dir or artifact_dir or output_dir or Path('outputs')",
+    "    path_value = Path(root)",
+    "    marker_value = _autolabos_orchestration_bridge_get(condition, 'marker', default=None)",
+    "    if marker_value and path_value.name == str(marker_value):",
+    "        return path_value.parent",
+    "    return path_value",
+    "",
+    "def _autolabos_orchestration_train_eval_condition_runner(",
+    "    condition=None,",
+    "    study_condition=None,",
+    "    condition_spec=None,",
+    "    args=None,",
+    "    namespace=None,",
+    "    output_dir=None,",
+    "    condition_output_dir=None,",
+    "    condition_dir=None,",
+    "    artifact_dir=None,",
+    "    preflight=None,",
+    "    preflight_result=None,",
+    "    data_bundle=None,",
+    "    dataset_bundle=None,",
+    "    **context,",
+    "):",
+    "    active_args = _autolabos_orchestration_active_args(args=args, namespace=namespace, **context)",
+    "    active_condition = condition or study_condition or condition_spec or context.get('lora_condition')",
+    "    if active_condition is None:",
+    "        raise RuntimeError('Generated condition runner bridge requires a condition.')",
+    "    loaded_artifacts = preflight_result or preflight or context.get('loaded_artifacts') or context.get('model_artifacts')",
+    "    if loaded_artifacts is None:",
+    "        loaded_artifacts = preflight_and_select_model(active_args)",
+    "    prepared_data = data_bundle or dataset_bundle or context.get('prepared_data') or context.get('study_data')",
+    "    if prepared_data is None:",
+    "        prepared_data = prepare_study_data(active_args)",
+    "    train_examples = _autolabos_orchestration_bridge_get(",
+    "        prepared_data,",
+    "        'train_examples',",
+    "        'training_examples',",
+    "        'instruction_examples',",
+    "        default=None,",
+    "    )",
+    "    if train_examples is None:",
+    "        train_examples = []",
+    "    eval_payload = _autolabos_orchestration_bridge_get(",
+    "        prepared_data,",
+    "        'evaluation_tasks',",
+    "        'eval_payload',",
+    "        'eval_examples_by_task',",
+    "        'evaluation_examples',",
+    "        default=prepared_data,",
+    "    )",
+    "    condition_root = _autolabos_orchestration_condition_output_root(",
+    "        active_condition,",
+    "        output_dir=output_dir,",
+    "        condition_output_dir=condition_output_dir,",
+    "        condition_dir=condition_dir,",
+    "        artifact_dir=artifact_dir,",
+    "    )",
+    "    training_result = _autolabos_orchestration_bridge_call(",
+    "        execute_condition_training,",
+    "        condition=active_condition,",
+    "        loaded_artifacts=loaded_artifacts,",
+    "        train_examples=train_examples,",
+    "        output_dir=condition_root,",
+    "        seed=_autolabos_orchestration_bridge_get(active_args, 'seed', default=globals().get('DEFAULT_SEED', 42)),",
+    "        max_seq_length=_autolabos_orchestration_bridge_get(active_args, 'max_seq_length', default=globals().get('DEFAULT_MAX_SEQ_LENGTH', 256)),",
+    "        num_train_epochs=_autolabos_orchestration_bridge_get(active_args, 'num_train_epochs', default=globals().get('DEFAULT_NUM_TRAIN_EPOCHS', 1)),",
+    "        per_device_train_batch_size=_autolabos_orchestration_bridge_get(active_args, 'per_device_train_batch_size', default=globals().get('DEFAULT_PER_DEVICE_TRAIN_BATCH_SIZE', 1)),",
+    "        gradient_accumulation_steps=_autolabos_orchestration_bridge_get(active_args, 'gradient_accumulation_steps', default=globals().get('DEFAULT_GRADIENT_ACCUMULATION_STEPS', 1)),",
+    "        learning_rate=_autolabos_orchestration_bridge_get(active_args, 'learning_rate', default=globals().get('DEFAULT_LEARNING_RATE', 2e-4)),",
+    "        warmup_ratio=_autolabos_orchestration_bridge_get(active_args, 'warmup_ratio', default=globals().get('DEFAULT_WARMUP_RATIO', 0.0)),",
+    "        weight_decay=_autolabos_orchestration_bridge_get(active_args, 'weight_decay', default=globals().get('DEFAULT_WEIGHT_DECAY', 0.0)),",
+    "        logging_steps=_autolabos_orchestration_bridge_get(active_args, 'logging_steps', default=globals().get('DEFAULT_LOGGING_STEPS', 10)),",
+    "    )",
+    "    evaluation_record = _autolabos_orchestration_bridge_call(",
+    "        evaluate_condition_on_tasks,",
+    "        condition=active_condition,",
+    "        training_result=training_result,",
+    "        eval_payload=eval_payload,",
+    "        loaded_model=loaded_artifacts,",
+    "        eval_max_new_tokens=_autolabos_orchestration_bridge_get(active_args, 'eval_max_new_tokens', default=globals().get('DEFAULT_EVAL_MAX_NEW_TOKENS', 1)),",
+    "    )",
+    "    return _autolabos_orchestration_bridge_call(",
+    "        build_condition_result_record,",
+    "        condition=active_condition,",
+    "        training_result=training_result,",
+    "        evaluation_record=evaluation_record,",
+    "        model_name=_autolabos_orchestration_bridge_get(loaded_artifacts, 'model_name', default=None),",
+    "        model_source=_autolabos_orchestration_bridge_get(loaded_artifacts, 'model_source', default=None),",
+    "    )",
+    "",
+    "execute_condition = _autolabos_orchestration_train_eval_condition_runner",
+    "run_condition = _autolabos_orchestration_train_eval_condition_runner",
+    "run_single_condition = _autolabos_orchestration_train_eval_condition_runner",
+    "train_and_evaluate_condition = _autolabos_orchestration_train_eval_condition_runner",
+    "execute_study_condition = _autolabos_orchestration_train_eval_condition_runner",
+    "run_lora_condition = _autolabos_orchestration_train_eval_condition_runner",
+    ""
+  ].join("\n");
+
+  const nextSource = `${source.slice(0, insertionMatch.index)}${bridgeBlock}${source.slice(insertionMatch.index)}`;
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Bridged generated preflight/data/train/eval helpers into final orchestration condition execution in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonEntrypointStudyResultKwargAliasSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    !source.includes("def _entrypoint_invoke_callable(") ||
+    !source.includes("study_output=study_output") ||
+    !source.includes("study_result") ||
+    source.includes("_autolabos_entrypoint_study_result_kwarg_alias_marker")
+  ) {
+    return { repaired: false };
+  }
+
+  const signatureLine =
+    "    signature = inspect.signature(target)\n";
+  if (!source.includes(signatureLine)) {
+    return { repaired: false };
+  }
+
+  const aliasBlock = [
+    signatureLine.trimEnd(),
+    "    # _autolabos_entrypoint_study_result_kwarg_alias_marker",
+    "    if \"study_result\" in signature.parameters and \"study_result\" not in candidate_kwargs:",
+    "        for _autolabos_result_alias in (\"study_output\", \"execution_result\", \"result\"):",
+    "            if _autolabos_result_alias in candidate_kwargs:",
+    "                candidate_kwargs[\"study_result\"] = candidate_kwargs[_autolabos_result_alias]",
+    "                break",
+    ""
+  ].join("\n");
+
+  const nextSource = source.replace(signatureLine, aliasBlock);
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Aliased generated entrypoint study_output to study_result in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonNestedRunRecordsProjectionSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    !source.includes("def _finalize_extract_run_records(") ||
+    (!source.includes("\"raw_result\"") && !source.includes("'raw_result'")) ||
+    !source.includes("condition_marker") ||
+    source.includes("_autolabos_nested_run_records_projection_marker")
+  ) {
+    return { repaired: false };
+  }
+
+  const needle = [
+    "",
+    "    condition_lookup = {condition.marker: condition for condition in context.conditions}",
+    "    normalized_records = ["
+  ].join("\n");
+  if (!source.includes(needle)) {
+    return { repaired: false };
+  }
+
+  const bridgeBlock = [
+    "",
+    "    # _autolabos_nested_run_records_projection_marker",
+    "    def _autolabos_nested_run_record_candidates(value: Any) -> list[Any]:",
+    "        candidates: list[Any] = []",
+    "        if isinstance(value, Mapping):",
+    "            for key in (",
+    "                \"value\",",
+    "                \"per_run_results\",",
+    "                \"run_results\",",
+    "                \"seed_results\",",
+    "                \"results\",",
+    "                \"rows\",",
+    "                \"trial_results\",",
+    "                \"completed_runs\",",
+    "                \"raw_results\",",
+    "                \"raw_condition_results\",",
+    "            ):",
+    "                nested = value.get(key)",
+    "                if isinstance(nested, Sequence) and not isinstance(nested, (str, bytes, bytearray, Mapping)):",
+    "                    candidates.extend(list(nested))",
+    "        elif isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray, Mapping)):",
+    "            candidates.extend(list(value))",
+    "        return candidates",
+    "",
+    "    if raw_records and not any(",
+    "        isinstance(record, Mapping) and record.get(\"condition_marker\")",
+    "        for record in raw_records",
+    "    ):",
+    "        _autolabos_nested_records: list[Any] = []",
+    "        for record in raw_records:",
+    "            if not isinstance(record, Mapping):",
+    "                continue",
+    "            for nested_source in (",
+    "                record.get(\"raw_result\"),",
+    "                record.get(\"raw_results\"),",
+    "                record.get(\"execution_metadata\"),",
+    "                record.get(\"study_result\"),",
+    "                record.get(\"study_output\"),",
+    "                record.get(\"value\"),",
+    "            ):",
+    "                for nested_record in _autolabos_nested_run_record_candidates(nested_source):",
+    "                    if isinstance(nested_record, Mapping) and nested_record.get(\"condition_marker\"):",
+    "                        _autolabos_nested_records.append(nested_record)",
+    "        if _autolabos_nested_records:",
+    "            raw_records = _autolabos_nested_records",
+    "    elif not raw_records:",
+    "        for nested_record in _autolabos_nested_run_record_candidates(execution_dict):",
+    "            if isinstance(nested_record, Mapping) and nested_record.get(\"condition_marker\"):",
+    "                raw_records.append(nested_record)",
+    "",
+    "    condition_lookup = {condition.marker: condition for condition in context.conditions}",
+    "    normalized_records = ["
+  ].join("\n");
+
+  const nextSource = source.replace(needle, bridgeBlock);
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Projected nested per-run records into final metrics extraction for ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonAggregateNestedRawResultRowsSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_aggregate_nested_raw_result_rows_marker";
+  if (
+    source.includes(marker) ||
+    !source.includes("def aggregate_seed_run_results(") ||
+    !source.includes("def normalize_run_result(") ||
+    !source.includes("raw_result") ||
+    !source.includes("normalized_rows = [normalize_run_result(run_result) for run_result in run_results]")
+  ) {
+    return { repaired: false };
+  }
+
+  const insertionMatch = source.match(/\ndef\s+aggregate_seed_run_results\s*\(/u);
+  if (!insertionMatch || insertionMatch.index === undefined) {
+    return { repaired: false };
+  }
+
+  const helper = [
+    "",
+    `# ${marker}`,
+    "def _autolabos_aggregate_nested_raw_result_rows(run_results):",
+    "    def _autolabos_nested_candidates(value):",
+    "        candidates = []",
+    "        if isinstance(value, dict):",
+    "            for key in (",
+    "                \"value\",",
+    "                \"per_run_results\",",
+    "                \"run_results\",",
+    "                \"seed_results\",",
+    "                \"results\",",
+    "                \"rows\",",
+    "                \"trial_results\",",
+    "                \"completed_runs\",",
+    "                \"raw_results\",",
+    "                \"raw_condition_results\",",
+    "            ):",
+    "                nested = value.get(key)",
+    "                if isinstance(nested, (list, tuple)):",
+    "                    candidates.extend(list(nested))",
+    "        elif isinstance(value, (list, tuple)):",
+    "            candidates.extend(list(value))",
+    "        return candidates",
+    "",
+    "    flattened = []",
+    "    for record in list(run_results or []):",
+    "        if isinstance(record, dict) and not record.get(\"condition_marker\"):",
+    "            nested_rows = []",
+    "            for nested_source in (",
+    "                record.get(\"raw_result\"),",
+    "                record.get(\"raw_results\"),",
+    "                record.get(\"study_result\"),",
+    "                record.get(\"study_output\"),",
+    "                record.get(\"execution_metadata\"),",
+    "                record.get(\"value\"),",
+    "            ):",
+    "                for nested_record in _autolabos_nested_candidates(nested_source):",
+    "                    if isinstance(nested_record, dict) and nested_record.get(\"condition_marker\"):",
+    "                        nested_rows.append(nested_record)",
+    "            if nested_rows:",
+    "                flattened.extend(nested_rows)",
+    "                continue",
+    "        flattened.append(record)",
+    "    return flattened",
+    ""
+  ].join("\n");
+
+  let nextSource = `${source.slice(0, insertionMatch.index)}${helper}${source.slice(insertionMatch.index)}`;
+  nextSource = nextSource.replace(
+    "    normalized_rows = [normalize_run_result(run_result) for run_result in run_results]",
+    [
+      "    run_results = _autolabos_aggregate_nested_raw_result_rows(run_results)",
+      "    normalized_rows = [normalize_run_result(run_result) for run_result in run_results]"
+    ].join("\n")
+  );
+
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Flattened nested raw_result per-seed rows before aggregate metrics projection in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonSingleRunExecutorSignatureDispatchSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_single_run_executor_signature_dispatch_marker";
+  if (
+    source.includes(marker) ||
+    !source.includes("def _invoke_single_run_executor(") ||
+    !source.includes("call_variants = [") ||
+    !source.includes("lambda: executor(args, condition, seed, run_output_dir)")
+  ) {
+    return { repaired: false };
+  }
+
+  const needle = "    call_variants = [\n";
+  if (!source.includes(needle)) {
+    return { repaired: false };
+  }
+
+  const dispatchBlock = [
+    `    # ${marker}`,
+    "    try:",
+    "        _autolabos_inspect = __import__(\"inspect\")",
+    "        _autolabos_signature = _autolabos_inspect.signature(executor)",
+    "    except (TypeError, ValueError):",
+    "        _autolabos_signature = None",
+    "    if _autolabos_signature is not None:",
+    "        _autolabos_loaded_bundle = None",
+    "        _autolabos_loaded_bundle_ready = False",
+    "",
+    "        def _autolabos_arg_value(names, default=None):",
+    "            for _autolabos_name in names:",
+    "                if hasattr(args, _autolabos_name):",
+    "                    _autolabos_value = getattr(args, _autolabos_name)",
+    "                    if _autolabos_value is not None:",
+    "                        return _autolabos_value",
+    "            return default",
+    "",
+    "        def _autolabos_call_with_supported_kwargs(func, keyword_pool):",
+    "            try:",
+    "                _autolabos_func_signature = _autolabos_inspect.signature(func)",
+    "            except (TypeError, ValueError):",
+    "                return func()",
+    "            _autolabos_accepts_kwargs = any(",
+    "                _autolabos_parameter.kind == _autolabos_inspect.Parameter.VAR_KEYWORD",
+    "                for _autolabos_parameter in _autolabos_func_signature.parameters.values()",
+    "            )",
+    "            _autolabos_filtered = (",
+    "                dict(keyword_pool)",
+    "                if _autolabos_accepts_kwargs",
+    "                else {",
+    "                    _autolabos_key: _autolabos_value",
+    "                    for _autolabos_key, _autolabos_value in keyword_pool.items()",
+    "                    if _autolabos_key in _autolabos_func_signature.parameters and _autolabos_value is not None",
+    "                }",
+    "            )",
+    "            return func(**_autolabos_filtered)",
+    "",
+    "        def _autolabos_load_model_bundle():",
+    "            nonlocal _autolabos_loaded_bundle, _autolabos_loaded_bundle_ready",
+    "            if _autolabos_loaded_bundle_ready:",
+    "                return _autolabos_loaded_bundle",
+    "            _autolabos_loader_names = (",
+    "                \"_load_fresh_model_bundle_for_training_run\",",
+    "                \"load_fresh_model_bundle_for_training_run\",",
+    "                \"load_model_bundle_for_training_run\",",
+    "                \"load_base_model_bundle_for_training_run\",",
+    "            )",
+    "            _autolabos_loader_pool = {",
+    "                \"preferred_model_name\": _autolabos_arg_value((",
+    "                    \"preferred_model_name\",",
+    "                    \"model_name\",",
+    "                    \"model_name_or_path\",",
+    "                    \"base_model_name\",",
+    "                    \"preferred_base_model\",",
+    "                )),",
+    "                \"fallback_model_name\": _autolabos_arg_value((",
+    "                    \"fallback_model_name\",",
+    "                    \"fallback_base_model\",",
+    "                    \"fallback_model\",",
+    "                )),",
+    "                \"local_files_only\": _autolabos_arg_value((",
+    "                    \"local_files_only\",",
+    "                    \"model_local_files_only\",",
+    "                )),",
+    "                \"args\": args,",
+    "                \"condition\": condition,",
+    "                \"seed\": seed,",
+    "                \"output_dir\": run_output_dir,",
+    "                \"run_output_dir\": run_output_dir,",
+    "            }",
+    "            for _autolabos_loader_name in _autolabos_loader_names:",
+    "                _autolabos_loader = globals().get(_autolabos_loader_name)",
+    "                if callable(_autolabos_loader):",
+    "                    _autolabos_loaded_bundle = _autolabos_call_with_supported_kwargs(",
+    "                        _autolabos_loader,",
+    "                        _autolabos_loader_pool,",
+    "                    )",
+    "                    _autolabos_loaded_bundle_ready = True",
+    "                    return _autolabos_loaded_bundle",
+    "            raise RuntimeError(\"Single-run executor requires a model bundle, but no compatible generated model-bundle loader was found.\")",
+    "",
+    "        _autolabos_candidate_kwargs = {}",
+    "        _autolabos_missing_required = []",
+    "        for _autolabos_name, _autolabos_parameter in _autolabos_signature.parameters.items():",
+    "            if _autolabos_parameter.kind in (",
+    "                _autolabos_inspect.Parameter.VAR_POSITIONAL,",
+    "                _autolabos_inspect.Parameter.VAR_KEYWORD,",
+    "            ):",
+    "                continue",
+    "            _autolabos_lower = _autolabos_name.lower()",
+    "            if _autolabos_lower in (\"condition\", \"study_condition\", \"locked_condition\", \"condition_config\", \"planned_condition\"):",
+    "                _autolabos_candidate_kwargs[_autolabos_name] = condition",
+    "            elif _autolabos_lower in (\"seed\", \"random_seed\", \"run_seed\"):",
+    "                _autolabos_candidate_kwargs[_autolabos_name] = seed",
+    "            elif _autolabos_lower in (\"args\", \"cli_args\", \"namespace\", \"parsed_args\"):",
+    "                _autolabos_candidate_kwargs[_autolabos_name] = args",
+    "            elif _autolabos_lower in (",
+    "                \"output_dir\",",
+    "                \"output_root\",",
+    "                \"run_output_dir\",",
+    "                \"run_output_root\",",
+    "                \"condition_output_dir\",",
+    "                \"artifact_dir\",",
+    "                \"artifacts_dir\",",
+    "            ):",
+    "                _autolabos_candidate_kwargs[_autolabos_name] = run_output_dir",
+    "            elif _autolabos_lower in (\"loaded_bundle\", \"model_bundle\", \"bundle\", \"loaded_model_bundle\", \"base_model_bundle\"):",
+    "                _autolabos_candidate_kwargs[_autolabos_name] = _autolabos_load_model_bundle()",
+    "            elif _autolabos_parameter.default is _autolabos_inspect.Parameter.empty:",
+    "                _autolabos_missing_required.append(_autolabos_name)",
+    "        if not _autolabos_missing_required:",
+    "            try:",
+    "                return executor(**_autolabos_candidate_kwargs)",
+    "            except TypeError as exc:",
+    "                if not _looks_like_signature_mismatch(exc):",
+    "                    raise",
+    "",
+    needle.trimEnd()
+  ].join("\n");
+
+  const nextSource = source.replace(needle, dispatchBlock);
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Dispatched generated single-run executor by signature in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
 export async function repairPythonLockedConditionSingleRunnerBridgeSurface(
   scriptPath?: string
 ): Promise<{ repaired: boolean; message?: string }> {
@@ -27540,6 +29385,475 @@ export async function repairPythonBenchmarkAccuracyComprehensionSurface(
   return {
     repaired: true,
     message: `Aligned generated benchmark accuracy comprehension in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonStudyCallModelSelectionKwargSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_study_call_model_selection_kwarg_marker";
+  if (
+    source.includes(marker) ||
+    !/\ndef\s+_study_call_with_supported_kwargs\s*\(/u.test(source) ||
+    !/\ndef\s+execute_condition\s*\(/u.test(source) ||
+    !source.includes("model_selection") ||
+    !/preflight_payload\s*=\s*_study_select_base_model\s*\(/u.test(source)
+  ) {
+    return { repaired: false };
+  }
+
+  const selectionAnchor = [
+    "    selected_model_name = str(preflight_payload.get(\"selected_model_name\") or PREFERRED_MODEL_NAME)",
+    "    used_fallback_model = bool(preflight_payload.get(\"used_fallback_model\", False))"
+  ].join("\n");
+  if (!source.includes(selectionAnchor)) {
+    return { repaired: false };
+  }
+
+  let nextSource = source.replace(
+    selectionAnchor,
+    [
+      "    selected_model_name = str(preflight_payload.get(\"selected_model_name\") or PREFERRED_MODEL_NAME)",
+      "    used_fallback_model = bool(preflight_payload.get(\"used_fallback_model\", False))",
+      `    # ${marker}`,
+      "    model_selection_payload = dict(preflight_payload)",
+      "    model_selection_payload.setdefault(\"success\", bool(selected_model_name))",
+      "    model_selection_payload.setdefault(\"selected_model_name\", selected_model_name)",
+      "    model_selection_payload.setdefault(\"selected_model_source\", model_selection_payload.get(\"source\") or model_selection_payload.get(\"status\") or \"preflight\")",
+      "    model_selection_payload.setdefault(\"local_files_only\", True)"
+    ].join("\n")
+  );
+
+  nextSource = nextSource.replace(
+    /^([ \t]*)selected_model_name=selected_model_name,\n\1base_model_name=selected_model_name,/gmu,
+    [
+      "$1selected_model_name=selected_model_name,",
+      "$1base_model_name=selected_model_name,",
+      "$1model_selection=model_selection_payload,",
+      "$1model_selection_payload=model_selection_payload,"
+    ].join("\n")
+  );
+
+  if (nextSource === source || !nextSource.includes("model_selection=model_selection_payload")) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Passed preflight model_selection payload into generated study condition calls in ${path.basename(
+      scriptPath
+    )} before handoff.`
+  };
+}
+
+export async function repairPythonModelSelectionPlanScalarFallbackSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_model_selection_plan_scalar_fallback_marker";
+  if (
+    source.includes(marker) ||
+    !source.includes("def build_model_selection_plan(") ||
+    !source.includes("def preflight_model_candidate(") ||
+    !source.includes("for candidate in model_candidates")
+  ) {
+    return { repaired: false };
+  }
+
+  const anchor = [
+    "    prefer_local_cache_only = (",
+    "        PREFER_LOCAL_CACHE_ONLY if prefer_local_cache_only is None else bool(prefer_local_cache_only)",
+    "    )"
+  ].join("\n");
+  if (!source.includes(anchor)) {
+    return { repaired: false };
+  }
+
+  const block = [
+    anchor,
+    `    # ${marker}`,
+    "    if isinstance(model_candidates, str):",
+    "        fallback_model_name = device_report if isinstance(device_report, str) else globals().get(" +
+      JSON.stringify("FALLBACK_MODEL_NAME") +
+      ", globals().get(" +
+      JSON.stringify("FALLBACK_BASE_MODEL") +
+      ", " +
+      JSON.stringify("TinyLlama/TinyLlama-1.1B-Chat-v1.0") +
+      "))",
+    "        model_candidates = [",
+    "            {\"label\": \"preferred\", \"model_name\": model_candidates},",
+    "            {\"label\": \"fallback\", \"model_name\": fallback_model_name},",
+    "        ]",
+    "        device_report = None",
+    "    else:",
+    "        normalized_model_candidates = []",
+    "        for index, candidate in enumerate(model_candidates):",
+    "            if isinstance(candidate, str):",
+    "                normalized_model_candidates.append({",
+    "                    \"label\": \"preferred\" if index == 0 else f\"candidate_{index}\",",
+    "                    \"model_name\": candidate,",
+    "                })",
+    "            else:",
+    "                normalized_model_candidates.append(candidate)",
+    "        model_candidates = normalized_model_candidates"
+  ].join("\n");
+
+  const nextSource = source.replace(anchor, block);
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Coerced scalar model-selection fallback candidates in ${path.basename(
+      scriptPath
+    )} before handoff.`
+  };
+}
+
+export async function repairPythonAllowModelDownloadDefaultSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_allow_model_download_default_marker";
+  if (!source.includes("DEFAULT_LOCAL_FILES_ONLY = True")) {
+    return { repaired: false };
+  }
+
+  const replacement = [
+    `# ${marker}`,
+    "DEFAULT_LOCAL_FILES_ONLY = os.environ.get(" +
+      JSON.stringify("AUTOLABOS_ALLOW_MODEL_DOWNLOAD") +
+      ", " +
+      JSON.stringify("") +
+      ").strip().lower() not in {" +
+      Array.from(["1", "true", "yes", "on"], (value) => JSON.stringify(value)).join(", ") +
+      "}"
+  ].join("\n");
+  const nextSource = source.split("DEFAULT_LOCAL_FILES_ONLY = True").join(replacement);
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Honored AUTOLABOS_ALLOW_MODEL_DOWNLOAD in ${path.basename(
+      scriptPath
+    )} before handoff.`
+  };
+}
+
+export async function repairPythonCallContextInvokerBridgeSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_call_context_invoker_bridge_marker";
+  if (
+    source.includes(marker) ||
+    !/\ndef\s+_call_with_supported_kwargs\s*\(/u.test(source) ||
+    !/\ndef\s+_invoke_condition_runner\s*\([^)]*call_context/u.test(source) ||
+    !source.includes("_call_with_supported_kwargs(invoker, runner, condition")
+  ) {
+    return { repaired: false };
+  }
+
+  const callWithSupportedHeader = source.match(
+    /\ndef\s+_call_with_supported_kwargs\s*\([^)]*\)\s*(?:->\s*[^:\n]+)?\s*:\n/u
+  );
+  if (!callWithSupportedHeader || callWithSupportedHeader.index === undefined) {
+    return { repaired: false };
+  }
+
+  const insertionPoint = callWithSupportedHeader.index + callWithSupportedHeader[0].length;
+  const bridgeLines = [
+    `    # ${marker}`,
+    "    try:",
+    "        _autolabos_signature = inspect.signature(func)",
+    "    except Exception:",
+    "        _autolabos_signature = None",
+    "    if _autolabos_signature is not None and \"call_context\" in _autolabos_signature.parameters and positional_args:",
+    "        _autolabos_context = dict(kwargs)",
+    "        if len(positional_args) >= 2 and hasattr(positional_args[1], \"items\"):",
+    "            _autolabos_context.update(dict(positional_args[1]))",
+    "        elif len(positional_args) >= 2:",
+    "            _autolabos_context.setdefault(\"condition\", positional_args[1])",
+    "            _autolabos_context.setdefault(\"study_condition\", positional_args[1])",
+    "        return func(positional_args[0], _autolabos_context)",
+    ""
+  ].join("\n");
+
+  const nextSource = `${source.slice(0, insertionPoint)}${bridgeLines}${source.slice(insertionPoint)}`;
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Bridged generated call_context invoker dispatch in ${path.basename(
+      scriptPath
+    )} before handoff.`
+  };
+}
+
+export async function repairPythonStudyConditionRuntimeInputMaterializationSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    source.includes("_autolabos_study_condition_runtime_inputs_marker") ||
+    !source.includes("def _build_study_execution_context(") ||
+    !source.includes("def run_locked_lora_rank_dropout_study(") ||
+    !source.includes("runner_kwargs = {") ||
+    !source.includes('"dataset_bundle": execution_context.get("dataset_bundle"),') ||
+    !source.includes("def load_instruction_training_records(") ||
+    !source.includes("def load_eval_task_examples(")
+  ) {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  let nextSource = source;
+
+  const helperBlock = [
+    "",
+    "def _autolabos_study_condition_runtime_inputs_marker():",
+    "    return True",
+    "",
+    "def _autolabos_study_getattr_any(source, names, default=None):",
+    "    for name in names:",
+    "        try:",
+    "            value = getattr(source, name, None)",
+    "        except Exception:",
+    "            value = None",
+    "        if value is not None:",
+    "            return value",
+    "    return default",
+    "",
+    "def _autolabos_study_records_from_loader_output(value):",
+    "    if isinstance(value, tuple) and value:",
+    "        records = value[0]",
+    "        meta = value[1] if len(value) > 1 else None",
+    "    else:",
+    "        records = value",
+    "        meta = None",
+    "    if records is None or isinstance(records, (str, bytes, bytearray)):",
+    "        return [], meta",
+    "    try:",
+    "        return list(records), meta",
+    "    except TypeError:",
+    "        return [], meta",
+    "",
+    "def _autolabos_study_condition_runtime_inputs(args, output_contract, execution_context):",
+    "    payload = {}",
+    "    if not isinstance(execution_context, dict):",
+    "        execution_context = {}",
+    "    selected_model_id = (",
+    "        _autolabos_study_getattr_any(args, ('model_id', 'base_model_id', 'preferred_model_id'))",
+    "        or execution_context.get('selected_model_id')",
+    "        or execution_context.get('model_id')",
+    "        or globals().get('PREFERRED_MODEL_ID')",
+    "        or globals().get('DEFAULT_PREFERRED_MODEL')",
+    "        or globals().get('DEFAULT_BASE_MODEL')",
+    "    )",
+    "    selected_model_source = 'preferred' if selected_model_id == globals().get('PREFERRED_MODEL_ID') else 'configured'",
+    "    model_preflight = execution_context.get('model_preflight')",
+    "    if hasattr(model_preflight, 'items'):",
+    "        selected_model_id = model_preflight.get('selected_model_id') or model_preflight.get('model_id') or selected_model_id",
+    "        selected_model_source = model_preflight.get('model_source') or model_preflight.get('selected_model_source') or selected_model_source",
+    "    if selected_model_id is not None:",
+    "        payload['model_id'] = selected_model_id",
+    "        payload['base_model_id'] = selected_model_id",
+    "        payload['selected_model_id'] = selected_model_id",
+    "        payload['model_selection'] = {",
+    "            'selected_model_id': selected_model_id,",
+    "            'model_id': selected_model_id,",
+    "            'model_source': selected_model_source,",
+    "        }",
+    "    device_info = execution_context.get('device_info') if isinstance(execution_context.get('device_info'), dict) else {}",
+    "    runtime_device = device_info.get('device') or globals().get('RUNTIME_DEVICE')",
+    "    if runtime_device is not None:",
+    "        payload['device'] = runtime_device",
+    "    if device_info:",
+    "        payload['device_info'] = device_info",
+    "    seed = _autolabos_study_getattr_any(args, ('seed',), globals().get('DEFAULT_SEED', 0))",
+    "    max_train_examples = _autolabos_study_getattr_any(args, ('max_train_examples', 'train_examples'), globals().get('DEFAULT_MAX_TRAIN_EXAMPLES', 0))",
+    "    train_loader = globals().get('load_instruction_training_records')",
+    "    if callable(train_loader):",
+    "        train_attempts = (",
+    "            lambda: train_loader(max_examples=max_train_examples, seed=seed),",
+    "            lambda: train_loader(max_train_examples, seed),",
+    "            lambda: train_loader(),",
+    "        )",
+    "        for attempt in train_attempts:",
+    "            try:",
+    "                train_records, train_meta = _autolabos_study_records_from_loader_output(attempt())",
+    "            except TypeError:",
+    "                continue",
+    "            except Exception as exc:",
+    "                payload['train_records_error'] = f'{type(exc).__name__}: {exc}'",
+    "                break",
+    "            if train_records:",
+    "                payload['train_records'] = train_records",
+    "                payload['train_examples'] = train_records",
+    "                payload['train_data'] = train_records",
+    "                if hasattr(train_meta, 'items'):",
+    "                    payload.setdefault('dataset_metadata', {})['train'] = dict(train_meta)",
+    "                break",
+    "    max_eval_examples = _autolabos_study_getattr_any(",
+    "        args,",
+    "        ('max_eval_examples_per_task', 'max_eval_samples_per_task', 'max_eval_examples'),",
+    "        globals().get('DEFAULT_MAX_EVAL_EXAMPLES_PER_TASK', 0),",
+    "    )",
+    "    eval_loader = globals().get('load_eval_task_examples')",
+    "    task_names = list(globals().get('TASK_NAMES') or ('arc_challenge', 'hellaswag'))",
+    "    eval_examples_by_task = {}",
+    "    eval_meta_by_task = {}",
+    "    if callable(eval_loader):",
+    "        for task_name in task_names:",
+    "            eval_attempts = (",
+    "                lambda task_name=task_name: eval_loader(task_name, max_examples=max_eval_examples, seed=seed),",
+    "                lambda task_name=task_name: eval_loader(task_name=task_name, max_examples=max_eval_examples, seed=seed),",
+    "                lambda task_name=task_name: eval_loader(task_name),",
+    "            )",
+    "            for attempt in eval_attempts:",
+    "                try:",
+    "                    records, meta = _autolabos_study_records_from_loader_output(attempt())",
+    "                except TypeError:",
+    "                    continue",
+    "                except Exception as exc:",
+    "                    eval_meta_by_task[task_name] = {'error': f'{type(exc).__name__}: {exc}'}",
+    "                    break",
+    "                if records:",
+    "                    eval_examples_by_task[task_name] = records",
+    "                    if hasattr(meta, 'items'):",
+    "                        eval_meta_by_task[task_name] = dict(meta)",
+    "                    break",
+    "    if eval_examples_by_task:",
+    "        payload['eval_examples_by_task'] = eval_examples_by_task",
+    "        payload['task_eval_examples'] = eval_examples_by_task",
+    "        payload['eval_examples'] = eval_examples_by_task",
+    "        payload.setdefault('dataset_metadata', {})['eval'] = eval_meta_by_task",
+    "    return payload",
+    ""
+  ].join("\n");
+
+  nextSource = insertPythonTopLevelHelperAfterImports(nextSource, helperBlock);
+  if (nextSource !== source) {
+    repaired = true;
+  }
+
+  const beforeHelperKwargs = nextSource;
+  nextSource = nextSource.replace(
+    /(\n\s*"runtime_context": context,\n)(\s*\})/u,
+    [
+      "$1",
+      "            \"model_id\": getattr(args, \"model_id\", None) or getattr(args, \"preferred_model_id\", None) or globals().get(\"PREFERRED_MODEL_ID\"),\n",
+      "            \"base_model_id\": getattr(args, \"model_id\", None) or getattr(args, \"preferred_model_id\", None) or globals().get(\"PREFERRED_MODEL_ID\"),\n",
+      "            \"runtime_device\": globals().get(\"RUNTIME_DEVICE\"),\n",
+      "            \"device\": globals().get(\"RUNTIME_DEVICE\"),\n",
+      "$2"
+    ].join("")
+  );
+  if (nextSource !== beforeHelperKwargs) {
+    repaired = true;
+  }
+
+  const beforeMissingRequiredGuard = nextSource;
+  nextSource = nextSource.replace(
+    /\n(\s*)try:\n(\s*)context\[context_key\] = _study_plain_data\(\n(\s*)_study_invoke_with_supported_kwargs\(helper, \*\*helper_kwargs\)\n(\s*)\)/u,
+    [
+      "\n$1try:",
+      "\n$2helper_signature = inspect.signature(helper)",
+      "\n$2missing_required_inputs = [",
+      "\n$2    name",
+      "\n$2    for name, parameter in helper_signature.parameters.items()",
+      "\n$2    if parameter.default is inspect._empty",
+      "\n$2    and parameter.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)",
+      "\n$2    and name not in helper_kwargs",
+      "\n$2]",
+      "\n$1except Exception:",
+      "\n$2missing_required_inputs = []",
+      "\n$1if missing_required_inputs:",
+      "\n$2warnings.append(f\"{context_key}_helper_skipped_missing_required:{','.join(missing_required_inputs)}\")",
+      "\n$2continue",
+      "\n$1try:",
+      "\n$2context[context_key] = _study_plain_data(",
+      "\n$3_study_invoke_with_supported_kwargs(helper, **helper_kwargs)",
+      "\n$4)"
+    ].join("")
+  );
+  if (nextSource !== beforeMissingRequiredGuard) {
+    repaired = true;
+  }
+
+  const beforeRunnerKwargs = nextSource;
+  nextSource = nextSource.replace(
+    /(\n\s*"seed": getattr\(args, "seed", DEFAULT_SEED\),\n)(\s*\})/u,
+    "$1            **_autolabos_study_condition_runtime_inputs(args, output_contract, execution_context),\n$2"
+  );
+  if (nextSource !== beforeRunnerKwargs) {
+    repaired = true;
+  }
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Materialized generated study condition runtime inputs in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
@@ -28305,6 +30619,163 @@ export async function repairPythonHighLevelConditionSweepDispatchSurface(
   return {
     repaired: true,
     message: `Dispatched generated high-level condition sweep with runtime inputs in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonOrderedConditionCollectorRuntimeInputsSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    source.includes("_autolabos_ordered_collector_runtime_inputs_marker") ||
+    !source.includes("def collect_ordered_condition_results(") ||
+    !source.includes("base_model_name:") ||
+    !source.includes("task_datasets") ||
+    !source.includes("collector = _resolve_first_callable(") ||
+    !source.includes("collection_output = _call_with_supported_kwargs(")
+  ) {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  let nextSource = source;
+
+  const helper = [
+    "",
+    "def _autolabos_ordered_collector_runtime_inputs_marker():",
+    "    return True",
+    "",
+    "def _autolabos_collector_base_model_name(args):",
+    "    for attr_name in ('base_model_name', 'base_model', 'model_name', 'model_id'):",
+    "        try:",
+    "            value = getattr(args, attr_name, None)",
+    "        except Exception:",
+    "            value = None",
+    "        if value:",
+    "            return str(value)",
+    "    return str(",
+    "        globals().get('DEFAULT_COMPACT_BASE_MODEL_ID')",
+    "        or globals().get('DEFAULT_BASE_MODEL')",
+    "        or globals().get('PREFERRED_BASE_MODEL')",
+    "        or globals().get('MODEL_NAME')",
+    "        or 'unknown_model'",
+    "    )",
+    "",
+    "def _autolabos_collector_runtime_device(args):",
+    "    torch_mod = globals().get('torch')",
+    "    explicit_device = None",
+    "    try:",
+    "        explicit_device = getattr(args, 'device', None)",
+    "    except Exception:",
+    "        explicit_device = None",
+    "    if torch_mod is not None:",
+    "        try:",
+    "            if explicit_device:",
+    "                return torch_mod.device(str(explicit_device))",
+    "            return torch_mod.device('cuda' if torch_mod.cuda.is_available() else 'cpu')",
+    "        except Exception:",
+    "            pass",
+    "    return explicit_device or 'cpu'",
+    "",
+    "def _autolabos_collector_load_dataset_split(loader, dataset_name, dataset_config, split_name):",
+    "    if dataset_config in (None, ''):",
+    "        return loader(dataset_name, split=split_name)",
+    "    return loader(dataset_name, dataset_config, split=split_name)",
+    "",
+    "def _autolabos_collector_task_datasets(args):",
+    "    loader = globals().get('load_dataset')",
+    "    if not callable(loader):",
+    "        raise RuntimeError('Cannot materialize task_datasets: load_dataset is unavailable.')",
+    "    configs = globals().get('TASK_DATASET_CONFIGS') or {}",
+    "    task_names = list(globals().get('TASK_NAMES') or configs.keys())",
+    "    dataset_dict_cls = globals().get('DatasetDict')",
+    "    task_datasets = {}",
+    "    for task_name in task_names:",
+    "        task_config = configs.get(task_name)",
+    "        if not task_config:",
+    "            continue",
+    "        dataset_name = task_config.get('dataset_name')",
+    "        if not dataset_name:",
+    "            continue",
+    "        dataset_config = task_config.get('dataset_config')",
+    "        train_split_name = task_config.get('train_split') or 'train'",
+    "        validation_split_name = task_config.get('validation_split') or task_config.get('eval_split') or 'validation'",
+    "        splits = {}",
+    "        splits[train_split_name] = _autolabos_collector_load_dataset_split(",
+    "            loader, dataset_name, dataset_config, train_split_name",
+    "        )",
+    "        if validation_split_name != train_split_name:",
+    "            splits[validation_split_name] = _autolabos_collector_load_dataset_split(",
+    "                loader, dataset_name, dataset_config, validation_split_name",
+    "            )",
+    "        try:",
+    "            task_datasets[task_name] = dataset_dict_cls(splits) if callable(dataset_dict_cls) else splits",
+    "        except Exception:",
+    "            task_datasets[task_name] = splits",
+    "    if not task_datasets:",
+    "        raise RuntimeError('Cannot materialize task_datasets: no configured task datasets were loaded.')",
+    "    return task_datasets",
+    ""
+  ].join("\n");
+
+  nextSource = insertPythonTopLevelHelperAfterImports(nextSource, helper);
+
+  const beforeCollectorCall = nextSource;
+  nextSource = nextSource.replace(
+    /(\n\s*if\s+collector\s+is\s+None:\s*\n\s*raise\s+RuntimeError\([^\n]*\)\s*\n\s*\n)(\s*)collection_output\s*=\s*_call_with_supported_kwargs\(\s*\n\s*collector,/u,
+    (full, prefix: string, indent: string) => {
+      repaired = true;
+      return [
+        prefix,
+        `${indent}collector_base_model_name = _autolabos_collector_base_model_name(runtime_namespace)\n`,
+        `${indent}collector_device = _autolabos_collector_runtime_device(runtime_namespace)\n`,
+        `${indent}collector_task_datasets = _autolabos_collector_task_datasets(runtime_namespace)\n\n`,
+        `${indent}collection_output = _call_with_supported_kwargs(\n`,
+        `${indent}    collector,`
+      ].join("");
+    }
+  );
+
+  if (nextSource === beforeCollectorCall) {
+    return { repaired: false };
+  }
+
+  const beforeKwargs = nextSource;
+  nextSource = nextSource.replace(
+    /(\n\s*output_root_dir=output_dir,\n)(\s*metrics_path=metrics_path,)/u,
+    (full, prefix: string, suffix: string) => {
+      repaired = true;
+      const indent = suffix.match(/^(\s*)/u)?.[1] ?? "        ";
+      return [
+        prefix,
+        `${indent}base_model_name=collector_base_model_name,\n`,
+        `${indent}model_name=collector_base_model_name,\n`,
+        `${indent}device=collector_device,\n`,
+        `${indent}task_datasets=collector_task_datasets,\n`,
+        `${indent}datasets_by_task=collector_task_datasets,\n`,
+        suffix
+      ].join("");
+    }
+  );
+
+  if (!repaired || nextSource === source || nextSource === beforeKwargs) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Materialized ordered-condition collector runtime inputs in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
@@ -32161,6 +34632,77 @@ export async function repairPythonNamespaceParseArgsSurface(scriptPath?: string)
   };
 }
 
+export async function repairPythonRuntimePathPrepareCallableSurface(
+  scriptPath?: string
+): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_runtime_path_prepare_callable_marker";
+  if (
+    source.includes(marker) ||
+    !source.includes("def _normalize_runtime_args(") ||
+    !source.includes("_resolve_stage_callable") ||
+    !source.includes("_invoke_compatible(prepare_fn, normalized, args=normalized)")
+  ) {
+    return { repaired: false };
+  }
+
+  const helper = [
+    "",
+    `# ${marker}`,
+    "def _autolabos_runtime_path_prepare_callable(func):",
+    "    if func is None or not callable(func):",
+    "        return False",
+    "    if isinstance(func, type):",
+    "        return False",
+    "    module = str(getattr(func, \"__module__\", \"\"))",
+    "    name = str(getattr(func, \"__name__\", \"\"))",
+    "    qualname = str(getattr(func, \"__qualname__\", name))",
+    "    pathlib_names = {",
+    "        \"Path\",",
+    "        \"PosixPath\",",
+    "        \"WindowsPath\",",
+    "        \"PurePath\",",
+    "        \"PurePosixPath\",",
+    "        \"PureWindowsPath\",",
+    "    }",
+    "    if module == \"pathlib\" or module.startswith(\"pathlib.\"):",
+    "        return False",
+    "    if name in pathlib_names or qualname in pathlib_names:",
+    "        return False",
+    "    return True",
+    ""
+  ].join("\n");
+
+  let nextSource = insertPythonTopLevelHelperAfterImports(source, helper);
+  nextSource = nextSource.replace(
+    /^(\s*)if\s+prepare_fn\s+is\s+not\s+None:\n(\1\s+)prepared\s*=\s*_invoke_compatible\s*\(\s*prepare_fn\s*,\s*normalized\s*,\s*args\s*=\s*normalized\s*\)/mu,
+    "$1if _autolabos_runtime_path_prepare_callable(prepare_fn):\n$2prepared = _invoke_compatible(prepare_fn, normalized, args=normalized)"
+  );
+
+  if (nextSource === source || !nextSource.includes("_autolabos_runtime_path_prepare_callable(prepare_fn)")) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Guarded runtime path preparation callable resolution in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
 export async function repairPythonRuntimePathsMappingRecordSurface(scriptPath?: string): Promise<{
   repaired: boolean;
   message?: string;
@@ -32716,6 +35258,42 @@ async function repairPythonRunCommandArgparseAliases(
     {
       commandFlag: "--num-train-epochs",
       parserFlag: "--epochs"
+    },
+    {
+      commandFlag: "--disable-progress-bars",
+      parserFlag: "--disable-progress-bar"
+    },
+    {
+      commandFlag: "--fallback-model",
+      parserFlag: "--fallback-base-model"
+    },
+    {
+      commandFlag: "--fallback-model",
+      parserFlag: "--fallback-model-id"
+    },
+    {
+      commandFlag: "--base-model",
+      parserFlag: "--base-model-id"
+    },
+    {
+      commandFlag: "--base-model",
+      parserFlag: "--model-name"
+    },
+    {
+      commandFlag: "--base-model",
+      parserFlag: "--model-name-or-path"
+    },
+    {
+      commandFlag: "--baseline-condition",
+      parserFlag: "--baseline-condition-marker"
+    },
+    {
+      commandFlag: "--baseline-condition",
+      parserFlag: "--baseline-marker"
+    },
+    {
+      commandFlag: "--baseline-condition",
+      parserFlag: "--baseline"
     }
   ].filter((pair) => commandFlags.has(pair.commandFlag));
 
@@ -32863,8 +35441,12 @@ function extractPythonArgparseNoValueLongFlags(source: string): Set<string> {
 
 function extractLongOptionFlags(command: string): string[] {
   const flags: string[] = [];
-  for (const match of command.matchAll(/(^|\s)(--[A-Za-z0-9][A-Za-z0-9_-]*)(?:[=\s]|$)/gu)) {
-    const flag = match[2];
+  const tokens = command.match(/"[^"]*"|'[^']*'|\S+/g) || [];
+  for (const token of tokens) {
+    const flag = unquoteShellToken(token || "").split("=", 2)[0] || "";
+    if (!/^--[A-Za-z0-9][A-Za-z0-9_-]*$/u.test(flag)) {
+      continue;
+    }
     if (flag === "--help" || flags.includes(flag)) {
       continue;
     }

@@ -895,6 +895,73 @@ describe("normalizeGenerateHypothesesRequest", () => {
     expect(logText).toContain("single low-confidence, caveated paper");
   });
 
+  it("blocks multi-paper deterministic fallback hypotheses with no operational dataset or metric contract", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-hypothesis-node-operational-fallback-gating-"));
+    process.chdir(root);
+
+    const runId = "run-hypothesis-operational-fallback-gating";
+    const run = makeRun(runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "evidence_store.jsonl"),
+      [
+        JSON.stringify({
+          evidence_id: "ev_1",
+          paper_id: "paper_1",
+          claim: "dataset=Not specified | metric=Not specified | Abstract-only fallback evidence about an unrelated clinical domain.",
+          source_type: "abstract",
+          confidence: 0.2,
+          confidence_reason: "abstract-only fallback evidence; no structured evidence could be grounded"
+        }),
+        JSON.stringify({
+          evidence_id: "ev_2",
+          paper_id: "paper_2",
+          claim: "dataset=Not specified | metric=Not specified | Abstract-only fallback evidence from a broad survey.",
+          source_type: "abstract",
+          confidence: 0.2,
+          confidence_reason: "abstract-only fallback evidence; no structured evidence could be grounded"
+        })
+      ].join("\n") + "\n",
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "corpus.jsonl"),
+      [
+        JSON.stringify({ paper_id: "paper_1", title: "Unrelated Clinical Abstract" }),
+        JSON.stringify({ paper_id: "paper_2", title: "Unrelated Survey Abstract" })
+      ].join("\n") + "\n",
+      "utf8"
+    );
+
+    const llm = new QueueJsonLLMClient(["", "", "", "", ""]);
+    const eventStream = new InMemoryEventStream();
+    const node = createGenerateHypothesesNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream,
+      llm,
+      pdfTextLlm: llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    const statusText = await readFile(path.join(runDir, "hypothesis_generation", "status.json"), "utf8");
+    const logText = await readFile(path.join(runDir, "hypothesis_generation", "progress.jsonl"), "utf8");
+
+    expect(result.status).toBe("failure");
+    expect(result.summary).toContain("operational dataset/metric/testability contract");
+    await expect(access(path.join(runDir, "hypotheses.jsonl"))).rejects.toThrow();
+    await expect(runContext.get("generate_hypotheses.source")).resolves.toBe("blocked_low_quality_fallback");
+    expect(statusText).toContain("operational dataset/metric/testability contract");
+    expect(logText).toContain("operational dataset/metric/testability contract");
+  });
+
   it("fails fast when no evidence items are available", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-hypothesis-node-empty-"));
     process.chdir(root);

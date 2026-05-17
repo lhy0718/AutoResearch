@@ -1132,7 +1132,7 @@ function buildStatisticalSummary(args: {
       "expected_run_count",
       "expected_trial_count"
     ]);
-  const executedTrials =
+  const primaryExecutedTrials =
     asNumber(sampling.executed_trials) ??
     firstNumber(args.metrics, [
       "executed_trials",
@@ -1141,6 +1141,26 @@ function buildStatisticalSummary(args: {
       "successful_run_count",
       "successful_trial_count"
     ]);
+  const supplementalExecutedTrials = args.supplementalMetrics.reduce((total, item) => {
+    const supplementalSampling = asRecord(item.metrics.sampling_profile);
+    const explicitExecuted = asNumber(supplementalSampling.executed_trials);
+    if (typeof explicitExecuted === "number") {
+      return total + explicitExecuted;
+    }
+    const status = asString(item.metrics.status)?.toLowerCase();
+    const objectiveStatus = asString(asRecord(item.metrics.objective_evaluation).status)?.toLowerCase();
+    const completed =
+      !status ||
+      /^(ok|success|completed|complete|pass|passed)$/u.test(status) ||
+      /^(met|observed|pass|passed)$/u.test(objectiveStatus || "");
+    return completed ? total + 1 : total;
+  }, 0);
+  const executedTrials =
+    typeof primaryExecutedTrials === "number"
+      ? primaryExecutedTrials + supplementalExecutedTrials
+      : supplementalExecutedTrials > 0
+        ? 1 + supplementalExecutedTrials
+        : undefined;
   const cachedTrials =
     asNumber(sampling.cached_trials) ??
     firstNumber(args.metrics, ["cached_trials", "cached_run_count", "cached_trial_count"]);
@@ -1158,6 +1178,7 @@ function buildStatisticalSummary(args: {
       sampleSize: totalTrials
     }),
     ...extractConditionSummaryHalfWidthConfidenceIntervals(args.metrics),
+    ...extractPredictionAccuracyConfidenceIntervals(args.metrics),
     ...args.supplementalMetrics.flatMap((item) =>
       extractConfidenceIntervals({
         value: item.metrics,
@@ -1244,12 +1265,17 @@ function buildFailureTaxonomy(args: {
   }
 
   if (args.supplementalRuns.length === 0 && args.supplementalExpectation?.applicable !== false) {
+    const hasStructuredRobustness =
+      args.statisticalSummary.confidence_intervals.length > 0 ||
+      args.statisticalSummary.stability_metrics.length > 0;
     categories.push({
       id: "supplemental_coverage_gap",
       category: "evidence_gap",
-      severity: "medium",
+      severity: hasStructuredRobustness ? "low" : "medium",
       status: "risk",
-      summary: "Supplemental confirmatory and quick-check runs are missing, so robustness across sampling profiles is still unverified.",
+      summary: hasStructuredRobustness
+        ? "Supplemental confirmatory and quick-check runs are missing, but structured uncertainty or stability evidence is available for bounded claims."
+        : "Supplemental confirmatory and quick-check runs are missing, so robustness across sampling profiles is still unverified.",
       evidence: ["warnings"],
       recommended_action: "Run confirmatory and quick-check profiles to validate stability."
     });
@@ -1432,6 +1458,142 @@ function extractConditionSummaryHalfWidthConfidenceIntervals(
         })
         .filter((item): item is AnalysisConfidenceInterval => item !== undefined);
     });
+}
+
+function extractPredictionAccuracyConfidenceIntervals(
+  metrics: Record<string, unknown>
+): AnalysisConfidenceInterval[] {
+  return [
+    ...conditionPredictionRows(metrics, "condition_results"),
+    ...conditionPredictionRows(metrics, "conditions")
+  ].flatMap(({ collection, conditionName, row }) => {
+    if (!isCompletedConditionRow(row)) {
+      return [];
+    }
+    const summaries = collectPredictionCorrectness(row);
+    const aggregate = summaries.reduce(
+      (acc, item) => ({
+        correct: acc.correct + item.correct,
+        total: acc.total + item.total
+      }),
+      { correct: 0, total: 0 }
+    );
+    if (aggregate.total === 0) {
+      return [];
+    }
+    const interval = wilsonConfidenceInterval(aggregate.correct, aggregate.total);
+    const metricKey = `${collection}.${conditionName || "condition"}.average_accuracy`;
+    const label = humanizeMetricLabel(metricKey);
+    return [{
+      metric_key: metricKey,
+      label,
+      lower: interval.lower,
+      upper: interval.upper,
+      level: interval.level,
+      sample_size: aggregate.total,
+      source: "condition_metrics" as const,
+      summary: `${label} ${formatConfidenceIntervalPercent(interval.level)}% CI [${formatMetricValue(interval.lower)}, ${formatMetricValue(interval.upper)}] over n=${aggregate.total} prediction(s).`
+    }];
+  });
+}
+
+function conditionPredictionRows(
+  metrics: Record<string, unknown>,
+  collection: "condition_results" | "conditions"
+): Array<{ collection: string; conditionName: string; row: Record<string, unknown> }> {
+  const raw = metrics[collection];
+  const rows = Array.isArray(raw)
+    ? raw.map((item) => asRecord(item))
+    : Object.entries(asRecord(raw)).map(([name, value]) => ({
+      name,
+      ...asRecord(value)
+    }));
+  return rows
+    .filter((row) => Object.keys(row).length > 0)
+    .map((row, index) => ({
+      collection,
+      conditionName: readConditionName(row) || `condition_${index + 1}`,
+      row
+    }));
+}
+
+function collectPredictionCorrectness(
+  value: Record<string, unknown>,
+  path = ""
+): Array<{ path: string; correct: number; total: number }> {
+  const predictions = asArray(value.predictions)
+    .map((item) => readPredictionCorrect(asRecord(item)))
+    .filter((item): item is boolean => typeof item === "boolean");
+  const correctCount = asNumber(value.correct);
+  const totalCount = asNumber(value.total);
+  const currentFromCounts =
+    typeof correctCount === "number" &&
+    typeof totalCount === "number" &&
+    Number.isFinite(correctCount) &&
+    Number.isFinite(totalCount) &&
+    totalCount > 0 &&
+    correctCount >= 0 &&
+    correctCount <= totalCount
+      ? [{
+        path,
+        correct: correctCount,
+        total: totalCount
+      }]
+      : [];
+  const currentFromPredictions = predictions.length > 0
+    ? [{
+      path,
+      correct: predictions.filter(Boolean).length,
+      total: predictions.length
+    }]
+    : [];
+  const current = currentFromCounts.length > 0 ? currentFromCounts : currentFromPredictions;
+  const nested = Object.entries(value)
+    .filter(([key, raw]) => key !== "predictions" && raw && typeof raw === "object" && !Array.isArray(raw))
+    .flatMap(([key, raw]) =>
+      collectPredictionCorrectness(
+        raw as Record<string, unknown>,
+        path ? `${path}.${key}` : key
+      )
+    );
+  return [...current, ...nested];
+}
+
+function readPredictionCorrect(row: Record<string, unknown>): boolean | undefined {
+  const raw = row.correct;
+  if (typeof raw === "boolean") {
+    return raw;
+  }
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    return raw !== 0;
+  }
+  if (typeof raw === "string") {
+    const normalized = raw.trim().toLowerCase();
+    if (["true", "1", "correct", "yes", "y"].includes(normalized)) {
+      return true;
+    }
+    if (["false", "0", "incorrect", "no", "n"].includes(normalized)) {
+      return false;
+    }
+  }
+  return undefined;
+}
+
+function wilsonConfidenceInterval(
+  correct: number,
+  total: number,
+  level = 0.95
+): { lower: number; upper: number; level: number } {
+  const z = 1.959963984540054;
+  const p = correct / total;
+  const denominator = 1 + (z * z) / total;
+  const center = p + (z * z) / (2 * total);
+  const margin = z * Math.sqrt((p * (1 - p) + (z * z) / (4 * total)) / total);
+  return {
+    lower: Number(Math.max(0, (center - margin) / denominator).toFixed(6)),
+    upper: Number(Math.min(1, (center + margin) / denominator).toFixed(6)),
+    level
+  };
 }
 
 function readDirectConfidenceInterval(args: {
@@ -2333,6 +2495,7 @@ function readPerConditionAverageAccuracyRows(
 
 function readBaselineConditionMarkers(metrics: Record<string, unknown>): Set<string> {
   const studySummary = asRecord(metrics.study_summary);
+  const summary = asRecord(metrics.summary);
   return new Set(
     [
       asString(metrics.baseline_marker),
@@ -2342,7 +2505,11 @@ function readBaselineConditionMarkers(metrics: Record<string, unknown>): Set<str
       asString(studySummary.baseline_marker),
       asString(studySummary.baseline_condition_marker),
       asString(studySummary.baseline_condition),
-      asString(studySummary.baseline_condition_id)
+      asString(studySummary.baseline_condition_id),
+      asString(summary.baseline_marker),
+      asString(summary.baseline_condition_marker),
+      asString(summary.baseline_condition),
+      asString(summary.baseline_condition_id)
     ].filter((item): item is string => Boolean(item))
   );
 }
@@ -2410,6 +2577,7 @@ function readConditionName(row: Record<string, unknown>): string {
     asString(row.condition_name) ||
     asString(row.condition_id) ||
     asString(row.condition_marker) ||
+    asString(row.marker) ||
     asString(row.id) ||
     asString(row.recipe) ||
     asString(row.recipe_id) ||
@@ -2479,6 +2647,7 @@ function baselineConditionTextScore(text: string): number {
 function readBestConditionName(metrics: Record<string, unknown>): string | undefined {
   const primaryMetric = asRecord(metrics.primary_metric);
   const studySummary = asRecord(metrics.study_summary);
+  const summary = asRecord(metrics.summary);
   const bestCondition = asRecord(metrics.best_condition);
   const bestTunedCondition = asRecord(metrics.best_tuned_condition);
   return (
@@ -2494,6 +2663,12 @@ function readBestConditionName(metrics: Record<string, unknown>): string | undef
     asString(studySummary.best_nonbaseline_condition) ||
     asString(studySummary.best_nonbaseline_condition_id) ||
     asString(studySummary.best_nonbaseline_condition_marker) ||
+    asString(summary.best_condition) ||
+    asString(summary.best_condition_id) ||
+    asString(summary.best_condition_marker) ||
+    asString(summary.best_nonbaseline_condition) ||
+    asString(summary.best_nonbaseline_condition_id) ||
+    asString(summary.best_nonbaseline_condition_marker) ||
     asString(bestCondition.name) ||
     asString(bestCondition.condition_id) ||
     asString(bestCondition.condition_marker) ||

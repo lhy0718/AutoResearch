@@ -1516,7 +1516,7 @@ async function resolveManagedSupplementalPlan(
   runContext: RunContextMemory,
   workspaceRoot: string
 ): Promise<ManagedSupplementalPlan | undefined> {
-  const experimentMode = await runContext.get<string>("implement_experiments.mode");
+  const experimentMode = (await runContext.get<string>("implement_experiments.mode")) || "real_execution";
   if (experimentMode !== "real_execution") {
     return undefined;
   }
@@ -1531,7 +1531,17 @@ async function resolveManagedSupplementalPlan(
   }
 
   const manifestPath = path.join(publicDir, "artifact_manifest.json");
-  if (await fileExists(manifestPath) && (await fileExists(scriptPath))) {
+  const scriptText = await readOptionalText(scriptPath);
+  const commandSurface = explicitCommand || "";
+  const supportsManagedProfiles =
+    scriptText.includes("--quick-check") &&
+    scriptText.includes("--profile") &&
+    scriptText.includes("--metrics-out");
+  const explicitManagedProfileCommand =
+    commandSurface.includes("--profile") &&
+    commandSurface.includes("--metrics-out") &&
+    path.basename(scriptPath).length > 0;
+  if (await fileExists(manifestPath) && (await fileExists(scriptPath)) && (supportsManagedProfiles || explicitManagedProfileCommand)) {
     return {
       kind: "managed_bundle",
       publicDir,
@@ -1567,14 +1577,16 @@ async function resolveManagedSupplementalPlan(
     metricsPath: quickCheckMetricsPath,
     profile: "quick_check",
     primaryWorkingDir,
-    scriptPath
+    scriptPath,
+    seedOnly: supportsSeedOnlyLegacySupplemental(scriptText)
   });
   const confirmatoryCommand = deriveLegacySupplementalCommand({
     primaryCommand: explicitCommand,
     metricsPath: confirmatoryMetricsPath,
     profile: "confirmatory",
     primaryWorkingDir,
-    scriptPath
+    scriptPath,
+    seedOnly: supportsSeedOnlyLegacySupplemental(scriptText)
   });
   if (!quickCheckCommand || !confirmatoryCommand) {
     return undefined;
@@ -1606,9 +1618,10 @@ function deriveLegacySupplementalCommand(input: {
   profile: SupplementalProfileName;
   primaryWorkingDir: string;
   scriptPath: string;
+  seedOnly?: boolean;
 }): string | undefined {
   const normalized = input.primaryCommand.trim();
-  if (!/run_experiment\.py/u.test(normalized)) {
+  if (!/run_experiment\.py/u.test(normalized) && !input.seedOnly) {
     return undefined;
   }
   if (/--profile\s+\w+/u.test(normalized) || /--quick-check/u.test(normalized)) {
@@ -1617,7 +1630,7 @@ function deriveLegacySupplementalCommand(input: {
 
   let command = rewriteFlagValue(normalized, "--metrics-path", input.metricsPath);
   let metricsFlag = "--metrics-path";
-  if (command === normalized) {
+  if (command === normalized && !input.seedOnly) {
     command = rewriteFlagValue(normalized, "--metrics-out", input.metricsPath);
     metricsFlag = "--metrics-out";
   }
@@ -1630,9 +1643,25 @@ function deriveLegacySupplementalCommand(input: {
 
   const repeats = input.profile === "quick_check" ? "2" : "8";
   const seedBase = input.profile === "quick_check" ? "700" : "900";
-  command = rewriteFlagValue(command, "--repeats", repeats, true);
-  command = rewriteFlagValue(command, "--seed-base", seedBase, true);
+  if (input.seedOnly) {
+    command = rewriteFlagValue(command, "--seed", seedBase, true);
+  } else {
+    command = rewriteFlagValue(command, "--repeats", repeats, true);
+    command = rewriteFlagValue(command, "--seed-base", seedBase, true);
+  }
   return absolutizeLegacySupplementalCommand(command, input.primaryWorkingDir, input.scriptPath);
+}
+
+function supportsSeedOnlyLegacySupplemental(scriptText: string): boolean {
+  return scriptText.includes("--seed") && scriptText.includes("--metrics-path");
+}
+
+async function readOptionalText(filePath: string): Promise<string> {
+  try {
+    return await fs.readFile(filePath, "utf8");
+  } catch {
+    return "";
+  }
 }
 
 function rewriteFlagValue(command: string, flag: string, value: string, appendIfMissing = false): string {

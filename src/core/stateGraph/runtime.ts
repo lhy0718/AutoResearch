@@ -657,6 +657,8 @@ export class StateGraphRuntime {
       // Reset the target node itself so it can be re-executed (LV-019 fix)
       for (let idx = targetIdx; idx < GRAPH_NODE_ORDER.length; idx += 1) {
         const node = GRAPH_NODE_ORDER[idx];
+        delete run.graph.retryCounters[node];
+        delete run.graph.rollbackCounters[node];
         run.graph.nodeStates[node] = {
           ...run.graph.nodeStates[node],
           status: "pending",

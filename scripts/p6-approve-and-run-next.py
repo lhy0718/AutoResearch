@@ -7,6 +7,8 @@ import select
 import signal
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -24,8 +26,9 @@ READY_PATTERN = (
     r"Add steering, or wait for the next (?:run or )?approval\.|"
     r"Research Brief workflow is ready)"
 )
-DOCTOR_READY_PATTERN = r"(\[(OK|ATTN)\] readiness:|codex-research-backend-model:|workspace-config:)"
+DOCTOR_READY_PATTERN = r"(\[(OK|ATTN)\] readiness:|runs-dir-write:|codex-research-backend-model:|workspace-config:)"
 STOP_BOUNDARY_STABLE_SECONDS = 2.0
+HANDOFF_GRACE_SECONDS = 5.0
 
 
 class WaitTimeout(Exception):
@@ -161,6 +164,28 @@ def running_node_after_fresh_handoff(record: dict | None) -> str:
     current = current_node(record)
     if current and node_status(record, current) == "running":
         return current
+    return ""
+
+
+def running_handoff_node(record: dict | None) -> str:
+    active_node = active_running_node(record)
+    if active_node:
+        return active_node
+    return running_node_after_fresh_handoff(record)
+
+
+def wait_for_running_handoff(
+    workspace: Path,
+    run_id: str,
+    previous_node: str,
+    grace_seconds: float = HANDOFF_GRACE_SECONDS
+) -> str:
+    deadline = time.time() + max(0.0, grace_seconds)
+    while time.time() < deadline:
+        active_node = running_handoff_node(try_load_run_record(workspace, run_id))
+        if active_node and active_node != previous_node:
+            return active_node
+        time.sleep(0.25)
     return ""
 
 
@@ -463,6 +488,49 @@ def run_selftest() -> int:
     if active_running_node(analyze_needs_approval):
         print("FAIL: stopped node was incorrectly projected as active-running")
         return 1
+    if running_handoff_node(analyze_running) != "analyze_papers":
+        print("FAIL: running handoff node was not detected")
+        return 1
+    if running_handoff_node(analyze_needs_approval):
+        print("FAIL: stopped run was incorrectly treated as a running handoff")
+        return 1
+    with tempfile.TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir)
+        delayed_run_id = "delayed-handoff"
+        record_dir = workspace / ".autolabos" / "runs" / delayed_run_id
+        record_dir.mkdir(parents=True)
+        (record_dir / "run_record.json").write_text(json.dumps({
+            "status": "paused",
+            "currentNode": "implement_experiments",
+            "graph": {
+                "nodeStates": {
+                    "implement_experiments": {"status": "completed"},
+                    "run_experiments": {"status": "pending"},
+                }
+            },
+        }), encoding="utf-8")
+
+        def write_delayed_handoff() -> None:
+            time.sleep(0.2)
+            (record_dir / "run_record.json").write_text(json.dumps({
+                "status": "running",
+                "currentNode": "run_experiments",
+                "graph": {
+                    "nodeStates": {
+                        "implement_experiments": {"status": "completed"},
+                        "run_experiments": {"status": "running", "updatedAt": "later"},
+                    }
+                },
+            }), encoding="utf-8")
+
+        handoff_writer = threading.Thread(target=write_delayed_handoff)
+        handoff_writer.start()
+        try:
+            if wait_for_running_handoff(workspace, delayed_run_id, "implement_experiments", 2.0) != "run_experiments":
+                print("FAIL: delayed running handoff was not detected during grace wait")
+                return 1
+        finally:
+            handoff_writer.join(timeout=1.0)
     if not should_observe_active_running(analyze_running, force_run_active=False):
         print("FAIL: active-running run was not selected for observation")
         return 1
@@ -583,6 +651,9 @@ def run_selftest() -> int:
     if not re.search(DOCTOR_READY_PATTERN, "+ [OK] codex-research-backend-model: configured"):
         print("FAIL: doctor ready pattern did not match current doctor output")
         return 1
+    if not re.search(DOCTOR_READY_PATTERN, "+ [OK] runs-dir-write: Run store write probe succeeded"):
+        print("FAIL: doctor ready pattern did not match run-store write output")
+        return 1
     if pending_transition_target({
         "graph": {"pendingTransition": {"targetNode": "generate_hypotheses"}}
     }) != "generate_hypotheses":
@@ -620,6 +691,7 @@ def main() -> int:
     node_args = os.environ.get("AUTOLABOS_P6_NEXT_NODE_ARGS", default_node_args).strip()
     command_override = os.environ.get("AUTOLABOS_P6_COMMAND", "").strip()
     timeout = float(os.environ.get("AUTOLABOS_P6_NEXT_TIMEOUT_SEC", "3600"))
+    handoff_grace_seconds = float(os.environ.get("AUTOLABOS_P6_HANDOFF_GRACE_SEC", str(HANDOFF_GRACE_SECONDS)))
     dist_main = repo_root / "dist" / "cli" / "main.js"
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"p6-continue-{next_node}-output.txt"
@@ -700,14 +772,24 @@ def main() -> int:
         observed_handoffs = 0
         while observed_handoffs < 3:
             record_after_boundary = try_load_run_record(workspace, run_id)
-            active_node = active_running_node(record_after_boundary)
+            active_node = running_handoff_node(record_after_boundary)
             if not active_node:
-                active_node = running_node_after_fresh_handoff(record_after_boundary)
+                active_node = wait_for_running_handoff(
+                    workspace,
+                    run_id,
+                    wait_node,
+                    handoff_grace_seconds
+                )
             if not active_node:
                 break
             observed_handoffs += 1
             wait_node = active_node
-            initial_signature = record_boundary_signature(record_after_boundary, wait_node)
+            record_after_boundary = try_load_run_record(workspace, run_id)
+            initial_signature = (
+                record_boundary_signature(record_after_boundary, wait_node)
+                if record_after_boundary
+                else None
+            )
             print(f"INFO: {wait_node} is already running after the prior boundary; observing the handoff.")
             buffer_text = wait_for_stop_boundary(
                 master_fd,

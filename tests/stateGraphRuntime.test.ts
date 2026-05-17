@@ -1415,6 +1415,11 @@ describe("StateGraphRuntime", () => {
     run.graph.nodeStates.implement_experiments.status = "completed";
     run.graph.nodeStates.run_experiments.status = "completed";
     run.graph.nodeStates.analyze_results.status = "completed";
+    run.graph.retryCounters.design_experiments = 1;
+    run.graph.retryCounters.implement_experiments = 3;
+    run.graph.retryCounters.run_experiments = 2;
+    run.graph.rollbackCounters.implement_experiments = 2;
+    run.graph.rollbackCounters.run_experiments = 1;
     await store.updateRun(run);
 
     const jumped = await runtime.jumpToNode(run.id, "design_experiments", "force", "objective not met");
@@ -1423,9 +1428,16 @@ describe("StateGraphRuntime", () => {
     expect(jumped.graph.nodeStates.implement_experiments.status).toBe("pending");
     expect(jumped.graph.nodeStates.run_experiments.status).toBe("pending");
     expect(jumped.graph.nodeStates.analyze_results.status).toBe("pending");
+    expect(jumped.graph.retryCounters.design_experiments).toBeUndefined();
+    expect(jumped.graph.retryCounters.implement_experiments).toBeUndefined();
+    expect(jumped.graph.retryCounters.run_experiments).toBeUndefined();
+    expect(jumped.graph.rollbackCounters.implement_experiments).toBeUndefined();
+    expect(jumped.graph.rollbackCounters.run_experiments).toBeUndefined();
 
     const persisted = await store.getRun(run.id);
     expect(persisted?.graph.nodeStates.design_experiments.status).toBe("pending");
+    expect(persisted?.graph.retryCounters.implement_experiments).toBeUndefined();
+    expect(persisted?.graph.rollbackCounters.implement_experiments).toBeUndefined();
   });
 
   it("runUntilPause returns immediately when run status is already failed", async () => {

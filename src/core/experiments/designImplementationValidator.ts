@@ -25,8 +25,19 @@ export interface ExperimentDesignImplementationValidationReport {
   };
 }
 
+export interface PlannedConditionImplementationContract {
+  required_condition_count?: number;
+  required_run_count?: number;
+  seed_schedule?: number[];
+  minimum_seeds_per_condition?: number;
+  baseline_condition_marker?: string;
+  required_condition_markers?: string[];
+  primary_metric_key?: string;
+}
+
 export async function validateDesignImplementationAlignment(input: {
   comparisonContract?: ExperimentComparisonContract;
+  plannedConditionContract?: PlannedConditionImplementationContract;
   attempt: {
     runCommand: string;
     testCommand?: string;
@@ -97,8 +108,8 @@ export async function validateDesignImplementationAlignment(input: {
   }
 
   checkedItems.push("baseline_contract_presence");
+  const scriptText = await safeReadText(input.attempt.scriptPath);
   if (input.comparisonContract?.baseline_first_required) {
-    const scriptText = await safeReadText(input.attempt.scriptPath);
     const baselineSignal = `${input.attempt.runCommand}\n${scriptText}`.toLowerCase();
     if (!/(baseline|control|comparator|greedy)/u.test(baselineSignal)) {
       findings.push({
@@ -108,6 +119,17 @@ export async function validateDesignImplementationAlignment(input: {
         evidence: `plan_id=${input.comparisonContract.plan_id}; baseline_candidates=${input.comparisonContract.baseline_candidate_ids.join(", ") || "none"}`
       });
     }
+  }
+
+  if (input.plannedConditionContract) {
+    checkedItems.push("planned_condition_contract_alignment");
+    const plannedFindings = validatePlannedConditionImplementationSurface({
+      contract: input.plannedConditionContract,
+      scriptText,
+      runCommand: input.attempt.runCommand,
+      testCommand: input.attempt.testCommand || ""
+    });
+    findings.push(...plannedFindings);
   }
 
   const blockingFindings = findings.filter((finding) => finding.severity === "block");
@@ -201,6 +223,169 @@ export function validateVerificationCommandSurface(input: {
         }
       : undefined
   };
+}
+
+function validatePlannedConditionImplementationSurface(input: {
+  contract: PlannedConditionImplementationContract;
+  scriptText: string;
+  runCommand: string;
+  testCommand: string;
+}): ExperimentDesignImplementationValidationFinding[] {
+  const findings: ExperimentDesignImplementationValidationFinding[] = [];
+  const implementationSignal = `${input.runCommand}\n${input.testCommand}\n${input.scriptText}`;
+  const requiredMarkers = dedupeStrings(input.contract.required_condition_markers || []);
+  const baselineMarker = input.contract.baseline_condition_marker || requiredMarkers[0];
+  if (requiredMarkers.length > 0) {
+    const missingMarkers = requiredMarkers.filter((marker) => !hasMarkerSignal(implementationSignal, marker));
+    if (missingMarkers.length > 0) {
+      findings.push({
+        code: "PLANNED_CONDITION_MARKERS_MISSING",
+        severity: "block",
+        message: "The implementation surface does not preserve all required planned condition markers.",
+        evidence: `missing=${missingMarkers.join(", ")}; required=${requiredMarkers.join(", ")}`
+      });
+    }
+  }
+
+  if (baselineMarker && requiredMarkers.length > 1) {
+    const declaredMarkerOrder = extractDeclaredConditionMarkerOrder(input.scriptText);
+    if (declaredMarkerOrder.length > 1 && declaredMarkerOrder[0] !== baselineMarker) {
+      findings.push({
+        code: "PLANNED_BASELINE_ORDER_MISMATCH",
+        severity: "block",
+        message: "The implementation exposes a planned condition order that does not put the locked baseline first.",
+        evidence: `first=${declaredMarkerOrder[0]}; baseline=${baselineMarker}`
+      });
+    }
+  }
+
+  const requiredConditionCount = normalizePositiveInteger(input.contract.required_condition_count);
+  if (requiredConditionCount !== undefined) {
+    const declaredConditionCount = extractDeclaredConditionCount(implementationSignal, requiredMarkers);
+    if (declaredConditionCount !== undefined && declaredConditionCount < requiredConditionCount) {
+      findings.push({
+        code: "PLANNED_CONDITION_COUNT_CONTRACTED",
+        severity: "block",
+        message: "The implementation declares fewer conditions than the approved design contract.",
+        evidence: `declared=${declaredConditionCount}; required=${requiredConditionCount}`
+      });
+    }
+  }
+
+  const seedSchedule = (input.contract.seed_schedule || [])
+    .map((seed) => normalizePositiveInteger(seed))
+    .filter((seed): seed is number => seed !== undefined);
+  if (seedSchedule.length > 1) {
+    const missingSeeds = seedSchedule.filter((seed) => !hasNumberSignal(implementationSignal, seed));
+    if (missingSeeds.length > 0) {
+      findings.push({
+        code: "PLANNED_SEED_SCHEDULE_MISSING",
+        severity: "block",
+        message: "The implementation surface does not preserve the planned repeated-seed schedule.",
+        evidence: `missing=${missingSeeds.join(", ")}; required=${seedSchedule.join(", ")}`
+      });
+    }
+  }
+
+  const requiredRunCount = normalizePositiveInteger(input.contract.required_run_count);
+  if (requiredRunCount !== undefined) {
+    const declaredRunCount = extractDeclaredRunCount(implementationSignal);
+    const inferredRunCount =
+      requiredMarkers.length > 0 && seedSchedule.length > 0 ? requiredMarkers.length * seedSchedule.length : undefined;
+    const bestVisibleRunCount = Math.max(declaredRunCount || 0, inferredRunCount || 0) || undefined;
+    if (bestVisibleRunCount !== undefined && bestVisibleRunCount < requiredRunCount) {
+      findings.push({
+        code: "PLANNED_RUN_COUNT_CONTRACTED",
+        severity: "block",
+        message: "The implementation exposes fewer condition-by-seed runs than the approved design contract.",
+        evidence: `visible=${bestVisibleRunCount}; required=${requiredRunCount}`
+      });
+    }
+  }
+
+  return findings;
+}
+
+function hasMarkerSignal(text: string, marker: string): boolean {
+  const escaped = escapeRegExp(marker);
+  const flexible = escaped.replace(/_/gu, "[_\\s.-]*");
+  return new RegExp(`(?:^|[^A-Za-z0-9])${flexible}(?:$|[^A-Za-z0-9])`, "iu").test(text);
+}
+
+function hasNumberSignal(text: string, value: number): boolean {
+  return new RegExp(`(?:^|[^0-9])${escapeRegExp(String(value))}(?:$|[^0-9])`, "u").test(text);
+}
+
+function extractDeclaredConditionCount(text: string, requiredMarkers: string[]): number | undefined {
+  const counts: number[] = [];
+  for (const match of text.matchAll(
+    /\b(?:required|planned|locked)?_?condition_?count\b\s*[:=]\s*(\d+)/giu
+  )) {
+    const parsed = normalizePositiveInteger(Number.parseInt(match[1] || "", 10));
+    if (parsed !== undefined) {
+      counts.push(parsed);
+    }
+  }
+  if (requiredMarkers.length > 0) {
+    const visibleMarkerCount = requiredMarkers.filter((marker) => hasMarkerSignal(text, marker)).length;
+    if (visibleMarkerCount > 0) {
+      counts.push(visibleMarkerCount);
+    }
+  }
+  return counts.length > 0 ? Math.max(...counts) : undefined;
+}
+
+function extractDeclaredRunCount(text: string): number | undefined {
+  const counts: number[] = [];
+  for (const match of text.matchAll(/\b(?:required|planned|total)?_?run_?count\b\s*[:=]\s*(\d+)/giu)) {
+    const parsed = normalizePositiveInteger(Number.parseInt(match[1] || "", 10));
+    if (parsed !== undefined) {
+      counts.push(parsed);
+    }
+  }
+  for (const match of text.matchAll(/\b(?:train\/eval|train[-\s]?eval|train[-\s]?and[-\s]?eval)\s+jobs?\b\s*[:=]\s*(\d+)/giu)) {
+    const parsed = normalizePositiveInteger(Number.parseInt(match[1] || "", 10));
+    if (parsed !== undefined) {
+      counts.push(parsed);
+    }
+  }
+  return counts.length > 0 ? Math.max(...counts) : undefined;
+}
+
+function extractDeclaredConditionMarkerOrder(text: string): string[] {
+  const assignments = [
+    ...text.matchAll(
+      /\b(?:PLANNED_CONDITION_MARKERS|LOCKED_CONDITION_MARKERS|CONDITION_MARKERS|LOCKED_CONDITION_ORDER)\b\s*=\s*(?:\(|\[)([\s\S]*?)(?:\)|\])/gu
+    )
+  ];
+  for (const assignment of assignments) {
+    const body = assignment[1] || "";
+    const markers = extractRankDropoutMarkersFromText(body);
+    if (markers.length > 0) {
+      return markers;
+    }
+  }
+  return extractRankDropoutMarkersFromText(text);
+}
+
+function extractRankDropoutMarkersFromText(text: string): string[] {
+  const markers: string[] = [];
+  for (const match of text.matchAll(/\brank_(\d+)_dropout_([0-9_]+)\b/giu)) {
+    const marker = `rank_${match[1]}_dropout_${match[2]}`;
+    if (!markers.includes(marker)) {
+      markers.push(marker);
+    }
+  }
+  return markers;
+}
+
+function normalizePositiveInteger(value: unknown): number | undefined {
+  const parsed = typeof value === "number" ? value : Number.parseInt(String(value || ""), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : undefined;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 async function safeReadText(filePath: string | undefined): Promise<string> {

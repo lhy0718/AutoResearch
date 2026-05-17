@@ -1256,7 +1256,9 @@ describe("constraint propagation", () => {
     const tex = await readFile(path.join(runDir, "paper", "main.tex"), "utf8");
     expect(tex).toContain("\\section{Introduction}");
     expect(tex).toContain("Structured coordination is a promising way to stabilize multi-agent workflows.");
-    expect(tex).toContain("Structured coordination is a promising way to stabilize multi-agent workflows. \\cite{");
+    expect(tex).not.toContain("Structured coordination is a promising way to stabilize multi-agent workflows. \\cite{");
+    expect(tex).toContain("\\section{Related Work}");
+    expect(tex).toContain("\\cite{");
     expect(tex).not.toContain("Evidence anchors");
     expect(tex).not.toContain("Claim Trace");
 

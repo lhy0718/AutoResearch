@@ -19,6 +19,7 @@ import { InMemoryEventStream } from "../src/core/events.js";
 import {
   extractWorkspacePathsFromCommand,
   evaluateImplementBootstrapContract,
+  parseImplementBootstrapContractFromText,
   getImplementLlmTimeoutMs,
   ImplementSessionManager,
   isMalformedJsonStagedLlmChunkError,
@@ -65,6 +66,11 @@ import {
   repairPythonConditionSpecFactoryKwargBridgeSurface,
   repairPythonConfigInstanceDataclassFieldAliasSurface,
   repairPythonStudyRuntimeHelperAliasSurface,
+  repairPythonStudyCallModelSelectionKwargSurface,
+  repairPythonModelSelectionPlanScalarFallbackSurface,
+  repairPythonAllowModelDownloadDefaultSurface,
+  repairPythonCallContextInvokerBridgeSurface,
+  repairPythonStudyConditionRuntimeInputMaterializationSurface,
   repairPythonTrainLossHelperAritySurface,
   repairPythonConditionSuccessStatusAliasSurface,
   repairPythonTerminalMetricsExistingConditionCountSurface,
@@ -82,6 +88,18 @@ import {
   repairPythonMainCallableResolverSpecificitySurface,
   repairPythonRunContextHelperFallbackSurface,
   repairPythonMainStudyRunnerDeviceBridgeSurface,
+  repairPythonRankDropoutStudyCallableBridgeSurface,
+  repairPythonLockedSweepExecutorResolverSurface,
+  repairPythonRankDropoutSweepControllerResolverSurface,
+  repairPythonLockedSweepPerRunExecutorBridgeSurface,
+  repairPythonSweepCallableClassResolverSurface,
+  repairPythonScheduleExecutorArgumentBridgeSurface,
+  repairPythonLockedStudyRunsEntrypointAliasSurface,
+  repairPythonBaselineFirstSweepEntrypointAliasSurface,
+  repairPythonLockedSweepPlanBuilderAliasSurface,
+  repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurface,
+  repairPythonFallbackBoundedFinetuningConditionRunnerSurface,
+  repairPythonOrchestrationTrainEvalConditionBridgeSurface,
   repairPythonLockedConditionSingleRunnerBridgeSurface,
   repairPythonSingleConditionExecutorBridgeSurface,
   repairPythonParameterSummaryRecordSurface,
@@ -98,6 +116,7 @@ import {
   repairPythonPlanArgumentPathChoicesSurface,
   repairPythonConditionExecutorDeadlineArgumentSurface,
   repairPythonHighLevelConditionSweepDispatchSurface,
+  repairPythonOrderedConditionCollectorRuntimeInputsSurface,
   repairPythonOutputDirArgparseAlias,
   repairPythonLoraStudyEntrypointContextSurface,
   repairPythonPrepareStudyInputsRuntimeContextSurface,
@@ -158,11 +177,16 @@ import {
   repairPythonMissingParseArgsSurface,
   repairPythonMissingBuildExperimentConfigSurface,
   repairPythonNamespaceParseArgsSurface,
+  repairPythonRuntimePathPrepareCallableSurface,
   repairPythonRuntimePathsMappingRecordSurface,
   repairPythonCommandTokensNamespaceSurface,
   repairPythonOptionalPathArgDefaultsSurface,
   repairPythonNamespaceGetNoneDefaultSurface,
   repairPythonStudyInvokeContractKwargSurface,
+  repairPythonEntrypointStudyResultKwargAliasSurface,
+  repairPythonNestedRunRecordsProjectionSurface,
+  repairPythonAggregateNestedRawResultRowsSurface,
+  repairPythonSingleRunExecutorSignatureDispatchSurface,
   repairPythonTransformersLinearSchedulerSurface,
   repairPythonLockedConditionContractCallSurface,
   repairPythonLockedConditionNameProjectionSurface,
@@ -7029,7 +7053,11 @@ describe("ImplementSessionManager", () => {
             file_edits: [
               {
                 path: publicScriptPath,
-                content: MINIMAL_METRICS_RUNNER_SOURCE
+                content: [
+                  "PLANNED_CONDITIONS = ['unmodified_base', 'vanilla_lora', 'rslora', 'dora']",
+                  "REQUIRED_CONDITION_COUNT = 4",
+                  MINIMAL_METRICS_RUNNER_SOURCE
+                ].join("\n\n")
               }
             ]
           })
@@ -7121,7 +7149,13 @@ describe("ImplementSessionManager", () => {
             file_edits: [
               {
                 path: publicScriptPath,
-                content: MINIMAL_METRICS_RUNNER_SOURCE
+                content: [
+                  "PLANNED_CONDITIONS = ['rank_8_dropout_0_0', 'rank_16_dropout_0_0', 'rank_16_dropout_0_05', 'rank_32_dropout_0_0', 'rank_32_dropout_0_05']",
+                  "REQUIRED_CONDITION_COUNT = 5",
+                  "REQUIRED_RUN_COUNT = 25",
+                  "SEED_SCHEDULE = [42, 43, 44, 45, 46]",
+                  MINIMAL_METRICS_RUNNER_SOURCE
+                ].join("\n\n")
               }
             ]
           })
@@ -7152,6 +7186,113 @@ describe("ImplementSessionManager", () => {
     expect(capturedPrompt).toContain('"rank_32_dropout_0_05"');
     expect(capturedPrompt).toContain("Do not compress repeated cells");
     expect(capturedPrompt).not.toContain('"required_condition_count": 2');
+  });
+
+  it("preserves full-grid LoRA condition and seed contracts from P6 plan prose", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-p6-grid-contract-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "P6 Full Grid Contract Run",
+      topic: "LoRA rank dropout fixed budget",
+      constraints: ["LoRA conditions: rank in `{4, 8, 16, 32}` x dropout in `{0.0, 0.05}`."],
+      objectiveMetric: "accuracy_delta_vs_baseline"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      path.join(runDir, "experiment_plan.yaml"),
+      [
+        "selected_design:",
+        '  title: "Locked 8-condition full grid with 3-seed paired deltas"',
+        '  summary: "Run the full rank x dropout grid on the local target with seeds 42, 43, and 44."',
+        "  implementation_notes:",
+        '    - "Baseline condition: rank=8, dropout=0.0."',
+        '    - "Use LoRA ranks {4, 8, 16, 32} and dropouts {0.0, 0.05}; total training conditions per seed = 8"',
+        '    - "Use seeds 42, 43, and 44; do not alter condition order."',
+        "  resource_notes:",
+        '    - "Total planned train/eval jobs: 24"'
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(path.join(runDir, "hypotheses.jsonl"), "", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "experiment.py");
+    let capturedPrompt = "";
+    const codex = {
+      runTurnStream: async () => {
+        throw new Error("Codex should not be used when llm_mode=openai_api");
+      }
+    } as unknown as CodexNativeClient;
+    const fullGridSource = [
+      "PLANNED_CONDITIONS = [",
+      "  'rank_8_dropout_0_0',",
+      "  'rank_4_dropout_0_0', 'rank_4_dropout_0_05', 'rank_8_dropout_0_05',",
+      "  'rank_16_dropout_0_0', 'rank_16_dropout_0_05',",
+      "  'rank_32_dropout_0_0', 'rank_32_dropout_0_05',",
+      "]",
+      "REQUIRED_CONDITION_COUNT = 8",
+      "REQUIRED_RUN_COUNT = 24",
+      "SEED_SCHEDULE = [42, 43, 44]",
+      MINIMAL_METRICS_RUNNER_SOURCE
+    ].join("\n\n");
+    const llm = {
+      complete: async (prompt: string) => {
+        capturedPrompt = prompt;
+        return {
+          text: JSON.stringify({
+            summary: "Implemented a full-grid LoRA contract runner.",
+            run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+            changed_files: [publicScriptPath],
+            artifacts: [publicScriptPath],
+            public_artifacts: [publicScriptPath],
+            script_path: publicScriptPath,
+            metrics_path: path.join(runDir, "metrics.json"),
+            experiment_mode: "real_execution",
+            file_edits: [
+              {
+                path: publicScriptPath,
+                content: fullGridSource
+              }
+            ]
+          })
+        };
+      }
+    };
+
+    const config = createTestConfig();
+    config.providers.llm_mode = "openai_api";
+    const manager = new ImplementSessionManager({
+      config,
+      codex,
+      llm: llm as any,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await manager.run(run);
+
+    expect(capturedPrompt).toContain('"required_condition_count": 8');
+    expect(capturedPrompt).toContain('"required_run_count": 24');
+    expect(capturedPrompt).toContain('"minimum_seeds_per_condition": 3');
+    expect(capturedPrompt).toContain('"baseline_condition_marker": "rank_8_dropout_0_0"');
+    expect(capturedPrompt).toContain('"seed_schedule":');
+    expect(capturedPrompt).toContain("42");
+    expect(capturedPrompt).toContain("43");
+    expect(capturedPrompt).toContain("44");
+    expect(capturedPrompt).toContain('"rank_4_dropout_0_0"');
+    expect(capturedPrompt).toContain('"rank_4_dropout_0_05"');
+    expect(capturedPrompt).toContain('"rank_32_dropout_0_05"');
+    expect(capturedPrompt).not.toContain('"required_condition_count": 5');
   });
 
   it("uses staged_llm directly when the runtime no longer enters a codex implement turn", async () => {
@@ -8179,6 +8320,49 @@ describe("ImplementSessionManager", () => {
     expect(parsedContract.summary).toContain("Recovered bootstrap contract");
   });
 
+  it("recovers bootstrap contracts after noisy tool transcripts leave dangling quote state", () => {
+    const payload = {
+      version: "1.0",
+      strategy: "hf_bootstrap_contract",
+      summary: "Recovered bootstrap contract after transcript noise.",
+      requires_network: true,
+      requires_warm_cache: false,
+      blocking_reason: "",
+      remediation: "Remote assets may need to be fetched.",
+      requirements: [
+        {
+          id: "hf_model_tiny",
+          kind: "model",
+          source: "huggingface",
+          required_for: ["baseline_condition"],
+          availability: "download_required",
+          summary: "Tiny model"
+        }
+      ],
+      checks: [
+        {
+          id: "check_python3",
+          check_type: "command_available",
+          target: "python3",
+          reason: "Runner executes through python3."
+        }
+      ]
+    };
+    const noisyTranscript = [
+      "to=container.exec code: ",
+      JSON.stringify({ cmd: ["bash", "-lc", "sed -n '1,80p' experiment.py"], timeout: 120000 }),
+      " provider transcript begins \"dangling non-json quote before the final schema object ",
+      JSON.stringify(payload)
+    ].join("");
+
+    const contract = parseImplementBootstrapContractFromText(noisyTranscript);
+
+    expect(contract?.summary).toContain("Recovered bootstrap contract after transcript noise");
+    expect(contract?.requires_network).toBe(true);
+    expect(contract?.requirements).toHaveLength(1);
+    expect(contract?.checks).toHaveLength(1);
+  });
+
   it("verifies python_module_available checks before accepting package-missing bootstrap blockers", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-bootstrap-python-module-pass-"));
     tempDirs.push(workspace);
@@ -9030,7 +9214,7 @@ describe("ImplementSessionManager", () => {
     expect(prompts.some((prompt) => prompt.includes("Staged implement unit generation"))).toBe(false);
     expect(prompts.some((prompt) => prompt.includes("Target chunk: runner_body"))).toBe(true);
     expect(readFileSync(publicScriptPath, "utf8")).toContain("def main():");
-  });
+  }, 15_000);
 
   it("re-subdivides a provider-terminated code subchunk through a smaller dynamic plan before materializing the file", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-resubchunk-plan-"));
@@ -12022,6 +12206,79 @@ describe("ImplementSessionManager", () => {
     expect(output).toBe("7");
   });
 
+  it("guards runtime path preparation dispatch from passing Namespace objects into pathlib.Path", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-runtime-path-prepare-guard-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "from pathlib import Path",
+        "",
+        "def _coerce_namespace(args):",
+        "    return args",
+        "",
+        "def _resolve_cli_args(argv=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--output-dir', default='out')",
+        "    return parser.parse_args(argv)",
+        "",
+        "def _resolve_stage_callable(candidate_names, required_tokens=()):",
+        "    return Path",
+        "",
+        "def _invoke_compatible(func, *positional_args, **candidate_kwargs):",
+        "    return func(*positional_args)",
+        "",
+        "def _normalize_runtime_args(args):",
+        "    normalized = _coerce_namespace(args)",
+        "    prepare_fn = _resolve_stage_callable(",
+        "        (",
+        "            'prepare_runtime_paths',",
+        "            'ensure_output_paths',",
+        "            'validate_and_prepare_paths',",
+        "            'resolve_output_paths',",
+        "            'prepare_run_paths',",
+        "        ),",
+        "        required_tokens=('path',),",
+        "    )",
+        "    if prepare_fn is not None:",
+        "        prepared = _invoke_compatible(prepare_fn, normalized, args=normalized)",
+        "        if prepared is not None:",
+        "            normalized = _coerce_namespace(prepared)",
+        "    return normalized",
+        "",
+        "def main(argv=None):",
+        "    args = _normalize_runtime_args(_resolve_cli_args(argv))",
+        "    print(args.output_dir)",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() =>
+      execFileSync("python3", [scriptPath, "--output-dir", workspace], {
+        cwd: workspace,
+        encoding: "utf8"
+      })
+    ).toThrow(/Namespace|os\.PathLike|__fspath__/);
+
+    const repair = await repairPythonRuntimePathPrepareCallableSurface(scriptPath);
+
+    expect(repair.repaired).toBe(true);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repairedSource).toContain("_autolabos_runtime_path_prepare_callable_marker");
+    expect(repairedSource).toContain("if _autolabos_runtime_path_prepare_callable(prepare_fn):");
+    const output = execFileSync("python3", [scriptPath, "--output-dir", workspace], {
+      cwd: workspace,
+      encoding: "utf8"
+    }).trim();
+    expect(output).toBe(workspace);
+  });
+
   it("repairs runtime_paths mappings before applying path environment", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-runtime-paths-mapping-repair-"));
     tempDirs.push(workspace);
@@ -13236,6 +13493,136 @@ describe("ImplementSessionManager", () => {
     expect(after.success).toBe(true);
     expect(after.aggregation_helper_error).toBeUndefined();
     expect(after.best_tuned_average_accuracy).toBe(0.5);
+  });
+
+  it("materializes runtime inputs for ordered condition collectors", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-ordered-collector-inputs-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    const metricsPath = path.join(workspace, "metrics.json");
+
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "import argparse",
+        "import inspect",
+        "import json",
+        "from pathlib import Path",
+        "",
+        "DEFAULT_BASE_MODEL = 'TinyLlama/TinyLlama-1.1B'",
+        "TASK_NAMES = ('arc_challenge', 'hellaswag')",
+        "TASK_DATASET_CONFIGS = {",
+        "    'arc_challenge': {'dataset_name': 'ai2_arc', 'dataset_config': 'ARC-Challenge', 'train_split': 'train', 'validation_split': 'validation'},",
+        "    'hellaswag': {'dataset_name': 'hellaswag', 'dataset_config': None, 'train_split': 'train', 'validation_split': 'validation'},",
+        "}",
+        "class DatasetDict(dict):",
+        "    pass",
+        "def load_dataset(dataset_name, dataset_config=None, split=None):",
+        "    return [{'dataset_name': dataset_name, 'dataset_config': dataset_config, 'split': split}]",
+        "def _resolve_first_callable(names):",
+        "    for name in names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "def _call_with_supported_kwargs(func, **kwargs):",
+        "    signature = inspect.signature(func)",
+        "    filtered = {key: value for key, value in kwargs.items() if key in signature.parameters}",
+        "    return func(**filtered)",
+        "def collect_ordered_condition_results(*, output_root_dir: Path, base_model_name: str, device, task_datasets):",
+        "    return [{",
+        "        'base_model_name': base_model_name,",
+        "        'device': str(device),",
+        "        'task_names': sorted(task_datasets.keys()),",
+        "        'arc_train_split': task_datasets['arc_challenge']['train'][0]['split'],",
+        "        'hellaswag_validation_split': task_datasets['hellaswag']['validation'][0]['split'],",
+        "    }]",
+        "def _extract_raw_condition_records(output):",
+        "    return output, {}",
+        "def _build_runtime_namespace(args: argparse.Namespace, output_dir: Path, metrics_path: Path) -> argparse.Namespace:",
+        "    namespace = argparse.Namespace(**vars(args))",
+        "    namespace.output_dir = output_dir",
+        "    namespace.output_root_dir = output_dir",
+        "    namespace.metrics_path = metrics_path",
+        "    return namespace",
+        "def run_lora_rank_dropout_study(args: argparse.Namespace):",
+        "    output_dir = Path(args.output_dir).resolve()",
+        "    metrics_path = Path(args.metrics_path).resolve()",
+        "    runtime_namespace = _build_runtime_namespace(args, output_dir=output_dir, metrics_path=metrics_path)",
+        "    collector = _resolve_first_callable(",
+        "        (",
+        "            '_collect_ordered_condition_results',",
+        "            'collect_ordered_condition_results',",
+        "            'run_ordered_condition_collection',",
+        "        )",
+        "    )",
+        "    if collector is None:",
+        "        raise RuntimeError('Unable to locate the ordered-condition collection helper in the study runner.')",
+        "",
+        "    collection_output = _call_with_supported_kwargs(",
+        "        collector,",
+        "        args=runtime_namespace,",
+        "        cli_args=runtime_namespace,",
+        "        config=runtime_namespace,",
+        "        runtime_config=runtime_namespace,",
+        "        study_config=runtime_namespace,",
+        "        output_dir=output_dir,",
+        "        output_root_dir=output_dir,",
+        "        metrics_path=metrics_path,",
+        "        timeout_sec=args.timeout_sec,",
+        "        seed=args.seed,",
+        "    )",
+        "    raw_condition_records, collection_metadata = _extract_raw_condition_records(collection_output)",
+        "    metrics_path.write_text(json.dumps({'condition_results': raw_condition_records, 'metadata': collection_metadata}), encoding='utf-8')",
+        "    return raw_condition_records",
+        "def main():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--output-dir', required=True)",
+        "    parser.add_argument('--metrics-path', required=True)",
+        "    parser.add_argument('--base-model-name', default='Qwen/Qwen2.5-1.5B')",
+        "    parser.add_argument('--timeout-sec', type=int, default=60)",
+        "    parser.add_argument('--seed', type=int, default=42)",
+        "    run_lora_rank_dropout_study(parser.parse_args())",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() =>
+      execFileSync(
+        "python3",
+        [scriptPath, "--output-dir", workspace, "--metrics-path", metricsPath],
+        { cwd: workspace }
+      )
+    ).toThrow(/base_model_name/u);
+
+    const repair = await repairPythonOrderedConditionCollectorRuntimeInputsSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_ordered_collector_runtime_inputs_marker");
+    expect(repairedSource).toContain("collector_task_datasets = _autolabos_collector_task_datasets(runtime_namespace)");
+    expect(repairedSource).toContain("base_model_name=collector_base_model_name");
+    expect(repairedSource).toContain("task_datasets=collector_task_datasets");
+
+    execFileSync(
+      "python3",
+      [scriptPath, "--output-dir", workspace, "--metrics-path", metricsPath],
+      { cwd: workspace }
+    );
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      condition_results: [
+        {
+          arc_train_split: "train",
+          base_model_name: "Qwen/Qwen2.5-1.5B",
+          hellaswag_validation_split: "validation",
+          task_names: ["arc_challenge", "hellaswag"]
+        }
+      ]
+    });
   });
 
   it("repairs study preparation calls that omit generated model and device context", async () => {
@@ -21154,6 +21541,2214 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
+  it("bridges rank/dropout sweep callables into the AutoLabOS study entrypoint", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-rank-dropout-study-callable-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "import json",
+        "from pathlib import Path",
+        "from typing import Any, Optional, Sequence",
+        "",
+        "PREFERRED_BASE_MODEL_ID = 'Qwen/Qwen2.5-1.5B'",
+        "SCRIPT_PATH = Path(__file__)",
+        "",
+        "class CliPaths:",
+        "    def __init__(self, output_dir, metrics_path):",
+        "        self.output_dir = Path(output_dir)",
+        "        self.metrics_path = Path(metrics_path)",
+        "",
+        "def run_locked_lora_rank_dropout_sweep(",
+        "    output_root: Path,",
+        "    base_model_id: str,",
+        "    *,",
+        "    preflight_summary: Optional[dict] = None,",
+        "    device_info: Optional[dict] = None,",
+        ") -> dict:",
+        "    Path(output_root).mkdir(parents=True, exist_ok=True)",
+        "    payload = {'ok': True, 'output_root': str(output_root), 'base_model_id': base_model_id}",
+        "    Path(output_root, 'study_results.json').write_text(json.dumps(payload), encoding='utf-8')",
+        "    return payload",
+        "",
+        "def _autolabos_find_callable(candidate_names: Sequence[str]) -> Optional[Any]:",
+        "    for name in candidate_names:",
+        "        maybe_callable = globals().get(name)",
+        "        if callable(maybe_callable):",
+        "            return maybe_callable",
+        "    return None",
+        "",
+        "def _autolabos_invoke_callable(func: Any, **context: Any) -> Any:",
+        "    signature = inspect.signature(func)",
+        "    params = signature.parameters",
+        "    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values()):",
+        "        return func(**context)",
+        "    kwargs = {name: value for name, value in context.items() if name in params}",
+        "    if kwargs or not params:",
+        "        return func(**kwargs)",
+        "    required = [",
+        "        param",
+        "        for param in params.values()",
+        "        if param.default is inspect.Signature.empty",
+        "        and param.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)",
+        "    ]",
+        "    if len(required) == 2:",
+        "        return func(context.get('args'), context.get('cli_paths') or context.get('paths'))",
+        "    return func()",
+        "",
+        "def _autolabos_run_study(",
+        "    args: argparse.Namespace,",
+        "    cli_paths: CliPaths,",
+        "    runnable_command: str,",
+        ") -> Any:",
+        "    candidate_names = (",
+        "        'run_locked_lora_rank_dropout_study',",
+        "        'run_lora_rank_dropout_study',",
+        "        'execute_locked_lora_rank_dropout_study',",
+        "        'execute_locked_condition_sweep',",
+        "        'execute_condition_sweep',",
+        "        'run_locked_condition_sweep',",
+        "        'run_locked_sweep',",
+        "        'run_study',",
+        "        'execute_study',",
+        "        'perform_study',",
+        "    )",
+        "    study_callable = _autolabos_find_callable(candidate_names)",
+        "    if study_callable is None:",
+        "        raise RuntimeError('No study execution callable was found in the script.')",
+        "    return _autolabos_invoke_callable(",
+        "        study_callable,",
+        "        args=args,",
+        "        cli_paths=cli_paths,",
+        "        paths=cli_paths,",
+        "        output_dir=cli_paths.output_dir,",
+        "        public_dir=cli_paths.output_dir,",
+        "        metrics_path=cli_paths.metrics_path,",
+        "        runnable_command=runnable_command,",
+        "        script_path=SCRIPT_PATH,",
+        "    )",
+        "",
+        "def main():",
+        "    args = argparse.Namespace(base_model_id='Qwen/Qwen2.5-1.5B')",
+        "    cli_paths = CliPaths(Path('out'), Path('metrics.json'))",
+        "    result = _autolabos_run_study(args, cli_paths, 'python runner.py')",
+        "    return 0 if result.get('ok') else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow();
+
+    const repair = await repairPythonRankDropoutStudyCallableBridgeSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("'run_locked_lora_rank_dropout_sweep'");
+    expect(repairedSource).toContain("_autolabos_rank_dropout_study_callable_bridge_marker");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(path.join(workspace, "out", "study_results.json"), "utf8"))).toMatchObject({
+      ok: true,
+      base_model_id: "Qwen/Qwen2.5-1.5B"
+    });
+  });
+
+  it("prioritizes locked full-sweep executors before study output assemblers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-sweep-executor-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import inspect",
+        "import json",
+        "from pathlib import Path",
+        "from typing import Any, Mapping, Sequence",
+        "",
+        "JsonDict = dict[str, Any]",
+        "",
+        "def collect_locked_execution_records(",
+        "    config: Any,",
+        "    schedule: Sequence[Any] | None = None,",
+        ") -> JsonDict:",
+        "    payload = {'ok': True, 'executor': 'collect_locked_execution_records'}",
+        "    Path('executed.json').write_text(json.dumps(payload), encoding='utf-8')",
+        "    return payload",
+        "",
+        "def collect_locked_per_run_records(",
+        "    config: Any,",
+        "    schedule: Sequence[Any] | None = None,",
+        ") -> list[JsonDict]:",
+        "    return [collect_locked_execution_records(config, schedule=schedule)]",
+        "",
+        "run_locked_full_sweep = collect_locked_execution_records",
+        "execute_locked_full_sweep = collect_locked_execution_records",
+        "orchestrate_locked_full_sweep = collect_locked_execution_records",
+        "",
+        "def assemble_study_outputs(config: Any, execution_payload: Any) -> JsonDict:",
+        "    return {'assembled': True, 'execution_payload': execution_payload}",
+        "",
+        "def _callable_candidates_from_globals(",
+        "    *,",
+        "    exact_names: Sequence[str] = (),",
+        "    required_fragments: Sequence[str] = (),",
+        "    forbidden_fragments: Sequence[str] = (),",
+        ") -> list[Any]:",
+        "    candidates = []",
+        "    seen = set()",
+        "    for name in exact_names:",
+        "        func = globals().get(name)",
+        "        if callable(func) and id(func) not in seen:",
+        "            candidates.append(func)",
+        "            seen.add(id(func))",
+        "    for name, func in sorted(globals().items()):",
+        "        lowered = name.lower()",
+        "        if name.startswith('_') or not callable(func):",
+        "            continue",
+        "        if required_fragments and not all(fragment in lowered for fragment in required_fragments):",
+        "            continue",
+        "        if forbidden_fragments and any(fragment in lowered for fragment in forbidden_fragments):",
+        "            continue",
+        "        if id(func) not in seen:",
+        "            candidates.append(func)",
+        "            seen.add(id(func))",
+        "    return candidates",
+        "",
+        "def _invoke_callable_with_context(func: Any, context: Mapping[str, Any]) -> Any:",
+        "    signature = inspect.signature(func)",
+        "    kwargs = {}",
+        "    for name, param in signature.parameters.items():",
+        "        if name in context:",
+        "            kwargs[name] = context[name]",
+        "        elif param.default is inspect.Signature.empty:",
+        "            raise TypeError(f\"Unable to satisfy parameter '{name}' when invoking {func.__name__}.\")",
+        "    return func(**kwargs)",
+        "",
+        "def _execute_main_study(config: Any, bootstrap_context: Mapping[str, Any]) -> Any:",
+        "    executor_candidates = _callable_candidates_from_globals(",
+        "        exact_names=(",
+        "            \"execute_locked_lora_rank_dropout_study\",",
+        "            \"execute_locked_lora_study\",",
+        "            \"execute_locked_study\",",
+        "            \"run_locked_lora_rank_dropout_study\",",
+        "            \"run_locked_study\",",
+        "            \"execute_study\",",
+        "            \"run_study\",",
+        "        ),",
+        "        required_fragments=(\"study\",),",
+        "        forbidden_fragments=(\"write\", \"serialize\", \"metric\", \"config\", \"arg\"),",
+        "    )",
+        "    last_error: Exception | None = None",
+        "    for candidate in executor_candidates:",
+        "        try:",
+        "            return _invoke_callable_with_context(",
+        "                candidate,",
+        "                {",
+        "                    \"config\": config,",
+        "                    \"study_config\": config,",
+        "                    \"runtime_config\": config,",
+        "                    \"args\": config,",
+        "                    \"output_dir\": bootstrap_context.get(\"output_dir\"),",
+        "                    \"metrics_path\": bootstrap_context.get(\"metrics_path\"),",
+        "                    \"argv\": list(bootstrap_context.get(\"argv\", [])),",
+        "                    \"invoked_command\": bootstrap_context.get(\"invoked_command\"),",
+        "                },",
+        "            )",
+        "        except TypeError as exc:",
+        "            last_error = exc",
+        "            continue",
+        "    if last_error is not None:",
+        "        raise RuntimeError(",
+        "            f\"Unable to resolve a compatible study execution function from the prepared sections: {last_error}\"",
+        "        )",
+        "    raise RuntimeError(\"Unable to find a study execution function in the prepared sections.\")",
+        "",
+        "def main() -> int:",
+        "    result = _execute_main_study({'condition': 'rank_8_dropout_0_0'}, {'output_dir': 'out', 'metrics_path': 'metrics.json'})",
+        "    return 0 if result.get('ok') else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /execution_payload/
+    );
+
+    const repair = await repairPythonLockedSweepExecutorResolverSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_locked_sweep_executor_resolver_marker");
+    expect(repairedSource).toContain("\"collect_locked_execution_records\"");
+    expect(repairedSource).toContain("\"assemble\", \"output\"");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(path.join(workspace, "executed.json"), "utf8"))).toMatchObject({
+      ok: true,
+      executor: "collect_locked_execution_records"
+    });
+  });
+
+  it("prioritizes rank/dropout sweep controllers before generic study controller names", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-rank-dropout-sweep-controller-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import json",
+        "from pathlib import Path",
+        "from typing import Any",
+        "",
+        "def execute_locked_rank_dropout_sweep(config: Any = None, contract: Any = None) -> dict:",
+        "    payload = {",
+        "        'ok': True,",
+        "        'controller': 'execute_locked_rank_dropout_sweep',",
+        "        'run_rows': [{'condition_marker': 'rank_8_dropout_0_0', 'status': 'completed'}],",
+        "        'failures': [],",
+        "    }",
+        "    Path('controller_executed.json').write_text(json.dumps(payload), encoding='utf-8')",
+        "    return payload",
+        "",
+        "run_locked_rank_dropout_sweep = execute_locked_rank_dropout_sweep",
+        "run_rank_dropout_sweep = execute_locked_rank_dropout_sweep",
+        "",
+        "def _resolve_sweep_controller() -> Any:",
+        "    for name in (",
+        "        \"run_locked_sweep\",",
+        "        \"execute_locked_study\",",
+        "        \"run_locked_study\",",
+        "        \"execute_study\",",
+        "        \"run_study\",",
+        "        \"run_experiment\",",
+        "    ):",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    raise RuntimeError(\"Unable to resolve the study sweep controller from module globals.\")",
+        "",
+        "def _invoke_sweep_controller(controller: Any, config: Any, contract: Any) -> dict:",
+        "    return controller(config, contract)",
+        "",
+        "def main() -> int:",
+        "    controller = _resolve_sweep_controller()",
+        "    result = _invoke_sweep_controller(controller, {}, {})",
+        "    return 0 if result.get('run_rows') else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /study sweep controller/
+    );
+
+    const repair = await repairPythonRankDropoutSweepControllerResolverSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_rank_dropout_sweep_controller_resolver_marker");
+    expect(repairedSource).toContain("\"execute_locked_rank_dropout_sweep\"");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(path.join(workspace, "controller_executed.json"), "utf8"))).toMatchObject({
+      ok: true,
+      controller: "execute_locked_rank_dropout_sweep",
+      failures: []
+    });
+  });
+
+  it("bridges locked sweep per-run model aliases and preserves evidence rows", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-sweep-per-run-bridge-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import inspect",
+        "import json",
+        "from pathlib import Path",
+        "from types import SimpleNamespace",
+        "from typing import Any, Mapping, Sequence",
+        "",
+        "PREFERRED_BASE_MODEL = 'Qwen/Qwen2.5-1.5B'",
+        "",
+        "class Condition:",
+        "    marker = 'rank_8_dropout_0_0'",
+        "    rank = 8",
+        "    dropout = 0.0",
+        "    def resolved_lora_alpha(self):",
+        "        return 16",
+        "",
+        "class RunKey:",
+        "    condition_marker = 'rank_8_dropout_0_0'",
+        "    seed = 42",
+        "    order_index = 0",
+        "",
+        "def run_finetune_for_condition_seed(model_name, condition, seed, run_output_dir):",
+        "    Path(run_output_dir, 'model_name.txt').write_text(model_name, encoding='utf-8')",
+        "    return {",
+        "        'status': 'completed',",
+        "        'condition_marker': condition.marker,",
+        "        'seed': seed,",
+        "        'average_accuracy': 0.5,",
+        "        'accuracy_delta_vs_baseline': 0.0,",
+        "    }",
+        "",
+        "def _invoke_executor_for_run(",
+        "    executor: Any,",
+        "    *,",
+        "    runtime_config: Any,",
+        "    condition: Any,",
+        "    run_key: Any,",
+        "    run_output_dir: Path,",
+        ") -> Any:",
+        "    available_kwargs: dict[str, Any] = {",
+        "        \"runtime_config\": runtime_config,",
+        "        \"config\": runtime_config,",
+        "        \"condition\": condition,",
+        "        \"condition_spec\": condition,",
+        "        \"condition_marker\": condition.marker,",
+        "        \"rank\": condition.rank,",
+        "        \"dropout\": condition.dropout,",
+        "        \"seed\": run_key.seed,",
+        "        \"run_key\": run_key,",
+        "        \"order_index\": run_key.order_index,",
+        "        \"run_id\": '000__rank_8_dropout_0_0__seed_42',",
+        "        \"output_dir\": run_output_dir,",
+        "        \"run_output_dir\": run_output_dir,",
+        "        \"condition_output_dir\": run_output_dir,",
+        "        \"study_output_dir\": runtime_config.paths.output_dir,",
+        "        \"base_model_override\": runtime_config.base_model_override,",
+        "        \"tasks\": ('arc_challenge', 'hellaswag'),",
+        "    }",
+        "    signature = inspect.signature(executor)",
+        "    call_kwargs = {}",
+        "    for name, parameter in signature.parameters.items():",
+        "        if name in available_kwargs:",
+        "            call_kwargs[name] = available_kwargs[name]",
+        "        elif parameter.default is inspect.Signature.empty:",
+        "            raise TypeError(f\"Executor {executor.__name__} requires unsupported parameter '{name}'.\")",
+        "    return executor(**call_kwargs)",
+        "",
+        "def execute_locked_sweep(runtime_config: Any) -> dict[str, Any]:",
+        "    output_dir = runtime_config.paths.output_dir / 'condition_runs' / 'rank_8_dropout_0_0' / 'seed_42'",
+        "    output_dir.mkdir(parents=True, exist_ok=True)",
+        "    row = _invoke_executor_for_run(",
+        "        run_finetune_for_condition_seed,",
+        "        runtime_config=runtime_config,",
+        "        condition=Condition(),",
+        "        run_key=RunKey(),",
+        "        run_output_dir=output_dir,",
+        "    )",
+        "    return {'evidence_rows': [row]}",
+        "",
+        "def _mappingify(value: Any) -> dict[str, Any]:",
+        "    if isinstance(value, Mapping):",
+        "        return dict(value)",
+        "    return dict(vars(value))",
+        "",
+        "def _extract_run_records(execution_state: Any) -> list[dict[str, Any]]:",
+        "    if execution_state is None:",
+        "        return []",
+        "    if isinstance(execution_state, list):",
+        "        return [_mappingify(item) for item in execution_state]",
+        "    if isinstance(execution_state, tuple):",
+        "        return [_mappingify(item) for item in execution_state]",
+        "    state_mapping = _mappingify(execution_state)",
+        "    for key in (",
+        "        \"run_records\",",
+        "        \"runs\",",
+        "        \"results\",",
+        "        \"records\",",
+        "        \"per_run_results\",",
+        "        \"study_runs\",",
+        "        \"observations\",",
+        "    ):",
+        "        value = state_mapping.get(key)",
+        "        if isinstance(value, list):",
+        "            return [_mappingify(item) for item in value]",
+        "        if isinstance(value, tuple):",
+        "            return [_mappingify(item) for item in value]",
+        "    return []",
+        "",
+        "def main() -> int:",
+        "    runtime_config = SimpleNamespace(paths=SimpleNamespace(output_dir=Path('out')), base_model_override=None)",
+        "    execution_state = execute_locked_sweep(runtime_config)",
+        "    rows = _extract_run_records(execution_state)",
+        "    Path('rows.json').write_text(json.dumps(rows), encoding='utf-8')",
+        "    return 0 if rows and rows[0].get('status') == 'completed' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /model_name/
+    );
+
+    const repair = await repairPythonLockedSweepPerRunExecutorBridgeSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_locked_sweep_per_run_executor_bridge_marker");
+    expect(repairedSource).toContain("\"model_name\": runtime_config.base_model_override");
+    expect(repairedSource).toContain("\"evidence_rows\"");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(readFileSync(path.join(workspace, "out", "condition_runs", "rank_8_dropout_0_0", "seed_42", "model_name.txt"), "utf8")).toBe(
+      "Qwen/Qwen2.5-1.5B"
+    );
+    expect(JSON.parse(readFileSync(path.join(workspace, "rows.json"), "utf8"))).toEqual([
+      expect.objectContaining({
+        status: "completed",
+        condition_marker: "rank_8_dropout_0_0",
+        average_accuracy: 0.5
+      })
+    ]);
+  });
+
+  it("skips config classes when discovering generated sweep callables", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-sweep-callable-class-resolver-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import json",
+        "from pathlib import Path",
+        "from typing import Any",
+        "",
+        "class StudyConfig:",
+        "    def __init__(",
+        "        self,",
+        "        output_dir,",
+        "        metrics_path,",
+        "        cache_dir,",
+        "        run_name,",
+        "        run_dir,",
+        "        logs_dir,",
+        "        artifacts_dir,",
+        "        per_seed_results_path,",
+        "        condition_summary_path,",
+        "        study_summary_path,",
+        "    ):",
+        "        self.output_dir = output_dir",
+        "",
+        "def execute_locked_baseline_first_sweep(",
+        "    config: Any = None,",
+        "    runtime_context: Any = None,",
+        "    dataset_bundle: Any = None,",
+        ") -> dict[str, Any]:",
+        "    payload = {",
+        "        'ok': True,",
+        "        'sweep': 'execute_locked_baseline_first_sweep',",
+        "        'has_runtime_context': runtime_context is not None,",
+        "        'has_dataset_bundle': dataset_bundle is not None,",
+        "    }",
+        "    Path('sweep_executed.json').write_text(json.dumps(payload), encoding='utf-8')",
+        "    return payload",
+        "",
+        "def _attempt_call(callable_obj: Any, attempts: list[dict[str, Any]]) -> Any:",
+        "    last_error = None",
+        "    for kwargs in attempts:",
+        "        try:",
+        "            return callable_obj(**kwargs)",
+        "        except TypeError as exc:",
+        "            last_error = exc",
+        "    if last_error is not None:",
+        "        raise last_error",
+        "    raise RuntimeError('No call attempts were available.')",
+        "",
+        "def _discover_sweep_callable() -> Any:",
+        "    explicit_names = [",
+        "        \"execute_study_sweep\",",
+        "        \"run_study_sweep\",",
+        "        \"execute_locked_sweep\",",
+        "        \"run_locked_sweep\",",
+        "        \"execute_study\",",
+        "        \"run_study\",",
+        "        \"run_sweep\",",
+        "        \"execute_sweep\",",
+        "        \"orchestrate_study\",",
+        "        \"orchestrate_sweep\",",
+        "    ]",
+        "    for name in explicit_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    excluded_names = {",
+        "        \"main\",",
+        "        \"parse_args\",",
+        "        \"parse_cli_args\",",
+        "        \"build_config\",",
+        "        \"build_experiment_config\",",
+        "    }",
+        "    for name, candidate in globals().items():",
+        "        if name in excluded_names or not callable(candidate):",
+        "            continue",
+        "        lowered = name.lower()",
+        "        if any(token in lowered for token in (\"sweep\", \"study\")) and not any(",
+        "            token in lowered for token in (\"aggregate\", \"summary\", \"normalize\", \"parse\", \"prepare\", \"write\", \"select\")",
+        "        ):",
+        "            return candidate",
+        "    raise RuntimeError(\"Unable to locate the sweep execution callable from chunk_2a.\")",
+        "",
+        "def _invoke_sweep_execution(config_obj: Any, args_obj: Any, argv: list[str]) -> Any:",
+        "    sweep_callable = _discover_sweep_callable()",
+        "    attempts = [",
+        "        {'config': config_obj, 'runtime_context': {'output_dir': 'out'}, 'dataset_bundle': {'name': 'toy'}},",
+        "        {'config_obj': config_obj, 'args_obj': args_obj, 'argv': argv},",
+        "        {},",
+        "    ]",
+        "    return _attempt_call(sweep_callable, attempts)",
+        "",
+        "def main() -> int:",
+        "    sweep_result = _invoke_sweep_execution(config_obj={'condition': 'rank_8_dropout_0_0'}, args_obj={}, argv=[])",
+        "    return 0 if sweep_result.get('ok') else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /StudyConfig/
+    );
+
+    const repair = await repairPythonSweepCallableClassResolverSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_sweep_callable_class_resolver_marker");
+    expect(repairedSource).toContain("\"execute_locked_baseline_first_sweep\"");
+    expect(repairedSource).toContain("not isinstance(candidate, type)");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(path.join(workspace, "sweep_executed.json"), "utf8"))).toMatchObject({
+      ok: true,
+      sweep: "execute_locked_baseline_first_sweep",
+      has_runtime_context: true,
+      has_dataset_bundle: true
+    });
+  });
+
+  it("bridges schedule executor condition and seed arguments without passing config as conditions", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-schedule-executor-bridge-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "import json",
+        "from pathlib import Path",
+        "from typing import Any, Sequence",
+        "",
+        "LOCKED_CONDITION_SPECS = ('rank_8_dropout_0_0', 'rank_16_dropout_0_05')",
+        "REQUIRED_SEED_SCHEDULE = (42, 314)",
+        "",
+        "def validate_locked_condition_specs(conditions: Sequence[str] | None = None) -> tuple[str, ...]:",
+        "    return tuple(LOCKED_CONDITION_SPECS if conditions is None else conditions)",
+        "",
+        "def get_required_seed_schedule(seed_schedule: Sequence[int] | None = None) -> tuple[int, ...]:",
+        "    return tuple(REQUIRED_SEED_SCHEDULE if seed_schedule is None else seed_schedule)",
+        "",
+        "def expand_planned_run_schedule(",
+        "    conditions: Sequence[str] | None = None,",
+        "    seed_schedule: Sequence[int] | None = None,",
+        ") -> tuple[dict[str, Any], ...]:",
+        "    specs = validate_locked_condition_specs(conditions=conditions)",
+        "    seeds = get_required_seed_schedule(seed_schedule=seed_schedule)",
+        "    rows = tuple({'condition': condition, 'seed': seed} for condition in specs for seed in seeds)",
+        "    Path('schedule.json').write_text(json.dumps(list(rows)), encoding='utf-8')",
+        "    return rows",
+        "",
+        "def _invoke_schedule_executor(executor: Any, config: Any, schedule: Sequence[Any]) -> Any:",
+        "    signature = inspect.signature(executor)",
+        "    kwargs: dict[str, Any] = {}",
+        "    for name in signature.parameters:",
+        "        lowered = name.lower()",
+        "        if lowered in {'config', 'study_config', 'cfg'}:",
+        "            kwargs[name] = config",
+        "        elif lowered in {'schedule', 'planned_runs', 'planned_run_specs', 'run_schedule'}:",
+        "            kwargs[name] = schedule",
+        "    if kwargs:",
+        "        return executor(**kwargs)",
+        "    positional_count = len(signature.parameters)",
+        "    if positional_count >= 2:",
+        "        return executor(config, schedule)",
+        "    if positional_count == 1:",
+        "        parameter_name = next(iter(signature.parameters)).lower()",
+        "        if 'schedule' in parameter_name or 'planned' in parameter_name:",
+        "            return executor(schedule)",
+        "        return executor(config)",
+        "    return executor()",
+        "",
+        "def main() -> int:",
+        "    rows = _invoke_schedule_executor(",
+        "        expand_planned_run_schedule,",
+        "        argparse.Namespace(seed=42),",
+        "        ({'stale': True},),",
+        "    )",
+        "    return 0 if len(rows) == 4 and rows[0]['condition'] == 'rank_8_dropout_0_0' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /Namespace.*not iterable|object is not iterable/
+    );
+
+    const repair = await repairPythonScheduleExecutorArgumentBridgeSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_schedule_executor_argument_bridge_marker");
+    expect(repairedSource).toContain("'conditions'");
+    expect(repairedSource).toContain("'seed_schedule'");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(path.join(workspace, "schedule.json"), "utf8"))).toEqual([
+      { condition: "rank_8_dropout_0_0", seed: 42 },
+      { condition: "rank_8_dropout_0_0", seed: 314 },
+      { condition: "rank_16_dropout_0_05", seed: 42 },
+      { condition: "rank_16_dropout_0_05", seed: 314 }
+    ]);
+  });
+
+  it("aliases locked study run executors into final study entrypoint names", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-study-runs-entrypoint-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import json",
+        "from pathlib import Path",
+        "from typing import Any",
+        "",
+        "def execute_locked_study_runs(args: argparse.Namespace) -> dict[str, Any]:",
+        "    payload = {",
+        "        'status': 'completed',",
+        "        'completed_run_count': 1,",
+        "        'executor': 'execute_locked_study_runs',",
+        "    }",
+        "    Path('executed.json').write_text(json.dumps(payload), encoding='utf-8')",
+        "    return payload",
+        "",
+        "def _resolve_callable(*candidate_names: str):",
+        "    for name in candidate_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return name, candidate",
+        "    return None, None",
+        "",
+        "def _invoke_executor_callable(executor_callable: Any, args: argparse.Namespace):",
+        "    return executor_callable(args)",
+        "",
+        "def _execute_locked_study(args: argparse.Namespace):",
+        "    executor_name, executor_callable = _resolve_callable(",
+        "        'execute_study',",
+        "        'run_study',",
+        "        'run_locked_study',",
+        "        'execute_experiment',",
+        "        'run_experiment',",
+        "        'orchestrate_study',",
+        "        'execute_locked_plan',",
+        "        'run_locked_plan',",
+        "    )",
+        "    if executor_callable is None:",
+        "        raise RuntimeError(",
+        "            'No study execution function was found in the script. Expected one of: '",
+        "            'execute_study, run_study, run_locked_study, execute_experiment, run_experiment, orchestrate_study.'",
+        "        )",
+        "    result = _invoke_executor_callable(executor_callable, args)",
+        "    if isinstance(result, dict):",
+        "        result.setdefault('executor_function', executor_name)",
+        "    return result",
+        "",
+        "def main() -> int:",
+        "    result = _execute_locked_study(argparse.Namespace())",
+        "    return 0 if result.get('status') == 'completed' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No study execution function/
+    );
+
+    const repair = await repairPythonLockedStudyRunsEntrypointAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_locked_study_runs_entrypoint_alias_marker");
+    expect(repairedSource).toContain("execute_study = execute_locked_study_runs");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(path.join(workspace, "executed.json"), "utf8"))).toMatchObject({
+      status: "completed",
+      completed_run_count: 1,
+      executor: "execute_locked_study_runs"
+    });
+  });
+
+  it("aliases baseline-first locked sweep executors into final study entrypoint names", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-baseline-first-sweep-entrypoint-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "import json",
+        "from pathlib import Path",
+        "from typing import Any, Mapping",
+        "",
+        "def execute_locked_baseline_first_sweep(args: argparse.Namespace, *, device=None, device_info=None, model_preflight=None) -> dict[str, Any]:",
+        "    payload = {",
+        "        'status': 'completed',",
+        "        'completed_run_count': 2,",
+        "        'executor': 'execute_locked_baseline_first_sweep',",
+        "        'has_device_kwarg': device is not None,",
+        "    }",
+        "    Path('executed.json').write_text(json.dumps(payload), encoding='utf-8')",
+        "    return payload",
+        "",
+        "def _resolve_first_callable(*candidate_names: str):",
+        "    for candidate_name in candidate_names:",
+        "        candidate = globals().get(candidate_name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def _invoke_callable_with_supported_kwargs(func: Any, /, *args: Any, **kwargs: Any) -> Any:",
+        "    signature = inspect.signature(func)",
+        "    parameters = signature.parameters",
+        "    filtered_kwargs = {key: value for key, value in kwargs.items() if key in parameters}",
+        "    return func(*args, **filtered_kwargs)",
+        "",
+        "def build_locked_run_plan():",
+        "    return [{'condition': 'baseline', 'seed': 42}]",
+        "",
+        "def _execute_study(args: argparse.Namespace, runtime_paths: Mapping[str, Path]) -> Any:",
+        "    sweep_runner = _resolve_first_callable(",
+        "        'run_locked_study',",
+        "        'run_locked_study_sweep',",
+        "        'execute_locked_study',",
+        "        'execute_study',",
+        "        'run_study',",
+        "        'run_baseline_first_sweep',",
+        "        'orchestrate_locked_study',",
+        "    )",
+        "    if sweep_runner is not None:",
+        "        return _invoke_callable_with_supported_kwargs(",
+        "            sweep_runner,",
+        "            args=args,",
+        "            metrics_path=runtime_paths['metrics_path'],",
+        "            study_output_dir=runtime_paths['study_output_dir'],",
+        "            run_output_dir=runtime_paths['run_output_dir'],",
+        "            cache_dir=runtime_paths['cache_dir'],",
+        "            log_dir=runtime_paths['log_dir'],",
+        "            device='cpu',",
+        "        )",
+        "",
+        "    single_run_helper = _resolve_first_callable(",
+        "        'run_single_condition',",
+        "        'execute_single_condition',",
+        "        'run_condition_seed',",
+        "        'execute_condition_run',",
+        "        'run_single_experiment',",
+        "        'run_single_trial',",
+        "    )",
+        "    if single_run_helper is None:",
+        "        raise RuntimeError('No study sweep runner or single-run helper was found in the script.')",
+        "    return single_run_helper()",
+        "",
+        "def main() -> int:",
+        "    paths = {",
+        "        'metrics_path': Path('metrics.json'),",
+        "        'study_output_dir': Path('.'),",
+        "        'run_output_dir': Path('.'),",
+        "        'cache_dir': Path('.'),",
+        "        'log_dir': Path('.'),",
+        "    }",
+        "    result = _execute_study(argparse.Namespace(), paths)",
+        "    return 0 if result.get('status') == 'completed' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No study sweep runner or single-run helper/
+    );
+
+    const repair = await repairPythonBaselineFirstSweepEntrypointAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_baseline_first_sweep_entrypoint_alias_marker");
+    expect(repairedSource).toContain("run_locked_study = execute_locked_baseline_first_sweep");
+    expect(repairedSource).toContain("run_baseline_first_sweep = execute_locked_baseline_first_sweep");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(path.join(workspace, "executed.json"), "utf8"))).toMatchObject({
+      status: "completed",
+      completed_run_count: 2,
+      executor: "execute_locked_baseline_first_sweep",
+      has_device_kwarg: true
+    });
+  });
+
+  it("aliases locked sweep plan builders into final sweep resolver names", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-sweep-plan-builder-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import json",
+        "from pathlib import Path",
+        "from typing import Any, Optional, Sequence",
+        "",
+        "class PreparedSweepPlan(dict):",
+        "    pass",
+        "",
+        "def expand_locked_sweep_plan(config: Any = None) -> PreparedSweepPlan:",
+        "    plan = PreparedSweepPlan(",
+        "        condition_specs=['rank_8_dropout_0_0', 'rank_4_dropout_0_0'],",
+        "        seed_schedule=[42, 43],",
+        "    )",
+        "    return plan",
+        "",
+        "def prepare_execution_plan(config: Any = None) -> PreparedSweepPlan:",
+        "    plan = expand_locked_sweep_plan(config)",
+        "    Path('plan.json').write_text(json.dumps(dict(plan)), encoding='utf-8')",
+        "    return plan",
+        "",
+        "def _resolve_callable(",
+        "    explicit: Any = None,",
+        "    *,",
+        "    candidates: Sequence[str] = (),",
+        "    required: bool = True,",
+        "    exclude_names: Sequence[str] = (),",
+        ") -> Optional[Any]:",
+        "    if callable(explicit):",
+        "        return explicit",
+        "    exclude = {str(name) for name in exclude_names}",
+        "    for name in candidates:",
+        "        if name in exclude:",
+        "            continue",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    if not required:",
+        "        return None",
+        "    raise RuntimeError(f'Unable to resolve required callable from candidates={list(candidates)}')",
+        "",
+        "def _call_with_supported_kwargs(fn: Any, **kwargs: Any) -> Any:",
+        "    return fn(config=kwargs.get('config'))",
+        "",
+        "def _resolve_plan_if_needed(",
+        "    *,",
+        "    prepared_plan: Optional[PreparedSweepPlan] = None,",
+        "    config: Any = None,",
+        "    args: Any = None,",
+        ") -> PreparedSweepPlan:",
+        "    if prepared_plan is not None:",
+        "        return prepared_plan",
+        "    plan_builder = _resolve_callable(",
+        "        candidates=(",
+        "            'prepare_locked_sweep_plan',",
+        "            'build_prepared_sweep_plan',",
+        "            'prepare_sweep_plan',",
+        "            'build_sweep_plan',",
+        "        )",
+        "    )",
+        "    return _call_with_supported_kwargs(",
+        "        plan_builder,",
+        "        config=config,",
+        "        args=args,",
+        "    )",
+        "",
+        "def main() -> int:",
+        "    plan = _resolve_plan_if_needed(config={'name': 'toy'})",
+        "    return 0 if plan.get('seed_schedule') == [42, 43] else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /Unable to resolve required callable/
+    );
+
+    const repair = await repairPythonLockedSweepPlanBuilderAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_locked_sweep_plan_builder_alias_marker");
+    expect(repairedSource).toContain("prepare_locked_sweep_plan = _autolabos_locked_sweep_plan_builder");
+    expect(repairedSource).toContain("build_sweep_plan = _autolabos_locked_sweep_plan_builder");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(path.join(workspace, "plan.json"), "utf8"))).toEqual({
+      condition_specs: ["rank_8_dropout_0_0", "rank_4_dropout_0_0"],
+      seed_schedule: [42, 43]
+    });
+  });
+
+  it("aliases baseline-first locked sweep helpers into final AutoLabOS study runner names", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-baseline-first-study-runner-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import json",
+        "from pathlib import Path",
+        "from typing import Any, Optional, Mapping",
+        "",
+        "def run_baseline_first_locked_sweep(",
+        "    args: argparse.Namespace,",
+        "    runtime_context: Optional[Mapping[str, Any]] = None,",
+        "    trial_runner: Optional[Any] = None,",
+        "    condition_markers: Optional[list[str]] = None,",
+        "    seed_schedule: Optional[list[int]] = None,",
+        ") -> dict:",
+        "    assert isinstance(args, argparse.Namespace)",
+        "    payload = {",
+        "        'status': 'completed',",
+        "        'runner': 'run_baseline_first_locked_sweep',",
+        "        'metrics_path': str(getattr(args, 'metrics_path', 'metrics.json')),",
+        "        'runtime_context_seen': runtime_context is not None,",
+        "    }",
+        "    Path('executed.json').write_text(json.dumps(payload), encoding='utf-8')",
+        "    return payload",
+        "",
+        "def _autolabos_select_callable(candidate_names):",
+        "    for name in candidate_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def _autolabos_call_with_filtered_kwargs(fn, **kwargs):",
+        "    return fn(args=kwargs.get('args'), runtime_context=kwargs.get('runtime_config') or kwargs.get('config'))",
+        "",
+        "def _autolabos_run_study(runtime_config: Any, args: argparse.Namespace) -> Any:",
+        "    runner = _autolabos_select_callable(",
+        "        (",
+        "            'run_locked_lora_rank_dropout_study',",
+        "            'run_lora_rank_dropout_study',",
+        "            'run_locked_rank_dropout_study',",
+        "            'run_locked_study',",
+        "            'run_study',",
+        "            'execute_locked_study',",
+        "            'execute_study',",
+        "            'orchestrate_study',",
+        "            'run_experiment',",
+        "            'execute_experiment',",
+        "        )",
+        "    )",
+        "    if runner is None:",
+        "        raise RuntimeError(",
+        "            'Unable to locate a study runner function in the generated script. '",
+        "            'Expected one of the approved orchestration helpers to be defined earlier.'",
+        "        )",
+        "    call_errors = []",
+        "    attempted_calls = (",
+        "        lambda: runner(runtime_config),",
+        "        lambda: runner(args),",
+        "        lambda: runner(runtime_config, args),",
+        "        lambda: _autolabos_call_with_filtered_kwargs(",
+        "            runner,",
+        "            config=runtime_config,",
+        "            runtime_config=runtime_config,",
+        "            args=args,",
+        "            metrics_path=getattr(args, 'metrics_path', 'metrics.json'),",
+        "        ),",
+        "    )",
+        "    for attempt in attempted_calls:",
+        "        try:",
+        "            return attempt()",
+        "        except TypeError as exc:",
+        "            call_errors.append(str(exc))",
+        "            continue",
+        "    raise RuntimeError(f'Failed to invoke runner: {call_errors!r}')",
+        "",
+        "def main() -> int:",
+        "    args = argparse.Namespace(metrics_path='metrics.json')",
+        "    result = _autolabos_run_study(args, args)",
+        "    return 0 if result.get('status') == 'completed' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /Unable to locate a study runner function/
+    );
+
+    const repair = await repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_baseline_first_locked_sweep_study_runner_alias_marker");
+    expect(repairedSource).toContain("run_locked_lora_rank_dropout_study");
+    expect(repairedSource).toContain("execute_experiment");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(path.join(workspace, "executed.json"), "utf8"))).toMatchObject({
+      status: "completed",
+      runner: "run_baseline_first_locked_sweep",
+      metrics_path: "metrics.json",
+      runtime_context_seen: true
+    });
+  });
+
+  it("aliases baseline-first locked sweep helpers into stage3b study callable names", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-stage3b-baseline-first-runner-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "import json",
+        "",
+        "def run_baseline_first_locked_sweep(args, runtime_context=None, trial_runner=None, condition_markers=None, seed_schedule=None):",
+        "    with open('stage3b-executed.json', 'w', encoding='utf-8') as handle:",
+        "        json.dump({",
+        "            'status': 'completed',",
+        "            'runner': 'run_baseline_first_locked_sweep',",
+        "            'metrics_path': str(getattr(args, 'metrics_path', None)),",
+        "            'runtime_context_seen': bool(runtime_context),",
+        "        }, handle)",
+        "    return {'status': 'completed'}",
+        "",
+        "def _stage3b_resolve_study_callable():",
+        "    exact_candidates = [",
+        "        'run_lora_rank_dropout_study',",
+        "        'execute_lora_rank_dropout_study',",
+        "        'run_rank_dropout_study',",
+        "        'execute_rank_dropout_study',",
+        "        'run_lora_study',",
+        "        'execute_lora_study',",
+        "        'run_governed_study',",
+        "        'execute_governed_study',",
+        "        'run_condition_sweep',",
+        "        'execute_condition_sweep',",
+        "        'run_study',",
+        "        'execute_study',",
+        "        'run_experiment',",
+        "        'execute_experiment',",
+        "    ]",
+        "    for name in exact_candidates:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    raise RuntimeError('Unable to locate the study execution function in the current module state.')",
+        "",
+        "def _stage3b_invoke_callable(func, kwargs):",
+        "    signature = inspect.signature(func)",
+        "    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()):",
+        "        return func(**dict(kwargs))",
+        "    return func()",
+        "",
+        "def main():",
+        "    args = argparse.Namespace(metrics_path='metrics.json')",
+        "    study_callable = _stage3b_resolve_study_callable()",
+        "    result = _stage3b_invoke_callable(",
+        "        study_callable,",
+        "        {",
+        "            'args': args,",
+        "            'runtime_context': {'run_id': 'stage3b'},",
+        "            'metrics_path': args.metrics_path,",
+        "        },",
+        "    )",
+        "    return 0 if result.get('status') == 'completed' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /Unable to locate the study execution function/
+    );
+
+    const repair = await repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_baseline_first_locked_sweep_study_runner_alias_marker");
+    expect(repairedSource).toContain("run_lora_rank_dropout_study");
+    expect(repairedSource).toContain("execute_condition_sweep");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(path.join(workspace, "stage3b-executed.json"), "utf8"))).toMatchObject({
+      status: "completed",
+      runner: "run_baseline_first_locked_sweep",
+      metrics_path: "metrics.json",
+      runtime_context_seen: true
+    });
+  });
+
+  it("aliases RuntimeOptions study runners to baseline-first condition sweep helpers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-runtime-options-condition-sweep-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "import argparse",
+        "import inspect",
+        "import json",
+        "from dataclasses import dataclass",
+        "from pathlib import Path",
+        "from typing import Any, Dict, Optional, Sequence",
+        "",
+        "class _FakeCuda:",
+        "    @staticmethod",
+        "    def is_available():",
+        "        return False",
+        "",
+        "class _FakeTorch:",
+        "    cuda = _FakeCuda()",
+        "",
+        "    @staticmethod",
+        "    def device(name):",
+        "        return f'device:{name}'",
+        "",
+        "torch = _FakeTorch()",
+        "",
+        "@dataclass",
+        "class RuntimeOptions:",
+        "    output_dir: Path",
+        "    metrics_path: Path",
+        "    seed: int = 11",
+        "    timeout_sec: int = 29",
+        "    max_train_samples: int = 3",
+        "    max_eval_samples_per_task: int = 2",
+        "",
+        "    def to_execution_kwargs(self) -> Dict[str, Any]:",
+        "        return {",
+        "            'output_dir': self.output_dir,",
+        "            'seed': self.seed,",
+        "            'timeout_sec': self.timeout_sec,",
+        "            'max_train_samples': self.max_train_samples,",
+        "            'max_eval_samples_per_task': self.max_eval_samples_per_task,",
+        "        }",
+        "",
+        "def run_baseline_first_condition_sweep(",
+        "    output_dir: Path,",
+        "    metrics_path: Path,",
+        "    *,",
+        "    device: Any,",
+        "    seed: int = 0,",
+        "    timeout_sec: int = 0,",
+        "    max_train_samples: int = 0,",
+        "    max_eval_samples_per_task: int = 0,",
+        ") -> dict:",
+        "    output_dir.mkdir(parents=True, exist_ok=True)",
+        "    payload = {",
+        "        'status': 'completed',",
+        "        'runner': 'run_baseline_first_condition_sweep',",
+        "        'output_dir': str(output_dir),",
+        "        'metrics_path': str(metrics_path),",
+        "        'device': str(device),",
+        "        'seed': seed,",
+        "        'timeout_sec': timeout_sec,",
+        "        'max_train_samples': max_train_samples,",
+        "        'max_eval_samples_per_task': max_eval_samples_per_task,",
+        "    }",
+        "    Path('runtime-options-executed.json').write_text(json.dumps(payload), encoding='utf-8')",
+        "    return payload",
+        "",
+        "def _invoke_study_runner(options: RuntimeOptions) -> Any:",
+        "    candidate_names = (",
+        "        'run_locked_lora_rank_dropout_study',",
+        "        'run_lora_rank_dropout_study',",
+        "        'execute_locked_study',",
+        "        'execute_baseline_first_sweep',",
+        "        'run_baseline_first_sweep',",
+        "        'run_locked_study',",
+        "        'run_study',",
+        "        'run_experiment',",
+        "    )",
+        "    runner = None",
+        "    for name in candidate_names:",
+        "        maybe_runner = globals().get(name)",
+        "        if callable(maybe_runner):",
+        "            runner = maybe_runner",
+        "            break",
+        "    if runner is None:",
+        "        raise RuntimeError(",
+        "            'Unable to locate the study execution function in the current module. '",
+        "            f\"Tried: {', '.join(candidate_names)}\"",
+        "        )",
+        "    signature = inspect.signature(runner)",
+        "    parameters = signature.parameters",
+        "    if 'runtime_options' in parameters:",
+        "        return runner(runtime_options=options)",
+        "    if 'options' in parameters:",
+        "        return runner(options=options)",
+        "    execution_kwargs = options.to_execution_kwargs()",
+        "    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):",
+        "        return runner(**execution_kwargs)",
+        "    filtered_kwargs = {key: value for key, value in execution_kwargs.items() if key in parameters}",
+        "    if filtered_kwargs:",
+        "        return runner(**filtered_kwargs)",
+        "    return runner(options)",
+        "",
+        "def main(argv: Optional[Sequence[str]] = None) -> int:",
+        "    options = RuntimeOptions(output_dir=Path('out'), metrics_path=Path('metrics.json'))",
+        "    result = _invoke_study_runner(options)",
+        "    return 0 if result.get('status') == 'completed' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /Unable to locate the study execution function/
+    );
+
+    const repair = await repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_baseline_first_locked_sweep_study_runner_alias_marker");
+    expect(repairedSource).toContain("run_baseline_first_condition_sweep");
+    expect(repairedSource).toContain('"metrics_path": context.get("metrics_path") or getattr(options, "metrics_path", None)');
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(path.join(workspace, "runtime-options-executed.json"), "utf8"))).toMatchObject({
+      status: "completed",
+      runner: "run_baseline_first_condition_sweep",
+      output_dir: "out",
+      metrics_path: "metrics.json",
+      device: "device:cpu",
+      seed: 11,
+      timeout_sec: 29,
+      max_train_samples: 3,
+      max_eval_samples_per_task: 2
+    });
+  });
+
+  it("bridges generated bounded finetuning helpers into fallback condition runners", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-fallback-bounded-condition-runner-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "import argparse",
+        "import inspect",
+        "import json",
+        "from dataclasses import asdict, dataclass",
+        "from pathlib import Path",
+        "from typing import Any, Dict, List, Optional, Sequence, Tuple",
+        "",
+        "DEFAULT_CONDITION_ARTIFACT_DIRNAME = 'conditions'",
+        "DEFAULT_GLOBAL_SEED = 7",
+        "DEFAULT_MAX_TRAIN_SAMPLES = 5",
+        "DEFAULT_MAX_EVAL_SAMPLES_PER_TASK = 2",
+        "DEFAULT_MAX_SEQ_LENGTH = 32",
+        "DEFAULT_EVAL_MAX_CONTEXT_LENGTH = 24",
+        "PREFERRED_BASE_MODEL = 'preferred-model'",
+        "FALLBACK_BASE_MODEL = 'fallback-model'",
+        "REQUIRED_CONDITION_MARKERS = ('rank_8_dropout_0_0',)",
+        "",
+        "@dataclass",
+        "class LoRACondition:",
+        "    marker: str",
+        "    rank: int",
+        "    dropout: float",
+        "",
+        "@dataclass",
+        "class LoadedBundle:",
+        "    model: str",
+        "    tokenizer: str",
+        "    device: str",
+        "    input_device: str",
+        "    model_name: str",
+        "",
+        "def _json_ready(value: Any) -> Any:",
+        "    if hasattr(value, '__dataclass_fields__'):",
+        "        return asdict(value)",
+        "    if isinstance(value, dict):",
+        "        return {str(key): _json_ready(item) for key, item in value.items()}",
+        "    if isinstance(value, (list, tuple)):",
+        "        return [_json_ready(item) for item in value]",
+        "    return value",
+        "",
+        "def resolve_runtime_device() -> str:",
+        "    return 'cpu'",
+        "",
+        "def clear_torch_memory() -> None:",
+        "    Path('cleanup-called.txt').write_text('yes', encoding='utf-8')",
+        "",
+        "def load_model_bundle_with_fallback(",
+        "    preferred_model_name: str = PREFERRED_BASE_MODEL,",
+        "    fallback_model_name: str = FALLBACK_BASE_MODEL,",
+        "    *,",
+        "    device: Optional[Any] = None,",
+        "    cache_dir: Optional[Path] = None,",
+        "    allow_remote_model_download: bool = True,",
+        "    trust_remote_code: bool = True,",
+        "    max_seq_length: int = DEFAULT_MAX_SEQ_LENGTH,",
+        "    run_smoke_test: bool = True,",
+        ") -> LoadedBundle:",
+        "    return LoadedBundle(model='model', tokenizer='tokenizer', device=str(device), input_device=str(device), model_name=preferred_model_name)",
+        "",
+        "def prepare_instruction_tuning_data(tokenizer: Any, max_train_samples: int, seed: int, max_seq_length: int):",
+        "    return ['tokenized-train'], {'seed': seed, 'max_train_samples': max_train_samples}, ['train-example']",
+        "",
+        "def prepare_benchmark_evaluation_data(tokenizer: Any, max_eval_samples_per_task: int, seed: int, max_context_length: int):",
+        "    return {'arc_challenge': [{'prompt': 'p'}]}, {'seed': seed, 'max_eval_samples_per_task': max_eval_samples_per_task}",
+        "",
+        "def prepare_trainable_condition_model(args: argparse.Namespace, condition: LoRACondition, model_bundle: LoadedBundle, tokenized_train_dataset: Any, output_dir: Path):",
+        "    condition_dir = output_dir / DEFAULT_CONDITION_ARTIFACT_DIRNAME / condition.marker",
+        "    condition_dir.mkdir(parents=True, exist_ok=True)",
+        "    return {",
+        "        'condition': condition,",
+        "        'model': model_bundle.model,",
+        "        'tokenizer': model_bundle.tokenizer,",
+        "        'runtime_device': model_bundle.device,",
+        "        'input_device': model_bundle.input_device,",
+        "        'base_model_name': model_bundle.model_name,",
+        "        'artifact_dir': str(condition_dir),",
+        "        'train_dataset': tokenized_train_dataset,",
+        "    }",
+        "",
+        "def run_single_condition_training(prepared_condition: Any, args: argparse.Namespace) -> Dict[str, Any]:",
+        "    Path('training-called.json').write_text(json.dumps({'marker': prepared_condition['condition'].marker}), encoding='utf-8')",
+        "    return {'status': 'completed', 'final_train_loss': 0.125, 'runtime_sec': 1.5, 'model_name': prepared_condition['base_model_name']}",
+        "",
+        "def evaluate_trained_condition(condition: LoRACondition, bundle_or_state: Any, eval_examples_by_task: Dict[str, Sequence[Any]], max_context_length: int = DEFAULT_EVAL_MAX_CONTEXT_LENGTH) -> Dict[str, Any]:",
+        "    Path('evaluation-called.json').write_text(json.dumps({'marker': condition.marker, 'tasks': sorted(eval_examples_by_task.keys())}), encoding='utf-8')",
+        "    return {'condition_marker': condition.marker, 'average_accuracy': 0.75, 'per_task_accuracy': {'arc_challenge': 0.75}}",
+        "",
+        "def _lookup_callable(candidate_names: Sequence[str]) -> Optional[Any]:",
+        "    for candidate_name in candidate_names:",
+        "        candidate = globals().get(candidate_name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def _resolve_locked_condition_sequence() -> List[LoRACondition]:",
+        "    return [LoRACondition(marker='rank_8_dropout_0_0', rank=8, dropout=0.0)]",
+        "",
+        "def _invoke_with_supported_kwargs(fn: Any, **kwargs: Any) -> Any:",
+        "    signature = inspect.signature(fn)",
+        "    parameters = signature.parameters",
+        "    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):",
+        "        return fn(**kwargs)",
+        "    return fn(**{key: value for key, value in kwargs.items() if key in parameters})",
+        "",
+        "def _normalize_condition_record(raw_record: Any) -> Dict[str, Any]:",
+        "    record = dict(raw_record)",
+        "    return {",
+        "        'marker': record.get('marker') or record.get('condition_marker'),",
+        "        'status': record.get('status', 'completed'),",
+        "        'success': record.get('success', True),",
+        "        'average_accuracy': record.get('average_accuracy'),",
+        "        'per_task_accuracy': record.get('per_task_accuracy', {}),",
+        "        'train_loss': record.get('train_loss'),",
+        "        'runtime_sec': record.get('runtime_sec'),",
+        "        'selected_model': record.get('selected_model'),",
+        "    }",
+        "",
+        "def _run_locked_study_fallback(args: argparse.Namespace, *, output_dir: Path, condition_artifact_dir: Path, timeout_sec: int) -> Dict[str, Any]:",
+        "    single_condition_runner = _lookup_callable((",
+        "        'run_single_condition',",
+        "        '_run_single_condition',",
+        "        'run_condition',",
+        "        '_run_condition',",
+        "        'execute_condition',",
+        "        '_execute_condition',",
+        "        'run_lora_condition',",
+        "        '_run_lora_condition',",
+        "        'execute_lora_condition',",
+        "        '_run_one_condition',",
+        "    ))",
+        "    if single_condition_runner is None:",
+        "        raise RuntimeError('No per-condition runner helper is available for fallback sweep execution.')",
+        "    condition = _resolve_locked_condition_sequence()[0]",
+        "    condition_output_dir = condition_artifact_dir / condition.marker",
+        "    raw_result = _invoke_with_supported_kwargs(",
+        "        single_condition_runner,",
+        "        condition=condition,",
+        "        args=args,",
+        "        output_dir=output_dir,",
+        "        condition_output_dir=condition_output_dir,",
+        "        timeout_sec=timeout_sec,",
+        "        condition_index=1,",
+        "        total_conditions=1,",
+        "    )",
+        "    return {'condition_results': [_normalize_condition_record(raw_result)]}",
+        "",
+        "def main() -> int:",
+        "    args = argparse.Namespace(output_dir='out', seed=13, max_train_samples=3, max_eval_samples_per_task=2, max_seq_length=40)",
+        "    payload = _run_locked_study_fallback(args, output_dir=Path('out'), condition_artifact_dir=Path('out') / DEFAULT_CONDITION_ARTIFACT_DIRNAME, timeout_sec=30)",
+        "    Path('fallback-result.json').write_text(json.dumps(payload, sort_keys=True), encoding='utf-8')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /No per-condition runner helper/
+    );
+
+    const repair = await repairPythonFallbackBoundedFinetuningConditionRunnerSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_fallback_bounded_finetuning_condition_runner_marker");
+    expect(repairedSource).toContain("run_single_condition = _autolabos_fallback_bounded_condition_runner");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(path.join(workspace, "fallback-result.json"), "utf8"))).toMatchObject({
+      condition_results: [
+        {
+          marker: "rank_8_dropout_0_0",
+          status: "completed",
+          success: true,
+          average_accuracy: 0.75,
+          train_loss: 0.125,
+          selected_model: "preferred-model"
+        }
+      ]
+    });
+    expect(JSON.parse(readFileSync(path.join(workspace, "training-called.json"), "utf8"))).toMatchObject({
+      marker: "rank_8_dropout_0_0"
+    });
+    expect(JSON.parse(readFileSync(path.join(workspace, "evaluation-called.json"), "utf8"))).toMatchObject({
+      marker: "rank_8_dropout_0_0",
+      tasks: ["arc_challenge"]
+    });
+  });
+
+  it("bridges generated train/eval helpers into final orchestration condition execution", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-orchestration-train-eval-bridge-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "import argparse",
+        "import inspect",
+        "import json",
+        "from dataclasses import asdict, dataclass",
+        "from pathlib import Path",
+        "from typing import Any, Dict, List, Optional, Sequence",
+        "",
+        "DEFAULT_SEED = 17",
+        "DEFAULT_MAX_SEQ_LENGTH = 32",
+        "DEFAULT_NUM_TRAIN_EPOCHS = 1",
+        "DEFAULT_PER_DEVICE_TRAIN_BATCH_SIZE = 1",
+        "DEFAULT_GRADIENT_ACCUMULATION_STEPS = 1",
+        "DEFAULT_LEARNING_RATE = 0.001",
+        "DEFAULT_WARMUP_RATIO = 0.0",
+        "DEFAULT_WEIGHT_DECAY = 0.0",
+        "DEFAULT_LOGGING_STEPS = 1",
+        "DEFAULT_EVAL_MAX_NEW_TOKENS = 1",
+        "",
+        "@dataclass(frozen=True)",
+        "class StudyCondition:",
+        "    marker: str",
+        "    rank: int",
+        "    lora_dropout: float",
+        "    is_baseline: bool = False",
+        "    def as_dict(self) -> Dict[str, Any]:",
+        "        return asdict(self)",
+        "",
+        "@dataclass",
+        "class LoadedModelArtifacts:",
+        "    model_name: str",
+        "    model_source: str",
+        "    ready: bool = True",
+        "",
+        "@dataclass",
+        "class PreparedDataBundle:",
+        "    train_examples: List[str]",
+        "    evaluation_tasks: Dict[str, List[str]]",
+        "",
+        "def preflight_candidate_model(runtime, *, model_name: str, model_source: str, local_files_only: bool):",
+        "    raise RuntimeError('wrong low-level preflight helper selected')",
+        "",
+        "def preflight_and_select_model(args: argparse.Namespace) -> LoadedModelArtifacts:",
+        "    Path('preflight-called.txt').write_text(str(getattr(args, 'seed', None)), encoding='utf-8')",
+        "    return LoadedModelArtifacts(model_name='model-a', model_source='preferred')",
+        "",
+        "def prepare_study_data(args: Optional[argparse.Namespace]) -> PreparedDataBundle:",
+        "    Path('data-called.txt').write_text(str(getattr(args, 'seed', None)), encoding='utf-8')",
+        "    return PreparedDataBundle(train_examples=['train-1'], evaluation_tasks={'arc_challenge': ['eval-1']})",
+        "",
+        "def execute_condition_training(",
+        "    condition: StudyCondition,",
+        "    loaded_artifacts: LoadedModelArtifacts,",
+        "    train_examples: Sequence[Any],",
+        "    output_dir: Path,",
+        "    *,",
+        "    seed: int = DEFAULT_SEED,",
+        "    max_seq_length: int = DEFAULT_MAX_SEQ_LENGTH,",
+        "    num_train_epochs: int = DEFAULT_NUM_TRAIN_EPOCHS,",
+        "    per_device_train_batch_size: int = DEFAULT_PER_DEVICE_TRAIN_BATCH_SIZE,",
+        "    gradient_accumulation_steps: int = DEFAULT_GRADIENT_ACCUMULATION_STEPS,",
+        "    learning_rate: float = DEFAULT_LEARNING_RATE,",
+        "    warmup_ratio: float = DEFAULT_WARMUP_RATIO,",
+        "    weight_decay: float = DEFAULT_WEIGHT_DECAY,",
+        "    logging_steps: int = DEFAULT_LOGGING_STEPS,",
+        ") -> Dict[str, Any]:",
+        "    condition_dir = Path(output_dir) / condition.marker",
+        "    condition_dir.mkdir(parents=True, exist_ok=True)",
+        "    Path('training-called.json').write_text(json.dumps({'marker': condition.marker, 'examples': len(train_examples), 'model': loaded_artifacts.model_name}), encoding='utf-8')",
+        "    return {'status': 'completed', 'train_loss': 0.2, 'runtime_sec': 1.0, 'model_name': loaded_artifacts.model_name}",
+        "",
+        "def evaluate_condition_on_tasks(",
+        "    condition: Any,",
+        "    training_result: Any,",
+        "    eval_payload: Any,",
+        "    loaded_model: Any,",
+        "    *,",
+        "    eval_max_new_tokens: int = DEFAULT_EVAL_MAX_NEW_TOKENS,",
+        ") -> Dict[str, Any]:",
+        "    Path('evaluation-called.json').write_text(json.dumps({'marker': condition.marker, 'tasks': sorted(eval_payload.keys())}), encoding='utf-8')",
+        "    return {'status': 'completed', 'arc_challenge_accuracy': 0.8, 'hellaswag_accuracy': 0.6, 'average_accuracy': 0.7}",
+        "",
+        "def build_condition_result_record(condition: Any, training_result: Any, evaluation_record: Any, *, model_name: Optional[str] = None, model_source: Optional[str] = None) -> Dict[str, Any]:",
+        "    return {",
+        "        'marker': condition.marker,",
+        "        'status': evaluation_record.get('status'),",
+        "        'completed': evaluation_record.get('status') == 'completed',",
+        "        'average_accuracy': evaluation_record.get('average_accuracy'),",
+        "        'train_loss': training_result.get('train_loss'),",
+        "        'model_name': model_name,",
+        "        'model_source': model_source,",
+        "    }",
+        "",
+        "def _orchestration_find_helper(exact_names: Sequence[str], required_tokens: Sequence[str] = (), forbidden_tokens: Sequence[str] = ()) -> Optional[Any]:",
+        "    for name in exact_names:",
+        "        helper = globals().get(name)",
+        "        if callable(helper):",
+        "            return helper",
+        "    candidates = []",
+        "    for name, helper in globals().items():",
+        "        if not callable(helper):",
+        "            continue",
+        "        lowered = str(name).lower()",
+        "        if required_tokens and not all(token in lowered for token in required_tokens):",
+        "            continue",
+        "        if any(token in lowered for token in forbidden_tokens):",
+        "            continue",
+        "        score = 100 - len(lowered) + 10 * sum(1 for token in required_tokens if token in lowered)",
+        "        candidates.append((score, str(name), helper))",
+        "    candidates.sort(key=lambda item: (-item[0], item[1]))",
+        "    return candidates[0][2] if candidates else None",
+        "",
+        "def _orchestration_invoke(func: Any, **kwargs: Any) -> Any:",
+        "    signature = inspect.signature(func)",
+        "    params = signature.parameters",
+        "    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values()):",
+        "        return func(**kwargs)",
+        "    return func(**{key: value for key, value in kwargs.items() if key in params})",
+        "",
+        "def run_locked_lora_rank_dropout_study(args: argparse.Namespace) -> Dict[str, Any]:",
+        "    output_dir = Path(args.output_dir)",
+        "    output_dir.mkdir(parents=True, exist_ok=True)",
+        "    condition = StudyCondition(marker='rank_8_dropout_0_0', rank=8, lora_dropout=0.0, is_baseline=True)",
+        "    preflight_fn = globals().get('preflight_model_and_runtime') or preflight_and_select_model",
+        "    data_fn = globals().get('prepare_datasets') or prepare_study_data",
+        "    runner = _orchestration_find_helper(",
+        "        exact_names=('execute_condition', 'run_condition', 'run_single_condition', 'train_and_evaluate_condition', 'execute_study_condition', 'run_lora_condition'),",
+        "        required_tokens=('condition',),",
+        "        forbidden_tokens=('validate', 'parse', 'aggregate', 'write', 'prepare', 'extract', 'normalize', 'failure', 'artifact'),",
+        "    )",
+        "    preflight_result = _orchestration_invoke(preflight_fn, args=args, namespace=args)",
+        "    data_bundle = _orchestration_invoke(data_fn, args=args, namespace=args)",
+        "    row = _orchestration_invoke(",
+        "        runner,",
+        "        condition=condition,",
+        "        args=args,",
+        "        output_dir=output_dir,",
+        "        condition_output_dir=output_dir / condition.marker,",
+        "        preflight_result=preflight_result,",
+        "        data_bundle=data_bundle,",
+        "    )",
+        "    payload = {'condition_results': [row]}",
+        "    Path('result.json').write_text(json.dumps(payload, sort_keys=True), encoding='utf-8')",
+        "    return payload",
+        "",
+        "def main() -> int:",
+        "    run_locked_lora_rank_dropout_study(argparse.Namespace(output_dir='out', seed=23))",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/StudyCondition/);
+
+    const repair = await repairPythonOrchestrationTrainEvalConditionBridgeSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_orchestration_train_eval_condition_bridge_marker");
+    expect(repairedSource).toContain("execute_condition = _autolabos_orchestration_train_eval_condition_runner");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(path.join(workspace, "result.json"), "utf8"))).toMatchObject({
+      condition_results: [
+        {
+          marker: "rank_8_dropout_0_0",
+          status: "completed",
+          completed: true,
+          average_accuracy: 0.7,
+          train_loss: 0.2,
+          model_name: "model-a",
+          model_source: "preferred"
+        }
+      ]
+    });
+    expect(readFileSync(path.join(workspace, "preflight-called.txt"), "utf8")).toBe("23");
+    expect(readFileSync(path.join(workspace, "data-called.txt"), "utf8")).toBe("23");
+    expect(JSON.parse(readFileSync(path.join(workspace, "training-called.json"), "utf8"))).toMatchObject({
+      marker: "rank_8_dropout_0_0",
+      examples: 1,
+      model: "model-a"
+    });
+    expect(JSON.parse(readFileSync(path.join(workspace, "evaluation-called.json"), "utf8"))).toMatchObject({
+      marker: "rank_8_dropout_0_0",
+      tasks: ["arc_challenge"]
+    });
+  });
+
+  it("aliases locked baseline-first sweep helpers into chunk3b final main resolver names", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-chunk3b-locked-baseline-sweep-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "import json",
+        "from pathlib import Path",
+        "from typing import Any, Optional, Sequence",
+        "",
+        "def run_locked_baseline_first_sweep(args: Any) -> dict:",
+        "    assert isinstance(args, argparse.Namespace)",
+        "    payload = {",
+        "        'status': 'completed',",
+        "        'runner': 'run_locked_baseline_first_sweep',",
+        "        'metrics_path': str(getattr(args, 'metrics_path', None)),",
+        "    }",
+        "    Path('chunk3b-executed.json').write_text(json.dumps(payload), encoding='utf-8')",
+        "    return payload",
+        "",
+        "def _chunk3b_resolve_global_callable(",
+        "    exact_names: Sequence[str],",
+        "    *,",
+        "    include_tokens: Sequence[str] = (),",
+        "    exclude_tokens: Sequence[str] = (),",
+        ") -> Optional[Any]:",
+        "    for name in exact_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    if include_tokens:",
+        "        for name, candidate in globals().items():",
+        "            if not callable(candidate):",
+        "                continue",
+        "            lowered = name.lower()",
+        "            if exclude_tokens and any(token in lowered for token in exclude_tokens):",
+        "                continue",
+        "            if all(token in lowered for token in include_tokens):",
+        "                return candidate",
+        "    return None",
+        "",
+        "def _chunk3b_call_with_supported_kwargs(func: Any, /, *args: Any, **kwargs: Any) -> Any:",
+        "    signature = inspect.signature(func)",
+        "    parameters = signature.parameters",
+        "    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()):",
+        "        return func(*args, **kwargs)",
+        "    accepted_kwargs = {key: value for key, value in kwargs.items() if key in parameters}",
+        "    return func(*args, **accepted_kwargs)",
+        "",
+        "def main(argv=None) -> int:",
+        "    args = argparse.Namespace(metrics_path='metrics.json')",
+        "    study_runner = _chunk3b_resolve_global_callable(",
+        "        [",
+        "            'run_lora_rank_dropout_study',",
+        "            'run_locked_lora_rank_dropout_study',",
+        "            'run_locked_study',",
+        "            'execute_locked_study',",
+        "            'run_study',",
+        "            'execute_study',",
+        "            'run_experiment_sweep',",
+        "            'run_experiment',",
+        "            'execute_experiment',",
+        "        ],",
+        "        include_tokens=('study',),",
+        "        exclude_tokens=('main', 'parse', 'write', 'report', 'payload', 'summary', 'chunk3b'),",
+        "    )",
+        "    if study_runner is None:",
+        "        raise RuntimeError('Unable to locate the experiment sweep runner callable in the current module.')",
+        "    result = _chunk3b_call_with_supported_kwargs(study_runner, args=args, runtime_context={'run_id': 'chunk3b'})",
+        "    return 0 if result.get('status') == 'completed' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /Unable to locate the experiment sweep runner callable/
+    );
+
+    const repair = await repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_baseline_first_locked_sweep_study_runner_alias_marker");
+    expect(repairedSource).toContain("run_locked_baseline_first_sweep");
+    expect(repairedSource).toContain("run_experiment_sweep");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(path.join(workspace, "chunk3b-executed.json"), "utf8"))).toMatchObject({
+      status: "completed",
+      runner: "run_locked_baseline_first_sweep",
+      metrics_path: "metrics.json"
+    });
+  });
+
+  it("aliases generated entrypoint study_output into study_result artifact writers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-study-result-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "import json",
+        "from pathlib import Path",
+        "",
+        "def _entrypoint_invoke_callable(target, **candidate_kwargs):",
+        "    signature = inspect.signature(target)",
+        "    accepts_var_kwargs = any(",
+        "        parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()",
+        "    )",
+        "    if accepts_var_kwargs:",
+        "        return target(**candidate_kwargs)",
+        "    supported_kwargs = {",
+        "        key: value for key, value in candidate_kwargs.items() if key in signature.parameters",
+        "    }",
+        "    return target(**supported_kwargs)",
+        "",
+        "def run_lora_rank_dropout_study(args):",
+        "    return {'status': 'completed', 'completed_run_count': 1}",
+        "",
+        "def write_study_artifacts(study_result, args, run_command=None):",
+        "    payload = {",
+        "        'status': study_result.get('status'),",
+        "        'completed_run_count': study_result.get('completed_run_count'),",
+        "        'metrics_path': args.metrics_path,",
+        "        'run_command': run_command,",
+        "    }",
+        "    Path(args.metrics_path).write_text(json.dumps(payload), encoding='utf-8')",
+        "    return payload",
+        "",
+        "def main():",
+        "    args = argparse.Namespace(metrics_path='metrics.json')",
+        "    study_output = run_lora_rank_dropout_study(args)",
+        "    final_payload = _entrypoint_invoke_callable(",
+        "        write_study_artifacts,",
+        "        study_output=study_output,",
+        "        execution_result=study_output,",
+        "        args=args,",
+        "        run_command='python3 experiment.py',",
+        "    )",
+        "    return 0 if final_payload.get('status') == 'completed' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /missing 1 required positional argument: 'study_result'/
+    );
+
+    const repair = await repairPythonEntrypointStudyResultKwargAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_entrypoint_study_result_kwarg_alias_marker");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(path.join(workspace, "metrics.json"), "utf8"))).toMatchObject({
+      status: "completed",
+      completed_run_count: 1,
+      metrics_path: "metrics.json",
+      run_command: "python3 experiment.py"
+    });
+  });
+
+  it("projects nested raw_result value rows into final run-record extraction", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-nested-run-records-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import dataclass",
+        "from typing import Any, Mapping, Sequence",
+        "",
+        "RUN_STATUS_COMPLETED = 'completed'",
+        "RUN_STATUS_FAILED = 'failed'",
+        "RUN_STATUS_NOT_RUN = 'not_run'",
+        "",
+        "@dataclass",
+        "class Condition:",
+        "    marker: str",
+        "    order_index: int",
+        "",
+        "@dataclass",
+        "class Context:",
+        "    conditions: list[Condition]",
+        "    baseline_condition: Condition",
+        "",
+        "def _json_safe_runtime_value(value):",
+        "    return value",
+        "",
+        "def _finalize_object_to_dict(value):",
+        "    return dict(value) if isinstance(value, Mapping) else {}",
+        "",
+        "def _finalize_first_present(raw, keys, default=None):",
+        "    for key in keys:",
+        "        if isinstance(raw, Mapping) and raw.get(key) is not None:",
+        "            return raw.get(key)",
+        "    return default",
+        "",
+        "def _finalize_to_float(value):",
+        "    return None if value is None else float(value)",
+        "",
+        "def _finalize_normalize_run_record(raw, condition_lookup, selected_model_id=None):",
+        "    return {",
+        "        'condition_marker': raw.get('condition_marker'),",
+        "        'seed': raw.get('seed'),",
+        "        'status': raw.get('status'),",
+        "        'average_accuracy': raw.get('accuracy') or raw.get('average_accuracy'),",
+        "        'raw_result': _json_safe_runtime_value(raw),",
+        "    }",
+        "",
+        "def _finalize_extract_run_records(context: Context, execution_payload: Any) -> tuple[list[dict], dict]:",
+        "    execution_dict = _finalize_object_to_dict(execution_payload)",
+        "    selected_model_id = _finalize_first_present(execution_dict, ('selected_model_id', 'model_id'))",
+        "    raw_records: list[Any] = []",
+        "    for key in (",
+        "        'per_run_results',",
+        "        'run_results',",
+        "        'seed_results',",
+        "        'results',",
+        "        'rows',",
+        "        'trial_results',",
+        "        'completed_runs',",
+        "    ):",
+        "        candidate = execution_dict.get(key)",
+        "        if isinstance(candidate, Sequence) and not isinstance(candidate, (str, bytes, bytearray, Mapping)):",
+        "            raw_records = list(candidate)",
+        "            break",
+        "    if not raw_records and isinstance(execution_payload, Sequence) and not isinstance(",
+        "        execution_payload,",
+        "        (str, bytes, bytearray, Mapping),",
+        "    ):",
+        "        raw_records = list(execution_payload)",
+        "",
+        "    condition_lookup = {condition.marker: condition for condition in context.conditions}",
+        "    normalized_records = [",
+        "        _finalize_normalize_run_record(record, condition_lookup=condition_lookup, selected_model_id=selected_model_id)",
+        "        for record in raw_records",
+        "    ]",
+        "    normalized_records.sort(",
+        "        key=lambda row: (",
+        "            condition_lookup.get(str(row.get('condition_marker')), context.baseline_condition).order_index",
+        "            if row.get('condition_marker') in condition_lookup",
+        "            else 999,",
+        "            row.get('seed') if row.get('seed') is not None else 10**9,",
+        "        )",
+        "    )",
+        "    return normalized_records, execution_dict",
+        "",
+        "def main():",
+        "    context = Context(",
+        "        conditions=[Condition('rank_8_dropout_0_0', 0), Condition('rank_4_dropout_0_0', 1)],",
+        "        baseline_condition=Condition('rank_8_dropout_0_0', 0),",
+        "    )",
+        "    payload = {",
+        "        'per_run_results': [",
+        "            {",
+        "                'status': 'not_run',",
+        "                'raw_result': {",
+        "                    'value': [",
+        "                        {'condition_marker': 'rank_8_dropout_0_0', 'seed': 42, 'status': 'completed', 'accuracy': 0.5},",
+        "                        {'condition_marker': 'rank_4_dropout_0_0', 'seed': 42, 'status': 'completed', 'accuracy': 0.6},",
+        "                    ]",
+        "                },",
+        "            }",
+        "        ]",
+        "    }",
+        "    rows, _ = _finalize_extract_run_records(context, payload)",
+        "    return 0 if len(rows) == 2 and rows[0]['status'] == 'completed' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow();
+
+    const repair = await repairPythonNestedRunRecordsProjectionSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_nested_run_records_projection_marker");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("flattens nested raw_result rows before aggregate metrics projection", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-aggregate-nested-rows-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "BASELINE_CONDITION_MARKER = 'rank_8_dropout_0_0'",
+        "REQUIRED_CONDITION_MARKERS = ['rank_8_dropout_0_0', 'rank_4_dropout_0_0']",
+        "SEED_SCHEDULE = [42]",
+        "",
+        "def normalize_run_result(run_result):",
+        "    raw = run_result if isinstance(run_result, dict) else {}",
+        "    return {",
+        "        'condition_marker': raw.get('condition_marker'),",
+        "        'seed': raw.get('seed'),",
+        "        'status': raw.get('status') or ('completed' if raw.get('success') else 'missing'),",
+        "        'average_accuracy': raw.get('accuracy') or raw.get('average_accuracy'),",
+        "        'accuracy_delta_vs_baseline': raw.get('accuracy_delta_vs_baseline'),",
+        "        'raw_result': raw.get('raw_result'),",
+        "    }",
+        "",
+        "def aggregate_seed_run_results(run_results):",
+        "    normalized_rows = [normalize_run_result(run_result) for run_result in run_results]",
+        "    rows_by_marker = {}",
+        "    for row in normalized_rows:",
+        "        marker = row.get('condition_marker')",
+        "        if marker:",
+        "            rows_by_marker.setdefault(marker, []).append(row)",
+        "    baseline_rows = rows_by_marker.get(BASELINE_CONDITION_MARKER, [])",
+        "    baseline_average = baseline_rows[0].get('average_accuracy') if baseline_rows else None",
+        "    best_delta = None",
+        "    for marker, rows in rows_by_marker.items():",
+        "        if marker == BASELINE_CONDITION_MARKER:",
+        "            continue",
+        "        if rows[0].get('average_accuracy') is not None and baseline_average is not None:",
+        "            best_delta = rows[0]['average_accuracy'] - baseline_average",
+        "    return {'per_seed_results': normalized_rows, 'accuracy_delta_vs_baseline': best_delta}",
+        "",
+        "def main():",
+        "    payload = [",
+        "        {",
+        "            'status': 'completed',",
+        "            'success': True,",
+        "            'raw_result': {",
+        "                'value': [",
+        "                    {'condition_marker': 'rank_8_dropout_0_0', 'seed': 42, 'status': 'completed', 'accuracy': 0.5},",
+        "                    {'condition_marker': 'rank_4_dropout_0_0', 'seed': 42, 'status': 'completed', 'accuracy': 0.6},",
+        "                ]",
+        "            },",
+        "        }",
+        "    ]",
+        "    aggregate = aggregate_seed_run_results(payload)",
+        "    return 0 if aggregate.get('accuracy_delta_vs_baseline') == 0.09999999999999998 else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow();
+
+    const repair = await repairPythonAggregateNestedRawResultRowsSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_aggregate_nested_raw_result_rows_marker");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("dispatches single-run executors by signature before unsafe positional fallbacks", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-single-run-signature-dispatch-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import json",
+        "from pathlib import Path",
+        "from typing import Any",
+        "",
+        "class StudyCondition:",
+        "    def __init__(self, marker):",
+        "        self.marker = marker",
+        "",
+        "def _load_fresh_model_bundle_for_training_run(preferred_model_name=None, fallback_model_name=None, local_files_only=None):",
+        "    return {'bundle': 'loaded', 'preferred': preferred_model_name, 'local_files_only': local_files_only}",
+        "",
+        "def run_single_condition_seed(condition, seed, loaded_bundle, args, run_output_root=None, **extra_kwargs):",
+        "    payload = {",
+        "        'condition_marker': condition.marker,",
+        "        'seed': seed,",
+        "        'bundle': loaded_bundle['bundle'],",
+        "        'model_name': args.model_name,",
+        "        'run_output_root': str(run_output_root),",
+        "    }",
+        "    Path(run_output_root).mkdir(parents=True, exist_ok=True)",
+        "    Path(run_output_root, 'result.json').write_text(json.dumps(payload), encoding='utf-8')",
+        "    return payload",
+        "",
+        "def _looks_like_signature_mismatch(exc: TypeError) -> bool:",
+        "    message = str(exc)",
+        "    signature_fragments = (",
+        "        'unexpected keyword argument',",
+        "        'missing 1 required positional argument',",
+        "        'missing 2 required positional arguments',",
+        "        'missing 3 required positional arguments',",
+        "        'takes ',",
+        "        'positional arguments but',",
+        "        'got an unexpected keyword argument',",
+        "    )",
+        "    return any(fragment in message for fragment in signature_fragments)",
+        "",
+        "def _invoke_single_run_executor(",
+        "    executor: Any,",
+        "    args: argparse.Namespace,",
+        "    condition: StudyCondition,",
+        "    seed: int,",
+        "    run_output_dir: Path,",
+        ") -> Any:",
+        "    call_variants = [",
+        "        lambda: executor(args=args, condition=condition, seed=seed, output_dir=run_output_dir),",
+        "        lambda: executor(args=args, condition=condition, seed=seed, run_output_dir=run_output_dir),",
+        "        lambda: executor(condition=condition, seed=seed, args=args, run_output_root=run_output_dir),",
+        "        lambda: executor(args, condition, seed, run_output_dir),",
+        "        lambda: executor(condition, seed, args, run_output_dir),",
+        "        lambda: executor(args, condition, seed),",
+        "        lambda: executor(condition, seed, args),",
+        "        lambda: executor(condition, seed),",
+        "    ]",
+        "    last_signature_error: TypeError | None = None",
+        "    for variant in call_variants:",
+        "        try:",
+        "            return variant()",
+        "        except TypeError as exc:",
+        "            if _looks_like_signature_mismatch(exc):",
+        "                last_signature_error = exc",
+        "                continue",
+        "            raise",
+        "    if last_signature_error is not None:",
+        "        raise last_signature_error",
+        "    raise RuntimeError('Single-run executor invocation failed without a captured signature error')",
+        "",
+        "def main():",
+        "    args = argparse.Namespace(model_name='Qwen/Qwen2.5-1.5B', local_files_only=True)",
+        "    condition = StudyCondition('rank_8_dropout_0_0')",
+        "    result = _invoke_single_run_executor(run_single_condition_seed, args, condition, 42, Path('run_out'))",
+        "    return 0 if result.get('condition_marker') == 'rank_8_dropout_0_0' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /Namespace.*marker|attribute 'marker'/
+    );
+
+    const repair = await repairPythonSingleRunExecutorSignatureDispatchSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_single_run_executor_signature_dispatch_marker");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(path.join(workspace, "run_out", "result.json"), "utf8"))).toMatchObject({
+      condition_marker: "rank_8_dropout_0_0",
+      seed: 42,
+      bundle: "loaded",
+      model_name: "Qwen/Qwen2.5-1.5B"
+    });
+  });
+
   it("bridges locked-condition single runner execution to generated tuning and evaluation helpers", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-condition-single-runner-"));
     tempDirs.push(workspace);
@@ -21547,6 +24142,435 @@ describe("ImplementSessionManager", () => {
     expect(repair.repaired).toBe(true);
     expect(repairedSource).toContain("_autolabos_metrics_payload_projection_marker");
     execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("passes preflight model_selection into generated study condition calls", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-study-model-selection-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "from pathlib import Path",
+        "from typing import Any, Dict",
+        "",
+        "PREFERRED_MODEL_NAME = 'Qwen/Qwen2.5-1.5B'",
+        "FALLBACK_MODEL_NAME = 'TinyLlama/TinyLlama-1.1B-Chat-v1.0'",
+        "DEFAULT_OUTPUT_DIR = Path('out')",
+        "",
+        "class StudyCondition:",
+        "    marker = 'rank_8_dropout_0_0'",
+        "    rank = 8",
+        "    dropout = 0.0",
+        "",
+        "def _study_select_base_model(*, preferred_model_name, fallback_model_name, output_dir, args):",
+        "    return {'selected_model_name': preferred_model_name, 'status': 'preferred_cached'}",
+        "",
+        "def _study_call_with_supported_kwargs(func: Any, **kwargs: Any) -> Any:",
+        "    signature = inspect.signature(func)",
+        "    parameters = signature.parameters",
+        "    filtered_kwargs = {key: value for key, value in kwargs.items() if key in parameters}",
+        "    return func(**filtered_kwargs)",
+        "",
+        "def execute_condition(condition: StudyCondition, args: argparse.Namespace, model_selection: Dict[str, Any], output_dir: Path) -> Dict[str, Any]:",
+        "    assert model_selection['success'] is True",
+        "    assert model_selection['selected_model_name'] == PREFERRED_MODEL_NAME",
+        "    return {'status': 'success', 'accuracy_delta_vs_baseline': 0.0}",
+        "",
+        "def run_study_orchestration(args: argparse.Namespace) -> Dict[str, Any]:",
+        "    output_dir = Path(getattr(args, 'output_dir', DEFAULT_OUTPUT_DIR)).resolve()",
+        "    preflight_payload = _study_select_base_model(",
+        "        preferred_model_name=PREFERRED_MODEL_NAME,",
+        "        fallback_model_name=FALLBACK_MODEL_NAME,",
+        "        output_dir=output_dir,",
+        "        args=args,",
+        "    )",
+        "    selected_model_name = str(preflight_payload.get(\"selected_model_name\") or PREFERRED_MODEL_NAME)",
+        "    used_fallback_model = bool(preflight_payload.get(\"used_fallback_model\", False))",
+        "    condition = StudyCondition()",
+        "    execute_condition_fn = execute_condition",
+        "    return _study_call_with_supported_kwargs(",
+        "        execute_condition_fn,",
+        "        condition=condition,",
+        "        selected_model_name=selected_model_name,",
+        "        base_model_name=selected_model_name,",
+        "        output_dir=output_dir,",
+        "        args=args,",
+        "    )",
+        "",
+        "if __name__ == '__main__':",
+        "    run_study_orchestration(argparse.Namespace(output_dir='out'))",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /missing 1 required positional argument: 'model_selection'/
+    );
+
+    const repair = await repairPythonStudyCallModelSelectionKwargSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_study_call_model_selection_kwarg_marker");
+    expect(repairedSource).toContain("model_selection=model_selection_payload");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+  });
+
+  it("coerces scalar model-selection fallback candidates before handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-model-selection-scalar-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from typing import Any, Mapping, Optional, Sequence",
+        "",
+        "PREFER_LOCAL_CACHE_ONLY = True",
+        "FALLBACK_MODEL_NAME = 'TinyLlama/TinyLlama-1.1B-Chat-v1.0'",
+        "",
+        "def preflight_model_candidate(",
+        "    candidate: Mapping[str, Any],",
+        "    device_report: Optional[Mapping[str, Any]] = None,",
+        "    prefer_local_cache_only: Optional[bool] = None,",
+        "):",
+        "    return {",
+        "        'label': candidate.get('label', 'candidate'),",
+        "        'model_name': candidate.get('model_name'),",
+        "        'available': True,",
+        "        'selected': False,",
+        "    }",
+        "",
+        "def build_model_selection_plan(",
+        "    model_candidates: Sequence[Mapping[str, Any]],",
+        "    device_report: Optional[Mapping[str, Any]] = None,",
+        "    prefer_local_cache_only: Optional[bool] = None,",
+        "):",
+        "    prefer_local_cache_only = (",
+        "        PREFER_LOCAL_CACHE_ONLY if prefer_local_cache_only is None else bool(prefer_local_cache_only)",
+        "    )",
+        "    preflight_records = [",
+        "        preflight_model_candidate(",
+        "            candidate=candidate,",
+        "            device_report=device_report,",
+        "            prefer_local_cache_only=prefer_local_cache_only,",
+        "        )",
+        "        for candidate in model_candidates",
+        "    ]",
+        "    selected_record = preflight_records[0]",
+        "    selected_record['selected'] = True",
+        "    return {'selected_model_name': selected_record['model_name'], 'preflight_records': preflight_records}",
+        "",
+        "if __name__ == '__main__':",
+        "    print(build_model_selection_plan('Qwen/Qwen2.5-1.5B', 'TinyLlama/TinyLlama-1.1B-Chat-v1.0')['selected_model_name'])",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /object has no attribute 'get'/
+    );
+
+    const repair = await repairPythonModelSelectionPlanScalarFallbackSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_model_selection_plan_scalar_fallback_marker");
+    const output = execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim();
+    expect(output).toBe("Qwen/Qwen2.5-1.5B");
+  });
+
+  it("honors AUTOLABOS_ALLOW_MODEL_DOWNLOAD for generated local-files-only defaults", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-model-download-default-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import os",
+        "",
+        "DEFAULT_LOCAL_FILES_ONLY = True",
+        "SECONDARY_DEFAULT_LOCAL_FILES_ONLY = DEFAULT_LOCAL_FILES_ONLY",
+        "DEFAULT_LOCAL_FILES_ONLY = True",
+        "",
+        "if __name__ == '__main__':",
+        "    print(DEFAULT_LOCAL_FILES_ONLY)",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const repair = await repairPythonAllowModelDownloadDefaultSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_allow_model_download_default_marker");
+    expect(repairedSource).not.toContain("DEFAULT_LOCAL_FILES_ONLY = True");
+    expect(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim()).toBe(
+      "True"
+    );
+    expect(
+      execFileSync("python3", [scriptPath], {
+        cwd: workspace,
+        encoding: "utf8",
+        env: { ...process.env, AUTOLABOS_ALLOW_MODEL_DOWNLOAD: "1" }
+      }).trim()
+    ).toBe("False");
+  });
+
+  it("bridges generated call_context invokers from positional condition dispatch", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-call-context-invoker-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "import json",
+        "from pathlib import Path",
+        "from typing import Any, Mapping",
+        "",
+        "class StudyCondition:",
+        "    marker = 'rank_8_dropout_0_0'",
+        "",
+        "def condition_worker(condition: StudyCondition, args: argparse.Namespace, condition_output_dir: Path):",
+        "    return {'marker': condition.marker, 'output_dir': str(condition_output_dir)}",
+        "",
+        "def _invoke_condition_runner(runner: Any, call_context: Mapping[str, Any]) -> Any:",
+        "    signature = inspect.signature(runner)",
+        "    accepted_kwargs = {}",
+        "    for parameter in signature.parameters.values():",
+        "        if parameter.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY) and parameter.name in call_context:",
+        "            accepted_kwargs[parameter.name] = call_context[parameter.name]",
+        "    return runner(**accepted_kwargs)",
+        "",
+        "def _resolve_optional_callable(names):",
+        "    return _invoke_condition_runner",
+        "",
+        "def _call_with_supported_kwargs(func: Any, *positional_args: Any, **kwargs: Any) -> Any:",
+        "    signature = inspect.signature(func)",
+        "    parameters = signature.parameters",
+        "    accepts_var_kwargs = any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values())",
+        "    accepted_kwargs = kwargs if accepts_var_kwargs else {key: value for key, value in kwargs.items() if key in parameters}",
+        "    return func(*positional_args, **accepted_kwargs)",
+        "",
+        "def _invoke_condition_runner_from_main(runner, condition, args, condition_output_dir):",
+        "    invoker = _resolve_optional_callable(('_invoke_condition_runner', 'invoke_condition_runner'))",
+        "    common_kwargs = {",
+        "        'args': args,",
+        "        'condition': condition,",
+        "        'study_condition': condition,",
+        "        'condition_output_dir': condition_output_dir,",
+        "        'output_dir': str(condition_output_dir),",
+        "    }",
+        "    if invoker is not None:",
+        "        return _call_with_supported_kwargs(invoker, runner, condition, **common_kwargs)",
+        "    return runner(condition)",
+        "",
+        "if __name__ == '__main__':",
+        "    result = _invoke_condition_runner_from_main(condition_worker, StudyCondition(), argparse.Namespace(), Path('out'))",
+        "    print(json.dumps(result, sort_keys=True))",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/StudyCondition/);
+
+    const repair = await repairPythonCallContextInvokerBridgeSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_call_context_invoker_bridge_marker");
+    const output = execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim();
+    expect(JSON.parse(output)).toEqual({ marker: "rank_8_dropout_0_0", output_dir: "out" });
+  });
+
+  it("materializes generated study condition train and eval inputs before handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-study-runtime-inputs-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_lora_rank_dropout_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import inspect",
+        "import json",
+        "from dataclasses import asdict, dataclass, is_dataclass",
+        "from pathlib import Path",
+        "from typing import Any, Sequence",
+        "",
+        "PREFERRED_MODEL_ID = 'Qwen/Qwen2.5-1.5B'",
+        "RUNTIME_DEVICE = 'cpu'",
+        "DEFAULT_SEED = 17",
+        "DEFAULT_MAX_TRAIN_EXAMPLES = 2",
+        "DEFAULT_MAX_EVAL_EXAMPLES_PER_TASK = 1",
+        "TASK_NAMES = ('arc_challenge', 'hellaswag')",
+        "REQUIRED_CONDITION_COUNT = 1",
+        "REQUIRED_CONDITION_MARKERS = ('rank_8_dropout_0_0',)",
+        "BASELINE_CONDITION_MARKER = 'rank_8_dropout_0_0'",
+        "PRIMARY_METRIC_KEY = 'accuracy_delta_vs_baseline'",
+        "",
+        "@dataclass",
+        "class ExperimentCondition:",
+        "    marker: str",
+        "    rank: int",
+        "    lora_dropout: float",
+        "    is_baseline: bool = False",
+        "",
+        "def load_instruction_training_records(max_examples=2, seed=0):",
+        "    return ([{'prompt': 'say A', 'response': 'A'}], {'source': 'fixture_train', 'seed': seed})",
+        "",
+        "def load_eval_task_examples(task_name, max_examples=1, seed=0):",
+        "    return ([{'prompt': task_name, 'choices': ['A', 'B'], 'answer': 'A'}], {'source': task_name, 'seed': seed})",
+        "",
+        "def preflight_model_candidate(model_id, runtime_device):",
+        "    return {'selected_model_id': model_id, 'model_id': model_id, 'model_source': 'preflight', 'runtime_device': runtime_device}",
+        "",
+        "def prepare_experiment_datasets(tokenizer):",
+        "    return {'tokenizer': tokenizer}",
+        "",
+        "def run_condition_experiment(condition, train_records=None, eval_examples_by_task=None, model_id=None, device=None, **kwargs):",
+        "    if not train_records:",
+        "        return {'status': 'failed', 'error_message': 'No training records were provided.'}",
+        "    return {",
+        "        'status': 'completed',",
+        "        'marker': condition.marker,",
+        "        'train_count': len(train_records),",
+        "        'eval_tasks': sorted(eval_examples_by_task.keys()),",
+        "        'model_id': model_id,",
+        "        'device': device,",
+        "        'average_accuracy': 0.5,",
+        "        'task_accuracies': {'arc_challenge': 0.5, 'hellaswag': 0.5},",
+        "    }",
+        "",
+        "def _study_plain_data(value: Any) -> Any:",
+        "    if is_dataclass(value):",
+        "        return asdict(value)",
+        "    if isinstance(value, dict):",
+        "        return {key: _study_plain_data(item) for key, item in value.items()}",
+        "    if isinstance(value, (list, tuple)):",
+        "        return [_study_plain_data(item) for item in value]",
+        "    return value",
+        "",
+        "def _study_find_routine(explicit_names: Sequence[str], token_groups: Sequence[Sequence[str]] = ()):",
+        "    for name in explicit_names:",
+        "        candidate = globals().get(name)",
+        "        if inspect.isroutine(candidate):",
+        "            return candidate",
+        "    for tokens in token_groups:",
+        "        for name, candidate in globals().items():",
+        "            lowered = name.lower()",
+        "            if not inspect.isroutine(candidate):",
+        "                continue",
+        "            if all(token in lowered for token in tokens):",
+        "                return candidate",
+        "    return None",
+        "",
+        "def _study_invoke_with_supported_kwargs(func: Any, **kwargs: Any) -> Any:",
+        "    signature = inspect.signature(func)",
+        "    parameters = signature.parameters",
+        "    filtered_kwargs = {key: value for key, value in kwargs.items() if key in parameters and value is not None}",
+        "    return func(**filtered_kwargs)",
+        "",
+        "def _build_study_execution_context(args: argparse.Namespace, output_contract):",
+        "    context = {'seed': getattr(args, 'seed', DEFAULT_SEED)}",
+        "    warnings = []",
+        "    helper_specs = (",
+        "        ('model_preflight', ('select_base_model',), (('model', 'preflight'),)),",
+        "        ('dataset_bundle', ('build_dataset_bundle',), (('prepare', 'dataset'),)),",
+        "    )",
+        "    for context_key, explicit_names, token_groups in helper_specs:",
+        "        helper = _study_find_routine(explicit_names, token_groups=token_groups)",
+        "        if helper is None:",
+        "            continue",
+        "        helper_kwargs = {",
+        "            \"args\": args,",
+        "            \"output_contract\": output_contract,",
+        "            \"output_dir\": output_contract.output_dir,",
+        "            \"metrics_path\": output_contract.metrics_path,",
+        "            \"seed\": context[\"seed\"],",
+        "            \"study_context\": context,",
+        "            \"runtime_context\": context,",
+        "        }",
+        "        try:",
+        "            context[context_key] = _study_plain_data(",
+        "                _study_invoke_with_supported_kwargs(helper, **helper_kwargs)",
+        "            )",
+        "        except Exception as exc:",
+        "            warnings.append(f\"{context_key}_helper_failed:{type(exc).__name__}: {exc}\")",
+        "            context[f\"{context_key}_error\"] = f\"{type(exc).__name__}: {exc}\"",
+        "    return context, warnings",
+        "",
+        "def get_locked_study_conditions():",
+        "    return [ExperimentCondition('rank_8_dropout_0_0', 8, 0.0, True)]",
+        "",
+        "def _resolve_single_condition_runner():",
+        "    return run_condition_experiment",
+        "",
+        "def run_locked_lora_rank_dropout_study(args: argparse.Namespace, output_contract):",
+        "    conditions = get_locked_study_conditions()",
+        "    execution_context, setup_warnings = _build_study_execution_context(args, output_contract)",
+        "    runner = _resolve_single_condition_runner()",
+        "    records = []",
+        "    for index, condition in enumerate(conditions, start=1):",
+        "        runner_kwargs = {",
+        "            \"condition\": condition,",
+        "            \"output_contract\": output_contract,",
+        "            \"output_dir\": output_contract.output_dir,",
+        "            \"metrics_path\": output_contract.metrics_path,",
+        "            \"study_context\": execution_context,",
+        "            \"runtime_context\": execution_context,",
+        "            \"shared_context\": execution_context,",
+        "            \"device_info\": execution_context.get(\"device_info\"),",
+        "            \"model_preflight\": execution_context.get(\"model_preflight\"),",
+        "            \"dataset_bundle\": execution_context.get(\"dataset_bundle\"),",
+        "            \"seed\": getattr(args, \"seed\", DEFAULT_SEED),",
+        "        }",
+        "        records.append(_study_invoke_with_supported_kwargs(runner, **runner_kwargs))",
+        "    return {'records': records, 'setup_warnings': setup_warnings}",
+        "",
+        "class OutputContract:",
+        "    output_dir = Path('out')",
+        "    metrics_path = Path('metrics.json')",
+        "",
+        "if __name__ == '__main__':",
+        "    result = run_locked_lora_rank_dropout_study(argparse.Namespace(seed=17), OutputContract())",
+        "    print(json.dumps(result, sort_keys=True))",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const beforeOutput = JSON.parse(
+      execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" })
+    );
+    expect(beforeOutput.records[0].status).toBe("failed");
+    expect(beforeOutput.setup_warnings.join("\n")).toContain("missing 2 required positional arguments");
+
+    const repair = await repairPythonStudyConditionRuntimeInputMaterializationSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_study_condition_runtime_inputs_marker");
+    expect(repairedSource).toContain("**_autolabos_study_condition_runtime_inputs");
+    execFileSync("python3", ["-m", "py_compile", scriptPath], { cwd: workspace });
+    const afterOutput = JSON.parse(
+      execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" })
+    );
+    expect(afterOutput.records[0]).toMatchObject({
+      status: "completed",
+      train_count: 1,
+      eval_tasks: ["arc_challenge", "hellaswag"],
+      model_id: "Qwen/Qwen2.5-1.5B",
+      device: "cpu"
+    });
+    expect(afterOutput.setup_warnings.join("\n")).toContain("dataset_bundle_helper_skipped_missing_required:tokenizer");
   });
 
   it("accepts choice_texts and correct_label fields from multiple-choice dataclass examples", async () => {
@@ -21953,6 +24977,130 @@ describe("ImplementSessionManager", () => {
     expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
       train_examples: 5000,
       eval_limit_per_benchmark: 64
+    });
+  });
+
+  it("adds run_command aliases for scheduler-emitted LoRA runtime argparse flags", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-lora-runtime-alias-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Run Command LoRA Runtime Alias",
+      topic: "LoRA rank dropout",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy_delta_vs_baseline"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import json",
+        "from pathlib import Path",
+        "",
+        "def build_arg_parser():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--metrics-path')",
+        "    parser.add_argument('--output-dir')",
+        "    parser.add_argument('--disable-progress-bar', action='store_true')",
+        "    parser.add_argument('--fallback-base-model')",
+        "    parser.add_argument('--base-model-id')",
+        "    parser.add_argument('--baseline-condition-marker')",
+        "    return parser",
+        "",
+        "def main(argv=None):",
+        "    args = build_arg_parser().parse_args(argv)",
+        "    Path(args.metrics_path).write_text(json.dumps({",
+        "        'disable_progress_bar': args.disable_progress_bar,",
+        "        'fallback_base_model': args.fallback_base_model,",
+        "        'base_model_id': args.base_model_id,",
+        "        'baseline_condition_marker': args.baseline_condition_marker,",
+        "    }), encoding='utf-8')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexNativeClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)} --disable-progress-bars --fallback-model TinyLlama/TinyLlama-1.1B --base-model Qwen/Qwen2.5-0.5B --baseline-condition rank_8_dropout_0_0`,
+        scriptPath,
+        workingDir: publicDir,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(report.status).toBe("pass");
+    expect(repairedSource).toContain("parser.add_argument('--disable-progress-bar', \"--disable-progress-bars\"");
+    expect(repairedSource).toContain("parser.add_argument('--fallback-base-model', \"--fallback-model\"");
+    expect(repairedSource).toContain("parser.add_argument('--base-model-id', \"--base-model\"");
+    expect(repairedSource).toContain("parser.add_argument('--baseline-condition-marker', \"--baseline-condition\"");
+
+    execFileSync(
+      "python3",
+      [
+        scriptPath,
+        "--metrics-path",
+        metricsPath,
+        "--output-dir",
+        publicDir,
+        "--disable-progress-bars",
+        "--fallback-model",
+        "TinyLlama/TinyLlama-1.1B",
+        "--base-model",
+        "Qwen/Qwen2.5-0.5B",
+        "--baseline-condition",
+        "rank_8_dropout_0_0"
+      ],
+      { cwd: publicDir }
+    );
+    expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
+      disable_progress_bar: true,
+      fallback_base_model: "TinyLlama/TinyLlama-1.1B",
+      base_model_id: "Qwen/Qwen2.5-0.5B",
+      baseline_condition_marker: "rank_8_dropout_0_0"
     });
   });
 
