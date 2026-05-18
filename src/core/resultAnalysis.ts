@@ -30,6 +30,7 @@ export interface AnalysisConditionComparison {
     | "metrics.conditions"
     | "metrics.condition_results"
     | "metrics.condition_summaries"
+    | "metrics.per_condition"
     | "metrics.per_condition_average_accuracy";
   metrics: AnalysisComparisonMetric[];
   hypothesis_supported?: boolean;
@@ -2373,6 +2374,7 @@ function readConditionRowsFromMetrics(metrics: Record<string, unknown>): {
     | "metrics.conditions"
     | "metrics.condition_results"
     | "metrics.condition_summaries"
+    | "metrics.per_condition"
     | "metrics.per_condition_average_accuracy";
   rows: Array<Record<string, unknown>>;
 } {
@@ -2414,6 +2416,17 @@ function readConditionRowsFromMetrics(metrics: Record<string, unknown>): {
     })
     .filter((row) => Object.keys(row).length > 0)
   ]);
+  const perConditionArrayRows = mergeConditionRowsByName([
+    ...explicitBaselineRows,
+    ...asArray(metrics.per_condition)
+      .map((item) => {
+        const row = asRecord(item);
+        const name = readConditionName(row);
+        const summary = name ? summariesByName.get(name) : undefined;
+        return markBaselineConditionRow(enrichConditionRow(summary ? { ...summary, ...row } : row), baselineMarkers);
+      })
+      .filter((row) => Object.keys(row).length > 0)
+  ]);
   const conditionRows = conditionRowsFromArray.length > 0
     ? conditionRowsFromArray
     : conditionRowsFromRecord;
@@ -2427,6 +2440,9 @@ function readConditionRowsFromMetrics(metrics: Record<string, unknown>): {
     .filter((row) => Object.keys(row).length > 0);
   if (conditionRows.length > 0) {
     return { source: "metrics.conditions", rows: conditionRows };
+  }
+  if (perConditionArrayRows.length > 0) {
+    return { source: "metrics.per_condition", rows: perConditionArrayRows };
   }
   if (conditionResultRows.length > 0) {
     return { source: "metrics.condition_results", rows: conditionResultRows };
@@ -2495,6 +2511,7 @@ function readPerConditionAverageAccuracyRows(
 
 function readBaselineConditionMarkers(metrics: Record<string, unknown>): Set<string> {
   const studySummary = asRecord(metrics.study_summary);
+  const studyContract = asRecord(metrics.study_contract);
   const summary = asRecord(metrics.summary);
   return new Set(
     [
@@ -2502,6 +2519,10 @@ function readBaselineConditionMarkers(metrics: Record<string, unknown>): Set<str
       asString(metrics.baseline_condition_marker),
       asString(metrics.baseline_condition),
       asString(metrics.baseline_condition_id),
+      asString(studyContract.baseline_marker),
+      asString(studyContract.baseline_condition_marker),
+      asString(studyContract.baseline_condition),
+      asString(studyContract.baseline_condition_id),
       asString(studySummary.baseline_marker),
       asString(studySummary.baseline_condition_marker),
       asString(studySummary.baseline_condition),

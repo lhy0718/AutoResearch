@@ -115,6 +115,36 @@ describe("ExperimentContract", () => {
     expect(contract.additional_changes).toEqual(["Change B", "Change C"]);
   });
 
+  it("preserves selected design and evidence ceiling for downstream claim calibration", () => {
+    const run = makeMinimalRun("test-run-1");
+    const contract = buildExperimentContract({
+      run,
+      hypothesis: "Rank/dropout sweep has only pilot support",
+      causalMechanism: "Matched seeds expose whether condition spread exceeds noise",
+      singleChange: "3-seed full-grid pilot with explicit no-interaction ceiling",
+      expectedMetricEffect: "Identify whether a confirmatory rerun is justified",
+      abortCondition: "Abort if cells are incomplete",
+      keepOrDiscardRule: "Keep only as a pilot signal",
+      metrics: ["accuracy_delta_vs_baseline"],
+      selectedDesign: {
+        id: "plan_2",
+        title: "3-seed full-grid pilot with explicit no-interaction ceiling",
+        summary: "Pilot only; not sufficient for a paper-ready interaction claim."
+      },
+      evidenceCeiling: "Pilot evidence only; do not make a paper-ready interaction claim.",
+      paperCeiling: "Workshop/pilot note ceiling until confirmatory evidence exists.",
+      resultsTableDirection: "higher_better"
+    });
+
+    expect(contract.selected_design).toEqual({
+      id: "plan_2",
+      title: "3-seed full-grid pilot with explicit no-interaction ceiling",
+      summary: "Pilot only; not sufficient for a paper-ready interaction claim."
+    });
+    expect(contract.evidence_ceiling).toBe("Pilot evidence only; do not make a paper-ready interaction claim.");
+    expect(contract.paper_ceiling).toBe("Workshop/pilot note ceiling until confirmatory evidence exists.");
+  });
+
   it("validates a complete contract as valid", () => {
     const contract: ExperimentContract = {
       version: 1,

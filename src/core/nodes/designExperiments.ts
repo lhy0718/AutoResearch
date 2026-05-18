@@ -262,9 +262,7 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         hypothesis: hypothesisText,
         causalMechanism: panelResult.selected.plan_summary,
         singleChange: panelResult.selected.title,
-        additionalChanges: panelResult.selected.baselines.length > 1
-          ? panelResult.selected.baselines.slice(1).map((b) => `additional baseline: ${b}`)
-          : [],
+        additionalChanges: [],
         expectedMetricEffect: `Improve ${run.objectiveMetric} relative to baseline(s): ${panelResult.selected.baselines.join(", ") || "none specified"}.`,
         abortCondition: panelResult.selected.risks.length > 0
           ? `Abort if: ${panelResult.selected.risks[0]}`
@@ -272,6 +270,13 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         keepOrDiscardRule: "Keep if objective metric improves over baseline; discard if no improvement or result is inconclusive.",
         baselines: panelResult.selected.baselines,
         metrics: panelResult.selected.metrics,
+        selectedDesign: {
+          id: panelResult.selected.id,
+          title: panelResult.selected.title,
+          summary: panelResult.selected.plan_summary
+        },
+        evidenceCeiling: deriveDesignEvidenceCeiling(panelResult.selected),
+        paperCeiling: deriveDesignPaperCeiling(panelResult.selected),
         resultsTableDirection: objectiveMetricProfile.direction === "minimize" ? "lower_better" : "higher_better",
         briefRequiredBaselineCount: deriveBriefRequiredBaselineCount(briefSections)
       });
@@ -1136,6 +1141,35 @@ function explainHypothesisDrop(
 
 function isReproducibilityObjective(profile: ObjectiveMetricProfile): boolean {
   return /reproduc|재현/u.test(profile.raw) || /reproduc|재현/u.test(profile.primaryMetric || "");
+}
+
+function deriveDesignEvidenceCeiling(design: ExperimentDesignCandidate): string | undefined {
+  const candidates = [
+    design.plan_summary,
+    ...design.implementation_notes,
+    ...design.evaluation_steps,
+    ...design.resource_notes,
+    ...design.risks
+  ];
+  return candidates
+    .map((value) => value.trim())
+    .find((value) =>
+      /\b(pilot ceiling|evidence ceiling|claim ceiling|paper-ready|not sufficient|not make a paper-ready|interaction claim|no-interaction ceiling|no-signal)\b/iu.test(
+        value
+      )
+    );
+}
+
+function deriveDesignPaperCeiling(design: ExperimentDesignCandidate): string | undefined {
+  const evidenceCeiling = deriveDesignEvidenceCeiling(design);
+  if (evidenceCeiling) {
+    return evidenceCeiling;
+  }
+  const titleAndSummary = `${design.title}\n${design.plan_summary}`;
+  if (/\bpilot\b/iu.test(titleAndSummary)) {
+    return "Pilot evidence only; do not present as a paper-ready experimental interaction claim without confirmatory evidence.";
+  }
+  return undefined;
 }
 
 export interface BaselineSummary {

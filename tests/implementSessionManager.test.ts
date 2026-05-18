@@ -3456,6 +3456,387 @@ describe("ImplementSessionManager", () => {
     expect(report.summary).toContain("total_latency_sec");
   });
 
+  it("fails local verification when a runner only discovers missing condition-level callables", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-missing-callable-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Missing Condition Callable",
+      topic: "LoRA rank dropout sweep",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy_delta_vs_baseline"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const scriptPath = path.join(runDir, "run_lora_rank_dropout_experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "ORCHESTRATION_NAMES = (",
+        "    'run_locked_condition_study',",
+        "    'run_locked_comparison_study',",
+        "    'execute_locked_condition_study',",
+        ")",
+        "RUNNER_NAMES = (",
+        "    'run_condition_experiment',",
+        "    'run_single_condition',",
+        "    'execute_condition',",
+        "    'train_and_evaluate_condition',",
+        "    'run_peft_condition',",
+        "    'run_condition_trial',",
+        ")",
+        "",
+        "def _run_execution_with_available_pipeline(args, paths, locked_conditions, selected_markers):",
+        "    raise RuntimeError(",
+        "        'No condition-level execution callable was found in the experiment script. '",
+        "        f'Tried orchestration={ORCHESTRATION_NAMES} and runners={RUNNER_NAMES}.'",
+        "    )",
+        "",
+        "def main():",
+        "    return _run_execution_with_available_pipeline(None, None, [], [])",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexNativeClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        workingDir: runDir,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    expect(report.status).toBe("fail");
+    expect(report.failure_type).toBe("implementation");
+    expect(report.summary).toContain("no concrete per-condition execution worker");
+    expect(report.summary).toContain("condition-level execution callable");
+  });
+
+  it("fails local verification when a resolved sweep callable is missing required kwargs", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-missing-sweep-kwarg-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Missing Sweep Kwarg",
+      topic: "LoRA rank dropout sweep",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy_delta_vs_baseline"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const scriptPath = path.join(runDir, "run_lora_rank_dropout_experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "from typing import Any, Dict",
+        "",
+        "def run_locked_condition_sweep(condition_runner: Any, timeout_seconds: float = 30.0) -> Dict[str, Any]:",
+        "    return condition_runner(timeout_seconds=timeout_seconds)",
+        "",
+        "def _resolve_cli_callable(candidate_names):",
+        "    for candidate_name in candidate_names:",
+        "        candidate = globals().get(candidate_name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def _call_with_compatible_kwargs(func, *args, **kwargs):",
+        "    import inspect",
+        "    signature = inspect.signature(func)",
+        "    compatible_kwargs = {",
+        "        name: value for name, value in kwargs.items()",
+        "        if name in signature.parameters",
+        "    }",
+        "    return func(*args, **compatible_kwargs)",
+        "",
+        "def main():",
+        "    sweep_callable = _resolve_cli_callable((",
+        "        'run_locked_condition_sweep',",
+        "    ))",
+        "    return _call_with_compatible_kwargs(",
+        "        sweep_callable,",
+        "        timeout_seconds=30.0,",
+        "    )",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexNativeClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        workingDir: runDir,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    expect(report.status).toBe("fail");
+    expect(report.failure_type).toBe("implementation");
+    expect(report.summary).toContain("omits required parameter");
+    expect(report.summary).toContain("condition_runner");
+  });
+
+  it("fails local verification when Python negative infinity checks are malformed", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-bad-inf-literal-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Bad Infinity Literal",
+      topic: "metrics failure safety",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const scriptPath = path.join(runDir, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "def _safe_float(value):",
+        "    numeric = float(value)",
+        "    if numeric != numeric or numeric == float('inf') or numeric == float('-') + 'inf':",
+        "        return None",
+        "    return numeric",
+        "",
+        "def main():",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexNativeClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        workingDir: runDir,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    expect(report.status).toBe("fail");
+    expect(report.failure_type).toBe("implementation");
+    expect(report.summary).toContain("invalid negative-infinity literal");
+    expect(report.summary).toContain("float(\"-\") + \"inf\"");
+  });
+
+  it("fails local verification when callable discovery can select a preflight class", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-preflight-class-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Preflight Class Selection",
+      topic: "LoRA rank dropout sweep",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    const scriptPath = path.join(runDir, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "from dataclasses import dataclass",
+        "from typing import Any",
+        "",
+        "@dataclass",
+        "class ModelPreflightAttempt:",
+        "    ok: bool",
+        "    phase: str",
+        "    used_cuda: bool",
+        "",
+        "def preflight_model_candidate(model_name: str):",
+        "    return ModelPreflightAttempt(ok=True, phase='loaded', used_cuda=False)",
+        "",
+        "def _autolabos_find_callable(exact_names=(), token_groups=(), exclude_names=()):",
+        "    excluded = set(exclude_names or ())",
+        "    for name, candidate in globals().items():",
+        "        if name in excluded or name.startswith('_autolabos_'):",
+        "            continue",
+        "        if not callable(candidate):",
+        "            continue",
+        "        lowered_name = name.lower()",
+        "        for tokens in token_groups or ():",
+        "            if all(token in lowered_name for token in tokens):",
+        "                return candidate",
+        "    return None",
+        "",
+        "def _autolabos_run_preflight(args):",
+        "    preflight_fn = _autolabos_find_callable(",
+        "        token_groups=(('preflight',),),",
+        "        exclude_names=('main', '_autolabos_main'),",
+        "    )",
+        "    return preflight_fn(args)",
+        "",
+        "def main():",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {} as CodexNativeClient,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const verifier = manager as unknown as {
+      verifyAttempt(
+        attempt: Record<string, unknown>,
+        abortSignal: AbortSignal | undefined,
+        runId: string,
+        attemptNumber: number
+      ): Promise<{ status: string; failure_type?: string; summary: string }>;
+    };
+
+    const report = await verifier.verifyAttempt(
+      {
+        verifyReport: { status: "not_run" },
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        workingDir: runDir,
+        workspaceRoot: workspace,
+        localization: {
+          selected_files: [scriptPath],
+          candidates: []
+        }
+      },
+      undefined,
+      run.id,
+      1
+    );
+
+    expect(report.status).toBe("fail");
+    expect(report.failure_type).toBe("implementation");
+    expect(report.summary).toContain("can select a class");
+    expect(report.summary).toContain("ModelPreflightAttempt");
+  });
+
   it("fails local verification when DictWriter fieldnames come from a named constant and summaries add extra CSV keys", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-constant-csv-fieldnames-"));
     tempDirs.push(workspace);

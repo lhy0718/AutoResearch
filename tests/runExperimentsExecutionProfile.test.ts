@@ -515,6 +515,94 @@ describe("run_experiments execution profile behavior", () => {
     });
   });
 
+  it("uses failed metrics payload as feedback when the command exits unsuccessfully", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-failed-command-metrics-"));
+    process.chdir(root);
+    const run = makeRun("run-failed-command-metrics");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "failed",
+                completed_condition_count: 0,
+                required_condition_count: 8,
+                observed_condition_count: 31,
+                missing_required_condition_markers: ["rank_8_dropout_0_0", "rank_4_dropout_0_0"],
+                condition_results_path: path.join(root, "condition_results.json")
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "error" as const,
+            stdout: "verbose model loading log",
+            stderr: "status=failed | completed_conditions=0",
+            exit_code: 1,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("Experiment metrics payload reports failed status");
+    expect(result.error).toContain("completed_condition_count=0/8");
+    expect(result.error).toContain("missing_required_condition_markers=rank_8_dropout_0_0,rank_4_dropout_0_0");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string; stderr_excerpt?: string };
+    expect(verifierReport).toMatchObject({
+      status: "fail",
+      stage: "metrics"
+    });
+    expect(verifierReport.summary).toContain("completed_condition_count=0/8");
+
+    const feedback = await runContext.get<{ status: string; stage: string; summary: string }>(
+      "implement_experiments.runner_feedback"
+    );
+    expect(feedback).toMatchObject({
+      status: "fail",
+      stage: "metrics"
+    });
+    expect(feedback?.summary).toContain("observed_condition_count=31");
+  });
+
   it("repairs runtime-resolved metrics payload builders before run_experiments execution", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-runtime-metrics-repair-"));
     process.chdir(root);

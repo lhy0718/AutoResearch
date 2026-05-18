@@ -780,42 +780,78 @@ export class ImplementSessionManager {
       } else {
         try {
           if (useCodexSession) {
-            result = await this.deps.codex.runTurnStream({
-              prompt: attemptPrompt,
-              threadId: activeThreadId,
-              agentId: `implementer:${run.id}`,
-              systemPrompt: attemptSystemPrompt,
-              sandboxMode: "workspace-write",
-              approvalPolicy: "never",
-              workingDirectory: toSandboxFriendlyWorkspaceRoot(isolation.workspaceRoot),
-              abortSignal,
-              onEvent: (event) => {
-                rawEvents.push(event);
-                streamProgress.onEvent(event);
-                const mapped = mapCodexEventToAutoLabOSEvents({
-                  event,
-                  runId: run.id,
-                  node: "implement_experiments",
-                  agentRole: "implementer",
-                  workspaceRoot: isolation.workspaceRoot
+            const codexTimeoutMs = getImplementLlmTimeoutMs(this.deps.config);
+            const codexTimeoutController = codexTimeoutMs > 0 ? new AbortController() : undefined;
+            const codexTimeoutId = codexTimeoutController
+              ? setTimeout(() => codexTimeoutController.abort(), codexTimeoutMs)
+              : undefined;
+            const codexAbortSignal = codexTimeoutController
+              ? abortSignal
+                ? AbortSignal.any([abortSignal, codexTimeoutController.signal])
+                : codexTimeoutController.signal
+              : abortSignal;
+            try {
+              const codexRun = this.deps.codex.runTurnStream({
+                  prompt: attemptPrompt,
+                  threadId: activeThreadId,
+                  agentId: `implementer:${run.id}`,
+                  systemPrompt: attemptSystemPrompt,
+                  sandboxMode: "workspace-write",
+                  approvalPolicy: "never",
+                  workingDirectory: toSandboxFriendlyWorkspaceRoot(isolation.workspaceRoot),
+                  abortSignal: codexAbortSignal,
+                  onEvent: (event) => {
+                    rawEvents.push(event);
+                    streamProgress.onEvent(event);
+                    const mapped = mapCodexEventToAutoLabOSEvents({
+                      event,
+                      runId: run.id,
+                      node: "implement_experiments",
+                      agentRole: "implementer",
+                      workspaceRoot: isolation.workspaceRoot
+                    });
+                    for (const item of mapped) {
+                      const nextItem = translateMappedCodexEventToPrimaryWorkspace(item, {
+                        fromWorkspaceRoot: isolation.workspaceRoot,
+                        toWorkspaceRoot: this.deps.workspaceRoot
+                      });
+                      if (item.type === "PATCH_APPLIED" && !shouldTrackPatchEvent(item.payload)) {
+                        continue;
+                      }
+                      this.deps.eventStream.emit(nextItem);
+                      const fileValue = typeof item.payload.file === "string" ? item.payload.file : undefined;
+                      if (fileValue && item.type === "PATCH_APPLIED") {
+                        attemptChangedFiles.add(fileValue);
+                        attemptArtifacts.add(fileValue);
+                      }
+                    }
+                  }
                 });
-                for (const item of mapped) {
-                  const nextItem = translateMappedCodexEventToPrimaryWorkspace(item, {
-                    fromWorkspaceRoot: isolation.workspaceRoot,
-                    toWorkspaceRoot: this.deps.workspaceRoot
-                  });
-                  if (item.type === "PATCH_APPLIED" && !shouldTrackPatchEvent(item.payload)) {
-                    continue;
-                  }
-                  this.deps.eventStream.emit(nextItem);
-                  const fileValue = typeof item.payload.file === "string" ? item.payload.file : undefined;
-                  if (fileValue && item.type === "PATCH_APPLIED") {
-                    attemptChangedFiles.add(fileValue);
-                    attemptArtifacts.add(fileValue);
-                  }
-                }
+              const timeoutRun = codexTimeoutController
+                ? new Promise<never>((_, reject) => {
+                    codexTimeoutController.signal.addEventListener(
+                      "abort",
+                      () => reject(new Error(`implement_experiments codex request timed out after ${codexTimeoutMs}ms`)),
+                      { once: true }
+                    );
+                  })
+                : undefined;
+              result = timeoutRun ? await Promise.race([codexRun, timeoutRun]) : await codexRun;
+            } catch (error) {
+              if (codexTimeoutController?.signal.aborted && !abortSignal?.aborted) {
+                emitImplementObservation("codex", `Codex implement turn timed out after ${codexTimeoutMs}ms.`, {
+                  attempt,
+                  threadId: activeThreadId,
+                  publicDir: defaultPublicDir
+                });
+                throw new Error(`implement_experiments codex request timed out after ${codexTimeoutMs}ms`);
               }
-            });
+              throw error;
+            } finally {
+              if (codexTimeoutId) {
+                clearTimeout(codexTimeoutId);
+              }
+            }
             if (this.deps.llm && shouldFallbackToStagedImplementLlm(result.finalText)) {
               emitImplementObservation(
                 "codex",
@@ -4490,6 +4526,104 @@ export class ImplementSessionManager {
         next_action: "retry_patch",
         stderr_excerpt: pythonMissingConditionWorker,
         summary: buildVerificationFailureSummary(command, "implementation", pythonMissingConditionWorker)
+      };
+      this.deps.eventStream.emit({
+        type: "TEST_FAILED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          command,
+          cwd: attempt.workingDir,
+          failure_type: report.failure_type,
+          stderr: report.stderr_excerpt || report.summary,
+          attempt: attemptNumber
+        }
+      });
+      onProgress?.(report.summary, {
+        verificationCommand: command,
+        verifyStatus: report.status
+      });
+      return report;
+    }
+
+    const pythonFlexibleCallableMissingKwargs =
+      await detectPythonFlexibleCallableMissingRequiredKwargs(executionScriptPath);
+    if (pythonFlexibleCallableMissingKwargs) {
+      const report: VerifyReport = {
+        status: "fail",
+        command,
+        cwd: attempt.workingDir,
+        exit_code: 0,
+        failure_type: "implementation",
+        next_action: "retry_patch",
+        stderr_excerpt: pythonFlexibleCallableMissingKwargs,
+        summary: buildVerificationFailureSummary(command, "implementation", pythonFlexibleCallableMissingKwargs)
+      };
+      this.deps.eventStream.emit({
+        type: "TEST_FAILED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          command,
+          cwd: attempt.workingDir,
+          failure_type: report.failure_type,
+          stderr: report.stderr_excerpt || report.summary,
+          attempt: attemptNumber
+        }
+      });
+      onProgress?.(report.summary, {
+        verificationCommand: command,
+        verifyStatus: report.status
+      });
+      return report;
+    }
+
+    const pythonInvalidInfinityLiteral = await detectPythonInvalidInfinityLiteralSurface(executionScriptPath);
+    if (pythonInvalidInfinityLiteral) {
+      const report: VerifyReport = {
+        status: "fail",
+        command,
+        cwd: attempt.workingDir,
+        exit_code: 0,
+        failure_type: "implementation",
+        next_action: "retry_patch",
+        stderr_excerpt: pythonInvalidInfinityLiteral,
+        summary: buildVerificationFailureSummary(command, "implementation", pythonInvalidInfinityLiteral)
+      };
+      this.deps.eventStream.emit({
+        type: "TEST_FAILED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          command,
+          cwd: attempt.workingDir,
+          failure_type: report.failure_type,
+          stderr: report.stderr_excerpt || report.summary,
+          attempt: attemptNumber
+        }
+      });
+      onProgress?.(report.summary, {
+        verificationCommand: command,
+        verifyStatus: report.status
+      });
+      return report;
+    }
+
+    const pythonCallableFinderClassSelection =
+      await detectPythonAutolabosCallableFinderClassSelectionSurface(executionScriptPath);
+    if (pythonCallableFinderClassSelection) {
+      const report: VerifyReport = {
+        status: "fail",
+        command,
+        cwd: attempt.workingDir,
+        exit_code: 0,
+        failure_type: "implementation",
+        next_action: "retry_patch",
+        stderr_excerpt: pythonCallableFinderClassSelection,
+        summary: buildVerificationFailureSummary(command, "implementation", pythonCallableFinderClassSelection)
       };
       this.deps.eventStream.emit({
         type: "TEST_FAILED",
@@ -34284,16 +34418,7 @@ async function detectPythonMissingConcreteConditionWorkerSurface(
     return undefined;
   }
 
-  if (
-    !source.includes("def execute_locked_condition_plan(") ||
-    !source.includes("def _find_condition_worker(") ||
-    (!source.includes("No real per-condition execution worker is registered") &&
-      !source.includes("worker_discovery"))
-  ) {
-    return undefined;
-  }
-
-  const searchedWorkerNames = [
+  const workerDiscoveryNames = [
     "run_locked_condition",
     "run_single_locked_condition",
     "execute_single_locked_condition",
@@ -34302,18 +34427,236 @@ async function detectPythonMissingConcreteConditionWorkerSurface(
     "train_evaluate_condition",
     "run_condition"
   ];
-  const definedWorkerNames = searchedWorkerNames.filter((name) =>
-    pythonSourceDefinesOrImportsName(source, name)
-  );
-  if (definedWorkerNames.length > 0) {
+
+  if (
+    source.includes("def execute_locked_condition_plan(") &&
+    source.includes("def _find_condition_worker(") &&
+    (source.includes("No real per-condition execution worker is registered") ||
+      source.includes("worker_discovery"))
+  ) {
+    const definedWorkerNames = workerDiscoveryNames.filter((name) =>
+      pythonSourceDefinesOrImportsName(source, name)
+    );
+    if (definedWorkerNames.length > 0) {
+      return undefined;
+    }
+
+    const resolverLine = source.slice(0, source.indexOf("def _find_condition_worker(")).split(/\r?\n/u).length;
+    return [
+      "Generated Python runner has no concrete per-condition execution worker.",
+      `The condition-worker resolver at ${path.basename(scriptPath)}:${resolverLine} searches ${workerDiscoveryNames.join(", ")} but none of those workers are defined or imported.`,
+      "Generate or preserve a real per-condition train/evaluate worker before handoff; do not satisfy local verification by recording all planned conditions as worker_discovery failures."
+    ].join(" ");
+  }
+
+  if (
+    !source.includes("No condition-level execution callable was found") &&
+    !source.includes("No condition level execution callable was found")
+  ) {
     return undefined;
   }
 
-  const resolverLine = source.slice(0, source.indexOf("def _find_condition_worker(")).split(/\r?\n/u).length;
+  const callableResolverNames = [
+    "run_locked_condition_study",
+    "run_locked_comparison_study",
+    "execute_locked_condition_study",
+    "execute_locked_comparison",
+    "run_comparison_workflow",
+    "run_experiment_suite",
+    "orchestrate_locked_condition_run",
+    "orchestrate_locked_study",
+    "run_condition_experiment",
+    "run_single_condition",
+    "execute_condition",
+    "train_and_evaluate_condition",
+    "run_peft_condition",
+    "run_condition_trial"
+  ];
+  const definedCallableNames = callableResolverNames.filter((name) =>
+    pythonSourceDefinesOrImportsName(source, name)
+  );
+  if (definedCallableNames.length > 0) {
+    return undefined;
+  }
+
+  const resolverIndex = source.indexOf("def _run_execution_with_available_pipeline(");
+  const resolverLine = resolverIndex >= 0
+    ? source.slice(0, resolverIndex).split(/\r?\n/u).length
+    : source.slice(0, source.indexOf("No condition-level execution callable was found")).split(/\r?\n/u).length;
   return [
     "Generated Python runner has no concrete per-condition execution worker.",
-    `The condition-worker resolver at ${path.basename(scriptPath)}:${resolverLine} searches ${searchedWorkerNames.join(", ")} but none of those workers are defined or imported.`,
-    "Generate or preserve a real per-condition train/evaluate worker before handoff; do not satisfy local verification by recording all planned conditions as worker_discovery failures."
+    `The execution resolver at ${path.basename(scriptPath)}:${resolverLine} reports that no condition-level execution callable was found while searching ${callableResolverNames.join(", ")}.`,
+    "Generate or preserve a real condition-level train/evaluate callable before handoff; py_compile alone is not sufficient for runnable experiment evidence."
+  ].join(" ");
+}
+
+async function detectPythonFlexibleCallableMissingRequiredKwargs(
+  scriptPath?: string
+): Promise<string | undefined> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return undefined;
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  if (!source.includes("_call_with_compatible_kwargs") || !source.includes("_resolve_cli_callable")) {
+    return undefined;
+  }
+
+  const definitions = extractPythonFunctionRequiredParameters(source);
+  if (definitions.size === 0) {
+    return undefined;
+  }
+
+  for (const resolverMatch of source.matchAll(
+    /\b([A-Za-z_]\w*)\s*=\s*_resolve_cli_callable\s*\(\s*(?:\(|\[)([\s\S]*?)(?:\)|\])\s*\)/gu
+  )) {
+    const variableName = resolverMatch[1];
+    const candidateNames = [...resolverMatch[2].matchAll(/["']([A-Za-z_]\w*)["']/gu)].map((match) => match[1]);
+    const selectedCandidate = candidateNames
+      .map((name) => definitions.get(name))
+      .find((definition) => definition && definition.required.length > 0);
+    if (!selectedCandidate) {
+      continue;
+    }
+
+    for (const callMatch of source.matchAll(
+      new RegExp(`_call_with_compatible_kwargs\\s*\\(\\s*${variableName}\\s*,([\\s\\S]*?)\\n\\s*\\)`, "gu")
+    )) {
+      const callBody = callMatch[1] || "";
+      const providedKwargs = new Set(
+        [...callBody.matchAll(/\b([A-Za-z_]\w*)\s*=/gu)].map((match) => match[1])
+      );
+      const providedPositionals = countLeadingPythonPositionalArguments(callBody);
+      const missing = selectedCandidate.required
+        .slice(providedPositionals)
+        .filter((parameter) => !providedKwargs.has(parameter));
+      if (missing.length === 0) {
+        continue;
+      }
+
+      const line = source.slice(0, callMatch.index).split(/\r?\n/u).length;
+      return [
+        `Generated Python runner omits required parameter(s): ${missing.join(", ")}.`,
+        `${path.basename(scriptPath)}:${line} can select ${selectedCandidate.name}() via _call_with_compatible_kwargs without supplying them.`,
+        "Pass those required arguments explicitly, choose a callable with a compatible signature, or route through the per-condition runner path before handoff."
+      ].join(" ");
+    }
+  }
+
+  return undefined;
+}
+
+function extractPythonFunctionRequiredParameters(
+  source: string
+): Map<string, { name: string; required: string[]; line: number }> {
+  const definitions = new Map<string, { name: string; required: string[]; line: number }>();
+  for (const match of source.matchAll(
+    /^\s*def\s+([A-Za-z_]\w*)\s*\(([\s\S]*?)\)\s*(?:->\s*[^:\n]+)?\s*:/gmu
+  )) {
+    const name = match[1];
+    const signature = match[2];
+    const required = splitPythonSignatureParameters(signature)
+      .map((parameter) => parameter.trim())
+      .filter((parameter) => parameter.length > 0)
+      .filter((parameter) => !parameter.startsWith("*") && parameter !== "/" && parameter !== "*")
+      .filter((parameter) => !parameter.includes("="))
+      .map((parameter) => parameter.split(":")[0]?.trim() || "")
+      .filter((parameter) => parameter.length > 0 && parameter !== "self" && parameter !== "cls");
+    const line = source.slice(0, match.index).split(/\r?\n/u).length;
+    definitions.set(name, { name, required, line });
+  }
+  return definitions;
+}
+
+function countLeadingPythonPositionalArguments(callBody: string): number {
+  const args = splitPythonSignatureParameters(callBody);
+  let count = 0;
+  for (const arg of args) {
+    const trimmed = arg.trim();
+    if (!trimmed) {
+      continue;
+    }
+    if (/^[A-Za-z_]\w*\s*=/u.test(trimmed)) {
+      break;
+    }
+    count += 1;
+  }
+  return count;
+}
+
+async function detectPythonInvalidInfinityLiteralSurface(scriptPath?: string): Promise<string | undefined> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return undefined;
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  const match = source.match(/float\(\s*["']-["']\s*\)\s*\+\s*["']inf["']/u);
+  if (!match || match.index === undefined) {
+    return undefined;
+  }
+
+  const line = source.slice(0, match.index).split(/\r?\n/u).length;
+  return [
+    "Python runner contains an invalid negative-infinity literal check.",
+    `${path.basename(scriptPath)}:${line} uses float("-") + "inf", which raises ValueError before failure metrics can be written.`,
+    "Use float('-inf'), math.isinf(...), or numeric in (float('inf'), float('-inf')) before handoff."
+  ].join(" ");
+}
+
+async function detectPythonAutolabosCallableFinderClassSelectionSurface(
+  scriptPath?: string
+): Promise<string | undefined> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return undefined;
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  if (
+    !source.includes("def _autolabos_find_callable(") ||
+    !source.includes("globals().items()") ||
+    !source.includes("if not callable(candidate)") ||
+    /inspect\.isclass\s*\(\s*candidate\s*\)/u.test(source)
+  ) {
+    return undefined;
+  }
+
+  const classNames = [...source.matchAll(/^\s*class\s+([A-Za-z_]\w*)\b/gmu)].map((match) => match[1]);
+  if (classNames.length === 0) {
+    return undefined;
+  }
+
+  const preflightClassName = classNames.find((name) => /preflight|attempt|result/iu.test(name));
+  if (
+    !preflightClassName ||
+    !/token_groups\s*=\s*\(\s*\(\s*["']preflight["']/u.test(source) ||
+    !source.includes("preflight_fn = _autolabos_find_callable(")
+  ) {
+    return undefined;
+  }
+
+  const finderLine = source.slice(0, source.indexOf("def _autolabos_find_callable(")).split(/\r?\n/u).length;
+  return [
+    "Python runner callable discovery can select a class instead of an executable preflight function.",
+    `The finder at ${path.basename(scriptPath)}:${finderLine} scans globals() for callable names but does not skip classes; ${preflightClassName} can be chosen before the real preflight helper.`,
+    "Skip inspect.isclass(candidate), restrict token fallback to functions, or prefer explicit preflight function names before handoff."
   ].join(" ");
 }
 

@@ -60,6 +60,19 @@ export interface ExperimentContract {
   /** Metrics the design intends to analyze. */
   metrics?: string[];
 
+  /** Selected design context preserved for downstream review and claim calibration. */
+  selected_design?: {
+    id?: string;
+    title: string;
+    summary?: string;
+  };
+
+  /** Maximum defensible evidence genre/claim level implied by the selected design. */
+  evidence_ceiling?: string;
+
+  /** Paper-readiness ceiling that downstream writing and review must preserve. */
+  paper_ceiling?: string;
+
   /** Minimum results-table structure that downstream analysis must materialize. */
   results_table_schema?: ResultsTableSchema;
 
@@ -82,6 +95,13 @@ export interface BuildExperimentContractInput {
   keepOrDiscardRule: string;
   baselines?: string[];
   metrics?: string[];
+  selectedDesign?: {
+    id?: string;
+    title?: string;
+    summary?: string;
+  };
+  evidenceCeiling?: string;
+  paperCeiling?: string;
   resultsTableDirection?: ResultsTableDirection;
   briefRequiredBaselineCount?: number;
 }
@@ -90,6 +110,10 @@ export function buildExperimentContract(input: BuildExperimentContractInput): Ex
   const additionalChanges = (input.additionalChanges ?? []).filter(Boolean);
   const baselines = (input.baselines ?? []).map((value) => value.trim()).filter(Boolean);
   const metrics = (input.metrics ?? []).map((value) => value.trim()).filter(Boolean);
+  const selectedDesignTitle = input.selectedDesign?.title?.trim();
+  const selectedDesignSummary = input.selectedDesign?.summary?.trim();
+  const evidenceCeiling = input.evidenceCeiling?.trim();
+  const paperCeiling = input.paperCeiling?.trim();
   const resultsTableSchema = buildResultsTableSchema(
     metrics,
     input.resultsTableDirection ?? "higher_better"
@@ -109,6 +133,15 @@ export function buildExperimentContract(input: BuildExperimentContractInput): Ex
     keep_or_discard_rule: input.keepOrDiscardRule || "Keep if objective metric improves; discard otherwise.",
     baselines: baselines.length > 0 ? baselines : undefined,
     metrics: metrics.length > 0 ? metrics : undefined,
+    selected_design: selectedDesignTitle
+      ? {
+          id: input.selectedDesign?.id?.trim() || undefined,
+          title: selectedDesignTitle,
+          summary: selectedDesignSummary || undefined
+        }
+      : undefined,
+    evidence_ceiling: evidenceCeiling || undefined,
+    paper_ceiling: paperCeiling || undefined,
     results_table_schema: resultsTableSchema.length > 0 ? resultsTableSchema : undefined,
     brief_required_baseline_count:
       typeof input.briefRequiredBaselineCount === "number" && input.briefRequiredBaselineCount > 0

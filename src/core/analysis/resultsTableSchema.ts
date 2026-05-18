@@ -23,13 +23,19 @@ export function buildResultsTableSchema(
   return uniqueStrings(metrics)
     .map((metric) => metric.trim())
     .filter(Boolean)
+    .filter(isReportableMetricKey)
     .map((metric) => ({
       metric,
       baseline: null,
       comparator: null,
       delta: null,
-      direction
+      direction: inferMetricDirection(metric, direction)
     }));
+}
+
+function isReportableMetricKey(metric: string): boolean {
+  const wordCount = metric.split(/\s+/u).filter(Boolean).length;
+  return !metric.includes(":") && wordCount <= 6;
 }
 
 export function validateResultsTableSchema(value: unknown): ResultsTableSchemaValidation {
@@ -105,4 +111,19 @@ function normalizeNullableNumber(
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+function inferMetricDirection(
+  metric: string,
+  fallback: ResultsTableDirection
+): ResultsTableDirection {
+  const normalized = metric.toLowerCase().replace(/[_-]+/g, " ");
+  if (
+    /\b(loss|latency|error|errors|runtime|wall clock|elapsed time|memory|vram|ram)\b/u.test(normalized) ||
+    /\b(mismatch|mislabel|incorrect|unsupported|overclaim|false positive|hidden failed|hidden incomplete)\b/u.test(normalized) ||
+    /\b(failure|fail|violation|defect|risk|regression)\s+(count|rate|ratio)\b/u.test(normalized)
+  ) {
+    return "lower_better";
+  }
+  return fallback;
 }

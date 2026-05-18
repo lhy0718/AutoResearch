@@ -145,16 +145,22 @@ function buildStatisticalReview(
     ...(objectiveProfile.preferredMetricKeys || [])
   ]).map((item) => item.toLowerCase());
   const metricMatch = candidate.metrics.some((metric) => preferredMetrics.includes(metric.toLowerCase()));
+  const primaryMetricMatch = candidate.metrics
+    .slice(0, 2)
+    .some((metric) => preferredMetrics.includes(metric.toLowerCase()));
+  const objectiveDrift = isLikelyObjectiveDrift(candidate, objectiveProfile, preferredMetrics, primaryMetricMatch);
   const hardBlock =
     candidate.metrics.length === 0 ||
     candidate.baselines.length === 0 ||
-    candidate.evaluation_steps.length === 0;
+    candidate.evaluation_steps.length === 0 ||
+    objectiveDrift;
   const rawScore =
     2 +
     (candidate.metrics.length > 0 ? 1 : 0) +
     (candidate.baselines.length > 0 ? 1 : 0) +
     (candidate.evaluation_steps.length > 0 ? 1 : 0) +
-    (metricMatch ? 1 : 0);
+    (metricMatch ? 1 : 0) -
+    (objectiveDrift ? 2 : 0);
   return {
     reviewer_id: "statistical_reviewer",
     reviewer_label: "Statistical reviewer",
@@ -162,11 +168,16 @@ function buildStatisticalReview(
     score_1_to_5: clampScore(rawScore),
     hard_block: hardBlock,
     summary: hardBlock
-      ? "The plan cannot support a reliable comparison because metrics, baselines, or evaluation steps are incomplete."
+      ? objectiveDrift
+        ? "The plan drifts from the objective into a reporting-integrity audit and cannot support the requested model-quality comparison."
+        : "The plan cannot support a reliable comparison because metrics, baselines, or evaluation steps are incomplete."
       : metricMatch
         ? "The plan is statistically aligned with the objective metric and comparison requirements."
         : "The plan is viable, but the metric set is only loosely aligned with the objective profile.",
     findings: uniqueStrings([
+      objectiveDrift
+        ? "The primary metric surface is report-gating or claim-integrity focused while the objective is a model-quality metric."
+        : "",
       metricMatch
         ? `Objective-aligned metric found: ${candidate.metrics.find((metric) => preferredMetrics.includes(metric.toLowerCase()))}.`
         : "No explicit objective-aligned metric was found.",
@@ -176,6 +187,49 @@ function buildStatisticalReview(
       candidate.evaluation_steps[0] || ""
     ]).slice(0, 3)
   };
+}
+
+function isLikelyObjectiveDrift(
+  candidate: ExperimentDesignCandidate,
+  objectiveProfile: ObjectiveMetricProfile,
+  preferredMetrics: string[],
+  primaryMetricMatch: boolean
+): boolean {
+  const objectiveText = uniqueStrings([
+    objectiveProfile.primaryMetric || "",
+    objectiveProfile.raw || "",
+    ...preferredMetrics
+  ]).join(" ").toLowerCase().replace(/[_-]+/g, " ");
+  const candidateText = [
+    candidate.title,
+    candidate.plan_summary,
+    candidate.metrics.slice(0, 3).join(" "),
+    candidate.evaluation_steps.slice(0, 2).join(" ")
+  ].join(" ").toLowerCase();
+  const titleSummaryText = [candidate.title, candidate.plan_summary].join(" ").toLowerCase();
+  const modelQualityObjective =
+    /\b(accuracy|pass@?1|f1|auc|rouge|bleu|mmlu|hellaswag|arc|gsm8k|benchmark|score|quality)\b/u.test(objectiveText);
+  const reportingAuditSurface =
+    /\b(report|reporting|renderer|rendering|claim|claims|gating|gate|integrity|mismatch|downgrade|visibility|audit)\b/u.test(candidateText);
+  const explicitlyNotModelQuality =
+    /\bnot\s+a\s+model[- ]quality\s+experiment\b/u.test(candidateText) ||
+    /\bdoes\s+not\s+answer\s+the\s+model[- ]quality\s+hypothesis\b/u.test(candidateText);
+  const modelExperimentSurface =
+    /\b(lora|rank|dropout|factorial|adapter|arc|hellaswag|training condition|train\/eval)\b/u.test(candidateText);
+  const primaryQualityMetric = candidate.metrics
+    .slice(0, 2)
+    .some((metric) => /\b(avg accuracy|mean accuracy|accuracy|f1|auc|rouge|bleu|pass@?1|delta.*baseline)\b/u.test(metric.toLowerCase().replace(/[_-]+/g, " ")));
+  const primaryAuditFraming =
+    /\b(report|reporting|claim|gating|gate|integrity|mismatch|downgrade|audit)\b/u.test(titleSummaryText) &&
+    !primaryQualityMetric;
+
+  return (
+    modelQualityObjective &&
+    reportingAuditSurface &&
+    (explicitlyNotModelQuality ||
+      primaryAuditFraming ||
+      (!modelExperimentSurface && !primaryQualityMetric && !primaryMetricMatch))
+  );
 }
 
 function buildOpsCapacityReview(

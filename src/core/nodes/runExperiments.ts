@@ -610,10 +610,21 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
 
         if (obs.status !== "ok") {
           const policyBlock = extractPolicyBlock(obs);
+          const metricsFailureSummary = policyBlock.blocked
+            ? undefined
+            : await loadFailedMetricsSummary(resolved.metricsPath);
+          const failureStage = metricsFailureSummary ? "metrics" : policyBlock.blocked ? "policy" : "command";
+          const triageStage = failureStage === "metrics" ? "metrics" : "command";
+          const failureSummary = metricsFailureSummary || obs.stderr || "Experiment command failed";
+          const suggestedNextAction = metricsFailureSummary
+            ? "Repair the experiment implementation so metrics.json records completed baseline/comparator execution instead of a top-level failed status."
+            : policyBlock.blocked
+              ? "Replace the blocked run command with a policy-compliant command before retrying."
+              : "Repair the experiment command or runtime dependencies before handing back to the runner.";
           const triage = classifyRunExperimentsFailure({
             attempt: attemptNumber,
-            stage: "command",
-            summary: obs.stderr || "Experiment command failed",
+            stage: triageStage,
+            summary: failureSummary,
             command: primaryCommand,
             cwd: resolved.cwd,
             exitCode: obs.exit_code ?? 1,
@@ -645,8 +656,8 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           const report = buildRunVerifierReport({
             status: "fail",
             trigger,
-            stage: policyBlock.blocked ? "policy" : "command",
-            summary: obs.stderr || "Experiment command failed",
+            stage: failureStage,
+            summary: failureSummary,
             policyRuleId: policyBlock.ruleId,
             policyReason: policyBlock.reason,
             command: primaryCommand,
@@ -654,11 +665,9 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             metricsPath: resolved.metricsPath,
             exitCode: obs.exit_code ?? 1,
             stdout: obs.stdout,
-            stderr: obs.stderr,
+            stderr: failureSummary,
             logFile,
-            suggestedNextAction: policyBlock.blocked
-              ? "Replace the blocked run command with a policy-compliant command before retrying."
-              : "Repair the experiment command or runtime dependencies before handing back to the runner."
+            suggestedNextAction
           });
           deps.eventStream.emit({
             type: "TEST_FAILED",
@@ -667,7 +676,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             agentRole: "runner",
             payload: {
               command: primaryCommand,
-              stderr: obs.stderr || "unknown"
+              stderr: failureSummary
             }
           });
           await persistRunVerifierReport(run, runContext, report);
@@ -676,7 +685,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             cwd: resolved.cwd,
             logFile,
             exitCode: obs.exit_code ?? 1,
-            error: obs.stderr || "Experiment command failed"
+            error: failureSummary
           });
           await persistGovernanceCrash({
             run,
@@ -686,17 +695,17 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             objectiveMetricName: run.objectiveMetric,
             rationale: report.summary,
             resourceUsage: {
-              stage: "command",
+              stage: failureStage,
               command: primaryCommand,
               cwd: resolved.cwd,
               exit_code: obs.exit_code ?? 1,
               log_file: logFile
             }
           });
-          await recordRunFailure(obs.stderr || "Experiment command failed", "structural");
+          await recordRunFailure(failureSummary, "structural");
           return {
             status: "failure",
-            error: obs.stderr || "Experiment command failed",
+            error: failureSummary,
             toolCallsUsed: preflightToolCallsUsed + primaryAttemptsUsed
           };
         }
@@ -1387,10 +1396,16 @@ function detectFailedMetricsPayload(metrics: Record<string, unknown>): string | 
         : undefined;
 
   if (["failed", "failure", "error", "errored"].includes(status)) {
-    return `Experiment metrics payload reports failed status${failureMessage ? `: ${failureMessage}` : "."}`;
+    return appendMetricsFailureEvidence(
+      `Experiment metrics payload reports failed status${failureMessage ? `: ${failureMessage}` : "."}`,
+      metrics
+    );
   }
   if (success === false) {
-    return `Experiment metrics payload reports success=false${failureMessage ? `: ${failureMessage}` : "."}`;
+    return appendMetricsFailureEvidence(
+      `Experiment metrics payload reports success=false${failureMessage ? `: ${failureMessage}` : "."}`,
+      metrics
+    );
   }
   const conditionDependencyBlocker = detectConditionDependencyBlocker(metrics);
   if (conditionDependencyBlocker) {
@@ -1414,6 +1429,54 @@ function detectFailedMetricsPayload(metrics: Record<string, unknown>): string | 
     return `Experiment metrics payload reports failed recipe(s): ${failedRecipeSummaries.join("; ")}.`;
   }
   return null;
+}
+
+async function loadFailedMetricsSummary(metricsPath: string | undefined): Promise<string | undefined> {
+  if (!metricsPath || !(await fileExists(metricsPath))) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(await fs.readFile(metricsPath, "utf8")) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return undefined;
+    }
+    return detectFailedMetricsPayload(parsed as Record<string, unknown>) || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function appendMetricsFailureEvidence(message: string, metrics: Record<string, unknown>): string {
+  const evidence = summarizeMetricsFailureEvidence(metrics);
+  return evidence ? `${message} ${evidence}` : message;
+}
+
+function summarizeMetricsFailureEvidence(metrics: Record<string, unknown>): string {
+  const parts: string[] = [];
+  const requiredConditionCount = asNumber(metrics.required_condition_count);
+  const completedConditionCount = asNumber(metrics.completed_condition_count);
+  if (requiredConditionCount !== undefined && completedConditionCount !== undefined) {
+    parts.push(`completed_condition_count=${completedConditionCount}/${requiredConditionCount}`);
+  }
+
+  const observedConditionCount = asNumber(metrics.observed_condition_count);
+  if (observedConditionCount !== undefined) {
+    parts.push(`observed_condition_count=${observedConditionCount}`);
+  }
+
+  const missingMarkers = Array.isArray(metrics.missing_required_condition_markers)
+    ? metrics.missing_required_condition_markers.filter((marker): marker is string => typeof marker === "string")
+    : [];
+  if (missingMarkers.length > 0) {
+    parts.push(`missing_required_condition_markers=${missingMarkers.slice(0, 8).join(",")}`);
+  }
+
+  const conditionResultsPath = asString(metrics.condition_results_path);
+  if (conditionResultsPath) {
+    parts.push(`condition_results_path=${conditionResultsPath}`);
+  }
+
+  return parts.length > 0 ? `Metrics evidence: ${parts.join("; ")}.` : "";
 }
 
 function detectConditionDependencyBlocker(metrics: Record<string, unknown>): string | null {
