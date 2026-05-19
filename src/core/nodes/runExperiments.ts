@@ -2555,12 +2555,20 @@ function promoteSummaryPrimaryMetric(metrics: Record<string, unknown>): string |
   if (
     typeof topLevelPrimaryMetricKey === "string" &&
     /^[A-Za-z_][A-Za-z0-9_]*$/u.test(topLevelPrimaryMetricKey) &&
-    metrics[topLevelPrimaryMetricKey] === undefined
+    metrics[topLevelPrimaryMetricKey] == null
   ) {
     const topLevelPrimaryMetric = metrics.primary_metric;
     if (typeof topLevelPrimaryMetric === "number" && Number.isFinite(topLevelPrimaryMetric)) {
       metrics[topLevelPrimaryMetricKey] = topLevelPrimaryMetric;
       return `Promoted primary metric ${topLevelPrimaryMetricKey}=${topLevelPrimaryMetric} to top-level metrics before contract evaluation.`;
+    }
+    const conditionSummaryMetric = derivePrimaryMetricFromConditionSummaries(metrics, topLevelPrimaryMetricKey);
+    if (conditionSummaryMetric !== undefined) {
+      metrics[topLevelPrimaryMetricKey] = conditionSummaryMetric;
+      if (typeof metrics.primary_metric_value !== "number" || !Number.isFinite(metrics.primary_metric_value)) {
+        metrics.primary_metric_value = conditionSummaryMetric;
+      }
+      return `Promoted condition-summary primary metric ${topLevelPrimaryMetricKey}=${conditionSummaryMetric} to top-level metrics before contract evaluation.`;
     }
   }
 
@@ -2582,6 +2590,37 @@ function promoteSummaryPrimaryMetric(metrics: Record<string, unknown>): string |
   }
   metrics[primaryMetricKey] = primaryMetric;
   return `Promoted summary primary metric ${primaryMetricKey}=${primaryMetric} to top-level metrics before contract evaluation.`;
+}
+
+function derivePrimaryMetricFromConditionSummaries(
+  metrics: Record<string, unknown>,
+  primaryMetricKey: string
+): number | undefined {
+  const rows = [
+    ...collectConditionRows(metrics.condition_summaries),
+    ...collectConditionRows(metrics.condition_results),
+    ...collectConditionRows(metrics.conditions),
+    ...collectConditionRows(asRecord(metrics.study).condition_summaries),
+    ...collectConditionRows(asRecord(metrics.study).condition_results)
+  ];
+  if (rows.length === 0) {
+    return undefined;
+  }
+  const baselineMarker = asString(metrics.baseline_condition_marker) || "rank_8_dropout_0_0";
+  const candidateRows =
+    primaryMetricKey === "accuracy_delta_vs_baseline"
+      ? rows.filter((row) => {
+          const marker = asString(row.condition_marker) || asString(row.marker);
+          return marker !== baselineMarker;
+        })
+      : rows;
+  const values = (candidateRows.length > 0 ? candidateRows : rows)
+    .map((row) => asNumber(row[primaryMetricKey]))
+    .filter((value): value is number => value !== undefined);
+  if (values.length === 0) {
+    return undefined;
+  }
+  return Math.max(...values);
 }
 
 function countTextOccurrences(text: string, token: string): number {

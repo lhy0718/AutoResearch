@@ -895,6 +895,134 @@ describe("run_experiments execution profile behavior", () => {
     ).toBe(true);
   });
 
+  it("promotes condition summary primary metric when the top-level objective metric is null", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-condition-summary-metric-projection-"));
+    process.chdir(root);
+    const run = makeRun("run-condition-summary-metric-projection");
+    run.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+    await runContext.put(EXPERIMENT_GOVERNANCE_CONTRACT_KEY, {
+      version: 1,
+      run_id: run.id,
+      plan_id: "plan-condition-summary-metric-projection",
+      selected_hypothesis_ids: ["hypothesis-1"],
+      objective_metric_name: run.objectiveMetric,
+      baseline_first_required: true,
+      baseline_candidate_ids: ["baseline"],
+      comparison_mode: "baseline_first_locked",
+      budget_profile: {
+        mode: "single_run_locked",
+        locked: true,
+        timeout_sec: 1800
+      },
+      objective_profile: {
+        source: "test",
+        raw: run.objectiveMetric,
+        primaryMetric: "accuracy_delta_vs_baseline",
+        preferredMetricKeys: ["accuracy_delta_vs_baseline"],
+        direction: "maximize",
+        threshold: 0.01,
+        thresholdOperator: ">="
+      },
+      created_at: new Date().toISOString()
+    });
+
+    const eventStream = new InMemoryEventStream();
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream,
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "completed",
+                primary_metric_key: "accuracy_delta_vs_baseline",
+                primary_metric_value: null,
+                accuracy_delta_vs_baseline: null,
+                completed_run_count: 22,
+                completed_condition_count: 4,
+                baseline_condition_marker: "rank_8_dropout_0_0",
+                condition_summaries: [
+                  {
+                    condition_marker: "rank_8_dropout_0_0",
+                    completed_runs: 7,
+                    accuracy_delta_vs_baseline: 0
+                  },
+                  {
+                    condition_marker: "rank_4_dropout_0_0",
+                    completed_runs: 5,
+                    accuracy_delta_vs_baseline: 0
+                  },
+                  {
+                    condition_marker: "rank_16_dropout_0_0",
+                    completed_runs: 5,
+                    accuracy_delta_vs_baseline: -0.0375
+                  },
+                  {
+                    condition_marker: "rank_32_dropout_0_0",
+                    completed_runs: 5,
+                    accuracy_delta_vs_baseline: -0.0375
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "runner completed",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).not.toBe("failure");
+    const metrics = JSON.parse(await readFile(path.join(runDir, "metrics.json"), "utf8")) as {
+      accuracy_delta_vs_baseline?: number;
+      primary_metric_value?: number;
+    };
+    expect(metrics.accuracy_delta_vs_baseline).toBe(0);
+    expect(metrics.primary_metric_value).toBe(0);
+    expect(
+      eventStream.history().some((event) =>
+        String(event.payload.text || "").includes("Promoted condition-summary primary metric accuracy_delta_vs_baseline=0")
+      )
+    ).toBe(true);
+  });
+
   it("repairs _make_config_instance dataclass aliases before run_experiments execution", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-config-instance-alias-"));
     process.chdir(root);
