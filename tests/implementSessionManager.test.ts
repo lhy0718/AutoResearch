@@ -184,6 +184,7 @@ import {
   repairPythonNamespaceGetNoneDefaultSurface,
   repairPythonRankDropoutMarkerParserCollisionSurface,
   repairPythonImportedHelperRunnerResolverSurface,
+  applyImplementationContractLocalizationGuard,
   applyRunnerFeedbackLocalizationGuard,
   repairPythonStudyInvokeContractKwargSurface,
   repairPythonEntrypointStudyResultKwargAliasSurface,
@@ -2243,6 +2244,118 @@ describe("ImplementSessionManager", () => {
 
     expect(guarded.selected_files[0]).toBe(runner);
     expect(guarded.candidates[0]?.path).toBe(runner);
+  });
+
+  it("pins implementation contract feedback to the canonical public runner before alternate scripts", () => {
+    const workspace = "/tmp/autolabos-contract-focus";
+    const publicDir = path.join(workspace, "outputs", "study", "experiment");
+    const helper = path.join(publicDir, "experiment.py");
+    const studyWrapper = path.join(publicDir, "run_lora_rank_dropout_study.py");
+    const canonicalRunner = path.join(publicDir, "run_lora_rank_dropout_experiment.py");
+    const guarded = applyImplementationContractLocalizationGuard(
+      {
+        context: {
+          implementation_contract_feedback: {
+            source: "implement_experiments",
+            status: "fail",
+            stage: "design_implementation_validation",
+            summary:
+              "Design-to-implementation contract validation failed: PLANNED_CONDITION_COUNT_CONTRACTED; PLANNED_RUN_COUNT_CONTRACTED",
+            stderr_excerpt: "declared=1; required=8; visible=3; required=24",
+            blocking_findings: [
+              {
+                code: "PLANNED_CONDITION_COUNT_CONTRACTED",
+                message: "The implementation declares fewer conditions than the approved design contract.",
+                evidence: "declared=1; required=8"
+              },
+              {
+                code: "PLANNED_RUN_COUNT_CONTRACTED",
+                message: "The implementation exposes fewer condition-by-seed runs than the approved design contract.",
+                evidence: "visible=3; required=24"
+              }
+            ],
+            suggested_next_action: "Expose the full planned grid and seed schedule in the runnable script.",
+            recorded_at: "2026-05-19T00:00:00.000Z"
+          }
+        },
+        workspace: {
+          public_dir: publicDir
+        }
+      } as never,
+      {
+        summary: "Localized to helper and wrapper.",
+        strategy: "search",
+        reasoning: "Matched helper first.",
+        selected_files: [helper, studyWrapper],
+        candidates: [
+          {
+            path: helper,
+            reason: "Matched helper."
+          },
+          {
+            path: studyWrapper,
+            reason: "Matched wrapper."
+          }
+        ],
+        confidence: 0.7
+      },
+      [helper, studyWrapper, canonicalRunner]
+    );
+
+    expect(guarded.selected_files[0]).toBe(canonicalRunner);
+    expect(guarded.candidates[0]?.path).toBe(canonicalRunner);
+    expect(guarded.strategy).toContain("implementation_contract_guard");
+  });
+
+  it("pins planned condition contracts to public runners before paper artifacts", () => {
+    const workspace = "/tmp/autolabos-planned-contract-focus";
+    const publicDir = path.join(workspace, "outputs", "study", "experiment");
+    const paperEvidence = path.join(workspace, "outputs", "study", "paper", "evidence_links.json");
+    const canonicalRunner = path.join(publicDir, "run_lora_rank_dropout_experiment.py");
+    const guarded = applyImplementationContractLocalizationGuard(
+      {
+        context: {
+          planned_condition_contract: {
+            required_condition_count: 8,
+            required_run_count: 24,
+            seed_schedule: [42, 43, 44],
+            baseline_condition_marker: "rank_8_dropout_0_0",
+            required_condition_markers: [
+              "rank_8_dropout_0_0",
+              "rank_4_dropout_0_0",
+              "rank_4_dropout_0_05",
+              "rank_8_dropout_0_05",
+              "rank_16_dropout_0_0",
+              "rank_16_dropout_0_05",
+              "rank_32_dropout_0_0",
+              "rank_32_dropout_0_05"
+            ]
+          }
+        },
+        workspace: {
+          public_dir: publicDir
+        }
+      } as never,
+      {
+        summary: "Search matched paper evidence.",
+        strategy: "search",
+        reasoning: "Matched paper artifact.",
+        selected_files: [paperEvidence],
+        candidates: [
+          {
+            path: paperEvidence,
+            reason: "Matched paper evidence."
+          }
+        ],
+        confidence: 0.9
+      },
+      [canonicalRunner]
+    );
+
+    expect(guarded.selected_files[0]).toBe(canonicalRunner);
+    expect(guarded.selected_files).not.toContain(paperEvidence);
+    expect(guarded.candidates[0]?.path).toBe(canonicalRunner);
+    expect(guarded.reasoning).toContain("planned condition contracts");
   });
 
   it("ignores stale runner feedback after design_experiments reruns", async () => {
@@ -7890,6 +8003,113 @@ describe("ImplementSessionManager", () => {
     expect(capturedPrompt).toContain('"rank_4_dropout_0_05"');
     expect(capturedPrompt).toContain('"rank_32_dropout_0_05"');
     expect(capturedPrompt).not.toContain('"required_condition_count": 5');
+  });
+
+  it("supplements selected-design count contracts with concrete rank/dropout grids from plan constraints", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-p6-grid-constraint-supplement-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "P6 Constraint Supplement Contract Run",
+      topic: "LoRA rank dropout fixed budget",
+      constraints: ["LoRA conditions: rank in `{4, 8, 16, 32}` x dropout in `{0.0, 0.05}`."],
+      objectiveMetric: "accuracy_delta_vs_baseline"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      path.join(runDir, "experiment_plan.yaml"),
+      [
+        "constraints:",
+        "  raw:",
+        '    - "LoRA conditions: rank in `{4, 8, 16, 32}` x dropout in `{0.0, 0.05}`."',
+        '    - "Baseline condition: rank=8, dropout=0.0."',
+        "selected_design:",
+        '  id: "plan_2"',
+        '  title: "Interaction-first analysis with planned mid-rank dropout contrast"',
+        '  summary: "Use the same full 4x2 grid and three-seed evidence floor, but make the primary analysis a planned mid-rank contrast."',
+        "  implementation_notes:",
+        '    - "Paper-scale evidence floor for the local-scope interaction claim: 8 cells x 3 seeds = 24 completed finetune runs."',
+        '    - "Pre-register the primary comparison before running the implementation."'
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(path.join(runDir, "hypotheses.jsonl"), "", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "experiment.py");
+    let capturedPrompt = "";
+    const codex = {
+      runTurnStream: async () => {
+        throw new Error("Codex should not be used when llm_mode=openai_api");
+      }
+    } as unknown as CodexNativeClient;
+    const llm = {
+      complete: async (prompt: string) => {
+        capturedPrompt = prompt;
+        return {
+          text: JSON.stringify({
+            summary: "Implemented a full-grid LoRA contract runner.",
+            run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+            changed_files: [publicScriptPath],
+            artifacts: [publicScriptPath],
+            public_artifacts: [publicScriptPath],
+            script_path: publicScriptPath,
+            metrics_path: path.join(runDir, "metrics.json"),
+            experiment_mode: "real_execution",
+            file_edits: [
+              {
+                path: publicScriptPath,
+                content: [
+                  "PLANNED_CONDITIONS = [",
+                  "  'rank_8_dropout_0_0',",
+                  "  'rank_4_dropout_0_0', 'rank_4_dropout_0_05', 'rank_8_dropout_0_05',",
+                  "  'rank_16_dropout_0_0', 'rank_16_dropout_0_05',",
+                  "  'rank_32_dropout_0_0', 'rank_32_dropout_0_05',",
+                  "]",
+                  "REQUIRED_CONDITION_COUNT = 8",
+                  "REQUIRED_RUN_COUNT = 24",
+                  "SEED_SCHEDULE = [42, 43, 44]",
+                  MINIMAL_METRICS_RUNNER_SOURCE
+                ].join("\n\n")
+              }
+            ]
+          })
+        };
+      }
+    };
+
+    const config = createTestConfig();
+    config.providers.llm_mode = "openai_api";
+    const manager = new ImplementSessionManager({
+      config,
+      codex,
+      llm: llm as any,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await manager.run(run);
+
+    expect(capturedPrompt).toContain('"required_condition_count": 8');
+    expect(capturedPrompt).toContain('"required_run_count": 24');
+    expect(capturedPrompt).toContain('"rank_4_dropout_0_0"');
+    expect(capturedPrompt).toContain('"rank_4_dropout_0_05"');
+    expect(capturedPrompt).toContain('"rank_8_dropout_0_0"');
+    expect(capturedPrompt).toContain('"rank_8_dropout_0_05"');
+    expect(capturedPrompt).toContain('"rank_16_dropout_0_0"');
+    expect(capturedPrompt).toContain('"rank_16_dropout_0_05"');
+    expect(capturedPrompt).toContain('"rank_32_dropout_0_0"');
+    expect(capturedPrompt).toContain('"rank_32_dropout_0_05"');
+    expect(capturedPrompt).not.toContain('"rank_64_dropout_0_1"');
   });
 
   it("uses staged_llm directly when the runtime no longer enters a codex implement turn", async () => {

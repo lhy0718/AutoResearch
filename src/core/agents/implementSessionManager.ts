@@ -673,9 +673,14 @@ export class ImplementSessionManager {
         this.buildLocalizerInput(taskSpec, attemptRecords.at(-1), branchContextFiles)
       );
       const defaultFocusFiles = await buildDefaultImplementFocusFiles(taskSpec);
-      const searchLocalization = applyRunnerFeedbackLocalizationGuard(
+      const runnerGuardedLocalization = applyRunnerFeedbackLocalizationGuard(
         taskSpec,
         rawSearchLocalization,
+        defaultFocusFiles
+      );
+      const searchLocalization = applyImplementationContractLocalizationGuard(
+        taskSpec,
+        runnerGuardedLocalization,
         defaultFocusFiles
       );
       latestSearchLocalization = searchLocalization;
@@ -684,7 +689,14 @@ export class ImplementSessionManager {
         searchLocalization,
         attemptRecords,
         branchContextFiles,
-        defaultFocusFiles
+        defaultFocusFiles,
+        isImplementationScheduleContractRepair(taskSpec)
+          ? {
+              lockFocusToLocalization: true,
+              lockReason:
+                "Design-to-implementation schedule feedback must repair the canonical runnable contract before exploring alternate files."
+            }
+          : undefined
       );
       const isolation = await createAttemptIsolationContext({
         config: this.deps.config,
@@ -1143,7 +1155,8 @@ export class ImplementSessionManager {
       });
 
       const comparisonContract = await loadExperimentComparisonContract(run, runContext);
-      const designImplementationValidation = await validateDesignImplementationAlignment({
+      const designImplementationValidation = enforceUnresolvedImplementationContractFeedback(
+        await validateDesignImplementationAlignment({
         comparisonContract,
         plannedConditionContract: promptTaskSpec.context.planned_condition_contract,
         attempt: {
@@ -1156,7 +1169,9 @@ export class ImplementSessionManager {
           changedFiles: prepared.changedFiles,
           publicArtifacts: prepared.publicArtifacts
         }
-      });
+        }),
+        taskSpec
+      );
       prepared.comparisonContract = comparisonContract;
       finalDesignImplementationValidation = designImplementationValidation;
       if (designImplementationValidation.verdict === "block") {
@@ -2111,7 +2126,9 @@ export class ImplementSessionManager {
         JSON.stringify(promptImplementationContractFeedback, null, 2),
         "",
         "This feedback is a first-stage handoff blocker. Fix it before addressing older runtime feedback.",
-        "The next implementation must expose the full planned condition grid and condition-by-seed run schedule in code and metrics."
+        "The next implementation must expose the full planned condition grid and condition-by-seed run schedule in code and metrics.",
+        "Keep the repair on the canonical public runnable script selected by Branch focus; do not create or shift to alternate experiment.py/run_* branches unless that focused runner imports them as tiny helpers.",
+        "Prefer one public runner plus minimal helper modules over broad multi-file rewrites when the blocker is only PLANNED_CONDITION_COUNT_CONTRACTED or PLANNED_RUN_COUNT_CONTRACTED."
       );
     }
     if (promptPaperCritiqueFeedback) {
@@ -11705,6 +11722,7 @@ function derivePlannedConditionContract(input: {
   objectiveMetric: string;
 }): PlannedConditionContract | undefined {
   const planContractText = extractSelectedDesignContractText(input.plan) || input.plan;
+  const fullContractText = [input.plan, input.brief, input.objectiveMetric].filter(Boolean).join("\n");
   const planText = [planContractText, input.objectiveMetric].filter(Boolean).join("\n");
   const planHasSpecificContract = Boolean(
     input.plan?.trim() &&
@@ -11730,6 +11748,9 @@ function derivePlannedConditionContract(input: {
   for (const marker of rankDropoutMarkers) {
     markers.add(marker);
   }
+  const fallbackRankDropoutMarkers = planHasSpecificContract
+    ? extractRankDropoutConditionMarkers(fullContractText)
+    : [];
   addMarkerIf(text, markers, "unmodified_base", /\bunmodified\s+base\b|\bno[-\s]?tune\b|\buntuned\b/iu);
   addMarkerIf(text, markers, "vanilla_lora", /\bvanilla\s+lora\b|\bstandard\s+lora\b|\bnamed\s+tuned\s+baseline[^\n.]*\blora\b/iu);
   addMarkerIf(text, markers, "rslora", /\brs[-\s]?lora\b/iu);
@@ -11740,12 +11761,24 @@ function derivePlannedConditionContract(input: {
 
   const repeatedRunContract = parseRepeatedSeedRunContract(text);
   const seedSchedule = extractSeedSchedule(text);
-  const exactRankDropoutMarkers = rankDropoutMarkers.length > 0 ? rankDropoutMarkers : undefined;
-  const baselineConditionMarker = extractBaselineRankDropoutMarker(text);
-  const requiredCount =
+  const baselineConditionMarker =
+    extractBaselineRankDropoutMarker(text) ||
+    (planHasSpecificContract ? extractBaselineRankDropoutMarker(fullContractText) : undefined);
+  const requiredCountFromText =
     repeatedRunContract?.cellCount ||
-    (exactRankDropoutMarkers && exactRankDropoutMarkers.length >= 2 ? exactRankDropoutMarkers.length : undefined) ||
     parsePlannedConditionContractCount(text);
+  const exactRankDropoutMarkers =
+    rankDropoutMarkers.length >= 2 && (!requiredCountFromText || rankDropoutMarkers.length === requiredCountFromText)
+      ? rankDropoutMarkers
+      : fallbackRankDropoutMarkers.length >= 2 &&
+          (!requiredCountFromText || fallbackRankDropoutMarkers.length === requiredCountFromText)
+        ? fallbackRankDropoutMarkers
+        : rankDropoutMarkers.length > 0
+          ? rankDropoutMarkers
+          : undefined;
+  const requiredCount =
+    requiredCountFromText ||
+    (exactRankDropoutMarkers && exactRankDropoutMarkers.length >= 2 ? exactRankDropoutMarkers.length : undefined);
   const inferredRepeatedRunCount =
     repeatedRunContract?.runCount ||
     (requiredCount && seedSchedule.length > 1 ? requiredCount * seedSchedule.length : undefined);
@@ -14510,6 +14543,141 @@ export function applyRunnerFeedbackLocalizationGuard(
   };
 }
 
+export function applyImplementationContractLocalizationGuard(
+  taskSpec: ImplementTaskSpec,
+  localization: LocalizationResult,
+  defaultFocusFiles: string[]
+): LocalizationResult {
+  const feedback = taskSpec.context.implementation_contract_feedback;
+  const hasPlannedScheduleContract = hasConcretePlannedConditionContract(taskSpec);
+  if (!isImplementationScheduleContractRepair(taskSpec) && !hasPlannedScheduleContract) {
+    return localization;
+  }
+
+  const publicDir = taskSpec.workspace.public_dir;
+  const feedbackText = [
+    feedback?.summary,
+    feedback?.stderr_excerpt,
+    feedback?.suggested_next_action,
+    taskSpec.context.planned_condition_contract
+      ? JSON.stringify(taskSpec.context.planned_condition_contract)
+      : undefined,
+    ...(feedback?.blocking_findings.flatMap((finding) => [finding.code, finding.message, finding.evidence || ""]) || [])
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join("\n");
+  const publicScriptCandidates = dedupeStrings([
+    ...defaultFocusFiles,
+    ...localization.selected_files,
+    ...localization.candidates.map((candidate) => candidate.path)
+  ])
+    .filter((filePath) => /\.(py|sh|js|mjs|cjs)$/iu.test(filePath))
+    .filter((filePath) => filePath.startsWith(publicDir + path.sep));
+  const runnerFocus = prioritizeImplementationContractFocus(publicScriptCandidates, feedbackText);
+  if (runnerFocus.length === 0) {
+    return localization;
+  }
+
+  const selectedFiles = dedupeStrings([
+    ...runnerFocus,
+    ...localization.selected_files.filter((filePath) => !filePath.includes(`${path.sep}paper${path.sep}`))
+  ]).slice(0, 6);
+  const contractCandidates: LocalizationCandidate[] = runnerFocus.map((filePath) => ({
+    path: filePath,
+    reason:
+      "implement_experiments contract feedback targets the canonical runnable script and its planned condition/run schedule.",
+    confidence: 0.98
+  }));
+
+  return {
+    ...localization,
+    summary: feedback
+      ? "Localized implementation contract feedback to the canonical public experiment runner."
+      : "Localized planned condition contract work to the canonical public experiment runner.",
+    strategy: dedupeStrings(["implementation_contract_guard", localization.strategy || ""])
+      .filter(Boolean)
+      .join("+"),
+    reasoning: [
+      feedback
+        ? "Design-to-implementation contract failures should repair the runnable schedule contract before exploring alternate scripts."
+        : "Concrete planned condition contracts should be implemented in runnable experiment scripts before paper artifacts are edited.",
+      localization.reasoning
+    ]
+      .filter(Boolean)
+      .join(" | "),
+    selected_files: selectedFiles,
+    candidates: mergeLocalizationCandidates([
+      ...contractCandidates,
+      ...localization.candidates.filter((candidate) => !candidate.path.includes(`${path.sep}paper${path.sep}`))
+    ]),
+    confidence: Math.max(localization.confidence || 0, 0.98)
+  };
+}
+
+function hasConcretePlannedConditionContract(taskSpec: ImplementTaskSpec): boolean {
+  const contract = taskSpec.context.planned_condition_contract;
+  if (!contract) {
+    return false;
+  }
+  return Boolean(
+    (contract.required_condition_markers && contract.required_condition_markers.length > 1) ||
+      (contract.required_condition_count && contract.required_condition_count > 1) ||
+      (contract.required_run_count && contract.required_run_count > 1)
+  );
+}
+
+function isImplementationScheduleContractRepair(taskSpec: ImplementTaskSpec): boolean {
+  const feedback = taskSpec.context.implementation_contract_feedback;
+  if (!feedback || feedback.status !== "fail" || feedback.stage !== "design_implementation_validation") {
+    return false;
+  }
+  const text = [
+    feedback.summary,
+    feedback.stderr_excerpt,
+    feedback.suggested_next_action,
+    ...feedback.blocking_findings.flatMap((finding) => [finding.code, finding.message, finding.evidence || ""])
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join("\n");
+  return /\bPLANNED_(?:CONDITION|RUN|SEED)_/u.test(text);
+}
+
+function enforceUnresolvedImplementationContractFeedback(
+  report: ExperimentDesignImplementationValidationReport,
+  taskSpec: ImplementTaskSpec
+): ExperimentDesignImplementationValidationReport {
+  if (
+    report.verdict === "block" ||
+    taskSpec.context.planned_condition_contract ||
+    !isImplementationScheduleContractRepair(taskSpec)
+  ) {
+    return report;
+  }
+
+  return {
+    ...report,
+    verdict: "block",
+    summary:
+      "Design-to-implementation validation blocked handoff because prior planned-condition feedback remains unverifiable without the current planned condition contract.",
+    checked_items: dedupeStrings([
+      ...report.checked_items,
+      "implementation_contract_feedback_resolution"
+    ]),
+    findings: [
+      ...report.findings,
+      {
+        code: "IMPLEMENTATION_CONTRACT_FEEDBACK_UNVERIFIED",
+        severity: "block",
+        message:
+          "A previous implement_experiments contract failure reported planned condition/run contraction, but the current task spec has no planned-condition contract to prove the repair.",
+        evidence:
+          taskSpec.context.implementation_contract_feedback?.summary ||
+          "implementation_contract_feedback present without planned_condition_contract"
+      }
+    ]
+  };
+}
+
 function prioritizeRunnerFeedbackFocus(filePaths: string[], feedbackText: string): string[] {
   const scored = filePaths.map((filePath, index) => {
     const basename = path.basename(filePath);
@@ -14520,6 +14688,25 @@ function prioritizeRunnerFeedbackFocus(filePaths: string[], feedbackText: string
     if (/study|experiment|runner/iu.test(basename)) score += 10;
     if (basename === "experiment.py") score -= 20;
     if (basename === "run_command.sh") score -= 10;
+    return { filePath, index, score };
+  });
+  return scored
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map((entry) => entry.filePath);
+}
+
+function prioritizeImplementationContractFocus(filePaths: string[], feedbackText: string): string[] {
+  const scored = filePaths.map((filePath, index) => {
+    const basename = path.basename(filePath);
+    let score = 0;
+    if (feedbackText.includes(filePath)) score += 100;
+    if (feedbackText.includes(basename)) score += 80;
+    if (/^run_.*experiment.*\.(py|js|mjs|cjs)$/iu.test(basename)) score += 70;
+    if (/^run_.*study.*\.(py|js|mjs|cjs)$/iu.test(basename)) score += 35;
+    if (/^run_.*\.(py|js|mjs|cjs|sh)$/iu.test(basename)) score += 25;
+    if (/study|experiment|runner/iu.test(basename)) score += 10;
+    if (basename === "experiment.py") score -= 25;
+    if (basename === "run_command.sh") score -= 20;
     return { filePath, index, score };
   });
   return scored
@@ -14543,7 +14730,11 @@ function chooseBranchPlan(
   searchLocalization: LocalizationResult,
   attemptRecords: AttemptRecord[],
   changedFiles: string[],
-  defaultFocusFiles: string[]
+  defaultFocusFiles: string[],
+  options?: {
+    lockFocusToLocalization?: boolean;
+    lockReason?: string;
+  }
 ): BranchPlan {
   const focusPool = dedupeStrings([
     ...searchLocalization.selected_files,
@@ -14563,9 +14754,22 @@ function chooseBranchPlan(
         ...defaultFocusFiles
       ]);
   const untried = primaryPool.filter((filePath) => !triedPaths.has(filePath));
+  const lockFocusFiles = primaryPool.slice(0, SEARCH_BRANCH_FOCUS_LIMIT);
+
+  if (options?.lockFocusToLocalization && attemptRecords.length > 0) {
+    return {
+      branch_id: `branch_contract_repair_${attemptRecords.length + 1}`,
+      source: "repair_retry",
+      summary: "Contract repair branch pinned to the canonical runnable implementation.",
+      rationale:
+        options.lockReason ||
+        "Contract feedback requires repairing the selected runnable implementation before exploring alternate candidates.",
+      focus_files: lockFocusFiles,
+      candidate_pool: primaryPool.slice(0, 6)
+    };
+  }
 
   if (attemptRecords.length === 0) {
-    const focusFiles = primaryPool.slice(0, SEARCH_BRANCH_FOCUS_LIMIT);
     return {
       branch_id: "branch_primary",
       source: "search_primary",
@@ -14573,7 +14777,7 @@ function chooseBranchPlan(
       rationale:
         searchLocalization.reasoning ||
         "Use the highest-confidence search-backed candidate files first.",
-      focus_files: focusFiles,
+      focus_files: lockFocusFiles,
       candidate_pool: primaryPool.slice(0, 6)
     };
   }
