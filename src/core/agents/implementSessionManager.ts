@@ -13249,7 +13249,11 @@ function isRecoverableBundleCommandRepairFeedback(report: RunVerifierReport | un
     return false;
   }
   const summary = `${report.summary || ""} ${report.suggested_next_action || ""}`.toLowerCase();
-  return /(?:--metrics-path|metrics path) is required for a live run/u.test(summary);
+  return (
+    /(?:--metrics-path|metrics path) is required for a live run/u.test(summary) ||
+    /unrecognized arguments?:\s+--[a-z0-9_-]+/u.test(summary) ||
+    /unsupported (?:cli )?(?:argument|option|flag)/u.test(summary)
+  );
 }
 
 function normalizeExperimentMode(mode: string | undefined, summary: string | undefined): string {
