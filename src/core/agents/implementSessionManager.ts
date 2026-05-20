@@ -791,6 +791,27 @@ export class ImplementSessionManager {
       );
 
       let result: RunTurnResult;
+      if (isRecoverableBundleCommandRepairFeedback(promptTaskSpec.context.runner_feedback)) {
+        const previousScriptPath = await runContext.get<string>("implement_experiments.script");
+        const previousRunCommand = await runContext.get<string>("implement_experiments.run_command");
+        const preflightWrapperRepair = await repairPublishedRunCommandWrapperBinding({
+          publicDir: isolation.publicDir,
+          scriptPath: previousScriptPath,
+          runCommand: previousRunCommand || "",
+          metricsPath: isolation.metricsPath
+        });
+        if (preflightWrapperRepair.repaired) {
+          attemptChangedFiles.add(preflightWrapperRepair.wrapperPath || path.join(isolation.publicDir, "run_command.sh"));
+          attemptPublicArtifacts.add(preflightWrapperRepair.wrapperPath || path.join(isolation.publicDir, "run_command.sh"));
+          emitImplementObservation("verify", preflightWrapperRepair.message, {
+            attempt,
+            threadId: activeThreadId,
+            publicDir: isolation.publicDir,
+            scriptPath: previousScriptPath,
+            runCommand: previousRunCommand
+          });
+        }
+      }
       const recoveredBeforeTurn = await recoverStructuredResultFromPublicBundle({
         publicDir: isolation.publicDir,
         runDir: isolation.runDir,
@@ -804,10 +825,18 @@ export class ImplementSessionManager {
           Boolean(promptTaskSpec.context.paper_critique_feedback),
         runnerFeedback: promptTaskSpec.context.runner_feedback
       });
-      if (recoveredBeforeTurn && (await hasRecoverableExecutionEvidence(isolation.publicDir, isolation.metricsPath))) {
+      const commandRepairRecovery =
+        Boolean(recoveredBeforeTurn) &&
+        isRecoverableBundleCommandRepairFeedback(promptTaskSpec.context.runner_feedback);
+      if (
+        recoveredBeforeTurn &&
+        (commandRepairRecovery || (await hasRecoverableExecutionEvidence(isolation.publicDir, isolation.metricsPath)))
+      ) {
         emitImplementObservation(
           "codex",
-          "Reused the existing governed experiment bundle and execution evidence instead of re-entering Codex.",
+          commandRepairRecovery
+            ? "Reused the existing governed experiment bundle after deterministic command-wrapper repair instead of re-entering Codex."
+            : "Reused the existing governed experiment bundle and execution evidence instead of re-entering Codex.",
           {
             attempt,
             threadId: activeThreadId,
