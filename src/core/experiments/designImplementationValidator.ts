@@ -207,7 +207,7 @@ export function validateVerificationCommandSurface(input: {
   const checkedItems = ["verification_command_script_binding", "verification_command_metrics_binding"];
   const verificationPaths = extractCommandPaths(input.verificationCommand, input.workingDir);
   const verificationScript = verificationPaths.find((candidate) => isRunnableScript(candidate));
-  const runCommandPaths = extractCommandPaths(input.runCommand, input.workingDir);
+  const runCommandPaths = extractCommandPaths(input.runCommand || "", input.workingDir);
   const runCommandScript = runCommandPaths.find((candidate) => isRunnableScript(candidate));
   const verificationUsesPublishedRunWrapper =
     verificationScript &&

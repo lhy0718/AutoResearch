@@ -9255,6 +9255,8 @@ export class ImplementSessionManager {
       await repairPythonConditionSeedPlanDispatchSurface(executionScriptPath);
     const lockedBaselineFirstExecutionResolverRepair =
       await repairPythonLockedBaselineFirstExecutionResolverSurface(executionScriptPath);
+    const lockedBaselineFirstSweepOrchestratorRepair =
+      await repairPythonLockedBaselineFirstSweepOrchestratorSurface(executionScriptPath);
     const entrypointStudyResultKwargAliasRepair =
       await repairPythonEntrypointStudyResultKwargAliasSurface(executionScriptPath);
     const nestedRunRecordsProjectionRepair =
@@ -9375,6 +9377,7 @@ export class ImplementSessionManager {
         lockedSweepRuntimeKwargBridgeRepair,
         conditionSeedPlanDispatchRepair,
         lockedBaselineFirstExecutionResolverRepair,
+        lockedBaselineFirstSweepOrchestratorRepair,
         entrypointStudyResultKwargAliasRepair,
         nestedRunRecordsProjectionRepair,
         aggregateNestedRawResultRowsRepair,
@@ -39268,6 +39271,50 @@ export async function repairPythonLockedBaselineFirstExecutionResolverSurface(sc
   return {
     repaired: true,
     message: `Added locked baseline-first execution helper aliases in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonLockedBaselineFirstSweepOrchestratorSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    source.includes('"execute_locked_baseline_first_sweep"') ||
+    !source.includes("def execute_locked_baseline_first_sweep(") ||
+    !source.includes("def _orchestrate_study_execution(") ||
+    !source.includes("_attach_baseline_deltas")
+  ) {
+    return { repaired: false };
+  }
+
+  const needle = '            "execute_baseline_first_sweep",\n';
+  if (!source.includes(needle)) {
+    return { repaired: false };
+  }
+
+  const nextSource = source.replace(
+    needle,
+    '            "execute_locked_baseline_first_sweep",\n' + needle
+  );
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added locked baseline-first sweep orchestrator alias in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

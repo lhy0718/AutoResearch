@@ -202,6 +202,7 @@ import {
   repairPythonLockedConditionCountSurface,
   repairPythonConditionSeedPlanDispatchSurface,
   repairPythonLockedBaselineFirstExecutionResolverSurface,
+  repairPythonLockedBaselineFirstSweepOrchestratorSurface,
   repairPublishedRunCommandWrapperBinding,
   resolvePythonVerificationScriptPath,
   selectRecoveredPublicBundleScriptPath,
@@ -14776,6 +14777,86 @@ describe("ImplementSessionManager", () => {
 
     expect(repair.repaired).toBe(true);
     expect(repairedSource).toContain("\"execute_locked_baseline_first_plan\"");
+    const output = execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim();
+    expect(output).toBe("completed");
+  });
+
+  it("repairs locked baseline-first sweep orchestrator aliases before handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-sweep-orchestrator-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "import inspect",
+        "",
+        "def _attach_baseline_deltas(per_seed_results):",
+        "    return {'status': 'wrong_helper'}",
+        "",
+        "def execute_locked_baseline_first_sweep(**kwargs):",
+        "    return {'status': 'completed'}",
+        "",
+        "def _resolve_callable(explicit_names, *, fuzzy_any_tokens=None, fuzzy_all_tokens=None):",
+        "    for name in explicit_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    lowered_explicit = {name.lower() for name in explicit_names}",
+        "    for name, candidate in globals().items():",
+        "        if not callable(candidate):",
+        "            continue",
+        "        lowered_name = name.lower()",
+        "        if lowered_name in lowered_explicit:",
+        "            return candidate",
+        "        if fuzzy_all_tokens and all(token.lower() in lowered_name for token in fuzzy_all_tokens):",
+        "            return candidate",
+        "        if fuzzy_any_tokens and any(token.lower() in lowered_name for token in fuzzy_any_tokens):",
+        "            if not lowered_name.startswith('_'):",
+        "                return candidate",
+        "    return None",
+        "",
+        "def _invoke_with_supported_kwargs(func, *args, **kwargs):",
+        "    signature = inspect.signature(func)",
+        "    supported_kwargs = {key: value for key, value in kwargs.items() if key in signature.parameters}",
+        "    return func(*args, **supported_kwargs)",
+        "",
+        "def _orchestrate_study_execution():",
+        "    orchestrator = _resolve_callable(",
+        "        [",
+        "            \"run_baseline_first_locked_study\",",
+        "            \"run_locked_baseline_first_study\",",
+        "            \"orchestrate_locked_baseline_first_study\",",
+        "            \"execute_baseline_first_sweep\",",
+        "            \"execute_locked_condition_sweep\",",
+        "            \"run_locked_condition_sweep\",",
+        "            \"orchestrate_locked_sweep\",",
+        "            \"run_lora_rank_dropout_study\",",
+        "            \"run_locked_lora_sweep\",",
+        "            \"run_full_locked_study\",",
+        "        ],",
+        "        fuzzy_any_tokens=(\"sweep\", \"orchestrate\", \"study\"),",
+        "        fuzzy_all_tokens=(\"baseline\",),",
+        "    )",
+        "    return _invoke_with_supported_kwargs(orchestrator, condition_specs=['rank_8_dropout_0_0'])",
+        "",
+        "if __name__ == '__main__':",
+        "    print(_orchestrate_study_execution()['status'])",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /per_seed_results/u
+    );
+
+    const repair = await repairPythonLockedBaselineFirstSweepOrchestratorSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("\"execute_locked_baseline_first_sweep\"");
     const output = execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim();
     expect(output).toBe("completed");
   });
