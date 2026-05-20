@@ -688,6 +688,76 @@ describe("run_experiments execution profile behavior", () => {
     expect(result.error).toContain("old stale failure");
   });
 
+  it("archives preexisting failure artifacts before running a fresh experiment command", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-clear-stale-failure-artifact-"));
+    process.chdir(root);
+    const run = makeRun("run-clear-stale-failure-artifact");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(path.join(root, "study_failure.json"), JSON.stringify({ error: "old stale failure" }), "utf8");
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "failed",
+                completed_run_count: 0,
+                completed_condition_count: 0,
+                selected_model: null,
+                per_seed_rows: [
+                  {
+                    condition_marker: "rank_8_dropout_0_0",
+                    seed: 42,
+                    status: "failed",
+                    failure_reason: "missing_row_for_required_condition_seed"
+                  }
+                ],
+                error: "fresh run produced no executable rows"
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return { status: "error" as const, stdout: "", stderr: "", exit_code: 1, duration_ms: 5 };
+        },
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("fresh run produced no executable rows");
+    expect(result.error).toContain("selected_model=null");
+    expect(result.error).toContain("missing_row_for_required_condition_seed");
+    expect(result.error).not.toContain("old stale failure");
+    const backups = await runContext.get<string[]>("run_experiments.previous_failure_artifact_backups");
+    expect(backups).toHaveLength(1);
+    expect(backups?.[0]).toContain("preexisting_study_failure");
+  });
+
   it("repairs runtime-resolved metrics payload builders before run_experiments execution", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-runtime-metrics-repair-"));
     process.chdir(root);

@@ -544,6 +544,21 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
       } else {
         await runContext.put("run_experiments.previous_metrics_backup", null);
       }
+      const previousFailureArtifactBackups = await clearPreexistingExperimentFailureArtifacts(run, resolved.cwd);
+      if (previousFailureArtifactBackups.length > 0) {
+        deps.eventStream.emit({
+          type: "OBS_RECEIVED",
+          runId: run.id,
+          node: "run_experiments",
+          agentRole: "runner",
+          payload: {
+            text: `Archived stale experiment failure artifact(s) before execution to ${previousFailureArtifactBackups.join(", ")}.`
+          }
+        });
+        await runContext.put("run_experiments.previous_failure_artifact_backups", previousFailureArtifactBackups);
+      } else {
+        await runContext.put("run_experiments.previous_failure_artifact_backups", null);
+      }
       watchdog = createRunExperimentsWatchdogState({
         metricsPath: resolved.metricsPath,
         previousMetricsBackup,
@@ -1585,6 +1600,14 @@ function summarizeMetricsFailureEvidence(metrics: Record<string, unknown>): stri
     parts.push(`failure_count=${failureCount}`);
   }
 
+  if (Object.prototype.hasOwnProperty.call(metrics, "selected_model") && metrics.selected_model == null) {
+    parts.push("selected_model=null");
+  }
+  const selectedModelId = asString(metrics.selected_model_id);
+  if (selectedModelId) {
+    parts.push(`selected_model_id=${trimShort(selectedModelId, 120)}`);
+  }
+
   const directErrorMessage = typeof metrics.error === "string" && metrics.error.trim()
     ? metrics.error.trim()
     : undefined;
@@ -1626,8 +1649,13 @@ function summarizeSeedFailureMessages(metrics: Record<string, unknown>): string[
   const studySummary = asRecord(metrics.study_summary);
   const seedRows = [
     ...collectConditionRows(metrics.seed_results),
+    ...collectConditionRows(metrics.per_seed_rows),
     ...collectConditionRows(metrics.per_seed_results),
+    ...collectConditionRows(metrics.condition_seed_rows),
+    ...collectConditionRows(metrics.per_run_results),
+    ...collectConditionRows(metrics.run_results),
     ...collectConditionRows(study.seed_results),
+    ...collectConditionRows(study.per_seed_rows),
     ...collectConditionRows(studySummary.seed_results)
   ];
   const counts = new Map<string, number>();
@@ -2268,6 +2296,32 @@ async function clearPreexistingMetricsOutput(
   );
   await fs.unlink(metricsPath);
   return backupPath;
+}
+
+async function clearPreexistingExperimentFailureArtifacts(
+  run: Parameters<typeof writeRunArtifact>[0],
+  artifactDir: string | undefined
+): Promise<string[]> {
+  if (!artifactDir) {
+    return [];
+  }
+
+  const backups: string[] = [];
+  for (const fileName of ["study_failure.json", "study_failures.json"]) {
+    const filePath = path.join(artifactDir, fileName);
+    if (!(await fileExists(filePath))) {
+      continue;
+    }
+    const existingArtifact = await fs.readFile(filePath, "utf8");
+    const backupPath = await writeRunArtifact(
+      run,
+      `exec_logs/preexisting_${fileName.replace(/\.json$/u, "")}_${Date.now()}.json`,
+      existingArtifact
+    );
+    await fs.unlink(filePath);
+    backups.push(backupPath);
+  }
+  return backups;
 }
 
 function isManagedStandardRunCommand(command: string): boolean {

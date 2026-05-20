@@ -182,6 +182,7 @@ import {
   repairPythonCommandTokensNamespaceSurface,
   repairPythonOptionalPathArgDefaultsSurface,
   repairPythonNamespaceGetNoneDefaultSurface,
+  repairPythonInvalidInfinityLiteralSurface,
   repairPythonRankDropoutMarkerParserCollisionSurface,
   repairPythonImportedHelperRunnerResolverSurface,
   applyImplementationContractLocalizationGuard,
@@ -203,6 +204,7 @@ import {
   repairPythonConditionSeedPlanDispatchSurface,
   repairPythonLockedBaselineFirstExecutionResolverSurface,
   repairPythonLockedBaselineFirstSweepOrchestratorSurface,
+  repairPythonFinalCliLockedGridResolverSurface,
   repairPublishedRunCommandWrapperBinding,
   resolvePythonVerificationScriptPath,
   selectRecoveredPublicBundleScriptPath,
@@ -12070,6 +12072,89 @@ describe("ImplementSessionManager", () => {
     expect(JSON.parse(output)).toEqual({ schedule_path: "public/execution_schedule.json" });
   });
 
+  it("repairs _study_get helpers so argparse None paths fall back to defaults", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-study-get-none-default-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "import argparse",
+        "from pathlib import Path",
+        "from typing import Any, Mapping",
+        "",
+        "DEFAULT_PER_RUN_ROWS_PATH = Path('results') / 'condition_seed_rows.jsonl'",
+        "",
+        "def _study_get(args: Any, key: str, default: Any = None) -> Any:",
+        "    if args is None:",
+        "        return default",
+        "    if isinstance(args, Mapping):",
+        "        return args.get(key, default)",
+        "    return getattr(args, key, default)",
+        "",
+        "def main() -> int:",
+        "    args = argparse.Namespace(per_run_rows_path=None)",
+        "    per_run_rows_path = Path(_study_get(args, 'per_run_rows_path', DEFAULT_PER_RUN_ROWS_PATH))",
+        "    print(per_run_rows_path)",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/NoneType/);
+
+    const repair = await repairPythonNamespaceGetNoneDefaultSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def _study_get(args: Any, key: str, default: Any = None) -> Any:");
+    expect(repairedSource).toContain("return default if value in (None, \"\") else value");
+    const output = execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim();
+    expect(output).toBe("results/condition_seed_rows.jsonl");
+  });
+
+  it("repairs invalid negative infinity literal checks before metrics serialization", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-invalid-infinity-literal-repair-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "def _to_jsonable(value):",
+        "    if value == float(\"-\") + float(\"inf\"):",
+        "        return None",
+        "    return value",
+        "",
+        "def main() -> int:",
+        "    print(_to_jsonable('safe'))",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/could not convert string to float/);
+
+    const repair = await repairPythonInvalidInfinityLiteralSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("float('-inf')");
+    const output = execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim();
+    expect(output).toBe("safe");
+  });
+
   it("repairs duplicate rank/dropout marker parsers that mix tuple and dict return contracts", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-rank-dropout-marker-parser-repair-"));
     tempDirs.push(workspace);
@@ -14859,6 +14944,143 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("\"execute_locked_baseline_first_sweep\"");
     const output = execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim();
     expect(output).toBe("completed");
+  });
+
+  it("prioritizes final CLI orchestration and locked grid executors before helper resolvers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-final-cli-locked-grid-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "import argparse",
+        "import inspect",
+        "import json",
+        "from typing import Any, Dict, List, Tuple",
+        "",
+        "def run_baseline_first_locked_grid(args=None, **kwargs):",
+        "    return {",
+        "        'status': 'completed',",
+        "        'condition_seed_rows': [",
+        "            {'condition_marker': 'rank_8_dropout_0_0', 'seed': 42, 'status': 'completed', 'average_accuracy': 0.5}",
+        "        ],",
+        "    }",
+        "",
+        "def _build_experiment_invocation_option_pool_for_cli(args=None):",
+        "    return {'stage': 'wrong_helper'}",
+        "",
+        "def _resolve_core_experiment_callable_for_cli() -> Any:",
+        "    candidate_names = (",
+        "        \"run_locked_lora_rank_dropout_study\",",
+        "        \"run_locked_lora_study\",",
+        "        \"run_baseline_first_experiment\",",
+        "    )",
+        "    for candidate_name in candidate_names:",
+        "        candidate = globals().get(candidate_name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    fuzzy_matches: List[Tuple[int, str, Any]] = []",
+        "    for name, candidate in globals().items():",
+        "        if not callable(candidate):",
+        "            continue",
+        "        lowered = str(name).lower()",
+        "        score = 100",
+        "        if 'lora' in lowered and ('study' in lowered or 'experiment' in lowered):",
+        "            score = 2",
+        "        if score < 100:",
+        "            fuzzy_matches.append((score, str(name), candidate))",
+        "    if fuzzy_matches:",
+        "        fuzzy_matches.sort(key=lambda item: (item[0], item[1]))",
+        "        return fuzzy_matches[0][2]",
+        "    raise RuntimeError('Unable to resolve core experiment callable')",
+        "",
+        "def _invoke_experiment_callable_for_cli(experiment_callable: Any, option_pool: Dict[str, Any]) -> Any:",
+        "    signature = inspect.signature(experiment_callable)",
+        "    kwargs = {key: value for key, value in option_pool.items() if key in signature.parameters}",
+        "    return experiment_callable(**kwargs)",
+        "",
+        "def orchestrate_experiment_run(args: argparse.Namespace) -> Dict[str, Any]:",
+        "    option_pool = {'args': args}",
+        "    experiment_callable = _resolve_core_experiment_callable_for_cli()",
+        "    return _invoke_experiment_callable_for_cli(experiment_callable, option_pool)",
+        "",
+        "def _call_callable_with_optional_single_argument(func: Any, argument: Any) -> Any:",
+        "    signature = inspect.signature(func)",
+        "    required = [",
+        "        parameter",
+        "        for parameter in signature.parameters.values()",
+        "        if parameter.default is inspect._empty",
+        "        and parameter.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)",
+        "    ]",
+        "    if len(required) <= 1:",
+        "        return func(argument)",
+        "    return func()",
+        "",
+        "def _parse_cli_args_for_entrypoint(argv=None):",
+        "    return argparse.Namespace()",
+        "",
+        "def _invoke_cli_orchestrator(args: Any) -> Any:",
+        "    candidate_names = (",
+        "        \"_run_cli_orchestration\",",
+        "        \"run_cli_orchestration\",",
+        "        \"run_cli_experiment\",",
+        "    )",
+        "    for name in candidate_names:",
+        "        func = globals().get(name)",
+        "        if callable(func):",
+        "            return _call_callable_with_optional_single_argument(func, args)",
+        "    heuristic_candidates: List[Tuple[str, Any]] = []",
+        "    for name, func in globals().items():",
+        "        if not callable(func):",
+        "            continue",
+        "        if name in {",
+        "            \"main\",",
+        "            \"_invoke_cli_orchestrator\",",
+        "            \"_parse_cli_args_for_entrypoint\",",
+        "            \"_assemble_final_metrics\",",
+        "            \"_persist_metrics_outputs\",",
+        "        }:",
+        "            continue",
+        "        lowered = name.lower()",
+        "        if 'cli' in lowered or 'orchestr' in lowered or 'experiment' in lowered or 'study' in lowered:",
+        "            heuristic_candidates.append((name, func))",
+        "    for _, func in sorted(heuristic_candidates, key=lambda item: item[0]):",
+        "        try:",
+        "            return _call_callable_with_optional_single_argument(func, args)",
+        "        except TypeError:",
+        "            continue",
+        "    raise RuntimeError('No CLI orchestration function was found in the experiment runner.')",
+        "",
+        "def main():",
+        "    payload = _invoke_cli_orchestrator(_parse_cli_args_for_entrypoint())",
+        "    print(json.dumps(payload, sort_keys=True))",
+        "",
+        "if __name__ == '__main__':",
+        "    main()",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const before = JSON.parse(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }));
+    expect(before).toEqual({ stage: "wrong_helper" });
+
+    const repair = await repairPythonFinalCliLockedGridResolverSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain('"orchestrate_experiment_run"');
+    expect(repairedSource).toContain('"run_baseline_first_locked_grid"');
+    expect(repairedSource).toContain('"_resolve_core_experiment_callable_for_cli"');
+    const after = JSON.parse(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }));
+    expect(after.condition_seed_rows).toHaveLength(1);
+    expect(after.condition_seed_rows[0]).toMatchObject({
+      condition_marker: "rank_8_dropout_0_0",
+      seed: 42,
+      status: "completed"
+    });
   });
 
   it("materializes runtime inputs for ordered condition collectors", async () => {

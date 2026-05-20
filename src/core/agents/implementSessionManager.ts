@@ -6687,6 +6687,51 @@ export class ImplementSessionManager {
       }
     }
 
+    const invalidInfinityLiteralRepair =
+      await repairPythonInvalidInfinityLiteralSurface(executionScriptPath);
+    if (invalidInfinityLiteralRepair.repaired) {
+      onProgress?.(
+        invalidInfinityLiteralRepair.message ||
+          "Repaired invalid Python infinity literal handling before handoff.",
+        {
+          verificationCommand: command
+        }
+      );
+      this.deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId,
+        node: "implement_experiments",
+        agentRole: "implementer",
+        payload: {
+          text:
+            invalidInfinityLiteralRepair.message ||
+            "Repaired invalid Python infinity literal handling before handoff."
+        }
+      });
+      const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
+      const repairedReport = summarizeVerification(command, attempt.workingDir, repairedObs, attempt.localization);
+      if (repairedReport.status === "fail") {
+        this.deps.eventStream.emit({
+          type: "TEST_FAILED",
+          runId,
+          node: "implement_experiments",
+          agentRole: "implementer",
+          payload: {
+            command,
+            cwd: attempt.workingDir,
+            failure_type: repairedReport.failure_type,
+            stderr: repairedReport.stderr_excerpt || repairedReport.summary,
+            attempt: attemptNumber
+          }
+        });
+        onProgress?.(repairedReport.summary, {
+          verificationCommand: command,
+          verifyStatus: repairedReport.status
+        });
+        return repairedReport;
+      }
+    }
+
     const rankDropoutMarkerParserCollisionRepair =
       await repairPythonRankDropoutMarkerParserCollisionSurface(executionScriptPath);
     if (rankDropoutMarkerParserCollisionRepair.repaired) {
@@ -9257,6 +9302,8 @@ export class ImplementSessionManager {
       await repairPythonLockedBaselineFirstExecutionResolverSurface(executionScriptPath);
     const lockedBaselineFirstSweepOrchestratorRepair =
       await repairPythonLockedBaselineFirstSweepOrchestratorSurface(executionScriptPath);
+    const finalCliLockedGridResolverRepair =
+      await repairPythonFinalCliLockedGridResolverSurface(executionScriptPath);
     const entrypointStudyResultKwargAliasRepair =
       await repairPythonEntrypointStudyResultKwargAliasSurface(executionScriptPath);
     const nestedRunRecordsProjectionRepair =
@@ -9378,6 +9425,7 @@ export class ImplementSessionManager {
         conditionSeedPlanDispatchRepair,
         lockedBaselineFirstExecutionResolverRepair,
         lockedBaselineFirstSweepOrchestratorRepair,
+        finalCliLockedGridResolverRepair,
         entrypointStudyResultKwargAliasRepair,
         nestedRunRecordsProjectionRepair,
         aggregateNestedRawResultRowsRepair,
@@ -36129,7 +36177,10 @@ export async function repairPythonNamespaceGetNoneDefaultSurface(scriptPath?: st
     return { repaired: false };
   }
 
-  if (!source.includes("def _namespace_get(") || source.includes("_autolabos_namespace_get_none_default_marker")) {
+  if (
+    (!source.includes("def _namespace_get(") && !source.includes("def _study_get(")) ||
+    source.includes("_autolabos_namespace_get_none_default_marker")
+  ) {
     return { repaired: false };
   }
 
@@ -36159,6 +36210,21 @@ export async function repairPythonNamespaceGetNoneDefaultSurface(scriptPath?: st
     ].join("\n")
   );
 
+  nextSource = nextSource.replace(
+    /def _study_get\(args: Any, key: str, default: Any = None\) -> Any:\n    if args is None:\n        return default\n    if isinstance\(args, Mapping\):\n        return args\.get\(key, default\)\n    return getattr\(args, key, default\)/gu,
+    [
+      "def _study_get(args: Any, key: str, default: Any = None) -> Any:",
+      "    _autolabos_namespace_get_none_default_marker = True",
+      "    if args is None:",
+      "        return default",
+      "    if isinstance(args, Mapping):",
+      "        value = args.get(key, default)",
+      "    else:",
+      "        value = getattr(args, key, default)",
+      "    return default if value in (None, \"\") else value"
+    ].join("\n")
+  );
+
   if (nextSource === source) {
     return { repaired: false };
   }
@@ -36167,6 +36233,36 @@ export async function repairPythonNamespaceGetNoneDefaultSurface(scriptPath?: st
   return {
     repaired: true,
     message: `Made _namespace_get defaults None-safe in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonInvalidInfinityLiteralSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  let nextSource = source
+    .replace(/float\(\s*["']-["']\s*\)\s*\+\s*float\(\s*["']inf["']\s*\)/gu, "float('-inf')")
+    .replace(/float\(\s*["']-["']\s*\)\s*\+\s*["']inf["']/gu, "float('-inf')");
+
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Repaired invalid negative-infinity literal checks in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
@@ -39315,6 +39411,93 @@ export async function repairPythonLockedBaselineFirstSweepOrchestratorSurface(sc
   return {
     repaired: true,
     message: `Added locked baseline-first sweep orchestrator alias in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonFinalCliLockedGridResolverSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    !source.includes("def _invoke_cli_orchestrator(") ||
+    !source.includes("def orchestrate_experiment_run(") ||
+    !source.includes("def _resolve_core_experiment_callable_for_cli(") ||
+    !source.includes("def run_baseline_first_locked_grid(")
+  ) {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  let nextSource = source;
+
+  const cliNamesNeedle =
+    "    candidate_names = (\n" +
+    '        "_run_cli_orchestration",\n';
+  if (
+    nextSource.includes(cliNamesNeedle) &&
+    !/candidate_names\s*=\s*\(\s*\n\s*"orchestrate_experiment_run"/u.test(nextSource)
+  ) {
+    nextSource = nextSource.replace(
+      cliNamesNeedle,
+      "    candidate_names = (\n" +
+        '        "orchestrate_experiment_run",\n' +
+        '        "_run_cli_orchestration",\n'
+    );
+    repaired = true;
+  }
+
+  const coreNamesNeedle =
+    "    candidate_names = (\n" +
+    '        "run_locked_lora_rank_dropout_study",\n';
+  if (
+    nextSource.includes(coreNamesNeedle) &&
+    !/candidate_names\s*=\s*\(\s*\n\s*"run_baseline_first_locked_grid"/u.test(nextSource)
+  ) {
+    nextSource = nextSource.replace(
+      coreNamesNeedle,
+      "    candidate_names = (\n" +
+        '        "run_baseline_first_locked_grid",\n' +
+        '        "run_locked_lora_rank_dropout_study",\n'
+    );
+    repaired = true;
+  }
+
+  const heuristicExcludeNeedle =
+    '            "_parse_cli_args_for_entrypoint",\n';
+  if (
+    nextSource.includes(heuristicExcludeNeedle) &&
+    !nextSource.includes('"_resolve_core_experiment_callable_for_cli",')
+  ) {
+    nextSource = nextSource.replace(
+      heuristicExcludeNeedle,
+      heuristicExcludeNeedle +
+        '            "_resolve_core_experiment_callable_for_cli",\n' +
+        '            "_invoke_experiment_callable_for_cli",\n' +
+        '            "_build_experiment_invocation_option_pool_for_cli",\n' +
+        '            "_normalize_core_execution_payload_for_cli",\n'
+    );
+    repaired = true;
+  }
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Prioritized final CLI orchestration and locked grid executor resolution in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
