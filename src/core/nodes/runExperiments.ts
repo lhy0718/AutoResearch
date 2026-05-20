@@ -1299,13 +1299,22 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         JSON.stringify(matrixTrialGroups, null, 2)
       );
       await writeRunArtifact(run, "run_manifest.json", JSON.stringify(runManifest, null, 2));
+      const publicSummaryProjection = await materializeRunExperimentPublicSummaryProjection({
+        run,
+        metrics: parsedMetrics,
+        objectiveEvaluation,
+        metricsPath: resolved.metricsPath,
+        command: primaryCommand,
+        cwd: resolved.cwd
+      });
       const publicOutputs = await publishRunExperimentOutputs({
         workspaceRoot: process.cwd(),
         run,
         runContext,
         metricsPath: resolved.metricsPath,
         supplementalPlan: managedSupplementalPlan,
-        matrixTrialGroups
+        matrixTrialGroups,
+        publicSummaryProjection
       });
 
       deps.eventStream.emit({
@@ -2926,6 +2935,90 @@ async function persistGovernanceCrash(input: {
   });
 }
 
+async function materializeRunExperimentPublicSummaryProjection(input: {
+  run: Parameters<typeof writeRunArtifact>[0];
+  metrics: Record<string, unknown>;
+  objectiveEvaluation: ObjectiveMetricEvaluation;
+  metricsPath: string;
+  command: string;
+  cwd?: string;
+}): Promise<{
+  summaryPath: string;
+  studySummaryPath: string;
+}> {
+  const bestCondition = asRecord(input.metrics.best_condition);
+  const summary = {
+    version: 1,
+    source: "run_experiments",
+    projection_source: "metrics.json",
+    status: asString(input.metrics.status) || "completed",
+    objective: {
+      raw_objective_metric: input.objectiveEvaluation.rawObjectiveMetric,
+      primary_metric_key:
+        input.objectiveEvaluation.matchedMetricKey ||
+        input.objectiveEvaluation.primaryMetric ||
+        asString(input.metrics.primary_metric_key) ||
+        null,
+      observed_value:
+        input.objectiveEvaluation.observedValue ??
+        asNumber(input.metrics.primary_metric_value) ??
+        null,
+      status: input.objectiveEvaluation.status,
+      summary: input.objectiveEvaluation.summary
+    },
+    metrics_path: input.metricsPath,
+    command: input.command,
+    cwd: input.cwd || null,
+    completed_run_count: asNumber(input.metrics.completed_run_count) ?? null,
+    required_run_count: asNumber(input.metrics.required_run_count) ?? null,
+    attempted_run_count: asNumber(input.metrics.attempted_run_count) ?? null,
+    failed_run_count: asNumber(input.metrics.failed_run_count) ?? null,
+    completed_condition_count: asNumber(input.metrics.completed_condition_count) ?? null,
+    required_condition_count: asNumber(input.metrics.required_condition_count) ?? null,
+    primary_metric_key:
+      asString(input.metrics.primary_metric_key) ||
+      input.objectiveEvaluation.matchedMetricKey ||
+      input.objectiveEvaluation.primaryMetric ||
+      null,
+    primary_metric_value:
+      asNumber(input.metrics.primary_metric_value) ??
+      input.objectiveEvaluation.observedValue ??
+      null,
+    accuracy_delta_vs_baseline: asNumber(input.metrics.accuracy_delta_vs_baseline) ?? null,
+    average_accuracy: asNumber(input.metrics.average_accuracy) ?? null,
+    baseline_average_accuracy: asNumber(input.metrics.baseline_average_accuracy) ?? null,
+    best_condition_marker:
+      asString(bestCondition.condition_marker) ||
+      asString(bestCondition.marker) ||
+      null,
+    best_condition_accuracy_delta_vs_baseline:
+      asNumber(bestCondition.accuracy_delta_vs_baseline) ?? null,
+    condition_summaries: Array.isArray(input.metrics.condition_summaries)
+      ? input.metrics.condition_summaries
+      : []
+  };
+  const studySummary = {
+    ...summary,
+    study_status: summary.status,
+    baseline_condition_marker: asString(input.metrics.baseline_condition_marker) || null,
+    seed_count: asNumber(input.metrics.seed_count) ?? null,
+    successful_seed_count: asNumber(input.metrics.successful_seed_count) ?? null,
+    failed_seed_count: asNumber(input.metrics.failed_seed_count) ?? null
+  };
+
+  const summaryPath = await writeRunArtifact(
+    input.run,
+    "run_experiments_public_summary.json",
+    JSON.stringify(summary, null, 2)
+  );
+  const studySummaryPath = await writeRunArtifact(
+    input.run,
+    "run_experiments_public_study_summary.json",
+    JSON.stringify(studySummary, null, 2)
+  );
+  return { summaryPath, studySummaryPath };
+}
+
 async function publishRunExperimentOutputs(input: {
   workspaceRoot: string;
   run: Parameters<typeof writeRunArtifact>[0];
@@ -2933,6 +3026,10 @@ async function publishRunExperimentOutputs(input: {
   metricsPath: string;
   supplementalPlan?: ManagedSupplementalPlan;
   matrixTrialGroups?: BuildExperimentRunManifestTrialGroupExecution[];
+  publicSummaryProjection?: {
+    summaryPath: string;
+    studySummaryPath: string;
+  };
 }): Promise<PublishPublicRunOutputsResult> {
   const runDir = path.join(input.workspaceRoot, ".autolabos", "runs", input.run.id);
   const files: Array<{
@@ -2996,6 +3093,20 @@ async function publishRunExperimentOutputs(input: {
         optional: true
       });
     }
+  }
+  if (input.publicSummaryProjection) {
+    files.push(
+      {
+        sourcePath: input.publicSummaryProjection.summaryPath,
+        targetRelativePath: "summary.json",
+        optional: true
+      },
+      {
+        sourcePath: input.publicSummaryProjection.studySummaryPath,
+        targetRelativePath: "study_summary.json",
+        optional: true
+      }
+    );
   }
 
   return publishPublicRunOutputs({

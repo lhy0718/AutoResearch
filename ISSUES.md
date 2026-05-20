@@ -7118,7 +7118,7 @@ Path placeholders:
   - `<validation-workspace>/.autolabos/runs/238eadcd-c672-4e81-a6b9-6ae0db4ba6cb/events.jsonl`
   - `<validation-workspace>/outputs/retrieval-augmented-feature-block-impact-on-macr-238eadcd/experiment/run_retrieval_feature_block_experiment.py`
 
-## Issue: LV-323
+## Issue: LV-441
 
 - Status: repair implemented; same-flow live revalidation pending after P0-8 AGB-001 same-flow TUI reproduction on 2026-05-02
 - Validation target: `implement_experiments` local handoff verification should reconcile generated dataset loader/fallback helper names before `run_experiments`.
@@ -19597,6 +19597,60 @@ The resolved entries below are kept as recent validation history and regression 
   - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/exec_logs/run_experiments.txt`
   - `.autolabos/runs/73050f85-6b56-4385-8c31-2ec69a5b7dec/metrics.json`
   - `outputs/identify-which-lightweight-parameter-efficient-i-73050f85/experiment/run_peft_instruction_study.py`
+
+## Issue: LV-323
+
+- Status: repair implemented; same-flow live revalidation passed on 2026-05-21
+- Validation target: public experiment summaries must match the accepted run-scoped `metrics.json` after `run_experiments`, even when the generated runner leaves stale `summary.json` or `study_summary.json` files in the public experiment directory.
+- Environment/session context:
+  - validation workspace: `<validation-workspace>`
+  - run: `3bc89107-909f-4315-9340-d75ce02eb0e0`
+  - node: `run_experiments`
+  - experiment: LoRA rank/dropout fixed-budget instruction-tuning validation
+
+- Reproduction steps:
+  1. Rerun `implement_experiments` after the previous runner-helper failure feedback.
+  2. Rerun `run_experiments` from the same validation workspace.
+  3. Compare run-scoped `.autolabos/runs/<run-id>/metrics.json` with public `outputs/<slug>/experiment/summary.json` and `study_summary.json`.
+
+- Expected behavior:
+  - Public summaries should project the accepted run metrics and report `source=run_experiments`, `status=completed`, `completed_run_count=24`, `failed_run_count=0`, and `objective.status=not_met`.
+  - Stale generated runner summaries should not remain as the public-facing status once the runner has completed successfully.
+
+- Actual behavior:
+  - `run_experiments` completed successfully and `.autolabos/runs/<run-id>/metrics.json` showed `completed_run_count=24`, `completed_condition_count=8`, and `failed_run_count=0`.
+  - Public `summary.json` and `study_summary.json` still reported stale failure state with `completed_run_count=0`.
+  - The run result itself was scientifically negative: `accuracy_delta_vs_baseline=0`, so the objective was not met.
+
+- Fresh vs existing session comparison:
+  - Fresh session: not separately started; the issue was reproduced in the same live validation workspace and persisted artifacts.
+  - Existing session: same run state exposed the mismatch between run-scoped metrics and public summaries.
+  - Divergence: dominant root-cause class `persisted_state_bug`; stale public artifacts disagreed with the accepted source-of-truth metrics.
+
+- Root cause hypothesis:
+  - `run_experiments` copied `metrics.json` and verifier artifacts to the public experiment section, but did not overwrite runner-owned `summary.json` / `study_summary.json` with a canonical projection from accepted metrics.
+
+- Code/test changes:
+  - `src/core/nodes/runExperiments.ts`
+    - added a canonical `run_experiments` public summary projection from accepted metrics and objective evaluation.
+    - publishes that projection as public `summary.json` and `study_summary.json`.
+  - `tests/runExperimentsExecutionProfile.test.ts`
+    - added regression coverage for stale public summaries being replaced by accepted metrics.
+
+- Regression status:
+  - Automated targeted regression: pass on 2026-05-21 with `npm test -- --run tests/runExperimentsExecutionProfile.test.ts -t "canonical public summaries"`.
+  - Build: pass on 2026-05-21 with `npm run build`.
+  - Same-flow live revalidation: pass on 2026-05-21. Re-running `run_experiments` updated public `summary.json` and `study_summary.json` to `source=run_experiments`, `status=completed`, `completed_run_count=24`, `failed_run_count=0`, and `objective.status=not_met`.
+
+- Follow-up risks:
+  - The experiment completed but did not meet the objective. Review/analyze nodes must treat this as a negative or weak-result run, not as a paper-ready LoRA rank/dropout claim.
+  - Evaluation accuracy fields are still null in the accepted metrics, so downstream review should block or downgrade paper claims until evaluation evidence is adequate.
+
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/metrics.json`
+  - `<validation-workspace>/.autolabos/runs/3bc89107-909f-4315-9340-d75ce02eb0e0/run_experiments_verify_report.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/summary.json`
+  - `<validation-workspace>/outputs/lora-rank-and-dropout-under-fixed-budget-instruc-3bc89107/experiment/study_summary.json`
 
 ## Issue: LV-322
 

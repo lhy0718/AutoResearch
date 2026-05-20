@@ -9234,6 +9234,8 @@ export class ImplementSessionManager {
       await repairPythonLockedSweepPlanBuilderAliasSurface(executionScriptPath);
     const baselineFirstLockedSweepStudyRunnerAliasRepair =
       await repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurface(executionScriptPath);
+    const entrypointLockedConditionSeedSweepCandidateRepair =
+      await repairPythonEntrypointLockedConditionSeedSweepCandidateSurface(executionScriptPath);
     const fallbackBoundedFinetuningConditionRunnerRepair =
       await repairPythonFallbackBoundedFinetuningConditionRunnerSurface(executionScriptPath);
     const orchestrationTrainEvalConditionBridgeRepair =
@@ -9391,6 +9393,7 @@ export class ImplementSessionManager {
         baselineFirstSweepEntrypointAliasRepair,
         lockedSweepPlanBuilderAliasRepair,
         baselineFirstLockedSweepStudyRunnerAliasRepair,
+        entrypointLockedConditionSeedSweepCandidateRepair,
         fallbackBoundedFinetuningConditionRunnerRepair,
         orchestrationTrainEvalConditionBridgeRepair,
         lockedConditionSingleRunnerBridgeRepair,
@@ -28923,6 +28926,9 @@ export async function repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurfac
   const hasRuntimeOptionsRunnerResolver =
     source.includes("def _invoke_study_runner(options: RuntimeOptions)") &&
     source.includes("Unable to locate the study execution function in the current module");
+  const hasLockedStudyOrchestratorResolver =
+    source.includes("Could not locate a locked-study orchestrator helper in the current script globals") &&
+    source.includes("run_full_locked_study");
   const sweepTargetName = [
     "run_baseline_first_condition_sweep",
     "execute_baseline_first_condition_sweep",
@@ -28931,7 +28937,17 @@ export async function repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurfac
     "run_baseline_first_locked_sweep",
     "run_locked_baseline_first_sweep",
     "execute_locked_baseline_first_sweep",
-    "execute_baseline_first_locked_sweep"
+    "execute_baseline_first_locked_sweep",
+    "run_baseline_first_locked_grid",
+    "run_locked_rank_dropout_sweep",
+    "execute_locked_rank_dropout_sweep",
+    "run_locked_lora_rank_dropout_sweep",
+    "execute_locked_lora_rank_dropout_sweep",
+    "run_locked_full_sweep",
+    "execute_locked_full_sweep",
+    "orchestrate_locked_full_sweep",
+    "collect_locked_execution_records",
+    "collect_locked_per_run_records"
   ].find((name) => source.includes(`def ${name}(`));
 
   if (
@@ -28939,7 +28955,8 @@ export async function repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurfac
       !hasAutolabosRunnerResolver &&
       !hasStage3bRunnerResolver &&
       !hasChunk3bRunnerResolver &&
-      !hasRuntimeOptionsRunnerResolver
+      !hasRuntimeOptionsRunnerResolver &&
+      !hasLockedStudyOrchestratorResolver
     ) ||
     !sweepTargetName ||
     source.includes("_autolabos_baseline_first_locked_sweep_study_runner_alias_marker")
@@ -28953,6 +28970,14 @@ export async function repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurfac
       ? source.match(/\ndef\s+_stage3b_resolve_study_callable\s*\(/u)
       : hasRuntimeOptionsRunnerResolver
         ? source.match(/\ndef\s+_invoke_study_runner\s*\(/u)
+        : hasLockedStudyOrchestratorResolver
+          ? (
+              source.match(/\ndef\s+_resolve_locked_study_orchestrator\s*\(/u) ||
+              source.match(/\ndef\s+_find_locked_study_orchestrator\s*\(/u) ||
+              source.match(/\ndef\s+_lookup_locked_study_orchestrator\s*\(/u) ||
+              source.match(/\ndef\s+_run_locked_study_orchestrator\s*\(/u) ||
+              source.match(/\ndef\s+main\s*\(/u)
+            )
         : source.match(/\ndef\s+main\s*\(/u);
   if (!insertionMatch || insertionMatch.index === undefined) {
     return { repaired: false };
@@ -29057,6 +29082,11 @@ export async function repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurfac
     "    \"execute_governed_study\",",
     "    \"run_locked_rank_dropout_study\",",
     "    \"run_locked_study\",",
+    "    \"run_locked_experiment\",",
+    "    \"execute_locked_experiment\",",
+    "    \"orchestrate_locked_study\",",
+    "    \"run_full_locked_study\",",
+    "    \"run_full_experiment\",",
     "    \"run_condition_sweep\",",
     "    \"execute_condition_sweep\",",
     "    \"run_study\",",
@@ -29077,6 +29107,69 @@ export async function repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurfac
   return {
     repaired: true,
     message: `Aliased baseline-first locked sweep helper into final AutoLabOS study runner names in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonEntrypointLockedConditionSeedSweepCandidateSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_entrypoint_locked_condition_seed_sweep_candidate_marker";
+  const hasEntrypointCandidateList = source.includes("ENTRYPOINT_SWEEP_HELPER_CANDIDATES");
+  const hasCompatibleLockedSweep =
+    source.includes("def execute_locked_condition_seed_sweep(") ||
+    source.includes("def run_locked_sweep(") ||
+    source.includes("run_locked_sweep = execute_locked_condition_seed_sweep");
+  const hasFallbackSingleRunFailure =
+    source.includes("No compatible single-run helper was found in the canonical runner");
+
+  if (
+    source.includes(marker) ||
+    !hasEntrypointCandidateList ||
+    !hasCompatibleLockedSweep ||
+    !hasFallbackSingleRunFailure
+  ) {
+    return { repaired: false };
+  }
+
+  const tupleStart = source.match(/ENTRYPOINT_SWEEP_HELPER_CANDIDATES:\s*Tuple\[str,\s*\.\.\.\]\s*=\s*\(\n/u);
+  if (!tupleStart || tupleStart.index === undefined) {
+    return { repaired: false };
+  }
+
+  const insertionIndex = tupleStart.index + tupleStart[0].length;
+  const missingCandidates = [
+    "execute_locked_condition_seed_sweep",
+    "run_locked_condition_seed_sweep",
+    "run_locked_sweep",
+    "execute_locked_sweep",
+    "run_baseline_first_locked_sweep"
+  ].filter((candidate) => !source.includes(JSON.stringify(candidate)));
+
+  if (missingCandidates.length === 0) {
+    return { repaired: false };
+  }
+
+  const candidateBlock = [
+    `    # ${marker}`,
+    ...missingCandidates.map((candidate) => `    ${JSON.stringify(candidate)},`)
+  ].join("\n") + "\n";
+
+  const nextSource = `${source.slice(0, insertionIndex)}${candidateBlock}${source.slice(insertionIndex)}`;
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added locked condition-seed sweep entrypoint candidates in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

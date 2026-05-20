@@ -98,6 +98,7 @@ import {
   repairPythonBaselineFirstSweepEntrypointAliasSurface,
   repairPythonLockedSweepPlanBuilderAliasSurface,
   repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurface,
+  repairPythonEntrypointLockedConditionSeedSweepCandidateSurface,
   repairPythonFallbackBoundedFinetuningConditionRunnerSurface,
   repairPythonOrchestrationTrainEvalConditionBridgeSurface,
   repairPythonLockedConditionSingleRunnerBridgeSurface,
@@ -24461,6 +24462,146 @@ describe("ImplementSessionManager", () => {
       max_train_samples: 3,
       max_eval_samples_per_task: 2
     });
+  });
+
+  it("aliases locked-study orchestrator helper names to generated locked rank/dropout sweeps", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-study-orchestrator-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "import argparse",
+        "import inspect",
+        "import json",
+        "from pathlib import Path",
+        "",
+        "def execute_locked_rank_dropout_sweep(args=None, **kwargs):",
+        "    payload = {",
+        "        'status': 'completed',",
+        "        'runner': 'execute_locked_rank_dropout_sweep',",
+        "        'metrics_path': str(getattr(args, 'metrics_path', kwargs.get('metrics_path', None))),",
+        "        'required_condition_markers': list(kwargs.get('required_condition_markers') or []),",
+        "    }",
+        "    Path('locked-orchestrator-executed.json').write_text(json.dumps(payload), encoding='utf-8')",
+        "    return payload",
+        "",
+        "def _resolve_locked_study_orchestrator():",
+        "    candidate_names = (",
+        "        'run_locked_lora_rank_dropout_study',",
+        "        'run_locked_study',",
+        "        'execute_locked_study',",
+        "        'run_locked_experiment',",
+        "        'execute_locked_experiment',",
+        "        'orchestrate_locked_study',",
+        "        'run_full_locked_study',",
+        "        'run_full_experiment',",
+        "        'run_experiment',",
+        "    )",
+        "    for name in candidate_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    raise RuntimeError(",
+        "        'Could not locate a locked-study orchestrator helper in the current script globals. '",
+        "        f\"Tried: {', '.join(candidate_names)}\"",
+        "    )",
+        "",
+        "def _invoke(fn, args):",
+        "    signature = inspect.signature(fn)",
+        "    kwargs = {'args': args, 'metrics_path': args.metrics_path, 'required_condition_markers': ('rank_8_dropout_0_0',)}",
+        "    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()):",
+        "        return fn(**kwargs)",
+        "    return fn(args)",
+        "",
+        "def main():",
+        "    args = argparse.Namespace(metrics_path='metrics.json')",
+        "    result = _invoke(_resolve_locked_study_orchestrator(), args)",
+        "    return 0 if result.get('status') == 'completed' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /Could not locate a locked-study orchestrator helper/
+    );
+
+    const repair = await repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_baseline_first_locked_sweep_study_runner_alias_marker");
+    expect(repairedSource).toContain("run_full_locked_study");
+    expect(repairedSource).toContain("execute_locked_rank_dropout_sweep");
+    execFileSync("python3", [scriptPath], { cwd: workspace });
+    expect(JSON.parse(readFileSync(path.join(workspace, "locked-orchestrator-executed.json"), "utf8"))).toMatchObject({
+      status: "completed",
+      runner: "execute_locked_rank_dropout_sweep",
+      metrics_path: "metrics.json",
+      required_condition_markers: ["rank_8_dropout_0_0"]
+    });
+  });
+
+  it("adds generated locked condition-seed sweep functions to entrypoint sweep candidates", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-entrypoint-locked-condition-seed-candidates-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "",
+        "from typing import Tuple",
+        "",
+        "ENTRYPOINT_SWEEP_HELPER_CANDIDATES: Tuple[str, ...] = (",
+        "    'run_locked_lora_rank_dropout_study',",
+        "    'run_locked_rank_dropout_study',",
+        "    'run_rank_dropout_sweep',",
+        ")",
+        "",
+        "def _resolve_callable(candidate_names):",
+        "    for name in candidate_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def execute_locked_condition_seed_sweep(args=None, **kwargs):",
+        "    return {'success': True, 'runner': 'execute_locked_condition_seed_sweep'}",
+        "",
+        "run_locked_sweep = execute_locked_condition_seed_sweep",
+        "",
+        "def _entrypoint_run_fallback_locked_sweep(args, device):",
+        "    return {'success': False, 'error': 'No compatible single-run helper was found in the canonical runner.'}",
+        "",
+        "def main():",
+        "    sweep_fn = _resolve_callable(ENTRYPOINT_SWEEP_HELPER_CANDIDATES)",
+        "    result = sweep_fn(args='args') if callable(sweep_fn) else _entrypoint_run_fallback_locked_sweep('args', 'cpu')",
+        "    return 0 if result.get('runner') == 'execute_locked_condition_seed_sweep' else 1",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow();
+
+    const repair = await repairPythonEntrypointLockedConditionSeedSweepCandidateSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_entrypoint_locked_condition_seed_sweep_candidate_marker");
+    expect(repairedSource).toContain('"execute_locked_condition_seed_sweep"');
+    expect(repairedSource).toContain('"run_locked_sweep"');
+    execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
   it("bridges generated bounded finetuning helpers into fallback condition runners", async () => {

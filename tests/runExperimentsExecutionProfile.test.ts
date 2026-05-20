@@ -7,6 +7,7 @@ import { InMemoryEventStream } from "../src/core/events.js";
 import { MockLLMClient } from "../src/core/llm/client.js";
 import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 import { createRunExperimentsNode } from "../src/core/nodes/runExperiments.js";
+import { buildPublicSectionDir } from "../src/core/publicArtifacts.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { EXPERIMENT_GOVERNANCE_CONTRACT_KEY } from "../src/core/experimentGovernance.js";
 import { RunRecord } from "../src/types.js";
@@ -1157,6 +1158,121 @@ describe("run_experiments execution profile behavior", () => {
         String(event.payload.text || "").includes("Promoted condition-summary primary metric accuracy_delta_vs_baseline=0")
       )
     ).toBe(true);
+  });
+
+  it("publishes canonical public summaries from accepted run metrics instead of stale runner summaries", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-public-summary-sync-"));
+    process.chdir(root);
+    const run = makeRun("run-public-summary-sync");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    const publicExperimentDir = buildPublicSectionDir(root, run, "experiment");
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await mkdir(publicExperimentDir, { recursive: true });
+    await writeFile(
+      path.join(publicExperimentDir, "summary.json"),
+      JSON.stringify({ status: "failed", completed_run_count: 0, required_run_count: 24 }, null, 2),
+      "utf8"
+    );
+    await writeFile(
+      path.join(publicExperimentDir, "study_summary.json"),
+      JSON.stringify({ status: "failed", completed_run_count: 0, required_run_count: 24 }, null, 2),
+      "utf8"
+    );
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "completed",
+                accuracy: 0.95,
+                completed_run_count: 24,
+                required_run_count: 24,
+                attempted_run_count: 24,
+                failed_run_count: 0,
+                completed_condition_count: 8,
+                required_condition_count: 8,
+                accuracy_delta_vs_baseline: 0,
+                condition_summaries: [
+                  {
+                    condition_marker: "rank_8_dropout_0_0",
+                    completed_runs: 3,
+                    accuracy_delta_vs_baseline: 0
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "runner completed",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const publicSummary = JSON.parse(await readFile(path.join(publicExperimentDir, "summary.json"), "utf8")) as {
+      source?: string;
+      completed_run_count?: number;
+      required_run_count?: number;
+      failed_run_count?: number;
+    };
+    const publicStudySummary = JSON.parse(
+      await readFile(path.join(publicExperimentDir, "study_summary.json"), "utf8")
+    ) as {
+      source?: string;
+      completed_run_count?: number;
+      required_run_count?: number;
+      completed_condition_count?: number;
+    };
+    expect(publicSummary).toMatchObject({
+      source: "run_experiments",
+      completed_run_count: 24,
+      required_run_count: 24,
+      failed_run_count: 0
+    });
+    expect(publicStudySummary).toMatchObject({
+      source: "run_experiments",
+      completed_run_count: 24,
+      required_run_count: 24,
+      completed_condition_count: 8
+    });
   });
 
   it("repairs _make_config_instance dataclass aliases before run_experiments execution", async () => {
