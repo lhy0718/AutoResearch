@@ -2416,6 +2416,12 @@ function buildStructuredResultsTable(
   }
 
   if (metricRows.size === 0) {
+    for (const row of deriveMetricTableComparisonRows(report, direction)) {
+      metricRows.set(row.metric, row);
+    }
+  }
+
+  if (metricRows.size === 0) {
     return (contractSchema ?? [])
       .map((row) => ({
         metric: row.metric,
@@ -2448,6 +2454,56 @@ function buildStructuredResultsTable(
   });
 
   return rows.filter((row) => row.metric.trim().length > 0);
+}
+
+function deriveMetricTableComparisonRows(
+  report: AnalysisReport,
+  direction: ResultsTableDirection
+): ResultsTableSchema {
+  const values = new Map<string, number>();
+  for (const metric of report.metric_table ?? []) {
+    if (typeof metric.key === "string" && typeof metric.value === "number" && Number.isFinite(metric.value)) {
+      values.set(metric.key, metric.value);
+    }
+  }
+
+  const rows: ResultsTableSchema = [];
+  const baselineAverage = values.get("baseline_average_accuracy");
+  const bestAverage = values.get("best_condition_average_accuracy");
+  const matchedMetric = report.overview?.matched_metric_key?.trim();
+  if (baselineAverage !== undefined && bestAverage !== undefined) {
+    rows.push({
+      metric: matchedMetric || "average_accuracy",
+      baseline: baselineAverage,
+      comparator: bestAverage,
+      delta: Number((bestAverage - baselineAverage).toFixed(6)),
+      direction
+    });
+  }
+
+  for (const [key, baseline] of values.entries()) {
+    if (!key.startsWith("baseline_")) {
+      continue;
+    }
+    const suffix = key.slice("baseline_".length);
+    const comparator = values.get(`best_condition_${suffix}`);
+    if (comparator === undefined) {
+      continue;
+    }
+    const metricName = suffix || key;
+    if (rows.some((row) => row.metric === metricName || row.metric === matchedMetric)) {
+      continue;
+    }
+    rows.push({
+      metric: metricName,
+      baseline,
+      comparator,
+      delta: Number((comparator - baseline).toFixed(6)),
+      direction
+    });
+  }
+
+  return rows;
 }
 
 function resolveResultsTableDirection(report: AnalysisReport): ResultsTableDirection {

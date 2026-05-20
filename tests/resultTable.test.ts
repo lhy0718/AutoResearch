@@ -145,4 +145,53 @@ describe("buildResultTable", () => {
     });
     expect(validation.rows[0]?.delta).toBeCloseTo(0.05, 6);
   });
+
+  it("derives a complete primary results_table row from metric_table baseline and best-condition aggregates", async () => {
+    const mod = await import("../src/core/nodes/analyzeResults.js");
+
+    const report: Partial<AnalysisReport> = {
+      condition_comparisons: [],
+      metric_table: [
+        { key: "accuracy_delta_vs_baseline", value: 0.000868 },
+        { key: "best_condition_average_accuracy", value: 0.592014 },
+        { key: "baseline_average_accuracy", value: 0.591146 }
+      ],
+      objective_metric: {
+        raw: "accuracy_delta_vs_baseline",
+        evaluation: { status: "not_met" },
+        profile: { primary_metric: "accuracy_delta_vs_baseline" }
+      } as AnalysisReport["objective_metric"],
+      overview: {
+        objective_status: "not_met",
+        objective_summary: "Objective metric not met",
+        matched_metric_key: "accuracy_delta_vs_baseline",
+        execution_runs: 1
+      }
+    };
+
+    const validation = mod.buildResultsTableValidation({
+      report: report as AnalysisReport,
+      experimentContract: {
+        results_table_schema: [
+          {
+            metric: "accuracy_delta_vs_baseline",
+            baseline: null,
+            comparator: null,
+            delta: null,
+            direction: "higher_better"
+          }
+        ]
+      }
+    });
+
+    expect(validation.valid).toBe(true);
+    expect(validation.issues).toHaveLength(0);
+    expect(validation.rows[0]).toMatchObject({
+      metric: "accuracy_delta_vs_baseline",
+      baseline: 0.591146,
+      comparator: 0.592014,
+      direction: "higher_better"
+    });
+    expect(validation.rows[0]?.delta).toBeCloseTo(0.000868, 6);
+  });
 });
