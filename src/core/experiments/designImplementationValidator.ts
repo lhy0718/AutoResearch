@@ -54,7 +54,7 @@ export async function validateDesignImplementationAlignment(input: {
   const commandPaths = extractCommandPaths(input.attempt.runCommand, input.attempt.workingDir);
   const testCommandPaths = extractCommandPaths(input.attempt.testCommand || "", input.attempt.workingDir);
   const allCommandPaths = dedupeStrings([...commandPaths, ...testCommandPaths]);
-  const scriptText = await safeReadText(input.attempt.scriptPath);
+  const scriptText = await readImplementationSurfaceText(input.attempt.scriptPath);
 
   checkedItems.push("run_command_paths");
   if (input.attempt.scriptPath) {
@@ -435,6 +435,24 @@ async function safeReadText(filePath: string | undefined): Promise<string> {
   } catch {
     return "";
   }
+}
+
+async function readImplementationSurfaceText(scriptPath: string | undefined): Promise<string> {
+  const directText = await safeReadText(scriptPath);
+  if (!scriptPath || !/\.sh$/iu.test(scriptPath) || !directText) {
+    return directText;
+  }
+  const wrapperDir = path.dirname(scriptPath);
+  const referencedPaths = extractCommandPaths(directText, wrapperDir)
+    .filter((candidate) => !samePath(candidate, scriptPath) && isRunnableScript(candidate));
+  const targetTexts: string[] = [];
+  for (const referencedPath of referencedPaths) {
+    const targetText = await safeReadText(referencedPath);
+    if (targetText) {
+      targetTexts.push(targetText);
+    }
+  }
+  return [directText, ...targetTexts].join("\n");
 }
 
 function extractCommandPaths(command: string, cwd: string): string[] {

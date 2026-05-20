@@ -203,6 +203,85 @@ describe("validateDesignImplementationAlignment", () => {
     expect(report.checked_items).toContain("public_run_command_wrapper_binding");
   });
 
+  it("uses a shell wrapper target runner as the planned-condition implementation surface", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-wrapper-surface-"));
+    tempDirs.push(workspace);
+    const publicDir = path.join(workspace, "outputs", "experiment");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "run_lora_rank_dropout_experiment.py");
+    const wrapperPath = path.join(publicDir, "run_command.sh");
+    const metricsPath = path.join(workspace, ".autolabos", "runs", "run-wrapper-surface", "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "BASELINE_CONDITION_MARKER = 'rank_8_dropout_0_0'",
+        "REQUIRED_SEEDS = (42, 43, 44)",
+        "REQUIRED_CONDITION_MARKERS = (",
+        "  'rank_8_dropout_0_0', 'rank_4_dropout_0_0', 'rank_4_dropout_0_05',",
+        "  'rank_8_dropout_0_05', 'rank_16_dropout_0_0', 'rank_16_dropout_0_05',",
+        "  'rank_32_dropout_0_0', 'rank_32_dropout_0_05',",
+        ")",
+        "REQUIRED_CONDITION_COUNT = 8",
+        "REQUIRED_RUN_COUNT = 24",
+        "print('baseline and adaptive evaluation')"
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      wrapperPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
+        'exec python "${SCRIPT_DIR}/run_lora_rank_dropout_experiment.py" --metrics-path "${PWD}/metrics.json"'
+      ].join("\n"),
+      "utf8"
+    );
+
+    const contract = buildExperimentComparisonContract({
+      run: { id: "run-wrapper-surface", objectiveMetric: "accuracy_delta_vs_baseline" },
+      selectedDesign: {
+        id: "design-wrapper-surface",
+        hypothesis_ids: ["h1"],
+        baselines: ["greedy_direct"]
+      },
+      objectiveProfile: buildHeuristicObjectiveMetricProfile("accuracy_delta_vs_baseline"),
+      managedBundleSupported: false
+    });
+
+    const report = await validateDesignImplementationAlignment({
+      comparisonContract: contract,
+      plannedConditionContract: {
+        required_condition_count: 8,
+        required_run_count: 24,
+        seed_schedule: [42, 43, 44],
+        baseline_condition_marker: "rank_8_dropout_0_0",
+        required_condition_markers: [
+          "rank_8_dropout_0_0",
+          "rank_4_dropout_0_0",
+          "rank_4_dropout_0_05",
+          "rank_8_dropout_0_05",
+          "rank_16_dropout_0_0",
+          "rank_16_dropout_0_05",
+          "rank_32_dropout_0_0",
+          "rank_32_dropout_0_05"
+        ]
+      },
+      attempt: {
+        runCommand: `bash ${JSON.stringify(wrapperPath)}`,
+        scriptPath: wrapperPath,
+        metricsPath,
+        workingDir: publicDir,
+        publicDir,
+        changedFiles: [wrapperPath, scriptPath],
+        publicArtifacts: [wrapperPath, scriptPath]
+      }
+    });
+
+    expect(report.verdict).toBe("allow");
+    expect(report.findings.filter((finding) => finding.severity === "block")).toEqual([]);
+  });
+
   it("blocks when a published run_command.sh still launches a stale runner", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-public-wrapper-stale-"));
     tempDirs.push(workspace);
