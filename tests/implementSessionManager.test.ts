@@ -2272,12 +2272,14 @@ describe("ImplementSessionManager", () => {
     const repair = await repairPublishedRunCommandWrapperBinding({
       publicDir,
       scriptPath,
-      runCommand: `python ${JSON.stringify(scriptPath)} --output-dir ${JSON.stringify(publicDir)} --metrics-path ${JSON.stringify(metricsPath)}`
+      runCommand: `bash ${JSON.stringify(wrapperPath)}`,
+      metricsPath
     });
 
     expect(repair.repaired).toBe(true);
     const repairedWrapper = readFileSync(wrapperPath, "utf8");
-    expect(repairedWrapper).toContain('python "${SCRIPT_DIR}/run_lora_rank_dropout_experiment.py"');
+    expect(repairedWrapper).toContain('RUNNER="${SCRIPT_DIR}/run_lora_rank_dropout_experiment.py"');
+    expect(repairedWrapper).toContain('exec "${PYTHON_BIN:-python3}" "$RUNNER" \\');
     expect(repairedWrapper).not.toContain("run_lora_rank_dropout_study.py");
     expect(repairedWrapper).toContain(JSON.stringify(metricsPath));
   });

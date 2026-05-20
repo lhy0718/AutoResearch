@@ -13291,6 +13291,7 @@ export async function repairPublishedRunCommandWrapperBinding(
     publicDir: string;
     scriptPath?: string;
     runCommand: string;
+    metricsPath?: string;
   }
 ): Promise<{ repaired: boolean; wrapperPath?: string; message: string }> {
   if (!attempt.publicDir || !attempt.scriptPath || !attempt.runCommand) {
@@ -13308,27 +13309,33 @@ export async function repairPublishedRunCommandWrapperBinding(
     };
   }
 
-  const scriptReference = `\${SCRIPT_DIR}/${path.basename(attempt.scriptPath)}`;
-  const wrapperRunCommand = rewriteCommandScriptPath(
-    attempt.runCommand,
-    attempt.scriptPath,
-    scriptReference
-  );
-  if (wrapperRunCommand === attempt.runCommand && !attempt.runCommand.includes(attempt.scriptPath)) {
-    return {
-      repaired: false,
-      wrapperPath,
-      message: "Public run_command.sh was not rewritten because run_command does not expose script_path."
-    };
-  }
+  const defaultMetricsPath = attempt.metricsPath || path.join(attempt.publicDir, "metrics.json");
+  const scriptText = await safeRead(attempt.scriptPath);
+  const metricsArgument = scriptText.includes("--metrics-path")
+    ? '  --metrics-path "$METRICS_PATH" \\'
+    : '  "$METRICS_PATH" \\';
 
   const content = [
     "#!/usr/bin/env bash",
     "set -euo pipefail",
     "",
     'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
+    `RUNNER="\${SCRIPT_DIR}/${path.basename(attempt.scriptPath)}"`,
+    `DEFAULT_METRICS_PATH=${JSON.stringify(defaultMetricsPath)}`,
+    'METRICS_PATH="${1:-$DEFAULT_METRICS_PATH}"',
+    'if [[ $# -gt 0 && "${1#--}" != "$1" ]]; then',
+    '  METRICS_PATH="$DEFAULT_METRICS_PATH"',
+    "else",
+    "  if [[ $# -gt 0 ]]; then",
+    "    shift",
+    "  fi",
+    "fi",
     "",
-    wrapperRunCommand,
+    'mkdir -p "$(dirname "$METRICS_PATH")"',
+    "",
+    'exec "${PYTHON_BIN:-python3}" "$RUNNER" \\',
+    metricsArgument,
+    '  "$@"',
     ""
   ].join("\n");
 
