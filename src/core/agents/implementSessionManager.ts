@@ -4424,11 +4424,13 @@ export class ImplementSessionManager {
         this.deps.workspaceRoot,
         verificationWorkspaceRoot
       ) || attempt.workingDir;
-    const executionScriptPath = rewriteWorkspacePathsForExecution(
+    let executionScriptPath = rewriteWorkspacePathsForExecution(
       attempt.scriptPath,
       this.deps.workspaceRoot,
       verificationWorkspaceRoot
     );
+    executionScriptPath =
+      (await resolvePythonVerificationScriptPath(executionScriptPath)) || executionScriptPath;
 
     const pythonUnfilledSections = await detectPythonUnfilledAutolabosSections(executionScriptPath);
     if (pythonUnfilledSections) {
@@ -9852,6 +9854,97 @@ async function detectPythonUnfilledAutolabosSections(scriptPath?: string): Promi
     visible ? `Unfilled or unstripped section marker(s): ${visible}.` : "Unfilled section markers are present.",
     "Regenerate the affected sections, including the CLI entrypoint and metrics writer, before handoff."
   ].join(" ");
+}
+
+export async function resolvePythonVerificationScriptPath(scriptPath?: string): Promise<string | undefined> {
+  if (!scriptPath) {
+    return undefined;
+  }
+  if (path.extname(scriptPath) === ".py") {
+    return scriptPath;
+  }
+  if (path.extname(scriptPath) !== ".sh") {
+    return undefined;
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  const wrapperDir = path.dirname(scriptPath);
+  const candidates = extractPythonRunnerPathsFromShellWrapper(source, wrapperDir);
+  for (const candidate of candidates) {
+    if (await fileExists(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+function extractPythonRunnerPathsFromShellWrapper(source: string, wrapperDir: string): string[] {
+  const shellVariables = new Map<string, string>([
+    ["SCRIPT_DIR", wrapperDir],
+    ["PWD", wrapperDir]
+  ]);
+  const candidates = new Set<string>();
+
+  for (const line of source.split(/\r?\n/u)) {
+    const assignment = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.+?)\s*(?:#.*)?$/u);
+    if (!assignment) {
+      continue;
+    }
+    const name = assignment[1];
+    const value = normalizeShellValue(assignment[2] || "");
+    if ((name === "SCRIPT_DIR" || name === "PWD") && /\bBASH_SOURCE\b|\bpwd\b/u.test(value)) {
+      continue;
+    }
+    const expanded = expandShellVariables(value, shellVariables);
+    if (expanded) {
+      shellVariables.set(name, expanded);
+      addPythonRunnerCandidate(candidates, expanded, wrapperDir);
+    }
+  }
+
+  const tokens = source.match(/"[^"]*"|'[^']*'|\S+/g) || [];
+  for (const token of tokens) {
+    const normalized = normalizeWorkspacePathToken(token);
+    if (!normalized) {
+      continue;
+    }
+    const expanded = expandShellVariables(normalized, shellVariables);
+    addPythonRunnerCandidate(candidates, expanded, wrapperDir);
+  }
+
+  return [...candidates];
+}
+
+function normalizeShellValue(value: string): string {
+  return value.trim().replace(/^['"]|['"]$/gu, "");
+}
+
+function expandShellVariables(value: string, variables: Map<string, string>): string {
+  return value
+    .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-[^}]*)?\}/gu, (_match, name: string) => variables.get(name) || "")
+    .replace(/\$([A-Za-z_][A-Za-z0-9_]*)/gu, (_match, name: string) => variables.get(name) || "");
+}
+
+function addPythonRunnerCandidate(candidates: Set<string>, rawValue: string | null, wrapperDir: string): void {
+  if (!rawValue) {
+    return;
+  }
+  const value = normalizeShellValue(rawValue);
+  if (!/\.py(?:$|[\s"'\\])/iu.test(value)) {
+    return;
+  }
+  const pathMatch = value.match(/(?:^|[\s"'=])([^\s"']+\.py)(?:$|[\s"'])/iu);
+  const candidate = pathMatch?.[1] || value;
+  if (!looksLikeWorkspacePath(candidate)) {
+    return;
+  }
+  candidates.add(path.normalize(path.isAbsolute(candidate) ? candidate : path.resolve(wrapperDir, candidate)));
 }
 
 const RECIPE_WORKFLOW_ENTRYPOINT_NAMES = [

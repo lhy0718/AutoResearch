@@ -201,6 +201,7 @@ import {
   repairLockedPeftStudyConfigSurface,
   repairPythonLockedConditionCountSurface,
   repairPublishedRunCommandWrapperBinding,
+  resolvePythonVerificationScriptPath,
   selectRecoveredPublicBundleScriptPath,
   shouldApplyRecoveredBundleStaticPythonGuards,
   shouldCheckRecoveredBundlePlanFreshness,
@@ -2286,6 +2287,29 @@ describe("ImplementSessionManager", () => {
     expect(repairedWrapper).toContain('exec "${PYTHON_BIN:-python3}" "$RUNNER" \\');
     expect(repairedWrapper).not.toContain("run_lora_rank_dropout_study.py");
     expect(repairedWrapper).toContain(JSON.stringify(metricsPath));
+  });
+
+  it("resolves the Python runner behind a published run_command.sh for semantic verification", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-wrapper-verification-target-"));
+    tempDirs.push(workspace);
+    const publicDir = path.join(workspace, "outputs", "study", "experiment");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "run_lora_rank_dropout_experiment.py");
+    const wrapperPath = path.join(publicDir, "run_command.sh");
+    writeFileSync(scriptPath, "print('runner')\n", "utf8");
+    writeFileSync(
+      wrapperPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
+        'RUNNER="${SCRIPT_DIR}/run_lora_rank_dropout_experiment.py"',
+        'exec "${PYTHON_BIN:-python3}" "$RUNNER" --metrics-path "$1"'
+      ].join("\n"),
+      "utf8"
+    );
+
+    await expect(resolvePythonVerificationScriptPath(wrapperPath)).resolves.toBe(scriptPath);
   });
 
   it("recovers the canonical public experiment runner before stale helpers and wrappers", () => {
