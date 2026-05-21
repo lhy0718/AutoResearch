@@ -442,6 +442,7 @@ function findMissingPerRunExecutionHelperEvidence(scriptText: string): string | 
   }
   const hasPerRunResolverFailure =
     /No callable per-run execution helper was found/iu.test(scriptText) ||
+    /Unable to locate a runnable execution helper/iu.test(scriptText) ||
     /No (?:condition[-\s]?seed|per[-\s]?run|condition) (?:execution )?helper (?:was )?found/iu.test(scriptText);
   if (!hasPerRunResolverFailure) {
     return undefined;
@@ -462,6 +463,7 @@ function extractPerRunResolverCandidateNames(scriptText: string): string[] {
   const names: string[] = [];
   const failureMatches = [
     ...scriptText.matchAll(/No callable per-run execution helper was found/giu),
+    ...scriptText.matchAll(/Unable to locate a runnable execution helper/giu),
     ...scriptText.matchAll(/No (?:condition[-\s]?seed|per[-\s]?run|condition) (?:execution )?helper (?:was )?found/giu)
   ];
   for (const match of failureMatches) {

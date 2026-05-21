@@ -668,6 +668,86 @@ describe("validateDesignImplementationAlignment", () => {
     );
   });
 
+  it("blocks planned runners whose execution loop resolver raises the runnable-helper variant", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-runnable-helper-"));
+    tempDirs.push(workspace);
+    const publicDir = path.join(workspace, "outputs", "experiment");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "run_lora_rank_dropout_experiment.py");
+    const metricsPath = path.join(workspace, ".autolabos", "runs", "run-runnable-helper", "metrics.json");
+    writeFileSync(
+      scriptPath,
+      [
+        "PLANNED_CONDITION_MARKERS = (",
+        "  'rank_8_dropout_0_0', 'rank_4_dropout_0_0', 'rank_4_dropout_0_05', 'rank_8_dropout_0_05',",
+        "  'rank_16_dropout_0_0', 'rank_16_dropout_0_05', 'rank_32_dropout_0_0', 'rank_32_dropout_0_05',",
+        ")",
+        "REQUIRED_CONDITION_COUNT = 8",
+        "REQUIRED_RUN_COUNT = 32",
+        "SEED_SCHEDULE = [42, 43, 44, 45]",
+        "PRIMARY_METRIC_KEY = 'accuracy_delta_vs_baseline'",
+        "def _find_callable(names):",
+        "    return None",
+        "def _execute_study_runs():",
+        "    single_run_function = _find_callable((",
+        "        'run_single_condition_seed',",
+        "        '_run_single_condition_seed',",
+        "        'execute_single_run',",
+        "        '_execute_single_run',",
+        "        'run_condition_seed',",
+        "        '_run_condition_seed',",
+        "        'train_and_evaluate_single_run',",
+        "    ))",
+        "    if single_run_function is None:",
+        "        raise RuntimeError('Unable to locate a runnable execution helper in the current module. Expected a study runner, execution loop, or single-run callable.')",
+        "    return single_run_function",
+        "def main():",
+        "    return {'completed_run_count': 0, 'accuracy_delta_vs_baseline': None}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const report = await validateDesignImplementationAlignment({
+      plannedConditionContract: {
+        required_condition_count: 8,
+        required_run_count: 32,
+        seed_schedule: [42, 43, 44, 45],
+        baseline_condition_marker: "rank_8_dropout_0_0",
+        required_condition_markers: [
+          "rank_8_dropout_0_0",
+          "rank_4_dropout_0_0",
+          "rank_4_dropout_0_05",
+          "rank_8_dropout_0_05",
+          "rank_16_dropout_0_0",
+          "rank_16_dropout_0_05",
+          "rank_32_dropout_0_0",
+          "rank_32_dropout_0_05"
+        ]
+      },
+      attempt: {
+        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+        testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        metricsPath,
+        workingDir: publicDir,
+        publicDir,
+        changedFiles: [scriptPath],
+        publicArtifacts: [scriptPath]
+      }
+    });
+
+    expect(report.verdict).toBe("block");
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "PLANNED_PER_RUN_EXECUTION_HELPER_MISSING",
+          severity: "block",
+          evidence: expect.stringContaining("run_single_condition_seed")
+        })
+      ])
+    );
+  });
+
   it("blocks hard evaluation caps below a full-validation contract", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-design-validator-full-eval-"));
     tempDirs.push(workspace);
