@@ -127,6 +127,21 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
           payload: { text: metricsLoadError }
         });
       }
+      const publicMetricsRecovery = await maybePromoteCompletedPublicMetrics({
+        metrics,
+        metricsPath,
+        publicDir,
+        warnings: inputWarnings
+      });
+      if (publicMetricsRecovery.promoted) {
+        metrics = publicMetricsRecovery.metrics;
+        deps.eventStream.emit({
+          type: "OBS_RECEIVED",
+          runId: run.id,
+          node: "analyze_results",
+          payload: { text: publicMetricsRecovery.message }
+        });
+      }
       metrics = await hydrateDetailedExperimentMetrics(metrics, publicDir, inputWarnings);
       const preflightOnlyMetricsMessage = detectPreflightOnlyMetrics(metrics);
       const analysisMetrics = preflightOnlyMetricsMessage ? {} : metrics;
@@ -958,6 +973,100 @@ async function readJsonObject<T extends object>(
     }
     return undefined;
   }
+}
+
+async function maybePromoteCompletedPublicMetrics(input: {
+  metrics: Record<string, unknown>;
+  metricsPath: string;
+  publicDir: string | undefined;
+  warnings: string[];
+}): Promise<{ metrics: Record<string, unknown>; promoted: false } | {
+  metrics: Record<string, unknown>;
+  promoted: true;
+  message: string;
+}> {
+  if (!input.publicDir || !shouldRecoverAnalysisMetrics(input.metrics)) {
+    return { metrics: input.metrics, promoted: false };
+  }
+
+  const candidates = await loadPublicMetricsCandidates(input.publicDir, input.warnings);
+  const best = candidates
+    .filter((candidate) => isCompletedAnalysisMetrics(candidate.metrics))
+    .sort((left, right) => scoreAnalysisMetrics(right.metrics) - scoreAnalysisMetrics(left.metrics))[0];
+  if (!best || scoreAnalysisMetrics(best.metrics) <= scoreAnalysisMetrics(input.metrics)) {
+    return { metrics: input.metrics, promoted: false };
+  }
+
+  const message = [
+    `Primary metrics at ${input.metricsPath} looked failed or empty for analysis.`,
+    `Using completed public experiment metrics from ${best.path} instead.`
+  ].join(" ");
+  input.warnings.push(message);
+  return {
+    metrics: best.metrics,
+    promoted: true,
+    message
+  };
+}
+
+async function loadPublicMetricsCandidates(
+  publicDir: string,
+  warnings: string[]
+): Promise<Array<{ path: string; metrics: Record<string, unknown> }>> {
+  const candidatePaths = [
+    path.join(publicDir, "metrics.json"),
+    path.join(publicDir, "latest_metrics.json"),
+    path.join(publicDir, "metrics_snapshot.json"),
+    path.join(publicDir, "latest_metrics_snapshot.json"),
+    path.join(publicDir, "study_metrics.json")
+  ];
+  const candidates: Array<{ path: string; metrics: Record<string, unknown> }> = [];
+  for (const candidatePath of candidatePaths) {
+    const metrics = await readJsonObject<Record<string, unknown>>(
+      candidatePath,
+      warnings,
+      path.basename(candidatePath)
+    );
+    if (metrics) {
+      candidates.push({ path: candidatePath, metrics });
+    }
+  }
+  return candidates;
+}
+
+function shouldRecoverAnalysisMetrics(metrics: Record<string, unknown>): boolean {
+  if (Object.keys(metrics).length === 0) {
+    return true;
+  }
+  return isFailedAnalysisMetrics(metrics) || scoreAnalysisMetrics(metrics) === 0;
+}
+
+function isCompletedAnalysisMetrics(metrics: Record<string, unknown>): boolean {
+  return !isFailedAnalysisMetrics(metrics) && scoreAnalysisMetrics(metrics) > 0;
+}
+
+function isFailedAnalysisMetrics(metrics: Record<string, unknown>): boolean {
+  const status = asString(metrics.status)?.toLowerCase();
+  return Boolean(
+    status && ["failed", "failure", "error", "errored"].includes(status)
+  );
+}
+
+function scoreAnalysisMetrics(metrics: Record<string, unknown>): number {
+  const directCompleted = asNumber(metrics.completed_condition_count);
+  const plannedCompleted = asNumber(metrics.fully_completed_condition_count);
+  const completedConditionCount = Math.max(directCompleted ?? 0, plannedCompleted ?? 0);
+  if (completedConditionCount > 0) {
+    return completedConditionCount;
+  }
+  const conditions = Array.isArray(metrics.conditions) ? metrics.conditions.length : 0;
+  const conditionResults = Array.isArray(metrics.condition_results)
+    ? metrics.condition_results.length
+    : Object.keys(asRecord(metrics.condition_results)).length;
+  const perCondition = Array.isArray(metrics.per_condition)
+    ? metrics.per_condition.length
+    : Object.keys(asRecord(metrics.per_condition)).length;
+  return Math.max(conditions, conditionResults, perCondition);
 }
 
 async function hydrateDetailedExperimentMetrics(

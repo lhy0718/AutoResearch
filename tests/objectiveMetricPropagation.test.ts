@@ -174,6 +174,83 @@ async function seedWritePaperInputs(runDir: string): Promise<void> {
 }
 
 describe("objective metric propagation", () => {
+  it("analyzes completed public metrics when the canonical metrics file contains a rejected rerun payload", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-recover-public-metrics-"));
+    process.chdir(root);
+
+    const runId = "run-analyze-recover-public-metrics";
+    const run = {
+      ...makeRun(runId),
+      currentNode: "analyze_results" as const,
+      objectiveMetric: "accuracy_delta_vs_baseline >= 0.01"
+    };
+    run.graph.currentNode = "analyze_results";
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    const memoryDir = path.join(runDir, "memory");
+    const publicDir = path.join(root, "public-experiment");
+    await mkdir(memoryDir, { recursive: true });
+    await mkdir(publicDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          { key: "implement_experiments.metrics_path", value: `.autolabos/runs/${runId}/metrics.json`, updatedAt: new Date().toISOString() },
+          { key: "implement_experiments.public_dir", value: publicDir, updatedAt: new Date().toISOString() }
+        ]
+      }),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "metrics.json"),
+      JSON.stringify({ status: "failed", completed_condition_count: 0, required_condition_count: 0, error: "No locked conditions are available to select from." }, null, 2),
+      "utf8"
+    );
+    await writeFile(
+      path.join(publicDir, "metrics.json"),
+      JSON.stringify(
+        {
+          status: "completed",
+          accuracy_delta_vs_baseline: 0.04,
+          completed_condition_count: 2,
+          required_condition_count: 2,
+          conditions: [
+            { marker: "baseline_condition", status: "completed", average_accuracy: 0.5, accuracy_delta_vs_baseline: 0 },
+            { marker: "candidate_condition_a", status: "completed", average_accuracy: 0.54, accuracy_delta_vs_baseline: 0.04 }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const analyzeNode = createAnalyzeResultsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await analyzeNode.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const analysisRaw = JSON.parse(await readFile(path.join(runDir, "result_analysis.json"), "utf8")) as {
+      overview: { objective_status: string };
+      warnings: string[];
+      condition_comparisons: Array<{ label: string; hypothesis_supported?: boolean }>;
+    };
+    expect(analysisRaw.overview.objective_status).toBe("met");
+    expect(analysisRaw.warnings.some((warning) => warning.includes("Using completed public experiment metrics"))).toBe(true);
+    expect(analysisRaw.condition_comparisons[0]).toMatchObject({
+      label: "candidate condition a vs baseline condition",
+      hypothesis_supported: true
+    });
+  });
+
   it("evaluates objective metrics during run, analysis, and paper writing", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-objective-propagation-"));
     process.chdir(root);
@@ -841,7 +918,8 @@ describe("objective metric propagation", () => {
     const backups = await readdir(path.join(runDir, "exec_logs"));
     expect(backups.some((name) => name.startsWith("preexisting_metrics_"))).toBe(true);
     const metricsPath = path.join(runDir, "metrics.json");
-    await expect(readFile(metricsPath, "utf8")).rejects.toThrow();
+    const restoredMetrics = JSON.parse(await readFile(metricsPath, "utf8")) as { stale?: boolean };
+    expect(restoredMetrics.stale).toBe(true);
   });
 
   it("reads a configured metrics_path during structured result analysis", async () => {
@@ -2823,7 +2901,7 @@ describe("objective metric propagation", () => {
     };
     expect(analysisRaw.condition_comparisons[0]).toMatchObject({
       source: "metrics.conditions",
-      label: "rank in 4 8 16 32 x dropout in 0 0 0 05 vs rank 8 dropout 0 0"
+      label: "rank in 4 8 16 32 x dropout in 0 0 0 05 vs baseline condition"
     });
     expect(analysisRaw.results_table).toEqual(
       expect.arrayContaining([
@@ -2834,16 +2912,10 @@ describe("objective metric propagation", () => {
           delta: 0.0208
         }),
         expect.objectContaining({
-          metric: "benchmark_task_a_accuracy",
-          baseline: 0.7917,
-          comparator: 0.8333,
-          delta: 0.0416
-        }),
-        expect.objectContaining({
-          metric: "benchmark_task_b_accuracy",
-          baseline: 0.5,
-          comparator: 0.5,
-          delta: 0
+          metric: "accuracy_delta_vs_baseline",
+          baseline: 0,
+          comparator: 0.020833,
+          delta: 0.0208
         })
       ])
     );
@@ -2971,7 +3043,7 @@ describe("objective metric propagation", () => {
     };
     expect(analysisRaw.condition_comparisons[0]).toMatchObject({
       source: "metrics.conditions",
-      label: "rank 8 dropout 0 05 vs rank 8 dropout 0 0",
+      label: "candidate condition f vs baseline condition",
       hypothesis_supported: false
     });
     expect(analysisRaw.results_table).toEqual(
@@ -2979,14 +3051,14 @@ describe("objective metric propagation", () => {
         expect.objectContaining({
           metric: "accuracy_delta_vs_baseline",
           baseline: 0,
-          comparator: 0,
-          delta: 0
+          comparator: -0.1875,
+          delta: -0.1875
         }),
         expect.objectContaining({
           metric: "average_accuracy",
           baseline: 0.5,
-          comparator: 0.5,
-          delta: 0
+          comparator: 0.3125,
+          delta: -0.1875
         })
       ])
     );
@@ -3123,7 +3195,7 @@ describe("objective metric propagation", () => {
     };
     expect(analysisRaw.condition_comparisons[0]).toMatchObject({
       source: "metrics.conditions",
-      label: "rank 32 dropout 0 05 vs rank 8 dropout 0 0",
+      label: "candidate condition f5 vs baseline condition",
       hypothesis_supported: true
     });
     expect(analysisRaw.results_table).toEqual(
@@ -3435,15 +3507,21 @@ describe("objective metric propagation", () => {
     };
     expect(analysisRaw.condition_comparisons[0]).toMatchObject({
       source: "metrics.conditions",
-      label: "rank 8 dropout 0 0 seed 42 vs unmodified base"
+      label: "candidate condition a seed 42 vs unmodified base"
     });
     expect(analysisRaw.results_table).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           metric: "average_accuracy",
           baseline: 0.5625,
-          comparator: 0.625,
-          delta: 0.0625
+          comparator: 0.5625,
+          delta: 0
+        }),
+        expect.objectContaining({
+          metric: "tasks.benchmark_task_b.accuracy",
+          baseline: 0.125,
+          comparator: 0.375,
+          delta: 0.25
         })
       ])
     );
@@ -3456,8 +3534,14 @@ describe("objective metric propagation", () => {
         expect.objectContaining({
           metric: "average_accuracy",
           baseline: 0.5625,
-          comparator: 0.625,
-          delta: 0.0625
+          comparator: 0.5625,
+          delta: 0
+        }),
+        expect.objectContaining({
+          metric: "tasks.benchmark_task_b.accuracy",
+          baseline: 0.125,
+          comparator: 0.375,
+          delta: 0.25
         })
       ])
     );

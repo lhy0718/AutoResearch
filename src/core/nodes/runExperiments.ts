@@ -544,6 +544,26 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
       } else {
         await runContext.put("run_experiments.previous_metrics_backup", null);
       }
+      const restoreMetricsAfterRejectedAttempt = async (reason: string) => {
+        const restoredPath = await restorePreexistingMetricsOutput({
+          run,
+          metricsPath: resolved.metricsPath,
+          backupPath: previousMetricsBackup,
+          reason
+        });
+        if (restoredPath) {
+          deps.eventStream.emit({
+            type: "OBS_RECEIVED",
+            runId: run.id,
+            node: "run_experiments",
+            agentRole: "runner",
+            payload: {
+              text: `Restored previous metrics output after rejected attempt from ${restoredPath}.`
+            }
+          });
+          await runContext.put("run_experiments.restored_previous_metrics_after_failure", restoredPath);
+        }
+      };
       const previousFailureArtifactBackups = await clearPreexistingExperimentFailureArtifacts(run, resolved.cwd);
       if (previousFailureArtifactBackups.length > 0) {
         deps.eventStream.emit({
@@ -718,6 +738,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             }
           });
           await recordRunFailure(failureSummary, "structural");
+          await restoreMetricsAfterRejectedAttempt(failureSummary);
           return {
             status: "failure",
             error: failureSummary,
@@ -796,6 +817,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             }
           });
           await recordRunFailure(missingMessage, "structural");
+          await restoreMetricsAfterRejectedAttempt(missingMessage);
           return {
             status: "failure",
             error: missingMessage,
@@ -910,6 +932,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
               }
             });
             await recordRunFailure(failedMetricsMessage, "structural");
+            await restoreMetricsAfterRejectedAttempt(failedMetricsMessage);
             return {
               status: "failure",
               error: failedMetricsMessage,
@@ -948,6 +971,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
               error: sentinelMessage
             });
             await recordRunFailure(sentinelMessage, "structural");
+            await restoreMetricsAfterRejectedAttempt(sentinelMessage);
             return {
               status: "failure",
               error: sentinelMessage,
@@ -984,6 +1008,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
               error: preflightOnlyMessage
             });
             await recordRunFailure(preflightOnlyMessage, "structural");
+            await restoreMetricsAfterRejectedAttempt(preflightOnlyMessage);
             return {
               status: "failure",
               error: preflightOnlyMessage,
@@ -1071,6 +1096,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             }
           });
           await recordRunFailure(metricsError, "structural");
+          await restoreMetricsAfterRejectedAttempt(metricsError);
           return {
             status: "failure",
             error: metricsError,
@@ -1164,6 +1190,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           }
         });
         await recordRunFailure(contractMessage, "structural");
+        await restoreMetricsAfterRejectedAttempt(contractMessage);
         return {
           status: "failure",
           error: contractMessage,
@@ -2305,6 +2332,40 @@ async function clearPreexistingMetricsOutput(
   );
   await fs.unlink(metricsPath);
   return backupPath;
+}
+
+async function restorePreexistingMetricsOutput(input: {
+  run: Parameters<typeof writeRunArtifact>[0];
+  metricsPath: string;
+  backupPath: string | undefined;
+  reason: string;
+}): Promise<string | undefined> {
+  if (!input.backupPath || !(await fileExists(input.backupPath))) {
+    return undefined;
+  }
+
+  if (await fileExists(input.metricsPath)) {
+    const rejectedMetrics = await fs.readFile(input.metricsPath, "utf8");
+    await writeRunArtifact(
+      input.run,
+      `exec_logs/rejected_metrics_${Date.now()}.json`,
+      rejectedMetrics
+    );
+  }
+
+  const previousMetrics = await fs.readFile(input.backupPath, "utf8");
+  await fs.mkdir(path.dirname(input.metricsPath), { recursive: true });
+  await fs.writeFile(input.metricsPath, previousMetrics, "utf8");
+  await writeRunArtifact(
+    input.run,
+    `exec_logs/metrics_restore_${Date.now()}.json`,
+    JSON.stringify({
+      restored_from: input.backupPath,
+      restored_to: input.metricsPath,
+      reason: input.reason
+    }, null, 2)
+  );
+  return input.backupPath;
 }
 
 async function clearPreexistingExperimentFailureArtifacts(
