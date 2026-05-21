@@ -134,9 +134,8 @@ describe("paper submission sanitization", () => {
       includeKeywords: false
     });
 
-    expect(tex).toContain("This paper studies how condition parameters interact under a fixed local instruction-tuning budget");
-    expect(tex).toContain("The contribution is a cautious condition-parameter preflight");
-    expect(tex.match(/The contribution is a cautious LoRA rank\/dropout preflight/gu)).toHaveLength(1);
+    expect(tex).toContain("This paper reports a fixed-budget experimental pilot");
+    expect(tex).toContain("The contribution is a cautious local preflight over a configured condition set");
     expect(tex).toContain("Nearby PEFT, LoRA, and instruction-tuning studies provide context");
     expect(tex).not.toContain("This draft studies");
     expect(tex).not.toContain("Primary metric:");
@@ -395,7 +394,7 @@ describe("paper submission sanitization", () => {
           heading: "Method",
           paragraphs: [
             "The experiment used a 4x2 factorial design crossing LoRA rank with dropout.",
-            "The realized data and evaluation settings were training data from Alpaca Clean, evaluation on Benchmark Task A and Benchmark Task B, and seed 17."
+            "The realized data and evaluation settings were training data from the configured training dataset, evaluation on Benchmark Task A and Benchmark Task B, and seed 17."
           ]
         },
         {
@@ -1098,7 +1097,7 @@ describe("paper submission sanitization", () => {
             heading: "Method",
             paragraphs: [
               "The design fixed rank and dropout before execution.",
-              "In the preregistered plan, the training source was an Alpaca Clean subset capped at 10,000 examples, and evaluation was limited to Benchmark Task A and Benchmark Task B. The preferred base model for this plan was the selected backbone, with the configured fallback backbone reserved only as a fallback if preflight checks failed. However, the reported execution artifact is narrower than that original plan: the metric summary records 48 training samples and a run seed of 17."
+              "In the preregistered plan, the training source was an the configured training dataset subset capped at 10,000 examples, and evaluation was limited to Benchmark Task A and Benchmark Task B. The preferred base model for this plan was the selected backbone, with the configured fallback backbone reserved only as a fallback if preflight checks failed. However, the reported execution artifact is narrower than that original plan: the metric summary records 48 training samples and a run seed of 17."
             ]
           },
           {
@@ -1211,7 +1210,7 @@ describe("paper submission sanitization", () => {
           {
             heading: "Limitations",
             paragraphs: [
-              "The largest limitation is the mismatch between the nominal brief and the executed summary available for writing. The broader plan described a capped Alpaca Clean study, seed 42, and model-selection rules involving Qwen2.5-1.5B and TinyLlama, whereas the verified summary used here reflects a seed-17, 48-sample preflight and does not disclose the final model choice or optimizer details in the condensed record. As a result, the paper can describe the registered design and the visible executed run, but it cannot present a fully conventional implementation section with complete artifact-level specificity.",
+              "The largest limitation is the mismatch between the nominal brief and the executed summary available for writing. The broader plan described a capped the configured training dataset study, seed 42, and model-selection rules involving the selected backbone and the configured fallback backbone, whereas the verified summary used here reflects a seed-17, 48-sample preflight and does not disclose the final model choice or optimizer details in the condensed record. As a result, the paper can describe the registered design and the visible executed run, but it cannot present a fully conventional implementation section with complete artifact-level specificity.",
               "Accordingly, the present run is best treated as a feasibility-scale study for selecting a next experiment. The same hyperparameter choice could behave differently with more seeds, a different dataset mixture, a larger model, or a broader evaluation suite.",
               "The most important limitation is scale. The run uses one small backbone, two benchmark tasks, and a fixed local training budget, so it can motivate a larger experiment but cannot establish a model-family-level regularization law."
             ]
@@ -1406,7 +1405,7 @@ describe("paper submission sanitization", () => {
       { label: "Leading Average", value: 0.4167 }
     ]);
     expect(text).toContain("prespecified baseline-relative accuracy target was met");
-    expect(text).toContain("Table 1 reports the condition-level values");
+    expect(text).toContain("Table 1 reports the corresponding mean values");
     expect(text).toContain("observed baseline-relative average-accuracy gain is 0.083332");
     expect(text).toContain("Table 1 reports the corresponding mean values");
     expect(text).not.toContain("Average accuracy increases from 0.333334 to 0.416666");
@@ -1443,7 +1442,7 @@ describe("paper submission sanitization", () => {
     });
     expect(validation.ok).toBe(true);
     expect(tex).toContain("The prespecified baseline-relative accuracy target was met");
-    expect(tex).toContain("The leading leading condition condition");
+    expect(tex).toContain("The leading observed condition is the follow-up candidate");
     expect(tex).toContain("Table 1 reports the condition-level values");
     expect(tex).not.toContain("[warning]");
     expect(tex).not.toContain("average accuracy was 0.4167 versus 0.3333");
@@ -1629,7 +1628,7 @@ describe("paper submission sanitization", () => {
   it("repairs reader-facing manuscript quality residues after LLM manuscript repair", () => {
     const stabilized = stabilizePaperManuscriptForSubmission({
       title: "A LoRA Benchmark",
-      abstract: "A cautious benchmark. The protocol targeted a 4 x 2 factorial sweep over ranks {4, 8, 16, 32} and dropout values {0.0, 0.05}, with average accuracy across Benchmark Task A and Benchmark Task B as the primary performance measure and rank 8 with no dropout as the locked in-grid baseline. Within that reviewed artifact, the best reported condition, rank 32 with dropout 0.05, improved average accuracy from 0.333334 to 0.416666, a gain of 0.083332 over baseline. The same artifact completed all eight requested conditions, reported 45.687 s wall-clock time, and used approximately 4.28 GB of peak allocated GPU memory. The run also remained inexpensive, completing the eight planned conditions in 45.687 s with about 4.28 GB of peak allocated CUDA memory. The sweep was also lightweight, with 45.687 s wall-clock runtime and 4,278,951,936 bytes of peak allocated memory. The strongest contribution of the study is a reproducible and conservative protocol for comparing LoRA settings under explicit budget, reporting, and uncertainty constraints.",
+      abstract: "A cautious benchmark. The protocol targeted a 4 x 2 factorial sweep over ranks {4, 8, 16, 32} and dropout values {0.0, 0.05}, with average accuracy across Benchmark Task A and Benchmark Task B as the primary performance measure and rank 8 with no dropout as the locked in-grid baseline. Within that reviewed artifact, the best reported condition, the leading observed condition, improved average accuracy from 0.333334 to 0.416666, a gain of 0.083332 over baseline. The same artifact completed all eight requested conditions, reported 45.687 s wall-clock time, and used approximately 4.28 GB of peak allocated GPU memory. The run also remained inexpensive, completing the eight planned conditions in 45.687 s with about 4.28 GB of peak allocated CUDA memory. The sweep was also lightweight, with 45.687 s wall-clock runtime and 4,278,951,936 bytes of peak allocated memory. The strongest contribution of the study is a reproducible and conservative protocol for comparing configured conditions under explicit budget, reporting, and uncertainty constraints.",
       keywords: ["LoRA"],
       sections: [
         {
@@ -1682,7 +1681,7 @@ describe("paper submission sanitization", () => {
         {
           heading: "Supplementary Experimental Details",
           paragraphs: [
-            "The study used a fixed 4x2 grid over ranks 4, 8, 16, and 32 and dropout values 0.0 and 0.05, with rank 8 and dropout 0.0 serving as the locked baseline. The run was designed for a dual-RTX-4090-class local workstation and used seed 42. The preferred backbone in the protocol was the selected backbone, with the configured fallback backbone reserved as a fallback. The training source was Alpaca Clean under a cap of 10000 examples, although the summarized preflight reported here used 48 examples."
+            "The study used a fixed 4x2 grid over ranks 4, 8, 16, and 32 and dropout values 0.0 and 0.05, with rank 8 and dropout 0.0 serving as the locked baseline. The run was designed for a dual-RTX-4090-class local workstation and used seed 42. The preferred backbone in the protocol was the selected backbone, with the configured fallback backbone reserved as a fallback. The training source was the configured training dataset under a cap of 10000 examples, although the summarized preflight reported here used 48 examples."
           ]
         },
         {
@@ -1700,15 +1699,15 @@ describe("paper submission sanitization", () => {
     expect(text).toContain("conservative, auditable pilot protocol");
     expect(text).toContain("completing all eight planned conditions under the declared time limit");
     expect(text).toContain("completed all eight planned conditions under the declared time and memory budgets");
-    expect(text).toContain("four LoRA ranks and two dropout settings");
-    expect(text).toContain("rank 32 with nonzero dropout");
+    expect(text).toContain("configured 4 x 2 condition sweep");
+    expect(text).toContain("leading observed condition");
     expect(text).toContain("retained peak allocated GPU memory as a secondary feasibility diagnostic");
     expect(text).toContain("completion of all eight planned conditions under the configured 1,800 s limit");
     expect(text).toContain("all eight requested, recorded, and completed conditions under the configured 1,800 s timeout");
     expect(text).toContain("scheduler details beyond the scalar learning rate");
     expect(text).toContain("executed metrics identify the selected backbone");
     expect(text).toContain("learning rate 0.0002");
-    expect(text).toContain("reports seed 17 with 48 yahma/alpaca-cleaned training examples");
+    expect(text).toContain("reports seed 17 with 48 the configured training dataset training examples");
     expect(text).toContain("Table 1 exposes the eight condition means");
     expect(text).toContain("provides condition means but not complete per-cell uncertainty");
     expect(text).toContain("complete per-cell uncertainty and resource tables");

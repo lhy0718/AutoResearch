@@ -3095,12 +3095,12 @@ function removeConflictingBackboneAssertion(heading: string, paragraph: string):
   }
   return paragraph
     .replace(
-      /\bThe executed run used Qwen\/Qwen2\.5-1\.5B as the selected backbone\.\s*/giu,
-      "The executed metrics record identifies the selected backbone as the selected backbone for the analyzed run; TinyLlama remained only a fallback option and is not treated as evidence for the reported condition means. "
+      /\bThe executed run used the selected backbone as the selected backbone\.\s*/giu,
+      "The executed metrics record identifies the selected backbone as the selected backbone for the analyzed run; the configured fallback backbone remained only a fallback option and is not treated as evidence for the reported condition means. "
     )
     .replace(
-      /\bThe run record lists Qwen\/Qwen2\.5-1\.5B in configuration metadata,\s*while the compact public summary still leaves preferred-versus-fallback execution provenance ambiguous\.\s*/giu,
-      "The executed metrics record identifies the selected backbone as the selected backbone for the analyzed run; TinyLlama remained only a fallback option and is not treated as evidence for the reported condition means. "
+      /\bThe run record lists the selected backbone in configuration metadata,\s*while the compact public summary still leaves preferred-versus-fallback execution provenance ambiguous\.\s*/giu,
+      "The executed metrics record identifies the selected backbone as the selected backbone for the analyzed run; the configured fallback backbone remained only a fallback option and is not treated as evidence for the reported condition means. "
     )
     .replace(
       /\b(?:the\s+)?compact public summary still leaves preferred-versus-fallback execution provenance ambiguous\b/giu,
@@ -3108,14 +3108,14 @@ function removeConflictingBackboneAssertion(heading: string, paragraph: string):
     )
     .replace(
       /\b(?:The\s+)?summary records all eight rank-by-dropout conditions as completed,\s*but it does not securely identify whether the reported metrics came from the preferred or fallback backbone,\s*so backbone-specific interpretation is intentionally limited\.?/giu,
-      "The executed metrics record identifies the selected backbone as the selected backbone for the analyzed run; TinyLlama remained only a fallback option and is not treated as evidence for the reported condition means."
+      "The executed metrics record identifies the selected backbone as the selected backbone for the analyzed run; the configured fallback backbone remained only a fallback option and is not treated as evidence for the reported condition means."
     )
     .replace(
       /\bThe reported analyzed execution did not preserve the resolved model identifier,\s*so we avoid stronger model-specific interpretation than the archived summary allows and treat the result as evidence from a small locally runnable instruction-tuning target\.?/giu,
-      "The archived execution summary identifies the selected backbone as the selected backbone for the analyzed run; TinyLlama remained only a fallback option and is not treated as evidence for the reported condition means."
+      "The archived execution summary identifies the selected backbone as the selected backbone for the analyzed run; the configured fallback backbone remained only a fallback option and is not treated as evidence for the reported condition means."
     )
     .replace(
-      /\bThe run plan preferred Qwen\/Qwen2\.5-1\.5B and specified TinyLlama\/TinyLlama-1\.1B-Chat-v1\.0 as a fallback if the preferred model failed preflight\.\s*However,\s*the compact reported summary does not identify which of those models produced the analyzed record\./giu,
+      /\bThe run plan preferred the selected backbone and specified the configured fallback backbone as a fallback if the preferred model failed preflight\.\s*However,\s*the compact reported summary does not identify which of those models produced the analyzed record\./giu,
       "The run plan preferred the selected backbone and specified the configured fallback backbone as a fallback if the preferred model failed preflight. The executed metrics record identifies the selected backbone as the selected backbone for the analyzed run."
     )
     .replace(

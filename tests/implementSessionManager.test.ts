@@ -9885,7 +9885,7 @@ describe("ImplementSessionManager", () => {
             source: "python",
             required_for: ["Llama-family tokenizer support"],
             availability: "unknown",
-            summary: "Tokenizer backend commonly needed for Llama-family checkpoints such as TinyLlama."
+            summary: "Tokenizer backend commonly needed for Llama-family checkpoints such as the configured fallback backbone."
           }
         ],
         checks: [
@@ -9893,7 +9893,7 @@ describe("ImplementSessionManager", () => {
             id: "check-python-module-sentencepiece",
             check_type: "python_module_available",
             target: "autolabos_missing_conditional_tokenizer_module_for_test",
-            reason: "Needed for tokenizer support if the selected checkpoint is TinyLlama or another Llama-family model."
+            reason: "Needed for tokenizer support if the selected checkpoint is the configured fallback backbone or another Llama-family model."
           }
         ]
       }

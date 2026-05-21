@@ -5833,7 +5833,7 @@ function compactReaderFacingMethodParagraphs(paragraphs: string[]): string[] {
     if (/^Resource diagnostics are explicitly measured\b/iu.test(cleaned) && hasProtocolCore) {
       return false;
     }
-    if (/^The fixed search space is the LoRA rank\/dropout grid\b/iu.test(cleaned) && hasProtocolCore) {
+    if (/^The fixed search space is the condition-parameter grid\b/iu.test(cleaned) && hasProtocolCore) {
       return false;
     }
     if (/^The executed condition-level summaries are the comparison unit\b/iu.test(cleaned) && hasReportingDetails) {
@@ -5842,7 +5842,7 @@ function compactReaderFacingMethodParagraphs(paragraphs: string[]): string[] {
     if (/^The task scope is fixed around\b/iu.test(cleaned) && hasProtocolCore) {
       return false;
     }
-    if (/^Untested LoRA rank\/dropout settings are left outside the conclusion\b/iu.test(cleaned)) {
+    if (/^Untested condition-parameter settings are left outside the conclusion\b/iu.test(cleaned)) {
       return false;
     }
     if (/^Seed-level outcomes are not promoted into separate conclusions\b/iu.test(cleaned) && hasRealizedRunDetails) {
@@ -5869,7 +5869,7 @@ function compactReaderFacingDiscussionParagraphs(paragraphs: string[]): string[]
   }
   const hasTriageParagraph = cleaned.some((paragraph) =>
     /^For this small-model preflight\b/iu.test(paragraph)
-    || /^For this fixed-budget LoRA rank\/dropout pilot\b/iu.test(paragraph)
+    || /^For this fixed-budget condition-parameter pilot\b/iu.test(paragraph)
   );
   const hasClaimCeilingParagraph = cleaned.some((paragraph) =>
     /^The claim ceiling is therefore central\b/iu.test(paragraph)
@@ -5886,7 +5886,7 @@ function compactReaderFacingDiscussionParagraphs(paragraphs: string[]): string[]
       }
       continue;
     }
-    if (/^For this small-model preflight\b/iu.test(paragraph) || /^For this fixed-budget LoRA rank\/dropout pilot\b/iu.test(paragraph)) {
+    if (/^For this small-model preflight\b/iu.test(paragraph) || /^For this fixed-budget condition-parameter pilot\b/iu.test(paragraph)) {
       if (!insertedTriage) {
         compact.push(paragraph);
         insertedTriage = true;
@@ -6486,7 +6486,7 @@ function compactMethodProtocolParagraphs(paragraphs: string[]): string[] {
     const repeatsResourceDiagnostics =
       /^Resource diagnostics are explicitly measured in the evaluation outputs\.?$/iu.test(cleaned) && hasOperationalProtocol;
     const repeatsFixedSearchSpace =
-      /^The fixed search space is the LoRA rank\/dropout grid described above\.?$/iu.test(cleaned) && hasOperationalProtocol;
+      /^The fixed search space is the condition-parameter grid described above\.?$/iu.test(cleaned) && hasOperationalProtocol;
     const repeatsComparisonUnit =
       /^The executed condition-level summaries are the comparison unit/iu.test(cleaned)
       && compact.some((item) =>
@@ -6579,8 +6579,8 @@ function rewriteMethodDataBudgetCapSentence(paragraph: string, context: Experime
     return paragraph;
   }
   return paragraph.replace(
-    /\bTraining used an Alpaca Clean subset capped at ([\d,]+) examples\./iu,
-    "The governed data budget capped the Alpaca Clean subset at $1 examples; the run-owned metadata exposes the consumed seed-level training count separately, so this cap should be read as a budget ceiling rather than as the number consumed by every run."
+    /\bTraining used an the configured training dataset subset capped at ([\d,]+) examples\./iu,
+    "The governed data budget capped the the configured training dataset subset at $1 examples; the run-owned metadata exposes the consumed seed-level training count separately, so this cap should be read as a budget ceiling rather than as the number consumed by every run."
   );
 }
 
@@ -6661,21 +6661,21 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
       /\bdevice cuda max memory allocated bytes\s*=\s*(\d+)\.?/giu,
       "peak CUDA allocation was recorded as a secondary resource diagnostic."
     )
-    .replace(/\s*\[(?:Qwen2?\.?5?|TinyLlama|Alpaca Clean|Benchmark Task A|Benchmark Task B)(?:\s*;\s*(?:Qwen2?\.?5?|TinyLlama|Alpaca Clean|Benchmark Task A|Benchmark Task B))*\]/giu, "")
+    .replace(/\s*\[(?:Qwen2?\.?5?|the configured fallback backbone|the configured training dataset|Benchmark Task A|Benchmark Task B)(?:\s*;\s*(?:Qwen2?\.?5?|the configured fallback backbone|the configured training dataset|Benchmark Task A|Benchmark Task B))*\]/giu, "")
     .replace(
-      /\bThe (?:preserved manuscript bundle|reported run records) identif(?:ies|y) the executed study only as a small-backbone local preflight and does not cleanly disambiguate whether the as-run model was the planned Qwen\/Qwen2\.5-1\.5B backbone or the TinyLlama\/TinyLlama-1\.1B-Chat-v1\.0 fallback\./giu,
+      /\bThe (?:preserved manuscript bundle|reported run records) identif(?:ies|y) the executed study only as a small-backbone local preflight and does not cleanly disambiguate whether the as-run model was the planned the selected backbone backbone or the the configured fallback backbone fallback\./giu,
       "The reported run records identify the selected backbone as the selected small-backbone model; the configured fallback backbone remained a fallback option and is not treated as evidence for the reported condition means."
     )
     .replace(
       /\bThe surviving preflight materials do not unambiguously identify the backbone actually used in the analyzed execution,\s*so the manuscript can report only the registered preferred and fallback options rather than a confirmed executed model\./giu,
-      "The executed metrics record identifies the selected backbone as the selected backbone for the analyzed run; TinyLlama remained a fallback option and is not treated as evidence for the reported condition means."
+      "The executed metrics record identifies the selected backbone as the selected backbone for the analyzed run; the configured fallback backbone remained a fallback option and is not treated as evidence for the reported condition means."
     )
     .replace(
       /\bThe available summary does not identify which backbone was ultimately used in the realized pilot execution,\s*so model-specific conclusions are limited to the declared protocol rather than a verified backbone-specific analysis\./giu,
-      "The executed metrics record identifies the selected backbone as the selected backbone for the realized pilot; TinyLlama remained only a fallback option and is not treated as evidence for the reported condition means."
+      "The executed metrics record identifies the selected backbone as the selected backbone for the realized pilot; the configured fallback backbone remained only a fallback option and is not treated as evidence for the reported condition means."
     )
     .replace(
-      /\bThe plan named Qwen\/Qwen2\.5-1\.5B as preferred for the executable run and TinyLlama\/TinyLlama-1\.1B-Chat-v1\.0 as the fallback if the preferred model could not be loaded\.\s*The executed metrics record identifies Qwen\/Qwen2\.5-1\.5B as the selected backbone for the analyzed run;\s*TinyLlama remained a fallback option and is not treated as evidence for the reported condition means\./giu,
+      /\bThe plan named the selected backbone as preferred for the executable run and the configured fallback backbone as the fallback if the preferred model could not be loaded\.\s*The executed metrics record identifies the selected backbone as the selected backbone for the analyzed run;\s*the configured fallback backbone remained a fallback option and is not treated as evidence for the reported condition means\./giu,
       "The executable run selected the selected backbone as the trained backbone; the configured fallback backbone remained only a fallback option and is not treated as evidence for the reported condition means."
     )
     .replace(
@@ -6831,7 +6831,7 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
       "available run records"
     )
     .replace(
-      /\bthe LoRA rank\/dropout tuning grid\. Untested settings are left outside the conclusion rather than inferred from nearby grid points\./giu,
+      /\bthe condition-parameter tuning grid\. Untested settings are left outside the conclusion rather than inferred from nearby grid points\./giu,
       "Untested condition-parameter settings are left outside the conclusion rather than inferred from nearby grid points."
     )
     .replace(
@@ -6855,7 +6855,7 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
       ""
     )
     .replace(
-      /\bThe intended training source was a capped instruction-tuning subset, described in the planning materials as Alpaca Clean and limited to at most 10,000 examples, and evaluation centered on the Benchmark Task A and Benchmark Task B benchmark tasks\./giu,
+      /\bThe intended training source was a capped instruction-tuning subset, described in the planning materials as the configured training dataset and limited to at most 10,000 examples, and evaluation centered on the Benchmark Task A and Benchmark Task B benchmark tasks\./giu,
       "The intended training source was a capped instruction-tuning subset recorded in the planning materials, and evaluation centered on the run-metadata task labels Benchmark Task A and Benchmark Task B."
     )
     .replace(
@@ -7129,7 +7129,7 @@ function rewriteReaderFacingProvenancePhrases(value: string): string {
       "The reported condition summaries preserve the locked baseline and evaluated rank/dropout alternatives as the comparison grid. Within that local pilot, the strongest reported comparison was between the baseline condition, the locked baseline, and a higher-capacity regularized condition, the leading observed condition."
     )
     .replace(
-      /\bThe evaluation spans dataset_to_be_selected\.\s*Models or conditions include Qwen\/Qwen2\.5-1\.5B and current_best_baseline\./giu,
+      /\bThe evaluation spans dataset_to_be_selected\.\s*Models or conditions include the selected backbone and current_best_baseline\./giu,
       "Evaluation spans Benchmark Task A and Benchmark Task B. The reported conditions are condition-parameter cells compared against the locked locked baseline baseline on the selected backbone."
     )
     .replace(

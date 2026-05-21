@@ -2710,7 +2710,7 @@ export function sanitizePaperNarrativeText(value: unknown): string {
     .replace(/\.autolabos\/[^\s,.;)`]+/giu, "the governed run artifact directory")
     .replace(/\btest\/outputs?\/[^\s,.;)`]+/giu, "the public output directory")
     .replace(/\boutputs\/[^\s,.;)`]+/giu, "the public output bundle")
-    .replace(/\s*\[(?:Qwen2?\.?5?|TinyLlama|Alpaca Clean|Benchmark Task A|Benchmark Task B)(?:\s*;\s*(?:Qwen2?\.?5?|TinyLlama|Alpaca Clean|Benchmark Task A|Benchmark Task B))*\]/giu, "")
+    .replace(/\s*\[(?:Qwen2?\.?5?|the configured fallback backbone|the configured training dataset|Benchmark Task A|Benchmark Task B)(?:\s*;\s*(?:Qwen2?\.?5?|the configured fallback backbone|the configured training dataset|Benchmark Task A|Benchmark Task B))*\]/giu, "")
     .replace(
       /\bPreprocessing follows this order:\s*.*?\bArtifact text references (?:imput|scale)\.?.*?\bModel selection and reporting focus on average_accuracy\s*=\s*unweighted mean of Benchmark Task A accuracy and Benchmark Task B accuracy,?\s*accuracy_delta_vs_locked_baseline\s*=\s*cell mean average_accuracy minus mean average_accuracy of rank=8, dropout=0\.0 over the same seed set,?\s*benchmark_task_a_accuracy and benchmark_task_b_accuracy per run and per cell mean,?\s*and seed_std_average_accuracy across seeds \[42,43,44,45,46\] for each repeated cell\./giu,
       "Preprocessing and reporting held optimizer settings, adapter target modules, data cap, effective batch size, and evaluation tasks fixed across cells. The reported metrics are average accuracy, delta versus the locked rank-8 dropout-0 baseline, task-level accuracies, and seed-level dispersion for each repeated cell."
@@ -2745,14 +2745,14 @@ export function sanitizePaperNarrativeText(value: unknown): string {
     )
     .replace(
       /\bThe surviving preflight materials do not unambiguously identify the backbone actually used in the analyzed execution,\s*so the manuscript can report only the registered preferred and fallback options rather than a confirmed executed model\./giu,
-      "The executed metrics record identifies the selected backbone as the selected backbone for the analyzed run; TinyLlama remained a fallback option and is not treated as evidence for the reported condition means."
+      "The executed metrics record identifies the selected backbone as the selected backbone for the analyzed run; the configured fallback backbone remained a fallback option and is not treated as evidence for the reported condition means."
     )
     .replace(
       /\bThe available summary does not identify which backbone was ultimately used in the realized pilot execution,\s*so model-specific conclusions are limited to the declared protocol rather than a verified backbone-specific analysis\./giu,
-      "The executed metrics record identifies the selected backbone as the selected backbone for the realized pilot; TinyLlama remained only a fallback option and is not treated as evidence for the reported condition means."
+      "The executed metrics record identifies the selected backbone as the selected backbone for the realized pilot; the configured fallback backbone remained only a fallback option and is not treated as evidence for the reported condition means."
     )
     .replace(
-      /\bThe plan named Qwen\/Qwen2\.5-1\.5B as preferred for the executable run and TinyLlama\/TinyLlama-1\.1B-Chat-v1\.0 as the fallback if the preferred model could not be loaded\.\s*The executed metrics record identifies Qwen\/Qwen2\.5-1\.5B as the selected backbone for the analyzed run;\s*TinyLlama remained a fallback option and is not treated as evidence for the reported condition means\./giu,
+      /\bThe plan named the selected backbone as preferred for the executable run and the configured fallback backbone as the fallback if the preferred model could not be loaded\.\s*The executed metrics record identifies the selected backbone as the selected backbone for the analyzed run;\s*the configured fallback backbone remained a fallback option and is not treated as evidence for the reported condition means\./giu,
       "The executable run selected the selected backbone as the trained backbone; the fallback backbone remained only a fallback option and is not treated as evidence for the reported condition means."
     )
     .replace(
@@ -2836,7 +2836,7 @@ function rewriteReaderFacingProvenancePhrases(value: string): string {
       "The reported condition summaries preserve the locked baseline and evaluated rank/dropout alternatives as the comparison grid. Within that local pilot, the strongest reported comparison was between the baseline condition, the locked baseline, and a higher-capacity regularized condition, the leading observed condition."
     )
     .replace(
-      /\bThe evaluation spans dataset_to_be_selected\.\s*Models or conditions include Qwen\/Qwen2\.5-1\.5B and current_best_baseline\./giu,
+      /\bThe evaluation spans dataset_to_be_selected\.\s*Models or conditions include the selected backbone and current_best_baseline\./giu,
       "Evaluation spans the configured benchmark tasks. The reported conditions are condition-parameter cells compared against the locked rank-8, dropout-0 baseline on the selected backbone."
     )
     .replace(

@@ -539,11 +539,11 @@ function sanitizeSubmissionSurfaceText(text: string, context: { sectionHeading?:
     )
     .replace(
       /\brank\s+32\s+dropout\s+0\s+05\s+vs\s+rank\s+8\s+dropout\s+0\s+0:\s*baseline-relative accuracy gain:\s*([0-9.]+)\s+vs\s+0\s+\(delta\s+([0-9.]+)\),\s*average accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\),\s*Benchmark Task A accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\),\s*Benchmark Task B accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\)\.?/giu,
-      "The leading leading observed condition condition is the follow-up candidate. Table 1 reports the condition-level values for that cell and the locked baseline; the baseline-relative average-accuracy gain was $1."
+      "The leading observed condition is the follow-up candidate. Table 1 reports the condition-level values for that cell and the locked baseline; the baseline-relative average-accuracy gain was $1."
     )
     .replace(
       /\bThe leading condition was rank 32 with dropout 0\.05,\s*compared with the locked rank 8 dropout 0\.0 baseline;\s*the observed baseline-relative average-accuracy gain was ([0-9.]+),\s*average accuracy was [0-9.]+ versus [0-9.]+,\s*Benchmark Task A accuracy was [0-9.]+ versus [0-9.]+,\s*and Benchmark Task B accuracy was [0-9.]+ versus [0-9.]+\.?/giu,
-      "The leading leading observed condition condition is the follow-up candidate. Table 1 reports the condition-level values for that cell and the locked baseline; the baseline-relative average-accuracy gain was $1."
+      "The leading observed condition is the follow-up candidate. Table 1 reports the condition-level values for that cell and the locked baseline; the baseline-relative average-accuracy gain was $1."
     )
     .replace(
       /\bIn the reported best comparison,\s*rank 32 with dropout 0\.05 outperformed the baseline rank 8 with dropout 0\.0 by ([0-9.]+) average accuracy;\s*Benchmark Task A stayed at [0-9.]+ while Benchmark Task B increased from [0-9.]+ to [0-9.]+\.?/giu,
@@ -562,8 +562,8 @@ function sanitizeSubmissionSurfaceText(text: string, context: { sectionHeading?:
       "The leading observed condition cell provides the clearest follow-up signal: its baseline-relative average-accuracy gain is $1 in the reported comparison."
     )
     .replace(
-      /\bThe fixed search space includes Fixed training settings included learning rate 0\.0002,\s*per-device train batch size 1,\s*gradient accumulation 4,\s*maximum sequence length 256,\s*4 optimizer steps,\s*and 1800-second timeout\.?,\s*reported run details records 48 training examples for the reported pilot\.?,\s*and the LoRA rank\/dropout tuning grid\./giu,
-      "The fixed search space held LoRA rank and dropout as the manipulated factors while keeping learning rate 0.0002, per-device train batch size 1, gradient accumulation 4, maximum sequence length 256, 4 optimizer steps, a 1,800-second timeout, and 48 training examples fixed for the reported pilot."
+      /\bThe fixed search space includes Fixed training settings included learning rate 0\.0002,\s*per-device train batch size 1,\s*gradient accumulation 4,\s*maximum sequence length 256,\s*4 optimizer steps,\s*and 1800-second timeout\.?,\s*reported run details records 48 training examples for the reported pilot\.?,\s*and the condition-parameter tuning grid\./giu,
+      "The fixed search space held condition parameters as the manipulated factors while keeping learning rate 0.0002, per-device train batch size 1, gradient accumulation 4, maximum sequence length 256, 4 optimizer steps, a 1,800-second timeout, and 48 training examples fixed for the reported pilot."
     );
   if (/^\s*\[(?:warning|error|fail|failed|pass|passed)\]\s*[^:]{0,80}:/iu.test(cleaned)) {
     return "";
@@ -574,7 +574,7 @@ function sanitizeSubmissionSurfaceText(text: string, context: { sectionHeading?:
   }
   if (/related\s+work/iu.test(heading) && isSubmissionRelatedWorkResidue(cleaned)) {
     return /closest prior studies|abstract-only|planner-timeout|full-text fallback/iu.test(cleaned)
-      ? "For this manuscript, prior work motivates the rank/dropout question and local-budget evaluation design; numerical claims remain grounded in the executed run artifacts."
+      ? "For this manuscript, prior work motivates the condition-parameter question and local-budget evaluation design; numerical claims remain grounded in the executed run artifacts."
       : "Nearby PEFT, LoRA, and instruction-tuning studies provide context for memory efficiency, benchmark sensitivity, and adapter design, but they do not replace the locked baseline comparison in this study.";
   }
   if (isSubmissionProcessResidue(cleaned)) {
@@ -932,12 +932,12 @@ function repairSubmissionAbstract(abstract: string): string {
       "the manuscript supplements the condensed record with verified execution metadata identifying the selected backbone as the selected backbone"
     )
     .replace(
-      /\bThe strongest contribution of the study is a reproducible and conservative protocol for comparing LoRA settings under explicit budget,\s*reporting,\s*and uncertainty constraints\./giu,
-      "The strongest contribution of the study is a conservative, auditable pilot protocol for comparing LoRA settings under explicit budget, reporting, and uncertainty constraints."
+      /\bThe strongest contribution of the study is a reproducible and conservative protocol for comparing configured conditions under explicit budget,\s*reporting,\s*and uncertainty constraints\./giu,
+      "The strongest contribution of the study is a conservative, auditable pilot protocol for comparing configured conditions under explicit budget, reporting, and uncertainty constraints."
     )
     .replace(
       /\bThe protocol targeted a 4 x 2 factorial sweep over ranks \{4,\s*8,\s*16,\s*32\} and dropout values \{0\.0,\s*0\.05\},\s*with average accuracy across Benchmark Task A and Benchmark Task B as the primary performance measure and rank 8 with no dropout as the locked in-grid baseline\./giu,
-      "The protocol targeted a 4 x 2 factorial sweep over four LoRA ranks and two dropout settings. Average accuracy across Benchmark Task A and Benchmark Task B was the primary performance measure, and rank 8 with no dropout was the locked in-grid baseline."
+      "The protocol targeted a configured 4 x 2 condition sweep. Average accuracy across Benchmark Task A and Benchmark Task B was the primary performance measure, and the locked in-grid baseline was designated in advance."
     )
     .replace(
       /\bthe leading observed condition\b/giu,
@@ -1011,7 +1011,7 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
     )
     .replace(
       /\bleading condition vs locked baseline:\s*accuracy_delta_vs_baseline:\s*([0-9.]+)\s+vs\s+0\s*\(delta\s+([0-9.]+)\),\s*average_accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s*\(delta\s+([0-9.]+)\),\s*benchmark_task_a_accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s*\(delta\s+([^)]+)\),\s*benchmark_task_b_accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s*\(delta\s+([^)]+)\)\./giu,
-      "For the leading leading observed condition condition, Table 1 reports the condition-level values for the cell and the locked baseline; the baseline-relative mean gain is $5."
+      "For the leading observed condition, Table 1 reports the condition-level values for the cell and the locked baseline; the baseline-relative mean gain is $5."
     )
     .replace(
       /\bIn the reported best comparison,\s*rank 32 with dropout 0\.05 outperformed the baseline rank 8 with dropout 0\.0 by ([0-9.]+) average accuracy;\s*Benchmark Task A stayed at [0-9.]+ while Benchmark Task B increased from [0-9.]+ to [0-9.]+\.?/giu,
@@ -1058,12 +1058,12 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       "the current manuscript does not report a broader replication that would establish the same improvement beyond this preflight."
     )
     .replace(
-      /\bThe fixed search space includes Fixed training settings included learning rate 0\.0002,\s*per-device train batch size 1,\s*gradient accumulation 4,\s*maximum sequence length 256,\s*4 optimizer steps,\s*and 1800-second timeout\.,\s*reported run details records 48 training examples for the reported pilot\.,\s*and the LoRA rank\/dropout tuning grid\./giu,
-      "The fixed search space held LoRA rank and dropout as the manipulated factors while keeping learning rate 0.0002, per-device train batch size 1, gradient accumulation 4, maximum sequence length 256, 4 optimizer steps, and an 1800-second timeout fixed for the reported pilot."
+      /\bThe fixed search space includes Fixed training settings included learning rate 0\.0002,\s*per-device train batch size 1,\s*gradient accumulation 4,\s*maximum sequence length 256,\s*4 optimizer steps,\s*and 1800-second timeout\.,\s*reported run details records 48 training examples for the reported pilot\.,\s*and the condition-parameter tuning grid\./giu,
+      "The fixed search space held condition parameters as the manipulated factors while keeping learning rate 0.0002, per-device train batch size 1, gradient accumulation 4, maximum sequence length 256, 4 optimizer steps, and an 1800-second timeout fixed for the reported pilot."
     )
     .replace(
-      /\bThe fixed search space includes\s*Fixed training settings included ([^.]+)\.,\s*reported run details records ([^.]+)\.,\s*and the LoRA rank\/dropout tuning grid\./giu,
-      "The fixed search space held LoRA rank and dropout as the manipulated factors, with fixed training settings including $1 and reported run details recording $2."
+      /\bThe fixed search space includes\s*Fixed training settings included ([^.]+)\.,\s*reported run details records ([^.]+)\.,\s*and the condition-parameter tuning grid\./giu,
+      "The fixed search space held condition parameters as the manipulated factors, with fixed training settings including $1 and reported run details recording $2."
     )
     .replace(
       /\bResults reports the best observed cell against the locked rank-8,\s*dropout-0 baseline;\s*Table 1 reports condition mean accuracies and identifies only that locked row as the baseline\./giu,
@@ -1169,7 +1169,7 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
     )
     .replace(
       /\bThe reported analyzed execution did not preserve the resolved model identifier,\s*so we avoid stronger model-specific interpretation than the archived summary allows and treat the result as evidence from a small locally runnable instruction-tuning target\./giu,
-      "The archived execution summary identifies the selected backbone as the selected backbone for the analyzed run; TinyLlama is retained only as a fallback option and is not treated as evidence for the reported condition means."
+      "The archived execution summary identifies the selected backbone as the selected backbone for the analyzed run; the configured fallback backbone is retained only as a fallback option and is not treated as evidence for the reported condition means."
     )
     .replace(
       /\bAccording to the archived execution summary,\s*The executed metrics record identifies\b/giu,
@@ -1192,11 +1192,11 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       "Because verified execution metadata identifies the selected backbone as the selected backbone"
     )
     .replace(
-      /\bThe reported conditions are LoRA rank\/dropout cells compared against the locked rank-8,\s*dropout-0 baseline on Qwen\/Qwen2\.5-1\.5B\./giu,
+      /\bThe reported conditions are condition-parameter cells compared against the locked rank-8,\s*dropout-0 baseline on the selected backbone\./giu,
       headingKey === "method" ? "" : "The reported conditions compare condition-parameter cells against the locked locked baseline baseline."
     )
     .replace(
-      /\bEvaluation spans Benchmark Task A and Benchmark Task B\.\s*The reported conditions are LoRA rank\/dropout cells compared against the locked rank-8,\s*dropout-0 baseline on Qwen\/Qwen2\.5-1\.5B\./giu,
+      /\bEvaluation spans Benchmark Task A and Benchmark Task B\.\s*The reported conditions are condition-parameter cells compared against the locked rank-8,\s*dropout-0 baseline on the selected backbone\./giu,
       headingKey === "method" ? "" : "Evaluation spans Benchmark Task A and Benchmark Task B."
     )
     .replace(
@@ -1261,8 +1261,8 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       /\bA second limitation is incomplete implementation disclosure in the reported summary\.\s*The final backbone used for the reported run is not identified,\s*and the summary does not expose optimizer choice,\s*learning rate,\s*batch size,\s*epochs or steps beyond the high-level budget frame,\s*LoRA target modules,\s*or adapter scaling\./giu,
       "A second limitation is bounded implementation disclosure rather than absent implementation disclosure. Method identifies the selected the selected backbone backbone, seed, learning rate, batch size, gradient accumulation, optimizer steps, maximum sequence length, and timeout; remaining reproducibility gaps concern any optimizer, adapter-scaling, and target-module fields not separately exposed in the compact record."
     ).replace(
-      /\bThe largest limitation is the mismatch between the nominal brief and the executed summary available for writing\.\s*The broader plan described a capped Alpaca Clean study,\s*seed 42,\s*and model-selection rules involving Qwen2\.5-1\.5B and TinyLlama,\s*whereas the verified summary used here reflects a seed-17,\s*48-sample preflight and does not disclose the final model choice or optimizer details in the condensed record\.\s*As a result,\s*the paper can describe the registered design and the visible executed run,\s*but it cannot present a fully conventional implementation section with complete artifact-level specificity\./giu,
-      "The largest limitation is metadata reconciliation between the nominal brief and the executed summary available for writing. The broader plan described a capped Alpaca Clean study, seed 42, and model-selection rules involving the selected backbone and TinyLlama, whereas the verified summary used here reflects a seed-17, 48-sample preflight. The manuscript supplements that compact summary with verified execution metadata identifying the selected backbone as the selected backbone, but optimizer choice, adapter scaling, and some trial-accounting fields remain insufficiently exposed for a fully conventional implementation section."
+      /\bThe largest limitation is the mismatch between the nominal brief and the executed summary available for writing\.\s*The broader plan described a capped the configured training dataset study,\s*seed 42,\s*and model-selection rules involving the selected backbone and the configured fallback backbone,\s*whereas the verified summary used here reflects a seed-17,\s*48-sample preflight and does not disclose the final model choice or optimizer details in the condensed record\.\s*As a result,\s*the paper can describe the registered design and the visible executed run,\s*but it cannot present a fully conventional implementation section with complete artifact-level specificity\./giu,
+      "The largest limitation is metadata reconciliation between the nominal brief and the executed summary available for writing. The broader plan described a capped the configured training dataset study, seed 42, and model-selection rules involving the selected backbone and the configured fallback backbone, whereas the verified summary used here reflects a seed-17, 48-sample preflight. The manuscript supplements that compact summary with verified execution metadata identifying the selected backbone as the selected backbone, but optimizer choice, adapter scaling, and some trial-accounting fields remain insufficiently exposed for a fully conventional implementation section."
     ).replace(
       /\bdoes not disclose the final model choice or optimizer details in the condensed record\b/giu,
       "is supplemented here with verified execution metadata for the selected backbone while optimizer details remain unavailable in the condensed record"
@@ -1305,11 +1305,11 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
     repaired = repaired
       .replace(
         /\bThe cited work therefore motivates the design and claim ceiling,\s*but it is not treated as a condition-matched baseline for the local 4x2 rank\/dropout preflight\./giu,
-      "Relative to memory-efficient finetuning work, this study holds quantization and adapter family fixed; relative to broader benchmark papers, it narrows evaluation to Benchmark Task A and Benchmark Task B; and relative to adapter-variant work, it tests rank/dropout choices within standard LoRA rather than proposing a new adapter architecture."
+      "Relative to memory-efficient finetuning work, this study holds quantization and adapter family fixed; relative to broader benchmark papers, it narrows evaluation to Benchmark Task A and Benchmark Task B; and relative to adapter-variant work, it tests configured condition choices rather than proposing a new adapter architecture."
       )
       .replace(
         /\bThe manuscript can position this bounded local condition-grid pilot as useful for deciding whether a larger follow-up is warranted,\s*but it should not claim to outperform QLoRA,\s*MAPLE,\s*or adapter-variant methods\./giu,
-        "The comparison to external PEFT methods is therefore one of scope and experimental role: those works define larger memory, benchmark, or architecture contexts, while this manuscript supplies a small controlled pilot for one rank/dropout grid."
+        "The comparison to external PEFT methods is therefore one of scope and experimental role: those works define larger memory, benchmark, or architecture contexts, while this manuscript supplies a small controlled pilot for one configured condition grid."
       );
   }
   return repairReaderVisibleMetricNames(repaired);
@@ -1407,8 +1407,8 @@ function repairResultsSectionReaderFlow(paragraphs: string[]): string[] {
 function repairMethodKnownExecutionDetails(paragraphs: string[]): string[] {
   const methodText = paragraphs.join(" ");
   const hasQwenPlan =
-    /Qwen\/Qwen2\.5-1\.5B/iu.test(methodText)
-    && /TinyLlama\/TinyLlama-1\.1B-Chat-v1\.0|TinyLlama/iu.test(methodText);
+    /the selected backbone/iu.test(methodText)
+    && /the configured fallback backbone|the configured fallback backbone/iu.test(methodText);
   if (!hasQwenPlan) {
     return paragraphs;
   }
@@ -1649,7 +1649,7 @@ function repairAppendixSections(sections: PaperManuscriptSection[]): PaperManusc
               "A later replication should preserve locked-baseline accounting, expose complete task-wise and resource tables, and rerun the leading condition under a broader benchmark suite before claiming general LoRA regularization behavior."
             )
             .replace(
-              /\bThe study used a fixed 4x2 grid over ranks 4,\s*8,\s*16,\s*and 32 and dropout values 0\.0 and 0\.05,\s*with rank 8 and dropout 0\.0 serving as the locked baseline\.\s*The run was designed for a dual-RTX-4090-class local workstation and used seed 42\.\s*The preferred backbone in the protocol was Qwen\/Qwen2\.5-1\.5B,\s*with TinyLlama\/TinyLlama-1\.1B-Chat-v1\.0 reserved as a fallback\.\s*The training source was Alpaca Clean under a cap of 10000 examples,\s*although the summarized preflight reported here used 48 examples\./giu,
+              /\bThe study used a fixed 4x2 grid over ranks 4,\s*8,\s*16,\s*and 32 and dropout values 0\.0 and 0\.05,\s*with rank 8 and dropout 0\.0 serving as the locked baseline\.\s*The run was designed for a dual-RTX-4090-class local workstation and used seed 42\.\s*The preferred backbone in the protocol was the selected backbone,\s*with the configured fallback backbone reserved as a fallback\.\s*The training source was the configured training dataset under a cap of 10000 examples,\s*although the summarized preflight reported here used 48 examples\./giu,
               "The study used a fixed 4x2 grid over ranks 4, 8, 16, and 32 and dropout values 0.0 and 0.05, with the locked baseline serving as the locked baseline. The executed summary identifies the selected backbone as the selected backbone, keeps the configured fallback backbone as a fallback candidate only, and reports seed 17 with 48 the configured training dataset training examples."
             )
             .replace(
@@ -2968,7 +2968,7 @@ function shouldRenderSubmissionCitationsForParagraph(heading: string, paragraph:
     return /\b(?:prior|Related Work|low-budget evidence|fixed-budget studies|PEFT|QLoRA|adapter|benchmarking|literature)\b/iu.test(paragraph);
   }
   if (key === "limitations") {
-    return /\b(?:Qwen\/Qwen2\.5|TinyLlama|Benchmark Task A|Benchmark Task B|PEFT|QLoRA|MAPLE|LoRA|adapter|benchmark)\b/iu.test(paragraph);
+    return /\b(?:Qwen\/Qwen2\.5|the configured fallback backbone|Benchmark Task A|Benchmark Task B|PEFT|QLoRA|MAPLE|LoRA|adapter|benchmark)\b/iu.test(paragraph);
   }
   if (key === "conclusion") {
     return /\b(?:PEFT|QLoRA|MAPLE|adapter|benchmark studies|literature)\b/iu.test(paragraph);
