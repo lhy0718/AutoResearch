@@ -714,6 +714,13 @@ export class TerminalApp {
       return;
     }
 
+    if (!isSlashPrefixed(text)) {
+      const steering = normalizeSteeringInput(text);
+      if (steering && await this.applyPersistedRunningRunSteeringInput(steering)) {
+        return;
+      }
+    }
+
     await this.executeInput(text);
 
     if (willRestore && savedDraft) {
@@ -2091,6 +2098,28 @@ export class TerminalApp {
     this.pushLog("Replanning current natural query with latest steering...");
     this.activeNaturalRequest.abortController.abort();
     this.render();
+  }
+
+  private async applyPersistedRunningRunSteeringInput(instruction: string): Promise<boolean> {
+    if (!this.activeRunId) {
+      return false;
+    }
+    const run = await this.runStore.getRun(this.activeRunId);
+    if (!run || run.status !== "running") {
+      return false;
+    }
+    const state = run.graph.nodeStates[run.currentNode];
+    if (!state || state.status !== "running") {
+      return false;
+    }
+    this.queuedInputs.push(instruction);
+    this.pushLog(`Queued steering: ${oneLine(instruction)}`);
+    this.pushLog(`Cancel requested: ${run.currentNode}`);
+    await this.forcePauseActiveRunIfStillRunning();
+    await this.refreshRunIndex();
+    await this.setActiveRunId(run.id);
+    this.render();
+    return true;
   }
 
   private async executeParsedSlash(

@@ -1839,6 +1839,31 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(rendered).not.toContain("idle · gpt-5.3-codex");
   });
 
+  it("pauses a persisted running run when plain steering is submitted from an idle attached TUI", async () => {
+    const app = makeApp();
+    const run = makeRun("run-running-steering");
+    run.status = "running";
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    run.graph.nodeStates.implement_experiments.status = "running";
+    app.activeRunId = run.id;
+    app.runStore = { getRun: vi.fn().mockResolvedValue(run) };
+    app.forcePauseActiveRunIfStillRunning = vi.fn().mockResolvedValue(undefined);
+    app.refreshRunIndex = vi.fn().mockResolvedValue(undefined);
+    app.setActiveRunId = vi.fn().mockResolvedValue(undefined);
+    app.executeInput = vi.fn().mockResolvedValue(undefined);
+    app.recordHistory = vi.fn().mockResolvedValue(undefined);
+
+    await app.submitInputText("stop the broad implementation loop");
+
+    expect(app.forcePauseActiveRunIfStillRunning).toHaveBeenCalledTimes(1);
+    expect(app.setActiveRunId).toHaveBeenCalledWith(run.id);
+    expect(app.executeInput).not.toHaveBeenCalled();
+    expect(app.queuedInputs).toEqual(["stop the broad implementation loop"]);
+    expect(app.logs).toContain("Queued steering: stop the broad implementation loop");
+    expect(app.logs).toContain("Cancel requested: implement_experiments");
+  });
+
   it("interrupts active supervised runs when plain steering is submitted while busy", async () => {
     const app = makeApp();
     const controller = new AbortController();
