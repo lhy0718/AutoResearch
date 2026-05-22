@@ -38521,7 +38521,7 @@ export async function repairPythonCandidateSpecPeftRecipeNormalizationSurface(sc
     "    return True",
     "",
     "def normalize_peft_recipe(raw, expected_order):",
-    "    \"\"\"Compatibility normalization for CandidateSpec-backed PEFT recipe lists.\"\"\"",
+    "    \"\"\"Compatibility normalization for CandidateSpec-backed adapter recipe lists.\"\"\"",
     "    if isinstance(raw, PeftRecipe):",
     "        values = raw.to_metrics_dict() if hasattr(raw, \"to_metrics_dict\") else dict(getattr(raw, \"__dict__\", {}))",
     "        values[\"target_modules\"] = tuple(values.get(\"target_modules\") or ())",
@@ -38599,7 +38599,7 @@ export async function repairPythonCandidateSpecPeftRecipeNormalizationSurface(sc
   await fs.writeFile(scriptPath, nextSource, "utf8");
   return {
     repaired: true,
-    message: `Aligned CandidateSpec-to-PeftRecipe normalization in ${path.basename(scriptPath)} before handoff.`
+    message: `Aligned CandidateSpec-to-generated recipe normalization in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
@@ -38852,7 +38852,7 @@ async function repairPythonBaselineFirstRecipeOrderSurface(scriptPath?: string):
   await fs.writeFile(scriptPath, nextSource, "utf8");
   return {
     repaired: true,
-    message: `Aligned baseline-first PEFT recipe ordering in ${path.basename(scriptPath)} before handoff.`
+    message: `Aligned baseline-first adapter recipe ordering in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

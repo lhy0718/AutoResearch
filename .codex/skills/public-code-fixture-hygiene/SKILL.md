@@ -23,6 +23,7 @@ Public source and tests must describe general AutoLabOS behavior, not one histor
 - Prefer neutral callable/file names such as run_condition_sweep_experiment.py, run_locked_condition_sweep, and benchmark_task_a/benchmark_task_b over method-, model-, or dataset-specific names in public fixtures.
 - Treat generated condition-marker families as leaks, not only individual strings. For example, public code should reject reusable markers shaped like `rank_<n>_dropout_<x_y>` unless those values come from user/run artifacts being inspected.
 - Keep cached-paper, planner-timeout, and fallback-text fixtures method-neutral. Avoid embedding a concrete method-family recipe phrase unless the method name is the explicit subject of the behavior under test.
+- Generic metric vocabularies such as accuracy, F1, BLEU, ROUGE, perplexity, runtime, latency, memory, and throughput are allowed when they are part of reusable metric extraction logic rather than a one-off experiment fixture.
 
 ## Workflow
 

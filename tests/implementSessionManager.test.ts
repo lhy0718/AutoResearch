@@ -30822,7 +30822,7 @@ describe("ImplementSessionManager", () => {
         "        if self.method == PEFT_METHOD_NONE and self.requires_training:",
         "            raise ValueError('untuned baseline cannot require training')",
         "        if self.method != PEFT_METHOD_NONE and not self.requires_training:",
-        "            raise ValueError('tuned PEFT recipe must require training')",
+        "            raise ValueError('tuned adapter recipe must require training')",
         "        if self.learning_rate <= 0.0:",
         "            raise ValueError(f\"Recipe {self.recipe_id!r} learning_rate must be positive\")",
         "        if self.train_epochs <= 0.0:",
@@ -36765,8 +36765,8 @@ describe("ImplementSessionManager", () => {
     expect(calls).toBe(3);
   });
 
-  it("repairs CandidateSpec-backed PEFT recipe normalization before locked baseline validation", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-candidate-spec-peft-normalization-"));
+  it("repairs CandidateSpec-backed adapter recipe normalization before locked baseline validation", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-candidate-spec-adapter-normalization-"));
     tempDirs.push(workspace);
     const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
