@@ -417,6 +417,17 @@ function validatePlannedConditionImplementationSurface(input: {
       });
     }
 
+    const unresolvedRuntimeGuardEvidence = findUnresolvedRuntimeGuardEvidence(input.scriptText);
+    if (unresolvedRuntimeGuardEvidence) {
+      findings.push({
+        code: "PLANNED_RUNTIME_EXECUTION_GUARD_UNRESOLVED",
+        severity: "block",
+        message:
+          "The implementation still exposes an unresolved runtime guard where the planned study execution loop should be.",
+        evidence: unresolvedRuntimeGuardEvidence
+      });
+    }
+
     const lockedConditionResolverMismatchEvidence = findLockedConditionResolverMismatchEvidence(
       input.scriptText,
       requiredMarkers
@@ -559,6 +570,30 @@ function splitPythonParameterList(parameters: string): string[] {
     parts.push(current);
   }
   return parts;
+}
+
+function findUnresolvedRuntimeGuardEvidence(scriptText: string): string | undefined {
+  if (!scriptText) {
+    return undefined;
+  }
+  const guardPatterns = [
+    {
+      label: "missing_locked_study_execution_helper",
+      pattern: /No locked study execution helper is available/iu
+    },
+    {
+      label: "missing_study_sweep_controller",
+      pattern: /Unable to resolve the study sweep controller from module globals/iu
+    },
+    {
+      label: "chunk_placeholder_reference",
+      pattern: /expected chunk_[A-Za-z0-9_]+/iu
+    }
+  ];
+  const hits = guardPatterns
+    .filter((entry) => entry.pattern.test(scriptText))
+    .map((entry) => entry.label);
+  return hits.length > 0 ? `runtime_guard=${hits.join(", ")}` : undefined;
 }
 
 function findLockedConditionResolverMismatchEvidence(scriptText: string, requiredMarkers: string[]): string | undefined {
