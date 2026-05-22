@@ -5726,11 +5726,11 @@ export class ImplementSessionManager {
       return report;
     }
 
-    const peftRecipeAliasRepair = await repairPythonMissingPeftRecipeSurface(executionScriptPath);
-    if (peftRecipeAliasRepair.repaired) {
+    const adapterRecipeAliasRepair = await repairPythonMissingAdapterRecipeSurface(executionScriptPath);
+    if (adapterRecipeAliasRepair.repaired) {
       onProgress?.(
-        peftRecipeAliasRepair.message ||
-          "Repaired missing PEFTRecipe compatibility surface before handoff.",
+        adapterRecipeAliasRepair.message ||
+          "Repaired missing AdapterRecipe compatibility surface before handoff.",
         {
           verificationCommand: command
         }
@@ -5742,8 +5742,8 @@ export class ImplementSessionManager {
         agentRole: "implementer",
         payload: {
           text:
-            peftRecipeAliasRepair.message ||
-            "Repaired missing PEFTRecipe compatibility surface before handoff."
+            adapterRecipeAliasRepair.message ||
+            "Repaired missing AdapterRecipe compatibility surface before handoff."
         }
       });
       const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
@@ -7300,12 +7300,12 @@ export class ImplementSessionManager {
       }
     }
 
-    const peftRecipeConfigAliasRepair =
-      await repairPythonPeftRecipeConfigMetadataAliasSurface(executionScriptPath);
-    if (peftRecipeConfigAliasRepair.repaired) {
+    const adapterRecipeConfigAliasRepair =
+      await repairPythonAdapterRecipeConfigMetadataAliasSurface(executionScriptPath);
+    if (adapterRecipeConfigAliasRepair.repaired) {
       onProgress?.(
-        peftRecipeConfigAliasRepair.message ||
-          "Repaired PEFTRecipeConfig metadata alias compatibility before handoff.",
+        adapterRecipeConfigAliasRepair.message ||
+          "Repaired AdapterRecipeConfig metadata alias compatibility before handoff.",
         {
           verificationCommand: command
         }
@@ -7317,8 +7317,8 @@ export class ImplementSessionManager {
         agentRole: "implementer",
         payload: {
           text:
-            peftRecipeConfigAliasRepair.message ||
-            "Repaired PEFTRecipeConfig metadata alias compatibility before handoff."
+            adapterRecipeConfigAliasRepair.message ||
+            "Repaired AdapterRecipeConfig metadata alias compatibility before handoff."
         }
       });
       const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
@@ -7925,11 +7925,11 @@ export class ImplementSessionManager {
     }
 
     const candidateSpecRecipeNormalizationRepair =
-      await repairPythonCandidateSpecPeftRecipeNormalizationSurface(executionScriptPath);
+      await repairPythonCandidateSpecAdapterRecipeNormalizationSurface(executionScriptPath);
     if (candidateSpecRecipeNormalizationRepair.repaired) {
       onProgress?.(
         candidateSpecRecipeNormalizationRepair.message ||
-          "Aligned CandidateSpec to PeftRecipe normalization before handoff.",
+          "Aligned CandidateSpec to AdapterRecipe normalization before handoff.",
         {
           verificationCommand: command
         }
@@ -7942,7 +7942,7 @@ export class ImplementSessionManager {
         payload: {
           text:
             candidateSpecRecipeNormalizationRepair.message ||
-            "Aligned CandidateSpec to PeftRecipe normalization before handoff."
+            "Aligned CandidateSpec to AdapterRecipe normalization before handoff."
         }
       });
       const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
@@ -10106,7 +10106,7 @@ const RECIPE_WORKFLOW_ENTRYPOINT_NAMES = [
   "run_baseline_first_candidate_evaluation",
   "run_baseline_first_recipe_comparison",
   "run_baseline_first_comparison",
-  "run_peft_recipe_comparison",
+  "run_adapter_recipe_comparison",
   "execute_recipe_comparison",
   "run_recipe_comparison",
   "run_recipe_execution_and_evaluation_loop",
@@ -10141,9 +10141,9 @@ const RECIPE_WORKFLOW_ENTRYPOINT_NAMES = [
   "run_experiment",
   "run_baseline_first_experiment",
   "run_baseline_first_study",
-  "run_baseline_and_peft_recipes",
+  "run_baseline_and_adapter_recipes",
   "build_and_write_metrics_payload",
-  "compare_peft_recipes",
+  "compare_adapter_recipes",
   "run_all_recipes"
 ];
 
@@ -16786,7 +16786,7 @@ export async function repairPythonOrchestrationArgumentSurface(
     /def\s+_execute_baseline_first_workflow\s*\(/u.test(nextSource) &&
     /\btrain_dataset\b/u.test(nextSource) &&
     /\beval_examples\b/u.test(nextSource) &&
-    /"recipes":\s*globals\(\)\.get\("PEFT_RECIPES"/u.test(nextSource) &&
+    /"recipes":\s*globals\(\)\.get\("ADAPTER_RECIPES"/u.test(nextSource) &&
     !/"train_dataset":\s*train_dataset/u.test(nextSource) &&
     !/def\s+_autolabos_prepare_workflow_train_dataset\s*\(/u.test(nextSource);
 
@@ -16854,7 +16854,7 @@ export async function repairPythonOrchestrationArgumentSurface(
     }
 
     const recipesLinePattern =
-      /(\n\s*"recipes":\s*globals\(\)\.get\("PEFT_RECIPES",\s*globals\(\)\.get\("RECIPE_CONFIGS",\s*None\)\),)/u;
+      /(\n\s*"recipes":\s*globals\(\)\.get\("ADAPTER_RECIPES",\s*globals\(\)\.get\("RECIPE_CONFIGS",\s*None\)\),)/u;
     if (recipesLinePattern.test(nextSource)) {
       nextSource = nextSource.replace(
         recipesLinePattern,
@@ -23201,7 +23201,6 @@ export async function repairPythonPeftAcronymClassAliasSurface(
 
   const aliasPairs = [
     ["PEFTConditionConfig", "PeftConditionConfig"],
-    ["PEFTRecipeConfig", "PeftRecipeConfig"],
     ["PEFTExperimentConfig", "PeftExperimentConfig"],
     ["PEFTConditionResult", "PeftConditionResult"],
     ["PEFTResult", "PeftResult"]
@@ -32990,7 +32989,7 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
   const hasRecipeEvaluationLoopDispatcher =
     source.includes("No recipe evaluation loop was found. Expected one of:") ||
     source.includes("run_recipe_evaluation_loop") ||
-    source.includes("run_peft_recipe_comparison");
+    source.includes("run_adapter_recipe_comparison");
   const hasConditionWorkflowCallableDispatcher =
     source.includes("No condition workflow callable was found. Expected one of") ||
     source.includes("def _run_conditions_via_available_api(");
@@ -33195,7 +33194,7 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
             "run_recipe_study",
             "run_all_recipes",
             "evaluate_recipe_conditions",
-            "run_peft_recipe_comparison",
+            "run_adapter_recipe_comparison",
             "run_recipes"
           ]
       : [
@@ -33203,7 +33202,7 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
         "execute_locked_recipe_sequence",
         "run_baseline_first_recipe_sequence",
         "run_recipe_execution_orchestrator",
-        "run_peft_recipe_study"
+        "run_adapter_recipe_study"
       ];
   if (searchedNames.some((name) => pythonSourceDefinesOrImportsName(source, name))) {
     return { repaired: false };
@@ -33356,7 +33355,7 @@ export async function repairPythonRecipeExecutionOrchestratorAlias(
               "run_recipe_execution_and_evaluation_loop",
               "run_recipe_evaluation_and_execution_loop",
               "run_baseline_first_recipe_comparison",
-              "run_peft_recipe_study",
+              "run_adapter_recipe_study",
               "execute_recipe_evaluation_loop",
               "evaluate_recipes_baseline_first"
             ]
@@ -37824,7 +37823,7 @@ export async function repairPythonExperimentConfigMetadataSurface(scriptPath?: s
   };
 }
 
-export async function repairPythonPeftRecipeConfigMetadataAliasSurface(scriptPath?: string): Promise<{
+export async function repairPythonAdapterRecipeConfigMetadataAliasSurface(scriptPath?: string): Promise<{
   repaired: boolean;
   message?: string;
 }> {
@@ -37840,11 +37839,11 @@ export async function repairPythonPeftRecipeConfigMetadataAliasSurface(scriptPat
   }
 
   if (
-    !source.includes("class PEFTRecipeConfig:") ||
+    !source.includes("class AdapterRecipeConfig:") ||
     !source.includes("_coerce_recipe_metadata_to_config") ||
     !source.includes("field_aliases") ||
     !source.includes("candidate_id: str") ||
-    source.includes("_autolabos_peft_recipe_config_metadata_alias_marker")
+    source.includes("_autolabos_adapter_recipe_config_metadata_alias_marker")
   ) {
     return { repaired: false };
   }
@@ -37873,7 +37872,7 @@ export async function repairPythonPeftRecipeConfigMetadataAliasSurface(scriptPat
   let nextSource = source.replace(
     aliasNeedle,
     [
-      "        _autolabos_peft_recipe_config_metadata_alias_marker = True",
+      "        _autolabos_adapter_recipe_config_metadata_alias_marker = True",
       aliasNeedle.trimEnd(),
       ...aliasLines
     ].join("\n") + "\n"
@@ -37899,7 +37898,7 @@ export async function repairPythonPeftRecipeConfigMetadataAliasSurface(scriptPat
   await fs.writeFile(scriptPath, nextSource, "utf8");
   return {
     repaired: true,
-    message: `Added PEFTRecipeConfig metadata aliases to ${path.basename(scriptPath)} before handoff.`
+    message: `Added AdapterRecipeConfig metadata aliases to ${path.basename(scriptPath)} before handoff.`
   };
 }
 
@@ -38056,7 +38055,7 @@ async function repairPythonRecipeSpecPeftTypeSurface(scriptPath?: string): Promi
   };
 }
 
-async function repairPythonMissingPeftRecipeSurface(scriptPath?: string): Promise<{
+async function repairPythonMissingAdapterRecipeSurface(scriptPath?: string): Promise<{
   repaired: boolean;
   message?: string;
 }> {
@@ -38071,13 +38070,13 @@ async function repairPythonMissingPeftRecipeSurface(scriptPath?: string): Promis
     return { repaired: false };
   }
 
-  if (pythonSourceDefinesOrImportsName(source, "PEFTRecipe")) {
+  if (pythonSourceDefinesOrImportsName(source, "AdapterRecipe")) {
     return { repaired: false };
   }
-  if (!/\bPEFTRecipe\b/u.test(source) || !/\bPEFTRecipe\s*\(\s*\*\*init_kwargs\s*\)/u.test(source)) {
+  if (!/\bAdapterRecipe\b/u.test(source) || !/\bAdapterRecipe\s*\(\s*\*\*init_kwargs\s*\)/u.test(source)) {
     return { repaired: false };
   }
-  if (!/\bdataclasses\.fields\s*\(\s*PEFTRecipe\s*\)/u.test(source)) {
+  if (!/\bdataclasses\.fields\s*\(\s*AdapterRecipe\s*\)/u.test(source)) {
     return { repaired: false };
   }
   if (!source.includes("@dataclass") || !source.includes("from dataclasses import")) {
@@ -38093,7 +38092,7 @@ async function repairPythonMissingPeftRecipeSurface(scriptPath?: string): Promis
   const compatibilityClass = [
     "",
     "@dataclass(frozen=True)",
-    "class PEFTRecipe:",
+    "class AdapterRecipe:",
     "    recipe_id: str",
     "    display_name: str",
     "    peft_type: str",
@@ -38141,7 +38140,7 @@ async function repairPythonMissingPeftRecipeSurface(scriptPath?: string): Promis
   await fs.writeFile(scriptPath, nextSource, "utf8");
   return {
     repaired: true,
-    message: `Added a PEFTRecipe compatibility dataclass to ${path.basename(scriptPath)} before handoff.`
+    message: `Added an AdapterRecipe compatibility dataclass to ${path.basename(scriptPath)} before handoff.`
   };
 }
 
@@ -38591,7 +38590,7 @@ async function repairPythonBaselineFirstExecutionCandidateSurface(scriptPath?: s
   };
 }
 
-export async function repairPythonCandidateSpecPeftRecipeNormalizationSurface(scriptPath?: string): Promise<{
+export async function repairPythonCandidateSpecAdapterRecipeNormalizationSurface(scriptPath?: string): Promise<{
   repaired: boolean;
   message?: string;
 }> {
@@ -38608,38 +38607,38 @@ export async function repairPythonCandidateSpecPeftRecipeNormalizationSurface(sc
 
   if (
     !source.includes("class CandidateSpec") ||
-    !source.includes("class PeftRecipe") ||
-    !source.includes("def normalize_peft_recipe(") ||
+    !source.includes("class AdapterRecipe") ||
+    !source.includes("def normalize_adapter_recipe(") ||
     !source.includes("def validate_locked_recipe_order(") ||
-    !source.includes("LOCKED_PEFT_RECIPES") ||
+    !source.includes("LOCKED_ADAPTER_RECIPES") ||
     !source.includes("candidate 0 must be the unmodified non-trainable base checkpoint") ||
-    source.includes("_autolabos_candidate_spec_peft_recipe_normalization_marker")
+    source.includes("_autolabos_candidate_spec_adapter_recipe_normalization_marker")
   ) {
     return { repaired: false };
   }
 
   const insertionMatch =
-    source.match(/\nLOCKED_PEFT_RECIPES\s*:/u) ||
-    source.match(/\nLOCKED_PEFT_RECIPES\s*=/u);
+    source.match(/\nLOCKED_ADAPTER_RECIPES\s*:/u) ||
+    source.match(/\nLOCKED_ADAPTER_RECIPES\s*=/u);
   if (!insertionMatch || insertionMatch.index === undefined) {
     return { repaired: false };
   }
 
   const helper = [
     "",
-    "def _autolabos_candidate_spec_peft_recipe_normalization_marker():",
+    "def _autolabos_candidate_spec_adapter_recipe_normalization_marker():",
     "    return True",
     "",
-    "def normalize_peft_recipe(raw, expected_order):",
+    "def normalize_adapter_recipe(raw, expected_order):",
     "    \"\"\"Compatibility normalization for CandidateSpec-backed adapter recipe lists.\"\"\"",
-    "    if isinstance(raw, PeftRecipe):",
+    "    if isinstance(raw, AdapterRecipe):",
     "        values = raw.to_metrics_dict() if hasattr(raw, \"to_metrics_dict\") else dict(getattr(raw, \"__dict__\", {}))",
     "        values[\"target_modules\"] = tuple(values.get(\"target_modules\") or ())",
     "        values[\"expected_order\"] = expected_order",
     "        if str(values.get(\"recipe_type\", \"\")).lower() in {\"unmodified_base\", \"base_model\", \"baseline\", \"none\", \"no_adapter\"}:",
     "            values[\"recipe_type\"] = \"base\"",
     "            values[\"trainable\"] = False",
-    "        return PeftRecipe(**values)",
+    "        return AdapterRecipe(**values)",
     "    recipe_id = str(",
     "        _recipe_value(",
     "            raw,",
@@ -38682,7 +38681,7 @@ export async function repairPythonCandidateSpecPeftRecipeNormalizationSurface(sc
     "    if locked_raw is None:",
     "        locked_raw = _recipe_value(raw, \"is_unmodified_baseline\", None)",
     "    locked_baseline = bool(locked_raw) or expected_order in (0, 1)",
-    "    return PeftRecipe(",
+    "    return AdapterRecipe(",
     "        recipe_id=recipe_id,",
     "        display_name=str(_recipe_value(raw, \"display_name\", _recipe_value(raw, \"label\", recipe_id))),",
     "        recipe_type=recipe_type,",
@@ -38730,25 +38729,25 @@ export async function repairPythonLockedRecipeCatalogAliasSurface(scriptPath?: s
 
   if (
     source.includes("def get_recipe_registry(") &&
-    source.includes("PEFT_RECIPES") &&
+    source.includes("ADAPTER_RECIPES") &&
     source.includes("candidate = globals().get(candidate_name)") &&
     source.includes('"RECIPE_CONFIGS"') &&
     source.includes('"RECIPE_REGISTRY"') &&
-    !source.includes('"PEFT_RECIPES",')
+    !source.includes('"ADAPTER_RECIPES",')
   ) {
     const candidateTuplePattern =
       /(\s*for candidate_name in \(\n(?:\s*"[^"]+",\n)+\s*\):)/u;
     const candidateTupleMatch = source.match(candidateTuplePattern);
-    if (candidateTupleMatch?.[0] && !candidateTupleMatch[0].includes('"PEFT_RECIPES"')) {
+    if (candidateTupleMatch?.[0] && !candidateTupleMatch[0].includes('"ADAPTER_RECIPES"')) {
       const nextTuple = candidateTupleMatch[0].replace(
         /(\s*"RECIPE_REGISTRY",\n)/u,
-        `$1        "PEFT_RECIPES",\n`
+        `$1        "ADAPTER_RECIPES",\n`
       );
       if (nextTuple !== candidateTupleMatch[0]) {
         await fs.writeFile(scriptPath, source.replace(candidateTupleMatch[0], nextTuple), "utf8");
         return {
           repaired: true,
-          message: `Expanded generated recipe registry lookup to PEFT_RECIPES in ${path.basename(scriptPath)} before handoff.`
+          message: `Expanded generated recipe registry lookup to ADAPTER_RECIPES in ${path.basename(scriptPath)} before handoff.`
         };
       }
     }
@@ -38759,7 +38758,7 @@ export async function repairPythonLockedRecipeCatalogAliasSurface(scriptPath?: s
   if (
     source.includes("def _get_recipe_catalog(") &&
     narrowCatalogLookupPattern.test(source) &&
-    /\b(?:ORDERED_RECIPE_SPECS|ALL_RECIPES|LOCKED_PEFT_RECIPES|ORDERED_PEFT_RECIPES|PEFT_RECIPE_SPECS|LIGHTWEIGHT_CANDIDATE_RECIPES|LIGHTWEIGHT_PEFT_CANDIDATES)\b/u.test(
+    /\b(?:ORDERED_RECIPE_SPECS|ALL_RECIPES|LOCKED_ADAPTER_RECIPES|ORDERED_ADAPTER_RECIPES|ADAPTER_RECIPE_SPECS|LIGHTWEIGHT_CANDIDATE_RECIPES|LIGHTWEIGHT_ADAPTER_CANDIDATES)\b/u.test(
       source
     ) &&
     !source.includes("_autolabos_recipe_catalog_lookup_names")
@@ -38771,11 +38770,11 @@ export async function repairPythonLockedRecipeCatalogAliasSurface(scriptPath?: s
         `${indent}    "RECIPES",`,
         `${indent}    "ORDERED_RECIPE_SPECS",`,
         `${indent}    "ALL_RECIPES",`,
-        `${indent}    "LOCKED_PEFT_RECIPES",`,
-        `${indent}    "ORDERED_PEFT_RECIPES",`,
-        `${indent}    "PEFT_RECIPE_SPECS",`,
+        `${indent}    "LOCKED_ADAPTER_RECIPES",`,
+        `${indent}    "ORDERED_ADAPTER_RECIPES",`,
+        `${indent}    "ADAPTER_RECIPE_SPECS",`,
         `${indent}    "LIGHTWEIGHT_CANDIDATE_RECIPES",`,
-        `${indent}    "LIGHTWEIGHT_PEFT_CANDIDATES",`,
+        `${indent}    "LIGHTWEIGHT_ADAPTER_CANDIDATES",`,
         `${indent})`,
         `${indent}recipes_obj = None`,
         `${indent}for _autolabos_recipe_catalog_name in _autolabos_recipe_catalog_lookup_names:`,
@@ -39177,7 +39176,7 @@ async function detectPythonBaselineFirstTunedBaselineMismatch(scriptPath?: strin
   }
 
   return [
-    "Generated baseline_first_locked PEFT runner treats the untuned/no-tuning reference as the primary baseline.",
+    "Generated baseline_first_locked adapter runner treats the untuned/no-tuning reference as the primary baseline.",
     "The governed experiment contract requires the tuned standard LoRA baseline to be the primary comparator; untuned/no-tuning may be retained only as a reference row.",
     "Revise the runner so baseline metrics and delta/objective comparisons are computed against the named tuned LoRA baseline, not baseline_no_tuning."
   ].join(" ");

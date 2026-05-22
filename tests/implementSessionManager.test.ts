@@ -43,7 +43,7 @@ import {
   repairPythonEntrypointConditionDatasetInputMaterializationSurface,
   repairPythonBaselineEvaluatorArgumentSurface,
   repairPythonBroaderTargetLoraMarkerSurface,
-  repairPythonCandidateSpecPeftRecipeNormalizationSurface,
+  repairPythonCandidateSpecAdapterRecipeNormalizationSurface,
   repairPythonCandidateExecutorArgumentBridgeSurface,
   repairPythonCausalLmLabelPaddingSurface,
   repairPythonCanonicalStringHelperAlias,
@@ -134,7 +134,7 @@ import {
   repairPythonFinalMetricsSchemaCompatibilitySurface,
   repairPythonMainMetricsRawResultsAliasSurface,
   repairPythonExperimentConfigMetadataSurface,
-  repairPythonPeftRecipeConfigMetadataAliasSurface,
+  repairPythonAdapterRecipeConfigMetadataAliasSurface,
   repairPythonJsonSafeHelperAlias,
   repairPythonEntrypointDatasetLoaderAliasSurface,
   repairPythonBaselineFirstConditionEvaluationRecordsSurface,
@@ -494,7 +494,7 @@ describe("ImplementSessionManager", () => {
     expect(repaired).toContain("require_baseline_first', 'baseline_first_required'");
   });
 
-  it("repairs generated condition-helper invocation kwargs for baseline-first PEFT runners", async () => {
+  it("repairs generated condition-helper invocation kwargs for baseline-first adapter runners", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-peft-helper-"));
     tempDirs.push(workspace);
     const scriptPath = path.join(workspace, "run_instruction_study.py");
@@ -4664,7 +4664,7 @@ describe("ImplementSessionManager", () => {
     writeFileSync(
       scriptPath,
       [
-        '"""Generated PEFT runner."""',
+        '"""Generated adapter runner."""',
         "",
         "import argparse",
         "import json",
@@ -4723,7 +4723,7 @@ describe("ImplementSessionManager", () => {
 
     const repairedSource = readFileSync(scriptPath, "utf8");
     expect(report.status, report.summary).toBe("pass");
-    expect(repairedSource).toMatch(/"""Generated PEFT runner\."""\n\s*from __future__ import annotations/u);
+    expect(repairedSource).toMatch(/"""Generated adapter runner\."""\n\s*from __future__ import annotations/u);
     expect(repairedSource).toContain("model: PreTrainedModel");
     expect(repairedSource).toContain("tokenizer: PreTrainedTokenizerBase");
   });
@@ -5573,7 +5573,7 @@ describe("ImplementSessionManager", () => {
         "MAX_ALLOWED_TRAIN_EXAMPLES = 4",
         "MAX_ALLOWED_EVAL_EXAMPLES_PER_BENCHMARK = 2",
         "LOCKED_RECIPE_ORDER = ['lora']",
-        "PEFT_RECIPES = [{'id': 'lora'}]",
+        "ADAPTER_RECIPES = [{'id': 'lora'}]",
         "",
         "def build_arg_parser():",
         "    parser = argparse.ArgumentParser()",
@@ -5626,7 +5626,7 @@ describe("ImplementSessionManager", () => {
         "        \"runtime_context\": runtime_context,",
         "        \"device\": device,",
         "        \"model_name\": model_name,",
-        "        \"recipes\": globals().get(\"PEFT_RECIPES\", globals().get(\"RECIPE_CONFIGS\", None)),",
+        "        \"recipes\": globals().get(\"ADAPTER_RECIPES\", globals().get(\"RECIPE_CONFIGS\", None)),",
         "    }",
         "    workflow_output = _call_with_compatible_signature(workflow, **common_kwargs)",
         "    return list(workflow_output)",
@@ -6303,7 +6303,7 @@ describe("ImplementSessionManager", () => {
       scriptPath,
       [
         '"""',
-        "Focused PEFT runner that writes JSON metrics.",
+        "Focused adapter runner that writes JSON metrics.",
         "This documentation mentions CAUSAL_LM but should not define runtime identifiers.",
         '"""',
         "",
@@ -6579,7 +6579,7 @@ describe("ImplementSessionManager", () => {
     expect(result.verifyReport).toMatchObject({ status: "pass" });
   });
 
-  it("does not reuse an existing public bundle when a baseline-first PEFT runner uses an untuned primary comparator", async () => {
+  it("does not reuse an existing public bundle when a baseline-first adapter runner uses an untuned primary comparator", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-reuse-baseline-mismatch-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
@@ -9659,7 +9659,7 @@ describe("ImplementSessionManager", () => {
           if (llmCalls === 1) {
             return {
               text: JSON.stringify({
-                summary: "Scaffold for a PEFT runner.",
+                summary: "Scaffold for a adapter runner.",
                 run_command: `python3 ${JSON.stringify(publicScriptPath)} --config ${JSON.stringify(path.join(publicDir, "experiment_config.yaml"))}`,
                 test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
                 changed_files: [publicScriptPath],
@@ -9820,7 +9820,7 @@ describe("ImplementSessionManager", () => {
           if (prompt.includes("scaffold-first contract")) {
             return {
               text: JSON.stringify({
-                summary: "Scaffold for a PEFT runner.",
+                summary: "Scaffold for a adapter runner.",
                 run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
                 test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
                 changed_files: [publicScriptPath],
@@ -10132,7 +10132,7 @@ describe("ImplementSessionManager", () => {
           if (prompt.includes("scaffold-first contract")) {
             return {
               text: JSON.stringify({
-                summary: "Scaffold for a PEFT runner.",
+                summary: "Scaffold for a adapter runner.",
                 run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
                 test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
                 changed_files: [publicScriptPath],
@@ -15993,7 +15993,7 @@ describe("ImplementSessionManager", () => {
     const codex = {
       runTurnStream: async () => {
         callCount += 1;
-        const returnAnnotation = callCount === 1 ? "RecipeSpec" : "PeftRecipeSpec";
+        const returnAnnotation = callCount === 1 ? "RecipeSpec" : "AdapterRecipeSpec";
         return {
           threadId: `thread-undefined-annotation-${callCount}`,
           finalText: JSON.stringify({
@@ -16020,11 +16020,11 @@ describe("ImplementSessionManager", () => {
                   "from dataclasses import dataclass",
                   "",
                   "@dataclass(frozen=True)",
-                  "class PeftRecipeSpec:",
+                  "class AdapterRecipeSpec:",
                   "    name: str",
                   "",
                   `def build_recipe() -> ${returnAnnotation}:`,
-                  "    return PeftRecipeSpec('baseline')",
+                  "    return AdapterRecipeSpec('baseline')",
                   "",
                   "def main(argv=None):",
                   "    build_recipe()",
@@ -19037,7 +19037,7 @@ describe("ImplementSessionManager", () => {
         "        'execute_locked_recipe_sequence',",
         "        'run_baseline_first_recipe_sequence',",
         "        'run_recipe_execution_orchestrator',",
-        "        'run_peft_recipe_study',",
+        "        'run_adapter_recipe_study',",
         "    )",
         "    if orchestrator is None:",
         "        raise RuntimeError('No recipe execution orchestrator is available in the completed runner sections.')",
@@ -22615,7 +22615,7 @@ describe("ImplementSessionManager", () => {
         "    assert device_info == {'backend': 'cpu'}",
         "    return {'recipe_results': [{'recipe_id': 'lora_r8', 'status': 'success'}]}",
         "",
-        "run_peft_recipe_study = run_recipe_execution_and_evaluation_loop",
+        "run_adapter_recipe_study = run_recipe_execution_and_evaluation_loop",
         "",
         "def _invoke_recipe_runner(args, device, output_dir, device_info):",
         "    runner = None",
@@ -22624,7 +22624,7 @@ describe("ImplementSessionManager", () => {
         "        'run_recipe_study',",
         "        'run_all_recipes',",
         "        'evaluate_recipe_conditions',",
-        "        'run_peft_recipe_comparison',",
+        "        'run_adapter_recipe_comparison',",
         "        'run_recipes',",
         "    ):",
         "        maybe_runner = globals().get(candidate)",
@@ -22632,7 +22632,7 @@ describe("ImplementSessionManager", () => {
         "            runner = maybe_runner",
         "            break",
         "    if runner is None:",
-        "        raise RuntimeError('No recipe evaluation loop was found. Expected one of: run_recipe_evaluation_loop, run_recipe_study, run_all_recipes, evaluate_recipe_conditions, run_peft_recipe_comparison, run_recipes.')",
+        "        raise RuntimeError('No recipe evaluation loop was found. Expected one of: run_recipe_evaluation_loop, run_recipe_study, run_all_recipes, evaluate_recipe_conditions, run_adapter_recipe_comparison, run_recipes.')",
         "    return runner(args=args, device=device, output_dir=output_dir, seed=42, recipes=['base'], recipe_configs=['base'], device_info=dict(device_info))",
         "",
         "def main():",
@@ -28965,8 +28965,8 @@ describe("ImplementSessionManager", () => {
     expect(() => execFileSync("python3", ["-m", "py_compile", scriptPath], { cwd: workspace })).not.toThrow();
   });
 
-  it("repairs PEFTRecipeConfig metadata aliases before module-level locked recipe projection", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-peft-recipe-config-alias-"));
+  it("repairs AdapterRecipeConfig metadata aliases before module-level locked recipe projection", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-adapter-recipe-config-alias-"));
     tempDirs.push(workspace);
     const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
@@ -28977,7 +28977,7 @@ describe("ImplementSessionManager", () => {
         "import dataclasses",
         "",
         "@dataclass(frozen=True)",
-        "class PEFTRecipeConfig:",
+        "class AdapterRecipeConfig:",
         "    candidate_id: str",
         "    display_name: str",
         "    adapter_method: str = 'lora'",
@@ -29006,7 +29006,7 @@ describe("ImplementSessionManager", () => {
         "]",
         "",
         "def _coerce_recipe_metadata_to_config(metadata: Mapping[str, Any]) -> Any:",
-        "    recipe_cls = globals().get('PEFTRecipeConfig')",
+        "    recipe_cls = globals().get('AdapterRecipeConfig')",
         "    if recipe_cls is None:",
         "        return dict(metadata)",
         "    shared_fields: Dict[str, Any] = {",
@@ -29066,11 +29066,11 @@ describe("ImplementSessionManager", () => {
 
     expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/candidate_id/);
 
-    const repair = await repairPythonPeftRecipeConfigMetadataAliasSurface(scriptPath);
+    const repair = await repairPythonAdapterRecipeConfigMetadataAliasSurface(scriptPath);
     const repairedSource = readFileSync(scriptPath, "utf8");
 
     expect(repair.repaired).toBe(true);
-    expect(repairedSource).toContain("_autolabos_peft_recipe_config_metadata_alias_marker");
+    expect(repairedSource).toContain("_autolabos_adapter_recipe_config_metadata_alias_marker");
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
@@ -30223,8 +30223,8 @@ describe("ImplementSessionManager", () => {
     expect(metrics.mutable_mapping_seen).toBe(true);
   });
 
-  it("repairs a missing PEFTRecipe compatibility dataclass before handing a python runner off to run_experiments", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-peft-recipe-alias-repair-"));
+  it("repairs a missing AdapterRecipe compatibility dataclass before handing a python runner off to run_experiments", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-adapter-recipe-alias-repair-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
@@ -30232,7 +30232,7 @@ describe("ImplementSessionManager", () => {
 
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
-      title: "Repair PEFTRecipe Compatibility",
+      title: "Repair AdapterRecipe Compatibility",
       topic: "PEFT instruction tuning",
       constraints: ["recent"],
       objectiveMetric: "accuracy"
@@ -30249,9 +30249,9 @@ describe("ImplementSessionManager", () => {
 
     const codex = {
       runTurnStream: async () => ({
-        threadId: "thread-peft-recipe-alias-repair",
+        threadId: "thread-adapter-recipe-alias-repair",
         finalText: JSON.stringify({
-          summary: "Implemented a PEFT runner with a missing PEFTRecipe schema.",
+          summary: "Implemented a adapter runner with a missing AdapterRecipe schema.",
           run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
           test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
           working_dir: publicDir,
@@ -30301,7 +30301,7 @@ describe("ImplementSessionManager", () => {
                 "    batch_size: int,",
                 "    gradient_accumulation_steps: int,",
                 "    extra: Optional[Mapping[str, Any]] = None,",
-                ") -> PEFTRecipe:",
+                ") -> AdapterRecipe:",
                 "    kwargs = {",
                 "        'recipe_id': recipe_id,",
                 "        'display_name': display_name,",
@@ -30316,9 +30316,9 @@ describe("ImplementSessionManager", () => {
                 "        'gradient_accumulation_steps': int(gradient_accumulation_steps),",
                 "        'extra': dict(extra or {}),",
                 "    }",
-                "    field_names = {field.name for field in dataclasses.fields(PEFTRecipe)}",
+                "    field_names = {field.name for field in dataclasses.fields(AdapterRecipe)}",
                 "    init_kwargs = {name: value for name, value in kwargs.items() if name in field_names}",
-                "    return PEFTRecipe(**init_kwargs)",
+                "    return AdapterRecipe(**init_kwargs)",
                 "",
                 "def main():",
                 "    _make_recipe('standard_lora', 'Standard LoRA', 'lora', 8, 16, 0.05, ('q_proj',), 1, 1e-4, 1, 1)",
@@ -30347,7 +30347,7 @@ describe("ImplementSessionManager", () => {
 
     const result = await manager.run(run);
     const repairedSource = readFileSync(result.scriptPath!, "utf8");
-    expect(repairedSource).toContain("class PEFTRecipe:");
+    expect(repairedSource).toContain("class AdapterRecipe:");
     expect(repairedSource).toContain("def peft_kwargs(self) -> Dict[str, Any]:");
     expect(result.testCommand).toContain("py_compile");
   });
@@ -30779,13 +30779,13 @@ describe("ImplementSessionManager", () => {
                 "    display_name: str",
                 "    peft_type: str",
                 "",
-                "PEFT_RECIPES = [RecipeSpec('baseline', 'Untouched baseline', 'none')]",
+                "ADAPTER_RECIPES = [RecipeSpec('baseline', 'Untouched baseline', 'none')]",
                 "",
                 "def build_arg_parser():",
                 "    parser = argparse.ArgumentParser()",
                 "    parser.add_argument('--metrics-path')",
                 "    parser.add_argument('--output-dir')",
-                "    parser.add_argument('--recipe', choices=[recipe.name for recipe in PEFT_RECIPES])",
+                "    parser.add_argument('--recipe', choices=[recipe.name for recipe in ADAPTER_RECIPES])",
                 "    return parser",
                 "",
                 "def main(argv=None):",
@@ -31007,12 +31007,12 @@ describe("ImplementSessionManager", () => {
                 "from typing import Tuple",
                 "",
                 "@dataclass(frozen=True)",
-                "class PeftRecipe:",
+                "class AdapterRecipe:",
                 "    name: str",
                 "    rank: int",
                 "",
-                "PEFT_RECIPES: Tuple[PeftRecipe, ...] = (",
-                "    PeftRecipe(name='lora_r8_baseline', rank=8),",
+                "ADAPTER_RECIPES: Tuple[AdapterRecipe, ...] = (",
+                "    AdapterRecipe(name='lora_r8_baseline', rank=8),",
                 ")",
                 "",
                 "def parse_args(argv=None):",
@@ -31022,7 +31022,7 @@ describe("ImplementSessionManager", () => {
                 "    return parser.parse_args(argv)",
                 "",
                 "def _resolve_recipe_selection(args):",
-                "    requested_names = [str(recipe['name']) for recipe in PEFT_RECIPES]",
+                "    requested_names = [str(recipe['name']) for recipe in ADAPTER_RECIPES]",
                 "    return requested_names",
                 "",
                 "def run_experiment(args):",
@@ -31070,7 +31070,7 @@ describe("ImplementSessionManager", () => {
     expect(result.testCommand).toContain("py_compile");
   });
 
-  it("repairs object-backed PEFT_RECIPE_DEFINITIONS subscript access before handoff", async () => {
+  it("repairs object-backed ADAPTER_RECIPE_DEFINITIONS subscript access before handoff", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-recipe-definitions-subscript-repair-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
@@ -31125,17 +31125,17 @@ describe("ImplementSessionManager", () => {
                 "from typing import Tuple",
                 "",
                 "@dataclass(frozen=True)",
-                "class _PeftRecipeDefinition:",
+                "class _AdapterRecipeDefinition:",
                 "    condition_id: str",
                 "    label: str",
                 "",
-                "PEFT_RECIPE_DEFINITIONS: Tuple[_PeftRecipeDefinition, ...] = (",
-                "    _PeftRecipeDefinition(condition_id='c0_base', label='unmodified base'),",
-                "    _PeftRecipeDefinition(condition_id='c1_lora', label='vanilla LoRA'),",
+                "ADAPTER_RECIPE_DEFINITIONS: Tuple[_AdapterRecipeDefinition, ...] = (",
+                "    _AdapterRecipeDefinition(condition_id='c0_base', label='unmodified base'),",
+                "    _AdapterRecipeDefinition(condition_id='c1_lora', label='vanilla LoRA'),",
                 ")",
                 "",
                 "def normalize_cli_args(args):",
-                "    args.condition_ids = [recipe['condition_id'] for recipe in PEFT_RECIPE_DEFINITIONS]",
+                "    args.condition_ids = [recipe['condition_id'] for recipe in ADAPTER_RECIPE_DEFINITIONS]",
                 "    return args",
                 "",
                 "def parse_cli_args(argv=None):",
@@ -31171,7 +31171,7 @@ describe("ImplementSessionManager", () => {
 
     const result = await manager.run(run);
     const repairedSource = readFileSync(result.scriptPath!, "utf8");
-    expect(repairedSource).toContain("class _PeftRecipeDefinition:");
+    expect(repairedSource).toContain("class _AdapterRecipeDefinition:");
     expect(repairedSource).toContain("def __getitem__(self, key):");
     expect(repairedSource).toContain("return getattr(self, key)");
     execFileSync("python3", [result.scriptPath!, "--metrics-path", metricsPath, "--output-dir", publicDir], {
@@ -31331,7 +31331,7 @@ describe("ImplementSessionManager", () => {
                   "    workflow_names = [",
                   "        'run_baseline_first_peft_comparison',",
                   "        'run_recipe_execution_and_evaluation_loop',",
-                  "        'compare_peft_recipes',",
+                  "        'compare_adapter_recipes',",
                   "    ]",
                   "    for name in workflow_names:",
                   "        candidate = globals().get(name)",
@@ -31946,9 +31946,9 @@ describe("ImplementSessionManager", () => {
                   "        'run_baseline_first_comparison',",
                   "        'execute_baseline_first_study',",
                   "        'run_recipe_comparison',",
-                  "        'run_peft_recipe_comparison',",
+                  "        'run_adapter_recipe_comparison',",
                   "        'run_peft_instruction_comparison',",
-                  "        'run_baseline_and_peft_recipes',",
+                  "        'run_baseline_and_adapter_recipes',",
                   "        'execute_experiment',",
                   "    )",
                   "    for name in runner_names:",
@@ -36804,7 +36804,7 @@ describe("ImplementSessionManager", () => {
                   "    def name(self) -> str:",
                   "        return self.recipe_id",
                   "",
-                  "PEFT_RECIPES = (",
+                  "ADAPTER_RECIPES = (",
                   "    RecipeSpec(",
                   "        name='lora_r8',",
                   "        display_name='LoRA baseline condition',",
@@ -36867,7 +36867,7 @@ describe("ImplementSessionManager", () => {
         "        return self.recipe_type == 'unmodified_base'",
         "",
         "@dataclass(frozen=True)",
-        "class PeftRecipe:",
+        "class AdapterRecipe:",
         "    recipe_id: str",
         "    display_name: str",
         "    recipe_type: str",
@@ -36901,19 +36901,19 @@ describe("ImplementSessionManager", () => {
         "        return tuple(default)",
         "    return tuple(value)",
         "",
-        "def normalize_peft_recipe(raw: Any, expected_order: int) -> PeftRecipe:",
+        "def normalize_adapter_recipe(raw: Any, expected_order: int) -> AdapterRecipe:",
         "    recipe_id = str(_recipe_value(raw, 'recipe_id', _recipe_value(raw, 'id', _recipe_value(raw, 'name', f'candidate_{expected_order}'))))",
         "    recipe_type = str(_recipe_value(raw, 'recipe_type', _recipe_value(raw, 'kind', 'base' if expected_order == 0 or 'base' in recipe_id.lower() else 'lora'))).lower()",
         "    rank = _recipe_value(raw, 'rank', _recipe_value(raw, 'r', None))",
         "    alpha = _recipe_value(raw, 'alpha', _recipe_value(raw, 'lora_alpha', None))",
         "    target_modules = _coerce_target_modules(_recipe_value(raw, 'target_modules', None), default=())",
-        "    return PeftRecipe(recipe_id=recipe_id, display_name=str(_recipe_value(raw, 'display_name', recipe_id)), recipe_type=recipe_type, description=str(_recipe_value(raw, 'description', recipe_id)), rank=rank, alpha=alpha, dropout=float(_recipe_value(raw, 'dropout', _recipe_value(raw, 'lora_dropout', 0.0)) or 0.0), target_modules=target_modules, trainable=bool(_recipe_value(raw, 'trainable', recipe_type != 'base')), locked_baseline=bool(_recipe_value(raw, 'locked_baseline', expected_order in (0, 1))), expected_order=expected_order)",
+        "    return AdapterRecipe(recipe_id=recipe_id, display_name=str(_recipe_value(raw, 'display_name', recipe_id)), recipe_type=recipe_type, description=str(_recipe_value(raw, 'description', recipe_id)), rank=rank, alpha=alpha, dropout=float(_recipe_value(raw, 'dropout', _recipe_value(raw, 'lora_dropout', 0.0)) or 0.0), target_modules=target_modules, trainable=bool(_recipe_value(raw, 'trainable', recipe_type != 'base')), locked_baseline=bool(_recipe_value(raw, 'locked_baseline', expected_order in (0, 1))), expected_order=expected_order)",
         "",
-        "def get_locked_peft_recipes(config: Any = None) -> List[PeftRecipe]:",
-        "    return validate_locked_recipe_order([normalize_peft_recipe(candidate, idx) for idx, candidate in enumerate(CANDIDATE_SPECS)])",
+        "def get_locked_adapter_recipes(config: Any = None) -> List[AdapterRecipe]:",
+        "    return validate_locked_recipe_order([normalize_adapter_recipe(candidate, idx) for idx, candidate in enumerate(CANDIDATE_SPECS)])",
         "",
-        "def validate_locked_recipe_order(recipes: Sequence[PeftRecipe]) -> List[PeftRecipe]:",
-        "    normalized = [normalize_peft_recipe(recipe, idx) for idx, recipe in enumerate(recipes)]",
+        "def validate_locked_recipe_order(recipes: Sequence[AdapterRecipe]) -> List[AdapterRecipe]:",
+        "    normalized = [normalize_adapter_recipe(recipe, idx) for idx, recipe in enumerate(recipes)]",
         "    first = normalized[0]",
         "    second = normalized[1]",
         "    if first.recipe_type != 'base' or first.trainable:",
@@ -36924,13 +36924,13 @@ describe("ImplementSessionManager", () => {
         "        raise ValueError('Locked LoRA baseline must be rank=8, alpha=16, dropout=0.05, target_modules=q_proj/k_proj/v_proj/o_proj.')",
         "    return normalized",
         "",
-        "LOCKED_PEFT_RECIPES: List[PeftRecipe] = get_locked_peft_recipes()",
+        "LOCKED_ADAPTER_RECIPES: List[AdapterRecipe] = get_locked_adapter_recipes()",
         "",
         "if __name__ == '__main__':",
-        "    assert LOCKED_PEFT_RECIPES[0].recipe_type == 'base'",
-        "    assert LOCKED_PEFT_RECIPES[0].trainable is False",
-        "    assert LOCKED_PEFT_RECIPES[1].rank == 8",
-        "    assert LOCKED_PEFT_RECIPES[1].target_modules == ('q_proj', 'k_proj', 'v_proj', 'o_proj')",
+        "    assert LOCKED_ADAPTER_RECIPES[0].recipe_type == 'base'",
+        "    assert LOCKED_ADAPTER_RECIPES[0].trainable is False",
+        "    assert LOCKED_ADAPTER_RECIPES[1].rank == 8",
+        "    assert LOCKED_ADAPTER_RECIPES[1].target_modules == ('q_proj', 'k_proj', 'v_proj', 'o_proj')",
         ""
       ].join("\n"),
       "utf8"
@@ -36940,15 +36940,15 @@ describe("ImplementSessionManager", () => {
       /candidate 0 must be the unmodified non-trainable base checkpoint/
     );
 
-    const repair = await repairPythonCandidateSpecPeftRecipeNormalizationSurface(scriptPath);
+    const repair = await repairPythonCandidateSpecAdapterRecipeNormalizationSurface(scriptPath);
     const repairedSource = readFileSync(scriptPath, "utf8");
 
     expect(repair.repaired).toBe(true);
-    expect(repairedSource).toContain("def _autolabos_candidate_spec_peft_recipe_normalization_marker():");
+    expect(repairedSource).toContain("def _autolabos_candidate_spec_adapter_recipe_normalization_marker():");
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
-  it("repairs generated baseline-first PEFT runners that sort the untuned reference before the locked tuned baseline", async () => {
+  it("repairs generated baseline-first adapter runners that sort the untuned reference before the locked tuned baseline", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-baseline-first-order-repair-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
@@ -37012,7 +37012,7 @@ describe("ImplementSessionManager", () => {
                 "    display_name: str",
                 "    peft_type: str",
                 "",
-                "PEFT_RECIPES = [",
+                "ADAPTER_RECIPES = [",
                 "    RecipeSpec('standard_lora_baseline', 'Standard LoRA baseline', 'lora'),",
                 "    RecipeSpec('untuned_reference', 'Untuned reference', 'none'),",
                 "]",
@@ -37050,7 +37050,7 @@ describe("ImplementSessionManager", () => {
                 "    return (2, recipe_id)",
                 "",
                 "def _get_locked_recipe_sequence(args: argparse.Namespace) -> List[Any]:",
-                "    recipes = list(PEFT_RECIPES)",
+                "    recipes = list(ADAPTER_RECIPES)",
                 "    recipes = sorted(recipes, key=_candidate_sort_key)",
                 "    if not _recipe_is_reference(recipes[0]):",
                 "        raise RuntimeError(",
@@ -37102,7 +37102,7 @@ describe("ImplementSessionManager", () => {
     expect(result.testCommand).toContain("py_compile");
   });
 
-  it("repairs baseline-first PEFT runners whose locked standard LoRA id drifts from the recipe registry", async () => {
+  it("repairs baseline-first adapter runners whose locked standard LoRA id drifts from the recipe registry", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-locked-lora-id-repair-"));
     tempDirs.push(workspace);
     const scriptPath = path.join(workspace, "run_instruction_study.py");
@@ -37116,13 +37116,13 @@ describe("ImplementSessionManager", () => {
         "STANDARD_LORA_BASELINE_ID = 'standard_lora_r8_all_linear'",
         "",
         "@dataclass(frozen=True)",
-        "class PeftRecipe:",
+        "class AdapterRecipe:",
         "    recipe_id: str",
         "",
-        "STANDARD_LORA_BASELINE_RECIPE = PeftRecipe(recipe_id=STANDARD_LORA_BASELINE_ID)",
+        "STANDARD_LORA_BASELINE_RECIPE = AdapterRecipe(recipe_id=STANDARD_LORA_BASELINE_ID)",
         "PEFT_CANDIDATE_RECIPES = (",
         "    STANDARD_LORA_BASELINE_RECIPE,",
-        "    PeftRecipe(recipe_id='attention_only_lora_r8'),",
+        "    AdapterRecipe(recipe_id='attention_only_lora_r8'),",
         ")",
         "",
         "LOCKED_STANDARD_LORA_BASELINE_ID = 'standard_lora'",
@@ -37185,7 +37185,7 @@ describe("ImplementSessionManager", () => {
         "VANILLA_LORA_BASELINE_RECIPE_ID = \"vanilla_lora\"",
         "",
         "def _recipe_catalog_from_globals() -> 'OrderedDict[str, Dict[str, Any]]':",
-        "    for name in ('RECIPE_CATALOG', 'PEFT_RECIPE_CATALOG', 'PEFT_RECIPES', 'RECIPE_DEFINITIONS', 'CANDIDATE_RECIPES'):",
+        "    for name in ('RECIPE_CATALOG', 'ADAPTER_RECIPE_CATALOG', 'ADAPTER_RECIPES', 'RECIPE_DEFINITIONS', 'CANDIDATE_RECIPES'):",
         "        value = globals().get(name)",
         "        if isinstance(value, Mapping) and value:",
         "            return OrderedDict((str(k), dict(v) if isinstance(v, Mapping) else {\"value\": v}) for k, v in value.items())",
@@ -37237,8 +37237,8 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
-  it("repairs final recipe registries that ignore generated PEFT_RECIPES mappings", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-peft-recipes-registry-alias-"));
+  it("repairs final recipe registries that ignore generated ADAPTER_RECIPES mappings", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-adapter-recipes-registry-alias-"));
     tempDirs.push(workspace);
     const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
@@ -37249,17 +37249,17 @@ describe("ImplementSessionManager", () => {
         "from typing import Any, Dict, Mapping, Sequence, Tuple",
         "",
         "@dataclass(frozen=True)",
-        "class PeftRecipeSpec:",
+        "class AdapterRecipeSpec:",
         "    recipe_id: str",
         "    display_name: str",
         "    is_base_model: bool = False",
         "    use_rslora: bool = False",
         "",
-        "BASE_MODEL_RECIPE = PeftRecipeSpec('base_model', 'Untuned base checkpoint', is_base_model=True)",
-        "VANILLA_LORA_RECIPE = PeftRecipeSpec('vanilla_lora', 'Vanilla LoRA baseline')",
-        "RSLORA_RECIPE = PeftRecipeSpec('rslora_lora', 'Rank-stabilized LoRA', use_rslora=True)",
+        "BASE_MODEL_RECIPE = AdapterRecipeSpec('base_model', 'Untuned base checkpoint', is_base_model=True)",
+        "VANILLA_LORA_RECIPE = AdapterRecipeSpec('vanilla_lora', 'Vanilla LoRA baseline')",
+        "RSLORA_RECIPE = AdapterRecipeSpec('rslora_lora', 'Rank-stabilized LoRA', use_rslora=True)",
         "LOCKED_RECIPE_ORDER: Tuple[str, ...] = ('base_model', 'vanilla_lora', 'rslora_lora')",
-        "PEFT_RECIPES: Dict[str, PeftRecipeSpec] = {",
+        "ADAPTER_RECIPES: Dict[str, AdapterRecipeSpec] = {",
         "    BASE_MODEL_RECIPE.recipe_id: BASE_MODEL_RECIPE,",
         "    VANILLA_LORA_RECIPE.recipe_id: VANILLA_LORA_RECIPE,",
         "    RSLORA_RECIPE.recipe_id: RSLORA_RECIPE,",
@@ -37275,15 +37275,15 @@ describe("ImplementSessionManager", () => {
         "def get_recipe_registry() -> Dict[str, Dict[str, Any]]:",
         "    for candidate_name in (",
         "        \"RECIPE_CONFIGS\",",
-        "        \"PEFT_RECIPE_CONFIGS\",",
-        "        \"PEFT_RECIPES_BY_NAME\",",
+        "        \"ADAPTER_RECIPE_CONFIGS\",",
+        "        \"ADAPTER_RECIPES_BY_NAME\",",
         "        \"RECIPE_REGISTRY\",",
         "    ):",
         "        candidate = globals().get(candidate_name)",
         "        if isinstance(candidate, Mapping) and candidate:",
         "            return {str(k): _jsonable(v) for k, v in candidate.items()}",
         "",
-        "    candidate_list = globals().get('PEFT_RECIPES') or globals().get('LOCKED_RECIPE_ORDER') or []",
+        "    candidate_list = globals().get('ADAPTER_RECIPES') or globals().get('LOCKED_RECIPE_ORDER') or []",
         "    registry: Dict[str, Dict[str, Any]] = {}",
         "    if isinstance(candidate_list, Sequence) and not isinstance(candidate_list, (str, bytes)):",
         "        for item in candidate_list:",
@@ -37323,7 +37323,7 @@ describe("ImplementSessionManager", () => {
     const repairedSource = readFileSync(scriptPath, "utf8");
 
     expect(repair.repaired).toBe(true);
-    expect(repairedSource).toContain('"PEFT_RECIPES",');
+    expect(repairedSource).toContain('"ADAPTER_RECIPES",');
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
@@ -37620,7 +37620,7 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
-  it("rejects baseline-first PEFT runners that use an untuned row as the primary comparator", async () => {
+  it("rejects baseline-first adapter runners that use an untuned row as the primary comparator", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-baseline-first-primary-baseline-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
@@ -37709,7 +37709,7 @@ describe("ImplementSessionManager", () => {
     });
 
     await expect(manager.run(run)).rejects.toThrow(
-      "Generated baseline_first_locked PEFT runner treats the untuned/no-tuning reference as the primary baseline"
+      "Generated baseline_first_locked adapter runner treats the untuned/no-tuning reference as the primary baseline"
     );
     expect(calls).toBe(3);
   });
