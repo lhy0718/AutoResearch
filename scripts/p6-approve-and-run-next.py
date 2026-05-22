@@ -669,6 +669,12 @@ def run_selftest() -> int:
     if not re.search(DOCTOR_READY_PATTERN, "+ [OK] runs-dir-write: Run store write probe succeeded"):
         print("FAIL: doctor ready pattern did not match run-store write output")
         return 1
+    try:
+        raise WaitTimeout("Bye", "boundary transcript")
+    except WaitTimeout as exc:
+        if exc.transcript != "boundary transcript":
+            print("FAIL: cleanup timeout did not preserve transcript")
+            return 1
     if pending_transition_target({
         "graph": {"pendingTransition": {"targetNode": "generate_hypotheses"}}
     }) != "generate_hypotheses":
@@ -817,7 +823,13 @@ def main() -> int:
                 initial_signature=initial_signature
             )
         send_line(master_fd, "/quit")
-        buffer_text = wait_for(master_fd, r"Bye", 20, buffer_text)
+        try:
+            buffer_text = wait_for(master_fd, r"Bye", 20, buffer_text)
+        except WaitTimeout as exc:
+            # The requested node boundary has already been observed. Some live
+            # TUI states do not emit a Bye line after /quit, so keep the
+            # transcript and let process cleanup in finally terminate the PTY.
+            buffer_text = exc.transcript
     except WaitTimeout as exc:
         output_path.write_text(exc.transcript, encoding="utf-8")
         print(f"FAIL: P6 continue timed out waiting for {exc.pattern}; output={output_path}")
