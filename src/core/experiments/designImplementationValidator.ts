@@ -1,4 +1,5 @@
 import path from "node:path";
+import { readFileSync } from "node:fs";
 import { promises as fs } from "node:fs";
 
 import type { ExperimentComparisonContract } from "../experimentGovernance.js";
@@ -221,14 +222,25 @@ export function validateVerificationCommandSurface(input: {
     runCommandScript &&
     path.extname(verificationScript) === ".sh" &&
     samePath(verificationScript, runCommandScript);
+  const verificationUsesScriptPathWrapperTarget =
+    input.scriptPath &&
+    verificationScript &&
+    runCommandScript &&
+    path.extname(input.scriptPath) === ".sh" &&
+    samePath(input.scriptPath, runCommandScript) &&
+    shellWrapperReferencesScriptPathSync(input.scriptPath, verificationScript);
   if (verificationUsesPublishedRunWrapper) {
     checkedItems.push("verification_command_run_wrapper_binding");
+  }
+  if (verificationUsesScriptPathWrapperTarget) {
+    checkedItems.push("verification_command_wrapper_target_binding");
   }
   if (
     input.scriptPath &&
     verificationScript &&
     !samePath(verificationScript, input.scriptPath) &&
-    !verificationUsesPublishedRunWrapper
+    !verificationUsesPublishedRunWrapper &&
+    !verificationUsesScriptPathWrapperTarget
   ) {
     findings.push({
       code: "VERIFY_COMMAND_SCRIPT_MISMATCH",
@@ -310,7 +322,7 @@ function validatePlannedConditionImplementationSurface(input: {
   }
 
   if (baselineMarker && requiredMarkers.length > 1) {
-    const declaredMarkerOrder = extractDeclaredConditionMarkerOrder(input.scriptText);
+    const declaredMarkerOrder = extractDeclaredConditionMarkerOrder(input.scriptText, requiredMarkers);
     if (declaredMarkerOrder.length > 1 && declaredMarkerOrder[0] !== baselineMarker) {
       findings.push({
         code: "PLANNED_BASELINE_ORDER_MISMATCH",
@@ -332,9 +344,7 @@ function validatePlannedConditionImplementationSurface(input: {
         evidence: `declared=${declaredConditionCount}; required=${requiredConditionCount}`
       });
     }
-    const publicMarkerCount = extractRankDropoutMarkersFromText(publicSignal).filter((marker) =>
-      requiredMarkers.includes(marker)
-    ).length;
+    const publicMarkerCount = requiredMarkers.filter((marker) => hasMarkerSignal(publicSignal, marker)).length;
     if (publicMarkerCount > 0 && publicMarkerCount < requiredConditionCount) {
       findings.push({
         code: "PUBLIC_CONDITION_MARKERS_CONTRACTED",
@@ -734,7 +744,7 @@ function extractDeclaredEvaluationLimits(text: string): number[] {
   return limits;
 }
 
-function extractDeclaredConditionMarkerOrder(text: string): string[] {
+function extractDeclaredConditionMarkerOrder(text: string, requiredMarkers: string[]): string[] {
   const assignments = [
     ...text.matchAll(
       /\b(?:PLANNED_CONDITION_MARKERS|LOCKED_CONDITION_MARKERS|CONDITION_MARKERS|LOCKED_CONDITION_ORDER)\b\s*=\s*(?:\(|\[)([\s\S]*?)(?:\)|\])/gu
@@ -742,23 +752,27 @@ function extractDeclaredConditionMarkerOrder(text: string): string[] {
   ];
   for (const assignment of assignments) {
     const body = assignment[1] || "";
-    const markers = extractRankDropoutMarkersFromText(body);
+    const markers = extractConditionMarkersFromText(body, requiredMarkers);
     if (markers.length > 0) {
       return markers;
     }
   }
-  return extractRankDropoutMarkersFromText(text);
+  return extractConditionMarkersFromText(text, requiredMarkers);
 }
 
-function extractRankDropoutMarkersFromText(text: string): string[] {
-  const markers: string[] = [];
-  for (const match of text.matchAll(/\brank_(\d+)_dropout_([0-9_]+)\b/giu)) {
-    const marker = `rank_${match[1]}_dropout_${match[2]}`;
-    if (!markers.includes(marker)) {
-      markers.push(marker);
-    }
+function extractConditionMarkersFromText(text: string, requiredMarkers: string[]): string[] {
+  const orderedRequiredMarkers = requiredMarkers
+    .map((marker) => {
+      const match = new RegExp(`(?:^|[^A-Za-z0-9])${escapeRegExp(marker).replace(/_/gu, "[_\\s.-]*")}(?:$|[^A-Za-z0-9])`, "iu").exec(text);
+      return match ? { marker, index: match.index } : undefined;
+    })
+    .filter((entry): entry is { marker: string; index: number } => entry !== undefined)
+    .sort((left, right) => left.index - right.index)
+    .map((entry) => entry.marker);
+  if (orderedRequiredMarkers.length > 0) {
+    return dedupeStrings(orderedRequiredMarkers);
   }
-  return markers;
+  return dedupeStrings(extractPythonStringLiterals(text).filter((literal) => /condition|baseline|candidate/iu.test(literal)));
 }
 
 function normalizePositiveInteger(value: unknown): number | undefined {
@@ -940,6 +954,21 @@ async function shellWrapperReferencesScriptPath(wrapperPath: string, scriptPath:
   }
   const wrapperText = await safeReadText(wrapperPath);
   if (!wrapperText) {
+    return false;
+  }
+  const wrapperDir = path.dirname(wrapperPath);
+  const referencedPaths = extractCommandPaths(wrapperText, wrapperDir).filter((candidate) => !samePath(candidate, wrapperPath));
+  return referencedPaths.some((candidate) => samePath(candidate, scriptPath));
+}
+
+function shellWrapperReferencesScriptPathSync(wrapperPath: string, scriptPath: string): boolean {
+  if (!/\.sh$/iu.test(wrapperPath)) {
+    return false;
+  }
+  let wrapperText = "";
+  try {
+    wrapperText = readFileSync(wrapperPath, "utf8");
+  } catch {
     return false;
   }
   const wrapperDir = path.dirname(wrapperPath);
