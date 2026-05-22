@@ -22,6 +22,7 @@ import {
   parseImplementBootstrapContractFromText,
   getImplementLlmTimeoutMs,
   ImplementSessionManager,
+  shouldSkipAttemptSnapshotPath,
   isMalformedJsonStagedLlmChunkError,
   isTransientStagedLlmProviderError,
   normalizeLockedPeftStudyConfigPayloadForCompatibility,
@@ -364,6 +365,15 @@ function initGitWorkspace(workspace: string, trackedFiles: string[]): void {
 }
 
 describe("ImplementSessionManager", () => {
+  it("excludes regenerated dependency and model caches from attempt snapshots", () => {
+    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", ".cache", "hf", "models--provider--model"))).toBe(true);
+    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", ".hf_cache", "models--provider--model"))).toBe(true);
+    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "hf_cache", "models--provider--model"))).toBe(true);
+    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "cache", "transformers", "models--provider--model"))).toBe(true);
+    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "node_modules", "pkg"))).toBe(true);
+    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "runner.py"))).toBe(false);
+  });
+
   it("normalizes a locked PEFT config from conditions to recipes-only runtime schema", () => {
     const normalized = normalizeLockedPeftStudyConfigPayloadForCompatibility({
       experiment_name: "locked_peft",

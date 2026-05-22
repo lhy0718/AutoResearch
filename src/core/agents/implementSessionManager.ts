@@ -13027,9 +13027,15 @@ async function restoreRecoveredSnapshotBundle(params: {
   const entries = await fs.readdir(params.snapshotDir, { withFileTypes: true });
   for (const entry of entries) {
     const sourcePath = path.join(params.snapshotDir, entry.name);
+    if (shouldSkipAttemptSnapshotPath(sourcePath)) {
+      continue;
+    }
     const targetPath = path.join(params.publicDir, entry.name);
     if (entry.isDirectory()) {
-      await fs.cp(sourcePath, targetPath, { recursive: true });
+      await fs.cp(sourcePath, targetPath, {
+        recursive: true,
+        filter: (source) => !shouldSkipAttemptSnapshotPath(source)
+      });
     } else if (entry.isFile()) {
       await fs.copyFile(sourcePath, targetPath);
     }
@@ -14203,6 +14209,30 @@ async function filterMissingFiles(filePaths: string[]): Promise<string[]> {
   return missing;
 }
 
+const ATTEMPT_SNAPSHOT_IGNORED_DIR_NAMES = new Set([
+  ".cache",
+  ".git",
+  ".hf_cache",
+  ".mypy_cache",
+  ".pytest_cache",
+  "__pycache__",
+  "hf_cache",
+  "node_modules"
+]);
+
+export function shouldSkipAttemptSnapshotPath(filePath: string): boolean {
+  const segments = filePath.split(/[\\/]+/u).filter(Boolean).map((segment) => segment.toLowerCase());
+  return segments.some((segment, index) => {
+    if (ATTEMPT_SNAPSHOT_IGNORED_DIR_NAMES.has(segment)) {
+      return true;
+    }
+    if (segment.startsWith("models--")) {
+      return true;
+    }
+    return segment === "transformers" && index > 0 && segments[index - 1] === "cache";
+  });
+}
+
 function collectWorkspaceChangedFiles(params: {
   changedFiles: string[];
   workspaceRoot: string;
@@ -14265,6 +14295,9 @@ async function createImplementAttemptSnapshot(params: {
     if (isPathInsideOrEqual(normalized, protectedDir)) {
       return;
     }
+    if (shouldSkipAttemptSnapshotPath(normalized)) {
+      return;
+    }
     for (const existingPath of [...captured.keys()]) {
       if (existingPath === normalized || isPathInsideOrEqual(normalized, existingPath)) {
         return;
@@ -14280,7 +14313,10 @@ async function createImplementAttemptSnapshot(params: {
       const stat = await fs.stat(normalized);
       if (stat.isDirectory()) {
         await ensureDir(path.dirname(snapshotPath));
-        await fs.cp(normalized, snapshotPath, { recursive: true });
+        await fs.cp(normalized, snapshotPath, {
+          recursive: true,
+          filter: (source) => !shouldSkipAttemptSnapshotPath(source)
+        });
         captured.set(normalized, {
           targetPath: normalized,
           kind: "directory",
