@@ -697,6 +697,11 @@ def run_selftest() -> int:
     ):
         print("FAIL: command override placeholders were not expanded")
         return 1
+    if expand_command_override("Steer {next_node} for {run_id}", run_id, "implement_experiments") != (
+        "Steer implement_experiments for run-p6"
+    ):
+        print("FAIL: text command override placeholders were not expanded")
+        return 1
     print("PASS: p6 continue command selection self-test")
     return 0
 
@@ -765,7 +770,12 @@ def main() -> int:
         if active_running_before or active_running_after_attach:
             wait_node = current_node(record_after_attach) or current_node(record_before) or next_node
             initial_signature = record_boundary_signature(record_after_attach, wait_node)
-            print(f"INFO: {wait_node} is already running; observing until the next stop boundary.")
+            if command_override:
+                command = expand_command_override(command_override, run_id, wait_node)
+                send_line(master_fd, command)
+                print(f"INFO: {wait_node} is already running; sent command override and observing until the next stop boundary.")
+            else:
+                print(f"INFO: {wait_node} is already running; observing until the next stop boundary.")
         else:
             if not force_run_active:
                 send_line(master_fd, "/doctor")
