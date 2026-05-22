@@ -5975,8 +5975,8 @@ export class ImplementSessionManager {
       return report;
     }
 
-    const pythonEmptyPeftRecipeRegistry = await detectPythonEmptyPeftRecipeRegistry(executionScriptPath);
-    if (pythonEmptyPeftRecipeRegistry) {
+    const pythonEmptyRecipeRegistry = await detectPythonEmptyRecipeRegistry(executionScriptPath);
+    if (pythonEmptyRecipeRegistry) {
       const report: VerifyReport = {
         status: "fail",
         command,
@@ -5984,8 +5984,8 @@ export class ImplementSessionManager {
         exit_code: 0,
         failure_type: "implementation",
         next_action: "retry_patch",
-        stderr_excerpt: pythonEmptyPeftRecipeRegistry,
-        summary: buildVerificationFailureSummary(command, "implementation", pythonEmptyPeftRecipeRegistry)
+        stderr_excerpt: pythonEmptyRecipeRegistry,
+        summary: buildVerificationFailureSummary(command, "implementation", pythonEmptyRecipeRegistry)
       };
       this.deps.eventStream.emit({
         type: "TEST_FAILED",
@@ -10207,7 +10207,7 @@ async function detectPythonMissingRegisteredRecipeWorkflow(scriptPath?: string):
   ].filter(Boolean).join(" ");
 }
 
-async function detectPythonEmptyPeftRecipeRegistry(scriptPath?: string): Promise<string | undefined> {
+async function detectPythonEmptyRecipeRegistry(scriptPath?: string): Promise<string | undefined> {
   if (!scriptPath || path.extname(scriptPath) !== ".py") {
     return undefined;
   }
@@ -10218,29 +10218,26 @@ async function detectPythonEmptyPeftRecipeRegistry(scriptPath?: string): Promise
     return undefined;
   }
 
-  if (
-    !source.includes("No PEFT recipes selected") ||
-    !source.includes("PEFT_RECIPES") ||
-    !source.includes("parse_args")
-  ) {
+  const emptySelectionMessage = /No\s+(?:[A-Za-z_ -]+\s+)?recipes selected/iu.exec(source);
+  if (!emptySelectionMessage || !source.includes("parse_args")) {
     return undefined;
   }
 
-  const peftRecipesAssignment = /^\s*PEFT_RECIPES\s*(?::[^\n=]+)?=\s*([^\n#]+)/mu.exec(source);
-  if (!peftRecipesAssignment) {
+  const registryAssignment = /^\s*(?:[A-Z][A-Z0-9_]*_)?RECIPES\s*(?::[^\n=]+)?=\s*([^\n#]+)/mu.exec(source);
+  if (!registryAssignment) {
     return [
-      "Generated Python runner can select no PEFT recipes by default.",
-      "CLI normalization raises 'No PEFT recipes selected' but no PEFT_RECIPES registry is defined.",
-      "Define a non-empty PEFT_RECIPES registry with the locked baseline-first trainable recipe before handoff."
+      "Generated Python runner can select no recipes by default.",
+      `CLI normalization raises '${emptySelectionMessage[0]}' but no default recipe registry is defined.`,
+      "Define a non-empty recipe registry with the locked baseline-first trainable candidate before handoff."
     ].join(" ");
   }
 
-  const assignmentValue = peftRecipesAssignment[1]?.trim() || "";
+  const assignmentValue = registryAssignment[1]?.trim() || "";
   if (/^(?:\[\s*\]|\(\s*\)|list\s*\(\s*\)|tuple\s*\(\s*\))$/u.test(assignmentValue)) {
     return [
-      "Generated Python runner can select no PEFT recipes by default.",
-      "PEFT_RECIPES is defined as an empty registry while CLI normalization rejects empty recipe selections.",
-      "Populate PEFT_RECIPES with at least the locked standard LoRA baseline before handoff."
+      "Generated Python runner can select no recipes by default.",
+      "The default recipe registry is empty while CLI normalization rejects empty recipe selections.",
+      "Populate the registry with at least the locked baseline candidate before handoff."
     ].join(" ");
   }
 
@@ -13300,7 +13297,7 @@ async function recoverStructuredResultFromPublicBundle(params: {
     if (await detectPythonMissingRegisteredRecipeWorkflow(scriptPath)) {
       return undefined;
     }
-    if (await detectPythonEmptyPeftRecipeRegistry(scriptPath)) {
+    if (await detectPythonEmptyRecipeRegistry(scriptPath)) {
       return undefined;
     }
     if (await detectPythonUnguardedOptionalHelperCall(scriptPath)) {

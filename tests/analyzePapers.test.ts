@@ -1669,7 +1669,7 @@ describe("analyzePapers node", () => {
     writeCachedPaperTextSync(
       runId,
       "p1",
-      "Recovered cached full text describing a compact PEFT recipe. The model was evaluated on Benchmark Task A and Benchmark Task B with accuracy and runtime metrics under a fixed adaptation budget."
+      "Recovered cached full text describing a compact candidate-comparison protocol. The system was evaluated on Benchmark Task A and Benchmark Task B with accuracy and runtime metrics under a fixed adaptation budget."
     );
     writeCachedPageImagesSync(runId, "p1", 3);
 

@@ -32116,8 +32116,8 @@ describe("ImplementSessionManager", () => {
     expect(calls).toBe(3);
   });
 
-  it("rejects python runners whose default PEFT recipe registry is missing", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-missing-peft-recipes-"));
+  it("rejects python runners whose default recipe registry is missing", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-missing-recipes-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
@@ -32125,8 +32125,8 @@ describe("ImplementSessionManager", () => {
 
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
-      title: "Reject Missing PEFT Recipe Registry",
-      topic: "PEFT instruction tuning",
+      title: "Reject Missing Recipe Registry",
+      topic: "adapter comparison",
       constraints: ["recent"],
       objectiveMetric: "mean zero-shot accuracy"
     });
@@ -32145,7 +32145,7 @@ describe("ImplementSessionManager", () => {
       runTurnStream: async () => {
         calls += 1;
         return {
-          threadId: "thread-missing-peft-recipes",
+          threadId: "thread-missing-recipes",
           finalText: JSON.stringify({
             summary: "Implemented a runner whose parser cannot select default recipes.",
             run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
@@ -32171,7 +32171,7 @@ describe("ImplementSessionManager", () => {
                   "import argparse",
                   "",
                   "def _available_recipe_names():",
-                  "    return [getattr(recipe, 'recipe_id', None) for recipe in globals().get('PEFT_RECIPES', [])]",
+                  "    return [getattr(recipe, 'recipe_id', None) for recipe in globals().get('ADAPTER_RECIPES', [])]",
                   "",
                   "def parse_args(argv=None):",
                   "    parser = argparse.ArgumentParser()",
@@ -32182,7 +32182,7 @@ describe("ImplementSessionManager", () => {
                   "    registered_names = [name for name in _available_recipe_names() if name]",
                   "    selected = list(args.recipes) if args.recipes else registered_names",
                   "    if not selected:",
-                  "        raise ValueError('No PEFT recipes selected; check PEFT_RECIPES registry or --recipes.')",
+                  "        raise ValueError('No recipes selected; check default recipe registry or --recipes.')",
                   "    args.recipes = selected",
                   "    return args",
                   "",
@@ -32211,7 +32211,7 @@ describe("ImplementSessionManager", () => {
       workspaceRoot: workspace
     });
 
-    await expect(manager.run(run)).rejects.toThrow(/select no PEFT recipes/i);
+    await expect(manager.run(run)).rejects.toThrow(/select no recipes/i);
     expect(calls).toBe(3);
   });
 

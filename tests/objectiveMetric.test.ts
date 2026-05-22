@@ -325,13 +325,13 @@ describe("objectiveMetric", () => {
     expect(enriched.exact_match_delta_vs_baseline).toBeCloseTo(0.15, 10);
   });
 
-  it("synthesizes accuracy delta from PEFT recipe result rows", () => {
+  it("synthesizes accuracy delta from adapter recipe result rows", () => {
     const enriched = synthesizeRelativeMetrics({
       comparison_mode: "baseline_first_locked",
       results: [
-        { recipe: "baseline_no_tuning", kind: "baseline", mean_zero_shot_accuracy: 0.36458333333333337 },
-        { recipe: "lora_r8", kind: "lora", mean_zero_shot_accuracy: 0.34375 },
-        { recipe: "lora_r16", kind: "lora", mean_zero_shot_accuracy: 0.34375 }
+        { recipe: "baseline_condition", kind: "baseline", mean_zero_shot_accuracy: 0.36458333333333337 },
+        { recipe: "candidate_condition_a", kind: "adapter", mean_zero_shot_accuracy: 0.34375 },
+        { recipe: "candidate_condition_b", kind: "adapter", mean_zero_shot_accuracy: 0.34375 }
       ]
     });
 

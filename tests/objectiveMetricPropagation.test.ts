@@ -3656,14 +3656,14 @@ describe("objective metric propagation", () => {
           version: 1,
           run_id: runId,
           created_at: new Date().toISOString(),
-          hypothesis: "A non-baseline PEFT condition should improve accuracy",
+          hypothesis: "A non-baseline candidate condition should improve accuracy",
           causal_mechanism: "Adapter choice changes zero-shot accuracy",
-          single_change: "PEFT recipe",
+          single_change: "adapter recipe",
           confounded: false,
           expected_metric_effect: "Higher accuracy than the named tuned baseline",
           abort_condition: "Abort on missing condition evidence",
           keep_or_discard_rule: "Keep if improved",
-          baselines: ["lora_baseline"],
+          baselines: ["baseline_condition"],
           metrics: ["accuracy_delta_vs_baseline"],
           results_table_schema: [
             {
