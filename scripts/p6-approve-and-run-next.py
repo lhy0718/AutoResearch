@@ -21,6 +21,7 @@ STOP_PATTERN = (
 STOP_READY_AFTER_STATUS_ERROR_PATTERN = (
     r"Add steering, or wait for the next (?:run or )?approval\."
 )
+LIVE_INTERACTIVE_PROMPT_PATTERN = STOP_READY_AFTER_STATUS_ERROR_PATTERN
 READY_PATTERN = (
     r"(needs_approval|running|pending|Canceled by user|"
     r"Add steering, or wait for the next (?:run or )?approval\.|"
@@ -389,6 +390,8 @@ def wait_for_stop_boundary(
             record = try_load_run_record(workspace, run_id)
             if should_accept_node_status_error_text(record, node, initial_signature):
                 return joined
+        if observed_target_running and re.search(LIVE_INTERACTIVE_PROMPT_PATTERN, searchable_after_target_running, re.MULTILINE):
+            return joined
         if regex.search(searchable):
             record = try_load_run_record(workspace, run_id)
             if is_target_node_running(record, node) and not observed_target_running:
@@ -638,6 +641,12 @@ def run_selftest() -> int:
         "design_experiments",
     ):
         print("FAIL: node-local status-error stop text matched an active-run prompt")
+        return 1
+    if not re.search(LIVE_INTERACTIVE_PROMPT_PATTERN, "Add steering, or wait for the next approval."):
+        print("FAIL: live interactive prompt pattern did not match current guidance")
+        return 1
+    if not re.search(LIVE_INTERACTIVE_PROMPT_PATTERN, "Add steering, or wait for the next run or approval."):
+        print("FAIL: live interactive prompt pattern did not preserve older guidance")
         return 1
     if "Approved [a-z_]+\\. Next node is" in STOP_PATTERN:
         print("FAIL: approval handoff should not be treated as a stop boundary")
