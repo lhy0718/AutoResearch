@@ -698,6 +698,16 @@ export class TerminalApp {
         this.applySteeringInput(steering);
         return;
       }
+      if (!isSlashPrefixed(text) && this.activeBusyAbortController && !this.activeBusyAbortController.signal.aborted) {
+        const steering = normalizeSteeringInput(text);
+        if (!steering) {
+          return;
+        }
+        this.queuedInputs.push(steering);
+        this.pushLog(`Queued steering: ${oneLine(steering)}`);
+        this.cancelCurrentBusyOperation();
+        return;
+      }
       this.queuedInputs.push(text);
       this.pushLog(`Queued turn: ${oneLine(text)}`);
       this.render();

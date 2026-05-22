@@ -1839,6 +1839,22 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(rendered).not.toContain("idle · gpt-5.3-codex");
   });
 
+  it("interrupts active supervised runs when plain steering is submitted while busy", async () => {
+    const app = makeApp();
+    const controller = new AbortController();
+    app.busy = true;
+    app.activeBusyAbortController = controller;
+    app.activeBusyLabel = "implement_experiments";
+    app.recordHistory = vi.fn().mockResolvedValue(undefined);
+
+    await app.submitInputText("narrow the implementation scope");
+
+    expect(controller.signal.aborted).toBe(true);
+    expect(app.queuedInputs).toEqual(["narrow the implementation scope"]);
+    expect(app.logs).toContain("Queued steering: narrow the implementation scope");
+    expect(app.logs).toContain("Cancel requested: implement_experiments");
+  });
+
   it("queues slash commands instead of treating them as steering while a natural request is active", async () => {
     const app = makeApp();
     app.busy = true;
