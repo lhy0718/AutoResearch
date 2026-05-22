@@ -37491,10 +37491,6 @@ async function repairPythonRunCommandArgparseAliases(
     }
   ].filter((option) => commandFlags.has(option.commandFlag));
 
-  if (aliasPairs.length === 0 && runtimeOptions.length === 0) {
-    return { repaired: false };
-  }
-
   let source: string;
   try {
     source = await fs.readFile(scriptPath, "utf8");
@@ -37503,6 +37499,58 @@ async function repairPythonRunCommandArgparseAliases(
   }
 
   if (!/\bargparse\b/u.test(source) || !/\badd_argument\s*\(/u.test(source)) {
+    return { repaired: false };
+  }
+
+  const acceptedFlagsForDynamicAliases = extractPythonArgparseLongFlags(source);
+  const normalizeFlagToken = (token: string): string => {
+    const lower = token.toLowerCase();
+    if (lower.endsWith("ies") && lower.length > 4) {
+      return `${lower.slice(0, -3)}y`;
+    }
+    if (lower.endsWith("ses") && lower.length > 4) {
+      return lower.slice(0, -2);
+    }
+    if (lower.endsWith("s") && lower.length > 3) {
+      return lower.slice(0, -1);
+    }
+    return lower;
+  };
+  const flagTokens = (flag: string): string[] =>
+    flag
+      .replace(/^--/u, "")
+      .split("-")
+      .map(normalizeFlagToken)
+      .filter(Boolean);
+  const parserFlagMatchesPluralSchedulerFlag = (commandFlag: string, parserFlag: string): boolean => {
+    if (parserFlag === commandFlag || !/^--[a-z0-9][a-z0-9-]*s$/iu.test(commandFlag)) {
+      return false;
+    }
+    const commandTokens = flagTokens(commandFlag);
+    const parserTokens = flagTokens(parserFlag);
+    const commandSubject = commandTokens.at(-1);
+    const parserSubject = parserTokens.at(-1);
+    if (!commandSubject) {
+      return false;
+    }
+    if (parserSubject === commandSubject && parserFlag.endsWith("s")) {
+      return true;
+    }
+    return parserTokens.includes(commandSubject) && parserTokens.some((token) => ["list", "set", "ids", "collection"].includes(token));
+  };
+  for (const commandFlag of [...commandFlags].sort()) {
+    if (acceptedFlagsForDynamicAliases.has(commandFlag)) {
+      continue;
+    }
+    const parserFlag = [...acceptedFlagsForDynamicAliases]
+      .sort()
+      .find((flag) => parserFlagMatchesPluralSchedulerFlag(commandFlag, flag));
+    if (parserFlag && !aliasPairs.some((pair) => pair.commandFlag === commandFlag && pair.parserFlag === parserFlag)) {
+      aliasPairs.push({ commandFlag, parserFlag });
+    }
+  }
+
+  if (aliasPairs.length === 0 && runtimeOptions.length === 0) {
     return { repaired: false };
   }
 

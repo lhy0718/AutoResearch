@@ -27675,8 +27675,8 @@ describe("ImplementSessionManager", () => {
     });
   });
 
-  it("adds run_command aliases for scheduler-emitted LoRA runtime argparse flags", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-lora-runtime-alias-"));
+  it("adds run_command aliases for scheduler-emitted condition runtime argparse flags", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-condition-runtime-alias-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
@@ -27684,8 +27684,8 @@ describe("ImplementSessionManager", () => {
 
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
-      title: "Run Command LoRA Runtime Alias",
-      topic: "LoRA rank dropout",
+      title: "Run Command Condition Runtime Alias",
+      topic: "condition sweep runtime",
       constraints: ["recent"],
       objectiveMetric: "accuracy_delta_vs_baseline"
     });
@@ -27711,6 +27711,10 @@ describe("ImplementSessionManager", () => {
         "    parser.add_argument('--fallback-base-model')",
         "    parser.add_argument('--base-model-id')",
         "    parser.add_argument('--baseline-condition-marker')",
+        "    parser.add_argument('--seed-list', nargs='+', type=int)",
+        "    parser.add_argument('--condition-levels', nargs='+', type=int)",
+        "    parser.add_argument('--regularization-rates', nargs='+', type=float)",
+        "    parser.add_argument('--benchmark-tasks', nargs='+')",
         "    return parser",
         "",
         "def main(argv=None):",
@@ -27720,6 +27724,10 @@ describe("ImplementSessionManager", () => {
         "        'fallback_base_model': args.fallback_base_model,",
         "        'base_model_id': args.base_model_id,",
         "        'baseline_condition_marker': args.baseline_condition_marker,",
+        "        'seed_list': args.seed_list,",
+        "        'condition_levels': args.condition_levels,",
+        "        'regularization_rates': args.regularization_rates,",
+        "        'benchmark_tasks': args.benchmark_tasks,",
         "        'timeout_sec': args.timeout_sec,",
         "    }), encoding='utf-8')",
         "    return 0",
@@ -27753,7 +27761,7 @@ describe("ImplementSessionManager", () => {
       {
         verifyReport: { status: "not_run" },
         testCommand: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
-        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)} --disable-progress-bars --fallback-model the configured fallback backbone --base-model the selected backbone --baseline-condition baseline_condition --budget-timeout-sec 1800`,
+        runCommand: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)} --disable-progress-bars --fallback-model the configured fallback backbone --base-model the selected backbone --baseline-condition baseline_condition --seeds 11 13 --levels 2 4 --rates 0.0 0.1 --tasks task_a task_b --budget-timeout-sec 1800`,
         scriptPath,
         workingDir: publicDir,
         workspaceRoot: workspace,
@@ -27773,6 +27781,10 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("parser.add_argument('--fallback-base-model', \"--fallback-model\"");
     expect(repairedSource).toContain("parser.add_argument('--base-model-id', \"--base-model\"");
     expect(repairedSource).toContain("parser.add_argument('--baseline-condition-marker', \"--baseline-condition\"");
+    expect(repairedSource).toContain("parser.add_argument('--seed-list', \"--seeds\"");
+    expect(repairedSource).toContain("parser.add_argument('--condition-levels', \"--levels\"");
+    expect(repairedSource).toContain("parser.add_argument('--regularization-rates', \"--rates\"");
+    expect(repairedSource).toContain("parser.add_argument('--benchmark-tasks', \"--tasks\"");
     expect(repairedSource).toContain("parser.add_argument('--budget-timeout-sec', dest='timeout_sec'");
 
     execFileSync(
@@ -27790,6 +27802,18 @@ describe("ImplementSessionManager", () => {
         "the selected backbone",
         "--baseline-condition",
         "baseline_condition",
+        "--seeds",
+        "11",
+        "13",
+        "--levels",
+        "2",
+        "4",
+        "--rates",
+        "0.0",
+        "0.1",
+        "--tasks",
+        "task_a",
+        "task_b",
         "--budget-timeout-sec",
         "1800"
       ],
@@ -27800,6 +27824,10 @@ describe("ImplementSessionManager", () => {
       fallback_base_model: "the configured fallback backbone",
       base_model_id: "the selected backbone",
       baseline_condition_marker: "baseline_condition",
+      seed_list: [11, 13],
+      condition_levels: [2, 4],
+      regularization_rates: [0, 0.1],
+      benchmark_tasks: ["task_a", "task_b"],
       timeout_sec: 1800
     });
   });

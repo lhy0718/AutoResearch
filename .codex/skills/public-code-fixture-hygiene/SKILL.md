@@ -1,6 +1,11 @@
 ---
 name: public-code-fixture-hygiene
 description: Use when editing AutoLabOS public source, tests, examples, or generated-code fixtures to prevent one-off experiment identifiers, model names, benchmark names, or condition markers from becoming public contracts.
+contract_version: 1
+contract_kind: codex_skill
+runtime_contract: true
+gate: public_code_fixture_sanitization
+validation: public_code_sanitization_scan
 ---
 
 # Public Code Fixture Hygiene
