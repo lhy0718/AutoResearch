@@ -20920,13 +20920,13 @@ export async function repairPythonEvaluationDatasetHelperAliasSurface(
     "prepare_bounded_eval_datasets",
     "load_bounded_eval_datasets"
   ];
-  const searchedArcNames = [
+  const searchedTaskANames = [
     "load_benchmark_task_a_examples",
     "load_benchmark_task_a_dataset",
     "load_benchmark_task_a",
     "load_benchmark_task_a_dataset"
   ];
-  const generatedArcNames = [
+  const generatedTaskANames = [
     "load_benchmark_task_a_eval_dataset",
     "load_benchmark_task_a_raw_dataset",
     "load_public_benchmark_task_a_dataset",
@@ -20934,12 +20934,12 @@ export async function repairPythonEvaluationDatasetHelperAliasSurface(
     "load_benchmark_task_a_public_dataset",
     "load_benchmark_task_a_raw_examples"
   ];
-  const searchedHellaswagNames = [
+  const searchedTaskBNames = [
     "load_benchmark_task_b_examples",
     "load_benchmark_task_b_dataset",
     "load_benchmark_task_b"
   ];
-  const generatedHellaswagNames = [
+  const generatedTaskBNames = [
     "load_benchmark_task_b_eval_dataset",
     "load_benchmark_task_b_raw_dataset",
     "load_public_task_b_dataset",
@@ -20957,13 +20957,13 @@ export async function repairPythonEvaluationDatasetHelperAliasSurface(
     callsSingularBoundedEvalHelper &&
     !definesAny(searchedSingularBoundedEvalNames) &&
     definesAny(generatedPluralBoundedEvalNames);
-  const needsArcAlias = !definesAny(searchedArcNames) && definesAny(generatedArcNames);
-  const needsHellaswagAlias =
-    !definesAny(searchedHellaswagNames) && definesAny(generatedHellaswagNames);
+  const needsTaskAAlias = !definesAny(searchedTaskANames) && definesAny(generatedTaskANames);
+  const needsTaskBAlias =
+    !definesAny(searchedTaskBNames) && definesAny(generatedTaskBNames);
   if (!hasEntrypointDatasetFailureMarker && !needsSingularBoundedEvalAlias) {
     return { repaired: false };
   }
-  if (!needsCombinedAlias && !needsSingularBoundedEvalAlias && !(needsArcAlias && needsHellaswagAlias)) {
+  if (!needsCombinedAlias && !needsSingularBoundedEvalAlias && !(needsTaskAAlias && needsTaskBAlias)) {
     return { repaired: false };
   }
 
@@ -21119,7 +21119,7 @@ export async function repairPythonEvaluationDatasetHelperAliasSurface(
     );
   }
 
-  if (needsArcAlias) {
+  if (needsTaskAAlias) {
     alias.push(
       "def load_benchmark_task_a_examples(*positional, **keyword):",
       "    for _autolabos_loader_name in (",
@@ -21141,7 +21141,7 @@ export async function repairPythonEvaluationDatasetHelperAliasSurface(
     );
   }
 
-  if (needsHellaswagAlias) {
+  if (needsTaskBAlias) {
     alias.push(
       "def load_benchmark_task_b_examples(*positional, **keyword):",
       "    for _autolabos_loader_name in (",
@@ -28631,8 +28631,8 @@ export async function repairPythonRankDropoutStudyCallableBridgeSurface(
 
   if (
     !source.includes("def _autolabos_run_study(") ||
-    !source.includes("def run_locked_lora_rank_dropout_sweep(") ||
-    source.includes("_autolabos_rank_dropout_study_callable_bridge_marker")
+    !source.includes("def run_locked_condition_sweep(") ||
+    source.includes("_autolabos_condition_sweep_study_callable_bridge_marker")
   ) {
     return { repaired: false };
   }
@@ -28643,7 +28643,7 @@ export async function repairPythonRankDropoutStudyCallableBridgeSurface(
   const beforeCandidate = nextSource;
   nextSource = nextSource.replace(
     /(\s*candidate_names = \(\n)(\s*['"]run_locked_study_sweep['"],)/u,
-    "$1        'run_locked_lora_rank_dropout_sweep',\n$2"
+    "$1        'run_locked_condition_sweep',\n$2"
   );
   if (nextSource !== beforeCandidate) {
     repaired = true;
@@ -28654,7 +28654,7 @@ export async function repairPythonRankDropoutStudyCallableBridgeSurface(
     /(\s*return _autolabos_invoke_callable\(\n\s*study_callable,\n\s*args=args,\n\s*cli_paths=cli_paths,\n\s*paths=cli_paths,\n\s*output_dir=cli_paths\.output_dir,\n\s*public_dir=cli_paths\.output_dir,\n)/u,
     [
       "$1",
-      "        _autolabos_rank_dropout_study_callable_bridge_marker=True,\n",
+      "        _autolabos_condition_sweep_study_callable_bridge_marker=True,\n",
       "        output_root=cli_paths.output_dir,\n",
       "        base_model_id=getattr(args, 'base_model_id', getattr(args, 'preferred_base_model_id', globals().get('PREFERRED_BASE_MODEL_ID', None))),\n"
     ].join("")
@@ -28670,7 +28670,7 @@ export async function repairPythonRankDropoutStudyCallableBridgeSurface(
   await fs.writeFile(scriptPath, nextSource, "utf8");
   return {
     repaired: true,
-    message: `Bridged rank/dropout study callable resolver in ${path.basename(scriptPath)} before handoff.`
+    message: `Bridged condition-sweep study callable resolver in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
@@ -28702,7 +28702,7 @@ export async function repairPythonLockedSweepExecutorResolverSurface(
 
   const beforeExactNames = nextSource;
   nextSource = nextSource.replace(
-    /(\s*exact_names=\(\n)(\s*["']execute_locked_lora_rank_dropout_study["'],)/u,
+    /(\s*exact_names=\(\n)(\s*["']execute_locked_condition_study["'],)/u,
     [
       "$1",
       "            # _autolabos_locked_sweep_executor_resolver_marker\n",
@@ -28754,8 +28754,8 @@ export async function repairPythonRankDropoutSweepControllerResolverSurface(
 
   if (
     !source.includes("def _resolve_sweep_controller(") ||
-    !source.includes("def execute_locked_rank_dropout_sweep(") ||
-    source.includes("_autolabos_rank_dropout_sweep_controller_resolver_marker")
+    !source.includes("def execute_locked_condition_sweep(") ||
+    source.includes("_autolabos_condition_sweep_controller_resolver_marker")
   ) {
     return { repaired: false };
   }
@@ -28768,13 +28768,11 @@ export async function repairPythonRankDropoutSweepControllerResolverSurface(
     /(\s*for name in \(\n)(\s*["']run_locked_sweep["'],)/u,
     [
       "$1",
-      "        # _autolabos_rank_dropout_sweep_controller_resolver_marker\n",
-      "        \"execute_locked_rank_dropout_sweep\",\n",
-      "        \"run_locked_rank_dropout_sweep\",\n",
-      "        \"run_rank_dropout_sweep\",\n",
-      "        \"execute_rank_dropout_sweep\",\n",
-      "        \"execute_locked_lora_rank_dropout_sweep\",\n",
-      "        \"run_locked_lora_rank_dropout_sweep\",\n",
+      "        # _autolabos_condition_sweep_controller_resolver_marker\n",
+      "        \"execute_locked_condition_sweep\",\n",
+      "        \"run_locked_condition_sweep\",\n",
+      "        \"run_condition_sweep\",\n",
+      "        \"execute_condition_sweep\",\n",
       "$2"
     ].join("")
   );
@@ -28789,7 +28787,7 @@ export async function repairPythonRankDropoutSweepControllerResolverSurface(
   await fs.writeFile(scriptPath, nextSource, "utf8");
   return {
     repaired: true,
-    message: `Prioritized rank/dropout sweep controller discovery in ${path.basename(scriptPath)} before handoff.`
+    message: `Prioritized condition-sweep controller discovery in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
@@ -29252,10 +29250,8 @@ export async function repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurfac
     "execute_locked_baseline_first_sweep",
     "execute_baseline_first_locked_sweep",
     "run_baseline_first_locked_grid",
-    "run_locked_rank_dropout_sweep",
-    "execute_locked_rank_dropout_sweep",
-    "run_locked_lora_rank_dropout_sweep",
-    "execute_locked_lora_rank_dropout_sweep",
+    "run_locked_condition_sweep",
+    "execute_locked_condition_sweep",
     "run_locked_full_sweep",
     "execute_locked_full_sweep",
     "orchestrate_locked_full_sweep",

@@ -568,7 +568,7 @@ describe("ImplementSessionManager", () => {
   it("extracts workspace paths from nested bash -lc verification commands without treating the command string as an artifact", () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-shell-c-paths-"));
     tempDirs.push(workspace);
-    const runnerPath = path.join(workspace, "outputs", "experiment", "run_lora_rank_dropout_experiment.py");
+    const runnerPath = path.join(workspace, "outputs", "experiment", "run_condition_sweep_experiment.py");
     const wrapperPath = path.join(workspace, "outputs", "experiment", "run_condition_grid_study.py");
     const shellPath = path.join(workspace, "outputs", "experiment", "run_command.sh");
     mkdirSync(path.dirname(runnerPath), { recursive: true });
@@ -2251,7 +2251,7 @@ describe("ImplementSessionManager", () => {
             status: "fail",
             trigger: "auto_handoff",
             stage: "runtime",
-            summary: `Traceback (most recent call last): File "${runner}", line 4231, in run_locked_lora_rank_dropout_study TypeError: _build_model_load_kwargs() missing 1 required positional argument: 'local_files_only'`,
+            summary: `Traceback (most recent call last): File "${runner}", line 4231, in run_locked_condition_study TypeError: _build_model_load_kwargs() missing 1 required positional argument: 'local_files_only'`,
             command: `bash ${JSON.stringify(command)}`,
             suggested_next_action: "Repair the experiment runner traceback.",
             recorded_at: "2026-05-17T20:49:56.189Z"
@@ -2290,7 +2290,7 @@ describe("ImplementSessionManager", () => {
     tempDirs.push(workspace);
     const publicDir = path.join(workspace, "outputs", "study", "experiment");
     mkdirSync(publicDir, { recursive: true });
-    const scriptPath = path.join(publicDir, "run_lora_rank_dropout_experiment.py");
+    const scriptPath = path.join(publicDir, "run_condition_sweep_experiment.py");
     const staleScriptPath = path.join(publicDir, "run_condition_grid_study.py");
     const wrapperPath = path.join(publicDir, "run_command.sh");
     const metricsPath = path.join(workspace, ".autolabos", "runs", "run-1", "metrics.json");
@@ -2316,7 +2316,7 @@ describe("ImplementSessionManager", () => {
 
     expect(repair.repaired).toBe(true);
     const repairedWrapper = readFileSync(wrapperPath, "utf8");
-    expect(repairedWrapper).toContain('RUNNER="${SCRIPT_DIR}/run_lora_rank_dropout_experiment.py"');
+    expect(repairedWrapper).toContain('RUNNER="${SCRIPT_DIR}/run_condition_sweep_experiment.py"');
     expect(repairedWrapper).toContain('exec "${PYTHON_BIN:-python3}" "$RUNNER" \\');
     expect(repairedWrapper).not.toContain("run_condition_grid_study.py");
     expect(repairedWrapper).toContain(JSON.stringify(metricsPath));
@@ -2327,7 +2327,7 @@ describe("ImplementSessionManager", () => {
     tempDirs.push(workspace);
     const publicDir = path.join(workspace, "outputs", "study", "experiment");
     mkdirSync(publicDir, { recursive: true });
-    const scriptPath = path.join(publicDir, "run_lora_rank_dropout_experiment.py");
+    const scriptPath = path.join(publicDir, "run_condition_sweep_experiment.py");
     const wrapperPath = path.join(publicDir, "run_command.sh");
     writeFileSync(scriptPath, "print('runner')\n", "utf8");
     writeFileSync(
@@ -2336,7 +2336,7 @@ describe("ImplementSessionManager", () => {
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
-        'RUNNER="${SCRIPT_DIR}/run_lora_rank_dropout_experiment.py"',
+        'RUNNER="${SCRIPT_DIR}/run_condition_sweep_experiment.py"',
         'exec "${PYTHON_BIN:-python3}" "$RUNNER" --metrics-path "$1"'
       ].join("\n"),
       "utf8"
@@ -2354,7 +2354,7 @@ describe("ImplementSessionManager", () => {
         "experiment.py",
         "run_command.sh",
         "run_condition_grid_study.py",
-        "run_lora_rank_dropout_experiment.py"
+        "run_condition_sweep_experiment.py"
       ],
       runnerFeedback: {
         source: "run_experiments",
@@ -2362,16 +2362,16 @@ describe("ImplementSessionManager", () => {
         trigger: "auto_handoff",
         stage: "command",
         summary:
-          "Local verification failed because run_lora_rank_dropout_experiment.py reported unrecognized arguments: --experiment-dir.",
+          "Local verification failed because run_condition_sweep_experiment.py reported unrecognized arguments: --experiment-dir.",
         command: "bash run_command.sh --experiment-dir outputs/study/experiment",
         stderr_excerpt:
-          "run_lora_rank_dropout_experiment.py: error: unrecognized arguments: --experiment-dir",
+          "run_condition_sweep_experiment.py: error: unrecognized arguments: --experiment-dir",
         suggested_next_action: "Repair the public wrapper without replacing the canonical runner.",
         recorded_at: "2026-05-20T00:00:00.000Z"
       }
     });
 
-    expect(selected).toBe(path.join(publicDir, "run_lora_rank_dropout_experiment.py"));
+    expect(selected).toBe(path.join(publicDir, "run_condition_sweep_experiment.py"));
   });
 
   it("bypasses recovered bundle static Python guards for command-only wrapper feedback", () => {
@@ -2382,10 +2382,10 @@ describe("ImplementSessionManager", () => {
         trigger: "auto_handoff",
         stage: "command",
         summary:
-          "Local verification failed because run_lora_rank_dropout_experiment.py reported unrecognized arguments: --experiment-dir.",
+          "Local verification failed because run_condition_sweep_experiment.py reported unrecognized arguments: --experiment-dir.",
         command: "bash run_command.sh",
         stderr_excerpt:
-          "run_lora_rank_dropout_experiment.py: error: unrecognized arguments: --experiment-dir",
+          "run_condition_sweep_experiment.py: error: unrecognized arguments: --experiment-dir",
         suggested_next_action: "Repair the experiment command before handing back to the runner.",
         recorded_at: "2026-05-20T00:00:00.000Z"
       })
@@ -2443,7 +2443,7 @@ describe("ImplementSessionManager", () => {
     const publicDir = path.join(workspace, "outputs", "study", "experiment");
     const helper = path.join(publicDir, "experiment.py");
     const studyWrapper = path.join(publicDir, "run_condition_grid_study.py");
-    const canonicalRunner = path.join(publicDir, "run_lora_rank_dropout_experiment.py");
+    const canonicalRunner = path.join(publicDir, "run_condition_sweep_experiment.py");
     const guarded = applyImplementationContractLocalizationGuard(
       {
         context: {
@@ -2503,7 +2503,7 @@ describe("ImplementSessionManager", () => {
     const workspace = "/tmp/autolabos-planned-contract-focus";
     const publicDir = path.join(workspace, "outputs", "study", "experiment");
     const paperEvidence = path.join(workspace, "outputs", "study", "paper", "evidence_links.json");
-    const canonicalRunner = path.join(publicDir, "run_lora_rank_dropout_experiment.py");
+    const canonicalRunner = path.join(publicDir, "run_condition_sweep_experiment.py");
     const guarded = applyImplementationContractLocalizationGuard(
       {
         context: {
@@ -3778,7 +3778,7 @@ describe("ImplementSessionManager", () => {
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
     mkdirSync(runDir, { recursive: true });
-    const scriptPath = path.join(runDir, "run_lora_rank_dropout_experiment.py");
+    const scriptPath = path.join(runDir, "run_condition_sweep_experiment.py");
     writeFileSync(
       scriptPath,
       [
@@ -3872,7 +3872,7 @@ describe("ImplementSessionManager", () => {
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
     mkdirSync(runDir, { recursive: true });
-    const scriptPath = path.join(runDir, "run_lora_rank_dropout_experiment.py");
+    const scriptPath = path.join(runDir, "run_condition_sweep_experiment.py");
     writeFileSync(
       scriptPath,
       [
@@ -15396,7 +15396,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def _resolve_core_experiment_callable_for_cli() -> Any:",
         "    candidate_names = (",
-        "        \"run_locked_lora_rank_dropout_study\",",
+        "        \"run_locked_condition_study\",",
         "        \"run_locked_lora_study\",",
         "        \"run_baseline_first_experiment\",",
         "    )",
@@ -23610,7 +23610,7 @@ describe("ImplementSessionManager", () => {
         "        self.output_dir = Path(output_dir)",
         "        self.metrics_path = Path(metrics_path)",
         "",
-        "def run_locked_lora_rank_dropout_sweep(",
+        "def run_locked_condition_sweep(",
         "    output_root: Path,",
         "    base_model_id: str,",
         "    *,",
@@ -23653,9 +23653,9 @@ describe("ImplementSessionManager", () => {
         "    runnable_command: str,",
         ") -> Any:",
         "    candidate_names = (",
-        "        'run_locked_lora_rank_dropout_study',",
+        "        'run_locked_condition_study',",
         "        'run_condition_grid_study',",
-        "        'execute_locked_lora_rank_dropout_study',",
+        "        'execute_locked_condition_study',",
         "        'execute_locked_condition_sweep',",
         "        'execute_condition_sweep',",
         "        'run_locked_condition_sweep',",
@@ -23698,8 +23698,8 @@ describe("ImplementSessionManager", () => {
     const repairedSource = readFileSync(scriptPath, "utf8");
 
     expect(repair.repaired).toBe(true);
-    expect(repairedSource).toContain("'run_locked_lora_rank_dropout_sweep'");
-    expect(repairedSource).toContain("_autolabos_rank_dropout_study_callable_bridge_marker");
+    expect(repairedSource).toContain("'run_locked_condition_sweep'");
+    expect(repairedSource).toContain("_autolabos_condition_sweep_study_callable_bridge_marker");
     execFileSync("python3", [scriptPath], { cwd: workspace });
     expect(JSON.parse(readFileSync(path.join(workspace, "out", "study_results.json"), "utf8"))).toMatchObject({
       ok: true,
@@ -23781,10 +23781,10 @@ describe("ImplementSessionManager", () => {
         "def _execute_main_study(config: Any, bootstrap_context: Mapping[str, Any]) -> Any:",
         "    executor_candidates = _callable_candidates_from_globals(",
         "        exact_names=(",
-        "            \"execute_locked_lora_rank_dropout_study\",",
+        "            \"execute_locked_condition_study\",",
         "            \"execute_locked_lora_study\",",
         "            \"execute_locked_study\",",
-        "            \"run_locked_lora_rank_dropout_study\",",
+        "            \"run_locked_condition_study\",",
         "            \"run_locked_study\",",
         "            \"execute_study\",",
         "            \"run_study\",",
@@ -23857,18 +23857,18 @@ describe("ImplementSessionManager", () => {
         "from pathlib import Path",
         "from typing import Any",
         "",
-        "def execute_locked_rank_dropout_sweep(config: Any = None, contract: Any = None) -> dict:",
+        "def execute_locked_condition_sweep(config: Any = None, contract: Any = None) -> dict:",
         "    payload = {",
         "        'ok': True,",
-        "        'controller': 'execute_locked_rank_dropout_sweep',",
+        "        'controller': 'execute_locked_condition_sweep',",
         "        'run_rows': [{'condition_marker': 'baseline_condition', 'status': 'completed'}],",
         "        'failures': [],",
         "    }",
         "    Path('controller_executed.json').write_text(json.dumps(payload), encoding='utf-8')",
         "    return payload",
         "",
-        "run_locked_rank_dropout_sweep = execute_locked_rank_dropout_sweep",
-        "run_rank_dropout_sweep = execute_locked_rank_dropout_sweep",
+        "run_locked_condition_sweep = execute_locked_condition_sweep",
+        "run_condition_sweep = execute_locked_condition_sweep",
         "",
         "def _resolve_sweep_controller() -> Any:",
         "    for name in (",
@@ -23907,12 +23907,12 @@ describe("ImplementSessionManager", () => {
     const repairedSource = readFileSync(scriptPath, "utf8");
 
     expect(repair.repaired).toBe(true);
-    expect(repairedSource).toContain("_autolabos_rank_dropout_sweep_controller_resolver_marker");
-    expect(repairedSource).toContain("\"execute_locked_rank_dropout_sweep\"");
+    expect(repairedSource).toContain("_autolabos_condition_sweep_controller_resolver_marker");
+    expect(repairedSource).toContain("\"execute_locked_condition_sweep\"");
     execFileSync("python3", [scriptPath], { cwd: workspace });
     expect(JSON.parse(readFileSync(path.join(workspace, "controller_executed.json"), "utf8"))).toMatchObject({
       ok: true,
-      controller: "execute_locked_rank_dropout_sweep",
+      controller: "execute_locked_condition_sweep",
       failures: []
     });
   });
@@ -24617,7 +24617,7 @@ describe("ImplementSessionManager", () => {
         "def _autolabos_run_study(runtime_config: Any, args: argparse.Namespace) -> Any:",
         "    runner = _autolabos_select_callable(",
         "        (",
-        "            'run_locked_lora_rank_dropout_study',",
+        "            'run_locked_condition_study',",
         "            'run_condition_grid_study',",
         "            'run_locked_rank_dropout_study',",
         "            'run_locked_study',",
@@ -24676,7 +24676,7 @@ describe("ImplementSessionManager", () => {
 
     expect(repair.repaired).toBe(true);
     expect(repairedSource).toContain("_autolabos_baseline_first_locked_sweep_study_runner_alias_marker");
-    expect(repairedSource).toContain("run_locked_lora_rank_dropout_study");
+    expect(repairedSource).toContain("run_locked_condition_study");
     expect(repairedSource).toContain("execute_experiment");
     execFileSync("python3", [scriptPath], { cwd: workspace });
     expect(JSON.parse(readFileSync(path.join(workspace, "executed.json"), "utf8"))).toMatchObject({
@@ -25054,7 +25054,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def _invoke_study_runner(options: RuntimeOptions) -> Any:",
         "    candidate_names = (",
-        "        'run_locked_lora_rank_dropout_study',",
+        "        'run_locked_condition_study',",
         "        'run_condition_grid_study',",
         "        'execute_locked_study',",
         "        'execute_baseline_first_sweep',",
@@ -25139,10 +25139,10 @@ describe("ImplementSessionManager", () => {
         "import json",
         "from pathlib import Path",
         "",
-        "def execute_locked_rank_dropout_sweep(args=None, **kwargs):",
+        "def execute_locked_condition_sweep(args=None, **kwargs):",
         "    payload = {",
         "        'status': 'completed',",
-        "        'runner': 'execute_locked_rank_dropout_sweep',",
+        "        'runner': 'execute_locked_condition_sweep',",
         "        'metrics_path': str(getattr(args, 'metrics_path', kwargs.get('metrics_path', None))),",
         "        'required_condition_markers': list(kwargs.get('required_condition_markers') or []),",
         "    }",
@@ -25151,7 +25151,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def _resolve_locked_study_orchestrator():",
         "    candidate_names = (",
-        "        'run_locked_lora_rank_dropout_study',",
+        "        'run_locked_condition_study',",
         "        'run_locked_study',",
         "        'execute_locked_study',",
         "        'run_locked_experiment',",
@@ -25199,11 +25199,11 @@ describe("ImplementSessionManager", () => {
     expect(repair.repaired).toBe(true);
     expect(repairedSource).toContain("_autolabos_baseline_first_locked_sweep_study_runner_alias_marker");
     expect(repairedSource).toContain("run_full_locked_study");
-    expect(repairedSource).toContain("execute_locked_rank_dropout_sweep");
+    expect(repairedSource).toContain("execute_locked_condition_sweep");
     execFileSync("python3", [scriptPath], { cwd: workspace });
     expect(JSON.parse(readFileSync(path.join(workspace, "locked-orchestrator-executed.json"), "utf8"))).toMatchObject({
       status: "completed",
-      runner: "execute_locked_rank_dropout_sweep",
+      runner: "execute_locked_condition_sweep",
       metrics_path: "metrics.json",
       required_condition_markers: ["baseline_condition"]
     });
@@ -25221,9 +25221,9 @@ describe("ImplementSessionManager", () => {
         "from typing import Tuple",
         "",
         "ENTRYPOINT_SWEEP_HELPER_CANDIDATES: Tuple[str, ...] = (",
-        "    'run_locked_lora_rank_dropout_study',",
+        "    'run_locked_condition_study',",
         "    'run_locked_rank_dropout_study',",
-        "    'run_rank_dropout_sweep',",
+        "    'run_condition_sweep',",
         ")",
         "",
         "def _resolve_callable(candidate_names):",
@@ -25592,7 +25592,7 @@ describe("ImplementSessionManager", () => {
         "        return func(**kwargs)",
         "    return func(**{key: value for key, value in kwargs.items() if key in params})",
         "",
-        "def run_locked_lora_rank_dropout_study(args: argparse.Namespace) -> Dict[str, Any]:",
+        "def run_locked_condition_study(args: argparse.Namespace) -> Dict[str, Any]:",
         "    output_dir = Path(args.output_dir)",
         "    output_dir.mkdir(parents=True, exist_ok=True)",
         "    condition = StudyCondition(marker='baseline_condition', rank=8, lora_dropout=0.0, is_baseline=True)",
@@ -25619,7 +25619,7 @@ describe("ImplementSessionManager", () => {
         "    return payload",
         "",
         "def main() -> int:",
-        "    run_locked_lora_rank_dropout_study(argparse.Namespace(output_dir='out', seed=23))",
+        "    run_locked_condition_study(argparse.Namespace(output_dir='out', seed=23))",
         "    return 0",
         "",
         "if __name__ == '__main__':",
@@ -25721,7 +25721,7 @@ describe("ImplementSessionManager", () => {
         "    study_runner = _chunk3b_resolve_global_callable(",
         "        [",
         "            'run_condition_grid_study',",
-        "            'run_locked_lora_rank_dropout_study',",
+        "            'run_locked_condition_study',",
         "            'run_locked_study',",
         "            'execute_locked_study',",
         "            'run_study',",
@@ -26919,7 +26919,7 @@ describe("ImplementSessionManager", () => {
         "def _resolve_single_condition_runner():",
         "    return run_condition_experiment",
         "",
-        "def run_locked_lora_rank_dropout_study(args: argparse.Namespace, output_contract):",
+        "def run_locked_condition_study(args: argparse.Namespace, output_contract):",
         "    conditions = get_locked_study_conditions()",
         "    execution_context, setup_warnings = _build_study_execution_context(args, output_contract)",
         "    runner = _resolve_single_condition_runner()",
@@ -26946,7 +26946,7 @@ describe("ImplementSessionManager", () => {
         "    metrics_path = Path('metrics.json')",
         "",
         "if __name__ == '__main__':",
-        "    result = run_locked_lora_rank_dropout_study(argparse.Namespace(seed=17), OutputContract())",
+        "    result = run_locked_condition_study(argparse.Namespace(seed=17), OutputContract())",
         "    print(json.dumps(result, sort_keys=True))",
         ""
       ].join("\n"),
@@ -29294,7 +29294,7 @@ describe("ImplementSessionManager", () => {
         "PRIMARY_METRIC_KEY = 'accuracy_delta_vs_baseline'",
         "PRIMARY_SCORE_AGGREGATE_KEY = 'average_accuracy'",
         "TASK_ACCURACY_KEYS = ('benchmark_task_a_accuracy', 'benchmark_task_b_accuracy')",
-        "STUDY_SLUG = 'lora-rank-dropout'",
+        "STUDY_SLUG = 'condition-sweep-study'",
         "",
         "def _main_make_json_safe(value):",
         "    return value",
@@ -34877,7 +34877,7 @@ describe("ImplementSessionManager", () => {
         "",
         "SEED = 42",
         "DEFAULT_ARC_EVAL_SAMPLES = 3",
-        "DEFAULT_HELLASWAG_EVAL_SAMPLES = 4",
+        "DEFAULT_TASK_B_EVAL_SAMPLES = 4",
         "",
         "def _arg_value(args: argparse.Namespace, name: str, default: Any = None) -> Any:",
         "    return getattr(args, name, default)",
@@ -34907,7 +34907,7 @@ describe("ImplementSessionManager", () => {
         "def _load_study_datasets(args: argparse.Namespace):",
         "    seed = int(_arg_value(args, 'seed', SEED))",
         "    arc_samples = int(_arg_value(args, 'arc_eval_samples', DEFAULT_ARC_EVAL_SAMPLES))",
-        "    benchmark_task_b_samples = int(_arg_value(args, 'benchmark_task_b_eval_samples', DEFAULT_HELLASWAG_EVAL_SAMPLES))",
+        "    benchmark_task_b_samples = int(_arg_value(args, 'benchmark_task_b_eval_samples', DEFAULT_TASK_B_EVAL_SAMPLES))",
         "    arc_payload = _invoke_with_supported_kwargs(",
         "        load_benchmark_task_a_examples,",
         "        split='validation',",
