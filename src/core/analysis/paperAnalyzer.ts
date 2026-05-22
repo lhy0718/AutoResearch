@@ -730,37 +730,119 @@ function buildDeterministicPlannerTimeoutFallback(
   }
 
   const sourceText = source.text?.trim() || buildAbstractFallbackText(paper);
+  const structured = extractPlannerTimeoutFallbackSlots(sourceText);
   const firstSentence = firstMeaningfulSentence(sourceText);
-  const summary = trimToLength(firstSentence || sourceText || paper.title, 280);
+  const supportSentence = structured.supportSentence || firstSentence;
+  const summary = trimToLength(supportSentence || sourceText || paper.title, 280);
   const evidenceSpan = trimToLength(sourceText || paper.title, 240);
-  const claim = trimToLength(firstSentence || summary, 220);
+  const claim = trimToLength(supportSentence || summary, 220);
+  const hasOperationalContract = structured.datasets.length > 0 && structured.metrics.length > 0;
   return {
     summary,
-    key_findings: firstSentence ? [trimToLength(firstSentence, 180)] : [],
+    key_findings: supportSentence ? [trimToLength(supportSentence, 180)] : [],
     limitations: [
       "Deterministic full-text fallback; planner timed out before structured extraction and review completed."
     ],
-    datasets: [],
-    metrics: [],
+    datasets: structured.datasets,
+    metrics: structured.metrics,
     novelty: "Not established from planner-timeout fallback evidence.",
     reproducibility_notes: [
-      `Synthesized from extracted full text after the planner timed out (${failureReason}).`
+      `Extracted from full text after the planner timed out (${failureReason}); reviewer validation remains incomplete.`
     ],
     evidence_items: [
       {
         claim,
-        method_slot: "Not yet structured; planner timed out before extraction planning completed.",
+        method_slot: structured.method || "Not yet structured; planner timed out before extraction planning completed.",
         result_slot: summary,
         limitation_slot: "Structured extraction and review did not complete before timeout.",
-        dataset_slot: "Not yet structured.",
-        metric_slot: "Not yet structured.",
+        dataset_slot: structured.datasets.join("; ") || "Not yet structured.",
+        metric_slot: structured.metrics.join("; ") || "Not yet structured.",
         evidence_span: evidenceSpan,
-        confidence: 0.45,
-        confidence_reason:
-          "This item was synthesized directly from the extracted full text after a planner timeout, so it is weaker than a normal structured extraction+review pass."
+        confidence: hasOperationalContract ? 0.62 : 0.35,
+        confidence_reason: hasOperationalContract
+          ? "Source is extracted full text; planner timed out before reviewer validation, so confidence is moderate."
+          : "Planner timed out before structured dataset and metric extraction completed, so this full-text row remains low confidence."
       }
     ]
   };
+}
+
+function extractPlannerTimeoutFallbackSlots(sourceText: string): {
+  datasets: string[];
+  metrics: string[];
+  method?: string;
+  supportSentence?: string;
+} {
+  const sentences = splitMeaningfulSentences(sourceText);
+  const supportSentence = sentences.find((sentence) => hasDatasetCue(sentence) && hasMetricCue(sentence)) ||
+    sentences.find((sentence) => hasMetricCue(sentence)) ||
+    sentences.find((sentence) => hasDatasetCue(sentence));
+  const datasets = uniqueStrings([
+    ...extractHints(sourceText, [
+      /\b(?:evaluated|trained|tested|fine[- ]?tuned)\s+(?:on|using|with)\s+([^.;\n]{3,120})/giu,
+      /\b(?:dataset|datasets|benchmark|benchmarks|task|tasks)\s*(?:included|include|were|was|:|=)\s+([^.;\n]{3,120})/giu
+    ]).map(cleanDatasetHint)
+  ]).filter(Boolean).slice(0, 4);
+  const metrics = uniqueStrings([
+    ...extractHints(sourceText, [
+      /\b(?:metric|metrics|measured by|reported|reports|reporting|with)\s+([^.;\n]{0,120}\b(?:accuracy|f1|bleu|rouge|perplexity|pass@\d+|runtime|latency|memory|throughput)\b[^.;\n]{0,80})/giu,
+      /\b(?:accuracy|f1|bleu|rouge|perplexity|pass@\d+|runtime|latency|memory|throughput)\b/giu
+    ]).map(cleanMetricHint)
+  ]).filter(Boolean).slice(0, 4);
+  const method = supportSentence ? trimToLength(supportSentence, 180) : undefined;
+  return { datasets, metrics, method, supportSentence };
+}
+
+function splitMeaningfulSentences(text: string): string[] {
+  return text
+    .replace(/\s+/gu, " ")
+    .split(/(?<=[.!?])\s+/u)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length > 24 && !looksLikeFrontMatter(sentence));
+}
+
+function looksLikeFrontMatter(sentence: string): boolean {
+  return /^(?:arxiv:|doi:|copyright|preprint|journal|proceedings|abstract\b)/iu.test(sentence) ||
+    sentence.split(/\s+/u).filter((token) => /[A-Z]{3,}/u.test(token)).length > 8;
+}
+
+function hasDatasetCue(sentence: string): boolean {
+  return /\b(?:dataset|benchmark|task|corpus|evaluated on|trained on|tested on|fine[- ]?tuned on)\b/iu.test(sentence);
+}
+
+function hasMetricCue(sentence: string): boolean {
+  return /\b(?:metric|accuracy|f1|bleu|rouge|perplexity|pass@\d+|runtime|latency|memory|throughput)\b/iu.test(sentence);
+}
+
+function extractHints(text: string, patterns: RegExp[]): string[] {
+  const hints: string[] = [];
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      hints.push(String(match[1] || match[0] || ""));
+    }
+  }
+  return hints;
+}
+
+function cleanDatasetHint(value: string): string {
+  return cleanHint(value)
+    .replace(/\s+\b(?:with|using|measured by|reporting|reports?)\b.*$/iu, "")
+    .replace(/\b(?:accuracy|f1|bleu|rouge|perplexity|pass@\d+|runtime|latency|memory|throughput)\b.*$/iu, "")
+    .trim();
+}
+
+function cleanMetricHint(value: string): string {
+  const cleaned = cleanHint(value);
+  const metricMatch = /\b(?:accuracy|f1|bleu|rouge|perplexity|pass@\d+|runtime|latency|memory|throughput)\b/iu.exec(cleaned);
+  return metricMatch ? metricMatch[0] : cleaned;
+}
+
+function cleanHint(value: string): string {
+  return trimToLength(value.replace(/[()\[\]{}]/gu, " ").replace(/\s+/gu, " ").trim(), 120);
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
 }
 
 function summarizeAbstractForTimeoutFallback(abstract: string, title: string): string {

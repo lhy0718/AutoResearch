@@ -1666,7 +1666,11 @@ describe("analyzePapers node", () => {
         pdf_url: "https://example.com/p1.pdf"
       }
     ]);
-    writeCachedPaperTextSync(runId, "p1", "Recovered cached full text describing a compact PEFT recipe and its measured behavior.");
+    writeCachedPaperTextSync(
+      runId,
+      "p1",
+      "Recovered cached full text describing a compact PEFT recipe. The model was evaluated on Benchmark Task A and Benchmark Task B with accuracy and runtime metrics under a fixed adaptation budget."
+    );
     writeCachedPageImagesSync(runId, "p1", 3);
 
     const llm = new HangingPlannerOnlyLLM();
@@ -1704,11 +1708,13 @@ describe("analyzePapers node", () => {
 
     const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
     expect(summariesRaw).toContain('"source_type":"full_text"');
-    expect(summariesRaw).toContain("compact PEFT recipe");
+    expect(summariesRaw).toContain("Benchmark Task A and Benchmark Task B");
 
     const evidenceRaw = await readFile(path.join(".autolabos", "runs", runId, "evidence_store.jsonl"), "utf8");
     expect(evidenceRaw).toContain('"source_type":"full_text"');
-    expect(evidenceRaw).toContain('"confidence":0.45');
+    expect(evidenceRaw).toContain("Benchmark Task A and Benchmark Task B");
+    expect(evidenceRaw).toContain('"metric_slot":"accuracy; runtime"');
+    expect(evidenceRaw).toContain('"confidence":0.62');
 
     const manifestRaw = await readFile(
       path.join(".autolabos", "runs", runId, "analysis_manifest.json"),
