@@ -21,7 +21,10 @@ STOP_PATTERN = (
 STOP_READY_AFTER_STATUS_ERROR_PATTERN = (
     r"Add steering, or wait for the next (?:run or )?approval\."
 )
-LIVE_INTERACTIVE_PROMPT_PATTERN = STOP_READY_AFTER_STATUS_ERROR_PATTERN
+LIVE_INTERACTIVE_PROMPT_PATTERN = (
+    r"(?:Add steering, or wait for the next (?:run or )?approval\.|"
+    r"Add steering to redirect the current run\.)"
+)
 READY_PATTERN = (
     r"(needs_approval|running|pending|Canceled by user|"
     r"Add steering, or wait for the next (?:run or )?approval\.|"
@@ -647,6 +650,9 @@ def run_selftest() -> int:
         return 1
     if not re.search(LIVE_INTERACTIVE_PROMPT_PATTERN, "Add steering, or wait for the next run or approval."):
         print("FAIL: live interactive prompt pattern did not preserve older guidance")
+        return 1
+    if not re.search(LIVE_INTERACTIVE_PROMPT_PATTERN, "Add steering to redirect the current run."):
+        print("FAIL: live interactive prompt pattern did not match active-run steering guidance")
         return 1
     if "Approved [a-z_]+\\. Next node is" in STOP_PATTERN:
         print("FAIL: approval handoff should not be treated as a stop boundary")
