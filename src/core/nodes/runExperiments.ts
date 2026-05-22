@@ -746,7 +746,27 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           };
         }
 
-        const metricsExists = await fileExists(resolved.metricsPath);
+        let metricsExists = await fileExists(resolved.metricsPath);
+        if (!metricsExists) {
+          const recoveredPublicMetricsPath = await recoverPublicBundleMetricsOutput({
+            runContext,
+            workspaceRoot: process.cwd(),
+            metricsPath: resolved.metricsPath
+          });
+          if (recoveredPublicMetricsPath) {
+            metricsExists = true;
+            deps.eventStream.emit({
+              type: "OBS_RECEIVED",
+              runId: run.id,
+              node: "run_experiments",
+              agentRole: "runner",
+              payload: {
+                text: `Recovered required metrics output from public bundle metrics at ${recoveredPublicMetricsPath}.`
+              }
+            });
+            await runContext.put("run_experiments.recovered_public_metrics_path", recoveredPublicMetricsPath);
+          }
+        }
         if (!metricsExists) {
           const missingMessage = `Experiment finished without metrics output at ${resolved.metricsPath}`;
           const triage = classifyRunExperimentsFailure({
@@ -2314,6 +2334,41 @@ function emitSupplementalObservation(
       text
     }
   });
+}
+
+async function recoverPublicBundleMetricsOutput(input: {
+  runContext: RunContextMemory;
+  workspaceRoot: string;
+  metricsPath: string;
+}): Promise<string | undefined> {
+  if (await fileExists(input.metricsPath)) {
+    return undefined;
+  }
+  const publicDir = resolveMaybeRelative(
+    await input.runContext.get<string>("implement_experiments.public_dir"),
+    input.workspaceRoot
+  );
+  if (!publicDir) {
+    return undefined;
+  }
+  const candidates = [
+    path.join(publicDir, "metrics.json"),
+    path.join(publicDir, "study_results.json"),
+    path.join(publicDir, "latest_metrics.json")
+  ];
+  for (const candidate of candidates) {
+    if (candidate === input.metricsPath || !(await fileExists(candidate))) {
+      continue;
+    }
+    const metrics = await readMetricsObject(candidate, input.workspaceRoot);
+    if (!metrics || Object.keys(metrics).length === 0) {
+      continue;
+    }
+    await fs.mkdir(path.dirname(input.metricsPath), { recursive: true });
+    await fs.copyFile(candidate, input.metricsPath);
+    return candidate;
+  }
+  return undefined;
 }
 
 async function clearPreexistingMetricsOutput(

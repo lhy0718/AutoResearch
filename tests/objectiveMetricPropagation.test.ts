@@ -4940,6 +4940,64 @@ describe("objective metric propagation", () => {
     });
   });
 
+  it("recovers required metrics from a public bundle when a successful command leaves the run metrics path empty", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-public-metrics-recovery-"));
+    process.chdir(root);
+
+    const runId = "run-public-metrics-recovery";
+    const run = makeRun(runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    const memoryDir = path.join(runDir, "memory");
+    const publicDir = path.join(root, "public-bundle");
+    const publicMetricsPath = path.join(publicDir, "metrics.json");
+    const scriptPath = path.join(publicDir, "run_experiment.py");
+    await mkdir(memoryDir, { recursive: true });
+    await mkdir(publicDir, { recursive: true });
+    await writeFile(scriptPath, "print(\"does not rewrite metrics\")\n", "utf8");
+    await writeFile(publicMetricsPath, JSON.stringify({ accuracy: 0.73, recovered: true }, null, 2), "utf8");
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          { key: "implement_experiments.run_command", value: `python3 ${JSON.stringify(scriptPath)}`, updatedAt: new Date().toISOString() },
+          { key: "implement_experiments.cwd", value: publicDir, updatedAt: new Date().toISOString() },
+          { key: "implement_experiments.metrics_path", value: path.join(runDir, "metrics.json"), updatedAt: new Date().toISOString() },
+          { key: "implement_experiments.public_dir", value: publicDir, updatedAt: new Date().toISOString() },
+          { key: "implement_experiments.script", value: scriptPath, updatedAt: new Date().toISOString() },
+          { key: "implement_experiments.mode", value: "real_execution", updatedAt: new Date().toISOString() }
+        ]
+      }),
+      "utf8"
+    );
+
+    const runNode = createRunExperimentsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => ({
+          status: "ok" as const,
+          stdout: "done",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 10
+        }),
+        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
+      } as any,
+      semanticScholar: {} as any
+    } as any);
+
+    const result = await runNode.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(await readFile(path.join(runDir, "metrics.json"), "utf8")).toContain("\"recovered\": true");
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    expect(await memory.get("run_experiments.recovered_public_metrics_path")).toBe(publicMetricsPath);
+  });
+
   it("auto-runs managed quick_check and confirmatory profiles after a successful standard run", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-managed-supplemental-"));
     process.chdir(root);
