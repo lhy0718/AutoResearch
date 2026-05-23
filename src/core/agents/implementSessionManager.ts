@@ -9348,6 +9348,8 @@ export class ImplementSessionManager {
       await repairPythonHighLevelConditionSweepDispatchSurface(executionScriptPath);
     const orderedConditionCollectorRuntimeInputsRepair =
       await repairPythonOrderedConditionCollectorRuntimeInputsSurface(executionScriptPath);
+    const coerceFloatFieldNameDefaultRepair =
+      await repairPythonCoerceFloatFieldNameDefaultSurface(executionScriptPath);
     const coerceIntDefaultArgumentRepair =
       await repairPythonCoerceIntDefaultArgumentSurface(executionScriptPath);
     const resolveDeviceNameArityRepair =
@@ -9500,6 +9502,7 @@ export class ImplementSessionManager {
         conditionExecutorDeadlineArgumentRepair,
         highLevelConditionSweepDispatchRepair,
         orderedConditionCollectorRuntimeInputsRepair,
+        coerceFloatFieldNameDefaultRepair,
         coerceIntDefaultArgumentRepair,
         resolveDeviceNameArityRepair,
         loraStudyEntrypointContextRepair,
@@ -17191,6 +17194,54 @@ export async function repairPythonNumericCoercionHelperAlias(
   return {
     repaired: true,
     message: `Added _coerce_float compatibility helper to ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonCoerceFloatFieldNameDefaultSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (!/\b_coerce_float\s*\([^,\n()]+\)/u.test(source)) {
+    return { repaired: false };
+  }
+
+  const replacements: Array<[RegExp, string]> = [
+    [
+      /def _coerce_float\(\s*value:\s*Any\s*,\s*field_name:\s*str\s*,/u,
+      "def _coerce_float(value: Any, field_name: str = \"value\","
+    ],
+    [
+      /def _coerce_float\(\s*value\s*,\s*field_name\s*,/u,
+      "def _coerce_float(value, field_name = \"value\","
+    ]
+  ];
+
+  let nextSource = source;
+  for (const [pattern, replacement] of replacements) {
+    if (pattern.test(nextSource)) {
+      nextSource = nextSource.replace(pattern, replacement);
+      break;
+    }
+  }
+
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Widened _coerce_float field-name compatibility in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

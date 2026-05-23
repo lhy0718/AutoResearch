@@ -168,6 +168,7 @@ import {
   repairPythonNeftuneEmbeddingForwardHookSurface,
   repairPythonNormalizeForJsonHelperAlias,
   repairPythonNumericCoercionHelperAlias,
+  repairPythonCoerceFloatFieldNameDefaultSurface,
   repairPythonCoerceIntDefaultArgumentSurface,
   repairPythonResolveDeviceNameAritySurface,
   repairPythonLoraSeedTrainEvalAssemblySurface,
@@ -6022,6 +6023,47 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("def _coerce_float(*args, **kwargs):");
     expect(repairedSource).toContain("return coerce_float(*args, **kwargs)");
     execFileSync("python3", [scriptPath]);
+  });
+
+  it("widens a metric float helper so aggregate callers can omit field names", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-coerce-float-field-name-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from typing import Any, Optional",
+        "",
+        "def _coerce_float(value: Any, field_name: str, minimum: Optional[float] = None) -> Optional[float]:",
+        "    try:",
+        "        numeric = float(value)",
+        "    except Exception:",
+        "        return None",
+        "    if minimum is not None and numeric < minimum:",
+        "        raise ValueError(field_name)",
+        "    return numeric",
+        "",
+        "def mean_metric(values):",
+        "    numeric_values = [candidate for candidate in (_coerce_float(value) for value in values) if candidate is not None]",
+        "    return sum(numeric_values) / len(numeric_values)",
+        "",
+        "print(mean_metric([1.0, 2.0]))",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath])).toThrow(/field_name/);
+
+    const repair = await repairPythonCoerceFloatFieldNameDefaultSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("def _coerce_float(value: Any, field_name: str = \"value\", minimum: Optional[float] = None)");
+    const output = execFileSync("python3", [scriptPath], {
+      cwd: workspace,
+      encoding: "utf8"
+    }).trim();
+    expect(output).toBe("1.5");
   });
 
   it("widens a later _coerce_int helper so generated callers can pass defaults", async () => {
