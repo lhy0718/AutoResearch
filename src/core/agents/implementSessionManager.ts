@@ -9402,6 +9402,8 @@ export class ImplementSessionManager {
       await repairPythonLockedBaselineFirstExecutionResolverSurface(executionScriptPath);
     const lockedBaselineFirstSweepOrchestratorRepair =
       await repairPythonLockedBaselineFirstSweepOrchestratorSurface(executionScriptPath);
+    const baselineFirstLockedSweepEntrypointResolverRepair =
+      await repairPythonBaselineFirstLockedSweepEntrypointResolverSurface(executionScriptPath);
     const finalCliLockedGridResolverRepair =
       await repairPythonFinalCliLockedGridResolverSurface(executionScriptPath);
     const entrypointStudyResultKwargAliasRepair =
@@ -9531,6 +9533,7 @@ export class ImplementSessionManager {
         conditionSeedPlanDispatchRepair,
         lockedBaselineFirstExecutionResolverRepair,
         lockedBaselineFirstSweepOrchestratorRepair,
+        baselineFirstLockedSweepEntrypointResolverRepair,
         finalCliLockedGridResolverRepair,
         entrypointStudyResultKwargAliasRepair,
         nestedRunRecordsProjectionRepair,
@@ -40601,6 +40604,81 @@ export async function repairPythonLockedBaselineFirstSweepOrchestratorSurface(sc
   return {
     repaired: true,
     message: `Added locked baseline-first sweep orchestrator alias in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonBaselineFirstLockedSweepEntrypointResolverSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    !source.includes("def execute_baseline_first_locked_sweep(") ||
+    !source.includes("def _resolve_existing_callable(") ||
+    !source.includes("def _call_with_supported_kwargs(")
+  ) {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  let nextSource = source;
+
+  const callablePattern = /(\s*run_fn = _resolve_existing_callable\(\n)(\s*)"run_locked_study_sweep",\n/u;
+  if (
+    callablePattern.test(nextSource) &&
+    !nextSource.includes('"execute_baseline_first_locked_sweep",')
+  ) {
+    nextSource = nextSource.replace(
+      callablePattern,
+      (_full, prefix: string, indent: string) =>
+        `${prefix}${indent}"execute_baseline_first_locked_sweep",\n${indent}"run_locked_study_sweep",\n`
+    );
+    repaired = true;
+  }
+
+  const callPattern = /(\n)(\s*)cache_dir=args\.cache_dir,\n\s*runnable_command=runnable_command,\n/u;
+  if (
+    callPattern.test(nextSource) &&
+    !nextSource.includes("_autolabos_cli_entrypoint_runtime_context_marker") &&
+    !nextSource.includes('base_model_name=getattr(args, "base_model"')
+  ) {
+    nextSource = nextSource.replace(
+      callPattern,
+      (_full, leadingNewline: string, indent: string) =>
+        [
+          leadingNewline + `${indent}cache_dir=args.cache_dir,`,
+          `${indent}# _autolabos_cli_entrypoint_runtime_context_marker`,
+          `${indent}base_model_name=getattr(args, "base_model", getattr(args, "model_name", globals().get("DEFAULT_BASE_MODEL", ""))),`,
+          `${indent}device=(`,
+          `${indent}    detect_runtime_device()[0]`,
+          `${indent}    if callable(globals().get("detect_runtime_device"))`,
+          `${indent}    else getattr(args, "device", "cpu")`,
+          `${indent}),`,
+          `${indent}runnable_command=runnable_command,`,
+          ""
+        ].join("\n")
+    );
+    repaired = true;
+  }
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Bridged baseline-first locked sweep CLI resolver and runtime context in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

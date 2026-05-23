@@ -213,6 +213,7 @@ import {
   repairPythonConditionSeedPlanDispatchSurface,
   repairPythonLockedBaselineFirstExecutionResolverSurface,
   repairPythonLockedBaselineFirstSweepOrchestratorSurface,
+  repairPythonBaselineFirstLockedSweepEntrypointResolverSurface,
   repairPythonFinalCliLockedGridResolverSurface,
   repairPublishedRunCommandWrapperBinding,
   resolvePythonVerificationScriptPath,
@@ -6089,6 +6090,82 @@ describe("ImplementSessionManager", () => {
       encoding: "utf8"
     }).trim();
     expect(output).toBe("(2, 1)");
+  });
+
+  it("bridges a baseline-first locked sweep executor into a final CLI resolver", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-baseline-first-locked-sweep-resolver-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from argparse import Namespace",
+        "from typing import Any, Optional, Sequence",
+        "",
+        "def detect_runtime_device():",
+        "    return 'cpu', {'device': 'cpu'}",
+        "",
+        "def execute_baseline_first_locked_sweep(args: Any, *, output_dir: Any, base_model_name: str, device: Any):",
+        "    return {'model': base_model_name, 'device': str(device), 'output_dir': output_dir}",
+        "",
+        "def _resolve_existing_callable(*candidate_names: str, required: bool = True):",
+        "    for name in candidate_names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    if required:",
+        "        raise RuntimeError('Unable to resolve required callable from candidates: ' + ', '.join(candidate_names))",
+        "    return None",
+        "",
+        "def _call_with_supported_kwargs(func, /, **kwargs):",
+        "    import inspect",
+        "    signature = inspect.signature(func)",
+        "    accepted_kwargs = {}",
+        "    for name, parameter in signature.parameters.items():",
+        "        if parameter.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY) and name in kwargs:",
+        "            accepted_kwargs[name] = kwargs[name]",
+        "    return func(**accepted_kwargs)",
+        "",
+        "def main(argv: Optional[Sequence[str]] = None) -> str:",
+        "    args = Namespace(output_dir='out', cache_dir='cache', base_model='neutral_base_model')",
+        "    runnable_command = 'python experiment.py'",
+        "    run_fn = _resolve_existing_callable(",
+        "        \"run_locked_study_sweep\",",
+        "        \"run_study_sweep\",",
+        "        \"execute_locked_sweep\",",
+        "        \"execute_study\",",
+        "        \"run_study\",",
+        "        \"orchestrate_study\",",
+        "        required=True,",
+        "    )",
+        "    result = _call_with_supported_kwargs(",
+        "        run_fn,",
+        "        args=args,",
+        "        output_dir=args.output_dir,",
+        "        metrics_path='metrics.json',",
+        "        cache_dir=args.cache_dir,",
+        "        runnable_command=runnable_command,",
+        "        start_time=0.0,",
+        "    )",
+        "    return result['model'] + ':' + result['device']",
+        "",
+        "print(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath])).toThrow(/Unable to resolve required callable/);
+
+    const repair = await repairPythonBaselineFirstLockedSweepEntrypointResolverSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain('"execute_baseline_first_locked_sweep"');
+    expect(repairedSource).toContain("_autolabos_cli_entrypoint_runtime_context_marker");
+    const output = execFileSync("python3", [scriptPath], {
+      encoding: "utf8"
+    }).trim();
+    expect(output).toBe("neutral_base_model:cpu");
   });
 
   it("widens a metric float helper so aggregate callers can omit field names", async () => {
