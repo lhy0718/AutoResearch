@@ -201,6 +201,7 @@ import {
   repairPythonTransformersLinearSchedulerSurface,
   repairPythonLockedConditionContractCallSurface,
   repairPythonLockedConditionNameProjectionSurface,
+  repairPythonDuplicateHelperSignatureDriftSurface,
   repairPythonLockedSweepRuntimeKwargBridgeSurface,
   repairPythonExecutionPlanMappingSequenceKeySurface,
   repairPythonTupleReturningMainArgsSurface,
@@ -15511,6 +15512,56 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("\"execute_locked_baseline_first_sweep\"");
     const output = execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim();
     expect(output).toBe("completed");
+  });
+
+
+  it("repairs duplicate helper definitions when the final signature drops called keywords", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-duplicate-helper-signature-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "import json",
+        "from typing import Sequence",
+        "",
+        "def normalize_schedule(",
+        "    raw_schedule: Sequence[int],",
+        "    *,",
+        "    allow_partial: bool,",
+        ") -> tuple[int, ...]:",
+        "    values = tuple(int(seed) for seed in raw_schedule)",
+        "    return values if allow_partial else values[:1]",
+        "",
+        "def parse_runtime_options():",
+        "    return normalize_schedule(",
+        "        [1, 2, 3],",
+        "        allow_partial=True,",
+        "    )",
+        "",
+        "def normalize_schedule(raw_schedule: Sequence[int]) -> tuple[int, ...]:",
+        "    return tuple(int(seed) for seed in raw_schedule[:1])",
+        "",
+        "if __name__ == '__main__':",
+        "    print(json.dumps({'seeds': list(parse_runtime_options())}, sort_keys=True))",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /unexpected keyword argument 'allow_partial'/u
+    );
+
+    const repair = await repairPythonDuplicateHelperSignatureDriftSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource.match(/^def normalize_schedule/gmu)).toHaveLength(1);
+    const output = JSON.parse(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }));
+    expect(output.seeds).toEqual([1, 2, 3]);
   });
 
   it("prioritizes final CLI orchestration and locked grid executors before helper resolvers", async () => {

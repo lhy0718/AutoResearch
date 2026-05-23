@@ -9388,6 +9388,8 @@ export class ImplementSessionManager {
       await repairPythonBuildMetricsPayloadFromOptionsBridgeSurface(executionScriptPath);
     const studyInvokeContractKwargRepair =
       await repairPythonStudyInvokeContractKwargSurface(executionScriptPath);
+    const duplicateHelperSignatureDriftRepair =
+      await repairPythonDuplicateHelperSignatureDriftSurface(executionScriptPath);
     const lockedSweepRuntimeKwargBridgeRepair =
       await repairPythonLockedSweepRuntimeKwargBridgeSurface(executionScriptPath);
     const conditionSeedPlanDispatchRepair =
@@ -9518,6 +9520,7 @@ export class ImplementSessionManager {
         chunk5OrchestrationHelperBridgeRepair,
         buildMetricsPayloadFromOptionsBridgeRepair,
         studyInvokeContractKwargRepair,
+        duplicateHelperSignatureDriftRepair,
         lockedSweepRuntimeKwargBridgeRepair,
         conditionSeedPlanDispatchRepair,
         lockedBaselineFirstExecutionResolverRepair,
@@ -39490,6 +39493,208 @@ async function repairPythonStrictJsonMetricsSurface(scriptPath?: string): Promis
   return {
     repaired: true,
     message: `Made metrics JSON serialization strict and non-finite-safe in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+interface PythonTopLevelFunctionDefinition {
+  name: string;
+  signature: string;
+  startOffset: number;
+  endOffset: number;
+}
+
+function collectPythonTopLevelFunctionDefinitions(source: string): PythonTopLevelFunctionDefinition[] {
+  const lines = source.split("\n");
+  const offsets: number[] = [];
+  let offset = 0;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] || "";
+    offsets.push(offset);
+    offset += line.length + (index < lines.length - 1 ? 1 : 0);
+  }
+
+  const definitions: PythonTopLevelFunctionDefinition[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] || "";
+    const match = /^def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/u.exec(line);
+    if (!match) {
+      continue;
+    }
+
+    let signatureEndLine = index;
+    let signatureDepth = 0;
+    for (let cursor = index; cursor < lines.length; cursor += 1) {
+      const candidateLine = lines[cursor] || "";
+      signatureDepth += countOccurrences(candidateLine, "(") - countOccurrences(candidateLine, ")");
+      if (cursor > index && signatureDepth <= 0) {
+        signatureEndLine = cursor;
+        break;
+      }
+    }
+
+    let functionEndLine = lines.length;
+    for (let cursor = signatureEndLine + 1; cursor < lines.length; cursor += 1) {
+      const candidateLine = lines[cursor] || "";
+      const trimmed = candidateLine.trim();
+      if (trimmed.length === 0 || trimmed.startsWith("#")) {
+        continue;
+      }
+      if (!candidateLine.startsWith(" ") && !candidateLine.startsWith("\t")) {
+        functionEndLine = cursor;
+        break;
+      }
+    }
+
+    const startOffset = offsets[index] ?? 0;
+    const endOffset = offsets[functionEndLine] ?? source.length;
+    const signature = extractPythonFunctionSignature(source.slice(startOffset, endOffset), match[1]) || "";
+    definitions.push({ name: match[1], signature, startOffset, endOffset });
+  }
+  return definitions;
+}
+
+function pythonSignatureAcceptsVarKwargs(signature: string): boolean {
+  return splitPythonSignatureParameters(signature)
+    .map((param) => param.replace(/#.*/u, "").trim())
+    .some((param) => /^\*\*\s*[A-Za-z_][A-Za-z0-9_]*(?:\s*:|\s*$|\s*=)/u.test(param));
+}
+
+function extractPythonCallKeywordNames(source: string, functionName: string): Set<string> {
+  const keywords = new Set<string>();
+  const escaped = escapeRegex(functionName);
+  const pattern = new RegExp("\\b" + escaped + "\\s*\\(", "gu");
+  for (const match of source.matchAll(pattern)) {
+    if (match.index == null) {
+      continue;
+    }
+    const prefix = source.slice(Math.max(0, match.index - 8), match.index);
+    if (/\bdef\s*$/u.test(prefix)) {
+      continue;
+    }
+    const openIndex = source.indexOf("(", match.index);
+    if (openIndex < 0) {
+      continue;
+    }
+    let depth = 0;
+    let quote: "'" | "\"" | undefined;
+    let escapedChar = false;
+    let closeIndex = -1;
+    for (let cursor = openIndex; cursor < source.length && cursor - openIndex < 3000; cursor += 1) {
+      const char = source[cursor];
+      if (quote) {
+        if (escapedChar) {
+          escapedChar = false;
+        } else if (char === "\\") {
+          escapedChar = true;
+        } else if (char === quote) {
+          quote = undefined;
+        }
+        continue;
+      }
+      if (char === "'" || char === "\"") {
+        quote = char;
+        continue;
+      }
+      if (char === "(") {
+        depth += 1;
+        continue;
+      }
+      if (char === ")") {
+        depth -= 1;
+        if (depth === 0) {
+          closeIndex = cursor;
+          break;
+        }
+      }
+    }
+    if (closeIndex < 0) {
+      continue;
+    }
+    const callBody = source.slice(openIndex + 1, closeIndex);
+    for (const keywordMatch of callBody.matchAll(/(?:^|[,\n])\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/gu)) {
+      keywords.add(keywordMatch[1]);
+    }
+  }
+  return keywords;
+}
+
+export async function repairPythonDuplicateHelperSignatureDriftSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const definitions = collectPythonTopLevelFunctionDefinitions(source);
+  const byName = new Map<string, PythonTopLevelFunctionDefinition[]>();
+  for (const definition of definitions) {
+    const group = byName.get(definition.name) || [];
+    group.push(definition);
+    byName.set(definition.name, group);
+  }
+
+  const rangesToRemove: Array<{ startOffset: number; endOffset: number; name: string }> = [];
+  for (const [name, group] of byName.entries()) {
+    if (group.length < 2) {
+      continue;
+    }
+    const callKeywords = extractPythonCallKeywordNames(source, name);
+    if (callKeywords.size === 0) {
+      continue;
+    }
+    const finalDefinition = group[group.length - 1];
+    const finalParams = new Set(extractPythonParameterNames(finalDefinition.signature));
+    const finalAcceptsKwargs = pythonSignatureAcceptsVarKwargs(finalDefinition.signature);
+    if (finalAcceptsKwargs) {
+      continue;
+    }
+
+    const compatibleEarlierDefinition = [...group]
+      .slice(0, -1)
+      .reverse()
+      .find((definition) => {
+        const params = new Set(extractPythonParameterNames(definition.signature));
+        const acceptsKwargs = pythonSignatureAcceptsVarKwargs(definition.signature);
+        return [...callKeywords].some(
+          (keyword) => !finalParams.has(keyword) && (acceptsKwargs || params.has(keyword))
+        );
+      });
+    if (!compatibleEarlierDefinition) {
+      continue;
+    }
+    rangesToRemove.push({
+      startOffset: finalDefinition.startOffset,
+      endOffset: finalDefinition.endOffset,
+      name
+    });
+  }
+
+  if (rangesToRemove.length === 0) {
+    return { repaired: false };
+  }
+
+  let nextSource = source;
+  for (const range of rangesToRemove.sort((left, right) => right.startOffset - left.startOffset)) {
+    nextSource = nextSource.slice(0, range.startOffset) + nextSource.slice(range.endOffset);
+  }
+  nextSource = nextSource.replace(/\n{4,}/gu, "\n\n\n");
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  const repairedNames = Array.from(new Set(rangesToRemove.map((range) => range.name))).sort();
+  return {
+    repaired: true,
+    message: "Removed narrower duplicate helper definition(s) before handoff: " + repairedNames.join(", ") + "."
   };
 }
 
