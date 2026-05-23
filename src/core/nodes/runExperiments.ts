@@ -2520,6 +2520,13 @@ async function repairPythonRuntimeCompatibilityBeforeRun(input: {
     messages.push(adjacentBackendDiscoveryRepair.message || `Added adjacent backend implementation discovery in ${path.basename(scriptPath)} before run_experiments execution.`);
   }
 
+  const adjacentBackendAggregationSeedRowsRepair =
+    await repairPythonAdjacentBackendAggregationSeedRowsSurface(scriptPath);
+  if (adjacentBackendAggregationSeedRowsRepair.repaired) {
+    repaired = true;
+    messages.push(adjacentBackendAggregationSeedRowsRepair.message || `Added adjacent backend aggregation seed_rows alias in ${path.basename(scriptPath)} before run_experiments execution.`);
+  }
+
   const mainCallableResolverSpecificityRepair =
     await repairPythonMainCallableResolverSpecificitySurface(scriptPath);
   if (mainCallableResolverSpecificityRepair.repaired) {
@@ -2731,6 +2738,32 @@ async function repairPythonAdjacentBackendDiscoverySurface(scriptPath: string): 
   };
 }
 
+async function repairPythonAdjacentBackendAggregationSeedRowsSurface(scriptPath: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  const backendPath = path.join(path.dirname(scriptPath), "backend_experiment_impl.py");
+  if (!(await fileExists(backendPath))) {
+    return { repaired: false };
+  }
+  const source = await fs.readFile(backendPath, "utf8");
+  if (!source.includes("def aggregate_study_results(") || source.includes("seed_rows=seed_results")) {
+    return { repaired: false };
+  }
+  const seedResultsLinePattern = /^(\s*)seed_results=seed_results,/mu;
+  if (!seedResultsLinePattern.test(source)) {
+    return { repaired: false };
+  }
+  const nextSource = source.replace(seedResultsLinePattern, "$1seed_rows=seed_results,\n$&");
+  if (nextSource === source) {
+    return { repaired: false };
+  }
+  await fs.writeFile(backendPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added seed_rows alias for adjacent backend aggregation in ${path.basename(backendPath)} before run_experiments execution.`
+  };
+}
 function extractPythonScriptPathFromCommand(command: string, cwd: string): string | undefined {
   const match = command.match(/(?:^|\s)python(?:3)?(?:\s+-B)?\s+(?:"([^"]+\.py)"|'([^']+\.py)'|(\S+\.py))/u);
   const candidate = match?.[1] || match?.[2] || match?.[3];
