@@ -9406,6 +9406,8 @@ export class ImplementSessionManager {
       await repairPythonBaselineFirstLockedSweepEntrypointResolverSurface(executionScriptPath);
     const publicStudyEntrypointArgsAliasRepair =
       await repairPythonPublicStudyEntrypointArgsAliasSurface(executionScriptPath);
+    const publicStudySiblingExperimentBackendRepair =
+      await repairPythonPublicStudySiblingExperimentBackendSurface(executionScriptPath);
     const finalCliLockedGridResolverRepair =
       await repairPythonFinalCliLockedGridResolverSurface(executionScriptPath);
     const entrypointStudyResultKwargAliasRepair =
@@ -9537,6 +9539,7 @@ export class ImplementSessionManager {
         lockedBaselineFirstSweepOrchestratorRepair,
         baselineFirstLockedSweepEntrypointResolverRepair,
         publicStudyEntrypointArgsAliasRepair,
+        publicStudySiblingExperimentBackendRepair,
         finalCliLockedGridResolverRepair,
         entrypointStudyResultKwargAliasRepair,
         nestedRunRecordsProjectionRepair,
@@ -40750,6 +40753,67 @@ export async function repairPythonPublicStudyEntrypointArgsAliasSurface(scriptPa
   return {
     repaired: true,
     message: `Added args keyword alias to argv-based public study entrypoint in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonPublicStudySiblingExperimentBackendSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  const marker = "_autolabos_sibling_experiment_backend_candidate_marker";
+  if (
+    source.includes(marker) ||
+    !source.includes("def _resolve_backend") ||
+    !source.includes("def _candidate_backend_files") ||
+    !source.includes("Unable to resolve a backend condition runner")
+  ) {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  let nextSource = source;
+
+  const moduleNamesPattern = /(\ndef\s+_candidate_backend_module_names\s*\([^)]*\)\s*(?:->\s*[^:\n]+)?\s*:\n\s*return\s+\[\n)/u;
+  if (moduleNamesPattern.test(nextSource) && !/["']experiment["']/u.test(nextSource)) {
+    nextSource = nextSource.replace(
+      moduleNamesPattern,
+      (_full: string, prefix: string) => `${prefix}        # ${marker}\n        "experiment",\n`
+    );
+    repaired = true;
+  }
+
+  const candidateFilesPattern = /(\ndef\s+_candidate_backend_files\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?::[^)]*)?\)\s*(?:->\s*[^:\n]+)?\s*:\n\s*files\s*:[^\n]*=\s*\[\]\n)/u;
+  if (candidateFilesPattern.test(nextSource) && !/["']experiment\.py["']/u.test(nextSource)) {
+    nextSource = nextSource.replace(
+      candidateFilesPattern,
+      (_full: string, prefix: string, baseDirName: string) =>
+        `${prefix}    # ${marker}\n` +
+        `    sibling_experiment_backend = ${baseDirName} / "experiment.py"\n` +
+        "    if sibling_experiment_backend.exists() and sibling_experiment_backend.name != Path(__file__).name:\n" +
+        "        files.append(sibling_experiment_backend)\n"
+    );
+    repaired = true;
+  }
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Added sibling experiment.py backend candidate to public study wrapper in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

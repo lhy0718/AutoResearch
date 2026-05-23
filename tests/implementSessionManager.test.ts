@@ -215,6 +215,7 @@ import {
   repairPythonLockedBaselineFirstSweepOrchestratorSurface,
   repairPythonBaselineFirstLockedSweepEntrypointResolverSurface,
   repairPythonPublicStudyEntrypointArgsAliasSurface,
+  repairPythonPublicStudySiblingExperimentBackendSurface,
   repairPythonFinalCliLockedGridResolverSurface,
   repairPublishedRunCommandWrapperBinding,
   resolvePythonVerificationScriptPath,
@@ -6199,6 +6200,101 @@ describe("ImplementSessionManager", () => {
       encoding: "utf8"
     }).trim();
     expect(output).toBe("candidate_condition_a");
+  });
+
+  it("adds sibling experiment.py as a backend candidate for public study wrappers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-public-study-sibling-backend-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_instruction_study.py");
+    const backendPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      backendPath,
+      [
+        "def run_experiment():",
+        "    return {'status': 'ok'}",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      scriptPath,
+      [
+        "import importlib",
+        "import importlib.util",
+        "import sys",
+        "from pathlib import Path",
+        "from typing import Any",
+        "",
+        "def _candidate_backend_module_names() -> list[str]:",
+        "    return [",
+        "        'condition_runner',",
+        "        'study_backend',",
+        "        'backend',",
+        "    ]",
+        "",
+        "def _candidate_backend_files(base_dir: Path) -> list[Path]:",
+        "    files: list[Path] = []",
+        "    for name in [",
+        "        'condition_runner.py',",
+        "        'study_backend.py',",
+        "        'backend.py',",
+        "    ]:",
+        "        path = base_dir / name",
+        "        if path.exists():",
+        "            files.append(path)",
+        "    return files",
+        "",
+        "def _load_module_from_file(path: Path):",
+        "    spec = importlib.util.spec_from_file_location('neutral_backend', path)",
+        "    module = importlib.util.module_from_spec(spec)",
+        "    assert spec and spec.loader",
+        "    spec.loader.exec_module(module)",
+        "    return module",
+        "",
+        "def _resolve_backend_callable(module: Any):",
+        "    for name in ('run_study', 'run_experiment', 'execute_study', 'main'):",
+        "        candidate = getattr(module, name, None)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    raise AttributeError('No callable backend entrypoint found')",
+        "",
+        "def _resolve_backend():",
+        "    base_dir = Path(__file__).resolve().parent",
+        "    if str(base_dir) not in sys.path:",
+        "        sys.path.insert(0, str(base_dir))",
+        "    errors = []",
+        "    for module_name in _candidate_backend_module_names():",
+        "        try:",
+        "            return _resolve_backend_callable(importlib.import_module(module_name))",
+        "        except Exception as exc:",
+        "            errors.append(f'{module_name}: {type(exc).__name__}: {exc}')",
+        "    for backend_file in _candidate_backend_files(base_dir):",
+        "        try:",
+        "            return _resolve_backend_callable(_load_module_from_file(backend_file))",
+        "        except Exception as exc:",
+        "            errors.append(f'{backend_file.name}: {type(exc).__name__}: {exc}')",
+        "    raise RuntimeError('Unable to resolve a backend condition runner. Tried: ' + ' | '.join(errors))",
+        "",
+        "def main():",
+        "    return _resolve_backend()()['status']",
+        "",
+        "print(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath])).toThrow(/Unable to resolve a backend condition runner/);
+
+    const repair = await repairPythonPublicStudySiblingExperimentBackendSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_sibling_experiment_backend_candidate_marker");
+    expect(repairedSource).toContain('"experiment"');
+    const output = execFileSync("python3", [scriptPath], {
+      encoding: "utf8"
+    }).trim();
+    expect(output).toBe("ok");
   });
 
   it("widens a metric float helper so aggregate callers can omit field names", async () => {

@@ -190,7 +190,7 @@ describe("ImplementationLocalizer", () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-localizer-script-priority-"));
     tempDirs.push(workspace);
 
-    const outputRoot = path.join(workspace, "outputs", "identify-which-lightweight-parameter-efficient-i-73050f85");
+    const outputRoot = path.join(workspace, "outputs", "condition-sweep-validation-run-73050f85");
     const experimentDir = path.join(outputRoot, "experiment");
     mkdirSync(experimentDir, { recursive: true });
 
