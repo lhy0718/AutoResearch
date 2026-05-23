@@ -40772,11 +40772,18 @@ export async function repairPythonPublicStudySiblingExperimentBackendSurface(scr
   }
 
   const marker = "_autolabos_sibling_experiment_backend_candidate_marker";
+  const functionCandidateSurface =
+    source.includes("def _resolve_backend") &&
+    source.includes("def _candidate_backend_files") &&
+    source.includes("Unable to resolve a backend condition runner");
+  const constantCandidateSurface =
+    source.includes("def _discover_backend_module") &&
+    source.includes("BACKEND_MODULE_CANDIDATES") &&
+    source.includes("BACKEND_FILE_CANDIDATES") &&
+    source.includes("Unable to locate backend experiment implementation");
   if (
     source.includes(marker) ||
-    !source.includes("def _resolve_backend") ||
-    !source.includes("def _candidate_backend_files") ||
-    !source.includes("Unable to resolve a backend condition runner")
+    (!functionCandidateSurface && !constantCandidateSurface)
   ) {
     return { repaired: false };
   }
@@ -40804,6 +40811,42 @@ export async function repairPythonPublicStudySiblingExperimentBackendSurface(scr
         "        files.append(sibling_experiment_backend)\n"
     );
     repaired = true;
+  }
+
+  if (constantCandidateSurface) {
+    const moduleCandidatesBlockPattern = /(BACKEND_MODULE_CANDIDATES\s*=\s*\[\n)([\s\S]*?\n\])/u;
+    const moduleCandidatesMatch = moduleCandidatesBlockPattern.exec(nextSource);
+    if (moduleCandidatesMatch && !/["']experiment["']/u.test(moduleCandidatesMatch[2] ?? "")) {
+      nextSource = nextSource.replace(
+        moduleCandidatesBlockPattern,
+        (_full: string, prefix: string, body: string) =>
+          `${prefix}    # ${marker}\n    "experiment",\n${body}`
+      );
+      repaired = true;
+    }
+
+    const backendFileLoopPattern = /(\n\s+for\s+filename\s+in\s+BACKEND_FILE_CANDIDATES:\n)/u;
+    if (
+      backendFileLoopPattern.test(nextSource) &&
+      !nextSource.includes("derived_sibling_backend_name = SCRIPT_PATH.name.replace")
+    ) {
+      nextSource = nextSource.replace(
+        backendFileLoopPattern,
+        (full: string) =>
+          "\n" +
+          `    # ${marker}\n` +
+          '    derived_sibling_backend_name = SCRIPT_PATH.name.replace("_study.py", "_experiment.py")\n' +
+          "    if derived_sibling_backend_name != SCRIPT_PATH.name:\n" +
+          "        derived_sibling_backend_path = (SCRIPT_DIR / derived_sibling_backend_name).resolve()\n" +
+          "        if derived_sibling_backend_path.exists() and derived_sibling_backend_path != SCRIPT_PATH:\n" +
+          "            try:\n" +
+          "                return _load_module_from_path(derived_sibling_backend_path), str(derived_sibling_backend_path)\n" +
+          "            except Exception:\n" +
+          "                pass\n" +
+          full
+      );
+      repaired = true;
+    }
   }
 
   if (!repaired || nextSource === source) {
