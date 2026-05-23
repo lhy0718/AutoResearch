@@ -12856,6 +12856,107 @@ describe("ImplementSessionManager", () => {
     expect(calls).toBe(3);
   });
 
+  it("rejects adjacent python verification surfaces that still contain AUTOLABOS section skeleton markers", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-adjacent-unfilled-sections-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Reject Adjacent Unfilled Section Backend",
+      topic: "bounded experiment implementation",
+      constraints: ["real artifacts"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "experiment.py");
+    const backendPath = path.join(publicDir, "backend_experiment_impl.py");
+    const metricsPath = path.join(runDir, "metrics.json");
+    let calls = 0;
+
+    const codex = {
+      runTurnStream: async () => {
+        calls += 1;
+        return {
+          threadId: "thread-adjacent-unfilled-sections",
+          finalText: JSON.stringify({
+            summary: "Generated a clean runner plus an incomplete adjacent backend.",
+            run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)} ${JSON.stringify(backendPath)}`,
+            working_dir: publicDir,
+            experiment_mode: "staged_llm",
+            changed_files: [scriptPath, backendPath],
+            artifacts: [scriptPath, backendPath],
+            public_dir: publicDir,
+            public_artifacts: [scriptPath, backendPath],
+            script_path: scriptPath,
+            metrics_path: metricsPath,
+            localization: {
+              summary: "Localized runner and adjacent backend.",
+              selected_files: [scriptPath, backendPath],
+              candidate_files: [
+                { path: scriptPath, reason: "Primary runner.", confidence: 0.9 },
+                { path: backendPath, reason: "Adjacent backend used by runner.", confidence: 0.8 }
+              ]
+            },
+            file_edits: [
+              {
+                path: scriptPath,
+                content: [
+                  "import json",
+                  "import sys",
+                  "from pathlib import Path",
+                  "",
+                  "def main():",
+                  "    metrics_path = Path(sys.argv[sys.argv.index('--metrics-path') + 1])",
+                  "    metrics_path.parent.mkdir(parents=True, exist_ok=True)",
+                  "    metrics_path.write_text(json.dumps({'status': 'completed'}), encoding='utf8')",
+                  "    return 0",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    raise SystemExit(main())",
+                  ""
+                ].join("\n")
+              },
+              {
+                path: backendPath,
+                content: [
+                  "# BEGIN AUTOLABOS SECTION backend_metrics_payload_and_api :: Build metrics payload",
+                  "# Purpose: Expose runner-facing API.",
+                  "# Order: 8/8",
+                  "# END AUTOLABOS SECTION backend_metrics_payload_and_api",
+                  ""
+                ].join("\n")
+              }
+            ],
+            assumptions: []
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    await expect(manager.run(run)).rejects.toThrow(/backend_experiment_impl\.py.*AUTOLABOS SECTION skeleton markers/i);
+    expect(calls).toBe(3);
+  });
+
   it("classifies Codex OAuth overload and retry-later failures as transient staged_llm provider errors", () => {
     expect(
       isTransientStagedLlmProviderError(

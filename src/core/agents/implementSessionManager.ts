@@ -4525,8 +4525,17 @@ export class ImplementSessionManager {
     );
     executionScriptPath =
       (await resolvePythonVerificationScriptPath(executionScriptPath)) || executionScriptPath;
+    const pythonVerificationSurfacePaths = await collectPythonVerificationSurfacePaths({
+      command: executionCommand,
+      cwd: executionCwd,
+      workspaceRoot: verificationWorkspaceRoot,
+      scriptPath: executionScriptPath
+    });
 
-    const pythonUnfilledSections = await detectPythonUnfilledAutolabosSections(executionScriptPath);
+    const pythonUnfilledSections = await detectPythonIssueAcrossSurfaces(
+      pythonVerificationSurfacePaths,
+      detectPythonUnfilledAutolabosSections
+    );
     if (pythonUnfilledSections) {
       const report: VerifyReport = {
         status: "fail",
@@ -16115,6 +16124,38 @@ function formatArtifactPath(filePath: string, workspaceRoot?: string): string {
     return path.relative(workspaceRoot, filePath).replace(/\\/g, "/");
   }
   return filePath.replace(/\\/g, "/");
+}
+
+async function collectPythonVerificationSurfacePaths(params: {
+  command: string;
+  cwd: string;
+  workspaceRoot: string;
+  scriptPath?: string;
+}): Promise<string[]> {
+  const candidates = dedupeStrings([
+    ...(params.scriptPath ? [params.scriptPath] : []),
+    ...extractWorkspacePathsFromCommand(params.command, params.cwd, params.workspaceRoot)
+  ]).filter((filePath) => path.extname(filePath).toLowerCase() === ".py");
+  const existing: string[] = [];
+  for (const candidate of candidates) {
+    if (await fileExists(candidate)) {
+      existing.push(candidate);
+    }
+  }
+  return dedupeStrings(existing);
+}
+
+async function detectPythonIssueAcrossSurfaces(
+  scriptPaths: string[],
+  detector: (scriptPath?: string) => Promise<string | undefined>
+): Promise<string | undefined> {
+  for (const scriptPath of scriptPaths) {
+    const issue = await detector(scriptPath);
+    if (issue) {
+      return issue;
+    }
+  }
+  return undefined;
 }
 
 function summarizeVerification(
