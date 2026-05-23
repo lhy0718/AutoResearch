@@ -168,6 +168,7 @@ import {
   repairPythonNeftuneEmbeddingForwardHookSurface,
   repairPythonNormalizeForJsonHelperAlias,
   repairPythonNumericCoercionHelperAlias,
+  repairPythonLockedStudySpecCollectionAliasSurface,
   repairPythonCoerceFloatFieldNameDefaultSurface,
   repairPythonCoerceIntDefaultArgumentSurface,
   repairPythonResolveDeviceNameAritySurface,
@@ -6023,6 +6024,71 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("def _coerce_float(*args, **kwargs):");
     expect(repairedSource).toContain("return coerce_float(*args, **kwargs)");
     execFileSync("python3", [scriptPath]);
+  });
+
+  it("widens locked study spec collection aliases before runtime validation", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-study-spec-alias-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from dataclasses import dataclass",
+        "from typing import Tuple",
+        "",
+        "@dataclass(frozen=True)",
+        "class StudyConditionSpec:",
+        "    marker: str",
+        "",
+        "@dataclass(frozen=True)",
+        "class BenchmarkTaskSpec:",
+        "    task_key: str",
+        "",
+        "@dataclass(frozen=True)",
+        "class LockedStudySpec:",
+        "    required_conditions: Tuple[StudyConditionSpec, ...]",
+        "    benchmark_tasks: Tuple[BenchmarkTaskSpec, ...]",
+        "",
+        "LOCKED_CONDITION_SPECS = (StudyConditionSpec('baseline_condition'), StudyConditionSpec('candidate_condition_a'))",
+        "LOCKED_TASK_SPECS = (BenchmarkTaskSpec('benchmark_task_a'),)",
+        "LOCKED_STUDY_SPEC = LockedStudySpec(required_conditions=LOCKED_CONDITION_SPECS, benchmark_tasks=LOCKED_TASK_SPECS)",
+        "",
+        "def _condition_specs_from_study(study_spec: LockedStudySpec) -> Tuple[StudyConditionSpec, ...]:",
+        "    raw = getattr(study_spec, 'condition_specs', None)",
+        "    if raw is None:",
+        "        raw = getattr(study_spec, 'conditions', None)",
+        "    if raw is None:",
+        "        raise ValueError('LockedStudySpec is missing condition_specs/conditions.')",
+        "    return tuple(raw)",
+        "",
+        "def _task_specs_from_study(study_spec: LockedStudySpec) -> Tuple[BenchmarkTaskSpec, ...]:",
+        "    raw = getattr(study_spec, 'task_specs', None)",
+        "    if raw is None:",
+        "        raw = getattr(study_spec, 'tasks', None)",
+        "    if raw is None:",
+        "        raise ValueError('LockedStudySpec is missing task_specs/tasks.')",
+        "    return tuple(raw)",
+        "",
+        "def validate_locked_study_spec():",
+        "    return len(_condition_specs_from_study(LOCKED_STUDY_SPEC)), len(_task_specs_from_study(LOCKED_STUDY_SPEC))",
+        "",
+        "print(validate_locked_study_spec())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath])).toThrow(/condition_specs/);
+
+    const repair = await repairPythonLockedStudySpecCollectionAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain('"required_conditions"');
+    expect(repairedSource).toContain('"benchmark_tasks"');
+    const output = execFileSync("python3", [scriptPath], {
+      encoding: "utf8"
+    }).trim();
+    expect(output).toBe("(2, 1)");
   });
 
   it("widens a metric float helper so aggregate callers can omit field names", async () => {

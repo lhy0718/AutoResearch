@@ -9348,6 +9348,8 @@ export class ImplementSessionManager {
       await repairPythonHighLevelConditionSweepDispatchSurface(executionScriptPath);
     const orderedConditionCollectorRuntimeInputsRepair =
       await repairPythonOrderedConditionCollectorRuntimeInputsSurface(executionScriptPath);
+    const lockedStudySpecCollectionAliasRepair =
+      await repairPythonLockedStudySpecCollectionAliasSurface(executionScriptPath);
     const coerceFloatFieldNameDefaultRepair =
       await repairPythonCoerceFloatFieldNameDefaultSurface(executionScriptPath);
     const coerceIntDefaultArgumentRepair =
@@ -9502,6 +9504,7 @@ export class ImplementSessionManager {
         conditionExecutorDeadlineArgumentRepair,
         highLevelConditionSweepDispatchRepair,
         orderedConditionCollectorRuntimeInputsRepair,
+        lockedStudySpecCollectionAliasRepair,
         coerceFloatFieldNameDefaultRepair,
         coerceIntDefaultArgumentRepair,
         resolveDeviceNameArityRepair,
@@ -17194,6 +17197,86 @@ export async function repairPythonNumericCoercionHelperAlias(
   return {
     repaired: true,
     message: `Added _coerce_float compatibility helper to ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonLockedStudySpecCollectionAliasSurface(
+  scriptPath?: string
+): Promise<{ repaired: boolean; message?: string }> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    !source.includes("class LockedStudySpec") ||
+    !source.includes("def _condition_specs_from_study(") ||
+    !source.includes("def _task_specs_from_study(")
+  ) {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  let nextSource = source;
+
+  const conditionFunctionPattern =
+    /def _condition_specs_from_study\(study_spec: LockedStudySpec\) -> Tuple\[StudyConditionSpec, \.{3}\]:\n(?:    .+\n)+?    return tuple\(raw\)\n/u;
+  nextSource = nextSource.replace(conditionFunctionPattern, (full) => {
+    if (full.includes("required_conditions") && full.includes("LOCKED_CONDITION_SPECS")) {
+      return full;
+    }
+    repaired = true;
+    return [
+      "def _condition_specs_from_study(study_spec: LockedStudySpec) -> Tuple[StudyConditionSpec, ...]:",
+      "    for attr_name in (\"condition_specs\", \"conditions\", \"required_conditions\", \"locked_conditions\", \"study_conditions\"):",
+      "        raw = getattr(study_spec, attr_name, None)",
+      "        if raw is not None:",
+      "            return tuple(raw)",
+      "    for global_name in (\"LOCKED_CONDITION_SPECS\", \"CONDITION_SPECS\", \"REQUIRED_CONDITIONS\", \"STUDY_CONDITIONS\"):",
+      "        raw = globals().get(global_name)",
+      "        if raw is not None:",
+      "            return tuple(raw)",
+      "    raise ValueError(\"LockedStudySpec is missing condition_specs/conditions/required_conditions.\")",
+      ""
+    ].join("\n");
+  });
+
+  const taskFunctionPattern =
+    /def _task_specs_from_study\(study_spec: LockedStudySpec\) -> Tuple\[BenchmarkTaskSpec, \.{3}\]:\n(?:    .+\n)+?    return tuple\(raw\)\n/u;
+  nextSource = nextSource.replace(taskFunctionPattern, (full) => {
+    if (full.includes("benchmark_tasks") && full.includes("LOCKED_TASK_SPECS")) {
+      return full;
+    }
+    repaired = true;
+    return [
+      "def _task_specs_from_study(study_spec: LockedStudySpec) -> Tuple[BenchmarkTaskSpec, ...]:",
+      "    for attr_name in (\"task_specs\", \"tasks\", \"benchmark_tasks\", \"evaluation_tasks\"):",
+      "        raw = getattr(study_spec, attr_name, None)",
+      "        if raw is not None:",
+      "            return tuple(raw)",
+      "    for global_name in (\"LOCKED_TASK_SPECS\", \"TASK_SPECS\", \"BENCHMARK_TASK_SPECS\", \"EVALUATION_TASKS\"):",
+      "        raw = globals().get(global_name)",
+      "        if raw is not None:",
+      "            return tuple(raw)",
+      "    raise ValueError(\"LockedStudySpec is missing task_specs/tasks/benchmark_tasks.\")",
+      ""
+    ].join("\n");
+  });
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Widened LockedStudySpec collection aliases in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
