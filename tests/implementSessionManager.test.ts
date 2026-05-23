@@ -6204,6 +6204,42 @@ describe("ImplementSessionManager", () => {
     expect(output).toBe("candidate_condition_a");
   });
 
+  it("adds args keyword compatibility to multiline keyword-only public study entrypoints", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-public-study-keyword-entrypoint-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "from pathlib import Path",
+        "from typing import Optional",
+        "",
+        "def run_candidate_study(",
+        "    *,",
+        "    output_dir: Path,",
+        "    metrics_path: Optional[Path] = None,",
+        "    dry_run: bool = False,",
+        "):",
+        "    return {'output_dir': str(output_dir), 'dry_run': dry_run}",
+        "",
+        "print(run_candidate_study(args={}, output_dir=Path('out'))['output_dir'])",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath])).toThrow(/unexpected keyword argument 'args'/);
+
+    const repair = await repairPythonPublicStudyEntrypointArgsAliasSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("*,\n    args=None,");
+    const output = execFileSync("python3", [scriptPath], {
+      encoding: "utf8"
+    }).trim();
+    expect(output).toBe("out");
+  });
+
   it("adds sibling experiment.py as a backend candidate for public study wrappers", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-public-study-sibling-backend-"));
     tempDirs.push(workspace);

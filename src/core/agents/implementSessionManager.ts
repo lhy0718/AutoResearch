@@ -40730,7 +40730,7 @@ export async function repairPythonPublicStudyEntrypointArgsAliasSurface(scriptPa
   ]);
 
   let repaired = false;
-  const nextSource = source.replace(
+  let nextSource = source.replace(
     /^(\s*(?:async\s+)?def\s+((?:run|execute|orchestrate)_[A-Za-z0-9_]*(?:study|experiment|workflow|orchestration|pipeline|matrix|schedule|conditions))\s*\()([^)\n]*\bargv\b[^)\n]*)(\)\s*(?:->\s*[^:\n]+)?\s*:\s*)$/gmu,
     (full: string, prefix: string, name: string, parameters: string, suffix: string) => {
       if (
@@ -40751,6 +40751,39 @@ export async function repairPythonPublicStudyEntrypointArgsAliasSurface(scriptPa
     }
   );
 
+  nextSource = nextSource.replace(
+    /^(\s*(?:async\s+)?def\s+((?:run|execute|orchestrate)_[A-Za-z0-9_]*(?:study|experiment|workflow|orchestration|pipeline|matrix|schedule|conditions))\s*\()([\s\S]*?)(\)\s*(?:->\s*[^:\n]+)?\s*:\s*)$/gmu,
+    (full: string, prefix: string, name: string, parameters: string, suffix: string) => {
+      if (
+        perRunNames.has(name) ||
+        /\*\*/u.test(parameters) ||
+        /(?:^|,|\n)\s*\*?args\s*(?::|=|,|\n|$)/u.test(parameters)
+      ) {
+        return full;
+      }
+
+      repaired = true;
+      if (parameters.includes("\n")) {
+        const parameterIndent = parameters.match(/\n(\s*)\S/u)?.[1] ?? "    ";
+        const escapedIndent = parameterIndent.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+        const bareStarLine = new RegExp(`\\n${escapedIndent}\\*,`);
+        if (bareStarLine.test(parameters)) {
+          return `${prefix}${parameters.replace(bareStarLine, `\n${parameterIndent}*,\n${parameterIndent}args=None,`)}${suffix}`;
+        }
+        return `${prefix}${parameters.replace(/\s*$/u, `,\n${parameterIndent}args=None`)}${suffix}`;
+      }
+
+      const trimmed = parameters.trim();
+      if (!trimmed) {
+        return `${prefix}args=None${suffix}`;
+      }
+      if (trimmed.startsWith("*,")) {
+        return `${prefix}${parameters.replace("*", "*, args=None")}${suffix}`;
+      }
+      return `${prefix}${parameters}, args=None${suffix}`;
+    }
+  );
+
   if (!repaired || nextSource === source) {
     return { repaired: false };
   }
@@ -40758,7 +40791,7 @@ export async function repairPythonPublicStudyEntrypointArgsAliasSurface(scriptPa
   await fs.writeFile(scriptPath, nextSource, "utf8");
   return {
     repaired: true,
-    message: `Added args keyword alias to argv-based public study entrypoint in ${path.basename(scriptPath)} before handoff.`
+    message: `Added args keyword alias to public study entrypoint in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
