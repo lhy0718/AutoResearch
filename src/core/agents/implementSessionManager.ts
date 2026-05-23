@@ -9410,6 +9410,8 @@ export class ImplementSessionManager {
       await repairPythonPublicStudySiblingExperimentBackendSurface(executionScriptPath);
     const publicStudyBackendCallableLoaderRepair =
       await repairPythonPublicStudyBackendCallableLoaderSurface(executionScriptPath);
+    const publicStudyPlanFinalizationRunnerRepair =
+      await repairPythonPublicStudyPlanFinalizationRunnerSurface(executionScriptPath);
     const finalCliLockedGridResolverRepair =
       await repairPythonFinalCliLockedGridResolverSurface(executionScriptPath);
     const entrypointStudyResultKwargAliasRepair =
@@ -9543,6 +9545,7 @@ export class ImplementSessionManager {
         publicStudyEntrypointArgsAliasRepair,
         publicStudySiblingExperimentBackendRepair,
         publicStudyBackendCallableLoaderRepair,
+        publicStudyPlanFinalizationRunnerRepair,
         finalCliLockedGridResolverRepair,
         entrypointStudyResultKwargAliasRepair,
         nestedRunRecordsProjectionRepair,
@@ -41051,6 +41054,102 @@ export async function repairPythonPublicStudyBackendCallableLoaderSurface(script
   return {
     repaired: true,
     message: `Loaded adjacent per-condition backend callables and hardened task metric normalization in ${path.basename(scriptPath)} before handoff.`
+  };
+}
+
+export async function repairPythonPublicStudyPlanFinalizationRunnerSurface(scriptPath?: string): Promise<{
+  repaired: boolean;
+  message?: string;
+}> {
+  if (!scriptPath || path.extname(scriptPath) !== ".py") {
+    return { repaired: false };
+  }
+
+  let source: string;
+  try {
+    source = await fs.readFile(scriptPath, "utf8");
+  } catch {
+    return { repaired: false };
+  }
+
+  if (
+    !source.includes("No execution function from the earlier study sections could be resolved") ||
+    !source.includes("def _run_execution_phase(") ||
+    !source.includes("def execute_study_plan(") ||
+    !source.includes("def build_locked_study_plan(") ||
+    !source.includes("def resolve_model_and_backend(")
+  ) {
+    return { repaired: false };
+  }
+
+  let repaired = false;
+  let nextSource = source;
+  const marker = "_autolabos_study_plan_finalization_runner_marker";
+
+  const runnerPattern = /(runner\s*=\s*_resolve_callable_candidate\(\s*\(\n)([\s\S]*?)(\n\s*\)\s*\)\n\s*if\s+runner\s+is\s+None:)/u;
+  const runnerMatch = runnerPattern.exec(nextSource);
+  if (runnerMatch && !/execute_study_plan/u.test(runnerMatch[2] ?? "")) {
+    nextSource = nextSource.replace(
+      runnerPattern,
+      (_full: string, prefix: string, body: string, suffix: string) =>
+        `${prefix}            # ${marker}\n            "execute_study_plan",\n${body}${suffix}`
+    );
+    repaired = true;
+  }
+
+  const contextPrep = [
+    `    # ${marker}`,
+    "    study_plan = None",
+    "    model_resolution = None",
+    "    backend_resolution = None",
+    "    try:",
+    "        study_plan = build_locked_study_plan(",
+    "            output_dir=Path(args.output_dir),",
+    "            report_name=getattr(args, \"report_name\", DEFAULT_REPORT_NAME),",
+    "            timeout_sec=int(getattr(args, \"timeout_sec\", DEFAULT_TIMEOUT_SEC)),",
+    "        )",
+    "        model_resolution, backend_resolution = resolve_model_and_backend(args)",
+    "        if callable(globals().get(\"write_study_plan_manifest\")):",
+    "            write_study_plan_manifest(study_plan)",
+    "        if callable(globals().get(\"log_study_plan_summary\")):",
+    "            log_study_plan_summary(study_plan)",
+    "    except Exception:",
+    "        LOGGER.warning(\"Study-plan finalization context preparation failed; falling back to generic invocation.\", exc_info=True)",
+    "",
+  ].join("\n");
+
+  const executionTryNeedle = "    try:\n        raw_execution_result = _call_with_context(\n";
+  if (!nextSource.includes(`    # ${marker}\n    study_plan = None`) && nextSource.includes(executionTryNeedle)) {
+    nextSource = nextSource.replace(executionTryNeedle, `${contextPrep}${executionTryNeedle}`);
+    repaired = true;
+  }
+
+  const contextNeedle = "                \"args\": args,\n                \"namespace\": args,\n";
+  if (nextSource.includes(contextNeedle) && !nextSource.includes('                "study_plan": study_plan,\n')) {
+    nextSource = nextSource.replace(
+      contextNeedle,
+      `${contextNeedle}                "study_plan": study_plan,\n                "model_resolution": model_resolution,\n                "backend_resolution": backend_resolution,\n`
+    );
+    repaired = true;
+  }
+
+  const resultKeyNeedle = 'for key in ("run_results", "runs", "records", "raw_results", "rows"):';
+  if (nextSource.includes(resultKeyNeedle)) {
+    nextSource = nextSource.replace(
+      resultKeyNeedle,
+      'for key in ("run_results", "runs", "records", "raw_results", "rows", "executed_runs"):'
+    );
+    repaired = true;
+  }
+
+  if (!repaired || nextSource === source) {
+    return { repaired: false };
+  }
+
+  await fs.writeFile(scriptPath, nextSource, "utf8");
+  return {
+    repaired: true,
+    message: `Connected study-plan execution helpers to finalization runner resolution in ${path.basename(scriptPath)} before handoff.`
   };
 }
 

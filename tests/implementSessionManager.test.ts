@@ -217,6 +217,7 @@ import {
   repairPythonPublicStudyEntrypointArgsAliasSurface,
   repairPythonPublicStudySiblingExperimentBackendSurface,
   repairPythonPublicStudyBackendCallableLoaderSurface,
+  repairPythonPublicStudyPlanFinalizationRunnerSurface,
   repairPythonFinalCliLockedGridResolverSurface,
   repairPublishedRunCommandWrapperBinding,
   resolvePythonVerificationScriptPath,
@@ -6585,6 +6586,117 @@ describe("ImplementSessionManager", () => {
     expect(output).toContain("'status': 'ok'");
     expect(output).toContain("'a': 0.25");
     expect(output).toContain("'b': 0.75");
+  });
+
+  it("connects generated study-plan executors to finalization runner resolution", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-public-study-plan-finalizer-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "run_candidate_study.py");
+    writeFileSync(
+      scriptPath,
+      [
+        "import argparse",
+        "import importlib",
+        "import inspect",
+        "import json",
+        "import logging",
+        "from pathlib import Path",
+        "",
+        "DEFAULT_REPORT_NAME = 'candidate-study'",
+        "DEFAULT_TIMEOUT_SEC = 60",
+        "LOGGER = logging.getLogger(__name__)",
+        "",
+        "def _mapping_from_any(value):",
+        "    return dict(value) if isinstance(value, dict) else {}",
+        "",
+        "def _resolve_callable_candidate(names):",
+        "    for name in names:",
+        "        candidate = globals().get(name)",
+        "        if callable(candidate):",
+        "            return candidate",
+        "    return None",
+        "",
+        "def _call_with_context(func, context):",
+        "    signature = inspect.signature(func)",
+        "    kwargs = {name: context[name] for name in signature.parameters if name in context}",
+        "    return func(**kwargs)",
+        "",
+        "def build_locked_study_plan(output_dir, report_name=DEFAULT_REPORT_NAME, timeout_sec=DEFAULT_TIMEOUT_SEC):",
+        "    return {'output_dir': str(output_dir), 'report_name': report_name, 'timeout_sec': timeout_sec}",
+        "",
+        "def resolve_model_and_backend(args):",
+        "    return {'model_label': 'small'}, {'backend_label': 'local'}",
+        "",
+        "def execute_study_plan(study_plan, backend_resolution):",
+        "    return {",
+        "        'status': 'completed',",
+        "        'executed_runs': [",
+        "            {'condition_marker': 'candidate_a', 'seed': 1, 'status': 'completed', 'average_accuracy': 0.5}",
+        "        ],",
+        "        'study_plan': study_plan,",
+        "        'backend_resolution': backend_resolution,",
+        "    }",
+        "",
+        "def _normalize_execution_bundle(raw_execution_result, args):",
+        "    bundle = _mapping_from_any(raw_execution_result)",
+        "    raw_results = bundle.get('results')",
+        "    if not isinstance(raw_results, list):",
+        "        for key in (\"run_results\", \"runs\", \"records\", \"raw_results\", \"rows\"):",
+        "            candidate = bundle.get(key)",
+        "            if isinstance(candidate, list):",
+        "                raw_results = candidate",
+        "                break",
+        "    if not isinstance(raw_results, list):",
+        "        raw_results = []",
+        "    return {'results': raw_results, 'status': 'completed' if raw_results else 'failed'}",
+        "",
+        "def _run_execution_phase(args):",
+        "    runner = _resolve_callable_candidate(",
+        "        (",
+        "            \"run_study\",",
+        "            \"execute_study\",",
+        "        )",
+        "    )",
+        "    if runner is None:",
+        "        return {",
+        "            \"results\": [],",
+        "            \"status\": \"failed\",",
+        "            \"fatal_error\": \"No execution function from the earlier study sections could be resolved.\",",
+        "        }",
+        "    try:",
+        "        raw_execution_result = _call_with_context(",
+        "            runner,",
+        "            {",
+        "                \"args\": args,",
+        "                \"namespace\": args,",
+        "                \"output_dir\": Path(args.output_dir),",
+        "            },",
+        "        )",
+        "        execution_bundle = _normalize_execution_bundle(raw_execution_result, args)",
+        "    except Exception as exc:",
+        "        execution_bundle = {'results': [], 'status': 'failed', 'fatal_error': f'{type(exc).__name__}: {exc}'}",
+        "    return execution_bundle",
+        "",
+        "if __name__ == '__main__':",
+        "    ns = argparse.Namespace(output_dir='out', report_name='demo', timeout_sec=7)",
+        "    print(json.dumps(_run_execution_phase(ns), sort_keys=True))",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const before = execFileSync("python3", [scriptPath], { encoding: "utf8" });
+    expect(before).toContain("No execution function from the earlier study sections could be resolved");
+
+    const repair = await repairPythonPublicStudyPlanFinalizationRunnerSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).toContain("_autolabos_study_plan_finalization_runner_marker");
+    expect(repairedSource).toContain('"execute_study_plan"');
+    expect(repairedSource).toContain('"executed_runs"');
+    const output = execFileSync("python3", [scriptPath], { encoding: "utf8" });
+    expect(output).toContain('"status": "completed"');
+    expect(output).toContain('"condition_marker": "candidate_a"');
   });
 
   it("widens a metric float helper so aggregate callers can omit field names", async () => {
