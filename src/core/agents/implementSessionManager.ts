@@ -41725,6 +41725,27 @@ export async function repairPythonPublicStudyTopLevelRunnerAliasSurface(scriptPa
   }
 
   const marker = "_autolabos_public_study_top_level_runner_alias_marker";
+  const duplicateRuntimeModelSelectorCall =
+    "        runtime_context = _call_with_supported_kwargs(model_selector, runtime_context, runtime=runtime_context)";
+  const signatureAwareModelSelectorCall = [
+    "        runtime_context = _call_with_supported_kwargs(",
+    "            model_selector,",
+    "            runtime=runtime_context,",
+    "            runtime_context=runtime_context,",
+    "        )"
+  ].join("\n");
+
+  if (source.includes(marker) && source.includes(duplicateRuntimeModelSelectorCall)) {
+    const nextSource = source.replace(duplicateRuntimeModelSelectorCall, signatureAwareModelSelectorCall);
+    if (nextSource !== source) {
+      await fs.writeFile(scriptPath, nextSource, "utf8");
+      return {
+        repaired: true,
+        message: `Removed duplicate runtime selector arguments from public study top-level runner alias in ${path.basename(scriptPath)} before handoff.`
+      };
+    }
+  }
+
   if (
     source.includes(marker) ||
     !source.includes("No experiment runner callable was found in the script globals") ||
@@ -41763,7 +41784,7 @@ export async function repairPythonPublicStudyTopLevelRunnerAliasSurface(scriptPa
     "    runtime_context = _call_with_supported_kwargs(runtime_builder, args=args)",
     "    model_selector = globals().get('select_base_model_with_fallback')",
     "    if callable(model_selector):",
-    "        runtime_context = _call_with_supported_kwargs(model_selector, runtime_context, runtime=runtime_context)",
+    signatureAwareModelSelectorCall,
     "",
     "    run_output_dir = getattr(args, 'run_output_dir', None)",
     "    planned_runs = _call_with_supported_kwargs(",

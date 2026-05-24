@@ -6448,6 +6448,9 @@ describe("ImplementSessionManager", () => {
         "def prepare_runtime_context(args):",
         "    return RuntimeContext(args.output_dir)",
         "",
+        "def select_base_model_with_fallback(runtime):",
+        "    return runtime",
+        "",
         "def build_experiment_schedule(runtime, run_output_dir=None):",
         "    return [{'condition_marker': 'baseline_condition', 'seed': 1}]",
         "",
@@ -6491,10 +6494,42 @@ describe("ImplementSessionManager", () => {
     const repairedSource = readFileSync(scriptPath, "utf8");
     expect(repair.repaired).toBe(true);
     expect(repairedSource).toContain("_autolabos_public_study_top_level_runner_alias_marker");
+    expect(repairedSource).not.toContain(
+      "_call_with_supported_kwargs(model_selector, runtime_context, runtime=runtime_context)"
+    );
+    expect(repairedSource).toContain("runtime=runtime_context,");
+    expect(repairedSource).toContain("runtime_context=runtime_context,");
     execFileSync("python3", [scriptPath, "--metrics-path", metricsPath, "--output-dir", workspace]);
     const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
     expect(metrics.status).toBe("completed");
     expect(metrics.run_results[0].condition_marker).toBe("baseline_condition");
+
+    const existingAliasScriptPath = path.join(workspace, "existing_alias_experiment.py");
+    writeFileSync(
+      existingAliasScriptPath,
+      [
+        "# _autolabos_public_study_top_level_runner_alias_marker",
+        "def _autolabos_public_study_top_level_runner(args=None):",
+        "    runtime_context = {'condition_id': 'baseline_condition'}",
+        "    model_selector = globals().get('select_base_model_with_fallback')",
+        "    if callable(model_selector):",
+        "        runtime_context = _call_with_supported_kwargs(model_selector, runtime_context, runtime=runtime_context)",
+        "    return runtime_context",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const existingAliasRepair = await repairPythonPublicStudyTopLevelRunnerAliasSurface(
+      existingAliasScriptPath
+    );
+    const repairedExistingAliasSource = readFileSync(existingAliasScriptPath, "utf8");
+    expect(existingAliasRepair.repaired).toBe(true);
+    expect(repairedExistingAliasSource).not.toContain(
+      "_call_with_supported_kwargs(model_selector, runtime_context, runtime=runtime_context)"
+    );
+    expect(repairedExistingAliasSource).toContain("runtime=runtime_context,");
+    expect(repairedExistingAliasSource).toContain("runtime_context=runtime_context,");
   });
 
   it("adds sibling experiment.py as a backend candidate for public study wrappers", async () => {
