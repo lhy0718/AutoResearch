@@ -3640,18 +3640,38 @@ export class ImplementSessionManager {
       bootstrapPrompt,
       "utf8"
     );
-    const completion = await this.completeStagedLlmRequest({
-      runDir: input.runDir,
-      prompt: bootstrapPrompt,
-      systemPrompt: appendStagedImplementBootstrapContractOverrideToPrompt(input.systemPrompt),
-      timeoutMs: input.timeoutMs,
-      abortSignal: input.abortSignal,
-      attempt: input.attempt,
-      threadId: input.threadId,
-      publicDir: input.publicDir,
-      emitImplementObservation: input.emitImplementObservation,
-      reasoningEffort: input.reasoningEffort
-    });
+    let completion: { text: string; threadId?: string };
+    try {
+      completion = await this.completeStagedLlmRequest({
+        runDir: input.runDir,
+        prompt: bootstrapPrompt,
+        systemPrompt: appendStagedImplementBootstrapContractOverrideToPrompt(input.systemPrompt),
+        timeoutMs: input.timeoutMs,
+        abortSignal: input.abortSignal,
+        attempt: input.attempt,
+        threadId: input.threadId,
+        publicDir: input.publicDir,
+        emitImplementObservation: input.emitImplementObservation,
+        reasoningEffort: input.reasoningEffort
+      });
+    } catch (error) {
+      if (!isImplementStagedLlmTimeoutError(error)) {
+        throw error;
+      }
+      input.emitImplementObservation(
+        "codex",
+        "Bootstrap contract planning timed out; using the local deterministic bootstrap contract.",
+        {
+          attempt: input.attempt,
+          threadId: input.threadId,
+          publicDir: input.publicDir
+        }
+      );
+      return {
+        contract: buildDefaultImplementBootstrapContract(input.taskSpec),
+        threadId: input.threadId
+      };
+    }
     await fs.writeFile(
       path.join(input.runDir, IMPLEMENT_BOOTSTRAP_CONTRACT_RAW_RESPONSE_ARTIFACT),
       completion.text,

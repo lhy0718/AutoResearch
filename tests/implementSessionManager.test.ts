@@ -10702,6 +10702,126 @@ describe("ImplementSessionManager", () => {
     expect(materializationPlan.chunks?.map((chunk) => chunk.id)).toEqual(["complete_artifact"]);
   });
 
+  it("uses the local bootstrap contract when bootstrap planning times out", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-bootstrap-timeout-fallback-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Bootstrap Timeout Fallback Run",
+      topic: "language model benchmark implementation",
+      constraints: ["real artifacts"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    await runContext.put(
+      "implement_experiments.last_summary",
+      "Implementation remains blocked by the environment: every Codex local filesystem action aborts with `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`."
+    );
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "experiment.py");
+    let llmCalls = 0;
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {
+        runTurnStream: async () => {
+          throw new Error("Codex should not be used in the known staged_llm fallback path");
+        }
+      } as unknown as CodexNativeClient,
+      llm: {
+        complete: async (prompt: string) => {
+          llmCalls += 1;
+          if (prompt.includes("scaffold-first contract")) {
+            return {
+              text: JSON.stringify({
+                summary: "Runner scaffold with one bounded text unit for a language model benchmark.",
+                run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
+                test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+                changed_files: [publicScriptPath],
+                artifacts: [publicScriptPath],
+                public_artifacts: [publicScriptPath],
+                script_path: publicScriptPath,
+                metrics_path: path.join(runDir, "metrics.json"),
+                experiment_mode: "real_execution",
+                decomposition_plan: {
+                  objective: "Materialize the primary runner only.",
+                  strategy: "purpose_adaptive",
+                  rationale: "This rerun only needs the main script.",
+                  units: [
+                    {
+                      id: "runner",
+                      unit_type: "text_file",
+                      title: "Primary experiment runner",
+                      purpose: "Provide the main runnable experiment entrypoint.",
+                      generation_mode: "materialize_text_file",
+                      target_path: publicScriptPath,
+                      verification_focus: ["run_command"]
+                    }
+                  ]
+                },
+                file_plan: [publicScriptPath]
+              }),
+              threadId: "thread-bootstrap-timeout-scaffold"
+            };
+          }
+          if (prompt.includes("Staged implement bootstrap contract planning.")) {
+            throw new Error("implement_experiments staged_llm request timed out after 10ms without provider progress");
+          }
+          if (prompt.includes("Staged implement materialization subplan.")) {
+            return {
+              text: JSON.stringify({
+                strategy: "single_runner_chunk",
+                rationale: "The runner is small enough for one chunk.",
+                chunks: [
+                  {
+                    id: "complete_artifact",
+                    title: "Complete artifact",
+                    purpose: "Write the runnable script.",
+                    content_kind: "code_section",
+                    include_imports: true,
+                    include_entrypoint: true
+                  }
+                ]
+              }),
+              threadId: "thread-bootstrap-timeout-plan"
+            };
+          }
+          return {
+            text: JSON.stringify({
+              chunk_id: "complete_artifact",
+              content: MINIMAL_METRICS_RUNNER_SOURCE
+            }),
+            threadId: "thread-bootstrap-timeout-content"
+          };
+        }
+      } as any,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+
+    expect(result.verifyReport).toMatchObject({ status: "pass" });
+    expect(llmCalls).toBe(4);
+    const bootstrapContract = JSON.parse(
+      readFileSync(path.join(runDir, "implement_experiments", "bootstrap_contract.json"), "utf8")
+    ) as { strategy?: string };
+    const progressLog = readFileSync(path.join(runDir, "implement_experiments", "progress.jsonl"), "utf8");
+    expect(bootstrapContract.strategy).toBe("deterministic_default");
+    expect(progressLog).toContain("Bootstrap contract planning timed out; using the local deterministic bootstrap contract.");
+  });
+
   it("records network-assisted bootstrap requirements without failing the run at the bootstrap gate", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-bootstrap-contract-"));
     tempDirs.push(workspace);
