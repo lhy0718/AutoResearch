@@ -992,7 +992,13 @@ describe("run_experiments execution profile behavior", () => {
     await writeFile(
       scriptPath,
       [
+        "import argparse",
         "from typing import Any, Optional, Sequence",
+        "",
+        "def build_arg_parser():",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--timeout-sec', type=int, default=0)",
+        "    return parser",
         "",
         "def _resolve_global_callable(candidate_names: Sequence[str]) -> Optional[Any]:",
         "    for candidate_name in candidate_names:",
@@ -1012,8 +1018,6 @@ describe("run_experiments execution profile behavior", () => {
         "",
         "def execute_run_schedule(planned_runs=None, runtime_context=None, **kwargs):",
         "    return [{'condition_id': 'baseline_condition', 'status': 'completed'}]",
-        "",
-        "TIMEOUT_FLAG = '--timeout-sec'",
         "",
         "def main() -> int:",
         "    runner = _resolve_global_callable(('run_experiment', 'execute_experiment', 'run_study'))",
@@ -1125,6 +1129,105 @@ describe("run_experiments execution profile behavior", () => {
         )
       )
     ).toBe(true);
+  });
+
+  it("does not append timeout flags only mentioned outside argparse", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-timeout-flag-source-mention-"));
+    process.chdir(root);
+    const run = makeRun("run-timeout-flag-source-mention");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const scriptPath = path.join(root, "experiment.py");
+    await writeFile(
+      scriptPath,
+      [
+        "import argparse",
+        "TIMEOUT_FLAG = '--timeout-sec'",
+        "def main(argv=None):",
+        "    parser = argparse.ArgumentParser()",
+        "    parser.add_argument('--output-dir', default='.')",
+        "    parser.add_argument('--metrics-path', default='metrics.json')",
+        "    return parser.parse_args(argv)",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", `python3 ${JSON.stringify(scriptPath)}`);
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.script", scriptPath);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    let observedCommand = "";
+    const node = createRunExperimentsNode({
+      config: {
+        experiments: {
+          timeout_sec: 14400,
+          network_policy: "blocked"
+        }
+      } as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async (command: string) => {
+          observedCommand = command;
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "completed",
+                success: true,
+                primary_metric: {
+                  name: "accuracy_delta_vs_baseline",
+                  value: 0.02,
+                  target: 0.01,
+                  met: true
+                },
+                condition_results: [
+                  { condition_id: "baseline_condition", status: "completed", accuracy: 0.4 },
+                  { condition_id: "candidate_condition_a", status: "completed", accuracy: 0.42 }
+                ],
+                completed_condition_count: 2
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "runner completed",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    await node.execute({ run, graph: run.graph });
+
+    expect(observedCommand).not.toContain("--timeout-sec 14400");
+    expect(observedCommand).not.toContain("--budget-timeout-sec 14400");
   });
 
   it("promotes top-level primary_metric_key and primary_metric before objective contract validation", async () => {

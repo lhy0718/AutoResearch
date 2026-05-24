@@ -2533,13 +2533,26 @@ async function appendPythonTimeoutArgIfAccepted(
     return command;
   }
   const source = await fs.readFile(scriptPath, "utf8");
-  if (source.includes("--timeout-sec")) {
+  const acceptedFlags = extractPythonArgparseLongFlagsForRunCommand(source);
+  if (acceptedFlags.has("--timeout-sec")) {
     return `${command} --timeout-sec ${timeoutSec}`;
   }
-  if (source.includes("--budget-timeout-sec")) {
+  if (acceptedFlags.has("--budget-timeout-sec")) {
     return `${command} --budget-timeout-sec ${timeoutSec}`;
   }
   return command;
+}
+
+function extractPythonArgparseLongFlagsForRunCommand(source: string): Set<string> {
+  const flags = new Set<string>();
+  const addArgumentPattern = /\badd_argument\s*\(([\s\S]*?)\)/gu;
+  for (const match of source.matchAll(addArgumentPattern)) {
+    const callText = match[1] || "";
+    for (const flagMatch of callText.matchAll(/["'](--[a-z0-9][a-z0-9_-]*)["']/giu)) {
+      flags.add(flagMatch[1].toLowerCase());
+    }
+  }
+  return flags;
 }
 
 async function repairPythonRuntimeCompatibilityBeforeRun(input: {
