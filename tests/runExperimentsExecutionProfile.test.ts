@@ -1013,6 +1013,8 @@ describe("run_experiments execution profile behavior", () => {
         "def execute_run_schedule(planned_runs=None, runtime_context=None, **kwargs):",
         "    return [{'condition_id': 'baseline_condition', 'status': 'completed'}]",
         "",
+        "TIMEOUT_FLAG = '--timeout-sec'",
+        "",
         "def main() -> int:",
         "    runner = _resolve_global_callable(('run_experiment', 'execute_experiment', 'run_study'))",
         "    if not callable(runner):",
@@ -1032,7 +1034,13 @@ describe("run_experiments execution profile behavior", () => {
     let repairedBeforeExecution = false;
     const eventStream = new InMemoryEventStream();
     const node = createRunExperimentsNode({
-      config: {} as any,
+      config: {
+        experiments: {
+          timeout_sec: 43200,
+          network_policy: "declared",
+          network_purpose: "model_download"
+        }
+      } as any,
       executionProfile: "local",
       runStore: {} as any,
       eventStream,
@@ -1041,7 +1049,9 @@ describe("run_experiments execution profile behavior", () => {
       pdfTextLlm: new MockLLMClient(),
       codex: {} as any,
       aci: {
-        runCommand: async () => {
+        runCommand: async (command: string) => {
+          expect(command).toContain("AUTOLABOS_ALLOW_MODEL_DOWNLOAD=1 ");
+          expect(command).toContain("--timeout-sec 43200");
           const repairedSource = await readFile(scriptPath, "utf8");
           repairedBeforeExecution =
             repairedSource.includes("_autolabos_public_study_top_level_runner_alias_marker") &&

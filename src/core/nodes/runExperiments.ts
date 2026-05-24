@@ -593,6 +593,11 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
       })
         ? appendFreshFlag(resolved.command)
         : resolved.command;
+      primaryCommand = await appendPythonTimeoutArgIfAccepted(
+        primaryCommand,
+        resolved.cwd,
+        resolveRunExperimentsBudgetTimeoutSec(deps.config)
+      );
       primaryCommand = wrapCommandForExecutionProfile({
         profile: deps.executionProfile || "local",
         command: primaryCommand,
@@ -2499,6 +2504,40 @@ function withModelDownloadEnvIfDeclared(
     return command;
   }
   return `AUTOLABOS_ALLOW_MODEL_DOWNLOAD=1 ${command}`;
+}
+
+function resolveRunExperimentsBudgetTimeoutSec(config: NodeExecutionDeps["config"]): number | undefined {
+  const envTimeout = Number(process.env.AUTOLABOS_P6_NEXT_TIMEOUT_SEC || "");
+  if (Number.isFinite(envTimeout) && envTimeout > 0) {
+    return Math.floor(envTimeout);
+  }
+  const configTimeout = Number(config.experiments?.timeout_sec || 0);
+  if (Number.isFinite(configTimeout) && configTimeout > 0) {
+    return Math.floor(configTimeout);
+  }
+  return undefined;
+}
+
+async function appendPythonTimeoutArgIfAccepted(
+  command: string,
+  cwd: string,
+  timeoutSec: number | undefined
+): Promise<string> {
+  if (!timeoutSec || /--(?:budget-)?timeout-sec\b/u.test(command)) {
+    return command;
+  }
+  const scriptPath = extractPythonScriptPathFromCommand(command, cwd);
+  if (!scriptPath || path.extname(scriptPath) !== ".py" || !(await fileExists(scriptPath))) {
+    return command;
+  }
+  const source = await fs.readFile(scriptPath, "utf8");
+  if (source.includes("--timeout-sec")) {
+    return `${command} --timeout-sec ${timeoutSec}`;
+  }
+  if (source.includes("--budget-timeout-sec")) {
+    return `${command} --budget-timeout-sec ${timeoutSec}`;
+  }
+  return command;
 }
 
 async function repairPythonRuntimeCompatibilityBeforeRun(input: {
