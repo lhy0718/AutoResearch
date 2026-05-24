@@ -2824,8 +2824,7 @@ export class ImplementSessionManager {
         materializationPlan
       );
 
-      const useSectionedSkeleton =
-        shouldUseSectionedSkeletonForTarget(filePath) && materializationPlan.chunks.length > 1;
+      const useSectionedSkeleton = shouldUseSectionedSkeletonForTarget(filePath);
 
       const useDirectFileMaterialization =
         materializationPlan.chunks.length === 1 &&

@@ -12181,6 +12181,139 @@ describe("ImplementSessionManager", () => {
     expect(llmCalls).toBe(6);
   });
 
+  it("strips canonical skeleton markers from single-chunk python materialization", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-single-section-skeleton-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Single Section Skeleton Runner",
+      topic: "bounded experiment implementation",
+      constraints: ["real artifacts"],
+      objectiveMetric: "accuracy"
+    });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
+
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    await runContext.put(
+      "implement_experiments.last_summary",
+      "Implementation remains blocked by the environment: every Codex local filesystem action aborts with `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`."
+    );
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const publicScriptPath = path.join(publicDir, "experiment.py");
+    let llmCalls = 0;
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex: {
+        runTurnStream: async () => {
+          throw new Error("Codex should not be used in the known staged_llm fallback path");
+        }
+      } as unknown as CodexNativeClient,
+      llm: {
+        complete: async (prompt: string) => {
+          llmCalls += 1;
+          if (prompt.includes("scaffold-first contract")) {
+            return {
+              text: JSON.stringify({
+                summary: "Runner scaffold with one materialized script.",
+                run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
+                test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
+                changed_files: [publicScriptPath],
+                artifacts: [publicScriptPath],
+                public_artifacts: [publicScriptPath],
+                script_path: publicScriptPath,
+                metrics_path: path.join(runDir, "metrics.json"),
+                experiment_mode: "real_execution",
+                decomposition_plan: {
+                  objective: "Materialize the primary runner only.",
+                  strategy: "purpose_adaptive",
+                  rationale: "This rerun only needs the main script.",
+                  units: [
+                    {
+                      id: "runner",
+                      unit_type: "text_file",
+                      title: "Primary experiment runner",
+                      purpose: "Provide the main runnable experiment entrypoint.",
+                      generation_mode: "materialize_text_file",
+                      target_path: publicScriptPath,
+                      verification_focus: ["run_command"]
+                    }
+                  ]
+                },
+                file_plan: [publicScriptPath]
+              }),
+              threadId: "thread-single-skeleton-scaffold"
+            };
+          }
+          if (prompt.includes("Staged implement materialization subplan.")) {
+            return {
+              text: JSON.stringify({
+                strategy: "single_runner_chunk",
+                rationale: "The runner is small enough for one chunk.",
+                chunks: [
+                  {
+                    id: "chunk_runner",
+                    title: "Complete runner",
+                    purpose: "Implement the runnable script.",
+                    content_kind: "code_section",
+                    include_imports: true,
+                    include_entrypoint: true
+                  }
+                ]
+              }),
+              threadId: "thread-single-skeleton-plan"
+            };
+          }
+          if (prompt.split(/\r?\n/).some((line) => line.startsWith("Target chunk: chunk_runner "))) {
+            return {
+              text: JSON.stringify({
+                chunk_id: "chunk_runner",
+                content: [
+                  "# BEGIN AUTOLABOS SECTION chunk_runner :: echoed marker from model output",
+                  "# Purpose: This line should not survive handoff.",
+                  "# Order: 1/1",
+                  "import json",
+                  "from pathlib import Path",
+                  "",
+                  "def main():",
+                  "    Path('metrics.json').write_text(json.dumps({'status': 'completed'}), encoding='utf8')",
+                  "    return 0",
+                  "",
+                  "if __name__ == '__main__':",
+                  "    raise SystemExit(main())",
+                  "# END AUTOLABOS SECTION chunk_runner"
+                ].join("\n")
+              }),
+              threadId: "thread-single-skeleton-chunk"
+            };
+          }
+          throw new Error(`Unexpected staged_llm prompt in single-chunk skeleton test: ${prompt.slice(0, 200)}`);
+        }
+      } as any,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const finalSource = readFileSync(result.scriptPath!, "utf8");
+    expect(finalSource).toContain("def main():");
+    expect(finalSource).not.toContain("AUTOLABOS CANONICAL SKELETON");
+    expect(finalSource).not.toContain("AUTOLABOS SECTION");
+    expect(
+      readFileSync(path.join(runDir, "implement_experiments", "unit_skeletons", "runner.txt"), "utf8")
+    ).toContain("AUTOLABOS CANONICAL SKELETON");
+    expect(llmCalls).toBe(3);
+  });
+
   it("re-subdivides a python materialization chunk when candidate syntax validation fails", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-syntax-resubchunk-"));
     tempDirs.push(workspace);
