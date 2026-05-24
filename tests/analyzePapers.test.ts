@@ -1510,7 +1510,7 @@ describe("analyzePapers node", () => {
         pdf_url: "https://example.com/p1.pdf"
       }
     ]);
-    writeCachedPaperTextSync(runId, "p1", "Recovered cached full text");
+    writeCachedPaperTextSync(runId, "p1", "Cached article body recovered for analysis");
     writeCachedPageImagesSync(runId, "p1", 3);
 
     const llm = new ImagePayloadTimeoutLLM();
@@ -1582,7 +1582,7 @@ describe("analyzePapers node", () => {
         pdf_url: "https://example.com/p1.pdf"
       }
     ]);
-    writeCachedPaperTextSync(runId, "p1", "Recovered cached full text");
+    writeCachedPaperTextSync(runId, "p1", "Cached article body recovered for analysis");
     writeCachedPageImagesSync(runId, "p1", 3);
 
     const llm = new FullTextThenAbstractFallbackLLM();
@@ -1669,7 +1669,7 @@ describe("analyzePapers node", () => {
     writeCachedPaperTextSync(
       runId,
       "p1",
-      "Recovered cached full text describing a compact candidate-comparison protocol. The system was evaluated on Benchmark Task A and Benchmark Task B with accuracy and runtime metrics under a fixed adaptation budget."
+      "Cached article body describing a general candidate-comparison protocol. The system was evaluated on Benchmark Task A and Benchmark Task B with accuracy and runtime metrics under a fixed budget."
     );
     writeCachedPageImagesSync(runId, "p1", 3);
 
@@ -2885,7 +2885,7 @@ describe("analyzePapers node", () => {
         updatedCount: 0
       }
     });
-    writeCachedPaperTextSync(runId, "p1", "Recovered cached full text");
+    writeCachedPaperTextSync(runId, "p1", "Cached article body recovered for analysis");
 
     setTimeout(() => {
       overwriteCorpusSync(runId, [
@@ -2928,7 +2928,7 @@ describe("analyzePapers node", () => {
     expect(retried.paper.pdf_url).toBe("https://example.com/p1.pdf");
     expect(retried.source.sourceType).toBe("full_text");
     expect(retried.source.pdfUrl).toBe("https://example.com/p1.pdf");
-    expect(retried.source.text).toBe("Recovered cached full text");
+    expect(retried.source.text).toBe("Cached article body recovered for analysis");
   });
 
   it("retries source resolution when collect enrichment replaces a stale PDF URL after an initial abstract fallback", async () => {
@@ -2957,7 +2957,7 @@ describe("analyzePapers node", () => {
         updatedCount: 0
       }
     });
-    writeCachedPaperTextSync(runId, "p1", "Recovered cached full text");
+    writeCachedPaperTextSync(runId, "p1", "Cached article body recovered for analysis");
 
     const recoveredPdfUrl = "https://example.com/p1.pdf";
     setTimeout(() => {
@@ -3007,7 +3007,7 @@ describe("analyzePapers node", () => {
     expect(retried.paper.pdf_url).toBe(recoveredPdfUrl);
     expect(retried.source.sourceType).toBe("full_text");
     expect(retried.source.pdfUrl).toBe(recoveredPdfUrl);
-    expect(retried.source.text).toBe("Recovered cached full text");
+    expect(retried.source.text).toBe("Cached article body recovered for analysis");
   });
 
   it("waits for in-flight paper persistence before surfacing an abort from a concurrent paper", async () => {

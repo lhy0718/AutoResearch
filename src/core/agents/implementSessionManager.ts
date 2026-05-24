@@ -1263,6 +1263,34 @@ export class ImplementSessionManager {
           }
         );
       }
+      const publicPlannedContractArtifactRepair = await materializePublicPlannedConditionContractArtifact({
+        publicDir: prepared.publicDir,
+        contract: promptTaskSpec.context.planned_condition_contract
+      });
+      if (publicPlannedContractArtifactRepair.artifactPath) {
+        prepared.publicArtifacts = dedupeStrings([
+          ...prepared.publicArtifacts,
+          publicPlannedContractArtifactRepair.artifactPath
+        ]);
+      }
+      if (publicPlannedContractArtifactRepair.repaired && publicPlannedContractArtifactRepair.artifactPath) {
+        prepared.changedFiles = dedupeStrings([
+          ...prepared.changedFiles,
+          publicPlannedContractArtifactRepair.artifactPath
+        ]);
+        emitImplementObservation(
+          "verify",
+          publicPlannedContractArtifactRepair.message ||
+            "Materialized public planned condition contract artifact before design validation.",
+          {
+            attempt,
+            threadId: activeThreadId,
+            publicDir: prepared.publicDir,
+            scriptPath: prepared.scriptPath,
+            runCommand: prepared.runCommand
+          }
+        );
+      }
       const earlyStudyEntrypointArgsRepair = await repairPythonPublicStudyEntrypointArgsAliasSurface(
         prepared.scriptPath
       );
@@ -41094,6 +41122,63 @@ export async function repairPythonPlannedConditionContractSurface(
   return {
     repaired: true,
     message: `Materialized the planned condition/seed contract in ${path.basename(scriptPath)} before design validation.`
+  };
+}
+
+export async function materializePublicPlannedConditionContractArtifact(input: {
+  publicDir?: string;
+  contract?: PlannedConditionImplementationContract;
+}): Promise<{ repaired: boolean; artifactPath?: string; message?: string }> {
+  if (!input.publicDir || !input.contract) {
+    return { repaired: false };
+  }
+
+  const requiredMarkers = dedupeStrings(input.contract.required_condition_markers || []);
+  const seedSchedule = (input.contract.seed_schedule || [])
+    .map((seed) => Number(seed))
+    .filter((seed) => Number.isInteger(seed));
+  const requiredConditionCount = normalizeContractPositiveInteger(input.contract.required_condition_count);
+  const requiredRunCount = normalizeContractPositiveInteger(input.contract.required_run_count);
+  if (
+    requiredMarkers.length === 0 &&
+    seedSchedule.length === 0 &&
+    requiredConditionCount === undefined &&
+    requiredRunCount === undefined
+  ) {
+    return { repaired: false };
+  }
+
+  const artifactPath = path.join(input.publicDir, "locked_condition_contract.json");
+  const payload = {
+    version: 1,
+    source: "approved_design_contract",
+    required_condition_markers: requiredMarkers,
+    baseline_condition_marker: input.contract.baseline_condition_marker || requiredMarkers[0] || null,
+    required_condition_count: requiredConditionCount ?? requiredMarkers.length,
+    seed_schedule: seedSchedule,
+    required_run_count:
+      requiredRunCount ??
+      (requiredMarkers.length > 0 && seedSchedule.length > 0
+        ? requiredMarkers.length * seedSchedule.length
+        : null)
+  };
+
+  let previous = "";
+  try {
+    previous = await fs.readFile(artifactPath, "utf8");
+  } catch {
+    previous = "";
+  }
+  const next = `${JSON.stringify(payload, null, 2)}\n`;
+  if (previous === next) {
+    return { repaired: false, artifactPath };
+  }
+
+  await writeJsonFile(artifactPath, payload);
+  return {
+    repaired: true,
+    artifactPath,
+    message: `Materialized public planned condition contract artifact in ${path.basename(artifactPath)} before design validation.`
   };
 }
 

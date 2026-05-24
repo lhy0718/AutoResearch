@@ -224,6 +224,7 @@ import {
   repairPythonPublicStudyPlanFinalizationRunnerSurface,
   repairPythonPublicStudyTopLevelRunnerAliasSurface,
   repairPythonFinalCliLockedGridResolverSurface,
+  materializePublicPlannedConditionContractArtifact,
   repairPublishedRunCommandWrapperBinding,
   resolvePythonVerificationScriptPath,
   selectRecoveredPublicBundleScriptPath,
@@ -6403,6 +6404,81 @@ describe("ImplementSessionManager", () => {
       }
     });
     expect(validation.verdict).toBe("allow");
+  });
+
+  it("materializes public planned condition contract artifacts for design validation", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-public-planned-contract-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "experiment.py");
+    const readmePath = path.join(workspace, "README.md");
+    writeFileSync(
+      scriptPath,
+      [
+        "PLANNED_CONDITION_MARKERS = ('baseline_condition', 'candidate_condition_a', 'candidate_condition_b')",
+        "REQUIRED_CONDITION_COUNT = 3",
+        "SEED_SCHEDULE = (11, 22)",
+        "def main():",
+        "    return 0",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      readmePath,
+      "Published conditions: baseline_condition and candidate_condition_a.\n",
+      "utf8"
+    );
+
+    const contract = {
+      required_condition_count: 3,
+      required_run_count: 6,
+      seed_schedule: [11, 22],
+      baseline_condition_marker: "baseline_condition",
+      required_condition_markers: [
+        "baseline_condition",
+        "candidate_condition_a",
+        "candidate_condition_b"
+      ]
+    };
+
+    const blockedValidation = await validateDesignImplementationAlignment({
+      plannedConditionContract: contract,
+      attempt: {
+        runCommand: `python3 ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        metricsPath: path.join(workspace, "metrics.json"),
+        workingDir: workspace,
+        publicDir: workspace,
+        changedFiles: [scriptPath, readmePath],
+        publicArtifacts: [readmePath]
+      }
+    });
+    expect(blockedValidation.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "PUBLIC_CONDITION_MARKERS_CONTRACTED" })
+      ])
+    );
+
+    const publicRepair = await materializePublicPlannedConditionContractArtifact({
+      publicDir: workspace,
+      contract
+    });
+    expect(publicRepair.repaired).toBe(true);
+    expect(publicRepair.artifactPath).toBe(path.join(workspace, "locked_condition_contract.json"));
+
+    const allowedValidation = await validateDesignImplementationAlignment({
+      plannedConditionContract: contract,
+      attempt: {
+        runCommand: `python3 ${JSON.stringify(scriptPath)}`,
+        scriptPath,
+        metricsPath: path.join(workspace, "metrics.json"),
+        workingDir: workspace,
+        publicDir: workspace,
+        changedFiles: [scriptPath, readmePath, publicRepair.artifactPath || ""],
+        publicArtifacts: [scriptPath, readmePath, publicRepair.artifactPath || ""]
+      }
+    });
+    expect(allowedValidation.verdict).toBe("allow");
   });
 
   it("aliases top-level public study runners to schedule executors before handoff", async () => {
