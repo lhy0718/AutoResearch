@@ -10128,6 +10128,51 @@ describe("ImplementSessionManager", () => {
         complete: async (prompt: string) => {
           prompts.push(prompt);
           llmCalls += 1;
+          if (prompt.includes("Staged implement bootstrap contract planning.")) {
+            return {
+              text: JSON.stringify({
+                version: 1,
+                strategy: "local_available_runtime",
+                summary: "No concrete bootstrap blocker for this bounded fixture.",
+                requires_network: false,
+                requires_warm_cache: false,
+                can_execute_under_current_policy: true,
+                blocking_reason: "",
+                remediation: [],
+                requirements: [],
+                checks: []
+              }),
+              threadId: "thread-bootstrap"
+            };
+          }
+          if (prompt.includes("Staged implement materialization subplan.")) {
+            return {
+              text: JSON.stringify({
+                strategy: "test_runner_chunks",
+                rationale: "Keep the locally synthesized runner in one chunk for this regression.",
+                chunks: [
+                  {
+                    id: "runner_full",
+                    title: "Runner full content",
+                    purpose: "Materialize the full repaired runner content.",
+                    content_kind: "code_section",
+                    include_imports: true,
+                    include_entrypoint: true
+                  }
+                ]
+              }),
+              threadId: "thread-runner-plan"
+            };
+          }
+          if (prompt.includes("Target chunk: runner_full")) {
+            return {
+              text: JSON.stringify({
+                chunk_id: "runner_full",
+                content: MINIMAL_METRICS_RUNNER_SOURCE
+              }),
+              threadId: "thread-file"
+            };
+          }
           if (llmCalls === 1) {
             return {
               text: JSON.stringify({
@@ -10145,54 +10190,9 @@ describe("ImplementSessionManager", () => {
               threadId: "thread-scaffold"
             };
           }
-          if (llmCalls === 2) {
-            return {
-              text: JSON.stringify({
-                decomposition_plan: {
-                  objective: "Materialize the primary runner only.",
-                  strategy: "purpose_adaptive_repair",
-                  rationale: "The current repair target is a single script.",
-                  units: [
-                    {
-                      id: "runner",
-                      unit_type: "text_file",
-                      title: "Primary experiment runner",
-                      purpose: "Provide the main runnable experiment entrypoint.",
-                      generation_mode: "materialize_text_file",
-                      target_path: publicScriptPath,
-                      verification_focus: ["run_command"]
-                    }
-                  ]
-                }
-              }),
-              threadId: "thread-plan"
-            };
-          }
-          if (llmCalls === 3) {
-            return {
-              text: JSON.stringify({
-                strategy: "test_runner_chunks",
-                rationale: "Keep the repaired runner in one chunk for this regression.",
-                chunks: [
-                  {
-                    id: "runner_full",
-                    title: "Runner full content",
-                    purpose: "Materialize the full repaired runner content.",
-                    content_kind: "code_section",
-                    include_imports: true,
-                    include_entrypoint: true
-                  }
-                ]
-              }),
-              threadId: "thread-runner-plan"
-            };
-          }
           return {
-            text: JSON.stringify({
-              chunk_id: "runner_full",
-              content: MINIMAL_METRICS_RUNNER_SOURCE
-            }),
-            threadId: "thread-file"
+            text: JSON.stringify({ note: "unexpected staged call" }),
+            threadId: "thread-unexpected"
           };
         }
       } as any,
@@ -10207,18 +10207,12 @@ describe("ImplementSessionManager", () => {
       readFileSync(path.join(runDir, "implement_experiments", "decomposition_plan.json"), "utf8")
     ) as { strategy?: string; units: Array<{ target_path?: string }> };
 
-    expect(llmCalls).toBe(4);
-    expect(prompts[1]).toContain("Staged implement decomposition planning repair.");
-    expect(prompts[1]).toContain("Do not use markdown fences.");
-    expect(prompts[2]).toContain("Staged implement materialization subplan.");
-    expect(decompositionPlan.strategy).toBe("purpose_adaptive_repair");
+    expect(llmCalls).toBe(3);
+    expect(prompts.join("\n")).not.toContain("Staged implement decomposition planning repair.");
+    expect(prompts.some((prompt) => prompt.includes("Staged implement materialization subplan."))).toBe(true);
+    expect(prompts.some((prompt) => prompt.includes("Target chunk: runner_full"))).toBe(true);
+    expect(decompositionPlan.strategy).toBe("scaffold_target_local_synthesis");
     expect(decompositionPlan.units.map((unit) => unit.target_path)).toEqual([publicScriptPath]);
-    expect(
-      readFileSync(
-        path.join(runDir, "implement_experiments", "decomposition_plan_raw_response.txt"),
-        "utf8"
-      )
-    ).toContain("\"decomposition_plan\"");
     expect(result.scriptPath).toBe(publicScriptPath);
     expect(readFileSync(publicScriptPath, "utf8")).toBe(MINIMAL_METRICS_RUNNER_SOURCE);
   });
@@ -10264,16 +10258,15 @@ describe("ImplementSessionManager", () => {
           if (llmCalls === 1) {
             return {
               text: JSON.stringify({
-                summary: "Scaffold without explicit decomposition plan.",
-                run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
-                test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
-                changed_files: [publicScriptPath],
-                artifacts: [publicScriptPath],
-                public_artifacts: [publicScriptPath],
-                script_path: publicScriptPath,
+                summary: "Scaffold without explicit decomposition plan or materializable targets.",
+                run_command: "",
+                test_command: "",
+                changed_files: [],
+                artifacts: [],
+                public_artifacts: [],
                 metrics_path: path.join(runDir, "metrics.json"),
                 experiment_mode: "real_execution",
-                file_plan: [publicScriptPath]
+                file_plan: []
               }),
               threadId: "thread-missing-plan-scaffold"
             };

@@ -46,6 +46,7 @@ import {
 } from "./implementationLocalizer.js";
 import { EnvironmentSnapshot } from "../environmentSnapshot.js";
 import {
+  buildDynamicDecompositionPlan,
   DynamicDecompositionPlan,
   DynamicDecompositionUnit,
   parseDynamicDecompositionPlan
@@ -2712,8 +2713,22 @@ export class ImplementSessionManager {
     if (bootstrapEvaluation.status === "block") {
       throw new Error(`bootstrap contract blocked implementation before code generation: ${bootstrapEvaluation.summary}`);
     }
+    const synthesizedDecompositionPlan = scaffoldParsed.value.decomposition_plan
+      ? undefined
+      : synthesizeDecompositionPlanFromScaffold(scaffoldParsed.value, input.workspaceRoot);
+    if (synthesizedDecompositionPlan) {
+      input.emitImplementObservation(
+        "codex",
+        "Scaffold omitted decomposition_plan; synthesized a local staged_llm decomposition plan from scaffold targets.",
+        {
+          attempt: input.attempt,
+          threadId: activeThreadId,
+          publicDir: input.publicDir
+        }
+      );
+    }
     const decompositionPlanRepair =
-      scaffoldParsed.value.decomposition_plan
+      scaffoldParsed.value.decomposition_plan || synthesizedDecompositionPlan
         ? undefined
         : await this.completeStagedLlmDecompositionPlan({
         runDir: input.runDir,
@@ -2734,6 +2749,7 @@ export class ImplementSessionManager {
     activeThreadId = decompositionPlanRepair?.threadId || activeThreadId;
     const decompositionPlan =
       normalizeDynamicDecompositionPlan(scaffoldParsed.value.decomposition_plan, input.workspaceRoot) ||
+      synthesizedDecompositionPlan ||
       decompositionPlanRepair?.plan;
     if (!decompositionPlan) {
       throw new Error(
@@ -11303,6 +11319,67 @@ function normalizeDynamicDecompositionPlan(
     ...plan,
     units: normalizedUnits
   };
+}
+
+function synthesizeDecompositionPlanFromScaffold(
+  scaffold: StructuredImplementResponse,
+  workspaceRoot: string
+): DynamicDecompositionPlan | undefined {
+  const targets = collectMaterializableScaffoldTargets(scaffold, workspaceRoot);
+  if (targets.length === 0) {
+    return undefined;
+  }
+
+  return buildDynamicDecompositionPlan({
+    objective: "Materialize the runnable implementation artifacts named by the scaffold.",
+    strategy: "scaffold_target_local_synthesis",
+    rationale:
+      "The scaffold already identified concrete text artifacts, so AutoLabOS can avoid an extra provider planning turn and preserve progress under bounded staged implementation.",
+    units: targets.map((targetPath, index) => ({
+      id: `artifact_${index + 1}`,
+      unit_type: inferDecompositionUnitTypeForPath(targetPath),
+      title: index === 0 ? "Primary scaffold artifact" : `Scaffold artifact ${index + 1}`,
+      purpose:
+        index === 0
+          ? "Materialize the primary runnable artifact declared by the scaffold."
+          : "Materialize an additional text artifact declared by the scaffold.",
+      generation_mode: "materialize_text_file",
+      target_path: targetPath,
+      depends_on: index === 0 ? undefined : ["artifact_1"],
+      verification_focus: index === 0 ? ["run_command", "test_command"] : ["artifact_materialized"]
+    }))
+  });
+}
+
+function collectMaterializableScaffoldTargets(scaffold: StructuredImplementResponse, workspaceRoot: string): string[] {
+  const candidates = [
+    scaffold.script_path,
+    ...(scaffold.changed_files || []),
+    ...(scaffold.file_plan || [])
+  ];
+  const targets: string[] = [];
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string" || candidate.trim().length === 0) {
+      continue;
+    }
+    const normalized = normalizeStoredPath(candidate, workspaceRoot) || candidate.trim();
+    if (!isMaterializableImplementTextPath(normalized) || targets.includes(normalized)) {
+      continue;
+    }
+    targets.push(normalized);
+  }
+  return targets;
+}
+
+function inferDecompositionUnitTypeForPath(filePath: string): DynamicDecompositionUnit["unit_type"] {
+  const ext = path.extname(filePath).toLowerCase();
+  if ([".json", ".yaml", ".yml", ".toml", ".ini", ".cfg"].includes(ext)) {
+    return "config_file";
+  }
+  if (ext === ".md") {
+    return "documentation_file";
+  }
+  return "text_file";
 }
 
 function parseDynamicMaterializationPlan(value: unknown): DynamicMaterializationPlan | undefined {
