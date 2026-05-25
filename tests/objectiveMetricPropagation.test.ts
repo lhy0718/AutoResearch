@@ -5340,6 +5340,16 @@ describe("objective metric propagation", () => {
       { profile: "quick_check", status: "pass" },
       { profile: "confirmatory", status: "pass" }
     ]);
+    const runManifest = JSON.parse(await readFile(path.join(runDir, "run_manifest.json"), "utf8")) as {
+      execution_model: string;
+      portfolio?: { execution_model?: string };
+    };
+    const experimentPortfolio = JSON.parse(await readFile(path.join(runDir, "experiment_portfolio.json"), "utf8")) as {
+      execution_model: string;
+    };
+    expect(runManifest.execution_model).toBe("legacy_python_runner");
+    expect(runManifest.portfolio?.execution_model).toBe("legacy_python_runner");
+    expect(experimentPortfolio.execution_model).toBe("legacy_python_runner");
     const triageRaw = await readFile(path.join(runDir, "run_experiments_panel", "triage.json"), "utf8");
     expect(triageRaw).toContain('"profile": "quick_check"');
     expect(triageRaw).toContain('"profile": "confirmatory"');
@@ -5470,9 +5480,15 @@ describe("objective metric propagation", () => {
     expect(supplementalRaw).not.toContain('"status": "fail"');
     const runManifest = JSON.parse(await readFile(path.join(runDir, "run_manifest.json"), "utf8")) as {
       execution_model: string;
+      portfolio?: { execution_model?: string };
       trial_groups: Array<{ profile?: string; status: string }>;
     };
+    const experimentPortfolio = JSON.parse(await readFile(path.join(runDir, "experiment_portfolio.json"), "utf8")) as {
+      execution_model: string;
+    };
     expect(runManifest.execution_model).toBe("legacy_python_runner");
+    expect(runManifest.portfolio?.execution_model).toBe("legacy_python_runner");
+    expect(experimentPortfolio.execution_model).toBe("legacy_python_runner");
     expect(runManifest.trial_groups).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ profile: "quick_check", status: "skipped" }),

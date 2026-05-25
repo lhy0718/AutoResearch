@@ -1357,6 +1357,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         "run_experiments_matrix_trial_groups.json",
         JSON.stringify(matrixTrialGroups, null, 2)
       );
+      await writeRunArtifact(run, "experiment_portfolio.json", JSON.stringify(runManifest.portfolio, null, 2));
       await writeRunArtifact(run, "run_manifest.json", JSON.stringify(runManifest, null, 2));
       const publicSummaryProjection = await materializeRunExperimentPublicSummaryProjection({
         run,
