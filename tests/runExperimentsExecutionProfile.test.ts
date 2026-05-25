@@ -560,11 +560,17 @@ describe("run_experiments execution profile behavior", () => {
             JSON.stringify(
               {
                 status: "failed",
+                primary_metric_key: "quality_delta",
+                quality_delta: null,
                 completed_condition_count: 0,
                 required_condition_count: 8,
                 observed_condition_count: 31,
                 missing_required_condition_markers: ["baseline_condition", "candidate_condition_a"],
                 condition_results_path: path.join(root, "condition_results.json"),
+                condition_results: [
+                  { condition_id: "baseline_condition", status: "missing", reason: "ok_without_condition_records" },
+                  { condition_id: "candidate_condition_a", status: "missing", reason: "ok_without_condition_records" }
+                ],
                 error: {
                   type: "AttributeError",
                   message: "'dict' object has no attribute 'baseline_run'"
@@ -603,6 +609,9 @@ describe("run_experiments execution profile behavior", () => {
     expect(result.status).toBe("failure");
     expect(result.error).toContain("Experiment metrics payload reports failed status");
     expect(result.error).toContain("completed_condition_count=0/8");
+    expect(result.error).toContain("primary_metric_value=quality_delta:null");
+    expect(result.error).toContain("condition_result_statuses=missing:2");
+    expect(result.error).toContain("condition_result_reasons=ok_without_condition_records:2");
     expect(result.error).toContain("missing_required_condition_markers=baseline_condition,candidate_condition_a");
     expect(result.error).toContain("_build_model_load_kwargs()");
     expect(result.error).toContain("local_files_only");
@@ -616,6 +625,8 @@ describe("run_experiments execution profile behavior", () => {
       stage: "metrics"
     });
     expect(verifierReport.summary).toContain("completed_condition_count=0/8");
+    expect(verifierReport.summary).toContain("primary_metric_value=quality_delta:null");
+    expect(verifierReport.summary).toContain("condition_result_statuses=missing:2");
     expect(verifierReport.summary).toContain("metrics_error=AttributeError");
 
     const feedback = await runContext.get<{ status: string; stage: string; summary: string }>(
@@ -625,6 +636,7 @@ describe("run_experiments execution profile behavior", () => {
       status: "fail",
       stage: "metrics"
     });
+    expect(feedback?.summary).toContain("condition_result_reasons=ok_without_condition_records:2");
     expect(feedback?.summary).toContain("observed_condition_count=31");
     expect(feedback?.summary).toContain("_build_model_load_kwargs()");
     expect(feedback?.summary).toContain("baseline_run");

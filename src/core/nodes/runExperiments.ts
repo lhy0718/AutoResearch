@@ -1692,6 +1692,9 @@ function summarizeMetricsFailureEvidence(metrics: Record<string, unknown>): stri
     parts.push(`seed_failure_messages=${seedFailureMessages.join(" | ")}`);
   }
 
+  parts.push(...summarizePrimaryMetricValueEvidence(metrics));
+  parts.push(...summarizeConditionResultFailureEvidence(metrics));
+
   const observedConditionCount = asNumber(metrics.observed_condition_count);
   if (observedConditionCount !== undefined) {
     parts.push(`observed_condition_count=${observedConditionCount}`);
@@ -1710,6 +1713,141 @@ function summarizeMetricsFailureEvidence(metrics: Record<string, unknown>): stri
   }
 
   return parts.length > 0 ? `Metrics evidence: ${parts.join("; ")}.` : "";
+}
+
+function summarizePrimaryMetricValueEvidence(metrics: Record<string, unknown>): string[] {
+  const objective = asRecord(metrics.objective);
+  const primaryMetric = asRecord(metrics.primary_metric);
+  const keys = [
+    asString(metrics.primary_metric_key),
+    asString(objective.primary_metric_key),
+    asString(primaryMetric.name)
+  ].filter((key): key is string => Boolean(key));
+  const uniqueKeys = [...new Set(keys)];
+  const parts: string[] = [];
+  for (const key of uniqueKeys.slice(0, 2)) {
+    if (Object.prototype.hasOwnProperty.call(metrics, key)) {
+      if (asNumber(metrics[key]) === undefined) {
+        parts.push(`primary_metric_value=${trimShort(key, 100)}:${describeMetricValue(metrics[key])}`);
+      }
+      continue;
+    }
+    parts.push(`primary_metric_value=${trimShort(key, 100)}:missing`);
+  }
+  return parts;
+}
+
+function describeMetricValue(value: unknown): string {
+  if (value === null) {
+    return "null";
+  }
+  if (value === undefined) {
+    return "missing";
+  }
+  if (Array.isArray(value)) {
+    return "array";
+  }
+  if (typeof value === "object") {
+    return "object";
+  }
+  if (typeof value === "string") {
+    return value.trim() ? "non_numeric_string" : "empty_string";
+  }
+  return typeof value;
+}
+
+function summarizeConditionResultFailureEvidence(metrics: Record<string, unknown>): string[] {
+  const study = asRecord(metrics.study);
+  const studySummary = asRecord(metrics.study_summary);
+  const conditionRows = [
+    ...collectConditionRows(metrics.condition_results),
+    ...collectConditionRows(metrics.conditions),
+    ...collectConditionRows(study.condition_results),
+    ...collectConditionRows(study.conditions),
+    ...collectConditionRows(studySummary.condition_results),
+    ...collectConditionRows(studySummary.conditions)
+  ];
+  if (conditionRows.length === 0) {
+    return [];
+  }
+
+  const statusCounts = new Map<string, number>();
+  const reasonCounts = new Map<string, number>();
+  const sampleFailures: string[] = [];
+  for (const row of conditionRows) {
+    const status = normalizeConditionResultStatus(row);
+    statusCounts.set(status, (statusCounts.get(status) || 0) + 1);
+    if (isCompletedConditionStatus(status)) {
+      continue;
+    }
+    const reason = conditionResultReason(row);
+    if (reason) {
+      reasonCounts.set(reason, (reasonCounts.get(reason) || 0) + 1);
+    }
+    if (sampleFailures.length < 2) {
+      const id =
+        asString(row.condition_marker) ||
+        asString(row.marker) ||
+        asString(row.condition_id) ||
+        asString(row.condition) ||
+        asString(row.name);
+      const sample = [
+        id ? trimShort(id, 80) : "unlabeled_condition",
+        `status=${status}`,
+        reason ? `reason=${trimShort(reason, 120)}` : undefined
+      ].filter((part): part is string => Boolean(part)).join(",");
+      sampleFailures.push(sample);
+    }
+  }
+
+  const parts = [`condition_result_statuses=${formatCountMap(statusCounts, 6)}`];
+  const formattedReasons = formatCountMap(reasonCounts, 4);
+  if (formattedReasons) {
+    parts.push(`condition_result_reasons=${formattedReasons}`);
+  }
+  if (sampleFailures.length > 0) {
+    parts.push(`condition_result_samples=${sampleFailures.join(" | ")}`);
+  }
+  return parts;
+}
+
+function normalizeConditionResultStatus(row: Record<string, unknown>): string {
+  const explicitStatus = asString(row.status)?.toLowerCase();
+  if (explicitStatus) {
+    return explicitStatus.replace(/\s+/gu, "_");
+  }
+  if (row.success === true || row.completed === true) {
+    return "completed";
+  }
+  if (row.success === false || row.completed === false) {
+    return "failed";
+  }
+  return "unknown";
+}
+
+function isCompletedConditionStatus(status: string): boolean {
+  return ["completed", "complete", "success", "succeeded", "ok", "passed"].includes(status);
+}
+
+function conditionResultReason(row: Record<string, unknown>): string | undefined {
+  const errorRecord = asRecord(row.error);
+  const reason =
+    asString(row.reason) ||
+    asString(row.failure_reason) ||
+    asString(row.error_message) ||
+    asString(row.message) ||
+    asString(errorRecord.message) ||
+    asString(errorRecord.error) ||
+    (typeof row.error === "string" ? row.error : undefined);
+  return reason ? trimShort(reason, 160) : undefined;
+}
+
+function formatCountMap(counts: Map<string, number>, limit: number): string {
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, limit)
+    .map(([key, count]) => `${trimShort(key, 80)}:${count}`)
+    .join(",");
 }
 
 function summarizeSeedFailureMessages(metrics: Record<string, unknown>): string[] {
