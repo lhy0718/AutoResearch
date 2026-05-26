@@ -12190,6 +12190,13 @@ function isOptionalBootstrapPythonModuleCheck(
   ]
     .join(" ")
     .toLowerCase();
+  if (
+    ["sklearn", "scikit_learn", "scikit-learn"].includes(target) &&
+    /\b(?:accuracy|metric|metrics|scoring|score|evaluation_metrics)\b/u.test(text)
+  ) {
+    return true;
+  }
+
   return (
     /\b(optional|if used|when used|only if used|useful for|nice-to-have|non-blocking)\b/u.test(text) ||
     /\b(?:if|when)\s+(?:the\s+)?(?:selected|fallback|chosen|configured|active|runtime)\b/u.test(text)

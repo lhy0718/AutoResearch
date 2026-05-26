@@ -11380,6 +11380,44 @@ describe("ImplementSessionManager", () => {
     expect(result.missing).toEqual([]);
   });
 
+  it("does not hard-block staged bootstrap planning on sklearn when only accuracy scoring needs it", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-bootstrap-sklearn-accuracy-"));
+    tempDirs.push(workspace);
+
+    const result = await evaluateImplementBootstrapContract({
+      workspaceRoot: workspace,
+      contract: {
+        version: 1,
+        summary: "Accuracy scoring can be implemented without an external metric helper.",
+        requires_network: false,
+        requires_warm_cache: false,
+        blocking_reason: "",
+        remediation: [],
+        requirements: [
+          {
+            id: "scikit-learn",
+            kind: "library",
+            source: "python",
+            required_for: ["evaluation_metrics"],
+            availability: "unknown",
+            summary: "scikit-learn is used for accuracy scoring."
+          }
+        ],
+        checks: [
+          {
+            id: "module-sklearn",
+            check_type: "python_module_available",
+            target: "sklearn",
+            reason: "Required for accuracy computation."
+          }
+        ]
+      }
+    });
+
+    expect(result.status).toBe("pass");
+    expect(result.missing).toEqual([]);
+  });
+
   it("blocks staged bootstrap planning when a declared Python module check fails", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-bootstrap-python-module-fail-"));
     tempDirs.push(workspace);
