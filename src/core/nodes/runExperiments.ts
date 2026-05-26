@@ -1728,25 +1728,29 @@ function summarizeMetricsFailureEvidence(metrics: Record<string, unknown>): stri
 
 function summarizeMetricsErrorMessages(metrics: Record<string, unknown>): string[] {
   const messages: string[] = [];
+  const addMessage = (value: unknown) => {
+    if (messages.length >= 3) {
+      return;
+    }
+    const text = asString(value);
+    if (!text) {
+      return;
+    }
+    const summary = trimShort(text, 220);
+    if (!messages.includes(summary)) {
+      messages.push(summary);
+    }
+  };
   const addMessages = (value: unknown) => {
     if (!Array.isArray(value)) {
       return;
     }
     for (const item of value) {
-      if (messages.length >= 3) {
-        return;
-      }
-      const text = asString(item);
-      if (!text) {
-        continue;
-      }
-      const summary = trimShort(text, 220);
-      if (!messages.includes(summary)) {
-        messages.push(summary);
-      }
+      addMessage(item);
     }
   };
 
+  addMessage(metrics.error_message);
   addMessages(metrics.error_messages);
   addMessages(asRecord(metrics.baseline_summary)?.error_messages);
   const conditionSummaries = Array.isArray(metrics.condition_summaries) ? metrics.condition_summaries : [];
@@ -1754,7 +1758,16 @@ function summarizeMetricsErrorMessages(metrics: Record<string, unknown>): string
     if (messages.length >= 3) {
       break;
     }
-    addMessages(asRecord(conditionSummary)?.error_messages);
+    const condition = asRecord(conditionSummary);
+    addMessage(condition.error_message);
+    addMessages(condition.error_messages);
+  }
+  const backendAttempts = collectConditionRows(asRecord(metrics.backend).attempts);
+  for (const attempt of backendAttempts) {
+    if (messages.length >= 3) {
+      break;
+    }
+    addMessage(attempt.error);
   }
 
   return messages;
@@ -1927,6 +1940,17 @@ function formatCountMap(counts: Map<string, number>, limit: number): string {
 function summarizeSeedFailureMessages(metrics: Record<string, unknown>): string[] {
   const study = asRecord(metrics.study);
   const studySummary = asRecord(metrics.study_summary);
+  const conditionSummaries = [
+    ...collectConditionRows(metrics.condition_summaries),
+    ...collectConditionRows(study.condition_summaries),
+    ...collectConditionRows(studySummary.condition_summaries)
+  ];
+  const nestedSeedRows = conditionSummaries.flatMap((row) => [
+    ...collectConditionRows(row.seed_results),
+    ...collectConditionRows(row.seed_rows),
+    ...collectConditionRows(row.raw_seed_results),
+    ...collectConditionRows(row.results)
+  ]);
   const seedRows = [
     ...collectConditionRows(metrics.seed_results),
     ...collectConditionRows(metrics.per_seed_rows),
@@ -1934,9 +1958,11 @@ function summarizeSeedFailureMessages(metrics: Record<string, unknown>): string[
     ...collectConditionRows(metrics.condition_seed_rows),
     ...collectConditionRows(metrics.per_run_results),
     ...collectConditionRows(metrics.run_results),
+    ...collectConditionRows(metrics.raw_results),
     ...collectConditionRows(study.seed_results),
     ...collectConditionRows(study.per_seed_rows),
-    ...collectConditionRows(studySummary.seed_results)
+    ...collectConditionRows(studySummary.seed_results),
+    ...nestedSeedRows
   ];
   const counts = new Map<string, number>();
   for (const row of seedRows) {

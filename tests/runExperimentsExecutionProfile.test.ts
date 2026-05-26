@@ -2645,6 +2645,118 @@ describe("run_experiments execution profile behavior", () => {
     expect(verifierReport.summary).toContain("seed_failure_messages=RuntimeError: stage=execution");
   });
 
+  it("surfaces nested backend discovery failures from rejected metrics payloads", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-nested-backend-failure-"));
+    process.chdir(root);
+    const run = makeRun("run-nested-backend-failure");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+
+    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
+    await runContext.put("implement_experiments.cwd", root);
+    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+
+    const node = createRunExperimentsNode({
+      config: {} as any,
+      executionProfile: "local",
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      experimentLlm: new MockLLMClient(),
+      pdfTextLlm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {
+        runCommand: async () => {
+          await writeFile(
+            path.join(runDir, "metrics.json"),
+            JSON.stringify(
+              {
+                status: "failed",
+                primary_metric: {
+                  key: "accuracy_delta_vs_baseline",
+                  value: null
+                },
+                aggregates: {
+                  completed_run_count: 0,
+                  failed_run_count: 2
+                },
+                backend: {
+                  status: "not_found",
+                  attempts: [
+                    {
+                      candidate: "backend_candidate_a",
+                      error: "ModuleNotFoundError: No module named backend_candidate_a",
+                      status: "failed"
+                    }
+                  ]
+                },
+                raw_results: [
+                  {
+                    condition_marker: "baseline_condition",
+                    status: "failed",
+                    error_message: "No supported backend module discovered: not_found"
+                  }
+                ],
+                condition_summaries: [
+                  {
+                    marker: "baseline_condition",
+                    completed_run_count: 0,
+                    status: "failed",
+                    seed_results: [
+                      {
+                        seed: 1,
+                        status: "failed",
+                        error_message: "No supported backend module discovered: not_found"
+                      }
+                    ]
+                  }
+                ]
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return {
+            status: "ok" as const,
+            stdout: "runner wrote failed metrics payload",
+            stderr: "",
+            exit_code: 0,
+            duration_ms: 10
+          };
+        },
+        runTests: async () => ({
+          status: "ok" as const,
+          stdout: "",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: 1
+        })
+      } as any,
+      semanticScholar: {} as any,
+      openAlex: {} as any,
+      crossref: {} as any,
+      arxiv: {} as any,
+      responsesPdfAnalysis: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("No supported backend module discovered: not_found");
+
+    const verifierReport = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
+    ) as { status: string; stage: string; summary: string };
+    expect(verifierReport).toMatchObject({
+      status: "fail",
+      stage: "metrics"
+    });
+    expect(verifierReport.summary).toContain("metrics_error_messages=ModuleNotFoundError");
+    expect(verifierReport.summary).toContain("seed_failure_messages=No supported backend module discovered: not_found");
+  });
+
   it("fails verification when planned run coverage is contracted below the portfolio evidence floor", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-contracted-coverage-"));
     process.chdir(root);
