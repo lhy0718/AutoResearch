@@ -1688,6 +1688,11 @@ function summarizeMetricsFailureEvidence(metrics: Record<string, unknown>): stri
     parts.push(`metrics_error=${trimShort(errorText, 220)}`);
   }
 
+  const evidenceMessages = summarizeMetricsEvidenceRecords(metrics);
+  if (evidenceMessages.length > 0) {
+    parts.push(`metrics_evidence=${evidenceMessages.join(" | ")}`);
+  }
+
   const seedFailureMessages = summarizeSeedFailureMessages(metrics);
   if (seedFailureMessages.length > 0) {
     parts.push(`seed_failure_messages=${seedFailureMessages.join(" | ")}`);
@@ -1714,6 +1719,35 @@ function summarizeMetricsFailureEvidence(metrics: Record<string, unknown>): stri
   }
 
   return parts.length > 0 ? `Metrics evidence: ${parts.join("; ")}.` : "";
+}
+
+function summarizeMetricsEvidenceRecords(metrics: Record<string, unknown>): string[] {
+  const evidence = Array.isArray(metrics.evidence) ? metrics.evidence : [];
+  const summaries: string[] = [];
+  for (const item of evidence) {
+    if (summaries.length >= 2) {
+      break;
+    }
+    const record = asRecord(item);
+    if (!record) {
+      continue;
+    }
+    const kind = asString(record.kind) || asString(record.type);
+    const message =
+      asString(record.message) ||
+      asString(record.error) ||
+      asString(asRecord(record.error)?.message);
+    const tracebackTail = tracebackLastLine(asString(record.traceback));
+    const summary = [
+      kind ? trimShort(kind, 80) : undefined,
+      message ? trimShort(message, 220) : undefined,
+      tracebackTail && tracebackTail !== message ? trimShort(tracebackTail, 220) : undefined
+    ].filter((part): part is string => Boolean(part)).join(": ");
+    if (summary) {
+      summaries.push(summary);
+    }
+  }
+  return summaries;
 }
 
 function summarizePrimaryMetricValueEvidence(metrics: Record<string, unknown>): string[] {

@@ -571,6 +571,13 @@ describe("run_experiments execution profile behavior", () => {
                   { condition_id: "baseline_condition", status: "missing", reason: "ok_without_condition_records" },
                   { condition_id: "candidate_condition_a", status: "missing", reason: "ok_without_condition_records" }
                 ],
+                evidence: [
+                  {
+                    kind: "orchestration_exception",
+                    message: "Could not resolve run-plan construction helper from the current module state.",
+                    traceback: "RuntimeError: Could not resolve run-plan construction helper from the current module state."
+                  }
+                ],
                 error: {
                   type: "AttributeError",
                   message: "'dict' object has no attribute 'baseline_run'"
@@ -615,6 +622,8 @@ describe("run_experiments execution profile behavior", () => {
     expect(result.error).toContain("missing_required_condition_markers=baseline_condition,candidate_condition_a");
     expect(result.error).toContain("_build_model_load_kwargs()");
     expect(result.error).toContain("local_files_only");
+    expect(result.error).toContain("metrics_evidence=orchestration_exception");
+    expect(result.error).toContain("run-plan construction helper");
     expect(result.error).toContain("'dict' object has no attribute 'baseline_run'");
 
     const verifierReport = JSON.parse(
@@ -628,6 +637,8 @@ describe("run_experiments execution profile behavior", () => {
     expect(verifierReport.summary).toContain("primary_metric_value=quality_delta:null");
     expect(verifierReport.summary).toContain("condition_result_statuses=missing:2");
     expect(verifierReport.summary).toContain("metrics_error=AttributeError");
+    expect(verifierReport.summary).toContain("metrics_evidence=orchestration_exception");
+    expect(verifierReport.summary).toContain("run-plan construction helper");
 
     const feedback = await runContext.get<{ status: string; stage: string; summary: string }>(
       "implement_experiments.runner_feedback"
@@ -640,6 +651,7 @@ describe("run_experiments execution profile behavior", () => {
     expect(feedback?.summary).toContain("observed_condition_count=31");
     expect(feedback?.summary).toContain("_build_model_load_kwargs()");
     expect(feedback?.summary).toContain("baseline_run");
+    expect(feedback?.summary).toContain("run-plan construction helper");
   });
 
   it("restores the previous canonical metrics when a rejected rerun writes failed metrics", async () => {
