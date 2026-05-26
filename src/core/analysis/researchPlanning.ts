@@ -178,6 +178,7 @@ export interface DesignRetryContext {
   previous_primary_metric_value?: number;
   previous_baseline_name?: string;
   previous_objective_status?: string;
+  implementation_failure?: string;
   transition_action?: string;
   transition_reason?: string;
   transition_evidence?: string[];
@@ -2004,33 +2005,36 @@ function buildFallbackDesigns(
       : [{ hypothesis_id: "h_1", text: "Baseline hypothesis placeholder." }];
   const candidates = base.map((hypothesis, index) => {
     const guidance = buildHypothesisDesignGuidance(hypothesis, objectiveProfile);
-    const retryNotes = retryContext?.retry_directives ?? [];
+    const retryNotes = buildFallbackRetryImplementationNotes(retryContext);
     const retrySummary = buildRetrySummary(retryContext, objectiveMetric);
     return {
       id: `plan_${index + 1}`,
       title: `Plan ${index + 1}: ${truncateText(hypothesis.text, 72)}`,
       hypothesis_ids: [hypothesis.hypothesis_id],
       plan_summary: `Test ${hypothesis.text} against configured baselines and evaluate with ${objectiveMetric || "the run objective metric"}.${retrySummary ? ` ${retrySummary}` : ""}`,
-      datasets:
-        (constraintProfile.collect.fieldsOfStudy?.length ?? 0) > 0
-          ? [...(constraintProfile.collect.fieldsOfStudy || [])]
-          : ["dataset_to_be_selected"],
+      datasets: buildFallbackDatasets(constraintProfile),
       metrics: dedupeStrings([objectiveMetric || "primary_metric", ...guidance.metrics]),
-      baselines: dedupeStrings(["current_best_baseline", ...guidance.baselines]),
+      baselines: buildFallbackBaselines(guidance, retryContext),
       implementation_notes: [
         ...constraintProfile.experiment.implementationNotes,
         ...guidance.implementationNotes,
         ...retryNotes,
-        "Keep the implementation minimal and reproducible."
+        "Keep the implementation minimal and reproducible.",
+        "Implement the smallest executable condition-sweep contract first: tiny entrypoint, helper module, metrics payload writer, then scale only after local payload validation passes.",
+        "Do not materialize a monolithic generated runner; keep condition execution, metric aggregation, and result writing as separate auditable units.",
+        "Final generated scripts must not contain placeholders, section skeleton markers, or unimplemented stubs.",
+        "The metrics payload must include primary_metric_name, numeric primary_metric_value for completed runs, completed_run_count, completed_condition_count, failure_count, baseline/comparator rows, and an explicit missing-evidence failure when no run completes."
       ],
       evaluation_steps: [
         ...constraintProfile.experiment.evaluationNotes,
         ...guidance.evaluationSteps,
         ...buildRetryEvaluationSteps(retryContext),
+        "Validate the metrics payload contract before handing off to the execution node.",
         "Compare the hypothesis-driven change against the baseline."
       ],
       risks: dedupeStrings([
         "Specification may be underspecified and require narrower scope.",
+        "Fallback design was used because automated design generation did not return a trusted structured plan; approval should verify executable scope before implementation.",
         ...(retryContext?.transition_evidence?.slice(0, 2) ?? [])
       ]),
       resource_notes: dedupeStrings([
@@ -2041,6 +2045,46 @@ function buildFallbackDesigns(
   });
   const selected = candidates[0]!;
   return { candidates, selected };
+}
+
+function buildFallbackDatasets(constraintProfile: ConstraintProfile): string[] {
+  if ((constraintProfile.collect.fieldsOfStudy?.length ?? 0) > 0) {
+    return [...(constraintProfile.collect.fieldsOfStudy || [])];
+  }
+  if (constraintProfile.experiment.evaluationNotes.length > 0) {
+    return dedupeStrings(constraintProfile.experiment.evaluationNotes.slice(0, 3));
+  }
+  return ["configured_task_or_dataset"];
+}
+
+function buildFallbackBaselines(
+  guidance: DesignGuidance,
+  retryContext: DesignRetryContext | undefined
+): string[] {
+  const baselines = [
+    retryContext?.previous_baseline_name,
+    ...guidance.baselines.filter((baseline) => baseline !== "current_best_baseline"),
+    "locked_baseline",
+    "unmodified_system_baseline"
+  ].filter((baseline): baseline is string => Boolean(baseline?.trim()));
+  return dedupeStrings(baselines);
+}
+
+function buildFallbackRetryImplementationNotes(retryContext: DesignRetryContext | undefined): string[] {
+  if (!retryContext) {
+    return [];
+  }
+  const notes = [...retryContext.retry_directives];
+  const failure = retryContext.implementation_failure || "";
+  if (failure) {
+    notes.push(`Previous implementation failure to repair: ${truncateText(failure, 180)}.`);
+  }
+  if (/before any runnable implementation|terminated|materiali[sz]ation|placeholder|skeleton/iu.test(failure)) {
+    notes.push(
+      "Repair the implementation contract before expanding scope: produce one runnable minimal branch, verify artifacts, then add repeated conditions."
+    );
+  }
+  return dedupeStrings(notes);
 }
 
 function buildRetrySummary(retryContext: DesignRetryContext | undefined, objectiveMetric: string): string {

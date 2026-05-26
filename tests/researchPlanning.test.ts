@@ -1152,6 +1152,65 @@ describe("researchPlanning helpers", () => {
     );
   });
 
+  it("keeps fallback experiment designs executable after implementation handoff failures", async () => {
+    const result = await designExperimentsFromHypotheses({
+      llm: new HangingLLMClient(),
+      runTitle: "Budget-aware reasoning",
+      runTopic: "Budget-aware reasoning",
+      objectiveMetric: "accuracy_delta_vs_baseline",
+      hypotheses: [
+        {
+          hypothesis_id: "h_1",
+          text: "A compact condition sweep improves budget-aware reasoning quality.",
+          measurement_hint: "Compare treatment and baseline across repeated bounded runs."
+        }
+      ],
+      constraintProfile: {
+        source: "heuristic_fallback",
+        raw: [],
+        collect: {},
+        writing: {},
+        experiment: {
+          designNotes: [],
+          implementationNotes: [],
+          evaluationNotes: []
+        },
+        assumptions: []
+      },
+      objectiveProfile: {
+        source: "heuristic_fallback",
+        raw: "accuracy_delta_vs_baseline",
+        primaryMetric: "accuracy_delta_vs_baseline",
+        preferredMetricKeys: ["accuracy_delta_vs_baseline"],
+        analysisFocus: [],
+        paperEmphasis: [],
+        assumptions: []
+      },
+      retryContext: {
+        previous_primary_metric_name: "accuracy_delta_vs_baseline",
+        previous_baseline_name: "locked_control",
+        previous_objective_status: "not_met",
+        implementation_failure: "Implementation execution failed before any runnable implementation was produced: terminated",
+        transition_action: "backtrack_to_design",
+        retry_directives: [
+          "Keep the explicit comparator discipline and preserve the locked baselines unless there is direct evidence to replace them."
+        ]
+      },
+      timeoutMs: 5
+    });
+
+    expect(result.source).toBe("fallback");
+    expect(result.selected.datasets).toEqual(["configured_task_or_dataset"]);
+    expect(result.selected.baselines).toEqual(["locked_control", "locked_baseline", "unmodified_system_baseline"]);
+    expect(result.selected.implementation_notes).toContain(
+      "Repair the implementation contract before expanding scope: produce one runnable minimal branch, verify artifacts, then add repeated conditions."
+    );
+    expect(result.selected.implementation_notes.some((note) => note.includes("metrics payload"))).toBe(true);
+    expect(result.selected.evaluation_steps).toContain(
+      "Validate the metrics payload contract before handing off to the execution node."
+    );
+  });
+
   it("aborts the in-flight experiment design completion when the timeout fires", async () => {
     const llm = new AbortAwareHangingLLMClient();
 

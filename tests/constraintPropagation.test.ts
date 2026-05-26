@@ -593,6 +593,25 @@ describe("constraint propagation", () => {
       "utf8"
     );
 
+    await writeFile(
+      path.join(runDir, "run_record.json"),
+      JSON.stringify(
+        {
+          graph: {
+            nodeStates: {
+              implement_experiments: {
+                status: "failed",
+                lastError: "Implementation execution failed before any runnable implementation was produced: terminated"
+              }
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
     const node = createDesignExperimentsNode({
       config: {} as any,
       runStore: {} as any,
@@ -612,16 +631,21 @@ describe("constraint propagation", () => {
       previous_pilot_size?: number;
       previous_repeats?: number;
       transition_action?: string;
+      implementation_failure?: string;
       retry_directives?: string[];
     };
     expect(retryContext).toMatchObject({
       previous_pilot_size: 1,
       previous_repeats: 1,
-      transition_action: "backtrack_to_design"
+      transition_action: "backtrack_to_design",
+      implementation_failure: "Implementation execution failed before any runnable implementation was produced: terminated"
     });
     expect(retryContext.retry_directives).toContain("Do not repeat a bounded-local design with pilot_size=1 and repeats=1.");
     expect(retryContext.retry_directives).toContain(
       "Use at least tens of examples and repeated runs in the next bounded local pilot if the workstation budget allows it."
+    );
+    expect(retryContext.retry_directives).toContain(
+      "Repair the failed implementation handoff before broadening the experiment: require a tiny executable entrypoint, helper-module decomposition, and metrics-payload validation before repeated-condition expansion."
     );
 
     const plan = await readFile(path.join(runDir, "experiment_plan.yaml"), "utf8");
@@ -631,13 +655,16 @@ describe("constraint propagation", () => {
     expect(plan).toContain('transition_action: "backtrack_to_design"');
     expect(plan).toContain('  - "Do not repeat a bounded-local design with pilot_size=1 and repeats=1."');
     expect(plan).toContain('  - "Use at least tens of examples and repeated runs in the next bounded local pilot if the workstation budget allows it."');
+    expect(plan).toContain('implementation_failure: "Implementation execution failed before any runnable implementation was produced: terminated"');
+    expect(plan).toContain('tiny executable entrypoint, helper-module decomposition, and metrics-payload validation');
     expect(plan).toContain('  - "The next bounded local retry must materially exceed the previous scope (pilot_size=1, repeats=1) while staying locally runnable."');
 
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);
     expect(await memory.get("design_experiments.retry_context")).toMatchObject({
       previous_pilot_size: 1,
       previous_repeats: 1,
-      transition_action: "backtrack_to_design"
+      transition_action: "backtrack_to_design",
+      implementation_failure: "Implementation execution failed before any runnable implementation was produced: terminated"
     });
   });
 

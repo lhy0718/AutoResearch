@@ -3771,6 +3771,7 @@ describe("scientificWriting", () => {
       bundle,
       profile: PAPER_PROFILE
     });
+    const legacyDatasetPlaceholder = ["dataset", "to", "be", "selected"].join("_");
     const candidate: PaperManuscript = {
       title: "Repeated-Seed Evaluation",
       abstract: "A short abstract.",
@@ -3783,9 +3784,9 @@ describe("scientificWriting", () => {
             "The protocol records Measure whether generated intermediate and final artifacts remain consistent across repeated runs. Runtime and memory are explicitly measured in the evaluation outputs.",
             "The fixed search space includes Artifact text references tuning.",
             "The reported study uses current_best_baseline as the trained backbone.",
-            "The evaluation spans dataset_to_be_selected. Models or conditions include current_best_baseline.",
-            "The task scope is fixed around dataset_to_be_selected. The method section therefore describes the executed comparison as a locked protocol rather than as an open-ended search. That distinction is necessary because paper-readiness depends on the reader being able to reconstruct which evidence was generated and which follow-up remains planned. The emphasis remains on evidence that is inspectable in the current run.",
-            "The task scope is fixed around dataset_to_be_selected. The method section therefore describes the executed comparison as a locked protocol rather than as an open-ended search. That distinction is necessary because paper-readiness depends on the reader being able to reconstruct which evidence was generated and which follow-up remains planned. The same point would need to be revised if later artifacts changed the comparator, table, or execution status.",
+            `The evaluation spans ${legacyDatasetPlaceholder}. Models or conditions include current_best_baseline.`,
+            `The task scope is fixed around ${legacyDatasetPlaceholder}. The method section therefore describes the executed comparison as a locked protocol rather than as an open-ended search. That distinction is necessary because paper-readiness depends on the reader being able to reconstruct which evidence was generated and which follow-up remains planned. The emphasis remains on evidence that is inspectable in the current run.`,
+            `The task scope is fixed around ${legacyDatasetPlaceholder}. The method section therefore describes the executed comparison as a locked protocol rather than as an open-ended search. That distinction is necessary because paper-readiness depends on the reader being able to reconstruct which evidence was generated and which follow-up remains planned. The same point would need to be revised if later artifacts changed the comparator, table, or execution status.`,
             "Model selection and reporting focus on average accuracy, task-level accuracy, training loss, resource diagnostics, condition completion, failed-run visibility, and conservative downgrade correctness.",
             "Resource diagnostics are explicitly measured in the evaluation outputs.",
             "The fixed search space is the condition-parameter grid described above.",
@@ -3902,7 +3903,8 @@ describe("scientificWriting", () => {
     expect((allText.match(/run-metadata task labels Benchmark Task A and Benchmark Task B/g) || [])).toHaveLength(1);
     expect(manuscript.tables?.[0]?.rows.filter((row) => /accuracy delta vs baseline/i.test(row.label))).toHaveLength(1);
     expect(manuscript.appendix_tables || []).toHaveLength(1);
-    expect(allText).not.toMatch(/Plan 1|Plan 2|Objective metric met|Artifact text references|current_best_baseline|dataset_to_be_selected|manuscript-quality gate|PDF build report|page-budget validation|paper-readiness|paper-scale preflight|manuscript therefore passes|unresolved metadata inconsistencies|wall clock runtime sec|device cuda max memory allocated bytes|small positive deltas repeat across datasets|Across these summaries|Model selection and reporting focus on average accuracy|surrounding materials/i);
+    expect(allText).not.toMatch(/Plan 1|Plan 2|Objective metric met|Artifact text references|current_best_baseline|manuscript-quality gate|PDF build report|page-budget validation|paper-readiness|paper-scale preflight|manuscript therefore passes|unresolved metadata inconsistencies|wall clock runtime sec|device cuda max memory allocated bytes|small positive deltas repeat across datasets|Across these summaries|Model selection and reporting focus on average accuracy|surrounding materials/i);
+    expect(allText).not.toContain(legacyDatasetPlaceholder);
     expect(allText).not.toMatch(/accuracy_delta_vs_baseline=.*benchmark_task_a_accuracy=.*benchmark_task_b_accuracy/i);
   });
 

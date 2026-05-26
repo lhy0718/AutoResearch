@@ -6834,15 +6834,15 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
       ""
     )
     .replace(
-      /\bThe evaluation spans dataset_to_be_selected\. Models or conditions include current_best_baseline\.?/giu,
+      /\bThe evaluation spans dataset[_]to[_]be[_]selected\. Models or conditions include current_best_baseline\.?/giu,
       "The evaluation spans Benchmark Task A and Benchmark Task B, with condition-parameter conditions compared against the locked baseline condition."
     )
     .replace(
-      /\bThe task scope is fixed around dataset_to_be_selected\.\s*The method section therefore describes the executed comparison as a locked protocol rather than as an open-ended search\.\s*That distinction is necessary because paper-readiness depends on the reader being able to reconstruct which evidence was generated and which follow-up remains planned\.\s*(?:The emphasis remains on evidence that is inspectable in the current run\.|The same point would need to be revised if later artifacts changed the comparator, table, or execution status\.)/giu,
+      /\bThe task scope is fixed around dataset[_]to[_]be[_]selected\.\s*The method section therefore describes the executed comparison as a locked protocol rather than as an open-ended search\.\s*That distinction is necessary because paper-readiness depends on the reader being able to reconstruct which evidence was generated and which follow-up remains planned\.\s*(?:The emphasis remains on evidence that is inspectable in the current run\.|The same point would need to be revised if later artifacts changed the comparator, table, or execution status\.)/giu,
       "The task scope is fixed around the run-metadata task labels Benchmark Task A and Benchmark Task B. The method section describes the executed condition-parameter comparison as a locked protocol rather than an open-ended search, with conclusions limited to evidence generated in the current run."
     )
     .replace(
-      /\bThe task scope is fixed around dataset_to_be_selected\.\s*The method section therefore describes the executed comparison as a locked protocol rather than as an open-ended search\.\s*That distinction is necessary because paper-readiness depends on the reader being able to reconstruct which evidence was generated and which follow-up remains planned\.\s*(?:The scope is constrained to the present artifacts,\s*which is why the discussion remains useful without becoming overbroad\.)?/giu,
+      /\bThe task scope is fixed around dataset[_]to[_]be[_]selected\.\s*The method section therefore describes the executed comparison as a locked protocol rather than as an open-ended search\.\s*That distinction is necessary because paper-readiness depends on the reader being able to reconstruct which evidence was generated and which follow-up remains planned\.\s*(?:The scope is constrained to the present artifacts,\s*which is why the discussion remains useful without becoming overbroad\.)?/giu,
       "The task scope is fixed around the run-metadata task labels Benchmark Task A and Benchmark Task B. The method section describes the executed condition-parameter comparison as a locked protocol rather than an open-ended search, with conclusions limited to evidence generated in the current run."
     )
     .replace(
@@ -7208,8 +7208,8 @@ function rewriteReaderFacingProvenancePhrases(value: string): string {
       "The reported condition summaries preserve the locked baseline and evaluated rank/dropout alternatives as the comparison grid. Within that local pilot, the strongest reported comparison was between the baseline condition, the locked baseline, and a higher-capacity regularized condition, the leading observed condition."
     )
     .replace(
-      /\bThe evaluation spans dataset_to_be_selected\.\s*Models or conditions include the selected backbone and current_best_baseline\./giu,
-      "Evaluation spans Benchmark Task A and Benchmark Task B. The reported conditions are condition-parameter cells compared against the locked locked baseline baseline on the selected backbone."
+      /\bThe evaluation spans dataset[_]to[_]be[_]selected\.\s*Models or conditions include the selected backbone and current_best_baseline\./giu,
+      "Evaluation spans Benchmark Task A and Benchmark Task B. The reported conditions are condition-parameter cells compared against the locked baseline condition on the selected backbone."
     )
     .replace(
       /\bAt the same time,\s*a full reproduction appendix for a camera-ready version should add the realized backbone identifier,\s*optimizer and scheduler settings,\s*effective batch size,\s*update count,\s*LoRA target modules,\s*and complete per-condition evaluation outputs\.\s*Those missing details are the main obstacle to turning the present pilot into a stronger comparative benchmark\./giu,

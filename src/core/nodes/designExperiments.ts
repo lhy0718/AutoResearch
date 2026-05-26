@@ -687,6 +687,7 @@ function buildPlanYaml(args: {
             previous_primary_metric_value: args.retryContext.previous_primary_metric_value,
             previous_baseline_name: args.retryContext.previous_baseline_name,
             previous_objective_status: args.retryContext.previous_objective_status,
+            implementation_failure: args.retryContext.implementation_failure,
             transition_action: args.retryContext.transition_action,
             transition_reason: args.retryContext.transition_reason
           },
@@ -823,16 +824,18 @@ function renderShortlistedDesigns(candidates: ExperimentDesignCandidate[]): stri
 
 async function loadDesignRetryContext(runId: string): Promise<DesignRetryContext | undefined> {
   const runDir = path.join(".autolabos", "runs", runId);
-  const [resultRaw, transitionRaw] = await Promise.all([
+  const [resultRaw, transitionRaw, runRecordRaw] = await Promise.all([
     safeRead(path.join(runDir, "result_analysis.json")),
-    safeRead(path.join(runDir, "transition_recommendation.json"))
+    safeRead(path.join(runDir, "transition_recommendation.json")),
+    safeRead(path.join(runDir, "run_record.json"))
   ]);
-  if (!resultRaw && !transitionRaw) {
+  if (!resultRaw && !transitionRaw && !runRecordRaw) {
     return undefined;
   }
 
   const resultAnalysis = parseJsonRecord(resultRaw);
   const transition = parseJsonRecord(transitionRaw);
+  const runRecord = parseJsonRecord(runRecordRaw);
   const transitionAction = stringValue(transition?.action);
   const transitionTarget = stringValue(transition?.targetNode);
   if (transitionAction && transitionAction !== "backtrack_to_design" && transitionTarget && transitionTarget !== "design_experiments") {
@@ -846,6 +849,9 @@ async function loadDesignRetryContext(runId: string): Promise<DesignRetryContext
   const objectiveEvaluation = recordValue(objectiveMetric?.evaluation);
   const planContext = recordValue(resultAnalysis?.plan_context);
   const selectedDesign = recordValue(planContext?.selected_design);
+  const nodeStates = recordValue(recordValue(runRecord?.graph)?.nodeStates);
+  const implementationNode = recordValue(nodeStates?.implement_experiments);
+  const implementationFailure = stringValue(implementationNode?.lastError) || stringValue(implementationNode?.note);
 
   const context: DesignRetryContext = {
     previous_selected_design_title: stringValue(selectedDesign?.title),
@@ -857,6 +863,7 @@ async function loadDesignRetryContext(runId: string): Promise<DesignRetryContext
     previous_primary_metric_value: numberValue(primaryMetric?.value),
     previous_baseline_name: stringValue(primaryMetric?.baseline_name),
     previous_objective_status: stringValue(objectiveEvaluation?.status) || inferObjectiveStatus(primaryMetric?.value),
+    implementation_failure: stringValue(implementationNode?.status) === "failed" ? implementationFailure : undefined,
     transition_action: transitionAction,
     transition_reason: stringValue(transition?.reason),
     transition_evidence: stringArrayValue(transition?.evidence),
@@ -867,7 +874,8 @@ async function loadDesignRetryContext(runId: string): Promise<DesignRetryContext
       registeredRepeats: numberValue(scope?.registered_repeats),
       previousPrimaryMetricName: stringValue(primaryMetric?.name),
       previousPrimaryMetricValue: numberValue(primaryMetric?.value),
-      previousBaselineName: stringValue(primaryMetric?.baseline_name)
+      previousBaselineName: stringValue(primaryMetric?.baseline_name),
+      implementationFailure: stringValue(implementationNode?.status) === "failed" ? implementationFailure : undefined
     })
   };
 
@@ -884,6 +892,7 @@ function buildRetryDirectives(args: {
   previousPrimaryMetricName?: string;
   previousPrimaryMetricValue?: number;
   previousBaselineName?: string;
+  implementationFailure?: string;
 }): string[] {
   const directives: string[] = [];
   if (
@@ -909,6 +918,9 @@ function buildRetryDirectives(args: {
     directives.push(
       `Revise the treatment or stopping policy because the previous ${args.previousPrimaryMetricName || "primary metric"} did not improve over ${args.previousBaselineName || "the locked baseline"}.`
     );
+  }
+  if (args.implementationFailure) {
+    directives.push("Repair the failed implementation handoff before broadening the experiment: require a tiny executable entrypoint, helper-module decomposition, and metrics-payload validation before repeated-condition expansion.");
   }
   directives.push("Keep the explicit comparator discipline and preserve the locked baselines unless there is direct evidence to replace them.");
   return uniqueStrings(directives);
