@@ -11830,6 +11830,14 @@ describe("ImplementSessionManager", () => {
                     include_entrypoint: false
                   },
                   {
+                    id: "chunk_contract",
+                    title: "Immutable model, baseline, seed, and marker contract constants",
+                    purpose: "Implement model identity, condition markers, baseline contract, seed schedule, and run-plan validation constants.",
+                    content_kind: "code_section",
+                    include_imports: false,
+                    include_entrypoint: false
+                  },
+                  {
                     id: "chunk_entrypoint",
                     title: "Entrypoint",
                     purpose: "Implement reporting and main entrypoint.",
@@ -11873,6 +11881,19 @@ describe("ImplementSessionManager", () => {
             };
           }
           if (prompt.includes("Requested parent chunk to subdivide:") && prompt.includes("chunk_execution")) {
+            throw new Error("implement_experiments staged_llm request timed out after 10ms without provider progress");
+          }
+          if (targetChunkId?.startsWith("chunk_contract")) {
+            const helperName = targetChunkId.replace(/[^A-Za-z0-9_]/g, "_");
+            return {
+              text: JSON.stringify({
+                chunk_id: targetChunkId,
+                content: `def ${helperName}():\n    return None\n`
+              }),
+              threadId: "thread-subdivision-timeout-contract"
+            };
+          }
+          if (prompt.includes("Requested parent chunk to subdivide:") && prompt.includes("chunk_contract")) {
             throw new Error("implement_experiments staged_llm request timed out after 10ms without provider progress");
           }
           if (prompt.includes("Requested parent chunk to subdivide:") && prompt.includes("chunk_entrypoint")) {
@@ -11941,7 +11962,18 @@ describe("ImplementSessionManager", () => {
     ]);
     expect(executionFallbackPlan.chunks?.[0]?.include_imports).toBe(false);
     expect(executionFallbackPlan.chunks?.[4]?.depends_on).toEqual(["chunk_execution_aggregation"]);
-    expect(llmCalls).toBeGreaterThanOrEqual(9);
+    const contractFallbackPlan = JSON.parse(
+      readFileSync(path.join(runDir, "implement_experiments", "unit_plans", "runner__chunk_contract.json"), "utf8")
+    ) as { strategy?: string; chunks?: Array<{ id?: string; depends_on?: string[] }> };
+    expect(contractFallbackPlan.strategy).toBe("local_contract_micro_stage_subdivision_fallback");
+    expect(contractFallbackPlan.chunks?.map((chunk) => chunk.id)).toEqual([
+      "chunk_contract_identity",
+      "chunk_contract_conditions",
+      "chunk_contract_seeds",
+      "chunk_contract_validation"
+    ]);
+    expect(contractFallbackPlan.chunks?.[3]?.depends_on).toEqual(["chunk_contract_seeds"]);
+    expect(llmCalls).toBeGreaterThanOrEqual(10);
   });
   it("subdivides a large runner chunk into smaller purpose-aligned subchunks before materializing code", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-subchunk-plan-"));

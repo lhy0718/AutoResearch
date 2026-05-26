@@ -11662,6 +11662,8 @@ function buildLocalChunkSubdivisionPlanForChunk(
     /\b(?:preflight|execution|execute|training|evaluation|result|results|evidence|metric|metrics|aggregation|aggregate|reporting|entrypoint)\b/u.test(
       responsibilityText
     );
+  const needsContractMicroStages =
+    /\b(?:contract|constants?|markers?|seeds?|baseline|conditions?|run[-\s]?plan|model)\b/u.test(responsibilityText);
   if (needsExecutionMicroStages) {
     const stageSpecs: Array<{ suffix: string; title: string; purpose: string; includeImports?: boolean; includeEntrypoint?: boolean }> = [
       {
@@ -11705,6 +11707,48 @@ function buildLocalChunkSubdivisionPlanForChunk(
       strategy: "local_execution_micro_stage_subdivision_fallback",
       rationale:
         "The provider did not return a forced-smaller subdivision subplan within the bounded request, so AutoLabOS splits the execution/result parent chunk into dependency-safe micro-stages.",
+      chunks
+    };
+  }
+
+  if (needsContractMicroStages) {
+    const stageSpecs: Array<{ suffix: string; title: string; purpose: string; includeImports?: boolean; includeEntrypoint?: boolean }> = [
+      {
+        suffix: "identity",
+        title: "Model and runtime identity constants",
+        purpose: "Define only model/runtime identity, budget, and static file-path constants needed by the parent contract.",
+        includeImports: chunk.include_imports
+      },
+      {
+        suffix: "conditions",
+        title: "Condition marker schema",
+        purpose: "Define condition marker fields, condition objects, and marker normalization without execution or aggregation logic."
+      },
+      {
+        suffix: "seeds",
+        title: "Seed schedule and baseline contract",
+        purpose: "Define seed schedules, baseline/comparator ordering, and planned run identifiers without training/evaluation code."
+      },
+      {
+        suffix: "validation",
+        title: "Run-plan contract validation",
+        purpose: "Add small validation helpers that check the run-plan contract and expose structured errors before downstream execution.",
+        includeEntrypoint: chunk.include_entrypoint
+      }
+    ];
+    const chunks = stageSpecs.map((stage, index): DynamicMaterializationChunk => ({
+      ...chunk,
+      id: chunk.id + "_" + stage.suffix,
+      title: chunk.title + ": " + stage.title,
+      purpose: chunk.purpose + " " + stage.purpose,
+      include_imports: index === 0 ? stage.includeImports === true : false,
+      include_entrypoint: stage.includeEntrypoint === true,
+      depends_on: index === 0 ? chunk.depends_on : [chunk.id + "_" + stageSpecs[index - 1].suffix]
+    }));
+    return {
+      strategy: "local_contract_micro_stage_subdivision_fallback",
+      rationale:
+        "The provider did not return a forced-smaller subdivision subplan within the bounded request, so AutoLabOS splits the contract/constants parent chunk into dependency-safe micro-stages.",
       chunks
     };
   }
