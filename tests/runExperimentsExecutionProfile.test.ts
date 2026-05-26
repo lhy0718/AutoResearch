@@ -580,8 +580,11 @@ describe("run_experiments execution profile behavior", () => {
                 ],
                 error: {
                   type: "AttributeError",
-                  message: "'dict' object has no attribute 'baseline_run'"
-                }
+                  message: "dict object has no attribute baseline_run"
+                },
+                error_messages: [
+                  "TypeError: SyntheticRunSpec.__init__() missing required argument output_dir"
+                ]
               },
               null,
               2
@@ -624,7 +627,8 @@ describe("run_experiments execution profile behavior", () => {
     expect(result.error).toContain("local_files_only");
     expect(result.error).toContain("metrics_evidence=orchestration_exception");
     expect(result.error).toContain("run-plan construction helper");
-    expect(result.error).toContain("'dict' object has no attribute 'baseline_run'");
+    expect(result.error).toContain("baseline_run");
+    expect(result.error).toContain("metrics_error_messages=TypeError: SyntheticRunSpec.__init__()");
 
     const verifierReport = JSON.parse(
       await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
@@ -637,6 +641,7 @@ describe("run_experiments execution profile behavior", () => {
     expect(verifierReport.summary).toContain("primary_metric_value=quality_delta:null");
     expect(verifierReport.summary).toContain("condition_result_statuses=missing:2");
     expect(verifierReport.summary).toContain("metrics_error=AttributeError");
+    expect(verifierReport.summary).toContain("metrics_error_messages=TypeError: SyntheticRunSpec.__init__()");
     expect(verifierReport.summary).toContain("metrics_evidence=orchestration_exception");
     expect(verifierReport.summary).toContain("run-plan construction helper");
 
@@ -651,6 +656,7 @@ describe("run_experiments execution profile behavior", () => {
     expect(feedback?.summary).toContain("observed_condition_count=31");
     expect(feedback?.summary).toContain("_build_model_load_kwargs()");
     expect(feedback?.summary).toContain("baseline_run");
+    expect(feedback?.summary).toContain("SyntheticRunSpec.__init__()");
     expect(feedback?.summary).toContain("run-plan construction helper");
   });
 

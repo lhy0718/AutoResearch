@@ -1688,6 +1688,11 @@ function summarizeMetricsFailureEvidence(metrics: Record<string, unknown>): stri
     parts.push(`metrics_error=${trimShort(errorText, 220)}`);
   }
 
+  const errorMessages = summarizeMetricsErrorMessages(metrics);
+  if (errorMessages.length > 0) {
+    parts.push(`metrics_error_messages=${errorMessages.join(" | ")}`);
+  }
+
   const evidenceMessages = summarizeMetricsEvidenceRecords(metrics);
   if (evidenceMessages.length > 0) {
     parts.push(`metrics_evidence=${evidenceMessages.join(" | ")}`);
@@ -1719,6 +1724,40 @@ function summarizeMetricsFailureEvidence(metrics: Record<string, unknown>): stri
   }
 
   return parts.length > 0 ? `Metrics evidence: ${parts.join("; ")}.` : "";
+}
+
+function summarizeMetricsErrorMessages(metrics: Record<string, unknown>): string[] {
+  const messages: string[] = [];
+  const addMessages = (value: unknown) => {
+    if (!Array.isArray(value)) {
+      return;
+    }
+    for (const item of value) {
+      if (messages.length >= 3) {
+        return;
+      }
+      const text = asString(item);
+      if (!text) {
+        continue;
+      }
+      const summary = trimShort(text, 220);
+      if (!messages.includes(summary)) {
+        messages.push(summary);
+      }
+    }
+  };
+
+  addMessages(metrics.error_messages);
+  addMessages(asRecord(metrics.baseline_summary)?.error_messages);
+  const conditionSummaries = Array.isArray(metrics.condition_summaries) ? metrics.condition_summaries : [];
+  for (const conditionSummary of conditionSummaries) {
+    if (messages.length >= 3) {
+      break;
+    }
+    addMessages(asRecord(conditionSummary)?.error_messages);
+  }
+
+  return messages;
 }
 
 function summarizeMetricsEvidenceRecords(metrics: Record<string, unknown>): string[] {
