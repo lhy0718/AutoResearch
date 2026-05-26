@@ -11653,10 +11653,14 @@ function buildLocalMaterializationPlanForUnit(unit: DynamicDecompositionUnit): D
   };
 }
 
-function buildLocalChunkSubdivisionPlanForChunk(
+export function buildLocalChunkSubdivisionPlanForChunk(
   chunk: DynamicMaterializationChunk,
   options: { forceSmallerSubdivision?: boolean } = {}
 ): DynamicMaterializationPlan {
+  if (options.forceSmallerSubdivision && isLocalMicroStageChunk(chunk)) {
+    return buildLocalTwoPartSubdivisionPlanForChunk(chunk);
+  }
+
   const responsibilityText = (chunk.title + " " + chunk.purpose).toLowerCase();
   const needsExecutionMicroStages =
     /\b(?:preflight|execution|execute|training|evaluation|result|results|evidence|metric|metrics|aggregation|aggregate|reporting|entrypoint)\b/u.test(
@@ -11762,6 +11766,14 @@ function buildLocalChunkSubdivisionPlanForChunk(
     };
   }
 
+  return buildLocalTwoPartSubdivisionPlanForChunk(chunk);
+}
+
+function isLocalMicroStageChunk(chunk: DynamicMaterializationChunk): boolean {
+  return /_(?:preflight|one_run|raw_records|aggregation|wiring|identity|conditions|seeds|validation)$/u.test(chunk.id);
+}
+
+function buildLocalTwoPartSubdivisionPlanForChunk(chunk: DynamicMaterializationChunk): DynamicMaterializationPlan {
   const firstChunk: DynamicMaterializationChunk = {
     ...chunk,
     id: chunk.id + "_part_1",

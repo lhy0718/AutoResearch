@@ -17,6 +17,7 @@ import path from "node:path";
 import { ensureScaffold, resolveAppPaths } from "../src/config.js";
 import { InMemoryEventStream } from "../src/core/events.js";
 import {
+  buildLocalChunkSubdivisionPlanForChunk,
   extractWorkspacePathsFromCommand,
   evaluateImplementBootstrapContract,
   parseImplementBootstrapContractFromText,
@@ -11742,6 +11743,30 @@ describe("ImplementSessionManager", () => {
       `staged_llm chunk subdivision planning did not return a parseable dynamic plan for ${publicScriptPath}:chunk_setup`
     );
     expect(llmCalls).toBe(3);
+  });
+
+  it("uses neutral two-part fallback when re-subdividing an existing local micro-stage", () => {
+    const plan = buildLocalChunkSubdivisionPlanForChunk(
+      {
+        id: "chunk_execution_preflight",
+        title: "Execution and result aggregation: Preflight and ordered run-plan setup",
+        purpose: "Resolve runtime context and ordered run-plan setup before execution.",
+        content_kind: "code_section",
+        include_imports: false,
+        include_entrypoint: false
+      },
+      { forceSmallerSubdivision: true }
+    );
+
+    expect(plan.strategy).toBe("local_two_part_subdivision_fallback");
+    expect(plan.chunks.map((chunk) => chunk.id)).toEqual([
+      "chunk_execution_preflight_part_1",
+      "chunk_execution_preflight_part_2"
+    ]);
+    expect(plan.chunks.map((chunk) => chunk.title)).toEqual([
+      "Execution and result aggregation: Preflight and ordered run-plan setup part 1",
+      "Execution and result aggregation: Preflight and ordered run-plan setup part 2"
+    ]);
   });
 
   it("uses local fallbacks that micro-split execution chunks when subdivision planning times out", async () => {
