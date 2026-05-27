@@ -52,8 +52,8 @@ export interface PaperManuscriptSection {
 export interface PaperManuscriptVisualRow {
   label: string;
   value: number;
-  lora_rank?: number;
-  lora_dropout?: number;
+  adapter_rank?: number;
+  adapter_dropout?: number;
   average_accuracy?: number;
   accuracy_delta_vs_baseline?: number;
   benchmark_task_a_accuracy?: number;
@@ -566,7 +566,7 @@ function sanitizeSubmissionSurfaceText(text: string, context: { sectionHeading?:
       "The fixed search space held the manipulated condition parameters while keeping run-recorded training settings and sample-count details fixed for the reported pilot."
     )
     .replace(
-      /\bThe run also remained inexpensive,\s*completing (?:the|all)?\s*planned conditions in [0-9.]+\s*(?:s|seconds?)\s*with about ([0-9.]+)\s*GB of peak allocated CUDA memory\./giu,
+      /\bThe run also remained inexpensive,\s*completing (?:the|all|the eight|all eight|eight)?\s*planned conditions in [0-9.]+\s*(?:s|seconds?)\s*with about ([0-9.]+)\s*GB of peak allocated CUDA memory\./giu,
       "The run also remained inexpensive, completing the planned conditions under the declared time limit with about $1 GB of peak allocated CUDA memory."
     );
   if (/^\s*\[(?:warning|error|fail|failed|pass|passed)\]\s*[^:]{0,80}:/iu.test(cleaned)) {
@@ -579,7 +579,7 @@ function sanitizeSubmissionSurfaceText(text: string, context: { sectionHeading?:
   if (/related\s+work/iu.test(heading) && isSubmissionRelatedWorkResidue(cleaned)) {
     return /closest prior studies|abstract-only|planner-timeout|full-text fallback/iu.test(cleaned)
       ? "For this manuscript, prior work motivates the condition-parameter question and local-budget evaluation design; numerical claims remain grounded in the executed run artifacts."
-      : "Nearby PEFT, LoRA, and instruction-tuning studies provide context for memory efficiency, benchmark sensitivity, and adapter design, but they do not replace the locked baseline comparison in this study.";
+      : "Nearby PEFT, adapter, and instruction-tuning studies provide context for memory efficiency, benchmark sensitivity, and adapter design, but they do not replace the locked baseline comparison in this study.";
   }
   if (isSubmissionProcessResidue(cleaned)) {
     if (/introduction/iu.test(heading)) {
@@ -948,11 +948,11 @@ function repairSubmissionAbstract(abstract: string): string {
       "the leading observed condition"
     )
     .replace(
-      /\bThe run also remained inexpensive,\s*completing (?:the|all) planned conditions in [0-9.]+\s*(?:s|seconds?)\s*with about ([0-9.]+)\s*GB of peak allocated CUDA memory\./giu,
+      /\bThe run also remained inexpensive,\s*completing (?:the|all|the eight|all eight|eight) planned conditions in [0-9.]+\s*(?:s|seconds?)\s*with about ([0-9.]+)\s*GB of peak allocated CUDA memory\./giu,
       "The run also remained inexpensive, completing all planned conditions under the declared time limit with about $1 GB of peak allocated CUDA memory."
     )
     .replace(
-      /\bThe same artifact completed all requested conditions,\s*reported [0-9.]+\s*(?:s|seconds?) wall-clock time,\s*and used approximately ([0-9.]+)\s*GB of peak allocated GPU memory\./giu,
+      /\bThe same artifact completed all (?:eight\s+)?requested conditions,\s*reported [0-9.]+\s*(?:s|seconds?) wall-clock time,\s*and used approximately ([0-9.]+)\s*GB of peak allocated GPU memory\./giu,
       "The same artifact completed all requested conditions under the declared time limit and retained peak allocated GPU memory as a secondary feasibility diagnostic."
     )
     .replace(
@@ -962,7 +962,7 @@ function repairSubmissionAbstract(abstract: string): string {
 }
 
 function repairReaderVisibleManuscriptCoherence(sections: PaperManuscriptSection[]): PaperManuscriptSection[] {
-  const shouldPruneRepeatedTopics = isLoraRankDropoutPreflightManuscript(sections);
+  const shouldPruneRepeatedTopics = isAdapterRankDropoutPreflightManuscript(sections);
   return sections.map((section) => {
     const headingKey = normalizeHeadingKey(section.heading);
     let paragraphs = section.paragraphs.map((paragraph) =>
@@ -995,10 +995,10 @@ function repairReaderVisibleManuscriptCoherence(sections: PaperManuscriptSection
   });
 }
 
-function isLoraRankDropoutPreflightManuscript(sections: PaperManuscriptSection[]): boolean {
+function isAdapterRankDropoutPreflightManuscript(sections: PaperManuscriptSection[]): boolean {
   const text = sections.flatMap((section) => section.paragraphs).join(" ");
   return (
-    /\bLoRA\b/iu.test(text) &&
+    /\badapter\b/iu.test(text) &&
     /\brank\b/iu.test(text) &&
     /\bdropout\b/iu.test(text) &&
     (/\bBenchmark Task A\b/iu.test(text) || /\bBenchmark Task B\b/iu.test(text) || /\b4\s*x\s*2\b/iu.test(text))
@@ -1046,7 +1046,7 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       "No broader replication is reported here, so the documented gain remains a single-run preflight observation."
     )
     .replace(
-      /\bOperationally,\s*the run was inexpensive and clean\.\s*The summarized record reports completion of the planned conditions,\s*a wall-clock runtime of [0-9.]+\s*(?:s|seconds?),\s*and peak allocated CUDA memory of ([0-9,]+) bytes,\s*or about ([0-9.]+)\s*GB\.\s*The runtime stayed within the configured time limit\./giu,
+      /\bOperationally,\s*the run was inexpensive and clean\.\s*The summarized record reports completion of (?:all\s+)?(?:eight\s+)?planned conditions,\s*a wall-clock runtime of [0-9.]+\s*(?:s|seconds?),\s*and peak allocated CUDA memory of ([0-9,]+) bytes,\s*or about ([0-9.]+)\s*GB\.\s*The runtime stayed (?:within|far below) the configured (?:time limit|[0-9,]+ s limit)\./giu,
       "Operationally, the run was inexpensive and clean. The summarized record reports completion of the planned conditions under the configured time limit, with peak allocated CUDA memory of $1 bytes, or about $2 GB."
     )
     .replace(
@@ -1116,7 +1116,7 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       "complete per-cell uncertainty and resource tables"
     )
     .replace(
-      /\ba fully exposed table of all cells\b/giu,
+      /\ba fully exposed table of all (?:eight\s+)?cells\b/giu,
       "complete per-cell uncertainty and resource tables for all cells"
     )
     .replace(
@@ -1144,12 +1144,12 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       "Table 1 reports condition-level mean accuracies, while the compact summary does not expose complete per-cell uncertainty and auxiliary-metric tables sufficient for estimating condition main effects or interactions across the whole grid"
     )
     .replace(
-      /\bthe reported analyses does not report optimizer choice,\s*learning rate,\s*batch size,\s*LoRA target modules,\s*or the exact procedure used to compute the reported 95% intervals\b/giu,
-      "the reported analyses do not report optimizer choice, LoRA target modules, adapter scaling, or the exact procedure used to compute the reported 95% intervals"
+      /\bthe reported analyses does not report optimizer choice,\s*learning rate,\s*batch size,\s*adapter target modules,\s*or the exact procedure used to compute the reported 95% intervals\b/giu,
+      "the reported analyses do not report optimizer choice, adapter target modules, adapter scaling, or the exact procedure used to compute the reported 95% intervals"
     )
     .replace(
-      /\bthe reported analyses do not report optimizer choice,\s*learning rate,\s*batch size,\s*LoRA target modules,\s*or the exact procedure used to compute the reported 95% intervals\b/giu,
-      "the reported analyses do not report optimizer choice, LoRA target modules, adapter scaling, or the exact procedure used to compute the reported 95% intervals"
+      /\bthe reported analyses do not report optimizer choice,\s*learning rate,\s*batch size,\s*adapter target modules,\s*or the exact procedure used to compute the reported 95% intervals\b/giu,
+      "the reported analyses do not report optimizer choice, adapter target modules, adapter scaling, or the exact procedure used to compute the reported 95% intervals"
     )
     .replace(
       /\bthe cited Benchmark Task A and Benchmark Task B benchmark pair\b/giu,
@@ -1204,11 +1204,11 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       headingKey === "method" ? "" : "Evaluation spans Benchmark Task A and Benchmark Task B."
     )
     .replace(
-      /\bThis cautious interpretation is consistent with prior low-budget LoRA and PEFT studies \(e\.g\.,\s*QLoRA and related benchmarking work\) that also treat adapter configuration as consequential,\s*while recognizing that the present study is much smaller and less stable than the settings used in broader adaptation papers\./giu,
+      /\bThis cautious interpretation is consistent with prior low-budget adapter and PEFT studies \(e\.g\.,\s*quantized adapter and related benchmarking work\) that also treat adapter configuration as consequential,\s*while recognizing that the present study is much smaller and less stable than the settings used in broader adaptation papers\./giu,
       "This cautious interpretation is consistent with prior PEFT studies that treat adapter configuration as consequential, while recognizing that the present study is much smaller and less stable than broader adaptation settings."
     )
     .replace(
-      /\bThis cautious interpretation is consistent with prior low-budget LoRA and PEFT studies \(e\.g\.,\s*QLoRA and related benchmarking work\)/giu,
+      /\bThis cautious interpretation is consistent with prior low-budget adapter and PEFT studies \(e\.g\.,\s*quantized adapter and related benchmarking work\)/giu,
       "This cautious interpretation is consistent with prior PEFT studies"
     )
     .replace(
@@ -1240,11 +1240,11 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       "presented table"
     )
     .replace(
-      /\bExisting PEFT studies define three comparison axes relevant here\.\s*QLoRA emphasizes the memory-efficiency axis by showing how low-rank adaptation combined with quantization can make finetuning feasible on constrained hardware;\s*MAPLE and related benchmark-oriented studies emphasize the evaluation axis by comparing methods across broader task or model settings;\s*adapter-variant papers emphasize the mechanism axis by changing the parameterization of the update itself\./giu,
+      /\bExisting PEFT studies define three comparison axes relevant here\.\s*quantized adapter emphasizes the memory-efficiency axis by showing how low-rank adaptation combined with quantization can make finetuning feasible on constrained hardware;\s*MAPLE and related benchmark-oriented studies emphasize the evaluation axis by comparing methods across broader task or model settings;\s*adapter-variant papers emphasize the mechanism axis by changing the parameterization of the update itself\./giu,
       "Existing PEFT studies define three comparison axes relevant here: memory efficiency under constrained hardware, evaluation breadth across task or model settings, and adapter-parameterization choices that change the update mechanism."
     )
     .replace(
-      /\bAccordingly,\s*prior work is used here as framing rather than as a condition-matched baseline\.\s*The comparator of record is the internal baseline condition,\s*no-dropout condition inside the executed run,\s*whereas QLoRA-,\s*MAPLE-,\s*and adapter-variant results differ in scale,\s*task mix,\s*adapter family,\s*or evaluation objective and therefore set the interpretation context rather than a direct performance target\./giu,
+      /\bAccordingly,\s*prior work is used here as framing rather than as a condition-matched baseline\.\s*The comparator of record is the internal baseline condition,\s*no-dropout condition inside the executed run,\s*whereas quantized adapter-,\s*MAPLE-,\s*and adapter-variant results differ in scale,\s*task mix,\s*adapter family,\s*or evaluation objective and therefore set the interpretation context rather than a direct performance target\./giu,
       "Accordingly, prior work is used here as framing rather than as a condition-matched baseline. The comparator of record is the internal baseline condition, no-dropout condition inside the executed run; external PEFT results differ in scale, task mix, adapter family, or evaluation objective and therefore set the interpretation context rather than a direct performance target."
     )
     .replace(/\baccuracy_delta_vs_baseline\b/giu, "baseline-relative accuracy gain")
@@ -1259,10 +1259,10 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       /\bThe protocol clearly specifies the preferred backbone and fallback option,\s*but the summarized materials do not fully disambiguate the realized checkpoint used in the analyzed slice\./giu,
       "The protocol specifies the preferred backbone and fallback option, and the executed metrics identify the selected backbone as the selected backbone for the analyzed slice."
     ).replace(
-      /\bA second limitation is incomplete implementation disclosure in the reported summary\.\s*The final backbone used for the reported run is not identified,\s*and the summary does not expose optimizer choice,\s*learning rate,\s*batch size,\s*epochs or steps beyond the high-level budget frame,\s*LoRA target modules,\s*or adapter scaling\.\s*In addition,\s*planned seed and recorded seed do not match,\s*and the reported trial counts are not fully reconciled\.\s*These gaps do not nullify the observed preflight outcome,\s*but they do not prevent a strong claim of fully resolved reproducibility\./giu,
+      /\bA second limitation is incomplete implementation disclosure in the reported summary\.\s*The final backbone used for the reported run is not identified,\s*and the summary does not expose optimizer choice,\s*learning rate,\s*batch size,\s*epochs or steps beyond the high-level budget frame,\s*adapter target modules,\s*or adapter scaling\.\s*In addition,\s*planned seed and recorded seed do not match,\s*and the reported trial counts are not fully reconciled\.\s*These gaps do not nullify the observed preflight outcome,\s*but they do not prevent a strong claim of fully resolved reproducibility\./giu,
       "A second limitation is bounded implementation disclosure rather than absent implementation disclosure. Method identifies the selected the selected backbone backbone, seed, learning rate, batch size, gradient accumulation, optimizer steps, maximum sequence length, and timeout; remaining reproducibility gaps concern any optimizer, adapter-scaling, and target-module fields not separately exposed in the compact record, seed reconciliation, and broader replication."
     ).replace(
-      /\bA second limitation is incomplete implementation disclosure in the reported summary\.\s*The final backbone used for the reported run is not identified,\s*and the summary does not expose optimizer choice,\s*learning rate,\s*batch size,\s*epochs or steps beyond the high-level budget frame,\s*LoRA target modules,\s*or adapter scaling\./giu,
+      /\bA second limitation is incomplete implementation disclosure in the reported summary\.\s*The final backbone used for the reported run is not identified,\s*and the summary does not expose optimizer choice,\s*learning rate,\s*batch size,\s*epochs or steps beyond the high-level budget frame,\s*adapter target modules,\s*or adapter scaling\./giu,
       "A second limitation is bounded implementation disclosure rather than absent implementation disclosure. Method identifies the selected the selected backbone backbone, seed, learning rate, batch size, gradient accumulation, optimizer steps, maximum sequence length, and timeout; remaining reproducibility gaps concern any optimizer, adapter-scaling, and target-module fields not separately exposed in the compact record."
     ).replace(
       /\bThe largest limitation is the mismatch between the nominal brief and the executed summary available for writing\.\s*The broader plan described a capped the configured training dataset study,\s*seed 42,\s*and model-selection rules involving the selected backbone and the configured fallback backbone,\s*whereas the verified summary used here reflects a seed-17,\s*48-sample preflight and does not disclose the final model choice or optimizer details in the condensed record\.\s*As a result,\s*the paper can describe the registered design and the visible executed run,\s*but it cannot present a fully conventional implementation section with complete artifact-level specificity\./giu,
@@ -1286,14 +1286,14 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       /\bThe reported summary does not provide the full eight-cell metric table,\s*does not report optimizer,\s*learning-rate,\s*batch-size,\s*or step-level details,\s*and does not explain how the 95% confidence intervals were constructed\./giu,
       "The visible manuscript reports the condition-level mean accuracies and fixed training settings, but it still lacks optimizer family, adapter-scaling, target-module, and interval-construction details."
     ).replace(
-      /\bit omits optimizer settings,\s*batch size,\s*LoRA target modules,\s*a full per-condition score table,\s*and the exact interval-construction procedure\./giu,
-      "it omits optimizer settings, LoRA target modules, adapter scaling, and the exact interval-construction procedure, while Table 1 provides the condition-level mean accuracy table."
+      /\bit omits optimizer settings,\s*batch size,\s*adapter target modules,\s*a full per-condition score table,\s*and the exact interval-construction procedure\./giu,
+      "it omits optimizer settings, adapter target modules, adapter scaling, and the exact interval-construction procedure, while Table 1 provides the condition-level mean accuracy table."
     ).replace(
-      /\bomits optimizer settings,\s*batch size,\s*LoRA target modules,\s*a full per-condition score table,\s*and the exact interval-construction procedure\b/giu,
-      "omits optimizer settings, LoRA target modules, adapter scaling, and the exact interval-construction procedure while Table 1 provides the condition-level mean accuracy table"
+      /\bomits optimizer settings,\s*batch size,\s*adapter target modules,\s*a full per-condition score table,\s*and the exact interval-construction procedure\b/giu,
+      "omits optimizer settings, adapter target modules, adapter scaling, and the exact interval-construction procedure while Table 1 provides the condition-level mean accuracy table"
     ).replace(
       /\bThe compact record also omits several implementation details that would normally be standard in an empirical paper,\s*including optimizer choice,\s*learning-rate schedule,\s*batch size,\s*and an unambiguous statement of the executed base model\.\s*These omissions materially narrow reproducibility and interpretability\./giu,
-      "The compact record still omits several implementation details that would normally be standard in an empirical paper, including optimizer family, scheduler details beyond the scalar learning rate, LoRA target modules, adapter scaling, and interval-construction details. These omissions materially narrow reproducibility and interpretability."
+      "The compact record still omits several implementation details that would normally be standard in an empirical paper, including optimizer family, scheduler details beyond the scalar learning rate, adapter target modules, adapter scaling, and interval-construction details. These omissions materially narrow reproducibility and interpretability."
     ).replace(
       /\bIn addition,\s*some of the surrounding related-work material available to this paper came from abstract-level or timeout-limited extraction rather than full-text comparative review\./giu,
       "In addition, the related-work comparison remains narrower than a full survey of PEFT rank and regularization studies."
@@ -1312,7 +1312,7 @@ function repairConditionTableAvailabilityClaim(headingKey: string, paragraph: st
       "Relative to memory-efficient finetuning work, this study holds quantization and adapter family fixed; relative to broader benchmark papers, it narrows evaluation to Benchmark Task A and Benchmark Task B; and relative to adapter-variant work, it tests configured condition choices rather than proposing a new adapter architecture."
       )
       .replace(
-        /\bThe manuscript can position this bounded local condition-grid pilot as useful for deciding whether a larger follow-up is warranted,\s*but it should not claim to outperform QLoRA,\s*MAPLE,\s*or adapter-variant methods\./giu,
+        /\bThe manuscript can position this bounded local condition-grid pilot as useful for deciding whether a larger follow-up is warranted,\s*but it should not claim to outperform quantized adapter,\s*MAPLE,\s*or adapter-variant methods\./giu,
         "The comparison to external PEFT methods is therefore one of scope and experimental role: those works define larger memory, benchmark, or architecture contexts, while this manuscript supplies a small controlled pilot for one configured condition grid."
       );
   }
@@ -1536,7 +1536,7 @@ function readerFacingParagraphTopicKey(headingKey: string, paragraph: string): s
     if (/\bcontribution\b/.test(text) && /\bpreflight\b/.test(text)) return "intro:contribution";
   }
   if (headingKey === "related_work" || headingKey === "related work") {
-    if (/\bqlora\b|\bmaple\b|\badapter-variant\b|\badapter variant\b/.test(text)) return "related:peft_context";
+    if (/\bquantized_adapter\b|\bmaple\b|\badapter-variant\b|\badapter variant\b/.test(text)) return "related:peft_context";
     if (/\blocked\b/.test(text) && /\bbaseline\b/.test(text)) return "related:internal_comparator";
     if (/\bheterogeneous\b|\bdiffer\b|\bdifferent scales\b|\bdata regimes\b/.test(text)) return "related:heterogeneity";
     if (/\bclusters?\b|\bstrands?\b|\baxes\b/.test(text)) return "related:taxonomy";
@@ -1617,11 +1617,11 @@ function repairLimitationsKnownExecutionDetails(paragraphs: string[]): string[] 
     cleanString(paragraph)
       .replace(
         /\bThe compact record also omits several implementation details that would normally be standard in an empirical paper,\s*including optimizer choice,\s*learning-rate schedule,\s*batch size,\s*and an unambiguous statement of the executed base model\.\s*These omissions materially narrow reproducibility and interpretability\./giu,
-        "The compact record still omits several implementation details that would normally be standard in an empirical paper, including optimizer family, scheduler details beyond the scalar learning rate, LoRA target modules, adapter scaling, and interval-construction details. These omissions materially narrow reproducibility and interpretability."
+        "The compact record still omits several implementation details that would normally be standard in an empirical paper, including optimizer family, scheduler details beyond the scalar learning rate, adapter target modules, adapter scaling, and interval-construction details. These omissions materially narrow reproducibility and interpretability."
       )
       .replace(
         /\bthe compact record also omits several implementation details that would normally be standard in an empirical paper,\s*including optimizer choice,\s*learning-rate schedule,\s*batch size,\s*and an unambiguous statement of the executed base model\b/giu,
-        "the compact record still omits optimizer family, scheduler details beyond the scalar learning rate, LoRA target modules, adapter scaling, and interval-construction details"
+        "the compact record still omits optimizer family, scheduler details beyond the scalar learning rate, adapter target modules, adapter scaling, and interval-construction details"
       )
   );
 }
@@ -1649,8 +1649,8 @@ function repairAppendixSections(sections: PaperManuscriptSection[]): PaperManusc
               "These details support the narrow preflight interpretation without turning the local study into a broader model-family result."
             )
             .replace(
-              /\bA later paper-scale replication should preserve the locked-baseline accounting,\s*expose complete task-wise and resource tables,\s*and rerun the leading condition under a broader benchmark suite before claiming general LoRA regularization behavior\./giu,
-              "A later replication should preserve locked-baseline accounting, expose complete task-wise and resource tables, and rerun the leading condition under a broader benchmark suite before claiming general LoRA regularization behavior."
+              /\bA later paper-scale replication should preserve the locked-baseline accounting,\s*expose complete task-wise and resource tables,\s*and rerun the leading condition under a broader benchmark suite before claiming general adapter regularization behavior\./giu,
+              "A later replication should preserve locked-baseline accounting, expose complete task-wise and resource tables, and rerun the leading condition under a broader benchmark suite before claiming general adapter regularization behavior."
             )
             .replace(
               /\bThe study used a fixed configured grid over condition parameters,\s*with baseline condition serving as the locked baseline\.\s*The run was designed for a dual-RTX-4090-class local workstation and used seed 42\.\s*The preferred backbone in the protocol was the selected backbone,\s*with the configured fallback backbone reserved as a fallback\.\s*The training source was the configured training dataset under a cap of 10000 examples,\s*although the summarized preflight reported here used 48 examples\./giu,
@@ -1661,7 +1661,7 @@ function repairAppendixSections(sections: PaperManuscriptSection[]): PaperManusc
               "Because the available summary does not expose the full interval-construction procedure"
             )
             .replace(
-              /\bthe full numeric table for all condition-parameter conditions is not completely exposed in the manuscript source\./giu,
+              /\bthe full numeric table for all (?:eight\s+[a-z-]+|condition-parameter) conditions is not completely exposed in the manuscript source\./giu,
               "Table 1 exposes the condition means, while complete per-cell uncertainty and auxiliary metric tables remain outside the reader-visible summary."
             )
         )
@@ -1784,7 +1784,7 @@ function enrichManuscriptMethodExecutionDetails(input: {
         };
   const replacement = buildExecutedMethodDetailsParagraph(details);
   const existingParagraphs = methodSection.paragraphs.filter((paragraph) =>
-    !/does not expose the final selected model identifier|does not clearly expose.*(?:final instantiated backbone|selected backbone|model choice)|does not unambiguously expose.*(?:backbone|selected_model_id)|does not expose.*(?:optimizer|learning rate|batch size|gradient accumulation|LoRA target modules)|final selected model identifier, optimizer/iu.test(
+    !/does not expose the final selected model identifier|does not clearly expose.*(?:final instantiated backbone|selected backbone|model choice)|does not unambiguously expose.*(?:backbone|selected_model_id)|does not expose.*(?:optimizer|learning rate|batch size|gradient accumulation|adapter target modules)|final selected model identifier, optimizer/iu.test(
       paragraph
     )
   );
@@ -1873,7 +1873,7 @@ function buildExecutedMethodDetails(
     learningRate: findRunNumber(runConfig, ["learning_rate"]),
     maxSeqLength: findRunNumber(runConfig, ["max_seq_length"]),
     timeoutSec: findRunNumber(runConfig, ["timeout_sec"]),
-    targetModules: findLoraTargetModules(metrics),
+    targetModules: findAdapterTargetModules(metrics),
     ciLevel,
     ciSampleSize
   };
@@ -1908,7 +1908,7 @@ function buildExecutedMethodDetailsParagraph(details: ExecutedMethodDetails): st
     typeof details.maxSteps === "number" ? `${formatTexNumber(details.maxSteps)} optimizer steps` : "",
     typeof details.maxSeqLength === "number" ? `maximum sequence length ${formatTexNumber(details.maxSeqLength)}` : "",
     typeof details.timeoutSec === "number" ? `${formatTexNumber(details.timeoutSec)} s timeout` : "",
-    details.targetModules.length > 0 ? `LoRA target modules ${details.targetModules.join(", ")}` : ""
+    details.targetModules.length > 0 ? `adapter target modules ${details.targetModules.join(", ")}` : ""
   ].filter(Boolean);
   const ciSentence =
     typeof details.ciLevel === "number" || typeof details.ciSampleSize === "number"
@@ -1964,20 +1964,20 @@ function findRunNumber(record: Record<string, unknown>, keys: string[]): number 
   return undefined;
 }
 
-function findLoraTargetModules(metrics: Record<string, unknown>): string[] {
-  const direct = normalizeStringArray(metrics.target_modules || metrics.lora_target_modules);
+function findAdapterTargetModules(metrics: Record<string, unknown>): string[] {
+  const direct = normalizeStringArray(metrics.target_modules || metrics.adapter_target_modules);
   if (direct.length > 0) {
     return direct.slice(0, 8);
   }
   const conditions = Array.isArray(metrics.conditions) ? metrics.conditions : [];
   for (const condition of conditions) {
     const conditionRecord = asPlainRecord(condition);
-    const candidates = normalizeStringArray(conditionRecord.target_modules || conditionRecord.lora_target_modules);
+    const candidates = normalizeStringArray(conditionRecord.target_modules || conditionRecord.adapter_target_modules);
     if (candidates.length > 0) {
       return candidates.slice(0, 8);
     }
     const adapter = asPlainRecord(conditionRecord.adapter);
-    const adapterTargets = normalizeStringArray(adapter.target_modules || adapter.lora_target_modules);
+    const adapterTargets = normalizeStringArray(adapter.target_modules || adapter.adapter_target_modules);
     if (adapterTargets.length > 0) {
       return adapterTargets.slice(0, 8);
     }
@@ -2769,13 +2769,13 @@ function buildAutomaticManuscriptAppendix(
       paragraphs: [
         `${intervalSummarySentence} ${averageIntervalSentence}`,
         uncertaintyContractSentence,
-        "A later paper-scale replication should preserve the locked-baseline accounting, expose complete task-wise and resource tables, and rerun the leading condition under a broader benchmark suite before claiming general LoRA regularization behavior."
+        "A later paper-scale replication should preserve the locked-baseline accounting, expose complete task-wise and resource tables, and rerun the leading condition under a broader benchmark suite before claiming general adapter regularization behavior."
       ]
     },
     {
       heading: "Supplementary Boundary Notes",
       paragraphs: [
-        `The strongest allowed claim is a bounded candidate-selection claim. ${claimCeilingEvidenceSentence} The same evidence does not support a general claim about LoRA regularization, broader instruction-following quality, or superiority over external PEFT methods.`,
+        `The strongest allowed claim is a bounded candidate-selection claim. ${claimCeilingEvidenceSentence} The same evidence does not support a general claim about adapter regularization, broader instruction-following quality, or superiority over external PEFT methods.`,
         "Comparative language is tied only to the executed condition-parameter grid. External papers motivate the design space and the need for budget-aware evaluation, but they are not treated as condition-matched baselines. This is why the related-work section frames prior work as context and why the discussion keeps the observed signal separate from mechanism-level or model-family conclusions.",
         "Quantitative claims are restricted to values that are present in the result table, metric table, or structured statistical summary. Runtime, memory, and train-loss dispersion are reported as feasibility and reproducibility diagnostics because the available records do not establish a condition-level efficiency ranking. The run accounting used here reports scheduled and executed trials explicitly.",
         "The result is therefore best read as a bounded preflight report: it has a research question, a comparator, executed experiments, quantitative tables, uncertainty notes, and limitations, while still naming the larger replication required before a stronger paper claim would be justified."
@@ -2969,13 +2969,13 @@ function shouldRenderSubmissionCitationsForParagraph(heading: string, paragraph:
     ) {
       return false;
     }
-    return /\b(?:prior|Related Work|low-budget evidence|fixed-budget studies|PEFT|QLoRA|adapter|benchmarking|literature)\b/iu.test(paragraph);
+    return /\b(?:prior|Related Work|low-budget evidence|fixed-budget studies|PEFT|quantized adapter|adapter|benchmarking|literature)\b/iu.test(paragraph);
   }
   if (key === "limitations") {
-    return /\b(?:model identifier\/Qwen2\.5|the configured fallback backbone|Benchmark Task A|Benchmark Task B|PEFT|QLoRA|MAPLE|LoRA|adapter|benchmark)\b/iu.test(paragraph);
+    return /\b(?:model identifier\/Qwen2\.5|the configured fallback backbone|Benchmark Task A|Benchmark Task B|PEFT|quantized adapter|MAPLE|adapter|adapter|benchmark)\b/iu.test(paragraph);
   }
   if (key === "conclusion") {
-    return /\b(?:PEFT|QLoRA|MAPLE|adapter|benchmark studies|literature)\b/iu.test(paragraph);
+    return /\b(?:PEFT|quantized adapter|MAPLE|adapter|benchmark studies|literature)\b/iu.test(paragraph);
   }
   if (key !== "introduction") {
     return false;
@@ -3101,8 +3101,8 @@ function isStructuredConditionTable(table: PaperManuscriptTable): boolean {
   return (
     table.rows.length >= 4
     && table.rows.every((row) =>
-      typeof row.lora_rank === "number"
-      || typeof row.lora_dropout === "number"
+      typeof row.adapter_rank === "number"
+      || typeof row.adapter_dropout === "number"
       || /\brank\s*\d+\b.*\bdropout\b/iu.test(row.label)
     )
   );
@@ -3148,11 +3148,11 @@ function parseConditionVisualRow(row: PaperManuscriptVisualRow): {
   arc: number;
   benchmark_task_b: number;
 } {
-  const rank = typeof row.lora_rank === "number"
-    ? row.lora_rank
+  const rank = typeof row.adapter_rank === "number"
+    ? row.adapter_rank
     : Number(row.label.match(/\brank\s*([0-9]+)/iu)?.[1]);
-  const dropout = typeof row.lora_dropout === "number"
-    ? row.lora_dropout
+  const dropout = typeof row.adapter_dropout === "number"
+    ? row.adapter_dropout
     : Number(row.label.match(/\bdropout\s*([0-9]+(?:\.[0-9]+)?)/iu)?.[1]);
   const condition = row.is_baseline || /\bbaseline\b/iu.test(row.label)
     ? "Locked baseline"

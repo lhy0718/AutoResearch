@@ -7,18 +7,18 @@ import type { BaselineLock } from "../src/core/exploration/types.js";
 function makeReport() {
   return buildAnalysisReport({
     run: {
-      objectiveMetric: "Improve mean zero-shot accuracy over the locked LoRA baseline."
+      objectiveMetric: "Improve mean zero-shot accuracy over the locked adapter baseline."
     },
     metrics: {
       result_rows: [
         {
-          condition_id: "locked_lora_baseline_r8",
+          condition_id: "locked_adapter_baseline_r8",
           recipe_type: "locked_baseline",
-          is_locked_lora_baseline: true,
+          is_locked_adapter_baseline: true,
           mean_zero_shot_accuracy: 0.3044
         },
         {
-          condition_id: "lora_r16_attention_mlp",
+          condition_id: "adapter_r16_attention_mlp",
           recipe_type: "candidate",
           mean_zero_shot_accuracy: 0.3135
         }
@@ -26,7 +26,7 @@ function makeReport() {
     },
     objectiveProfile: {
       source: "llm",
-      raw: "Improve mean zero-shot accuracy over the locked LoRA baseline.",
+      raw: "Improve mean zero-shot accuracy over the locked adapter baseline.",
       primaryMetric: "mean_zero_shot_accuracy",
       preferredMetricKeys: ["mean_zero_shot_accuracy"],
       comparator: ">=",
@@ -37,7 +37,7 @@ function makeReport() {
       assumptions: []
     },
     objectiveEvaluation: {
-      rawObjectiveMetric: "Improve mean zero-shot accuracy over the locked LoRA baseline.",
+      rawObjectiveMetric: "Improve mean zero-shot accuracy over the locked adapter baseline.",
       profileSource: "llm",
       primaryMetric: "mean_zero_shot_accuracy",
       preferredMetricKeys: ["mean_zero_shot_accuracy"],
@@ -76,7 +76,7 @@ describe("baselineComparisonSurface", () => {
 
     expect(surface.status).toBe("available");
     expect(surface.primary_comparison).toMatchObject({
-      id: "lora_r16_attention_mlp_vs_locked_lora_baseline_r8",
+      id: "adapter_r16_attention_mlp_vs_locked_adapter_baseline_r8",
       source: "metrics.result_rows"
     });
     expect(surface.primary_comparison?.metrics).toEqual([

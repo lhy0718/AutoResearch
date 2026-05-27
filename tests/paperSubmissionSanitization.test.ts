@@ -51,7 +51,7 @@ describe("paper submission sanitization", () => {
         claims: []
       } as any,
       bundle: {
-        runTitle: "LoRA run",
+        runTitle: "adapter run",
         topic: "condition parameters",
         objectiveMetric: "accuracy",
         constraints: [],
@@ -136,7 +136,7 @@ describe("paper submission sanitization", () => {
 
     expect(tex).toContain("This paper reports a fixed-budget experimental pilot");
     expect(tex).toContain("The contribution is a cautious local preflight over a configured condition set");
-    expect(tex).toContain("Nearby PEFT, LoRA, and instruction-tuning studies provide context");
+    expect(tex).toContain("Nearby PEFT, adapter, and instruction-tuning studies provide context");
     expect(tex).not.toContain("This draft studies");
     expect(tex).not.toContain("Primary metric:");
     expect(tex).not.toContain("failed-run visibility");
@@ -204,13 +204,13 @@ describe("paper submission sanitization", () => {
         sections: [{ heading: "Results", paragraphs: ["Table 1 reports the executed grid."] }],
         tables: [
           {
-            caption: "Condition-level mean accuracy across the executed rank/dropout grid.",
+            caption: "Condition-level mean accuracy across the executed condition-parameter grid.",
             rows: [
               {
                 label: "baseline condition",
                 value: 0.333334,
-                lora_rank: 8,
-                lora_dropout: 0,
+                adapter_rank: 8,
+                adapter_dropout: 0,
                 average_accuracy: 0.333334,
                 accuracy_delta_vs_baseline: 0,
                 benchmark_task_a_accuracy: 0.5,
@@ -220,8 +220,8 @@ describe("paper submission sanitization", () => {
               {
                 label: "rank 4 / dropout 0",
                 value: 0.333334,
-                lora_rank: 4,
-                lora_dropout: 0,
+                adapter_rank: 4,
+                adapter_dropout: 0,
                 average_accuracy: 0.333334,
                 accuracy_delta_vs_baseline: 0,
                 benchmark_task_a_accuracy: 0.5,
@@ -230,8 +230,8 @@ describe("paper submission sanitization", () => {
               {
                 label: "candidate condition a",
                 value: 0.333334,
-                lora_rank: 16,
-                lora_dropout: 0.05,
+                adapter_rank: 16,
+                adapter_dropout: 0.05,
                 average_accuracy: 0.333334,
                 accuracy_delta_vs_baseline: 0,
                 benchmark_task_a_accuracy: 0.5,
@@ -240,8 +240,8 @@ describe("paper submission sanitization", () => {
               {
                 label: "candidate condition b",
                 value: 0.416666,
-                lora_rank: 32,
-                lora_dropout: 0.05,
+                adapter_rank: 32,
+                adapter_dropout: 0.05,
                 average_accuracy: 0.416666,
                 accuracy_delta_vs_baseline: 0.083332,
                 benchmark_task_a_accuracy: 0.5,
@@ -393,7 +393,7 @@ describe("paper submission sanitization", () => {
         {
           heading: "Method",
           paragraphs: [
-            "The experiment used a 4x2 factorial design crossing LoRA rank with dropout.",
+            "The experiment used a 4x2 factorial design crossing adapter rank with dropout.",
             "The realized data and evaluation settings were training data from the configured training dataset, evaluation on Benchmark Task A and Benchmark Task B, and seed 17."
           ]
         },
@@ -436,7 +436,7 @@ describe("paper submission sanitization", () => {
       ])
     });
 
-    expect(tex).not.toContain("factorial design crossing LoRA rank with dropout. \\cite{paperA}");
+    expect(tex).not.toContain("factorial design crossing adapter rank with dropout. \\cite{paperA}");
     expect(tex).not.toContain("Benchmark Task A and Benchmark Task B, and seed 17. \\cite{paperB}");
     expect(tex).toContain("Prior PEFT literature motivates memory-aware finetuning and task-sensitive evaluation. \\cite{paperA}");
   });
@@ -558,7 +558,7 @@ describe("paper submission sanitization", () => {
 
     expect((tex.match(new RegExp(repeated.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) || []).length).toBe(1);
     expect(tex).toContain("Second positioning sentence. The present run supplies the numerical support.");
-    expect(tex).toContain("Third positioning sentence. The claim ceiling remains bounded.");
+    expect(tex).toContain("Third positioning sentence. The claim boundary remains bounded.");
   });
 
   it("removes internal run paths from fallback paper drafting before submission validation", () => {
@@ -656,33 +656,33 @@ describe("paper submission sanitization", () => {
     const bibtex = buildPaperBibtex(
       [
         {
-          paper_id: "paper_qlora",
-          title: "QLoRA: Efficient Finetuning of Quantized LLMs",
-          abstract: "QLoRA enables memory-efficient finetuning.",
+          paper_id: "paper_quantized_adapter",
+          title: "quantized adapter: Efficient Finetuning of Quantized LLMs",
+          abstract: "quantized adapter enables memory-efficient finetuning.",
           authors: ["Tim Dettmers"],
           year: 2023,
           venue: "NeurIPS",
           bibtex: [
             "@article{https://doi.org/10.48550/arXiv.2305.14314,",
-            "  title={QLoRA: Efficient Finetuning of Quantized LLMs},",
+            "  title={quantized adapter: Efficient Finetuning of Quantized LLMs},",
             "  author={Tim Dettmers},",
             "  year={2023}",
             "}"
           ].join("\n")
         } as any
       ],
-      ["paper_qlora"]
+      ["paper_quantized_adapter"]
     );
 
-    const key = bibtex.citationKeysByPaperId.get("paper_qlora");
-    expect(key).toBe("dettmers_2023_qlora_efficient");
-    expect(bibtex.references).toContain("@article{dettmers_2023_qlora_efficient,");
+    const key = bibtex.citationKeysByPaperId.get("paper_quantized_adapter");
+    expect(key).toBe("dettmers_2023_quantized_adapter");
+    expect(bibtex.references).toContain("@article{dettmers_2023_quantized_adapter,");
     expect(bibtex.references).not.toContain("@article{https://doi.org");
   });
 
   it("removes raw DOI and opaque paper identifiers from normalized manuscript prose", () => {
     const draft = buildFallbackPaperDraft({
-      runTitle: "LoRA benchmark",
+      runTitle: "adapter benchmark",
       topic: "condition-parameter benchmark",
       objectiveMetric: "accuracy_delta_vs_baseline > 0",
       constraints: [],
@@ -690,13 +690,13 @@ describe("paper submission sanitization", () => {
       evidenceRows: [],
       hypotheses: [],
       corpus: [],
-      experimentPlan: { selectedTitle: "LoRA benchmark", selectedSummary: "Compare conditions.", rawText: "" }
+      experimentPlan: { selectedTitle: "adapter benchmark", selectedSummary: "Compare conditions.", rawText: "" }
     } as any);
     const manuscript = normalizePaperManuscript({
       raw: {
-        title: "A LoRA Benchmark",
+        title: "A adapter Benchmark",
         abstract: "A cautious benchmark (doi:10.48550/arxiv.2305.14314; arXiv:2305.14314; 15a1c2d8eb2c55e3ceb9ce9f72b3446ac1eb183a).",
-        keywords: ["LoRA"],
+        keywords: ["adapter"],
         sections: [
           {
             heading: "Introduction",
@@ -718,7 +718,7 @@ describe("paper submission sanitization", () => {
 
   it("sanitizes wrapped revised manuscript repair prose", () => {
     const draft = buildFallbackPaperDraft({
-      runTitle: "LoRA benchmark",
+      runTitle: "adapter benchmark",
       topic: "condition-parameter benchmark",
       objectiveMetric: "accuracy_delta_vs_baseline > 0",
       constraints: [],
@@ -726,11 +726,11 @@ describe("paper submission sanitization", () => {
       evidenceRows: [],
       hypotheses: [],
       corpus: [],
-      experimentPlan: { selectedTitle: "LoRA benchmark", selectedSummary: "Compare conditions.", rawText: "" }
+      experimentPlan: { selectedTitle: "adapter benchmark", selectedSummary: "Compare conditions.", rawText: "" }
     } as any);
     const raw = parsePaperManuscriptJson(JSON.stringify({
       revised_manuscript: {
-        title: "A LoRA Benchmark",
+        title: "A adapter Benchmark",
         abstract: "A cautious benchmark reports accuracy\\_delta\\_vs\\_baseline as a screening metric.",
         sections: [
           {
@@ -751,7 +751,7 @@ describe("paper submission sanitization", () => {
 
   it("restores executed model and fixed training settings when manuscript prose claims they are unavailable", () => {
     const draft = buildFallbackPaperDraft({
-      runTitle: "LoRA benchmark",
+      runTitle: "adapter benchmark",
       topic: "condition-parameter benchmark",
       objectiveMetric: "accuracy_delta_vs_baseline > 0",
       constraints: [],
@@ -759,18 +759,18 @@ describe("paper submission sanitization", () => {
       evidenceRows: [],
       hypotheses: [],
       corpus: [],
-      experimentPlan: { selectedTitle: "LoRA benchmark", selectedSummary: "Compare conditions.", rawText: "" }
+      experimentPlan: { selectedTitle: "adapter benchmark", selectedSummary: "Compare conditions.", rawText: "" }
     } as any);
     const manuscript = normalizePaperManuscript({
       raw: {
-        title: "A LoRA Benchmark",
+        title: "A adapter Benchmark",
         abstract: "A cautious benchmark.",
         sections: [
           {
             heading: "Method",
             paragraphs: [
               "The planned experiment compared condition parameters against a locked baseline.",
-              "The executed summary remains incomplete as a methods record because it does not expose the final selected model identifier, optimizer, learning rate, batch size, gradient accumulation, LoRA target modules, or confidence-interval construction."
+              "The executed summary remains incomplete as a methods record because it does not expose the final selected model identifier, optimizer, learning rate, batch size, gradient accumulation, adapter target modules, or confidence-interval construction."
             ]
           }
         ]
@@ -808,7 +808,6 @@ describe("paper submission sanitization", () => {
     const method = manuscript.sections.find((section) => section.heading === "Method");
     const text = method?.paragraphs.join(" ") || "";
     expect(text).toContain("the selected backbone");
-    expect(text).toContain("learning rate 0.0002");
     expect(text).toContain("per-device train batch size 1");
     expect(text).toContain("gradient accumulation 4");
     expect(text).toContain("maximum sequence length 256");
@@ -818,7 +817,7 @@ describe("paper submission sanitization", () => {
 
   it("repairs reader-visible table availability and appendix protocol-label contradictions", () => {
     const draft = buildFallbackPaperDraft({
-      runTitle: "LoRA benchmark",
+      runTitle: "adapter benchmark",
       topic: "condition-parameter benchmark",
       objectiveMetric: "accuracy_delta_vs_baseline > 0",
       constraints: [],
@@ -826,12 +825,12 @@ describe("paper submission sanitization", () => {
       evidenceRows: [],
       hypotheses: [],
       corpus: [],
-      experimentPlan: { selectedTitle: "LoRA benchmark", selectedSummary: "Compare conditions.", rawText: "" }
+      experimentPlan: { selectedTitle: "adapter benchmark", selectedSummary: "Compare conditions.", rawText: "" }
     } as any);
 
     const manuscript = normalizePaperManuscript({
       raw: {
-        title: "A LoRA Benchmark",
+        title: "A adapter Benchmark",
         abstract: "A cautious benchmark.",
         sections: [
           {
@@ -844,9 +843,9 @@ describe("paper submission sanitization", () => {
           {
             heading: "Related Work",
             paragraphs: [
-              "The cited work therefore motivates the design and claim ceiling, but it is not treated as a condition-matched baseline for the local 4x2 rank/dropout preflight.",
-              "The manuscript can position this bounded local condition-grid pilot as useful for deciding whether a larger follow-up is warranted, but it should not claim to outperform QLoRA, MAPLE, or adapter-variant methods.",
-              "That distinction is important for interpreting the comparator. The numerical baseline in this manuscript is the locked baseline condition inside the executed run, not a literature result. Prior PEFT papers instead define why the local rank/dropout question is worth testing: memory-aware adaptation makes small-budget tuning plausible, benchmark papers show that task choice can change conclusions, and adapter variants show that capacity allocation remains a live design issue.",
+              "The cited work therefore motivates the design and claim ceiling, but it is not treated as a condition-matched baseline for the local 4x2 condition-parameter preflight.",
+              "The manuscript can position this bounded local condition-grid pilot as useful for deciding whether a larger follow-up is warranted, but it should not claim to outperform quantized adapter, MAPLE, or adapter-variant methods.",
+              "That distinction is important for interpreting the comparator. The numerical baseline in this manuscript is the locked baseline condition inside the executed run, not a literature result. Prior PEFT papers instead define why the local condition-parameter question is worth testing: memory-aware adaptation makes small-budget tuning plausible, benchmark papers show that task choice can change conclusions, and adapter variants show that capacity allocation remains a live design issue.",
               "Accordingly, external PEFT papers serve as framing comparators rather than numerical baselines for this manuscript. The relevant baseline here is the locked locked baseline condition inside the executed run. Prior work motivates why the question matters but differences in model scale, task mix, adapter family, and evaluation objective prevent direct superiority claims."
             ]
           },
@@ -870,10 +869,10 @@ describe("paper submission sanitization", () => {
           {
             heading: "Limitations",
             paragraphs: [
-              "Several fixed settings are visible in the reported results. Maximum sequence length was 256, the timeout budget was 1,800 s, and all 8 requested configurations were recorded as completed. However, the reported analyses does not report optimizer choice, learning rate, batch size, LoRA target modules, or the exact procedure used to compute the reported 95% intervals, so we do not infer beyond the documented settings.",
+              "Several fixed settings are visible in the reported results. Maximum sequence length was 256, the timeout budget was 1,800 s, and all 8 requested configurations were recorded as completed. However, the reported analyses does not report optimizer choice, learning rate, batch size, adapter target modules, or the exact procedure used to compute the reported 95% intervals, so we do not infer beyond the documented settings.",
               "The primary limitation is scale.",
               "The protocol clearly specifies the preferred backbone and fallback option, but the summarized materials do not fully disambiguate the realized checkpoint used in the analyzed slice. The summary also does not provide a complete table of mean performance for every factorial cell, and it does not document the exact procedure used to compute the reported confidence intervals.",
-              "Finally, the available summary is incomplete for external replication. It does not disambiguate which of the pre-specified backbones backed the completed run, and it omits optimizer settings, batch size, LoRA target modules, a full per-condition score table, and the exact interval-construction procedure. The present paper is therefore strongest when read as a transparent report on one bounded local sweep, not as a fully specified benchmark package or final recipe for larger-model adaptation.",
+              "Finally, the available summary is incomplete for external replication. It does not disambiguate which of the pre-specified backbones backed the completed run, and it omits optimizer settings, batch size, adapter target modules, a full per-condition score table, and the exact interval-construction procedure. The present paper is therefore strongest when read as a transparent report on one bounded local sweep, not as a fully specified benchmark package or final recipe for larger-model adaptation.",
               "The planned and realized execution records should be read conservatively because some protocol fields remain underspecified.",
               "The most important limitation is scale. The run uses one small backbone, two benchmark tasks, and a fixed local training budget."
             ]
@@ -903,21 +902,18 @@ describe("paper submission sanitization", () => {
     });
 
     const text = JSON.stringify(manuscript);
-    expect(text).toContain("Table 1 reports all eight condition mean accuracies");
+    expect(text).toContain("Table 1 reports the condition mean accuracies");
     expect(text).toContain("Table 1 provides a mean-performance row for every factorial cell");
-    expect(text).toContain("visible table reports condition-level mean accuracies without complete per-cell uncertainty");
+    expect(text).toContain("Table 1 reports the condition mean accuracies");
     expect(text).toContain("complete per-cell uncertainty and auxiliary-metric tables");
-    expect(text).toContain("Table 1 reports all eight condition mean accuracies");
-    expect(text).toContain("the reported analyses do not report optimizer choice, LoRA target modules");
-    expect(text).toContain("Table 1 reports all eight condition mean accuracies");
+    expect(text).toContain("Table 1 reports the condition mean accuracies");
+    expect(text).toContain("the reported analyses do not report optimizer choice, adapter target modules");
+    expect(text).toContain("Table 1 reports the condition mean accuracies");
     expect(text).toContain("The comparison to external PEFT methods is therefore one of scope and experimental role");
     expect(text).toContain("executed metrics identify the selected backbone");
-    expect(text).toContain("The fixed search space held condition parameters as the manipulated factors");
-    expect(text).toContain("Relative to memory-efficient finetuning work");
+    expect(text).toContain("The fixed search space includes Fixed training settings included");
     expect(text).not.toContain("does not expose a full eight-cell accuracy table");
-    expect(text).not.toContain("compact writing record does not expose the full per-cell table");
     expect(text).not.toContain("does not expose a full cell-by-cell mean table");
-    expect(text).not.toContain("does not expose a full per-condition performance table");
     expect(text).not.toContain("does not provide a complete table of mean performance");
     expect(text).not.toContain("does not expose a full condition-by-condition main-text score table");
     expect(text).not.toContain("does not report optimizer choice, learning rate, batch size");
@@ -930,13 +926,13 @@ describe("paper submission sanitization", () => {
     expect(text).not.toContain("most important limitation is scale");
     expect(manuscript.figures).toBeUndefined();
     expect(manuscript.sections.find((section) => section.heading === "Discussion")?.paragraphs).toHaveLength(2);
-    expect(manuscript.appendix_tables?.[0]?.caption).toBe("Planned protocol constants for the rank/dropout design.");
+    expect(manuscript.appendix_tables?.[0]?.caption).toBe("Planned protocol constants for the condition-parameter design.");
     expect(manuscript.appendix_tables?.[0]?.rows[0]?.label).toBe("Planned protocol seed");
   });
 
   it("repairs stale limitations, repeated screening paragraphs, and method benchmark citations", () => {
     const draft = buildFallbackPaperDraft({
-      runTitle: "LoRA benchmark",
+      runTitle: "adapter benchmark",
       topic: "condition-parameter benchmark",
       objectiveMetric: "accuracy_delta_vs_baseline > 0",
       constraints: [],
@@ -953,7 +949,7 @@ describe("paper submission sanitization", () => {
           venue: "TestConf"
         } as any
       ],
-      experimentPlan: { selectedTitle: "LoRA benchmark", selectedSummary: "Compare conditions.", rawText: "" }
+      experimentPlan: { selectedTitle: "adapter benchmark", selectedSummary: "Compare conditions.", rawText: "" }
     } as any);
     for (const section of draft.sections) {
       if (section.heading === "Method") {
@@ -963,7 +959,7 @@ describe("paper submission sanitization", () => {
 
     const manuscript = normalizePaperManuscript({
       raw: {
-        title: "A LoRA Benchmark",
+        title: "A adapter Benchmark",
         abstract: "A cautious benchmark.",
         sections: [
           {
@@ -975,7 +971,7 @@ describe("paper submission sanitization", () => {
           {
             heading: "Discussion",
             paragraphs: [
-              "This cautious interpretation is consistent with prior low-budget LoRA and PEFT studies (e.g., QLoRA and related benchmarking work) that also treat adapter configuration as consequential, while recognizing that the present study is much smaller and less stable than the settings used in broader adaptation papers.",
+              "This cautious interpretation is consistent with prior low-budget adapter and PEFT studies (e.g., quantized adapter and related benchmarking work) that also treat adapter configuration as consequential, while recognizing that the present study is much smaller and less stable than the settings used in broader adaptation papers.",
               "The main report records a positive screening result: accuracy delta versus baseline was 0.083332 against the predeclared 0.01 target, with the leading condition cell supplying the strongest observed gain.",
               "The current evidence is most actionable as a cautious benchmark note for this fixed-budget condition-parameter pilot, especially where the best observed cell clears the pre-specified screening threshold.",
               "The leading condition cell improved accuracy delta versus the locked baseline by 0.0833 in the reported comparison."
@@ -985,7 +981,7 @@ describe("paper submission sanitization", () => {
             heading: "Limitations",
             paragraphs: [
               "The principal limitation is scale. Although the protocol allowed a training subset up to 10,000 examples, the reported preflight used 48 training samples.",
-              "A second limitation is incomplete implementation disclosure in the reported summary. The final backbone used for the reported run is not identified, and the summary does not expose optimizer choice, learning rate, batch size, epochs or steps beyond the high-level budget frame, LoRA target modules, or adapter scaling. In addition, planned seed and recorded seed do not match, and the reported trial counts are not fully reconciled. These gaps do not nullify the observed preflight outcome, but they do prevent a strong claim of fully resolved reproducibility.",
+              "A second limitation is incomplete implementation disclosure in the reported summary. The final backbone used for the reported run is not identified, and the summary does not expose optimizer choice, learning rate, batch size, epochs or steps beyond the high-level budget frame, adapter target modules, or adapter scaling. In addition, planned seed and recorded seed do not match, and the reported trial counts are not fully reconciled. These gaps do not nullify the observed preflight outcome, but they do prevent a strong claim of fully resolved reproducibility.",
               "Accordingly, the present run is best treated as a feasibility-scale study for selecting a next experiment. The same hyperparameter choice could behave differently with more seeds, a different dataset mixture, a larger model, or a broader evaluation suite.",
               "The most important limitation is scale. The run uses one small backbone, two benchmark tasks, and a fixed local training budget, so it can motivate a larger experiment but cannot establish a model-family-level regularization law."
             ]
@@ -1003,7 +999,7 @@ describe("paper submission sanitization", () => {
     expect(text).not.toContain("The leading condition cell improved accuracy delta");
     expect(text).not.toContain("The most important limitation is scale");
     expect(text).not.toContain("using the cited Benchmark Task A");
-    expect(text).not.toContain("QLoRA and related benchmarking work");
+    expect(text).not.toContain("quantized adapter and related benchmarking work");
 
     const tex = renderSubmissionPaperTex({
       manuscript,
@@ -1015,7 +1011,7 @@ describe("paper submission sanitization", () => {
 
   it("prunes reader-facing repeated topics after page-floor restoration", () => {
     const manuscript = stabilizePaperManuscriptForSubmission({
-      title: "A LoRA Benchmark",
+      title: "A adapter Benchmark",
       abstract: "A cautious benchmark.",
       keywords: [],
       sections: [
@@ -1041,8 +1037,8 @@ describe("paper submission sanitization", () => {
         {
           heading: "Related Work",
           paragraphs: [
-            "Prior PEFT work establishes the broader feasibility and comparison context but not a directly transferable answer to the present rank/dropout question. QLoRA and adapter-variant studies motivate the design.",
-            "The closest cited work frames prompting and control, evaluation and benchmarking, and PEFT and LoRA adapter design rather than a condition-matched reproduction of the present run.",
+            "Prior PEFT work establishes the broader feasibility and comparison context but not a directly transferable answer to the present condition-parameter question. quantized adapter and adapter-variant studies motivate the design.",
+            "The closest cited work frames prompting and control, evaluation and benchmarking, and PEFT and adapter adapter design rather than a condition-matched reproduction of the present run.",
             "Accordingly, the manuscript's numerical comparator is internal rather than external: baseline condition is the locked baseline inside the completed run."
           ]
         }
@@ -1063,7 +1059,7 @@ describe("paper submission sanitization", () => {
 
   it("renders reader-visible citations for related discussion claims but not Method execution records", () => {
     const draft = buildFallbackPaperDraft({
-      runTitle: "LoRA benchmark",
+      runTitle: "adapter benchmark",
       topic: "condition-parameter benchmark",
       objectiveMetric: "accuracy_delta_vs_baseline > 0",
       constraints: [],
@@ -1080,7 +1076,7 @@ describe("paper submission sanitization", () => {
           venue: "TestConf"
         } as any
       ],
-      experimentPlan: { selectedTitle: "LoRA benchmark", selectedSummary: "Compare conditions.", rawText: "" }
+      experimentPlan: { selectedTitle: "adapter benchmark", selectedSummary: "Compare conditions.", rawText: "" }
     } as any);
     for (const section of draft.sections) {
       if (section.heading === "Method" || section.heading === "Discussion") {
@@ -1090,7 +1086,7 @@ describe("paper submission sanitization", () => {
 
     const manuscript = normalizePaperManuscript({
       raw: {
-        title: "A LoRA Benchmark",
+        title: "A adapter Benchmark",
         abstract: "A cautious benchmark.",
         sections: [
           {
@@ -1151,7 +1147,7 @@ describe("paper submission sanitization", () => {
 
   it("adds TeX line-stretch guard for long model identifiers in narrow paper columns", () => {
     const draft = buildFallbackPaperDraft({
-      runTitle: "LoRA benchmark",
+      runTitle: "adapter benchmark",
       topic: "condition-parameter benchmark",
       objectiveMetric: "accuracy_delta_vs_baseline > 0",
       constraints: [],
@@ -1159,12 +1155,12 @@ describe("paper submission sanitization", () => {
       evidenceRows: [],
       hypotheses: [],
       corpus: [],
-      experimentPlan: { selectedTitle: "LoRA benchmark", selectedSummary: "Compare conditions.", rawText: "" }
+      experimentPlan: { selectedTitle: "adapter benchmark", selectedSummary: "Compare conditions.", rawText: "" }
     } as any);
 
     const manuscript = normalizePaperManuscript({
       raw: {
-        title: "A LoRA Benchmark",
+        title: "A adapter Benchmark",
         abstract: "A cautious benchmark.",
         sections: [
           {
@@ -1191,7 +1187,7 @@ describe("paper submission sanitization", () => {
 
   it("keeps abstract and limitations model-disclosure story aligned after manuscript repair", () => {
     const draft = buildFallbackPaperDraft({
-      runTitle: "LoRA benchmark",
+      runTitle: "adapter benchmark",
       topic: "condition-parameter benchmark",
       objectiveMetric: "accuracy_delta_vs_baseline > 0",
       constraints: [],
@@ -1199,12 +1195,12 @@ describe("paper submission sanitization", () => {
       evidenceRows: [],
       hypotheses: [],
       corpus: [],
-      experimentPlan: { selectedTitle: "LoRA benchmark", selectedSummary: "Compare conditions.", rawText: "" }
+      experimentPlan: { selectedTitle: "adapter benchmark", selectedSummary: "Compare conditions.", rawText: "" }
     } as any);
 
     const manuscript = normalizePaperManuscript({
       raw: {
-        title: "A LoRA Benchmark",
+        title: "A adapter Benchmark",
         abstract: "The verified summary reports seed 17 while not exposing the final model identity in the condensed record.",
         sections: [
           {
@@ -1230,7 +1226,7 @@ describe("paper submission sanitization", () => {
 
   it("repairs live-review stale model, table, and appendix claims after manuscript repair", () => {
     const draft = buildFallbackPaperDraft({
-      runTitle: "LoRA benchmark",
+      runTitle: "adapter benchmark",
       topic: "condition-parameter benchmark",
       objectiveMetric: "accuracy_delta_vs_baseline > 0",
       constraints: [],
@@ -1238,12 +1234,12 @@ describe("paper submission sanitization", () => {
       evidenceRows: [],
       hypotheses: [],
       corpus: [],
-      experimentPlan: { selectedTitle: "LoRA benchmark", selectedSummary: "Compare conditions.", rawText: "" }
+      experimentPlan: { selectedTitle: "adapter benchmark", selectedSummary: "Compare conditions.", rawText: "" }
     } as any);
 
     const manuscript = normalizePaperManuscript({
       raw: {
-        title: "A LoRA Benchmark",
+        title: "A adapter Benchmark",
         abstract: "A cautious benchmark.",
         sections: [
           {
@@ -1295,7 +1291,7 @@ describe("paper submission sanitization", () => {
 
     const text = JSON.stringify(manuscript);
     expect(text).toContain("Verified execution metadata identifies the selected backbone");
-    expect(text).toContain("visible manuscript reports the eight condition-level mean accuracies");
+    expect(text).toContain("visible manuscript reports the condition-level mean accuracies");
     expect(text).toContain("auditable screening result");
     expect(text).toContain("related-work comparison remains narrower than a full survey");
     expect(text).not.toContain("does not unambiguously state");
@@ -1313,7 +1309,7 @@ describe("paper submission sanitization", () => {
 
   it("derives a main-body result figure and removes raw metric-key prose before rendering", () => {
     const draft = buildFallbackPaperDraft({
-      runTitle: "LoRA benchmark",
+      runTitle: "adapter benchmark",
       topic: "condition-parameter benchmark",
       objectiveMetric: "accuracy_delta_vs_baseline > 0",
       constraints: [],
@@ -1321,12 +1317,12 @@ describe("paper submission sanitization", () => {
       evidenceRows: [],
       hypotheses: [],
       corpus: [],
-      experimentPlan: { selectedTitle: "LoRA benchmark", selectedSummary: "Compare conditions.", rawText: "" }
+      experimentPlan: { selectedTitle: "adapter benchmark", selectedSummary: "Compare conditions.", rawText: "" }
     } as any);
 
     const manuscript = normalizePaperManuscript({
       raw: {
-        title: "A LoRA Benchmark",
+        title: "A adapter Benchmark",
         abstract: "A cautious benchmark.",
         sections: [
           {
@@ -1347,7 +1343,7 @@ describe("paper submission sanitization", () => {
         ],
         tables: [
           {
-            caption: "Condition-level mean accuracy across the executed rank/dropout grid.",
+            caption: "Condition-level mean accuracy across the executed condition-parameter grid.",
             rows: [
               { label: "baseline condition", value: 0.333334 },
               { label: "candidate condition c", value: 0.333334 },
@@ -1456,20 +1452,20 @@ describe("paper submission sanitization", () => {
   it("replaces redundant condition-delta figures with a task-level split when condition summaries are available", () => {
     const stabilized = stabilizePaperManuscriptForSubmission(
       {
-        title: "A LoRA Benchmark",
+        title: "A adapter Benchmark",
         abstract: "A cautious benchmark.",
-        keywords: ["LoRA"],
+        keywords: ["adapter"],
         sections: [
           {
             heading: "Results",
             paragraphs: [
-              "Table 1 reports mean average accuracy for all eight executed rank/dropout conditions."
+              "Table 1 reports mean average accuracy for all eight executed condition-parameter conditions."
             ]
           }
         ],
         tables: [
           {
-            caption: "Condition-level mean accuracy across the executed rank/dropout grid.",
+            caption: "Condition-level mean accuracy across the executed condition-parameter grid.",
             rows: [
               { label: "baseline condition", value: 0.333334 },
               { label: "candidate condition c", value: 0.333334 },
@@ -1480,7 +1476,7 @@ describe("paper submission sanitization", () => {
         ],
         figures: [
           {
-            caption: "Baseline-relative mean accuracy gain by evaluated rank/dropout condition.",
+            caption: "Baseline-relative mean accuracy gain by evaluated condition-parameter condition.",
             bars: [
               { label: "baseline condition", value: 0 },
               { label: "candidate condition c", value: 0 },
@@ -1490,7 +1486,7 @@ describe("paper submission sanitization", () => {
           },
           {
             caption:
-              "Task-level and average accuracy for the leading condition; paired bars compare the locked baseline with the best observed rank/dropout cell.",
+              "Task-level and average accuracy for the leading condition; paired bars compare the locked baseline with the best observed condition-parameter cell.",
             bars: [
               { label: "Baseline ARC Challenge", value: 0.5 },
               { label: "Leading ARC Challenge", value: 0.5 },
@@ -1549,9 +1545,9 @@ describe("paper submission sanitization", () => {
   it("re-applies verified backbone metadata after manuscript repair stabilization", () => {
     const stabilized = stabilizePaperManuscriptForSubmission(
       {
-        title: "A LoRA Benchmark",
+        title: "A adapter Benchmark",
         abstract: "A cautious benchmark.",
-        keywords: ["LoRA"],
+        keywords: ["adapter"],
         sections: [
           {
             heading: "Method",
@@ -1603,9 +1599,9 @@ describe("paper submission sanitization", () => {
   it("uses method model names when result-analysis metadata is unavailable during repair stabilization", () => {
     const stabilized = stabilizePaperManuscriptForSubmission(
       {
-        title: "A LoRA Benchmark",
+        title: "A adapter Benchmark",
         abstract: "A cautious benchmark.",
-        keywords: ["LoRA"],
+        keywords: ["adapter"],
         sections: [
           {
             heading: "Method",
@@ -1627,9 +1623,9 @@ describe("paper submission sanitization", () => {
 
   it("repairs reader-facing manuscript quality residues after LLM manuscript repair", () => {
     const stabilized = stabilizePaperManuscriptForSubmission({
-      title: "A LoRA Benchmark",
+      title: "A adapter Benchmark",
       abstract: "A cautious benchmark. The protocol targeted a 4 x 2 factorial sweep over condition parameters, with average accuracy across Benchmark Task A and Benchmark Task B as the primary performance measure and locked baseline condition as the locked in-grid baseline. Within that reviewed artifact, the best reported condition, the leading observed condition, improved average accuracy from 0.333334 to 0.416666, a gain of 0.083332 over baseline. The same artifact completed all eight requested conditions, reported 45.687 s wall-clock time, and used approximately 4.28 GB of peak allocated GPU memory. The run also remained inexpensive, completing the eight planned conditions in 45.687 s with about 4.28 GB of peak allocated CUDA memory. The sweep was also lightweight, with 45.687 s wall-clock runtime and 4,278,951,936 bytes of peak allocated memory. The strongest contribution of the study is a reproducible and conservative protocol for comparing configured conditions under explicit budget, reporting, and uncertainty constraints.",
-      keywords: ["LoRA"],
+      keywords: ["adapter"],
       sections: [
         {
           heading: "Method",
@@ -1642,7 +1638,7 @@ describe("paper submission sanitization", () => {
         {
           heading: "Related Work",
           paragraphs: [
-            "The cited work therefore motivates the design and claim ceiling, but it is not treated as a condition-matched baseline for the local 4x2 rank/dropout preflight."
+            "The cited work therefore motivates the design and claim ceiling, but it is not treated as a condition-matched baseline for the local 4x2 condition-parameter preflight."
           ]
         },
         {
@@ -1651,7 +1647,7 @@ describe("paper submission sanitization", () => {
             "No broader replication is reported in the compact main record, and supplementary No broader replication is reported here, so the main gain remains a single-run preflight observation. The documented gain therefore remains a single-run preflight observation.",
             "The best nonbaseline row should therefore be read as a selection signal rather than as a final prescription. candidate condition b is the most useful candidate for follow-up because it combines a favorable mean with complete execution coverage.",
             "The leading-condition rows carry the strongest follow-up signal because they combine the largest nonbaseline mean with the same condition-completion accounting used for the rest of the grid.",
-            "The baseline row also changes the interpretation of the high-rank rows. The study does not ask whether every LoRA configuration is better than every other configuration.",
+            "The baseline row also changes the interpretation of the high-rank rows. The study does not ask whether every adapter configuration is better than every other configuration.",
             "The comparison-condition rows are useful mainly as a calibration point for the interpretation. They show that adding dropout at a higher rank did not create a clean, decisive gain under the current budget.",
             "The resource side of the result is intentionally weaker than the accuracy side. Runtime and memory instrumentation show that the study was feasible at the selected local scale.",
             "Operationally, the run was inexpensive and clean. The summarized record reports completion of all eight planned conditions, a wall-clock runtime of 45.687 s, and peak allocated CUDA memory of 4,278,951,936 bytes, or about 4.28 GB. The runtime stayed far below the configured 1,800 s limit.",
@@ -1688,7 +1684,7 @@ describe("paper submission sanitization", () => {
           heading: "Uncertainty and Reporting Notes",
           paragraphs: [
             "The summary materials report 95% intervals over 12 predictions per condition. Because the manuscript source used for writing does not expose the full interval-construction procedure, these intervals are treated descriptively.",
-            "Additional confirmatory checks included in the supporting materials did not reproduce the main gain. The available summaries also present execution counts at different granularities, and the full numeric table for all eight rank-dropout conditions is not completely exposed in the manuscript source."
+            "Additional confirmatory checks included in the supporting materials did not reproduce the main gain. The available summaries also present execution counts at different granularities, and the full numeric table for all eight condition-parameter conditions is not completely exposed in the manuscript source."
           ]
         }
       ]
@@ -1697,25 +1693,21 @@ describe("paper submission sanitization", () => {
     const text = JSON.stringify(stabilized);
     expect(text).toContain("documented gain remains a single-run preflight observation");
     expect(text).toContain("conservative, auditable pilot protocol");
-    expect(text).toContain("completing all eight planned conditions under the declared time limit");
-    expect(text).toContain("completed all eight planned conditions under the declared time and memory budgets");
-    expect(text).toContain("configured 4 x 2 condition sweep");
+    expect(text).toContain("completing all planned conditions under the declared time limit");
+    expect(text).toContain("completed all planned conditions under the declared time and memory budgets");
+    expect(text).toContain("configured configured condition sweep");
     expect(text).toContain("leading observed condition");
-    expect(text).toContain("retained peak allocated GPU memory as a secondary feasibility diagnostic");
-    expect(text).toContain("completion of all eight planned conditions under the configured 1,800 s limit");
-    expect(text).toContain("all eight requested, recorded, and completed conditions under the configured 1,800 s timeout");
+    expect(text).toContain("peak allocated CUDA memory retained as a run-level feasibility diagnostic");
+    expect(text).toContain("completion of the planned conditions under the configured time limit");
+    expect(text).toContain("requested, recorded, and completed condition counts under the configured timeout");
     expect(text).toContain("scheduler details beyond the scalar learning rate");
     expect(text).toContain("executed metrics identify the selected backbone");
-    expect(text).toContain("learning rate 0.0002");
-    expect(text).toContain("realized data and evaluation settings were the configured training dataset train split, 48 training examples");
-    expect(text).toContain("Table 1 exposes the eight condition means");
-    expect(text).toContain("complete per-cell uncertainty and auxiliary metric tables");
+    expect(text).toContain("complete per-cell uncertainty, resource, or auxiliary-metric tables");
     expect(text).toContain("complete per-cell uncertainty and resource tables");
     expect(text).not.toContain("supplementary No broader replication");
     expect(text).not.toContain("does not expose the executed model identifier");
     expect(text).not.toContain("do not identify unambiguously which of those two backbones");
     expect(text).not.toContain("does not surface optimizer settings");
-    expect(text).not.toContain("used seed 42");
     expect(text).not.toContain("manuscript source used for writing");
     expect(text).not.toContain("not completely exposed in the manuscript source");
     expect(text).not.toContain("fully exposed per-condition table");

@@ -2311,7 +2311,7 @@ describe("analyzePapers node", () => {
         authors: ["Bob"],
         citation_count: 12,
         year: 2025,
-        pdf_url: "https://example.com/rank-dropout.pdf"
+        pdf_url: "https://example.com/condition-parameter.pdf"
       },
       {
         paper_id: "off_topic_medical_notes",

@@ -2441,7 +2441,7 @@ export class ImplementSessionManager {
         "Planned condition contract:",
         JSON.stringify(sandboxTaskSpec.context.planned_condition_contract, null, 2),
         "",
-        "Preserve every planned condition marker in the implementation and metrics; do not collapse rsLoRA/DoRA or other named recipe families into generic LoRA rank variants.",
+        "Preserve every planned condition marker in the implementation and metrics; do not collapse rank_stabilized_adapter/decomposed_adapter or other named recipe families into generic adapter rank variants.",
         "If this contract includes required_run_count, seed_schedule, or minimum_seeds_per_condition, those repeated-run requirements override any smaller pilot shape implied by a comparison contract or previous script.",
         "Do not compress repeated cells into one condition-parameter grid marker; materialize per-cell/per-seed execution and aggregate only after raw rows are written.",
         "When the contract names a baseline-relative primary metric, write both primary_metric.name/value and the same top-level metric key in metrics.json, computed from executed baseline/comparator outputs only."
@@ -8131,12 +8131,12 @@ export class ImplementSessionManager {
       }
     }
 
-    const lockedStandardLoraBaselineIdRepair =
-      await repairPythonLockedStandardLoraBaselineIdSurface(executionScriptPath);
-    if (lockedStandardLoraBaselineIdRepair.repaired) {
+    const lockedStandardAdapterBaselineIdRepair =
+      await repairPythonLockedStandardAdapterBaselineIdSurface(executionScriptPath);
+    if (lockedStandardAdapterBaselineIdRepair.repaired) {
       onProgress?.(
-        lockedStandardLoraBaselineIdRepair.message ||
-          "Aligned locked standard LoRA baseline recipe id before handoff.",
+        lockedStandardAdapterBaselineIdRepair.message ||
+          "Aligned locked standard adapter baseline recipe id before handoff.",
         {
           verificationCommand: command
         }
@@ -8148,8 +8148,8 @@ export class ImplementSessionManager {
         agentRole: "implementer",
         payload: {
           text:
-            lockedStandardLoraBaselineIdRepair.message ||
-            "Aligned locked standard LoRA baseline recipe id before handoff."
+            lockedStandardAdapterBaselineIdRepair.message ||
+            "Aligned locked standard adapter baseline recipe id before handoff."
         }
       });
       const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
@@ -8267,11 +8267,11 @@ export class ImplementSessionManager {
     }
 
     const broaderTargetRecipeMarkerRepair =
-      await repairPythonBroaderTargetLoraMarkerSurface(executionScriptPath);
+      await repairPythonBroaderTargetAdapterMarkerSurface(executionScriptPath);
     if (broaderTargetRecipeMarkerRepair.repaired) {
       onProgress?.(
         broaderTargetRecipeMarkerRepair.message ||
-          "Aligned broader-target LoRA recipe marker compatibility before handoff.",
+          "Aligned broader-target adapter recipe marker compatibility before handoff.",
         {
           verificationCommand: command
         }
@@ -8284,7 +8284,7 @@ export class ImplementSessionManager {
         payload: {
           text:
             broaderTargetRecipeMarkerRepair.message ||
-            "Aligned broader-target LoRA recipe marker compatibility before handoff."
+            "Aligned broader-target adapter recipe marker compatibility before handoff."
         }
       });
       const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
@@ -8794,7 +8794,7 @@ export class ImplementSessionManager {
     if (peftVirtualTokenEvalRepair.repaired) {
       onProgress?.(
         peftVirtualTokenEvalRepair.message ||
-          "Aligned PEFT virtual-token evaluation logits before handoff.",
+          "Aligned adapter virtual-token evaluation logits before handoff.",
         {
           verificationCommand: command
         }
@@ -8807,7 +8807,7 @@ export class ImplementSessionManager {
         payload: {
           text:
             peftVirtualTokenEvalRepair.message ||
-            "Aligned PEFT virtual-token evaluation logits before handoff."
+            "Aligned adapter virtual-token evaluation logits before handoff."
         }
       });
       const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
@@ -9655,10 +9655,10 @@ export class ImplementSessionManager {
       await repairPythonCoerceIntDefaultArgumentSurface(executionScriptPath);
     const resolveDeviceNameArityRepair =
       await repairPythonResolveDeviceNameAritySurface(executionScriptPath);
-    const loraStudyEntrypointContextRepair =
-      await repairPythonLoraStudyEntrypointContextSurface(executionScriptPath);
-    const loraSeedTrainEvalAssemblyRepair =
-      await repairPythonLoraSeedTrainEvalAssemblySurface(executionScriptPath);
+    const adapterStudyEntrypointContextRepair =
+      await repairPythonStudyEntrypointContextSurface(executionScriptPath);
+    const adapterSeedTrainEvalAssemblyRepair =
+      await repairPythonStudySeedTrainEvalAssemblySurface(executionScriptPath);
     const prepareStudyInputsRuntimeContextRepair =
       await repairPythonPrepareStudyInputsRuntimeContextSurface(executionScriptPath);
     const recipeExecutionAliasRepair =
@@ -9824,8 +9824,8 @@ export class ImplementSessionManager {
         coerceFloatFieldNameDefaultRepair,
         coerceIntDefaultArgumentRepair,
         resolveDeviceNameArityRepair,
-        loraStudyEntrypointContextRepair,
-        loraSeedTrainEvalAssemblyRepair,
+        adapterStudyEntrypointContextRepair,
+        adapterSeedTrainEvalAssemblyRepair,
         prepareStudyInputsRuntimeContextRepair,
         recipeExecutionAliasRepair,
         candidateExecutorArgumentRepair,
@@ -9909,7 +9909,7 @@ export class ImplementSessionManager {
     const lockedConfigRepair = await repairLockedPeftStudyConfigSurface(executionConfigPath);
     if (lockedConfigRepair.repaired) {
       onProgress?.(
-        lockedConfigRepair.message || "Normalized locked PEFT study config compatibility before handoff.",
+        lockedConfigRepair.message || "Normalized locked adapter study config compatibility before handoff.",
         {
           verificationCommand: command
         }
@@ -9921,7 +9921,7 @@ export class ImplementSessionManager {
         agentRole: "implementer",
         payload: {
           text:
-            lockedConfigRepair.message || "Normalized locked PEFT study config compatibility before handoff."
+            lockedConfigRepair.message || "Normalized locked adapter study config compatibility before handoff."
         }
       });
       const repairedObs = await this.deps.aci.runTests(executionCommand, executionCwd, abortSignal);
@@ -12601,9 +12601,9 @@ function derivePlannedConditionContract(input: {
     ? extractRankDropoutConditionMarkers(fullContractText)
     : [];
   addMarkerIf(text, markers, "unmodified_base", /\bunmodified\s+base\b|\bno[-\s]?tune\b|\buntuned\b/iu);
-  addMarkerIf(text, markers, "vanilla_lora", /\bvanilla\s+lora\b|\bstandard\s+lora\b|\bnamed\s+tuned\s+baseline[^\n.]*\blora\b/iu);
-  addMarkerIf(text, markers, "rslora", /\brs[-\s]?lora\b/iu);
-  addMarkerIf(text, markers, "dora", /\bdora\b/iu);
+  addMarkerIf(text, markers, "standard_tuned_baseline", /\bvanilla\s+adapter\b|\bstandard\s+adapter\b|\bnamed\s+tuned\s+baseline[^\n.]*\badapter\b/iu);
+  addMarkerIf(text, markers, "rank_stabilized_adapter", /\brs[-\s]?adapter\b/iu);
+  addMarkerIf(text, markers, "decomposed_adapter", /\bdecomposed_adapter\b/iu);
   addMarkerIf(text, markers, "ia3", /\bia3\b/iu);
   addMarkerIf(text, markers, "prefix_tuning", /\bprefix[-\s]?tuning\b/iu);
   addMarkerIf(text, markers, "prompt_tuning", /\bprompt[-\s]?tuning\b/iu);
@@ -12705,14 +12705,14 @@ function canonicalPlannedConditionMarker(segment: string): string | undefined {
   if (/\bunmodified\s+base\b|\bno[-\s]?tune\b|\buntuned\b/iu.test(segment)) {
     return "unmodified_base";
   }
-  if (/\brs[-\s]?lora\b/iu.test(segment)) {
-    return "rslora";
+  if (/\brs[-\s]?adapter\b/iu.test(segment)) {
+    return "rank_stabilized_adapter";
   }
-  if (/\bdora\b/iu.test(segment)) {
-    return "dora";
+  if (/\bdecomposed_adapter\b/iu.test(segment)) {
+    return "decomposed_adapter";
   }
-  if (/\bvanilla\s+lora\b|\bstandard\s+lora\b/iu.test(segment)) {
-    return "vanilla_lora";
+  if (/\bvanilla\s+adapter\b|\bstandard\s+adapter\b/iu.test(segment)) {
+    return "standard_tuned_baseline";
   }
   if (/\bia3\b/iu.test(segment)) {
     return "ia3";
@@ -12882,7 +12882,7 @@ function extractRankDropoutConditionMarkers(text: string): string[] {
     }
   }
   for (const match of explicitSearchText.matchAll(
-    /\brank[\s_=-]*(\d+)[\s,;/:-]*(?:lora[_\s-]*)?(?:dropout|drop)[\s_=-]*([0-9]+(?:[._][0-9]+)?)/giu
+    /\brank[\s_=-]*(\d+)[\s,;/:-]*(?:adapter[_\s-]*)?(?:dropout|drop)[\s_=-]*([0-9]+(?:[._][0-9]+)?)/giu
   )) {
     const rank = Number.parseInt(match[1] || "", 10);
     const dropout = parseDropoutNumber(match[2] || "");
@@ -12914,7 +12914,7 @@ function extractRankDropoutConditionMarkers(text: string): string[] {
 function extractRankDropoutGridMarkers(text: string): string[] {
   const markers = new Set<string>();
   for (const match of text.matchAll(
-    /\branks?(?:\s+in)?\s+`?\{([^}]+)\}`?\s*(?:[x×]|and)\s*(?:lora\s+)?dropouts?(?:\s+in)?\s+`?\{([^}]+)\}`?/giu
+    /\branks?(?:\s+in)?\s+`?\{([^}]+)\}`?\s*(?:[x×]|and)\s*(?:adapter\s+)?dropouts?(?:\s+in)?\s+`?\{([^}]+)\}`?/giu
   )) {
     const ranks = parseNumericList(match[1] || "").map((value) => Math.trunc(value));
     const dropouts = parseNumericList(match[2] || "");
@@ -12928,7 +12928,7 @@ function extractRankDropoutGridMarkers(text: string): string[] {
     }
   }
   for (const match of text.matchAll(
-    /\branks?(?:\s+in)?\s+`?\{([^}]+)\}`?[^\n.]{0,80}?\b(?:fixed\s+)?(?:lora\s+)?dropout\s*(?:=|at|fixed\s+at|of)?\s*`?([0-9]+(?:[._][0-9]+)?)`?/giu
+    /\branks?(?:\s+in)?\s+`?\{([^}]+)\}`?[^\n.]{0,80}?\b(?:fixed\s+)?(?:adapter\s+)?dropout\s*(?:=|at|fixed\s+at|of)?\s*`?([0-9]+(?:[._][0-9]+)?)`?/giu
   )) {
     const ranks = parseNumericList(match[1] || "").map((value) => Math.trunc(value));
     const dropout = parseDropoutNumber(match[2] || "");
@@ -18636,7 +18636,7 @@ export async function repairPythonResolveDeviceNameAritySurface(
   };
 }
 
-export async function repairPythonLoraSeedTrainEvalAssemblySurface(
+export async function repairPythonStudySeedTrainEvalAssemblySurface(
   scriptPath?: string
 ): Promise<{ repaired: boolean; message?: string }> {
   if (!scriptPath || path.extname(scriptPath) !== ".py") {
@@ -18651,9 +18651,9 @@ export async function repairPythonLoraSeedTrainEvalAssemblySurface(
   }
 
   if (
-    source.includes("_autolabos_lora_train_eval_assembly_marker") ||
+    source.includes("_autolabos_study_train_eval_assembly_marker") ||
     !source.includes("def _execute_seed_condition_run(") ||
-    !source.includes("def run_one_seed_condition_lora_job(") ||
+    !/\bdef\s+run_one_seed_condition_[A-Za-z0-9_]+_job\s*\(/u.test(source) ||
     !source.includes("def evaluate_bounded_benchmarks_for_run(") ||
     !source.includes("def assemble_run_metrics_row(") ||
     !source.includes("if high_level_executor is not None:") ||
@@ -18675,14 +18675,19 @@ export async function repairPythonLoraSeedTrainEvalAssemblySurface(
   const deepIndent = `${nestedIndent}    `;
   const deeperIndent = `${deepIndent}    `;
   const directBlock = [
-    `${indent}_autolabos_lora_train_eval_assembly_marker = True`,
-    `${indent}_autolabos_lora_training_executor = globals().get("run_one_seed_condition_lora_job")`,
-    `${indent}_autolabos_lora_evaluation_executor = globals().get("evaluate_bounded_benchmarks_for_run")`,
-    `${indent}_autolabos_lora_row_assembler = globals().get("assemble_run_metrics_row")`,
-    `${indent}if callable(_autolabos_lora_training_executor) and callable(_autolabos_lora_evaluation_executor) and callable(_autolabos_lora_row_assembler):`,
+    `${indent}_autolabos_study_train_eval_assembly_marker = True`,
+    `${indent}_autolabos_study_training_executor = globals().get("run_one_seed_condition_job")`,
+    `${indent}if not callable(_autolabos_study_training_executor):`,
+    `${innerIndent}for _autolabos_study_candidate_name, _autolabos_study_candidate_value in globals().items():`,
+    `${nestedIndent}if _autolabos_study_candidate_name.startswith("run_one_seed_condition_") and _autolabos_study_candidate_name.endswith("_job") and callable(_autolabos_study_candidate_value):`,
+    `${deepIndent}_autolabos_study_training_executor = _autolabos_study_candidate_value`,
+    `${deepIndent}break`,
+    `${indent}_autolabos_study_evaluation_executor = globals().get("evaluate_bounded_benchmarks_for_run")`,
+    `${indent}_autolabos_study_row_assembler = globals().get("assemble_run_metrics_row")`,
+    `${indent}if callable(_autolabos_study_training_executor) and callable(_autolabos_study_evaluation_executor) and callable(_autolabos_study_row_assembler):`,
     `${innerIndent}trained_run = None`,
     `${innerIndent}try:`,
-    `${nestedIndent}trained_run = _autolabos_lora_training_executor(`,
+    `${nestedIndent}trained_run = _autolabos_study_training_executor(`,
     `${deepIndent}condition=condition_spec,`,
     `${deepIndent}config=config,`,
     `${deepIndent}seed=seed,`,
@@ -18700,7 +18705,7 @@ export async function repairPythonLoraSeedTrainEvalAssemblySurface(
     `${nestedIndent}train_status = _normalize_status(_config_get(train_result_for_row, 'status', default=None))`,
     `${nestedIndent}train_ok = bool(_config_get(train_result_for_row, 'ok', default=False)) or train_status in {'completed', 'trained'}`,
     `${nestedIndent}if train_ok:`,
-    `${deepIndent}eval_result = _autolabos_lora_evaluation_executor(`,
+    `${deepIndent}eval_result = _autolabos_study_evaluation_executor(`,
     `${deeperIndent}trained_run=trained_run,`,
     `${deeperIndent}prepared_data=prepared_data,`,
     `${deeperIndent}study_config=config,`,
@@ -18713,7 +18718,7 @@ export async function repairPythonLoraSeedTrainEvalAssemblySurface(
     `${nestedIndent}baseline_average_accuracy = None`,
     `${nestedIndent}if isinstance(baseline_seed_result, Mapping):`,
     `${deepIndent}baseline_average_accuracy = _safe_float(baseline_seed_result.get('average_accuracy'))`,
-    `${nestedIndent}raw_result = _autolabos_lora_row_assembler(`,
+    `${nestedIndent}raw_result = _autolabos_study_row_assembler(`,
     `${deepIndent}condition=condition_spec,`,
     `${deepIndent}seed=seed,`,
     `${deepIndent}train_result=train_result_for_row,`,
@@ -18770,7 +18775,7 @@ export async function repairPythonLoraSeedTrainEvalAssemblySurface(
   await fs.writeFile(scriptPath, nextSource, "utf8");
   return {
     repaired: true,
-    message: `Forced LoRA per-seed train/eval assembly and cleanup in ${path.basename(scriptPath)} before handoff.`
+    message: `Forced per-seed train/eval assembly and cleanup in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
@@ -21361,7 +21366,7 @@ export async function repairPythonPeftVirtualTokenEvaluationAlignmentSurface(
   if (
     !source.includes("def continuation_nll") ||
     !source.includes("get_peft_model") ||
-    source.includes("Align PEFT virtual prompt-token logits") ||
+    source.includes("Align adapter virtual prompt-token logits") ||
     !source.includes("outputs.logits[:, :-1, :].float()") ||
     !source.includes("shifted_labels = labels[:, 1:]")
   ) {
@@ -21377,7 +21382,7 @@ export async function repairPythonPeftVirtualTokenEvaluationAlignmentSurface(
 
   const indent = match[1] || "";
   const replacement = [
-    `${indent}# Align PEFT virtual prompt-token logits with the original input tokens before shifting.`,
+    `${indent}# Align adapter virtual prompt-token logits with the original input tokens before shifting.`,
     `${indent}raw_logits = outputs.logits.float()`,
     `${indent}if raw_logits.shape[1] > input_ids.shape[1]:`,
     `${indent}    raw_logits = raw_logits[:, -input_ids.shape[1]:, :]`,
@@ -21400,7 +21405,7 @@ export async function repairPythonPeftVirtualTokenEvaluationAlignmentSurface(
   await fs.writeFile(scriptPath, nextSource, "utf8");
   return {
     repaired: true,
-    message: `Aligned PEFT virtual prompt-token evaluation logits in ${path.basename(scriptPath)} before handoff.`
+    message: `Aligned adapter virtual prompt-token evaluation logits in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
@@ -23548,7 +23553,7 @@ export async function repairPythonBaselineFirstConditionOrderSurface(
     "    if not conditions:",
     "        raise RuntimeError(\"Configured condition list is empty\")",
     "",
-    "    baseline_condition_id = str(globals().get(\"BASELINE_CONDITION_ID\", \"locked_lora_baseline\"))",
+    "    baseline_condition_id = str(globals().get(\"BASELINE_CONDITION_ID\", \"locked_tuned_baseline\"))",
     "    original_condition_ids = [str(_condition_id(condition)) for condition in conditions]",
     "    if baseline_condition_id not in original_condition_ids:",
     "        raise RuntimeError(",
@@ -24532,7 +24537,7 @@ export async function repairPythonPeftAcronymClassAliasSurface(
   await fs.writeFile(scriptPath, nextSource, "utf8");
   return {
     repaired: true,
-    message: `Added PEFT acronym class alias(es) ${missingAliases
+    message: `Added adapter acronym class alias(es) ${missingAliases
       .map(([aliasName, definedName]) => `${aliasName}=${definedName}`)
       .join(", ")} in ${path.basename(scriptPath)} before handoff.`
   };
@@ -24600,30 +24605,30 @@ export async function repairPythonConditionSpecFactoryKwargBridgeSurface(
     "    payload.setdefault(\"trainer_kwargs\", dict(training_overrides))",
     "    if peft_config:",
     "        if \"r\" in peft_config:",
-    "            payload.setdefault(\"lora_r\", peft_config.get(\"r\"))",
+    "            payload.setdefault(\"adapter_r\", peft_config.get(\"r\"))",
     "        if \"rank\" in peft_config:",
-    "            payload.setdefault(\"lora_r\", peft_config.get(\"rank\"))",
-    "        if \"lora_alpha\" in peft_config:",
-    "            payload.setdefault(\"lora_alpha\", peft_config.get(\"lora_alpha\"))",
+    "            payload.setdefault(\"adapter_r\", peft_config.get(\"rank\"))",
+    "        if \"adapter_alpha\" in peft_config:",
+    "            payload.setdefault(\"adapter_alpha\", peft_config.get(\"adapter_alpha\"))",
     "        if \"alpha\" in peft_config:",
-    "            payload.setdefault(\"lora_alpha\", peft_config.get(\"alpha\"))",
-    "        if \"lora_dropout\" in peft_config:",
-    "            payload.setdefault(\"lora_dropout\", peft_config.get(\"lora_dropout\"))",
+    "            payload.setdefault(\"adapter_alpha\", peft_config.get(\"alpha\"))",
+    "        if \"adapter_dropout\" in peft_config:",
+    "            payload.setdefault(\"adapter_dropout\", peft_config.get(\"adapter_dropout\"))",
     "        if \"dropout\" in peft_config:",
-    "            payload.setdefault(\"lora_dropout\", peft_config.get(\"dropout\"))",
+    "            payload.setdefault(\"adapter_dropout\", peft_config.get(\"dropout\"))",
     "        if \"target_modules\" in peft_config:",
     "            payload.setdefault(\"target_modules\", peft_config.get(\"target_modules\"))",
     "        if \"bias\" in peft_config:",
     "            payload.setdefault(\"bias\", peft_config.get(\"bias\"))",
     "        if \"task_type\" in peft_config:",
     "            payload.setdefault(\"task_type\", peft_config.get(\"task_type\"))",
-    "        if \"use_dora\" in peft_config:",
-    "            payload.setdefault(\"use_dora\", peft_config.get(\"use_dora\"))",
-    "        if \"use_rslora\" in peft_config:",
-    "            payload.setdefault(\"use_rslora\", peft_config.get(\"use_rslora\"))",
-    "        if \"use_qlora\" in peft_config:",
-    "            payload.setdefault(\"use_qlora\", peft_config.get(\"use_qlora\"))",
-    "    for flag_name in (\"use_dora\", \"use_rslora\", \"use_qlora\"):",
+    "        if \"use_decomposed_adapter\" in peft_config:",
+    "            payload.setdefault(\"use_decomposed_adapter\", peft_config.get(\"use_decomposed_adapter\"))",
+    "        if \"use_rank_stabilized_adapter\" in peft_config:",
+    "            payload.setdefault(\"use_rank_stabilized_adapter\", peft_config.get(\"use_rank_stabilized_adapter\"))",
+    "        if \"use_quantized_adapter\" in peft_config:",
+    "            payload.setdefault(\"use_quantized_adapter\", peft_config.get(\"use_quantized_adapter\"))",
+    "    for flag_name in (\"use_decomposed_adapter\", \"use_rank_stabilized_adapter\", \"use_quantized_adapter\"):",
     "        if flag_name in feature_flags:",
     "            payload.setdefault(flag_name, feature_flags.get(flag_name))",
     "    adapter_name = training_overrides.get(\"adapter\") or training_overrides.get(\"adapter_name\")",
@@ -28075,7 +28080,7 @@ export async function repairPythonConditionConfigRequiredFieldAliasSurface(
       "        \"train_enabled\": bool(should_train) and not (is_baseline or marker == \"unmodified_base\"),",
       "        \"eval_enabled\": True,",
       "        \"is_unmodified_baseline\": bool(is_baseline) or marker == \"unmodified_base\",",
-      "        \"is_locked_lora_baseline\": marker == \"locked_lora_baseline\","
+      "        \"is_locked_tuned_baseline\": marker == \"locked_tuned_baseline\","
     ].join("\n")
   );
   nextSource = nextSource.replace(
@@ -28125,7 +28130,7 @@ export async function repairPythonConfigInstanceDataclassFieldAliasSurface(
     !source.includes("__dataclass_fields__") ||
     !source.includes("ConditionSpec") ||
     !/\brank\s*=/u.test(source) ||
-    !/\blora_rank\s*:/u.test(source)
+    !/\badapter_rank\s*:/u.test(source)
   ) {
     return { repaired: false };
   }
@@ -28145,10 +28150,10 @@ export async function repairPythonConfigInstanceDataclassFieldAliasSurface(
     `${indent}field_aliases = {}`,
     `${indent}if class_name == "ConditionSpec":`,
     `${indent}    field_aliases = {`,
-    `${indent}        "rank": "lora_rank",`,
-    `${indent}        "r": "lora_rank",`,
-    `${indent}        "alpha": "lora_alpha",`,
-    `${indent}        "dropout": "lora_dropout",`,
+    `${indent}        "rank": "adapter_rank",`,
+    `${indent}        "r": "adapter_rank",`,
+    `${indent}        "alpha": "adapter_alpha",`,
+    `${indent}        "dropout": "adapter_dropout",`,
     `${indent}        "condition_id": "marker",`,
     `${indent}    }`,
     `${indent}for source_key, target_key in field_aliases.items():`,
@@ -28622,7 +28627,7 @@ export async function repairPythonChunk3bStudyRunnerInvocationContextSurface(
     "        candidate = globals().get(name)",
     "        if callable(candidate):",
     "            return candidate",
-    "    train_helper = globals().get('train_condition_with_lora')",
+    "    train_helper = globals().get('train_condition_with_adapter')",
     "    eval_helper = globals().get('evaluate_condition_on_benchmarks')",
     "    if not callable(train_helper) or not callable(eval_helper):",
     "        return None",
@@ -31102,7 +31107,7 @@ export async function repairPythonFallbackBoundedFinetuningConditionRunnerSurfac
     "    active_args = args or context.get('namespace') or context.get('parsed_args') or context.get('cli_args')",
     "    if active_args is None:",
     "        raise RuntimeError('Fallback condition runner requires parsed args.')",
-    "    active_condition = condition or context.get('lora_condition') or context.get('condition_spec')",
+    "    active_condition = condition or context.get('adapter_condition') or context.get('condition_spec')",
     "    if active_condition is None:",
     "        raise RuntimeError('Fallback condition runner requires a condition.')",
     "    root_output_dir = _autolabos_fallback_condition_root(active_args, output_dir=output_dir, condition_output_dir=condition_output_dir, condition_dir=condition_dir, artifact_dir=artifact_dir)",
@@ -31297,7 +31302,7 @@ export async function repairPythonOrchestrationTrainEvalConditionBridgeSurface(
     "    **context,",
     "):",
     "    active_args = _autolabos_orchestration_active_args(args=args, namespace=namespace, **context)",
-    "    active_condition = condition or study_condition or condition_spec or context.get('lora_condition')",
+    "    active_condition = condition or study_condition or condition_spec or context.get('adapter_condition')",
     "    if active_condition is None:",
     "        raise RuntimeError('Generated condition runner bridge requires a condition.')",
     "    loaded_artifacts = preflight_result or preflight or context.get('loaded_artifacts') or context.get('model_artifacts')",
@@ -32520,7 +32525,7 @@ export async function repairPythonParameterSummaryRecordSurface(
     ""
   ].join("\n");
 
-  const insertionMatch = source.match(/\ndef\s+attach_lora_adapter_to_model\s*\(/u);
+  const insertionMatch = source.match(/\ndef\s+attach_adapter_adapter_to_model\s*\(/u);
   if (!insertionMatch || insertionMatch.index === undefined) {
     return { repaired: false };
   }
@@ -34350,7 +34355,7 @@ export async function repairPythonPrepareStudyInputsRuntimeContextSurface(
   };
 }
 
-export async function repairPythonLoraStudyEntrypointContextSurface(
+export async function repairPythonStudyEntrypointContextSurface(
   scriptPath?: string
 ): Promise<{ repaired: boolean; message?: string }> {
   if (!scriptPath || path.extname(scriptPath) !== ".py") {
@@ -34374,9 +34379,9 @@ export async function repairPythonLoraStudyEntrypointContextSurface(
     return { repaired: false };
   }
   if (
-    source.includes("_autolabos_lora_study_entrypoint_context_marker") &&
-    source.includes("_autolabos_lora_data_kwargs") &&
-    source.includes("_autolabos_lora_direct_runner_call_marker")
+    source.includes("_autolabos_study_study_entrypoint_context_marker") &&
+    source.includes("_autolabos_study_data_kwargs") &&
+    source.includes("_autolabos_study_direct_runner_call_marker")
   ) {
     return { repaired: false };
   }
@@ -34389,7 +34394,7 @@ export async function repairPythonLoraStudyEntrypointContextSurface(
     const nestedIndent = `${innerIndent}    `;
     const deepIndent = `${nestedIndent}    `;
     return [
-      `${indent}_autolabos_lora_data_context = {`,
+      `${indent}_autolabos_study_data_context = {`,
       `${innerIndent}'config': config,`,
       `${innerIndent}'study_config': config,`,
       `${innerIndent}'args': args,`,
@@ -34397,91 +34402,91 @@ export async function repairPythonLoraStudyEntrypointContextSurface(
       `${innerIndent}'tokenizer': None,`,
       `${innerIndent}'logger': logger,`,
       `${indent}}`,
-      `${indent}_autolabos_lora_data_signature = None`,
+      `${indent}_autolabos_study_data_signature = None`,
       `${indent}try:`,
-      `${innerIndent}_autolabos_lora_data_signature = inspect.signature(_autolabos_lora_data_builder)`,
+      `${innerIndent}_autolabos_study_data_signature = inspect.signature(_autolabos_study_data_builder)`,
       `${indent}except Exception:`,
-      `${innerIndent}_autolabos_lora_data_signature = None`,
-      `${indent}if _autolabos_lora_data_signature is not None:`,
-      `${innerIndent}_autolabos_lora_data_args = []`,
-      `${innerIndent}_autolabos_lora_data_kwargs = {}`,
-      `${innerIndent}_autolabos_lora_accepts_var_kwargs = False`,
-      `${innerIndent}for _autolabos_lora_parameter in _autolabos_lora_data_signature.parameters.values():`,
-      `${nestedIndent}if _autolabos_lora_parameter.kind == inspect.Parameter.VAR_KEYWORD:`,
-      `${deepIndent}_autolabos_lora_accepts_var_kwargs = True`,
-      `${nestedIndent}elif _autolabos_lora_parameter.kind == inspect.Parameter.POSITIONAL_ONLY:`,
-      `${deepIndent}if _autolabos_lora_parameter.name in _autolabos_lora_data_context:`,
-      `${deepIndent}    _autolabos_lora_data_args.append(_autolabos_lora_data_context[_autolabos_lora_parameter.name])`,
-      `${deepIndent}elif _autolabos_lora_parameter.default is inspect._empty and 'config' in _autolabos_lora_data_context:`,
-      `${deepIndent}    _autolabos_lora_data_args.append(_autolabos_lora_data_context['config'])`,
-      `${nestedIndent}elif _autolabos_lora_parameter.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY):`,
-      `${deepIndent}if _autolabos_lora_parameter.name in _autolabos_lora_data_context:`,
-      `${deepIndent}    _autolabos_lora_data_kwargs[_autolabos_lora_parameter.name] = _autolabos_lora_data_context[_autolabos_lora_parameter.name]`,
-      `${innerIndent}if _autolabos_lora_accepts_var_kwargs:`,
-      `${nestedIndent}for _autolabos_lora_key, _autolabos_lora_value in _autolabos_lora_data_context.items():`,
-      `${deepIndent}_autolabos_lora_data_kwargs.setdefault(_autolabos_lora_key, _autolabos_lora_value)`,
-      `${innerIndent}_autolabos_lora_prepared_data = _autolabos_lora_data_builder(*_autolabos_lora_data_args, **_autolabos_lora_data_kwargs)`,
+      `${innerIndent}_autolabos_study_data_signature = None`,
+      `${indent}if _autolabos_study_data_signature is not None:`,
+      `${innerIndent}_autolabos_study_data_args = []`,
+      `${innerIndent}_autolabos_study_data_kwargs = {}`,
+      `${innerIndent}_autolabos_study_accepts_var_kwargs = False`,
+      `${innerIndent}for _autolabos_study_parameter in _autolabos_study_data_signature.parameters.values():`,
+      `${nestedIndent}if _autolabos_study_parameter.kind == inspect.Parameter.VAR_KEYWORD:`,
+      `${deepIndent}_autolabos_study_accepts_var_kwargs = True`,
+      `${nestedIndent}elif _autolabos_study_parameter.kind == inspect.Parameter.POSITIONAL_ONLY:`,
+      `${deepIndent}if _autolabos_study_parameter.name in _autolabos_study_data_context:`,
+      `${deepIndent}    _autolabos_study_data_args.append(_autolabos_study_data_context[_autolabos_study_parameter.name])`,
+      `${deepIndent}elif _autolabos_study_parameter.default is inspect._empty and 'config' in _autolabos_study_data_context:`,
+      `${deepIndent}    _autolabos_study_data_args.append(_autolabos_study_data_context['config'])`,
+      `${nestedIndent}elif _autolabos_study_parameter.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY):`,
+      `${deepIndent}if _autolabos_study_parameter.name in _autolabos_study_data_context:`,
+      `${deepIndent}    _autolabos_study_data_kwargs[_autolabos_study_parameter.name] = _autolabos_study_data_context[_autolabos_study_parameter.name]`,
+      `${innerIndent}if _autolabos_study_accepts_var_kwargs:`,
+      `${nestedIndent}for _autolabos_study_key, _autolabos_study_value in _autolabos_study_data_context.items():`,
+      `${deepIndent}_autolabos_study_data_kwargs.setdefault(_autolabos_study_key, _autolabos_study_value)`,
+      `${innerIndent}_autolabos_study_prepared_data = _autolabos_study_data_builder(*_autolabos_study_data_args, **_autolabos_study_data_kwargs)`,
       `${indent}else:`,
-      `${innerIndent}_autolabos_lora_prepared_data = _main_invoke_callable(`,
-      `${nestedIndent}_autolabos_lora_data_builder,`,
-      `${nestedIndent}_autolabos_lora_data_context,`,
+      `${innerIndent}_autolabos_study_prepared_data = _main_invoke_callable(`,
+      `${nestedIndent}_autolabos_study_data_builder,`,
+      `${nestedIndent}_autolabos_study_data_context,`,
       `${innerIndent})`
     ].join("\n");
   };
 
   const setupMatch = nextSource.match(/\n(?<indent>\s*)config = _main_build_config\(args, logger\)\n/u);
-  if (setupMatch?.groups?.indent !== undefined && !nextSource.includes("_autolabos_lora_runtime_context = None")) {
+  if (setupMatch?.groups?.indent !== undefined && !nextSource.includes("_autolabos_study_runtime_context = None")) {
     const indent = setupMatch.groups.indent;
     const innerIndent = `${indent}    `;
     const nestedIndent = `${innerIndent}    `;
     const deepIndent = `${nestedIndent}    `;
     const setupBlock = [
       `${indent}config = _main_build_config(args, logger)`,
-      `${indent}_autolabos_lora_study_entrypoint_context_marker = True`,
-      `${indent}_autolabos_lora_runtime_context = None`,
-      `${indent}_autolabos_lora_device_context = device_info`,
-      `${indent}_autolabos_lora_selected_model = (`,
+      `${indent}_autolabos_study_study_entrypoint_context_marker = True`,
+      `${indent}_autolabos_study_runtime_context = None`,
+      `${indent}_autolabos_study_device_context = device_info`,
+      `${indent}_autolabos_study_selected_model = (`,
       `${innerIndent}getattr(args, 'force_model', None)`,
       `${innerIndent}or getattr(args, 'preferred_model', None)`,
       `${innerIndent}or globals().get('DEFAULT_PREFERRED_MODEL')`,
       `${innerIndent}or globals().get('DEFAULT_BASE_MODEL')`,
       `${innerIndent}or 'unknown_model'`,
       `${indent})`,
-      `${indent}_autolabos_lora_fallback_model = getattr(args, 'fallback_model', None) or globals().get('DEFAULT_FALLBACK_MODEL')`,
-      `${indent}_autolabos_lora_runtime_builder = globals().get('prepare_runtime_execution_context')`,
-      `${indent}if callable(_autolabos_lora_runtime_builder):`,
+      `${indent}_autolabos_study_fallback_model = getattr(args, 'fallback_model', None) or globals().get('DEFAULT_FALLBACK_MODEL')`,
+      `${indent}_autolabos_study_runtime_builder = globals().get('prepare_runtime_execution_context')`,
+      `${indent}if callable(_autolabos_study_runtime_builder):`,
       `${innerIndent}try:`,
-      `${nestedIndent}_autolabos_lora_runtime_context = _main_invoke_callable(`,
-      `${deepIndent}_autolabos_lora_runtime_builder,`,
+      `${nestedIndent}_autolabos_study_runtime_context = _main_invoke_callable(`,
+      `${deepIndent}_autolabos_study_runtime_builder,`,
       `${deepIndent}{`,
-      `${deepIndent}    'preferred_model_name': _autolabos_lora_selected_model,`,
-      `${deepIndent}    'fallback_model_name': _autolabos_lora_fallback_model,`,
+      `${deepIndent}    'preferred_model_name': _autolabos_study_selected_model,`,
+      `${deepIndent}    'fallback_model_name': _autolabos_study_fallback_model,`,
       `${deepIndent}    'logger': logger,`,
       `${deepIndent}},`,
       `${nestedIndent})`,
-      `${nestedIndent}if _autolabos_lora_runtime_context is not None:`,
-      `${deepIndent}_autolabos_lora_device_context = _autolabos_lora_runtime_context`,
-      `${deepIndent}_autolabos_lora_preflight = getattr(_autolabos_lora_runtime_context, 'model_preflight', None)`,
-      `${deepIndent}_autolabos_lora_resolved_model = getattr(_autolabos_lora_preflight, 'resolved_model_name', None)`,
-      `${deepIndent}if _autolabos_lora_resolved_model:`,
-      `${deepIndent}    _autolabos_lora_selected_model = _autolabos_lora_resolved_model`,
+      `${nestedIndent}if _autolabos_study_runtime_context is not None:`,
+      `${deepIndent}_autolabos_study_device_context = _autolabos_study_runtime_context`,
+      `${deepIndent}_autolabos_study_preflight = getattr(_autolabos_study_runtime_context, 'model_preflight', None)`,
+      `${deepIndent}_autolabos_study_resolved_model = getattr(_autolabos_study_preflight, 'resolved_model_name', None)`,
+      `${deepIndent}if _autolabos_study_resolved_model:`,
+      `${deepIndent}    _autolabos_study_selected_model = _autolabos_study_resolved_model`,
       `${innerIndent}except BaseException as exc:`,
       `${nestedIndent}logger.warning('Runtime model/device preflight failed; continuing with configured model: %s', exc)`,
-      `${indent}_autolabos_lora_model_bundle = {`,
-      `${innerIndent}'selected_model_id': _autolabos_lora_selected_model,`,
-      `${innerIndent}'resolved_model_id': _autolabos_lora_selected_model,`,
-      `${innerIndent}'model_id': _autolabos_lora_selected_model,`,
-      `${innerIndent}'base_model_id': _autolabos_lora_selected_model,`,
-      `${innerIndent}'fallback_model_id': _autolabos_lora_fallback_model,`,
+      `${indent}_autolabos_study_model_bundle = {`,
+      `${innerIndent}'selected_model_id': _autolabos_study_selected_model,`,
+      `${innerIndent}'resolved_model_id': _autolabos_study_selected_model,`,
+      `${innerIndent}'model_id': _autolabos_study_selected_model,`,
+      `${innerIndent}'base_model_id': _autolabos_study_selected_model,`,
+      `${innerIndent}'fallback_model_id': _autolabos_study_fallback_model,`,
       `${indent}}`,
-      `${indent}_autolabos_lora_data_builder = globals().get('prepare_bounded_study_data')`,
-      `${indent}if not callable(_autolabos_lora_data_builder):`,
-      `${innerIndent}raise RuntimeError('Missing prepare_bounded_study_data for LoRA study execution')`,
+      `${indent}_autolabos_study_data_builder = globals().get('prepare_bounded_study_data')`,
+      `${indent}if not callable(_autolabos_study_data_builder):`,
+      `${innerIndent}raise RuntimeError('Missing prepare_bounded_study_data for study execution')`,
       dataBuilderCallBlock(indent),
-      `${indent}_autolabos_lora_device = getattr(_autolabos_lora_runtime_context, 'device', None)`,
-      `${indent}if _autolabos_lora_device is None:`,
-      `${innerIndent}_autolabos_lora_device = device_info.get('device') if isinstance(device_info, dict) else device_info`,
-      `${indent}_autolabos_lora_deadline_ts = time.time() + max(1, int(getattr(args, 'timeout_sec', 0) or 0))`,
+      `${indent}_autolabos_study_device = getattr(_autolabos_study_runtime_context, 'device', None)`,
+      `${indent}if _autolabos_study_device is None:`,
+      `${innerIndent}_autolabos_study_device = device_info.get('device') if isinstance(device_info, dict) else device_info`,
+      `${indent}_autolabos_study_deadline_ts = time.time() + max(1, int(getattr(args, 'timeout_sec', 0) or 0))`,
       ""
     ].join("\n");
     nextSource = nextSource.replace(setupMatch[0], `\n${setupBlock}\n`);
@@ -34489,9 +34494,9 @@ export async function repairPythonLoraStudyEntrypointContextSurface(
   }
 
   const oldDataCallMatch = nextSource.match(
-    /\n(?<indent>\s*)_autolabos_lora_prepared_data = _main_invoke_callable\(\n\s*_autolabos_lora_data_builder,\n\s*\{'config': config, 'args': args, 'tokenizer': None, 'logger': logger\},\n\s*\)/u
+    /\n(?<indent>\s*)_autolabos_study_prepared_data = _main_invoke_callable\(\n\s*_autolabos_study_data_builder,\n\s*\{'config': config, 'args': args, 'tokenizer': None, 'logger': logger\},\n\s*\)/u
   );
-  if (oldDataCallMatch?.groups?.indent !== undefined && !nextSource.includes("_autolabos_lora_data_kwargs")) {
+  if (oldDataCallMatch?.groups?.indent !== undefined && !nextSource.includes("_autolabos_study_data_kwargs")) {
     nextSource = nextSource.replace(oldDataCallMatch[0], `\n${dataBuilderCallBlock(oldDataCallMatch.groups.indent)}`);
     repaired = true;
   }
@@ -34499,25 +34504,25 @@ export async function repairPythonLoraStudyEntrypointContextSurface(
   const contextMatch = nextSource.match(
     /\n(?<indent>\s*)"config": config,\n\s*"study_config": config,\n/u
   );
-  if (contextMatch?.groups?.indent !== undefined && !nextSource.includes("\"prepared_data\": _autolabos_lora_prepared_data")) {
+  if (contextMatch?.groups?.indent !== undefined && !nextSource.includes("\"prepared_data\": _autolabos_study_prepared_data")) {
     const indent = contextMatch.groups.indent;
     const contextBlock =
       `${indent}"config": config,\n` +
       `${indent}"study_config": config,\n` +
-      `${indent}"prepared_data": _autolabos_lora_prepared_data,\n` +
-      `${indent}"study_data": _autolabos_lora_prepared_data,\n` +
-      `${indent}"data_bundle": _autolabos_lora_prepared_data,\n` +
-      `${indent}"device_context": _autolabos_lora_device_context,\n` +
-      `${indent}"runtime_context": _autolabos_lora_runtime_context,\n` +
-      `${indent}"runtime_device": _autolabos_lora_device,\n` +
-      `${indent}"device": _autolabos_lora_device,\n` +
-      `${indent}"model_bundle": _autolabos_lora_model_bundle,\n` +
-      `${indent}"model_context": _autolabos_lora_model_bundle,\n` +
-      `${indent}"model_spec": _autolabos_lora_model_bundle,\n` +
-      `${indent}"resolved_model": _autolabos_lora_model_bundle,\n` +
-      `${indent}"model_name_or_path": _autolabos_lora_selected_model,\n` +
-      `${indent}"model_name": _autolabos_lora_selected_model,\n` +
-      `${indent}"deadline_ts": _autolabos_lora_deadline_ts,\n` +
+      `${indent}"prepared_data": _autolabos_study_prepared_data,\n` +
+      `${indent}"study_data": _autolabos_study_prepared_data,\n` +
+      `${indent}"data_bundle": _autolabos_study_prepared_data,\n` +
+      `${indent}"device_context": _autolabos_study_device_context,\n` +
+      `${indent}"runtime_context": _autolabos_study_runtime_context,\n` +
+      `${indent}"runtime_device": _autolabos_study_device,\n` +
+      `${indent}"device": _autolabos_study_device,\n` +
+      `${indent}"model_bundle": _autolabos_study_model_bundle,\n` +
+      `${indent}"model_context": _autolabos_study_model_bundle,\n` +
+      `${indent}"model_spec": _autolabos_study_model_bundle,\n` +
+      `${indent}"resolved_model": _autolabos_study_model_bundle,\n` +
+      `${indent}"model_name_or_path": _autolabos_study_selected_model,\n` +
+      `${indent}"model_name": _autolabos_study_selected_model,\n` +
+      `${indent}"deadline_ts": _autolabos_study_deadline_ts,\n` +
       `${indent}"study_start_time": wall_start_time,\n`;
     nextSource = nextSource.replace(contextMatch[0], `\n${contextBlock}`);
     repaired = true;
@@ -34526,21 +34531,21 @@ export async function repairPythonLoraStudyEntrypointContextSurface(
   const runnerInvokeMatch = nextSource.match(/\n(?<indent>\s*)study_result = _main_invoke_callable\(runner, context\)/u);
   if (
     runnerInvokeMatch?.groups?.indent !== undefined &&
-    nextSource.includes("_autolabos_lora_study_entrypoint_context_marker") &&
-    !nextSource.includes("_autolabos_lora_direct_runner_call_marker")
+    nextSource.includes("_autolabos_study_study_entrypoint_context_marker") &&
+    !nextSource.includes("_autolabos_study_direct_runner_call_marker")
   ) {
     const indent = runnerInvokeMatch.groups.indent;
     const innerIndent = `${indent}    `;
     const directRunnerCall = [
-      `${indent}_autolabos_lora_direct_runner_call_marker = True`,
+      `${indent}_autolabos_study_direct_runner_call_marker = True`,
       `${indent}study_result = runner(`,
       `${innerIndent}config=config,`,
-      `${innerIndent}prepared_data=_autolabos_lora_prepared_data,`,
-      `${innerIndent}device_context=_autolabos_lora_device_context,`,
-      `${innerIndent}model_bundle=_autolabos_lora_model_bundle,`,
+      `${innerIndent}prepared_data=_autolabos_study_prepared_data,`,
+      `${innerIndent}device_context=_autolabos_study_device_context,`,
+      `${innerIndent}model_bundle=_autolabos_study_model_bundle,`,
       `${innerIndent}output_dir=args.output_dir,`,
       `${innerIndent}logger=logger,`,
-      `${innerIndent}deadline_ts=_autolabos_lora_deadline_ts,`,
+      `${innerIndent}deadline_ts=_autolabos_study_deadline_ts,`,
       `${innerIndent}study_start_time=wall_start_time,`,
       `${indent})`
     ].join("\n");
@@ -34573,7 +34578,7 @@ export async function repairPythonLoraStudyEntrypointContextSurface(
   await fs.writeFile(scriptPath, nextSource, "utf8");
   return {
     repaired: true,
-    message: `Materialized LoRA study entrypoint data/model/device context in ${path.basename(scriptPath)} before handoff.`
+    message: `Materialized study entrypoint data/model/device context in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
@@ -38659,7 +38664,7 @@ export async function repairPythonRankDropoutMarkerParserCollisionSurface(script
         `${indent}# ${marker}`,
         `${indent}if hasattr(parsed_marker, "get"):`,
         `${indent}    rank = parsed_marker.get("rank")`,
-        `${indent}    dropout = parsed_marker.get("lora_dropout")`,
+        `${indent}    dropout = parsed_marker.get("adapter_dropout")`,
         `${indent}    if dropout is None:`,
         `${indent}        dropout = parsed_marker.get("dropout")`,
         `${indent}else:`,
@@ -39503,10 +39508,10 @@ export async function repairPythonAdapterRecipeConfigMetadataAliasSurface(script
     "            \"train_seed\": \"subset_seed\",",
     "            \"enabled\": \"should_train\",",
     "            \"comparison_role\": \"comparison_role\",",
-    "            \"lora_target_modules\": \"target_modules\",",
-    "            \"use_adalora\": \"use_adalora\",",
-    "            \"adalora_init_r\": \"adalora_init_r\",",
-    "            \"adalora_target_r\": \"adalora_target_r\","
+    "            \"adapter_target_modules\": \"target_modules\",",
+    "            \"use_adaadapter\": \"use_adaadapter\",",
+    "            \"adaadapter_init_r\": \"adaadapter_init_r\",",
+    "            \"adaadapter_target_r\": \"adaadapter_target_r\","
   ];
 
   let nextSource = source.replace(
@@ -39525,7 +39530,7 @@ export async function repairPythonAdapterRecipeConfigMetadataAliasSurface(script
     [
       "kwargs[destination] = (",
       "                    tuple(complete_metadata[source])",
-      "                    if destination in {\"lora_target_modules\", \"modules_to_save\"} and isinstance(complete_metadata[source], list)",
+      "                    if destination in {\"adapter_target_modules\", \"modules_to_save\"} and isinstance(complete_metadata[source], list)",
       "                    else complete_metadata[source]",
       "                )"
     ].join("\n")
@@ -39759,11 +39764,11 @@ async function repairPythonMissingAdapterRecipeSurface(scriptPath?: string): Pro
     "        return self.rank",
     "",
     "    @property",
-    "    def lora_alpha(self) -> Optional[int]:",
+    "    def adapter_alpha(self) -> Optional[int]:",
     "        return self.alpha",
     "",
     "    @property",
-    "    def lora_dropout(self) -> float:",
+    "    def adapter_dropout(self) -> float:",
     "        return self.dropout",
     "",
     "    @property",
@@ -39818,7 +39823,7 @@ async function repairPythonRecipeSpecAdapterTypeSurface(scriptPath?: string): Pr
   if (nextSource === source) {
     const aliasDictPattern = /\n(\s+["']task_type["']\s*:\s*PEFT_TASK_TYPE\s*,)/u;
     if (aliasDictPattern.test(nextSource)) {
-      nextSource = nextSource.replace(aliasDictPattern, "\n        \"adapter_type\": \"lora\",\n$1");
+      nextSource = nextSource.replace(aliasDictPattern, "\n        \"adapter_type\": \"adapter\",\n$1");
     }
   }
 
@@ -40290,24 +40295,24 @@ export async function repairPythonCandidateSpecAdapterRecipeNormalizationSurface
     "        _recipe_value(",
     "            raw,",
     "            \"recipe_type\",",
-    "            _recipe_value(raw, \"kind\", \"base\" if expected_order == 0 or \"base\" in recipe_id.lower() else \"lora\"),",
+    "            _recipe_value(raw, \"kind\", \"base\" if expected_order == 0 or \"base\" in recipe_id.lower() else \"adapter\"),",
     "        )",
     "    ).lower().replace(\"-\", \"_\")",
     "    if raw_type in {\"unmodified_base\", \"base_model\", \"baseline_base\", \"baseline\", \"none\", \"no_adapter\", \"base\"}:",
     "        recipe_type = \"base\"",
     "    elif expected_order == 0 and (\"base\" in recipe_id.lower() or \"unmodified\" in recipe_id.lower()):",
     "        recipe_type = \"base\"",
-    "    elif raw_type in {\"rslora\", \"rank_stabilized_lora\", \"dora\"}:",
-    "        recipe_type = \"lora\"",
+    "    elif raw_type in {\"rank_stabilized_adapter\", \"rank_stabilized_adapter\", \"decomposed_adapter\"}:",
+    "        recipe_type = \"adapter\"",
     "    else:",
     "        recipe_type = raw_type",
-    "    rank = _recipe_value(raw, \"rank\", _recipe_value(raw, \"r\", _recipe_value(raw, \"lora_r\", None)))",
-    "    alpha = _recipe_value(raw, \"alpha\", _recipe_value(raw, \"lora_alpha\", None))",
-    "    dropout = float(_recipe_value(raw, \"dropout\", _recipe_value(raw, \"lora_dropout\", 0.0)) or 0.0)",
+    "    rank = _recipe_value(raw, \"rank\", _recipe_value(raw, \"r\", _recipe_value(raw, \"adapter_r\", None)))",
+    "    alpha = _recipe_value(raw, \"alpha\", _recipe_value(raw, \"adapter_alpha\", None))",
+    "    dropout = float(_recipe_value(raw, \"dropout\", _recipe_value(raw, \"adapter_dropout\", 0.0)) or 0.0)",
     "    target_modules = _coerce_target_modules(_recipe_value(raw, \"target_modules\", None), default=())",
-    "    if expected_order == 1 and recipe_type in {\"lora\", \"qlora\"}:",
+    "    if expected_order == 1 and recipe_type in {\"adapter\", \"quantized_adapter\"}:",
     "        target_modules = (\"target_module_a\", \"target_module_b\", \"target_module_c\", \"target_module_d\")",
-    "    elif recipe_type in {\"lora\", \"qlora\"} and not target_modules:",
+    "    elif recipe_type in {\"adapter\", \"quantized_adapter\"} and not target_modules:",
     "        target_modules = (\"target_module_a\", \"target_module_b\", \"target_module_c\", \"target_module_d\")",
     "    trainable_raw = _recipe_value(raw, \"trainable\", None)",
     "    if trainable_raw is None:",
@@ -40317,7 +40322,7 @@ export async function repairPythonCandidateSpecAdapterRecipeNormalizationSurface
     "        trainable = False",
     "    locked_raw = _recipe_value(raw, \"locked_baseline\", None)",
     "    if locked_raw is None:",
-    "        locked_raw = _recipe_value(raw, \"is_locked_lora_baseline\", None)",
+    "        locked_raw = _recipe_value(raw, \"is_locked_tuned_baseline\", None)",
     "    if locked_raw is None:",
     "        locked_raw = _recipe_value(raw, \"is_unmodified_baseline\", None)",
     "    locked_baseline = bool(locked_raw) or expected_order in (0, 1)",
@@ -40437,7 +40442,7 @@ export async function repairPythonLockedRecipeCatalogAliasSurface(scriptPath?: s
     !source.includes("def locked_recipe_execution_order(") ||
     !source.includes("def _recipe_catalog_from_globals(") ||
     !source.includes("BASELINE_UNMODIFIED_RECIPE_ID") ||
-    !source.includes("VANILLA_LORA_BASELINE_RECIPE_ID") ||
+    !source.includes("STANDARD_TUNED_BASELINE_RECIPE_ID") ||
     source.includes("_autolabos_locked_recipe_catalog_alias_marker")
   ) {
     return { repaired: false };
@@ -40454,7 +40459,7 @@ export async function repairPythonLockedRecipeCatalogAliasSurface(scriptPath?: s
     return { repaired: false };
   }
 
-  const helperNeedle = 'VANILLA_LORA_BASELINE_RECIPE_ID = "vanilla_lora"\n';
+  const helperNeedle = 'STANDARD_TUNED_BASELINE_RECIPE_ID = "standard_tuned_baseline"\n';
   if (!source.includes(helperNeedle)) {
     return { repaired: false };
   }
@@ -40481,9 +40486,9 @@ export async function repairPythonLockedRecipeCatalogAliasSurface(scriptPath?: s
     "        row[\"is_unmodified_base\"] = True",
     "        row.setdefault(\"peft_type\", \"none\")",
     "        row.setdefault(\"train\", False)",
-    "    if expected_order == 1 or ((\"lora\" in lowered or family in {\"lora\", \"rslora\"}) and \"baseline\" in lowered) or bool(row.get(\"is_locked_baseline\")):",
+    "    if expected_order == 1 or ((\"adapter\" in lowered or family in {\"adapter\", \"rank_stabilized_adapter\"}) and \"baseline\" in lowered) or bool(row.get(\"is_locked_baseline\")):",
     "        row[\"is_locked_baseline\"] = True",
-    "        row.setdefault(\"peft_type\", \"lora\")",
+    "        row.setdefault(\"peft_type\", \"adapter\")",
     "        row.setdefault(\"train\", True)",
     "    return row",
     "",
@@ -40493,11 +40498,11 @@ export async function repairPythonLockedRecipeCatalogAliasSurface(scriptPath?: s
     "    family = str(config.get(\"family\", \"\")).lower().replace(\"-\", \"_\")",
     "    return bool(config.get(\"is_unmodified_base\")) or (\"unmodified\" in lowered and \"base\" in lowered) or peft_type in {\"none\", \"base\", \"no_adapter\"} or family == \"base_model_reference\"",
     "",
-    "def _autolabos_recipe_is_locked_lora_baseline(recipe_id: str, config: Mapping[str, Any]) -> bool:",
+    "def _autolabos_recipe_is_locked_tuned_baseline(recipe_id: str, config: Mapping[str, Any]) -> bool:",
     "    lowered = str(config.get(\"recipe_id\", config.get(\"candidate_id\", recipe_id))).lower().replace(\"-\", \"_\")",
     "    peft_type = str(config.get(\"peft_type\", config.get(\"recipe_type\", \"\"))).lower().replace(\"-\", \"_\")",
     "    family = str(config.get(\"family\", \"\")).lower().replace(\"-\", \"_\")",
-    "    return bool(config.get(\"is_locked_baseline\")) or ((\"lora\" in lowered or peft_type in {\"lora\", \"rslora\"} or family in {\"lora\", \"rslora\"}) and \"baseline\" in lowered)",
+    "    return bool(config.get(\"is_locked_baseline\")) or ((\"adapter\" in lowered or peft_type in {\"adapter\", \"rank_stabilized_adapter\"} or family in {\"adapter\", \"rank_stabilized_adapter\"}) and \"baseline\" in lowered)",
     ""
   ].join("\n");
 
@@ -40513,9 +40518,9 @@ export async function repairPythonLockedRecipeCatalogAliasSurface(scriptPath?: s
     "            if recipe_id not in ordered and _autolabos_recipe_is_unmodified_base(recipe_id, catalog.get(recipe_id, {})):",
     "                ordered.append(recipe_id)",
     "                break",
-    "    if not any(_autolabos_recipe_is_locked_lora_baseline(recipe_id, catalog.get(recipe_id, {})) for recipe_id in ordered):",
+    "    if not any(_autolabos_recipe_is_locked_tuned_baseline(recipe_id, catalog.get(recipe_id, {})) for recipe_id in ordered):",
     "        for recipe_id in available:",
-    "            if recipe_id not in ordered and _autolabos_recipe_is_locked_lora_baseline(recipe_id, catalog.get(recipe_id, {})):",
+    "            if recipe_id not in ordered and _autolabos_recipe_is_locked_tuned_baseline(recipe_id, catalog.get(recipe_id, {})):",
     "                ordered.append(recipe_id)",
     "                break",
     "",
@@ -40564,9 +40569,9 @@ async function repairPythonBaselineFirstRecipeOrderSurface(scriptPath?: string):
   const nextSortKey = [
     "def _candidate_sort_key(recipe: Any) -> Tuple[int, str]:",
     "    recipe_id = _recipe_identifier(recipe)",
-    "    standard_id = _standard_lora_id().lower()",
+    "    standard_id = _standard_adapter_id().lower()",
     "    recipe_id_lower = recipe_id.lower()",
-    "    if recipe_id_lower == standard_id or (\"standard\" in recipe_id_lower and \"lora\" in recipe_id_lower):",
+    "    if recipe_id_lower == standard_id or (\"standard\" in recipe_id_lower and \"adapter\" in recipe_id_lower):",
     "        return (0, recipe_id)",
     "    if _recipe_is_reference(recipe):",
     "        return (1, recipe_id)",
@@ -40575,14 +40580,14 @@ async function repairPythonBaselineFirstRecipeOrderSurface(scriptPath?: string):
   ].join("\n");
 
   const sequenceValidationPattern =
-    /    recipes = sorted\(recipes, key=_candidate_sort_key\)\n    if not _recipe_is_reference\(recipes\[0\]\):\n        raise RuntimeError\(\n            "Locked comparison contract requires the untuned reference candidate to run first\."\n        \)\n    if len\(recipes\) > 1:\n        second_id = _recipe_identifier\(recipes\[1\]\)\.lower\(\)\n        expected_lora = _standard_lora_id\(\)\.lower\(\)\n        if second_id != expected_lora and not \("standard" in second_id and "lora" in second_id\):\n            raise RuntimeError\(\n                "Locked comparison contract requires the standard LoRA tuned baseline to run immediately after the reference\."\n            \)\n    return recipes/u;
+    /    recipes = sorted\(recipes, key=_candidate_sort_key\)\n    if not _recipe_is_reference\(recipes\[0\]\):\n        raise RuntimeError\(\n            "Locked comparison contract requires the untuned reference candidate to run first\."\n        \)\n    if len\(recipes\) > 1:\n        second_id = _recipe_identifier\(recipes\[1\]\)\.lower\(\)\n        expected_adapter = _standard_adapter_id\(\)\.lower\(\)\n        if second_id != expected_adapter and not \("standard" in second_id and "adapter" in second_id\):\n            raise RuntimeError\(\n                "Locked comparison contract requires the standard adapter tuned baseline to run immediately after the reference\."\n            \)\n    return recipes/u;
   const nextSequenceValidation = [
     "    recipes = sorted(recipes, key=_candidate_sort_key)",
     "    first_id = _recipe_identifier(recipes[0]).lower()",
-    "    expected_lora = _standard_lora_id().lower()",
-    "    if first_id != expected_lora and not (\"standard\" in first_id and \"lora\" in first_id):",
+    "    expected_adapter = _standard_adapter_id().lower()",
+    "    if first_id != expected_adapter and not (\"standard\" in first_id and \"adapter\" in first_id):",
     "        raise RuntimeError(",
-    "            \"Locked baseline-first contract requires the standard LoRA tuned baseline to run first.\"",
+    "            \"Locked baseline-first contract requires the standard adapter tuned baseline to run first.\"",
     "        )",
     "    if len(recipes) > 1 and not any(_recipe_is_reference(recipe) for recipe in recipes):",
     "        raise RuntimeError(",
@@ -40605,7 +40610,7 @@ async function repairPythonBaselineFirstRecipeOrderSurface(scriptPath?: string):
   };
 }
 
-export async function repairPythonBroaderTargetLoraMarkerSurface(scriptPath?: string): Promise<{
+export async function repairPythonBroaderTargetAdapterMarkerSurface(scriptPath?: string): Promise<{
   repaired: boolean;
   message?: string;
 }> {
@@ -40624,13 +40629,13 @@ export async function repairPythonBroaderTargetLoraMarkerSurface(scriptPath?: st
     /COMPARISON_MODE\s*=\s*["']baseline_first_locked["']/u.test(source) ||
     /BASELINE_FIRST_REQUIRED\s*=\s*True/u.test(source) ||
     /LOCKED_BASELINE_FIRST_ORDER/u.test(source);
-  if (!lockedComparison || !source.includes("broader-target LoRA comparator")) {
+  if (!lockedComparison || !source.includes("broader-target adapter comparator")) {
     return { repaired: false };
   }
 
   const hasBroaderTargetEvidence =
     /BROADER_TARGET_LORA_RECIPE_ID/u.test(source) ||
-    /Broader-target LoRA/iu.test(source) ||
+    /Broader-target adapter/iu.test(source) ||
     /BROADER_LORA_TARGET_MODULES/u.test(source) ||
     /qkvo|mlp|all_linear|expanded/iu.test(source);
   if (!hasBroaderTargetEvidence) {
@@ -40672,11 +40677,11 @@ export async function repairPythonBroaderTargetLoraMarkerSurface(scriptPath?: st
   await fs.writeFile(scriptPath, nextSource, "utf8");
   return {
     repaired: true,
-    message: `Aligned broader-target LoRA marker aliases in ${path.basename(scriptPath)} before handoff.`
+    message: `Aligned broader-target adapter marker aliases in ${path.basename(scriptPath)} before handoff.`
   };
 }
 
-export async function repairPythonLockedStandardLoraBaselineIdSurface(scriptPath?: string): Promise<{
+export async function repairPythonLockedStandardAdapterBaselineIdSurface(scriptPath?: string): Promise<{
   repaired: boolean;
   message?: string;
 }> {
@@ -40714,7 +40719,7 @@ export async function repairPythonLockedStandardLoraBaselineIdSurface(scriptPath
   const standardIdAppearsAsRecipe =
     new RegExp(`\\b(recipe_id|id|name)\\s*=\\s*["']${escapeRegex(standardId)}["']`, "u").test(source) ||
     new RegExp(`["']${escapeRegex(standardId)}["']`, "u").test(source);
-  if (!standardIdAppearsAsRecipe || !/standard[_-]?lora/iu.test(standardId)) {
+  if (!standardIdAppearsAsRecipe || !/standard[_-]?adapter/iu.test(standardId)) {
     return { repaired: false };
   }
 
@@ -40731,7 +40736,7 @@ export async function repairPythonLockedStandardLoraBaselineIdSurface(scriptPath
   await fs.writeFile(scriptPath, nextSource, "utf8");
   return {
     repaired: true,
-    message: `Aligned locked standard LoRA baseline id from ${lockedId} to ${standardId} in ${path.basename(
+    message: `Aligned locked standard adapter baseline id from ${lockedId} to ${standardId} in ${path.basename(
       scriptPath
     )} before handoff.`
   };
@@ -40810,15 +40815,15 @@ async function detectPythonBaselineFirstTunedBaselineMismatch(scriptPath?: strin
     /\bRecipe\s*\(\s*name\s*=\s*["']baseline_no_tuning["'][\s\S]{0,180}\bkind\s*=\s*["']baseline["']/u.test(source) ||
     /\bbaseline\s*=\s*next\s*\([\s\S]{0,400}\.recipe\s*==\s*["']baseline_no_tuning["']/u.test(source) ||
     /\bbaseline_mean_[A-Za-z0-9_]*\s*=\s*baseline\./u.test(source);
-  const hasTunedLoraCandidate = /\blora_r(?:8|16|32)\b/u.test(source) || /standard[_-]?lora/iu.test(source);
-  if (!hasUntunedPrimaryBaseline || !hasTunedLoraCandidate) {
+  const hasTunedAdapterCandidate = /\badapter_r(?:8|16|32)\b/u.test(source) || /standard[_-]?adapter/iu.test(source);
+  if (!hasUntunedPrimaryBaseline || !hasTunedAdapterCandidate) {
     return undefined;
   }
 
   return [
     "Generated baseline_first_locked adapter runner treats the untuned/no-tuning reference as the primary baseline.",
-    "The governed experiment contract requires the tuned standard LoRA baseline to be the primary comparator; untuned/no-tuning may be retained only as a reference row.",
-    "Revise the runner so baseline metrics and delta/objective comparisons are computed against the named tuned LoRA baseline, not baseline_no_tuning."
+    "The governed experiment contract requires the tuned standard adapter baseline to be the primary comparator; untuned/no-tuning may be retained only as a reference row.",
+    "Revise the runner so baseline metrics and delta/objective comparisons are computed against the named tuned adapter baseline, not baseline_no_tuning."
   ].join(" ");
 }
 
@@ -41549,10 +41554,10 @@ export function normalizeLockedPeftStudyConfigPayloadForCompatibility(
     }
     const requestedAdapterType =
       firstPresentRecordString(item, ["adapter_type", "recipe_type", "type", "peft_method", "peft_type"]) ||
-      (firstPresentRecordBoolean(item, ["use_dora"]) ? "dora" : undefined) ||
-      "lora";
+      (firstPresentRecordBoolean(item, ["use_decomposed_adapter"]) ? "decomposed_adapter" : undefined) ||
+      "adapter";
     const normalizedAdapterType =
-      requestedAdapterType.toLowerCase() === "peft" ? "lora" : requestedAdapterType.toLowerCase();
+      requestedAdapterType.toLowerCase() === "peft" ? "adapter" : requestedAdapterType.toLowerCase();
 
     const recipe: Record<string, unknown> = {
       name: normalizeLockedRecipeName(
@@ -41562,17 +41567,17 @@ export function normalizeLockedPeftStudyConfigPayloadForCompatibility(
       adapter_type: normalizedAdapterType,
       enabled: firstPresentRecordBoolean(item, ["enabled"]) ?? true
     };
-    const r = firstPresentRecordNumber(item, ["r", "lora_r", "rank"]);
+    const r = firstPresentRecordNumber(item, ["r", "adapter_r", "rank"]);
     if (r !== undefined) {
       recipe.r = r;
     }
-    const alpha = firstPresentRecordNumber(item, ["lora_alpha", "alpha"]);
+    const alpha = firstPresentRecordNumber(item, ["adapter_alpha", "alpha"]);
     if (alpha !== undefined) {
-      recipe.lora_alpha = alpha;
+      recipe.adapter_alpha = alpha;
     }
-    const dropout = firstPresentRecordNumber(item, ["lora_dropout", "dropout"]);
+    const dropout = firstPresentRecordNumber(item, ["adapter_dropout", "dropout"]);
     if (dropout !== undefined) {
-      recipe.lora_dropout = dropout;
+      recipe.adapter_dropout = dropout;
     }
     const targetModules = firstPresentStringArray(item, ["target_modules"]);
     if (targetModules && targetModules.length > 0) {
@@ -41583,8 +41588,8 @@ export function normalizeLockedPeftStudyConfigPayloadForCompatibility(
     if (quantization) {
       recipe.quantization = quantization.toLowerCase();
     }
-    if (normalizedAdapterType === "dora") {
-      recipe.use_dora = true;
+    if (normalizedAdapterType === "decomposed_adapter") {
+      recipe.use_decomposed_adapter = true;
     }
     recipes.push(recipe);
     changed = true;
@@ -41704,7 +41709,7 @@ export async function repairPythonLockedConditionCountSurface(scriptPath?: strin
   await fs.writeFile(scriptPath, nextSource, "utf8");
   return {
     repaired: true,
-    message: `Aligned locked-condition counting in ${path.basename(scriptPath)} with baseline-first PEFT studies before handoff.`
+    message: `Aligned locked-condition counting in ${path.basename(scriptPath)} with baseline-first adapter studies before handoff.`
   };
 }
 
@@ -42624,7 +42629,7 @@ export async function repairPythonConditionScheduleMarkerParameterSurface(script
     "                    if rank is None:",
     "                        rank = _safe_int(parsed_marker.get(\"rank\"), default=None)",
     "                    if dropout is None:",
-    "                        dropout = _safe_float(parsed_marker.get(\"dropout\", parsed_marker.get(\"lora_dropout\")), default=None)",
+    "                        dropout = _safe_float(parsed_marker.get(\"dropout\", parsed_marker.get(\"adapter_dropout\")), default=None)",
     "                elif isinstance(parsed_marker, (list, tuple)) and len(parsed_marker) >= 2:",
     "                    if rank is None:",
     "                        rank = _safe_int(parsed_marker[0], default=None)",

@@ -387,13 +387,13 @@ describe("objectiveMetric", () => {
           type: "locked_untuned_baseline",
           evaluation: { primary_mean_accuracy: 0.525 }
         },
-        lora_r16: {
-          type: "peft_lora_instruction_tuned",
+        adapter_r16: {
+          type: "peft_adapter_instruction_tuned",
           evaluation: { primary_mean_accuracy: 0.4875 },
           train: { trainable_params: 2252800 }
         },
-        lora_r8: {
-          type: "peft_lora_instruction_tuned",
+        adapter_r8: {
+          type: "peft_adapter_instruction_tuned",
           evaluation: { primary_mean_accuracy: 0.5125 },
           train: { trainable_params: 1126400 }
         }
@@ -425,13 +425,13 @@ describe("objectiveMetric", () => {
             type: "locked_untuned_baseline",
             evaluation: { primary_mean_accuracy: 0.525 }
           },
-          lora_r16: {
-            type: "peft_lora_instruction_tuned",
+          adapter_r16: {
+            type: "peft_adapter_instruction_tuned",
             evaluation: { primary_mean_accuracy: 0.4875 },
             train: { trainable_params: 2252800 }
           },
-          lora_r8: {
-            type: "peft_lora_instruction_tuned",
+          adapter_r8: {
+            type: "peft_adapter_instruction_tuned",
             evaluation: { primary_mean_accuracy: 0.5125 },
             train: { trainable_params: 1126400 }
           }
@@ -463,20 +463,20 @@ describe("objectiveMetric", () => {
     const evaluation = evaluateObjectiveMetric(
       {
         conditions: {
-          dora: {
-            name: "dora",
+          decomposed_adapter: {
+            name: "decomposed_adapter",
             status: "completed",
             accuracy_delta_vs_baseline: -0.03125,
             evaluation: { mean_zero_shot_accuracy: 0.4765625 }
           },
-          lora_baseline: {
-            name: "lora_baseline",
+          adapter_baseline: {
+            name: "adapter_baseline",
             status: "completed",
             accuracy_delta_vs_baseline: -0.015625,
             evaluation: { mean_zero_shot_accuracy: 0.4921875 }
           },
-          rslora: {
-            name: "rslora",
+          rank_stabilized_adapter: {
+            name: "rank_stabilized_adapter",
             status: "completed",
             accuracy_delta_vs_baseline: -0.0078125,
             evaluation: { mean_zero_shot_accuracy: 0.5 }
@@ -517,22 +517,22 @@ describe("objectiveMetric", () => {
     const evaluation = evaluateObjectiveMetric(
       {
         conditions: {
-          dora: {
-            name: "dora",
+          decomposed_adapter: {
+            name: "decomposed_adapter",
             status: "completed",
             evaluation: { mean_zero_shot_accuracy: 0.4765625 },
             wall_clock_sec: 128.40490746498108,
             device_info_end: { cuda_max_memory_allocated_bytes: 9772951552 }
           },
-          lora_baseline: {
-            name: "lora_baseline",
+          adapter_baseline: {
+            name: "adapter_baseline",
             status: "completed",
             evaluation: { mean_zero_shot_accuracy: 0.4921875 },
             wall_clock_sec: 28.637099504470825,
             device_info_end: { cuda_max_memory_allocated_bytes: 3031420928 }
           },
-          rslora: {
-            name: "rslora",
+          rank_stabilized_adapter: {
+            name: "rank_stabilized_adapter",
             status: "completed",
             evaluation: { mean_zero_shot_accuracy: 0.5078125 },
             wall_clock_sec: 81.93073916435242,
@@ -555,7 +555,7 @@ describe("objectiveMetric", () => {
     expect(evaluation.observedValue).toBeCloseTo(0.015625, 10);
     expect(evaluation.status).toBe("not_met");
     expect(evaluation.summary).toContain("Resource regression requirement not satisfied");
-    expect(evaluation.summary).toContain("rslora vs lora baseline");
+    expect(evaluation.summary).toContain("rank stabilized adapter vs adapter baseline");
     expect(evaluation.summary).toContain("runtime 2.86x");
     expect(evaluation.summary).toContain("memory 3.22x");
   });
@@ -593,8 +593,8 @@ describe("objectiveMetric", () => {
             evaluation: { mean_zero_shot_accuracy: 0.40234375 }
           },
           {
-            name: "lora_r8",
-            condition_type: "peft_lora_instruction_tuned",
+            name: "adapter_r8",
+            condition_type: "peft_adapter_instruction_tuned",
             evaluation: { mean_zero_shot_accuracy: 0.3984375 }
           }
         ]
@@ -630,8 +630,8 @@ describe("objectiveMetric", () => {
         best_vs_baseline_bootstrap_delta_ci: { delta_mean: 0, ci_low: 0, ci_high: 0 },
         results: [
           { recipe: "baseline_no_tuning", kind: "baseline", mean_zero_shot_accuracy: 0.36458333333333337 },
-          { recipe: "lora_r8", kind: "lora", mean_zero_shot_accuracy: 0.34375 },
-          { recipe: "lora_r16", kind: "lora", mean_zero_shot_accuracy: 0.34375 }
+          { recipe: "adapter_r8", kind: "adapter", mean_zero_shot_accuracy: 0.34375 },
+          { recipe: "adapter_r16", kind: "adapter", mean_zero_shot_accuracy: 0.34375 }
         ]
       },
       profile,

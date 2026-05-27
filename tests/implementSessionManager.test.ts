@@ -44,7 +44,7 @@ import {
   repairPythonConditionTrainEvalHelperBridgeSurface,
   repairPythonEntrypointConditionDatasetInputMaterializationSurface,
   repairPythonBaselineEvaluatorArgumentSurface,
-  repairPythonBroaderTargetLoraMarkerSurface,
+  repairPythonBroaderTargetAdapterMarkerSurface,
   repairPythonCandidateSpecAdapterRecipeNormalizationSurface,
   repairPythonCandidateExecutorArgumentBridgeSurface,
   repairPythonCausalLmLabelPaddingSurface,
@@ -125,7 +125,7 @@ import {
   repairPythonHighLevelConditionSweepDispatchSurface,
   repairPythonOrderedConditionCollectorRuntimeInputsSurface,
   repairPythonOutputDirArgparseAlias,
-  repairPythonLoraStudyEntrypointContextSurface,
+  repairPythonAdapterStudyEntrypointContextSurface,
   repairPythonPrepareStudyInputsRuntimeContextSurface,
   repairPythonAutolabosCliParserBuilderAliasSurface,
   repairPythonAutolabosSupportedArgsDuplicateArgsSurface,
@@ -152,7 +152,7 @@ import {
   repairPythonBenchmarkEvaluatorArgumentSurface,
   repairPythonAggregateMetricsPluralFinalizerSurface,
   repairPythonLockedRecipeCatalogAliasSurface,
-  repairPythonLockedStandardLoraBaselineIdSurface,
+  repairPythonLockedStandardAdapterBaselineIdSurface,
   repairPythonLegacyBaseModelRecipeIdSurface,
   repairPythonLoggingHelperAlias,
   repairPythonCleanupModelArtifactsAliasSurface,
@@ -175,7 +175,7 @@ import {
   repairPythonCoerceFloatFieldNameDefaultSurface,
   repairPythonCoerceIntDefaultArgumentSurface,
   repairPythonResolveDeviceNameAritySurface,
-  repairPythonLoraSeedTrainEvalAssemblySurface,
+  repairPythonAdapterSeedTrainEvalAssemblySurface,
   repairPythonRecipeExecutionOrchestratorAlias,
   repairPythonRecipeSpecUntunedNoTrainingHyperparameterSurface,
   repairPythonRecipeSpecTrainAdapterSurface,
@@ -467,13 +467,13 @@ describe("ImplementSessionManager", () => {
         },
         {
           id: "named_tuned_baseline",
-          label: "lora_qv_r16",
+          label: "adapter_qv_r16",
           kind: "peft",
-          peft_method: "lora",
+          peft_method: "adapter",
           enabled: true,
-          lora_r: 16,
-          lora_alpha: 32,
-          lora_dropout: 0.05,
+          adapter_r: 16,
+          adapter_alpha: 32,
+          adapter_dropout: 0.05,
           target_modules: ["q_proj", "v_proj"]
         }
       ]
@@ -484,12 +484,12 @@ describe("ImplementSessionManager", () => {
     expect(normalized.payload?.require_baseline_first).toBe(true);
     expect(normalized.payload?.recipes).toEqual([
       {
-        name: "lora_qv_r16",
-        adapter_type: "lora",
+        name: "adapter_qv_r16",
+        adapter_type: "adapter",
         enabled: true,
         r: 16,
-        lora_alpha: 32,
-        lora_dropout: 0.05,
+        adapter_alpha: 32,
+        adapter_dropout: 0.05,
         target_modules: ["q_proj", "v_proj"],
         quantization: "4bit"
       }
@@ -516,13 +516,13 @@ describe("ImplementSessionManager", () => {
         "    train: false",
         "    evaluate_only: true",
         "  - id: named_tuned_baseline",
-        "    label: lora_qv_r16",
+        "    label: adapter_qv_r16",
         "    kind: peft",
-        "    peft_method: lora",
+        "    peft_method: adapter",
         "    enabled: true",
-        "    lora_r: 16",
-        "    lora_alpha: 32",
-        "    lora_dropout: 0.05",
+        "    adapter_r: 16",
+        "    adapter_alpha: 32",
+        "    adapter_dropout: 0.05",
         "    target_modules:",
         "      - q_proj",
         "      - v_proj",
@@ -536,7 +536,7 @@ describe("ImplementSessionManager", () => {
     const repaired = readFileSync(configPath, "utf8");
     expect(repaired).toContain("recipes:");
     expect(repaired).not.toContain("\nconditions:");
-    expect(repaired).toContain("adapter_type: lora");
+    expect(repaired).toContain("adapter_type: adapter");
     expect(repaired).toContain("quantization: 4bit");
   });
 
@@ -5787,8 +5787,8 @@ describe("ImplementSessionManager", () => {
         "DEFAULT_MAX_NEW_TOKENS = 4",
         "MAX_ALLOWED_TRAIN_EXAMPLES = 4",
         "MAX_ALLOWED_EVAL_EXAMPLES_PER_BENCHMARK = 2",
-        "LOCKED_RECIPE_ORDER = ['lora']",
-        "ADAPTER_RECIPES = [{'id': 'lora'}]",
+        "LOCKED_RECIPE_ORDER = ['adapter']",
+        "ADAPTER_RECIPES = [{'id': 'adapter'}]",
         "",
         "def build_arg_parser():",
         "    parser = argparse.ArgumentParser()",
@@ -5830,7 +5830,7 @@ describe("ImplementSessionManager", () => {
         "    return {'benchmark_task_a': [{'answer': 'A'}]}",
         "",
         "def run_baseline_first_recipe_loop(args, device, train_dataset, eval_examples):",
-        "    return [{'recipe_id': 'lora', 'train_dataset': train_dataset, 'eval_examples': eval_examples}]",
+        "    return [{'recipe_id': 'adapter', 'train_dataset': train_dataset, 'eval_examples': eval_examples}]",
         "",
         "def _execute_baseline_first_workflow(args: argparse.Namespace, runtime_context: Mapping[str, Any]) -> list[dict[str, Any]]:",
         "    workflow = run_baseline_first_recipe_loop",
@@ -7430,8 +7430,8 @@ describe("ImplementSessionManager", () => {
     expect(output).toBe("cuda:1");
   });
 
-  it("forces LoRA train-only seed helpers through evaluation and cleanup before row assembly", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-lora-train-eval-assembly-"));
+  it("forces adapter train-only seed helpers through evaluation and cleanup before row assembly", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-adapter-train-eval-assembly-"));
     tempDirs.push(workspace);
     const scriptPath = path.join(workspace, "runner.py");
     writeFileSync(
@@ -7511,7 +7511,7 @@ describe("ImplementSessionManager", () => {
         "        CLEANUP_COUNT += 1",
         "",
         "def _find_callable(exact_names, token_groups):",
-        "    return run_one_seed_condition_lora_job",
+        "    return run_one_seed_condition_adapter_job",
         "",
         "def _invoke_callable_with_context(target, context):",
         "    return target(",
@@ -7526,7 +7526,7 @@ describe("ImplementSessionManager", () => {
         "        deadline_time=context['deadline_time'],",
         "    )",
         "",
-        "def run_one_seed_condition_lora_job(condition, config, seed, prepared_data, model_name_or_path, device, device_info, run_output_dir, deadline_time=None):",
+        "def run_one_seed_condition_adapter_job(condition, config, seed, prepared_data, model_name_or_path, device, device_info, run_output_dir, deadline_time=None):",
         "    return TrainingResult()",
         "",
         "def evaluate_bounded_benchmarks_for_run(trained_run, prepared_data, study_config):",
@@ -7587,10 +7587,10 @@ describe("ImplementSessionManager", () => {
     }).trim();
     expect(before).toBe("trained|None|0");
 
-    const repair = await repairPythonLoraSeedTrainEvalAssemblySurface(scriptPath);
+    const repair = await repairPythonAdapterSeedTrainEvalAssemblySurface(scriptPath);
     const repairedSource = readFileSync(scriptPath, "utf8");
     expect(repair.repaired).toBe(true);
-    expect(repairedSource).toContain("_autolabos_lora_train_eval_assembly_marker = True");
+    expect(repairedSource).toContain("_autolabos_adapter_train_eval_assembly_marker = True");
     const output = execFileSync("python3", [scriptPath], {
       cwd: workspace,
       encoding: "utf8"
@@ -7931,7 +7931,7 @@ describe("ImplementSessionManager", () => {
         "    kind: str",
         "def build_recipes():",
         "    recipes = [Recipe(name='baseline_no_tuning', kind='baseline')]",
-        "    recipes.append(Recipe(name='lora_r16', kind='lora'))",
+        "    recipes.append(Recipe(name='adapter_r16', kind='adapter'))",
         "    return recipes",
         "def summarize(results):",
         "    baseline = next(res for res in results if res.recipe == 'baseline_no_tuning')",
@@ -7963,7 +7963,7 @@ describe("ImplementSessionManager", () => {
         return {
           threadId: "thread-reuse-baseline-mismatch",
           finalText: JSON.stringify({
-            summary: "Reimplemented with tuned standard LoRA baseline.",
+            summary: "Reimplemented with tuned standard adapter baseline.",
             run_command: `python3 ${JSON.stringify(scriptPath)} --metrics-path ${JSON.stringify(metricsPath)} --output-dir ${JSON.stringify(publicDir)}`,
             test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
             working_dir: publicDir,
@@ -7991,9 +7991,9 @@ describe("ImplementSessionManager", () => {
                   "    name: str",
                   "    kind: str",
                   "def build_recipes():",
-                  "    recipes = [Recipe(name='standard_lora_baseline', kind='lora')]",
+                  "    recipes = [Recipe(name='standard_adapter_baseline', kind='adapter')]",
                   "    recipes.append(Recipe(name='untuned_reference', kind='reference'))",
-                  "    recipes.append(Recipe(name='lora_r8', kind='lora'))",
+                  "    recipes.append(Recipe(name='adapter_r8', kind='adapter'))",
                   "    return recipes",
                   MINIMAL_METRICS_RUNNER_FOOTER,
                   ""
@@ -8019,7 +8019,7 @@ describe("ImplementSessionManager", () => {
     const result = await manager.run(run);
     const source = readFileSync(result.scriptPath!, "utf8");
     expect(callCount).toBe(1);
-    expect(source).toContain("standard_lora_baseline");
+    expect(source).toContain("standard_adapter_baseline");
     expect(source).not.toContain("baseline_no_tuning', kind='baseline'");
     expect(result.verifyReport).toMatchObject({ status: "pass" });
   });
@@ -9927,7 +9927,7 @@ describe("ImplementSessionManager", () => {
       "  - baseline",
       "selected_design:",
       "  implementation_notes:",
-      "    - Conditions: C0 unmodified base no-tune evaluation only; C1 vanilla LoRA rank=8; C2 rsLoRA rank=8; C3 DoRA rank=8.",
+      "    - Conditions: C0 unmodified base no-tune evaluation only; C1 vanilla adapter rank=8; C2 rank-stabilized adapter rank=8; C3 decomposed adapter rank=8.",
       `notes: ${"plan-token ".repeat(900)}`
     ].join("\n");
     const longHypotheses = `${"hypothesis-token ".repeat(900)}\n`;
@@ -9960,7 +9960,7 @@ describe("ImplementSessionManager", () => {
               {
                 path: publicScriptPath,
                 content: [
-                  "PLANNED_CONDITIONS = ['unmodified_base', 'vanilla_lora', 'rslora', 'dora']",
+                  "PLANNED_CONDITIONS = ['unmodified_base', 'vanilla_adapter', 'rank_stabilized_adapter', 'decomposed_adapter']",
                   "REQUIRED_CONDITION_COUNT = 4",
                   MINIMAL_METRICS_RUNNER_SOURCE
                 ].join("\n\n")
@@ -9989,11 +9989,11 @@ describe("ImplementSessionManager", () => {
     expect(capturedPrompt).toContain('"plan_excerpt":');
     expect(capturedPrompt).toContain('"planned_condition_contract":');
     expect(capturedPrompt).toContain('"required_condition_count": 4');
-    expect(capturedPrompt).toContain('"vanilla_lora"');
-    expect(capturedPrompt).toContain('"rslora"');
-    expect(capturedPrompt).toContain('"dora"');
+    expect(capturedPrompt).toContain('"vanilla_adapter"');
+    expect(capturedPrompt).toContain('"rank_stabilized_adapter"');
+    expect(capturedPrompt).toContain('"decomposed_adapter"');
     expect(capturedPrompt).toContain('"primary_metric_key": "accuracy_delta_vs_baseline"');
-    expect(capturedPrompt).toContain("do not collapse rsLoRA/DoRA");
+    expect(capturedPrompt).toContain("do not collapse rank-stabilized adapter/decomposed adapter");
     expect(capturedPrompt).toContain("...<truncated>");
     expect(capturedPrompt).not.toContain('"repo_listing":');
     expect(capturedPrompt).not.toContain('"resolved_constraint_profile":');
@@ -10008,9 +10008,9 @@ describe("ImplementSessionManager", () => {
 
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
-      title: "Repeated LoRA Contract Run",
+      title: "Repeated adapter Contract Run",
       topic: "Adapter parameter stability",
-      constraints: ["2x RTX 4090", "LoRA conditions: rank in {4,8,16,32} x dropout in {0.0,0.05}"],
+      constraints: ["2x RTX 4090", "adapter conditions: rank in {4,8,16,32} x dropout in {0.0,0.05}"],
       objectiveMetric: "accuracy_delta_vs_baseline"
     });
 
@@ -10043,7 +10043,7 @@ describe("ImplementSessionManager", () => {
         capturedPrompt = prompt;
         return {
           text: JSON.stringify({
-            summary: "Implemented a repeated LoRA contract runner.",
+            summary: "Implemented a repeated adapter contract runner.",
             run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
             test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
             changed_files: [publicScriptPath],
@@ -10106,7 +10106,7 @@ describe("ImplementSessionManager", () => {
       [
         "# Original Brief",
         "",
-        "LoRA conditions: rank in `{4, 8, 16, 32}` x dropout in `{0.0, 0.05}`.",
+        "adapter conditions: rank in `{4, 8, 16, 32}` x dropout in `{0.0, 0.05}`.",
         "Baseline condition: rank=8, dropout=0.0."
       ].join("\n"),
       "utf8"
@@ -10114,9 +10114,9 @@ describe("ImplementSessionManager", () => {
 
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
-      title: "Redesigned LoRA Contract Run",
+      title: "Redesigned adapter Contract Run",
       topic: "Adapter parameter fixed budget",
-      constraints: ["Original brief used a full rank/dropout grid."],
+      constraints: ["Original brief used a full condition-parameter grid."],
       objectiveMetric: "accuracy_delta_vs_baseline"
     });
 
@@ -10129,7 +10129,7 @@ describe("ImplementSessionManager", () => {
         '  previous_objective_status: "not_met"',
         "constraints:",
         "  raw:",
-        '    - "LoRA conditions: rank in `{4, 8, 16, 32}` x dropout in `{0.0, 0.05}`."',
+        '    - "adapter conditions: rank in `{4, 8, 16, 32}` x dropout in `{0.0, 0.05}`."',
         '    - "Baseline condition: rank=8, dropout=0.0."',
         "selected_design:",
         '  id: "plan_2"',
@@ -10213,7 +10213,7 @@ describe("ImplementSessionManager", () => {
     expect(capturedPrompt).not.toContain('"candidate_condition_f5"');
   });
 
-  it("preserves full-grid LoRA condition and seed contracts from P6 plan prose", async () => {
+  it("preserves full-grid adapter condition and seed contracts from P6 plan prose", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-p6-grid-contract-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
@@ -10224,7 +10224,7 @@ describe("ImplementSessionManager", () => {
     const run = await runStore.createRun({
       title: "P6 Full Grid Contract Run",
       topic: "Adapter parameter fixed budget",
-      constraints: ["LoRA conditions: rank in `{4, 8, 16, 32}` x dropout in `{0.0, 0.05}`."],
+      constraints: ["adapter conditions: rank in `{4, 8, 16, 32}` x dropout in `{0.0, 0.05}`."],
       objectiveMetric: "accuracy_delta_vs_baseline"
     });
 
@@ -10238,7 +10238,7 @@ describe("ImplementSessionManager", () => {
         '  summary: "Run the full rank x dropout grid on the local target with seeds {42,43,44,45}."',
         "  implementation_notes:",
         '    - "Baseline condition: rank=8, dropout=0.0."',
-        '    - "Use LoRA ranks {4, 8, 16, 32} and dropouts {0.0, 0.05}; total training conditions per seed = 8"',
+        '    - "Use adapter ranks {4, 8, 16, 32} and dropouts {0.0, 0.05}; total training conditions per seed = 8"',
         '    - "Use seeds {42,43,44,45}; do not alter condition order."',
         "  evaluation_steps:",
         '    - "Evaluate every completed checkpoint on the full Benchmark Task A validation split (n=299) and full Benchmark Task B validation split (n=10042)."',
@@ -10274,7 +10274,7 @@ describe("ImplementSessionManager", () => {
         capturedPrompt = prompt;
         return {
           text: JSON.stringify({
-            summary: "Implemented a full-grid LoRA contract runner.",
+            summary: "Implemented a full-grid adapter contract runner.",
             run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
             test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
             changed_files: [publicScriptPath],
@@ -10327,7 +10327,7 @@ describe("ImplementSessionManager", () => {
     expect(capturedPrompt).not.toContain('"required_condition_count": 5');
   });
 
-  it("supplements selected-design count contracts with concrete rank/dropout grids from plan constraints", async () => {
+  it("supplements selected-design count contracts with concrete condition-parameter grids from plan constraints", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-p6-grid-constraint-supplement-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
@@ -10338,7 +10338,7 @@ describe("ImplementSessionManager", () => {
     const run = await runStore.createRun({
       title: "P6 Constraint Supplement Contract Run",
       topic: "Adapter parameter fixed budget",
-      constraints: ["LoRA conditions: rank in `{4, 8, 16, 32}` x dropout in `{0.0, 0.05}`."],
+      constraints: ["adapter conditions: rank in `{4, 8, 16, 32}` x dropout in `{0.0, 0.05}`."],
       objectiveMetric: "accuracy_delta_vs_baseline"
     });
 
@@ -10349,7 +10349,7 @@ describe("ImplementSessionManager", () => {
       [
         "constraints:",
         "  raw:",
-        '    - "LoRA conditions: rank in `{4, 8, 16, 32}` x dropout in `{0.0, 0.05}`."',
+        '    - "adapter conditions: rank in `{4, 8, 16, 32}` x dropout in `{0.0, 0.05}`."',
         '    - "Baseline condition: rank=8, dropout=0.0."',
         "selected_design:",
         '  id: "plan_2"',
@@ -10376,7 +10376,7 @@ describe("ImplementSessionManager", () => {
         capturedPrompt = prompt;
         return {
           text: JSON.stringify({
-            summary: "Implemented a full-grid LoRA contract runner.",
+            summary: "Implemented a full-grid adapter contract runner.",
             run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
             test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
             changed_files: [publicScriptPath],
@@ -15072,8 +15072,8 @@ describe("ImplementSessionManager", () => {
     expect(output).toBe("safe");
   });
 
-  it("repairs duplicate rank/dropout marker parsers that mix tuple and dict return contracts", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-rank-dropout-marker-parser-repair-"));
+  it("repairs duplicate condition-parameter marker parsers that mix tuple and dict return contracts", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-condition-parameter-marker-parser-repair-"));
     tempDirs.push(workspace);
     const scriptPath = path.join(workspace, "runner.py");
     writeFileSync(
@@ -15094,13 +15094,13 @@ describe("ImplementSessionManager", () => {
         "",
         "def build_condition_spec(marker: str) -> Dict[str, Any]:",
         "    rank, dropout = _parse_condition_marker(marker)",
-        "    return {'marker': marker, 'rank': rank, 'lora_dropout': dropout}",
+        "    return {'marker': marker, 'rank': rank, 'adapter_dropout': dropout}",
         "",
         "def _parse_condition_marker(marker: str) -> Dict[str, Any]:",
         "    return {",
         "        'marker': marker,",
         "        'rank': 8,",
-        "        'lora_dropout': 0.05,",
+        "        'adapter_dropout': 0.05,",
         "        'is_baseline': marker == BASELINE_CONDITION_MARKER,",
         "    }",
         "",
@@ -15122,7 +15122,7 @@ describe("ImplementSessionManager", () => {
     expect(JSON.parse(output)).toMatchObject({
       marker: "baseline_condition5",
       rank: 8,
-      lora_dropout: 0.05
+      adapter_dropout: 0.05
     });
   });
 
@@ -15171,8 +15171,8 @@ describe("ImplementSessionManager", () => {
         "        return candidate",
         "    return None",
         "",
-        "def locked_lora_study(args: Any = None) -> dict[str, Any]:",
-        "    return {'status': 'ok', 'runner': 'locked_lora_study'}",
+        "def locked_adapter_study(args: Any = None) -> dict[str, Any]:",
+        "    return {'status': 'ok', 'runner': 'locked_adapter_study'}",
         "",
         "def main() -> int:",
         "    runner = _find_callable(",
@@ -15202,7 +15202,7 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("_autolabos_find_callable_local_module_only_marker");
     const output = execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim();
     expect(JSON.parse(output)).toEqual({
-      runner: "locked_lora_study",
+      runner: "locked_adapter_study",
       status: "ok"
     });
   });
@@ -15267,14 +15267,14 @@ describe("ImplementSessionManager", () => {
         "",
         "LOCKED_CONDITION_SPECS = (",
         "    ConditionSpec('unmodified_base'),",
-        "    ConditionSpec('vanilla_lora'),",
-        "    ConditionSpec('rslora'),",
-        "    ConditionSpec('dora'),",
+        "    ConditionSpec('vanilla_adapter'),",
+        "    ConditionSpec('rank_stabilized_adapter'),",
+        "    ConditionSpec('decomposed_adapter'),",
         ")",
         "",
         "def validate_locked_condition_contract(specs):",
         "    markers = [spec.marker for spec in specs]",
-        "    if markers != ['unmodified_base', 'vanilla_lora', 'rslora', 'dora']:",
+        "    if markers != ['unmodified_base', 'vanilla_adapter', 'rank_stabilized_adapter', 'decomposed_adapter']:",
         "        raise RuntimeError(markers)",
         "",
         "def _locked_condition_sequence():",
@@ -15311,9 +15311,9 @@ describe("ImplementSessionManager", () => {
         "",
         "LOCKED_CONDITIONS = [",
         "    {'condition_id': 'unmodified_base', 'name': 'unmodified_base'},",
-        "    {'condition_id': 'vanilla_lora', 'name': 'vanilla_lora'},",
-        "    {'condition_id': 'rslora', 'name': 'rslora'},",
-        "    {'condition_id': 'dora', 'name': 'dora'},",
+        "    {'condition_id': 'vanilla_adapter', 'name': 'vanilla_adapter'},",
+        "    {'condition_id': 'rank_stabilized_adapter', 'name': 'rank_stabilized_adapter'},",
+        "    {'condition_id': 'decomposed_adapter', 'name': 'decomposed_adapter'},",
         "]",
         "",
         "def build_arg_parser():",
@@ -15324,7 +15324,7 @@ describe("ImplementSessionManager", () => {
         "def _locked_condition_names():",
         "    if 'LOCKED_CONDITIONS' in globals():",
         "        return [str(x) for x in globals()['LOCKED_CONDITIONS']]",
-        "    return ['unmodified_base', 'vanilla_lora', 'rslora', 'dora']",
+        "    return ['unmodified_base', 'vanilla_adapter', 'rank_stabilized_adapter', 'decomposed_adapter']",
         "",
         "def parse_args(argv=None):",
         "    parser = build_arg_parser()",
@@ -15353,7 +15353,7 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("_autolabos_locked_condition_name_projection_marker");
     expect(repairedSource).toContain('_autolabos_condition.get("condition_id")');
     const output = execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }).trim();
-    expect(output).toBe("unmodified_base,vanilla_lora,rslora,dora");
+    expect(output).toBe("unmodified_base,vanilla_adapter,rank_stabilized_adapter,decomposed_adapter");
   });
 
   it("accepts generated execution-plan mapping keys before run handoff", async () => {
@@ -15770,7 +15770,7 @@ describe("ImplementSessionManager", () => {
         "    return {'benchmark_task_a': [{'id': 'arc-1'}], 'benchmark_task_b': [{'id': 'hella-1'}]}",
         "",
         "def run_conditions_baseline_first(args, device, benchmark_samples, run_output_dir):",
-        "    return [{'condition_marker': 'locked_lora_baseline', 'sample_count': len(benchmark_samples['benchmark_task_a']), 'output_dir': str(run_output_dir), 'device': str(device)}]",
+        "    return [{'condition_marker': 'locked_adapter_baseline', 'sample_count': len(benchmark_samples['benchmark_task_a']), 'output_dir': str(run_output_dir), 'device': str(device)}]",
         "",
         "def _resolve_helper(candidate_names, required=True):",
         "    for name in candidate_names:",
@@ -15865,7 +15865,7 @@ describe("ImplementSessionManager", () => {
         "    return None",
         "",
         "def build_locked_condition_sequence(args):",
-        "    return ['unmodified_base', 'dora']",
+        "    return ['unmodified_base', 'decomposed_adapter']",
         "",
         "def load_benchmark_subsets(max_examples_per_task, seed=42):",
         "    return {'benchmark_task_a': [{'id': f'arc-{seed}', 'limit': max_examples_per_task}]}, {'source': 'benchmark-loader'}",
@@ -15957,7 +15957,7 @@ describe("ImplementSessionManager", () => {
       condition_index: 0
     });
     expect(rows[1]).toMatchObject({
-      condition_marker: "dora",
+      condition_marker: "decomposed_adapter",
       condition_index: 1
     });
   });
@@ -16020,7 +16020,7 @@ describe("ImplementSessionManager", () => {
         "from pathlib import Path",
         "from typing import Any, Callable, Dict, List, Mapping, MutableMapping, Optional",
         "",
-        "LOCKED_CONDITIONS = [{'condition_id': 'unmodified_base'}, {'condition_id': 'vanilla_lora'}]",
+        "LOCKED_CONDITIONS = [{'condition_id': 'unmodified_base'}, {'condition_id': 'vanilla_adapter'}]",
         "",
         "def _condition_identifier(condition):",
         "    return condition['condition_id']",
@@ -16537,8 +16537,8 @@ describe("ImplementSessionManager", () => {
     expect(output).toContain("--metrics-path custom.json");
   });
 
-  it("materializes LoRA study entrypoint data, model, and device context before handoff", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-lora-entrypoint-context-"));
+  it("materializes adapter study entrypoint data, model, and device context before handoff", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-adapter-entrypoint-context-"));
     tempDirs.push(workspace);
     const scriptPath = path.join(workspace, "runner.py");
     writeFileSync(
@@ -16669,15 +16669,15 @@ describe("ImplementSessionManager", () => {
       /missing .*prepared_data|missing .*device_context|missing .*model_bundle/
     );
 
-    const repair = await repairPythonLoraStudyEntrypointContextSurface(scriptPath);
+    const repair = await repairPythonAdapterStudyEntrypointContextSurface(scriptPath);
 
     expect(repair.repaired).toBe(true);
     const repairedSource = readFileSync(scriptPath, "utf8");
-    expect(repairedSource).toContain("_autolabos_lora_study_entrypoint_context_marker = True");
-    expect(repairedSource).toContain("_autolabos_lora_data_kwargs");
-    expect(repairedSource).toContain("_autolabos_lora_direct_runner_call_marker = True");
-    expect(repairedSource).toContain('"prepared_data": _autolabos_lora_prepared_data');
-    expect(repairedSource).toContain('"model_name_or_path": _autolabos_lora_selected_model');
+    expect(repairedSource).toContain("_autolabos_adapter_study_entrypoint_context_marker = True");
+    expect(repairedSource).toContain("_autolabos_adapter_data_kwargs");
+    expect(repairedSource).toContain("_autolabos_adapter_direct_runner_call_marker = True");
+    expect(repairedSource).toContain('"prepared_data": _autolabos_adapter_prepared_data');
+    expect(repairedSource).toContain('"model_name_or_path": _autolabos_adapter_selected_model');
     const output = execFileSync("python3", [scriptPath], {
       cwd: workspace,
       encoding: "utf8"
@@ -16798,7 +16798,7 @@ describe("ImplementSessionManager", () => {
         "from typing import Any, Optional, Sequence",
         "",
         "class StudyCondition:",
-        "    def __init__(self, condition_marker: str, lora_r: int, lora_alpha: int, lora_dropout: float):",
+        "    def __init__(self, condition_marker: str, adapter_r: int, adapter_alpha: int, adapter_dropout: float):",
         "        self.condition_marker = condition_marker",
         "",
         "def run_locked_condition_study(args: argparse.Namespace, **kwargs: Any) -> dict[str, Any]:",
@@ -17835,7 +17835,7 @@ describe("ImplementSessionManager", () => {
         "            \"run_locked_condition_sweep\",",
         "            \"orchestrate_locked_sweep\",",
         "            \"run_condition_grid_study\",",
-        "            \"run_locked_lora_sweep\",",
+        "            \"run_locked_adapter_sweep\",",
         "            \"run_full_locked_study\",",
         "        ],",
         "        fuzzy_any_tokens=(\"sweep\", \"orchestrate\", \"study\"),",
@@ -17982,7 +17982,7 @@ describe("ImplementSessionManager", () => {
         "def _resolve_core_experiment_callable_for_cli() -> Any:",
         "    candidate_names = (",
         "        \"run_locked_condition_study\",",
-        "        \"run_locked_lora_study\",",
+        "        \"run_locked_adapter_study\",",
         "        \"run_baseline_first_experiment\",",
         "    )",
         "    for candidate_name in candidate_names:",
@@ -17995,7 +17995,7 @@ describe("ImplementSessionManager", () => {
         "            continue",
         "        lowered = str(name).lower()",
         "        score = 100",
-        "        if 'lora' in lowered and ('study' in lowered or 'experiment' in lowered):",
+        "        if 'adapter' in lowered and ('study' in lowered or 'experiment' in lowered):",
         "            score = 2",
         "        if score < 100:",
         "            fuzzy_matches.append((score, str(name), candidate))",
@@ -18767,7 +18767,7 @@ describe("ImplementSessionManager", () => {
                   "    def recipe_id(self) -> str:",
                   "        return slugify(self.name)",
                   "",
-                  "RECIPE_SPECS: Tuple[RecipeSpec, ...] = (RecipeSpec('Locked LoRA'),)",
+                  "RECIPE_SPECS: Tuple[RecipeSpec, ...] = (RecipeSpec('Locked adapter'),)",
                   "ORDERED_RECIPE_IDS: Tuple[str, ...] = tuple(recipe.recipe_id for recipe in RECIPE_SPECS)",
                   "",
                   "def main(argv=None):",
@@ -20396,7 +20396,7 @@ describe("ImplementSessionManager", () => {
         "    return parser.parse_args()",
         "",
         "def _locked_condition_order(config):",
-        "    return ['unmodified_base', 'locked_lora_baseline']",
+        "    return ['unmodified_base', 'locked_adapter_baseline']",
         "",
         "def run_baseline_first_conditions(args, instruction_dataset=None, eval_bundle=None):",
         "    return {",
@@ -20408,8 +20408,8 @@ describe("ImplementSessionManager", () => {
         "                'benchmark_task_a_accuracy': 0.20,",
         "                'benchmark_task_b_accuracy': 0.30,",
         "            }),",
-        "            ('locked_lora_baseline', {",
-        "                'condition_marker': 'locked_lora_baseline',",
+        "            ('locked_adapter_baseline', {",
+        "                'condition_marker': 'locked_adapter_baseline',",
         "                'status': 'completed',",
         "                'benchmark_task_a_accuracy': 0.40,",
         "                'benchmark_task_b_accuracy': 0.50,",
@@ -20430,7 +20430,7 @@ describe("ImplementSessionManager", () => {
         "        ) / 2.0,",
         "    }",
         "",
-        "def aggregate_condition_results(condition_results, baseline_marker='locked_lora_baseline'):",
+        "def aggregate_condition_results(condition_results, baseline_marker='locked_adapter_baseline'):",
         "    normalized_results: List[Dict[str, Any]] = [normalize_condition_result(result) for result in condition_results]",
         "    return {",
         "        'condition_order': [row['condition_marker'] for row in normalized_results],",
@@ -20438,7 +20438,7 @@ describe("ImplementSessionManager", () => {
         "        'baseline_marker': baseline_marker,",
         "    }",
         "",
-        "def build_metrics_contract(condition_results, baseline_marker='locked_lora_baseline'):",
+        "def build_metrics_contract(condition_results, baseline_marker='locked_adapter_baseline'):",
         "    aggregated = aggregate_condition_results(condition_results, baseline_marker=baseline_marker)",
         "    return {",
         "        'status': 'completed',",
@@ -20517,13 +20517,13 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace });
     expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
       status: "completed",
-      condition_order: ["unmodified_base", "locked_lora_baseline"],
+      condition_order: ["unmodified_base", "locked_adapter_baseline"],
       per_recipe_results: {
         unmodified_base: {
           status: "completed",
           mean_zero_shot_accuracy: 0.25
         },
-        locked_lora_baseline: {
+        locked_adapter_baseline: {
           status: "completed",
           mean_zero_shot_accuracy: 0.45
         }
@@ -20541,12 +20541,12 @@ describe("ImplementSessionManager", () => {
         "from dataclasses import dataclass",
         "from typing import Any, List",
         "",
-        "BASELINE_CONDITION_ID = 'locked_lora_baseline'",
-        "REQUIRED_CONDITION_MARKERS = ['unmodified_base', 'locked_lora_baseline', 'dora']",
+        "BASELINE_CONDITION_ID = 'locked_adapter_baseline'",
+        "REQUIRED_CONDITION_MARKERS = ['unmodified_base', 'locked_adapter_baseline', 'decomposed_adapter']",
         "CONDITIONS = [",
         "    {'condition_id': 'unmodified_base'},",
-        "    {'condition_id': 'locked_lora_baseline'},",
-        "    {'condition_id': 'dora'},",
+        "    {'condition_id': 'locked_adapter_baseline'},",
+        "    {'condition_id': 'decomposed_adapter'},",
         "]",
         "",
         "@dataclass",
@@ -20596,7 +20596,7 @@ describe("ImplementSessionManager", () => {
     );
 
     expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
-      /first configured condition must be 'locked_lora_baseline'/
+      /first configured condition must be 'locked_adapter_baseline'/
     );
 
     const repair = await repairPythonBaselineFirstConditionOrderSurface(scriptPath);
@@ -20607,9 +20607,9 @@ describe("ImplementSessionManager", () => {
     const output = execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" })
       .trim()
       .split("\n");
-    expect(output[0]).toBe("locked_lora_baseline,unmodified_base,dora");
-    expect(output[1]).toBe("locked_lora_baseline,unmodified_base,dora");
-    expect(output[2]).toBe("unmodified_base,locked_lora_baseline,dora");
+    expect(output[0]).toBe("locked_adapter_baseline,unmodified_base,decomposed_adapter");
+    expect(output[1]).toBe("locked_adapter_baseline,unmodified_base,decomposed_adapter");
+    expect(output[2]).toBe("unmodified_base,locked_adapter_baseline,decomposed_adapter");
   });
 
   it("resolves uniquely aliased required condition markers against concrete registry specs", async () => {
@@ -20624,7 +20624,7 @@ describe("ImplementSessionManager", () => {
         "from dataclasses import dataclass",
         "from typing import Optional, Sequence, Tuple",
         "",
-        "BASELINE_CONDITION_MARKER = 'locked_lora_baseline'",
+        "BASELINE_CONDITION_MARKER = 'locked_adapter_baseline'",
         "UNMODIFIED_BASE_MARKER = 'unmodified_base'",
         "REFERENCE_ROLE_LOCKED_BASELINE = 'locked_baseline'",
         "REFERENCE_ROLE_BASE_MODEL = 'base_model'",
@@ -20638,17 +20638,17 @@ describe("ImplementSessionManager", () => {
         "ORDERED_CONDITION_SPECS: Tuple[ConditionSpec, ...] = (",
         "    ConditionSpec(BASELINE_CONDITION_MARKER, REFERENCE_ROLE_LOCKED_BASELINE),",
         "    ConditionSpec(UNMODIFIED_BASE_MARKER, REFERENCE_ROLE_BASE_MODEL),",
-        "    ConditionSpec('the_strongest_alternative_lightweight_recipe_among_vanilla_lora_and_rslora', REFERENCE_ROLE_CANDIDATE),",
-        "    ConditionSpec('vanilla_lora', REFERENCE_ROLE_CANDIDATE),",
-        "    ConditionSpec('rslora', REFERENCE_ROLE_CANDIDATE),",
+        "    ConditionSpec('the_strongest_alternative_lightweight_recipe_among_vanilla_adapter_and_rank_stabilized_adapter', REFERENCE_ROLE_CANDIDATE),",
+        "    ConditionSpec('vanilla_adapter', REFERENCE_ROLE_CANDIDATE),",
+        "    ConditionSpec('rank_stabilized_adapter', REFERENCE_ROLE_CANDIDATE),",
         ")",
         "",
         "REQUIRED_CONDITION_MARKERS: Tuple[str, ...] = (",
         "    'unmodified_base',",
-        "    'locked_lora_baseline',",
+        "    'locked_adapter_baseline',",
         "    'the_strongest_alternative_lightweight_recipe_amo',",
-        "    'vanilla_lora',",
-        "    'rslora',",
+        "    'vanilla_adapter',",
+        "    'rank_stabilized_adapter',",
         ")",
         "",
         "COMPARISON_CONTRACT = {",
@@ -20707,10 +20707,10 @@ describe("ImplementSessionManager", () => {
     expect(summary.missing_required_condition_markers).toEqual([]);
     expect(summary.required_condition_marker_aliases).toEqual({
       the_strongest_alternative_lightweight_recipe_amo:
-        "the_strongest_alternative_lightweight_recipe_among_vanilla_lora_and_rslora"
+        "the_strongest_alternative_lightweight_recipe_among_vanilla_adapter_and_rank_stabilized_adapter"
     });
     expect(summary.required_condition_markers).toContain(
-      "the_strongest_alternative_lightweight_recipe_among_vanilla_lora_and_rslora"
+      "the_strongest_alternative_lightweight_recipe_among_vanilla_adapter_and_rank_stabilized_adapter"
     );
   });
 
@@ -20727,10 +20727,10 @@ describe("ImplementSessionManager", () => {
         "from typing import Any, Dict, List, Optional, Sequence, Tuple",
         "",
         "UNMODIFIED_BASE_MARKER = 'unmodified_base'",
-        "LOCKED_LORA_BASELINE_MARKER = 'locked_lora_baseline'",
+        "LOCKED_LORA_BASELINE_MARKER = 'locked_adapter_baseline'",
         "STRONGEST_ALT_MARKER = 'the_strongest_alternative_lightweight_recipe_amo'",
-        "VANILLA_LORA_MARKER = 'vanilla_lora'",
-        "RSLORA_MARKER = 'rslora'",
+        "VANILLA_LORA_MARKER = 'vanilla_adapter'",
+        "RSLORA_MARKER = 'rank_stabilized_adapter'",
         "CONDITION_ROLE_CANDIDATE = 'candidate_lightweight_recipe'",
         "",
         "@dataclass(frozen=True)",
@@ -20740,7 +20740,7 @@ describe("ImplementSessionManager", () => {
         "",
         "LOCKED_CONDITION_SPECS: Tuple[ConditionSpec, ...] = (",
         "    ConditionSpec(UNMODIFIED_BASE_MARKER, 'base_model_reference'),",
-        "    ConditionSpec(LOCKED_LORA_BASELINE_MARKER, 'locked_lora_baseline'),",
+        "    ConditionSpec(LOCKED_LORA_BASELINE_MARKER, 'locked_adapter_baseline'),",
         "    ConditionSpec(VANILLA_LORA_MARKER, CONDITION_ROLE_CANDIDATE),",
         "    ConditionSpec(RSLORA_MARKER, CONDITION_ROLE_CANDIDATE),",
         ")",
@@ -20806,7 +20806,7 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("PLAN_MARKER_COVERAGE");
     const aliases = JSON.parse(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }));
     expect(aliases).toEqual({
-      the_strongest_alternative_lightweight_recipe_amo: ["vanilla_lora", "rslora"]
+      the_strongest_alternative_lightweight_recipe_amo: ["vanilla_adapter", "rank_stabilized_adapter"]
     });
   });
 
@@ -21124,9 +21124,9 @@ describe("ImplementSessionManager", () => {
         "    return {",
         "        'candidate_results': [",
         "            {'candidate_id': 'base', 'is_baseline': True, 'evaluation': {'benchmark_task_a_accuracy': 0.25, 'benchmark_task_b_accuracy': 0.5, 'mean_zero_shot_accuracy': 0.375}},",
-        "            {'candidate_id': 'vanilla_lora_r8_alpha16_dropout005', 'is_baseline': False, 'evaluation': {'benchmark_task_a_accuracy': 0.5, 'benchmark_task_b_accuracy': 0.75, 'mean_zero_shot_accuracy': 0.625}},",
+        "            {'candidate_id': 'vanilla_adapter_r8_alpha16_dropout005', 'is_baseline': False, 'evaluation': {'benchmark_task_a_accuracy': 0.5, 'benchmark_task_b_accuracy': 0.75, 'mean_zero_shot_accuracy': 0.625}},",
         "        ],",
-        "        'summary': {'completed_candidate_ids': ['base', 'vanilla_lora_r8_alpha16_dropout005']},",
+        "        'summary': {'completed_candidate_ids': ['base', 'vanilla_adapter_r8_alpha16_dropout005']},",
         "    }",
         "",
         "def run_study_and_build_metrics(config):",
@@ -21666,7 +21666,7 @@ describe("ImplementSessionManager", () => {
       [
         "def execute_candidate_study(args=None):",
         "    assert args is not None",
-        "    return {'status': 'completed', 'recipe_results': [{'recipe_id': 'lora_r8'}]}",
+        "    return {'status': 'completed', 'recipe_results': [{'recipe_id': 'adapter_r8'}]}",
         "",
         "run_candidate_study = execute_candidate_study",
         "run_raw_experiment = execute_candidate_study",
@@ -21741,7 +21741,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def execute_candidate_study(args):",
         "    assert args == {'seed': 42}",
-        "    return {'candidate_results': [{'candidate_id': 'base_unmodified'}, {'candidate_id': 'lora_r8_alpha16'}]}",
+        "    return {'candidate_results': [{'candidate_id': 'base_unmodified'}, {'candidate_id': 'adapter_r8_alpha16'}]}",
         "",
         "def _invoke_candidate_orchestration(args, metrics_path, output_dir):",
         "    executor = _resolve_global_callable(",
@@ -21772,7 +21772,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def main():",
         "    result = _invoke_candidate_orchestration({'seed': 42}, 'metrics.json', '.')",
-        "    return 0 if result['candidate_results'][1]['candidate_id'] == 'lora_r8_alpha16' else 1",
+        "    return 0 if result['candidate_results'][1]['candidate_id'] == 'adapter_r8_alpha16' else 1",
         "",
         "if __name__ == '__main__':",
         "    raise SystemExit(main())",
@@ -21817,7 +21817,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def run_baseline_locked_candidate_variant_comparison(config):",
         "    assert config == {'seed': 42}",
-        "    return {'status': 'completed', 'candidate_results': [{'candidate_id': 'base'}, {'candidate_id': 'lora_r8'}]}",
+        "    return {'status': 'completed', 'candidate_results': [{'candidate_id': 'base'}, {'candidate_id': 'adapter_r8'}]}",
         "",
         "run_candidate_variant_comparison = run_baseline_locked_candidate_variant_comparison",
         "run_experiment_comparison = run_baseline_locked_candidate_variant_comparison",
@@ -21841,7 +21841,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def main():",
         "    result = _autolabos_run_workflow({'seed': 42}, object())",
-        "    return 0 if result['candidate_results'][1]['candidate_id'] == 'lora_r8' else 1",
+        "    return 0 if result['candidate_results'][1]['candidate_id'] == 'adapter_r8' else 1",
         "",
         "if __name__ == '__main__':",
         "    raise SystemExit(main())",
@@ -22011,7 +22011,7 @@ describe("ImplementSessionManager", () => {
       [
         "def run_baseline_first_condition_execution(args):",
         "    assert args == {'seed': 42}",
-        "    return {'status': 'completed', 'conditions': [{'condition_id': 'vanilla_lora', 'is_baseline': False}]}",
+        "    return {'status': 'completed', 'conditions': [{'condition_id': 'vanilla_adapter', 'is_baseline': False}]}",
         "",
         "def _dispatch_experiment(args):",
         "    for name in (",
@@ -22064,7 +22064,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def execute_locked_condition_study(config):",
         "    assert getattr(config, 'seed', None) == 42",
-        "    return {'status': 'completed', 'conditions': [{'condition_id': 'locked_lora_baseline'}]}",
+        "    return {'status': 'completed', 'conditions': [{'condition_id': 'locked_adapter_baseline'}]}",
         "",
         "def _resolve_callable(*names):",
         "    for name in names:",
@@ -22090,7 +22090,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def main():",
         "    result = _run_locked_study(SimpleNamespace(seed=42))",
-        "    return 0 if result['conditions'][0]['condition_id'] == 'locked_lora_baseline' else 1",
+        "    return 0 if result['conditions'][0]['condition_id'] == 'locked_adapter_baseline' else 1",
         "",
         "if __name__ == '__main__':",
         "    raise SystemExit(main())",
@@ -22130,7 +22130,7 @@ describe("ImplementSessionManager", () => {
         "    assert getattr(args, 'seed', None) == 42",
         "    assert device == 'cpu'",
         "    assert output_dir == 'out'",
-        "    return {'status': 'completed', 'conditions': [{'condition_id': 'locked_lora_baseline'}]}",
+        "    return {'status': 'completed', 'conditions': [{'condition_id': 'locked_adapter_baseline'}]}",
         "",
         "run_baseline_first_conditions = execute_baseline_first_conditions",
         "run_condition_study = execute_baseline_first_conditions",
@@ -22179,7 +22179,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def main():",
         "    result = _chunk5c_run_condition_study({'seed': 42, 'output_dir': 'out'})",
-        "    return 0 if result['conditions'][0]['condition_id'] == 'locked_lora_baseline' else 1",
+        "    return 0 if result['conditions'][0]['condition_id'] == 'locked_adapter_baseline' else 1",
         "",
         "if __name__ == '__main__':",
         "    raise SystemExit(main())",
@@ -22300,7 +22300,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def build_condition_registry(args):",
         "    assert getattr(args, 'seed', None) == 42",
-        "    return {'locked_lora_baseline': {'condition_id': 'locked_lora_baseline'}}",
+        "    return {'locked_adapter_baseline': {'condition_id': 'locked_adapter_baseline'}}",
         "",
         "def build_shared_training_budget(args):",
         "    return {'seed': getattr(args, 'seed', None), 'max_steps': 1}",
@@ -22313,12 +22313,12 @@ describe("ImplementSessionManager", () => {
         "",
         "def run_condition_execution_workflow(args, condition_registry, budget, train_records, eval_sets, device):",
         "    assert isinstance(args, argparse.Namespace)",
-        "    assert condition_registry['locked_lora_baseline']['condition_id'] == 'locked_lora_baseline'",
+        "    assert condition_registry['locked_adapter_baseline']['condition_id'] == 'locked_adapter_baseline'",
         "    assert budget['seed'] == 42",
         "    assert train_records[0]['instruction'] == 'say hi'",
         "    assert 'benchmark_task_a' in eval_sets",
         "    assert device == 'cpu'",
-        "    return {'condition_results': [{'condition_id': 'locked_lora_baseline', 'status': 'completed'}]}",
+        "    return {'condition_results': [{'condition_id': 'locked_adapter_baseline', 'status': 'completed'}]}",
         "",
         "def _run_conditions_via_available_api(args, device, output_dir, cache_dir):",
         "    workflow_candidates = (",
@@ -22358,7 +22358,7 @@ describe("ImplementSessionManager", () => {
         "def main():",
         "    args = argparse.Namespace(seed=42, output_dir='out', cache_dir='cache')",
         "    result = _run_conditions_via_available_api(args, 'cpu', 'out', 'cache')",
-        "    return 0 if result['condition_results'][0]['condition_id'] == 'locked_lora_baseline' else 1",
+        "    return 0 if result['condition_results'][0]['condition_id'] == 'locked_adapter_baseline' else 1",
         "",
         "if __name__ == '__main__':",
         "    raise SystemExit(main())",
@@ -22452,7 +22452,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def run_recipe_comparison(**overrides: Any) -> dict[str, Any]:",
         "    study_context: dict[str, Any] = {",
-        "        'condition_order': ['locked_lora_baseline'],",
+        "        'condition_order': ['locked_adapter_baseline'],",
         "        'seed': 42,",
         "        'train_examples': 2,",
         "        'eval_examples_per_dataset': 1,",
@@ -22546,7 +22546,7 @@ describe("ImplementSessionManager", () => {
         "    return {'benchmark_task_a': [{'question': 'q'}], 'benchmark_task_b': [{'ctx': 'c'}]}",
         "",
         "def build_ordered_condition_specs(args=None):",
-        "    return [{'condition_marker': 'unmodified_base'}, {'condition_marker': 'locked_lora_baseline'}]",
+        "    return [{'condition_marker': 'unmodified_base'}, {'condition_marker': 'locked_adapter_baseline'}]",
         "",
         "def collect_condition_results(experiment_state, controls, device, conditions=None):",
         "    assert experiment_state['train_dataset'][0]['instruction'] == 'say hi'",
@@ -22556,7 +22556,7 @@ describe("ImplementSessionManager", () => {
         "    assert device == 'cpu'",
         "    return [",
         "        {'condition_marker': 'unmodified_base', 'status': 'success', 'success': True, 'mean_zero_shot_accuracy': 0.40},",
-        "        {'condition_marker': 'locked_lora_baseline', 'status': 'success', 'success': True, 'mean_zero_shot_accuracy': 0.55},",
+        "        {'condition_marker': 'locked_adapter_baseline', 'status': 'success', 'success': True, 'mean_zero_shot_accuracy': 0.55},",
         "    ]",
         "",
         "def aggregate_condition_results_into_metrics(workflow_results, *, args=None, device_info=None, run_started_at=None, wall_clock_seconds=None, metrics_path=None):",
@@ -22627,7 +22627,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def run_locked_baseline_first_conditions(args, device=None, tokenizer=None, eval_datasets=None, instruction_examples=None, condition_catalog=None):",
         "    assert args.seed == 42",
-        "    return [{'condition_marker': 'locked_lora_baseline', 'status': 'completed', 'mean_zero_shot_accuracy': 0.5}]",
+        "    return [{'condition_marker': 'locked_adapter_baseline', 'status': 'completed', 'mean_zero_shot_accuracy': 0.5}]",
         "",
         "def aggregate_primary_and_secondary_metrics(condition_results):",
         "    return {'condition_count': len(condition_results), 'best_recipe_marker': condition_results[0]['condition_marker']}",
@@ -22681,7 +22681,7 @@ describe("ImplementSessionManager", () => {
 
     const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
     expect(metrics.status).toBe("completed");
-    expect(metrics.metrics.best_recipe_marker).toBe("locked_lora_baseline");
+    expect(metrics.metrics.best_recipe_marker).toBe("locked_adapter_baseline");
   });
 
   it("materializes baseline-first workflow dataset inputs before calling generated condition executors", async () => {
@@ -22724,7 +22724,7 @@ describe("ImplementSessionManager", () => {
         "    assert instruction_examples[0]['text'] == 'train'",
         "    assert benchmark_samples['benchmark_task_a'][0]['seed'] == 42",
         "    assert str(output_dir).endswith('out')",
-        "    return [{'marker': 'locked_lora_baseline', 'status': 'completed'}]",
+        "    return [{'marker': 'locked_adapter_baseline', 'status': 'completed'}]",
         "",
         "def run_experiment(args=None):",
         "    args_dict = dict(vars(args))",
@@ -22744,7 +22744,7 @@ describe("ImplementSessionManager", () => {
         "        seed=seed,",
         "        max_train_examples=max_train_examples,",
         "        max_eval_examples=max_eval_examples,",
-        "        locked_recipe_order=['unmodified_base', 'locked_lora_baseline'],",
+        "        locked_recipe_order=['unmodified_base', 'locked_adapter_baseline'],",
         "    )",
         "    payload = {'status': 'completed', 'condition_results': workflow_result}",
         "    metrics_path.write_text(json.dumps(payload), encoding='utf-8')",
@@ -22776,7 +22776,7 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
 
     const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
-    expect(metrics.condition_results[0].marker).toBe("locked_lora_baseline");
+    expect(metrics.condition_results[0].marker).toBe("locked_adapter_baseline");
   });
 
   it("materializes baseline-first study-loop runtime and dataset inputs before invoking generated study runners", async () => {
@@ -22806,9 +22806,9 @@ describe("ImplementSessionManager", () => {
         "    assert runtime['seed'] == 42",
         "    assert train_examples[0]['text'] == 'train'",
         "    assert eval_bundle['benchmark_task_a'][0]['seed'] == 42",
-        "    assert condition_markers == ['unmodified_base', 'locked_lora_baseline']",
+        "    assert condition_markers == ['unmodified_base', 'locked_adapter_baseline']",
         "    assert str(output_dir).endswith('out')",
-        "    return [{'condition': 'locked_lora_baseline', 'status': 'completed', 'mean_zero_shot_accuracy': 0.5}]",
+        "    return [{'condition': 'locked_adapter_baseline', 'status': 'completed', 'mean_zero_shot_accuracy': 0.5}]",
         "",
         "def _condition_result_as_dict(item):",
         "    return dict(item)",
@@ -22842,7 +22842,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def main():",
         `    args = SimpleNamespace(seed=42, metrics_path=${JSON.stringify(metricsPath)}, output_dir=${JSON.stringify(outputDir)}, train_subset_size=3, eval_subset_size=2)`,
-        "    config = {'seed': 42, 'metrics_path': args.metrics_path, 'output_dir': args.output_dir, 'condition_order': ['unmodified_base', 'locked_lora_baseline']}",
+        "    config = {'seed': 42, 'metrics_path': args.metrics_path, 'output_dir': args.output_dir, 'condition_order': ['unmodified_base', 'locked_adapter_baseline']}",
         "    results = _invoke_baseline_first_study(args=args, config=config, device_info={'device': 'cpu'})",
         "    Path(args.metrics_path).write_text(json.dumps({'status': 'completed', 'condition_results': results}), encoding='utf-8')",
         "    return 0",
@@ -22869,7 +22869,7 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
 
     const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
-    expect(metrics.condition_results[0].condition).toBe("locked_lora_baseline");
+    expect(metrics.condition_results[0].condition).toBe("locked_adapter_baseline");
   });
 
   it("materializes baseline-first entrypoint context inputs before invoking generated condition loops", async () => {
@@ -22904,7 +22904,7 @@ describe("ImplementSessionManager", () => {
         "    assert device == 'cpu'",
         "    assert instruction_dataset[0]['text'] == 'train'",
         "    assert benchmark_datasets['benchmark_task_a'][0]['seed'] == 42",
-        "    return {'condition_records': [{'condition': 'locked_lora_baseline', 'status': 'completed'}]}",
+        "    return {'condition_records': [{'condition': 'locked_adapter_baseline', 'status': 'completed'}]}",
         "",
         "def _call_entrypoint_helper(helper, context):",
         "    signature = inspect.signature(helper)",
@@ -22926,7 +22926,7 @@ describe("ImplementSessionManager", () => {
         "    return None",
         "",
         "def _locked_baseline_first_condition_order():",
-        "    return ['unmodified_base', 'locked_lora_baseline']",
+        "    return ['unmodified_base', 'locked_adapter_baseline']",
         "",
         "def _run_orchestration_from_cli(args):",
         "    loop_helper = _locate_first_callable((",
@@ -22974,7 +22974,7 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
 
     const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
-    expect(metrics.condition_records[0].condition).toBe("locked_lora_baseline");
+    expect(metrics.condition_records[0].condition).toBe("locked_adapter_baseline");
   });
 
   it("materializes train and benchmark inputs for final _main_execute_conditions dispatch", async () => {
@@ -23031,7 +23031,7 @@ describe("ImplementSessionManager", () => {
         "    assert train_dataset[0]['instruction'] == 'say hi'",
         "    assert benchmark_data['benchmark_task_a'][0]['seed'] == 42",
         "    assert device == 'cpu'",
-        "    return {'conditions': [{'condition_id': 'locked_lora_baseline', 'status': 'completed'}]}",
+        "    return {'conditions': [{'condition_id': 'locked_adapter_baseline', 'status': 'completed'}]}",
         "",
         "def _main_execute_conditions(args, run_context, device, device_info):",
         "    runner_names = (",
@@ -23073,7 +23073,7 @@ describe("ImplementSessionManager", () => {
         "def main():",
         "    args = SimpleNamespace(seed=42, max_train_examples=3, max_eval_examples=2, output_dir='out', cache_dir='cache', adapter_dir='adapters', metrics_path='metrics.json')",
         "    records = _main_execute_conditions(args, {}, 'cpu', {'device': 'cpu'})",
-        "    assert records[0]['condition_id'] == 'locked_lora_baseline'",
+        "    assert records[0]['condition_id'] == 'locked_adapter_baseline'",
         "    return 0",
         "",
         "if __name__ == '__main__':",
@@ -23169,7 +23169,7 @@ describe("ImplementSessionManager", () => {
         "    train_enabled: bool",
         "    eval_enabled: bool = True",
         "    is_unmodified_baseline: bool = False",
-        "    is_locked_lora_baseline: bool = False",
+        "    is_locked_adapter_baseline: bool = False",
         "    hyperparameter_metadata: Mapping[str, Any] = field(default_factory=dict)",
         "    implementation_notes: str = ''",
         "    required_peft_features: Tuple[str, ...] = field(default_factory=tuple)",
@@ -23207,16 +23207,16 @@ describe("ImplementSessionManager", () => {
         "",
         "ORDERED_CONDITION_CONFIGS = [",
         "    _make_condition_config(marker='unmodified_base', display_name='Base', recipe_type='baseline_no_adapter', description='baseline', is_baseline=True, should_train=False),",
-        "    _make_condition_config(marker='locked_lora_baseline', display_name='Locked LoRA', recipe_type='locked_lora_baseline', description='lora'),",
+        "    _make_condition_config(marker='locked_adapter_baseline', display_name='Locked adapter', recipe_type='locked_adapter_baseline', description='adapter'),",
         "]",
         "",
         "if __name__ == '__main__':",
         "    assert ORDERED_CONDITION_CONFIGS[0].adapter_recipe_type == 'none'",
         "    assert ORDERED_CONDITION_CONFIGS[0].train_enabled is False",
         "    assert ORDERED_CONDITION_CONFIGS[0].is_unmodified_baseline is True",
-        "    assert ORDERED_CONDITION_CONFIGS[1].adapter_recipe_type == 'locked_lora_baseline'",
+        "    assert ORDERED_CONDITION_CONFIGS[1].adapter_recipe_type == 'locked_adapter_baseline'",
         "    assert ORDERED_CONDITION_CONFIGS[1].train_enabled is True",
-        "    assert ORDERED_CONDITION_CONFIGS[1].is_locked_lora_baseline is True",
+        "    assert ORDERED_CONDITION_CONFIGS[1].is_locked_adapter_baseline is True",
         ""
       ].join("\n"),
       "utf8"
@@ -23253,9 +23253,9 @@ describe("ImplementSessionManager", () => {
         "class ConditionSpec:",
         "    marker: str",
         "    display_name: str",
-        "    lora_rank: int",
-        "    lora_alpha: int",
-        "    lora_dropout: float",
+        "    adapter_rank: int",
+        "    adapter_alpha: int",
+        "    adapter_dropout: float",
         "    is_baseline: bool = False",
         "",
         "def _make_config_instance(type_name, **kwargs):",
@@ -23282,8 +23282,8 @@ describe("ImplementSessionManager", () => {
         "    display_name='Baseline condition',",
         "    is_baseline=True,",
         "    rank=8,",
-        "    lora_alpha=16,",
-        "    lora_dropout=0.0,",
+        "    adapter_alpha=16,",
+        "    adapter_dropout=0.0,",
         ")",
         "",
         "if __name__ == '__main__':",
@@ -23295,7 +23295,7 @@ describe("ImplementSessionManager", () => {
     );
 
     expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
-      /lora_rank|unexpected keyword argument 'condition_id'/
+      /adapter_rank|unexpected keyword argument 'condition_id'/
     );
 
     const repair = await repairPythonConfigInstanceDataclassFieldAliasSurface(scriptPath);
@@ -23308,9 +23308,9 @@ describe("ImplementSessionManager", () => {
       marker: "baseline_condition",
       display_name: "Baseline condition",
       is_baseline: true,
-      lora_rank: 8,
-      lora_alpha: 16,
-      lora_dropout: 0
+      adapter_rank: 8,
+      adapter_alpha: 16,
+      adapter_dropout: 0
     });
   });
 
@@ -23351,7 +23351,7 @@ describe("ImplementSessionManager", () => {
         "        exclude_substrings=('run_single_condition', 'evaluation', 'metrics', 'normalize'),",
         "    )",
         "    if train_helper is None:",
-        "        raise RuntimeError('Unable to locate a bounded fine-tuning helper for the LoRA study runner')",
+        "        raise RuntimeError('Unable to locate a bounded fine-tuning helper for the adapter study runner')",
         "    eval_helper = _study_find_runtime_helper(",
         "        explicit_names=('run_condition_evaluation', 'evaluate_condition_model', 'evaluate_model_on_tasks', 'evaluate_model_bundle', 'run_benchmark_evaluation'),",
         "        required_substrings=('evaluat',),",
@@ -23430,7 +23430,7 @@ describe("ImplementSessionManager", () => {
         "        exclude_substrings=('run_single_condition',),",
         "    )",
         "    if train_helper is None:",
-        "        raise RuntimeError('Unable to locate a bounded fine-tuning helper for the LoRA study runner')",
+        "        raise RuntimeError('Unable to locate a bounded fine-tuning helper for the adapter study runner')",
         "    return train_helper(bundle='bundle', condition=condition, output_dir=condition_dir)",
         "",
         "if __name__ == '__main__':",
@@ -23799,7 +23799,7 @@ describe("ImplementSessionManager", () => {
         "def flatten_benchmark_eval_samples(records_by_task):",
         "    return [record for records in records_by_task.values() for record in records]",
         "",
-        "def train_condition_with_lora(**kwargs):",
+        "def train_condition_with_adapter(**kwargs):",
         "    return {'status': 'completed', 'train_loss': 0.1, 'marker': kwargs['condition'].marker}",
         "",
         "def condition_training_bundle_to_record(bundle):",
@@ -24095,7 +24095,7 @@ describe("ImplementSessionManager", () => {
         "    assert args.seed == 42",
         "    assert output_dir == 'out'",
         "    assert eval_datasets == {'arc': []}",
-        "    return [{'condition_id': 'baseline_unmodified'}, {'condition_id': 'vanilla_lora'}]",
+        "    return [{'condition_id': 'baseline_unmodified'}, {'condition_id': 'vanilla_adapter'}]",
         "",
         "def _run_conditions_from_cli(args):",
         "    runner_names = (",
@@ -24113,7 +24113,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def main():",
         "    result = _run_conditions_from_cli(SimpleNamespace(seed=42))",
-        "    return 0 if result[1]['condition_id'] == 'vanilla_lora' else 1",
+        "    return 0 if result[1]['condition_id'] == 'vanilla_adapter' else 1",
         "",
         "if __name__ == '__main__':",
         "    raise SystemExit(main())",
@@ -24165,7 +24165,7 @@ describe("ImplementSessionManager", () => {
         "    assert device_info == {'backend': 'cpu'}",
         "    return [",
         "        {'condition_id': 'unmodified_base', 'status': 'completed', 'accuracy_delta_vs_baseline': 0.0},",
-        "        {'condition_id': 'lora_baseline', 'status': 'completed', 'accuracy_delta_vs_baseline': 0.2},",
+        "        {'condition_id': 'adapter_baseline', 'status': 'completed', 'accuracy_delta_vs_baseline': 0.2},",
         "    ]",
         "",
         "def execute_selected_conditions(args: argparse.Namespace, device_info: Any):",
@@ -24178,7 +24178,7 @@ describe("ImplementSessionManager", () => {
         "    )",
         "    common_kwargs = {",
         "        'args': args,",
-        "        'conditions': ['unmodified_base', 'lora_baseline'],",
+        "        'conditions': ['unmodified_base', 'adapter_baseline'],",
         "        'device_info': device_info,",
         "        'output_dir': Path(args.output_dir),",
         "    }",
@@ -24222,7 +24222,7 @@ describe("ImplementSessionManager", () => {
       accuracy_delta_vs_baseline: 0.2,
       conditions: [
         { condition_id: "unmodified_base", status: "completed" },
-        { condition_id: "lora_baseline", status: "completed" }
+        { condition_id: "adapter_baseline", status: "completed" }
       ]
     });
   });
@@ -24259,7 +24259,7 @@ describe("ImplementSessionManager", () => {
         "    assert benchmark_samples == {'benchmark_task_a': [{'answer': 'A'}]}",
         "    return [",
         "        {'condition_id': 'unmodified_base', 'status': 'completed'},",
-        "        {'condition_id': 'locked_lora_baseline', 'status': 'completed'},",
+        "        {'condition_id': 'locked_adapter_baseline', 'status': 'completed'},",
         "    ]",
         "",
         "run_condition_execution = execute_baseline_first_conditions",
@@ -24313,7 +24313,7 @@ describe("ImplementSessionManager", () => {
     expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
       conditions: [
         { condition_id: "unmodified_base", status: "completed" },
-        { condition_id: "locked_lora_baseline", status: "completed" }
+        { condition_id: "locked_adapter_baseline", status: "completed" }
       ]
     });
   });
@@ -24347,7 +24347,7 @@ describe("ImplementSessionManager", () => {
         "def run_baseline_first_locked_conditions(args=None, device_metadata=None):",
         "    assert args.seed == 42",
         "    assert device_metadata == {'backend': 'cpu'}",
-        "    return [{'condition_marker': 'locked_lora_baseline', 'status': 'completed'}]",
+        "    return [{'condition_marker': 'locked_adapter_baseline', 'status': 'completed'}]",
         "",
         "def main(argv=None):",
         "    parser = argparse.ArgumentParser()",
@@ -24364,7 +24364,7 @@ describe("ImplementSessionManager", () => {
         "        'run_all_conditions',",
         "    ])",
         "    if execution_fn is None:",
-        "        rows = [{'condition_marker': 'locked_lora_baseline', 'status': 'failed', 'failure_reason': 'No condition execution function was available in the materialized runner skeleton.'}]",
+        "        rows = [{'condition_marker': 'locked_adapter_baseline', 'status': 'failed', 'failure_reason': 'No condition execution function was available in the materialized runner skeleton.'}]",
         "    else:",
         "        rows = _call_with_compatible_signature(execution_fn, args=args, device_metadata={'backend': 'cpu'})",
         "    with open(args.metrics_path, 'w', encoding='utf8') as handle:",
@@ -24388,7 +24388,7 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("target = run_baseline_first_locked_conditions");
     execFileSync("python3", [scriptPath, "--metrics-path", metricsPath], { cwd: workspace });
     expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
-      conditions: [{ condition_marker: "locked_lora_baseline", status: "completed" }]
+      conditions: [{ condition_marker: "locked_adapter_baseline", status: "completed" }]
     });
   });
 
@@ -24422,7 +24422,7 @@ describe("ImplementSessionManager", () => {
         "def run_locked_condition_study(config: Any, device: Any):",
         "    assert config.seed == 42",
         "    assert device == 'cpu-device'",
-        "    return {'comparison_mode': 'baseline_first_locked', 'condition_order': ['unmodified_base', 'locked_lora_baseline']}",
+        "    return {'comparison_mode': 'baseline_first_locked', 'condition_order': ['unmodified_base', 'locked_adapter_baseline']}",
         "",
         "def _invoke_experiment_orchestration(args):",
         "    config = args",
@@ -24485,7 +24485,7 @@ describe("ImplementSessionManager", () => {
         "    assert train_dataset == [{'instruction': 'say hi'}]",
         "    assert eval_datasets['benchmark_task_a'] == [{'answer': 'A'}]",
         "    assert eval_datasets['benchmark_task_b'] == [{'label': 'B'}]",
-        "    return [{'condition_marker': 'locked_lora_baseline', 'status': 'completed', 'output_dir': str(output_dir)}]",
+        "    return [{'condition_marker': 'locked_adapter_baseline', 'status': 'completed', 'output_dir': str(output_dir)}]",
         "",
         "execute_baseline_first_conditions = run_baseline_first_condition_orchestrator",
         "",
@@ -24581,7 +24581,7 @@ describe("ImplementSessionManager", () => {
         "",
         "CONDITION_DESCRIPTORS = (",
         "    PEFTConditionConfig('unmodified_base', True),",
-        "    PEFTConditionConfig('lora_baseline', False),",
+        "    PEFTConditionConfig('adapter_baseline', False),",
         ")",
         "",
         "def main():",
@@ -24634,10 +24634,10 @@ describe("ImplementSessionManager", () => {
         "    recipe_kind: str",
         "    trainable: bool",
         "    description: str",
-        "    lora_r: Optional[int] = None",
-        "    lora_alpha: Optional[int] = None",
+        "    adapter_r: Optional[int] = None",
+        "    adapter_alpha: Optional[int] = None",
         "    target_modules: Tuple[str, ...] = field(default_factory=tuple)",
-        "    use_dora: bool = False",
+        "    use_decomposed_adapter: bool = False",
         "    adapter_name: Optional[str] = None",
         "    peft_method: Optional[str] = None",
         "    neftune_noise_alpha: Optional[float] = None",
@@ -24654,10 +24654,10 @@ describe("ImplementSessionManager", () => {
         "    recipe_kind: str,",
         "    trainable: bool,",
         "    description: str,",
-        "    lora_r: Optional[int] = None,",
-        "    lora_alpha: Optional[int] = None,",
+        "    adapter_r: Optional[int] = None,",
+        "    adapter_alpha: Optional[int] = None,",
         "    target_modules = None,",
-        "    use_dora: bool = False,",
+        "    use_decomposed_adapter: bool = False,",
         "    adapter_name: Optional[str] = None,",
         "    peft_method: Optional[str] = None,",
         "    neftune_noise_alpha: Optional[float] = None,",
@@ -24673,10 +24673,10 @@ describe("ImplementSessionManager", () => {
         "        recipe_kind=recipe_kind,",
         "        trainable=trainable,",
         "        description=description,",
-        "        lora_r=lora_r,",
-        "        lora_alpha=lora_alpha,",
+        "        adapter_r=adapter_r,",
+        "        adapter_alpha=adapter_alpha,",
         "        target_modules=tuple(target_modules or ()),",
-        "        use_dora=use_dora,",
+        "        use_decomposed_adapter=use_decomposed_adapter,",
         "        adapter_name=adapter_name,",
         "        peft_method=peft_method,",
         "        neftune_noise_alpha=neftune_noise_alpha,",
@@ -24717,15 +24717,15 @@ describe("ImplementSessionManager", () => {
         "    raise RuntimeError('missing factory')",
         "",
         "LOCKED_CONDITION = _construct_condition_spec(",
-        "    'dora',",
-        "    display_name='DoRA',",
+        "    'decomposed_adapter',",
+        "    display_name='decomposed adapter',",
         "    role='tuned_comparator',",
-        "    family='lora',",
+        "    family='adapter',",
         "    recipe_kind='comparator',",
-        "    description='DoRA comparator',",
-        "    peft_config={'r': 16, 'lora_alpha': 32, 'target_modules': ['q_proj'], 'use_dora': True},",
-        "    training_overrides={'train': True, 'adapter': 'dora', 'neftune_noise_alpha': 5},",
-        "    feature_flags={'use_dora': True},",
+        "    description='decomposed adapter comparator',",
+        "    peft_config={'r': 16, 'adapter_alpha': 32, 'target_modules': ['q_proj'], 'use_decomposed_adapter': True},",
+        "    training_overrides={'train': True, 'adapter': 'decomposed_adapter', 'neftune_noise_alpha': 5},",
+        "    feature_flags={'use_decomposed_adapter': True},",
         "    notes=['locked'],",
         ")",
         "",
@@ -24752,17 +24752,17 @@ describe("ImplementSessionManager", () => {
     expect(repairedSource).toContain("_autolabos_condition_spec_factory_kwarg_bridge_marker");
     execFileSync("python3", [scriptPath], { cwd: workspace });
     expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
-      marker: "dora",
+      marker: "decomposed_adapter",
       trainable: true,
-      lora_r: 16,
-      lora_alpha: 32,
+      adapter_r: 16,
+      adapter_alpha: 32,
       target_modules: ["q_proj"],
-      use_dora: true,
-      adapter_name: "dora",
-      peft_method: "dora",
+      use_decomposed_adapter: true,
+      adapter_name: "decomposed_adapter",
+      peft_method: "decomposed_adapter",
       neftune_noise_alpha: 5,
-      peft_kwargs: { r: 16, lora_alpha: 32, use_dora: true },
-      trainer_kwargs: { train: true, adapter: "dora", neftune_noise_alpha: 5 },
+      peft_kwargs: { r: 16, adapter_alpha: 32, use_decomposed_adapter: true },
+      trainer_kwargs: { train: true, adapter: "decomposed_adapter", neftune_noise_alpha: 5 },
       notes: ["locked"]
     });
   });
@@ -24789,8 +24789,8 @@ describe("ImplementSessionManager", () => {
         "",
         "def run_baseline_first_locked_workflow(runtime_config=None, **_kwargs):",
         "    return [",
-        "        {'condition_id': 'locked_lora_baseline', 'status': 'completed', 'accuracy_delta_vs_baseline': 0.0},",
-        "        {'condition_id': 'dora', 'status': 'completed', 'accuracy_delta_vs_baseline': 0.03},",
+        "        {'condition_id': 'locked_adapter_baseline', 'status': 'completed', 'accuracy_delta_vs_baseline': 0.0},",
+        "        {'condition_id': 'decomposed_adapter', 'status': 'completed', 'accuracy_delta_vs_baseline': 0.03},",
         "    ]",
         "",
         "run_locked_baseline_first_workflow = run_baseline_first_locked_workflow",
@@ -24929,8 +24929,8 @@ describe("ImplementSessionManager", () => {
     expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
       status: "completed",
       condition_results: [
-        { condition_id: "locked_lora_baseline", status: "completed" },
-        { condition_id: "dora", status: "completed", accuracy_delta_vs_baseline: 0.03 }
+        { condition_id: "locked_adapter_baseline", status: "completed" },
+        { condition_id: "decomposed_adapter", status: "completed", accuracy_delta_vs_baseline: 0.03 }
       ]
     });
   });
@@ -24968,10 +24968,10 @@ describe("ImplementSessionManager", () => {
         "def main():",
         "    payload = build_metrics_document([",
         "        {'condition_marker': 'unmodified_base', 'mean_accuracy': 0.4},",
-        "        {'condition_marker': 'dora', 'mean_accuracy': 0.45},",
+        "        {'condition_marker': 'decomposed_adapter', 'mean_accuracy': 0.45},",
         "    ])",
         "    enriched, best = compute_accuracy_deltas_and_best_condition(payload['condition_results'])",
-        "    assert best['condition_marker'] == 'dora'",
+        "    assert best['condition_marker'] == 'decomposed_adapter'",
         "    assert enriched[1][PRIMARY_METRIC_KEY] > 0",
         "    return 0 if payload['unmodified_base_result']['condition_marker'] == 'unmodified_base' else 1",
         "",
@@ -25031,7 +25031,7 @@ describe("ImplementSessionManager", () => {
         "        'eval_keys': sorted(eval_bundle.keys()),",
         "        'conditions': [",
         "            {'condition': 'unmodified_base', 'status': 'success', 'mean_zero_shot_accuracy': 0.41},",
-        "            {'condition': 'locked_lora_baseline', 'status': 'success', 'mean_zero_shot_accuracy': 0.45},",
+        "            {'condition': 'locked_adapter_baseline', 'status': 'success', 'mean_zero_shot_accuracy': 0.45},",
         "        ],",
         "    }",
         "",
@@ -25123,7 +25123,7 @@ describe("ImplementSessionManager", () => {
       device: { device: "cpu", torch_available: false },
       conditions: [
         { condition: "unmodified_base", status: "success" },
-        { condition: "locked_lora_baseline", status: "success" }
+        { condition: "locked_adapter_baseline", status: "success" }
       ]
     });
   });
@@ -25140,7 +25140,7 @@ describe("ImplementSessionManager", () => {
         "def run_recipe_execution_and_evaluation_loop(args, device_info=None):",
         "    assert args == {'seed': 42}",
         "    assert device_info == {'backend': 'cpu'}",
-        "    return {'recipe_results': [{'recipe_id': 'lora_r8', 'status': 'success'}]}",
+        "    return {'recipe_results': [{'recipe_id': 'adapter_r8', 'status': 'success'}]}",
         "",
         "run_adapter_recipe_study = run_recipe_execution_and_evaluation_loop",
         "",
@@ -25164,7 +25164,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def main():",
         "    result = _invoke_recipe_runner({'seed': 42}, 'cpu', Path('.'), {'backend': 'cpu'})",
-        "    return 0 if result['recipe_results'][0]['recipe_id'] == 'lora_r8' else 1",
+        "    return 0 if result['recipe_results'][0]['recipe_id'] == 'adapter_r8' else 1",
         "",
         "if __name__ == '__main__':",
         "    raise SystemExit(main())",
@@ -25340,7 +25340,7 @@ describe("ImplementSessionManager", () => {
         "DEFAULT_OUTPUT_DIR = Path('out')",
         "DEFAULT_MODEL_NAME = 'tiny-model'",
         "SEED = 42",
-        "LOCKED_CONDITION_ORDER = ['locked_lora_baseline', 'ia3']",
+        "LOCKED_CONDITION_ORDER = ['locked_adapter_baseline', 'ia3']",
         "REQUIRED_CONDITION_MARKERS = LOCKED_CONDITION_ORDER",
         "",
         "def _lookup_callable(*names):",
@@ -25357,10 +25357,10 @@ describe("ImplementSessionManager", () => {
         "    return {'type': type(exc).__name__, 'message': str(exc), 'context': context}",
         "",
         "def execute_baseline_first_conditions(args):",
-        "    return {'condition_results': [{'condition_marker': 'locked_lora_baseline', 'status': 'completed'}], 'runtime': {'seed': args.seed}}",
+        "    return {'condition_results': [{'condition_marker': 'locked_adapter_baseline', 'status': 'completed'}], 'runtime': {'seed': args.seed}}",
         "",
         "def write_metrics_artifact(args, condition_results, runtime, extra):",
-        "    payload = {'status': 'completed', 'condition_results': condition_results, 'runtime': runtime, 'best_condition': 'locked_lora_baseline'}",
+        "    payload = {'status': 'completed', 'condition_results': condition_results, 'runtime': runtime, 'best_condition': 'locked_adapter_baseline'}",
         "    Path(args.metrics_path).write_text(json.dumps(payload), encoding='utf-8')",
         "    return payload",
         "",
@@ -25477,7 +25477,7 @@ describe("ImplementSessionManager", () => {
         "",
         "def main():",
         "    payload = _finalize_main_metrics_payload(",
-        "        [{'condition_marker': 'locked_lora_baseline'}],",
+        "        [{'condition_marker': 'locked_adapter_baseline'}],",
         "        {'seed': 42},",
         "        {'start_time_unix': 123.0},",
         "    )",
@@ -26260,8 +26260,8 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
-  it("bridges rank/dropout sweep callables into the AutoLabOS study entrypoint", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-rank-dropout-study-callable-"));
+  it("bridges condition-parameter sweep callables into the AutoLabOS study entrypoint", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-condition-parameter-study-callable-"));
     tempDirs.push(workspace);
     const scriptPath = path.join(workspace, "runner.py");
     writeFileSync(
@@ -26453,7 +26453,7 @@ describe("ImplementSessionManager", () => {
         "    executor_candidates = _callable_candidates_from_globals(",
         "        exact_names=(",
         "            \"execute_locked_condition_study\",",
-        "            \"execute_locked_lora_study\",",
+        "            \"execute_locked_adapter_study\",",
         "            \"execute_locked_study\",",
         "            \"run_locked_condition_study\",",
         "            \"run_locked_study\",",
@@ -26517,8 +26517,8 @@ describe("ImplementSessionManager", () => {
     });
   });
 
-  it("prioritizes rank/dropout sweep controllers before generic study controller names", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-rank-dropout-sweep-controller-"));
+  it("prioritizes condition-parameter sweep controllers before generic study controller names", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-condition-parameter-sweep-controller-"));
     tempDirs.push(workspace);
     const scriptPath = path.join(workspace, "runner.py");
     writeFileSync(
@@ -26607,7 +26607,7 @@ describe("ImplementSessionManager", () => {
         "    marker = 'baseline_condition'",
         "    rank = 8",
         "    dropout = 0.0",
-        "    def resolved_lora_alpha(self):",
+        "    def resolved_adapter_alpha(self):",
         "        return 16",
         "",
         "class RunKey:",
@@ -27587,8 +27587,8 @@ describe("ImplementSessionManager", () => {
         "        'execute_condition_grid_study',",
         "        'run_rank_dropout_study',",
         "        'execute_rank_dropout_study',",
-        "        'run_lora_study',",
-        "        'execute_lora_study',",
+        "        'run_adapter_study',",
+        "        'execute_adapter_study',",
         "        'run_governed_study',",
         "        'execute_governed_study',",
         "        'run_condition_sweep',",
@@ -27796,7 +27796,7 @@ describe("ImplementSessionManager", () => {
     });
   });
 
-  it("aliases locked-study orchestrator helper names to generated locked rank/dropout sweeps", async () => {
+  it("aliases locked-study orchestrator helper names to generated locked condition-parameter sweeps", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-locked-study-orchestrator-alias-"));
     tempDirs.push(workspace);
     const scriptPath = path.join(workspace, "experiment.py");
@@ -27963,7 +27963,7 @@ describe("ImplementSessionManager", () => {
         "REQUIRED_CONDITION_MARKERS = ('baseline_condition',)",
         "",
         "@dataclass",
-        "class LoRACondition:",
+        "class adapterCondition:",
         "    marker: str",
         "    rank: int",
         "    dropout: float",
@@ -28010,7 +28010,7 @@ describe("ImplementSessionManager", () => {
         "def prepare_benchmark_evaluation_data(tokenizer: Any, max_eval_samples_per_task: int, seed: int, max_context_length: int):",
         "    return {'benchmark_task_a': [{'prompt': 'p'}]}, {'seed': seed, 'max_eval_samples_per_task': max_eval_samples_per_task}",
         "",
-        "def prepare_trainable_condition_model(args: argparse.Namespace, condition: LoRACondition, model_bundle: LoadedBundle, tokenized_train_dataset: Any, output_dir: Path):",
+        "def prepare_trainable_condition_model(args: argparse.Namespace, condition: adapterCondition, model_bundle: LoadedBundle, tokenized_train_dataset: Any, output_dir: Path):",
         "    condition_dir = output_dir / DEFAULT_CONDITION_ARTIFACT_DIRNAME / condition.marker",
         "    condition_dir.mkdir(parents=True, exist_ok=True)",
         "    return {",
@@ -28028,7 +28028,7 @@ describe("ImplementSessionManager", () => {
         "    Path('training-called.json').write_text(json.dumps({'marker': prepared_condition['condition'].marker}), encoding='utf-8')",
         "    return {'status': 'completed', 'final_train_loss': 0.125, 'runtime_sec': 1.5, 'model_name': prepared_condition['base_model_name']}",
         "",
-        "def evaluate_trained_condition(condition: LoRACondition, bundle_or_state: Any, eval_examples_by_task: Dict[str, Sequence[Any]], max_context_length: int = DEFAULT_EVAL_MAX_CONTEXT_LENGTH) -> Dict[str, Any]:",
+        "def evaluate_trained_condition(condition: adapterCondition, bundle_or_state: Any, eval_examples_by_task: Dict[str, Sequence[Any]], max_context_length: int = DEFAULT_EVAL_MAX_CONTEXT_LENGTH) -> Dict[str, Any]:",
         "    Path('evaluation-called.json').write_text(json.dumps({'marker': condition.marker, 'tasks': sorted(eval_examples_by_task.keys())}), encoding='utf-8')",
         "    return {'condition_marker': condition.marker, 'average_accuracy': 0.75, 'per_task_accuracy': {'benchmark_task_a': 0.75}}",
         "",
@@ -28039,8 +28039,8 @@ describe("ImplementSessionManager", () => {
         "            return candidate",
         "    return None",
         "",
-        "def _resolve_locked_condition_sequence() -> List[LoRACondition]:",
-        "    return [LoRACondition(marker='baseline_condition', rank=8, dropout=0.0)]",
+        "def _resolve_locked_condition_sequence() -> List[adapterCondition]:",
+        "    return [adapterCondition(marker='baseline_condition', rank=8, dropout=0.0)]",
         "",
         "def _invoke_with_supported_kwargs(fn: Any, **kwargs: Any) -> Any:",
         "    signature = inspect.signature(fn)",
@@ -28164,7 +28164,7 @@ describe("ImplementSessionManager", () => {
         "class StudyCondition:",
         "    marker: str",
         "    rank: int",
-        "    lora_dropout: float",
+        "    adapter_dropout: float",
         "    is_baseline: bool = False",
         "    def as_dict(self) -> Dict[str, Any]:",
         "        return asdict(self)",
@@ -28263,7 +28263,7 @@ describe("ImplementSessionManager", () => {
         "def run_locked_condition_study(args: argparse.Namespace) -> Dict[str, Any]:",
         "    output_dir = Path(args.output_dir)",
         "    output_dir.mkdir(parents=True, exist_ok=True)",
-        "    condition = StudyCondition(marker='baseline_condition', rank=8, lora_dropout=0.0, is_baseline=True)",
+        "    condition = StudyCondition(marker='baseline_condition', rank=8, adapter_dropout=0.0, is_baseline=True)",
         "    preflight_fn = globals().get('preflight_model_and_runtime') or preflight_and_select_model",
         "    data_fn = globals().get('prepare_datasets') or prepare_study_data",
         "    runner = _orchestration_find_helper(",
@@ -29277,7 +29277,7 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
-  it("normalizes tuple parameter counters before LoRA summary dict merging", async () => {
+  it("normalizes tuple parameter counters before adapter summary dict merging", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-parameter-summary-record-"));
     tempDirs.push(workspace);
     const scriptPath = path.join(workspace, "experiment.py");
@@ -29289,7 +29289,7 @@ describe("ImplementSessionManager", () => {
         "def count_model_parameters(model):",
         "    return {'total_parameters': 10, 'trainable_parameters': 2, 'trainable_fraction': 0.2}",
         "",
-        "def attach_lora_adapter_to_model(model, condition, target_modules=None):",
+        "def attach_adapter_adapter_to_model(model, condition, target_modules=None):",
         "    adapted_model = model",
         "    parameter_summary = count_model_parameters(adapted_model)",
         "    summary = {",
@@ -29300,17 +29300,17 @@ describe("ImplementSessionManager", () => {
         "",
         "def load_base_model_bundle(config, model_id, *, condition=None, local_files_only=False):",
         "    model = SimpleNamespace()",
-        "    model, lora_summary = attach_lora_adapter_to_model(model, condition or {})",
+        "    model, adapter_summary = attach_adapter_adapter_to_model(model, condition or {})",
         "    load_summary = {'model_id': model_id}",
         "    load_summary.update(count_model_parameters(model))",
-        "    return {'lora_summary': lora_summary, 'load_summary': load_summary}",
+        "    return {'adapter_summary': adapter_summary, 'load_summary': load_summary}",
         "",
         "def count_model_parameters(model):",
         "    return (2, 10)",
         "",
         "def main():",
         "    bundle = load_base_model_bundle({}, 'fake-model', condition={'marker': 'baseline_condition'})",
-        "    assert bundle['lora_summary']['trainable_parameters'] == 2",
+        "    assert bundle['adapter_summary']['trainable_parameters'] == 2",
         "    assert bundle['load_summary']['total_parameters'] == 10",
         "    return 0",
         "",
@@ -29774,7 +29774,7 @@ describe("ImplementSessionManager", () => {
         "class ExperimentCondition:",
         "    marker: str",
         "    rank: int",
-        "    lora_dropout: float",
+        "    adapter_dropout: float",
         "    is_baseline: bool = False",
         "",
         "def load_instruction_training_records(max_examples=2, seed=0):",
@@ -29948,7 +29948,7 @@ describe("ImplementSessionManager", () => {
         "class ConditionSpec:",
         "    marker: str",
         "    rank: int = 8",
-        "    lora_dropout: float = 0.0",
+        "    adapter_dropout: float = 0.0",
         "    is_baseline: bool = True",
         "",
         "@dataclass",
@@ -30709,7 +30709,7 @@ describe("ImplementSessionManager", () => {
       ): Promise<{ status: string; failure_type?: string; summary: string }>;
     };
 
-    const comparisonContractJson = JSON.stringify({ baseline: "standard_lora" });
+    const comparisonContractJson = JSON.stringify({ baseline: "standard_adapter" });
     const plannedConditionContractJson = JSON.stringify({ conditions: ["baseline_condition5"] });
     const report = await verifier.verifyAttempt(
       {
@@ -30752,7 +30752,7 @@ describe("ImplementSessionManager", () => {
       { cwd: publicDir }
     );
     expect(JSON.parse(readFileSync(metricsPath, "utf8"))).toMatchObject({
-      comparison_contract: { baseline: "standard_lora" },
+      comparison_contract: { baseline: "standard_adapter" },
       planned_condition_contract: { conditions: ["baseline_condition5"] }
     });
   });
@@ -31299,11 +31299,11 @@ describe("ImplementSessionManager", () => {
         "    assert args.seed == 42",
         "    return [",
         "        {'condition_id': 'unmodified_base', 'status': 'completed', 'accuracy_delta_vs_baseline': 0.0},",
-        "        {'condition_id': 'lora_baseline', 'status': 'completed', 'accuracy_delta_vs_baseline': 0.12},",
+        "        {'condition_id': 'adapter_baseline', 'status': 'completed', 'accuracy_delta_vs_baseline': 0.12},",
         "    ]",
         "",
         "def _selected_conditions(args: argparse.Namespace):",
-        "    return ['unmodified_base', 'lora_baseline']",
+        "    return ['unmodified_base', 'adapter_baseline']",
         "",
         "def _orchestrator_candidates():",
         "    return [run_locked_condition_study]",
@@ -31412,7 +31412,7 @@ describe("ImplementSessionManager", () => {
       accuracy_delta_vs_baseline: 0.12,
       conditions: [
         { condition_id: "unmodified_base", status: "completed" },
-        { condition_id: "lora_baseline", status: "completed" }
+        { condition_id: "adapter_baseline", status: "completed" }
       ]
     });
   });
@@ -31522,8 +31522,8 @@ describe("ImplementSessionManager", () => {
         "        for condition in condition_rows:",
         "            if not isinstance(condition, Mapping):",
         "                continue",
-        "            rank = _safe_int(condition.get(\"rank\", condition.get(\"lora_rank\", condition.get(\"r\"))), default=None)",
-        "            dropout = _safe_float(condition.get(\"dropout\", condition.get(\"lora_dropout\")), default=None)",
+        "            rank = _safe_int(condition.get(\"rank\", condition.get(\"adapter_rank\", condition.get(\"r\"))), default=None)",
+        "            dropout = _safe_float(condition.get(\"dropout\", condition.get(\"adapter_dropout\")), default=None)",
         "            marker = condition.get(\"condition_marker\") or condition.get(\"marker\")",
         "            if marker is None and rank is not None and dropout is not None:",
         "                marker = 'candidate'",
@@ -31913,11 +31913,11 @@ describe("ImplementSessionManager", () => {
         "class AdapterRecipeConfig:",
         "    candidate_id: str",
         "    display_name: str",
-        "    adapter_method: str = 'lora'",
+        "    adapter_method: str = 'adapter'",
         "    train_dataset_name: str = 'alpaca'",
         "    train_subset_size: int = 32",
         "    train_seed: int = 42",
-        "    lora_target_modules: Tuple[str, ...] = ('q_proj', 'v_proj')",
+        "    adapter_target_modules: Tuple[str, ...] = ('q_proj', 'v_proj')",
         "    enabled: bool = True",
         "",
         "LOCKED_BASE_MODEL_NAME = 'tiny'",
@@ -32032,13 +32032,13 @@ describe("ImplementSessionManager", () => {
         "",
         "LOCKED_BASELINE_FIRST_RECIPES: List[Dict[str, Any]] = [",
         "    {'recipe_id': 'Base Checkpoint', 'peft_type': 'none'},",
-        "    {'recipe_id': 'Vanilla LoRA', 'peft_type': 'LoRA'},",
+        "    {'recipe_id': 'Vanilla adapter', 'peft_type': 'adapter'},",
         "]",
         "LOCKED_BASELINE_FIRST_IDS = [_recipe_identity(recipe) for recipe in LOCKED_BASELINE_FIRST_RECIPES]",
         "",
         "if __name__ == '__main__':",
         "    assert LOCKED_BASELINE_FIRST_IDS[0] == 'base_checkpoint'",
-        "    assert _recipe_peft_type(LOCKED_BASELINE_FIRST_RECIPES[1]) == 'lora'",
+        "    assert _recipe_peft_type(LOCKED_BASELINE_FIRST_RECIPES[1]) == 'adapter'",
         ""
       ].join("\n"),
       "utf8"
@@ -32145,13 +32145,13 @@ describe("ImplementSessionManager", () => {
         "    record = _call_candidate_executor(",
         "        execute_candidate_recipe,",
         "        config={'output_dir': '.'},",
-        "        recipe_id='vanilla_lora',",
-        "        recipe={'recipe_id': 'vanilla_lora'},",
+        "        recipe_id='vanilla_adapter',",
+        "        recipe={'recipe_id': 'vanilla_adapter'},",
         "        candidate_dir=Path('wrong'),",
         "        order_index=1,",
-        "        runtime_context={'candidate_recipe_ids': ['base', 'vanilla_lora'], 'comparison_mode': 'baseline_first_locked'},",
+        "        runtime_context={'candidate_recipe_ids': ['base', 'vanilla_adapter'], 'comparison_mode': 'baseline_first_locked'},",
         "    )",
-        "    assert record['candidate_dir'].endswith('01_vanilla_lora')",
+        "    assert record['candidate_dir'].endswith('01_vanilla_adapter')",
         "    assert record['candidate_index'] == 1",
         "    assert record['total_candidates'] == 2",
         "    assert record['runtime_seen'] == 'baseline_first_locked'",
@@ -32595,11 +32595,11 @@ describe("ImplementSessionManager", () => {
         "    assert eval_sets['benchmark_task_a'][0]['id'] == 'arc-1'",
         "    assert device == 'cpu'",
         "    return {",
-        "        'condition_order': ['unmodified_base', 'locked_lora_baseline', 'dora'],",
+        "        'condition_order': ['unmodified_base', 'locked_adapter_baseline', 'decomposed_adapter'],",
         "        'condition_results': [",
         "            {'condition_id': 'unmodified_base', 'status': 'success', 'mean_accuracy': 0.30},",
-        "            {'condition_id': 'locked_lora_baseline', 'status': 'success', 'mean_accuracy': 0.40},",
-        "            {'condition_id': 'dora', 'status': 'success', 'mean_accuracy': 0.55, 'accuracy_delta_vs_baseline': 0.15},",
+        "            {'condition_id': 'locked_adapter_baseline', 'status': 'success', 'mean_accuracy': 0.40},",
+        "            {'condition_id': 'decomposed_adapter', 'status': 'success', 'mean_accuracy': 0.55, 'accuracy_delta_vs_baseline': 0.15},",
         "        ],",
         "    }",
         "",
@@ -32680,13 +32680,13 @@ describe("ImplementSessionManager", () => {
     const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
     expect(metrics.condition_results.map((item: { condition_id: string }) => item.condition_id)).toEqual([
       "unmodified_base",
-      "locked_lora_baseline",
-      "dora"
+      "locked_adapter_baseline",
+      "decomposed_adapter"
     ]);
     expect(metrics.dataset_metadata.train_sample_count).toBe(1);
     expect(metrics.dataset_metadata.benchmark_sample_counts.benchmark_task_a).toBe(1);
     expect(metrics.device_info.device).toBe("cpu");
-    expect(metrics.study.condition_order).toEqual(["unmodified_base", "locked_lora_baseline", "dora"]);
+    expect(metrics.study.condition_order).toEqual(["unmodified_base", "locked_adapter_baseline", "decomposed_adapter"]);
   });
 
   it("repairs chunk-5 orchestration helper dispatch without fabricating metrics", async () => {
@@ -32719,8 +32719,8 @@ describe("ImplementSessionManager", () => {
         "        'status': 'completed',",
         "        'condition_results': [",
         "            {'marker': 'unmodified_base', 'status': 'success', 'mean_accuracy': 0.20},",
-        "            {'marker': 'locked_lora_baseline', 'status': 'success', 'mean_accuracy': 0.35},",
-        "            {'marker': 'dora', 'status': 'success', 'mean_accuracy': 0.41, 'accuracy_delta_vs_baseline': 0.06},",
+        "            {'marker': 'locked_adapter_baseline', 'status': 'success', 'mean_accuracy': 0.35},",
+        "            {'marker': 'decomposed_adapter', 'status': 'success', 'mean_accuracy': 0.41, 'accuracy_delta_vs_baseline': 0.06},",
         "        ],",
         "        'study_called_with_config': config['from_builder'],",
         "    }",
@@ -32801,8 +32801,8 @@ describe("ImplementSessionManager", () => {
     const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
     expect(metrics.condition_results.map((item: { marker: string }) => item.marker)).toEqual([
       "unmodified_base",
-      "locked_lora_baseline",
-      "dora"
+      "locked_adapter_baseline",
+      "decomposed_adapter"
     ]);
     expect(metrics.config.from_builder).toBe(true);
     expect(metrics.study_called_with_config).toBe(true);
@@ -32826,7 +32826,7 @@ describe("ImplementSessionManager", () => {
         "CALL_TRACE = []",
         "",
         "class RecipeCondition:",
-        "    def __init__(self, marker: str, display_name: str, recipe_kind: str = 'lora') -> None:",
+        "    def __init__(self, marker: str, display_name: str, recipe_kind: str = 'adapter') -> None:",
         "        self.marker = marker",
         "        self.display_name = display_name",
         "        self.recipe_kind = recipe_kind",
@@ -32850,8 +32850,8 @@ describe("ImplementSessionManager", () => {
         "",
         "RECIPE_CONDITIONS = (",
         "    RecipeCondition('unmodified_base', 'Unmodified base', 'base_model_no_tuning'),",
-        "    RecipeCondition('locked_lora_baseline', 'Locked LoRA baseline'),",
-        "    RecipeCondition('dora', 'DoRA'),",
+        "    RecipeCondition('locked_adapter_baseline', 'Locked adapter baseline'),",
+        "    RecipeCondition('decomposed_adapter', 'decomposed adapter'),",
         ")",
         "EXECUTABLE_RECIPE_CONDITIONS = RECIPE_CONDITIONS",
         "",
@@ -32985,8 +32985,8 @@ describe("ImplementSessionManager", () => {
     const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
     expect(metrics.condition_results.map((item: { condition_id: string }) => item.condition_id)).toEqual([
       "unmodified_base",
-      "locked_lora_baseline",
-      "dora"
+      "locked_adapter_baseline",
+      "decomposed_adapter"
     ]);
     expect(metrics.condition_results.some((item: Record<string, unknown>) => "model" in item || "tokenizer" in item)).toBe(
       false
@@ -33000,8 +33000,8 @@ describe("ImplementSessionManager", () => {
       "load:3:2:7",
       "validate",
       "train:unmodified_base:7:experiment-output",
-      "train:locked_lora_baseline:7:experiment-output",
-      "train:dora:7:experiment-output",
+      "train:locked_adapter_baseline:7:experiment-output",
+      "train:decomposed_adapter:7:experiment-output",
       "evaluate",
       "build"
     ]);
@@ -33031,8 +33031,8 @@ describe("ImplementSessionManager", () => {
         "        'status': 'completed',",
         "        'condition_records': [",
         "            {'condition_marker': 'unmodified_base', 'status': 'completed', 'seed': args.seed},",
-        "            {'condition_marker': 'locked_lora_baseline', 'status': 'completed', 'seed': args.seed, 'accuracy_delta_vs_baseline': 0.03},",
-        "            {'condition_marker': 'dora', 'status': 'completed', 'seed': args.seed, 'accuracy_delta_vs_baseline': 0.05},",
+        "            {'condition_marker': 'locked_adapter_baseline', 'status': 'completed', 'seed': args.seed, 'accuracy_delta_vs_baseline': 0.03},",
+        "            {'condition_marker': 'decomposed_adapter', 'status': 'completed', 'seed': args.seed, 'accuracy_delta_vs_baseline': 0.05},",
         "        ],",
         "    }",
         "",
@@ -33111,8 +33111,8 @@ describe("ImplementSessionManager", () => {
     const metrics = JSON.parse(readFileSync(metricsPath, "utf8"));
     expect(metrics.conditions.map((item: { condition_marker: string }) => item.condition_marker)).toEqual([
       "unmodified_base",
-      "locked_lora_baseline",
-      "dora"
+      "locked_adapter_baseline",
+      "decomposed_adapter"
     ]);
     expect(metrics.conditions.every((item: { seed: number }) => item.seed === 17)).toBe(true);
   });
@@ -33217,8 +33217,8 @@ describe("ImplementSessionManager", () => {
                 "    method: str",
                 "    description: str",
                 "    r: Optional[int] = None",
-                "    lora_alpha: Optional[int] = None",
-                "    lora_dropout: float = 0.05",
+                "    adapter_alpha: Optional[int] = None",
+                "    adapter_dropout: float = 0.05",
                 "    target_modules: Tuple[str, ...] = field(default_factory=tuple)",
                 "",
                 "def _make_recipe(",
@@ -33254,7 +33254,7 @@ describe("ImplementSessionManager", () => {
                 "    return AdapterRecipe(**init_kwargs)",
                 "",
                 "def main():",
-                "    _make_recipe('standard_lora', 'Standard LoRA', 'lora', 8, 16, 0.05, ('q_proj',), 1, 1e-4, 1, 1)",
+                "    _make_recipe('standard_adapter', 'Standard adapter', 'adapter', 8, 16, 0.05, ('q_proj',), 1, 1e-4, 1, 1)",
                 "    return 0",
                 "",
                 "if __name__ == '__main__':",
@@ -33360,7 +33360,7 @@ describe("ImplementSessionManager", () => {
                 "    return RecipeSpec(**kwargs)",
                 "",
                 "LOCKED_RECIPE_PLAN = [",
-                "    make_recipe_spec('baseline', 'LoRA baseline', 'lora', 'Baseline comparator'),",
+                "    make_recipe_spec('baseline', 'adapter baseline', 'adapter', 'Baseline comparator'),",
                 "]",
                 "",
                 "def main():",
@@ -33475,7 +33475,7 @@ describe("ImplementSessionManager", () => {
                 "    return RecipeSpec(**values)",
                 "",
                 "ORDERED_TUNED_RECIPE_SPECS = (",
-                "    _recipe_spec_from_defaults('standard_lora', 'Standard LoRA', 'Baseline comparator'),",
+                "    _recipe_spec_from_defaults('standard_adapter', 'Standard adapter', 'Baseline comparator'),",
                 ")",
                 "",
                 "def main():",
@@ -33501,7 +33501,7 @@ describe("ImplementSessionManager", () => {
 
     const result = await manager.run(run);
     const repairedSource = readFileSync(result.scriptPath!, "utf8");
-    expect(repairedSource).toContain("\"adapter_type\": \"lora\"");
+    expect(repairedSource).toContain("\"adapter_type\": \"adapter\"");
     expect(result.testCommand).toContain("py_compile");
   });
 
@@ -33777,11 +33777,11 @@ describe("ImplementSessionManager", () => {
         "",
         "RECIPE_SPECS = [",
         "    _recipe_spec(recipe_id='base_unmodified', recipe_name='Base', train_adapter=False, enable_training=False, save_adapter=False),",
-        "    _recipe_spec(recipe_id='lora_vanilla_r8', recipe_name='Vanilla LoRA', train_adapter=True, enable_training=True, save_adapter=True),",
+        "    _recipe_spec(recipe_id='adapter_vanilla_r8', recipe_name='Vanilla adapter', train_adapter=True, enable_training=True, save_adapter=True),",
         "]",
         "",
-        "if RECIPE_SPECS[1].recipe_id != 'lora_vanilla_r8' or not RECIPE_SPECS[1].train_adapter:",
-        "    raise RuntimeError('Locked recipe order violation: vanilla LoRA baseline must be second.')",
+        "if RECIPE_SPECS[1].recipe_id != 'adapter_vanilla_r8' or not RECIPE_SPECS[1].train_adapter:",
+        "    raise RuntimeError('Locked recipe order violation: vanilla adapter baseline must be second.')",
         "",
         "if __name__ == '__main__':",
         "    raise SystemExit(0)",
@@ -33812,7 +33812,7 @@ describe("ImplementSessionManager", () => {
         "from typing import Optional",
         "",
         "PEFT_METHOD_NONE = 'none'",
-        "PEFT_METHOD_LORA = 'lora'",
+        "PEFT_METHOD_LORA = 'adapter'",
         "SUPPORTED_PEFT_METHODS = {PEFT_METHOD_NONE, PEFT_METHOD_LORA}",
         "",
         "@dataclass(frozen=True)",
@@ -33853,8 +33853,8 @@ describe("ImplementSessionManager", () => {
         "    assert LOCKED_BASELINE_RECIPE.recipe_id == 'baseline_unmodified_base'",
         "    try:",
         "        RecipeSpec(",
-        "            recipe_id='bad_tuned_lora',",
-        "            display_name='Bad tuned LoRA',",
+        "            recipe_id='bad_tuned_adapter',",
+        "            display_name='Bad tuned adapter',",
         "            method=PEFT_METHOD_LORA,",
         "            requires_training=True,",
         "            learning_rate=0.0,",
@@ -33945,7 +33945,7 @@ describe("ImplementSessionManager", () => {
                 "    rank: int",
                 "",
                 "ADAPTER_RECIPES: Tuple[AdapterRecipe, ...] = (",
-                "    AdapterRecipe(name='lora_r8_baseline', rank=8),",
+                "    AdapterRecipe(name='adapter_r8_baseline', rank=8),",
                 ")",
                 "",
                 "def parse_args(argv=None):",
@@ -34064,7 +34064,7 @@ describe("ImplementSessionManager", () => {
                 "",
                 "ADAPTER_RECIPE_DEFINITIONS: Tuple[_AdapterRecipeDefinition, ...] = (",
                 "    _AdapterRecipeDefinition(condition_id='c0_base', label='unmodified base'),",
-                "    _AdapterRecipeDefinition(condition_id='c1_lora', label='vanilla LoRA'),",
+                "    _AdapterRecipeDefinition(condition_id='c1_adapter', label='vanilla adapter'),",
                 ")",
                 "",
                 "def normalize_cli_args(args):",
@@ -34079,7 +34079,7 @@ describe("ImplementSessionManager", () => {
                 "",
                 "def main(argv=None):",
                 "    args = parse_cli_args(argv)",
-                "    return 0 if args.condition_ids == ['c0_base', 'c1_lora'] else 1",
+                "    return 0 if args.condition_ids == ['c0_base', 'c1_adapter'] else 1",
                 "",
                 "if __name__ == '__main__':",
                 "    raise SystemExit(main())",
@@ -34867,7 +34867,7 @@ describe("ImplementSessionManager", () => {
                   "    return {'candidate_id': 'baseline_unmodified_base'}",
                   "",
                   "def run_candidate_evaluations(*args, **kwargs):",
-                  "    return [{'candidate_id': 'lora_r8_alpha16'}], {'best_recipe': 'lora_r8_alpha16'}",
+                  "    return [{'candidate_id': 'adapter_r8_alpha16'}], {'best_recipe': 'adapter_r8_alpha16'}",
                   "",
                   "def _autolabos_callable(name):",
                   "    candidate = globals().get(name)",
@@ -34974,7 +34974,7 @@ describe("ImplementSessionManager", () => {
                   "from __future__ import annotations",
                   "",
                   "def run_locked_candidate_experiment_rows(args=None):",
-                  "    return [{'recipe_id': 'standard_lora', 'status': 'completed'}]",
+                  "    return [{'recipe_id': 'standard_adapter', 'status': 'completed'}]",
                   "",
                   "def run_recipe_execution_evaluation_loop(args=None):",
                   "    return run_locked_candidate_experiment_rows(args)",
@@ -35280,7 +35280,7 @@ describe("ImplementSessionManager", () => {
                   "import json",
                   "from pathlib import Path",
                   "",
-                  "LOCKED_CONDITIONS = [{'condition_id': 'unmodified_base'}, {'condition_id': 'lora_baseline'}]",
+                  "LOCKED_CONDITIONS = [{'condition_id': 'unmodified_base'}, {'condition_id': 'adapter_baseline'}]",
                   "",
                   "def _find_condition_worker():",
                   "    for name in (",
@@ -35740,8 +35740,8 @@ describe("ImplementSessionManager", () => {
         "from typing import Any, Dict, Mapping, Sequence",
         "",
         "class Spec:",
-        "    marker = 'locked_lora_baseline'",
-        "    recipe = 'lora'",
+        "    marker = 'locked_adapter_baseline'",
+        "    recipe = 'adapter'",
         "",
         "def _training_result_model_payload(training_result):",
         "    return {'model_bundle': training_result}",
@@ -35814,7 +35814,7 @@ describe("ImplementSessionManager", () => {
     const payload = JSON.parse(output);
     expect(payload).toMatchObject({
       benchmark_count: 3,
-      condition_marker: "locked_lora_baseline",
+      condition_marker: "locked_adapter_baseline",
       max_examples_per_task: 3,
       model_bundle: { status: "trained" }
     });
@@ -38920,7 +38920,7 @@ describe("ImplementSessionManager", () => {
         "    assert eval_examples_by_benchmark['benchmark_task_a'][0]['seed'] == 7",
         "    assert train_examples[0]['text'] == 'train'",
         "    assert device_info['device'] == 'cpu'",
-        "    return [{'condition_id': 'locked_lora_baseline', 'status': 'completed'}]",
+        "    return [{'condition_id': 'locked_adapter_baseline', 'status': 'completed'}]",
         "",
         "def _invoke_locked_recipe_workflow(args: argparse.Namespace) -> Dict[str, Any]:",
         "    workflow_names = (",
@@ -38952,7 +38952,7 @@ describe("ImplementSessionManager", () => {
         "def main():",
         "    args = argparse.Namespace(seed=7, eval_examples_per_benchmark=2, train_examples=3, validation_examples=1, cache_dir='cache', metrics_path='metrics.json')",
         "    payload = _invoke_locked_recipe_workflow(args)",
-        "    assert payload['conditions'][0]['condition_id'] == 'locked_lora_baseline'",
+        "    assert payload['conditions'][0]['condition_id'] == 'locked_adapter_baseline'",
         "    return 0",
         "",
         "if __name__ == '__main__':",
@@ -38985,7 +38985,7 @@ describe("ImplementSessionManager", () => {
         "from typing import Any, Dict, List, Mapping, Sequence",
         "",
         "def _ordered_condition_markers():",
-        "    return ['unmodified_base', 'locked_lora_baseline']",
+        "    return ['unmodified_base', 'locked_adapter_baseline']",
         "",
         "def normalize_condition_results(condition_results: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:",
         "    normalized = []",
@@ -39016,7 +39016,7 @@ describe("ImplementSessionManager", () => {
         "def main():",
         "    records = normalize_condition_results([{'condition_marker': 'unmodified_base', 'status': 'completed'}])",
         "    records = _ensure_required_condition_records(records)",
-        "    assert records[1]['condition_marker'] == 'locked_lora_baseline'",
+        "    assert records[1]['condition_marker'] == 'locked_adapter_baseline'",
         "    assert records[1]['normalized'] is True",
         "    assert records[1]['status'] == 'failed'",
         "    return 0",
@@ -39630,8 +39630,8 @@ describe("ImplementSessionManager", () => {
                   "from typing import Any, Dict, List",
                   "",
                   "RECIPE_CONFIGS: List[Dict[str, Any]] = [",
-                  "    {'name': 'standard_lora', 'rank': 8},",
-                  "    {'name': 'low_rank_lora', 'rank': 4},",
+                  "    {'name': 'standard_adapter', 'rank': 8},",
+                  "    {'name': 'low_rank_adapter', 'rank': 4},",
                   "]",
                   "",
                   "def build_arg_parser():",
@@ -39739,9 +39739,9 @@ describe("ImplementSessionManager", () => {
                   "",
                   "ADAPTER_RECIPES = (",
                   "    RecipeSpec(",
-                  "        name='lora_r8',",
-                  "        display_name='LoRA baseline condition',",
-                  "        recipe_type='lora',",
+                  "        name='adapter_r8',",
+                  "        display_name='adapter baseline condition',",
+                  "        recipe_type='adapter',",
                   "        rank=8,",
                   "        alpha=16,",
                   "        dropout=0.05,",
@@ -39791,9 +39791,9 @@ describe("ImplementSessionManager", () => {
         "    recipe_type: str",
         "    description: str",
         "    train: bool",
-        "    lora_r: Optional[int] = None",
-        "    lora_alpha: Optional[int] = None",
-        "    lora_dropout: float = 0.0",
+        "    adapter_r: Optional[int] = None",
+        "    adapter_alpha: Optional[int] = None",
+        "    adapter_dropout: float = 0.0",
         "    target_modules: Tuple[str, ...] = ()",
         "    @property",
         "    def is_unmodified_baseline(self) -> bool:",
@@ -39819,7 +39819,7 @@ describe("ImplementSessionManager", () => {
         "",
         "CANDIDATE_SPECS = (",
         "    CandidateSpec('base_unmodified', 'Base', 'unmodified_base', 'no training', False),",
-        "    CandidateSpec('lora_r8_alpha16_all_linear', 'Vanilla LoRA', 'lora', 'locked tuned baseline', True, lora_r=8, lora_alpha=16, lora_dropout=0.05, target_modules=('q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj')),",
+        "    CandidateSpec('adapter_r8_alpha16_all_linear', 'Vanilla adapter', 'adapter', 'locked tuned baseline', True, adapter_r=8, adapter_alpha=16, adapter_dropout=0.05, target_modules=('q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj')),",
         ")",
         "",
         "def _recipe_value(raw: Any, key: str, default: Any = None) -> Any:",
@@ -39836,11 +39836,11 @@ describe("ImplementSessionManager", () => {
         "",
         "def normalize_adapter_recipe(raw: Any, expected_order: int) -> AdapterRecipe:",
         "    recipe_id = str(_recipe_value(raw, 'recipe_id', _recipe_value(raw, 'id', _recipe_value(raw, 'name', f'candidate_{expected_order}'))))",
-        "    recipe_type = str(_recipe_value(raw, 'recipe_type', _recipe_value(raw, 'kind', 'base' if expected_order == 0 or 'base' in recipe_id.lower() else 'lora'))).lower()",
+        "    recipe_type = str(_recipe_value(raw, 'recipe_type', _recipe_value(raw, 'kind', 'base' if expected_order == 0 or 'base' in recipe_id.lower() else 'adapter'))).lower()",
         "    rank = _recipe_value(raw, 'rank', _recipe_value(raw, 'r', None))",
-        "    alpha = _recipe_value(raw, 'alpha', _recipe_value(raw, 'lora_alpha', None))",
+        "    alpha = _recipe_value(raw, 'alpha', _recipe_value(raw, 'adapter_alpha', None))",
         "    target_modules = _coerce_target_modules(_recipe_value(raw, 'target_modules', None), default=())",
-        "    return AdapterRecipe(recipe_id=recipe_id, display_name=str(_recipe_value(raw, 'display_name', recipe_id)), recipe_type=recipe_type, description=str(_recipe_value(raw, 'description', recipe_id)), rank=rank, alpha=alpha, dropout=float(_recipe_value(raw, 'dropout', _recipe_value(raw, 'lora_dropout', 0.0)) or 0.0), target_modules=target_modules, trainable=bool(_recipe_value(raw, 'trainable', recipe_type != 'base')), locked_baseline=bool(_recipe_value(raw, 'locked_baseline', expected_order in (0, 1))), expected_order=expected_order)",
+        "    return AdapterRecipe(recipe_id=recipe_id, display_name=str(_recipe_value(raw, 'display_name', recipe_id)), recipe_type=recipe_type, description=str(_recipe_value(raw, 'description', recipe_id)), rank=rank, alpha=alpha, dropout=float(_recipe_value(raw, 'dropout', _recipe_value(raw, 'adapter_dropout', 0.0)) or 0.0), target_modules=target_modules, trainable=bool(_recipe_value(raw, 'trainable', recipe_type != 'base')), locked_baseline=bool(_recipe_value(raw, 'locked_baseline', expected_order in (0, 1))), expected_order=expected_order)",
         "",
         "def get_locked_adapter_recipes(config: Any = None) -> List[AdapterRecipe]:",
         "    return validate_locked_recipe_order([normalize_adapter_recipe(candidate, idx) for idx, candidate in enumerate(CANDIDATE_SPECS)])",
@@ -39851,10 +39851,10 @@ describe("ImplementSessionManager", () => {
         "    second = normalized[1]",
         "    if first.recipe_type != 'base' or first.trainable:",
         "        raise ValueError('Baseline-first contract violation: candidate 0 must be the unmodified non-trainable base checkpoint.')",
-        "    if second.recipe_type not in {'lora', 'qlora'}:",
-        "        raise ValueError('Baseline-first contract violation: candidate 1 must be the locked vanilla LoRA baseline.')",
+        "    if second.recipe_type not in {'adapter', 'quantized_adapter'}:",
+        "        raise ValueError('Baseline-first contract violation: candidate 1 must be the locked vanilla adapter baseline.')",
         "    if not (second.rank == 8 and second.alpha == 16 and abs(second.dropout - 0.05) < 1e-12 and tuple(second.target_modules) == ('q_proj', 'k_proj', 'v_proj', 'o_proj')):",
-        "        raise ValueError('Locked LoRA baseline must be rank=8, alpha=16, dropout=0.05, target_modules=q_proj/k_proj/v_proj/o_proj.')",
+        "        raise ValueError('Locked adapter baseline must be rank=8, alpha=16, dropout=0.05, target_modules=q_proj/k_proj/v_proj/o_proj.')",
         "    return normalized",
         "",
         "LOCKED_ADAPTER_RECIPES: List[AdapterRecipe] = get_locked_adapter_recipes()",
@@ -39937,7 +39937,7 @@ describe("ImplementSessionManager", () => {
                 "",
                 "COMPARISON_MODE = 'baseline_first_locked'",
                 "BASELINE_FIRST_REQUIRED = True",
-                "STANDARD_LORA_BASELINE_ID = 'standard_lora_baseline'",
+                "STANDARD_LORA_BASELINE_ID = 'standard_adapter_baseline'",
                 "",
                 "@dataclass(frozen=True)",
                 "class RecipeSpec:",
@@ -39946,7 +39946,7 @@ describe("ImplementSessionManager", () => {
                 "    peft_type: str",
                 "",
                 "ADAPTER_RECIPES = [",
-                "    RecipeSpec('standard_lora_baseline', 'Standard LoRA baseline', 'lora'),",
+                "    RecipeSpec('standard_adapter_baseline', 'Standard adapter baseline', 'adapter'),",
                 "    RecipeSpec('untuned_reference', 'Untuned reference', 'none'),",
                 "]",
                 "",
@@ -39971,14 +39971,14 @@ describe("ImplementSessionManager", () => {
                 "        or bool(recipe_dict.get('is_reference', False))",
                 "    )",
                 "",
-                "def _standard_lora_id() -> str:",
-                "    return str(globals().get('STANDARD_LORA_BASELINE_ID', 'standard_lora'))",
+                "def _standard_adapter_id() -> str:",
+                "    return str(globals().get('STANDARD_LORA_BASELINE_ID', 'standard_adapter'))",
                 "",
                 "def _candidate_sort_key(recipe: Any) -> Tuple[int, str]:",
                 "    recipe_id = _recipe_identifier(recipe)",
                 "    if _recipe_is_reference(recipe):",
                 "        return (0, recipe_id)",
-                "    if recipe_id == _standard_lora_id() or 'standard' in recipe_id.lower() and 'lora' in recipe_id.lower():",
+                "    if recipe_id == _standard_adapter_id() or 'standard' in recipe_id.lower() and 'adapter' in recipe_id.lower():",
                 "        return (1, recipe_id)",
                 "    return (2, recipe_id)",
                 "",
@@ -39991,10 +39991,10 @@ describe("ImplementSessionManager", () => {
                 "        )",
                 "    if len(recipes) > 1:",
                 "        second_id = _recipe_identifier(recipes[1]).lower()",
-                "        expected_lora = _standard_lora_id().lower()",
-                "        if second_id != expected_lora and not (\"standard\" in second_id and \"lora\" in second_id):",
+                "        expected_adapter = _standard_adapter_id().lower()",
+                "        if second_id != expected_adapter and not (\"standard\" in second_id and \"adapter\" in second_id):",
                 "            raise RuntimeError(",
-                "                \"Locked comparison contract requires the standard LoRA tuned baseline to run immediately after the reference.\"",
+                "                \"Locked comparison contract requires the standard adapter tuned baseline to run immediately after the reference.\"",
                 "            )",
                 "    return recipes",
                 "",
@@ -40004,7 +40004,7 @@ describe("ImplementSessionManager", () => {
                 "    parser.add_argument('--output-dir')",
                 "    args = parser.parse_args(argv)",
                 "    recipes = _get_locked_recipe_sequence(args)",
-                "    assert _recipe_identifier(recipes[0]) == 'standard_lora_baseline'",
+                "    assert _recipe_identifier(recipes[0]) == 'standard_adapter_baseline'",
                 "    return 0",
                 "",
                 "if __name__ == '__main__':",
@@ -40030,13 +40030,13 @@ describe("ImplementSessionManager", () => {
 
     const result = await manager.run(run);
     const repairedSource = readFileSync(result.scriptPath!, "utf8");
-    expect(repairedSource).toContain("Locked baseline-first contract requires the standard LoRA tuned baseline to run first.");
+    expect(repairedSource).toContain("Locked baseline-first contract requires the standard adapter tuned baseline to run first.");
     expect(repairedSource).toContain("if _recipe_is_reference(recipe):\n        return (1, recipe_id)");
     expect(result.testCommand).toContain("py_compile");
   });
 
-  it("repairs baseline-first adapter runners whose locked standard LoRA id drifts from the recipe registry", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-locked-lora-id-repair-"));
+  it("repairs baseline-first adapter runners whose locked standard adapter id drifts from the recipe registry", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-locked-adapter-id-repair-"));
     tempDirs.push(workspace);
     const scriptPath = path.join(workspace, "run_instruction_study.py");
     writeFileSync(
@@ -40046,7 +40046,7 @@ describe("ImplementSessionManager", () => {
         "from typing import Any, Dict, List, Optional, Sequence",
         "",
         "COMPARISON_MODE = 'baseline_first_locked'",
-        "STANDARD_LORA_BASELINE_ID = 'standard_lora_r8_all_linear'",
+        "STANDARD_LORA_BASELINE_ID = 'standard_adapter_r8_all_linear'",
         "",
         "@dataclass(frozen=True)",
         "class AdapterRecipe:",
@@ -40055,10 +40055,10 @@ describe("ImplementSessionManager", () => {
         "STANDARD_LORA_BASELINE_RECIPE = AdapterRecipe(recipe_id=STANDARD_LORA_BASELINE_ID)",
         "PEFT_CANDIDATE_RECIPES = (",
         "    STANDARD_LORA_BASELINE_RECIPE,",
-        "    AdapterRecipe(recipe_id='attention_only_lora_r8'),",
+        "    AdapterRecipe(recipe_id='attention_only_adapter_r8'),",
         ")",
         "",
-        "LOCKED_STANDARD_LORA_BASELINE_ID = 'standard_lora'",
+        "LOCKED_STANDARD_LORA_BASELINE_ID = 'standard_adapter'",
         "",
         "def _recipe_identifier(recipe: Any) -> str:",
         "    return str(recipe.recipe_id)",
@@ -40070,7 +40070,7 @@ describe("ImplementSessionManager", () => {
         "    ordered_candidates = list(_candidate_recipe_sequence() if candidates is None else candidates)",
         "    by_id: Dict[str, Any] = {_recipe_identifier(recipe): recipe for recipe in ordered_candidates}",
         "    if LOCKED_STANDARD_LORA_BASELINE_ID not in by_id:",
-        "        raise ValueError('missing locked standard LoRA baseline')",
+        "        raise ValueError('missing locked standard adapter baseline')",
         "    return [by_id[LOCKED_STANDARD_LORA_BASELINE_ID]]",
         "",
         "LOCKED_TUNED_CANDIDATE_ORDER = build_locked_candidate_order()",
@@ -40079,12 +40079,12 @@ describe("ImplementSessionManager", () => {
       "utf8"
     );
 
-    const repair = await repairPythonLockedStandardLoraBaselineIdSurface(scriptPath);
+    const repair = await repairPythonLockedStandardAdapterBaselineIdSurface(scriptPath);
     const repairedSource = readFileSync(scriptPath, "utf8");
 
     expect(repair.repaired).toBe(true);
     expect(repairedSource).toContain("LOCKED_STANDARD_LORA_BASELINE_ID = STANDARD_LORA_BASELINE_ID");
-    expect(repairedSource).toContain("STANDARD_LORA_BASELINE_ID = 'standard_lora_r8_all_linear'");
+    expect(repairedSource).toContain("STANDARD_LORA_BASELINE_ID = 'standard_adapter_r8_all_linear'");
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
@@ -40100,7 +40100,7 @@ describe("ImplementSessionManager", () => {
         "from typing import Any, Dict, List, Mapping, Optional",
         "",
         "UNMODIFIED_BASE_CANDIDATE_ID = '00_unmodified_base_checkpoint'",
-        "LOCKED_LORA_BASELINE_CANDIDATE_ID = '01_locked_vanilla_lora_baseline'",
+        "LOCKED_LORA_BASELINE_CANDIDATE_ID = '01_locked_vanilla_adapter_baseline'",
         "",
         "@dataclass(frozen=True)",
         "class RecipeDefinition:",
@@ -40111,11 +40111,11 @@ describe("ImplementSessionManager", () => {
         "",
         "CANDIDATE_RECIPES = OrderedDict([",
         "    (UNMODIFIED_BASE_CANDIDATE_ID, RecipeDefinition(UNMODIFIED_BASE_CANDIDATE_ID, 'Unmodified base checkpoint', 'base_model_reference', False)),",
-        "    (LOCKED_LORA_BASELINE_CANDIDATE_ID, RecipeDefinition(LOCKED_LORA_BASELINE_CANDIDATE_ID, 'Locked vanilla LoRA baseline', 'lora', True)),",
+        "    (LOCKED_LORA_BASELINE_CANDIDATE_ID, RecipeDefinition(LOCKED_LORA_BASELINE_CANDIDATE_ID, 'Locked vanilla adapter baseline', 'adapter', True)),",
         "])",
         "",
         "BASELINE_UNMODIFIED_RECIPE_ID = \"base_unmodified\"",
-        "VANILLA_LORA_BASELINE_RECIPE_ID = \"vanilla_lora\"",
+        "VANILLA_LORA_BASELINE_RECIPE_ID = \"vanilla_adapter\"",
         "",
         "def _recipe_catalog_from_globals() -> 'OrderedDict[str, Dict[str, Any]]':",
         "    for name in ('RECIPE_CATALOG', 'ADAPTER_RECIPE_CATALOG', 'ADAPTER_RECIPES', 'RECIPE_DEFINITIONS', 'CANDIDATE_RECIPES'):",
@@ -40137,7 +40137,7 @@ describe("ImplementSessionManager", () => {
         "                ordered.append(alias)",
         "                break",
         "    if VANILLA_LORA_BASELINE_RECIPE_ID not in ordered:",
-        "        for alias in ('lora', 'baseline_lora', 'vanilla-lora'):",
+        "        for alias in ('adapter', 'baseline_adapter', 'vanilla-adapter'):",
         "            if alias in catalog:",
         "                ordered.append(alias)",
         "                break",
@@ -40147,9 +40147,9 @@ describe("ImplementSessionManager", () => {
         "    first_config = dict(catalog.get(ordered[0], {}))",
         "    second_config = dict(catalog.get(ordered[1], {}))",
         "    first_is_base = ordered[0] == BASELINE_UNMODIFIED_RECIPE_ID or bool(first_config.get('is_unmodified_base')) or str(first_config.get('peft_type', '')).lower() in {'none', 'base'}",
-        "    second_is_lora = ordered[1] == VANILLA_LORA_BASELINE_RECIPE_ID or bool(second_config.get('is_locked_baseline')) or str(second_config.get('peft_type', '')).lower() == 'lora'",
-        "    if not first_is_base or not second_is_lora:",
-        "        raise RuntimeError('Baseline-first comparison contract cannot be satisfied; missing/invalid order: unmodified base checkpoint first, vanilla LoRA baseline second')",
+        "    second_is_adapter = ordered[1] == VANILLA_LORA_BASELINE_RECIPE_ID or bool(second_config.get('is_locked_baseline')) or str(second_config.get('peft_type', '')).lower() == 'adapter'",
+        "    if not first_is_base or not second_is_adapter:",
+        "        raise RuntimeError('Baseline-first comparison contract cannot be satisfied; missing/invalid order: unmodified base checkpoint first, vanilla adapter baseline second')",
         "    return ordered",
         "",
         "if __name__ == '__main__':",
@@ -40186,12 +40186,12 @@ describe("ImplementSessionManager", () => {
         "    recipe_id: str",
         "    display_name: str",
         "    is_base_model: bool = False",
-        "    use_rslora: bool = False",
+        "    use_rank_stabilized_adapter: bool = False",
         "",
         "BASE_MODEL_RECIPE = AdapterRecipeSpec('base_model', 'Untuned base checkpoint', is_base_model=True)",
-        "VANILLA_LORA_RECIPE = AdapterRecipeSpec('vanilla_lora', 'Vanilla LoRA baseline')",
-        "RSLORA_RECIPE = AdapterRecipeSpec('rslora_lora', 'Rank-stabilized LoRA', use_rslora=True)",
-        "LOCKED_RECIPE_ORDER: Tuple[str, ...] = ('base_model', 'vanilla_lora', 'rslora_lora')",
+        "VANILLA_LORA_RECIPE = AdapterRecipeSpec('vanilla_adapter', 'Vanilla adapter baseline')",
+        "RSLORA_RECIPE = AdapterRecipeSpec('rank_stabilized_adapter_adapter', 'Rank-stabilized adapter', use_rank_stabilized_adapter=True)",
+        "LOCKED_RECIPE_ORDER: Tuple[str, ...] = ('base_model', 'vanilla_adapter', 'rank_stabilized_adapter_adapter')",
         "ADAPTER_RECIPES: Dict[str, AdapterRecipeSpec] = {",
         "    BASE_MODEL_RECIPE.recipe_id: BASE_MODEL_RECIPE,",
         "    VANILLA_LORA_RECIPE.recipe_id: VANILLA_LORA_RECIPE,",
@@ -40225,8 +40225,8 @@ describe("ImplementSessionManager", () => {
         "    if registry:",
         "        return registry",
         "    return {",
-        "        'lora_vanilla': {'name': 'lora_vanilla'},",
-        "        'lora_rslora': {'name': 'lora_rslora'},",
+        "        'adapter_vanilla': {'name': 'adapter_vanilla'},",
+        "        'adapter_rank_stabilized_adapter': {'name': 'adapter_rank_stabilized_adapter'},",
         "    }",
         "",
         "def validate_args(args: argparse.Namespace) -> argparse.Namespace:",
@@ -40271,7 +40271,7 @@ describe("ImplementSessionManager", () => {
         "from typing import List, Mapping, Tuple",
         "",
         "BASE_RECIPE_ID = 'base_model_zero_shot'",
-        "LOCKED_LORA_RECIPE_ID = 'locked_vanilla_lora_r8_alpha16'",
+        "LOCKED_LORA_RECIPE_ID = 'locked_vanilla_adapter_r8_alpha16'",
         "",
         "@dataclass(frozen=True)",
         "class RecipeSpec:",
@@ -40283,7 +40283,7 @@ describe("ImplementSessionManager", () => {
         "ORDERED_RECIPE_SPECS: Tuple[RecipeSpec, ...] = (",
         "    RecipeSpec(BASE_RECIPE_ID, 0, is_base_model=True),",
         "    RecipeSpec(LOCKED_LORA_RECIPE_ID, 1, is_locked_baseline=True),",
-        "    RecipeSpec('lora_r4_alpha8_attn_only', 2),",
+        "    RecipeSpec('adapter_r4_alpha8_attn_only', 2),",
         ")",
         "",
         "def _get_recipe_catalog() -> List[RecipeSpec]:",
@@ -40303,11 +40303,11 @@ describe("ImplementSessionManager", () => {
         "    if len(base) != 1:",
         "        raise RuntimeError(f\"Expected exactly one base-model recipe, found {[r.recipe_id for r in base]}\")",
         "    if len(locked) != 1:",
-        "        raise RuntimeError(f\"Expected exactly one locked vanilla LoRA baseline, found {[r.recipe_id for r in locked]}\")",
+        "        raise RuntimeError(f\"Expected exactly one locked vanilla adapter baseline, found {[r.recipe_id for r in locked]}\")",
         "    return [base[0], locked[0], *sorted(candidates, key=lambda recipe: int(getattr(recipe, \"order\", 9999)))]",
         "",
         "if __name__ == '__main__':",
-        "    assert [recipe.recipe_id for recipe in _baseline_first_recipe_order()] == [BASE_RECIPE_ID, LOCKED_LORA_RECIPE_ID, 'lora_r4_alpha8_attn_only']",
+        "    assert [recipe.recipe_id for recipe in _baseline_first_recipe_order()] == [BASE_RECIPE_ID, LOCKED_LORA_RECIPE_ID, 'adapter_r4_alpha8_attn_only']",
         ""
       ].join("\n"),
       "utf8"
@@ -40413,8 +40413,8 @@ describe("ImplementSessionManager", () => {
         "",
         "RECIPE_SPECS = (",
         "    RecipeSpec(recipe_id=BASELINE_CANDIDATE_ID),",
-        "    RecipeSpec(recipe_id='vanilla_lora_r8_alpha16'),",
-        "    RecipeSpec(recipe_id='lora_r16_alpha32'),",
+        "    RecipeSpec(recipe_id='vanilla_adapter_r8_alpha16'),",
+        "    RecipeSpec(recipe_id='adapter_r16_alpha32'),",
         ")",
         "",
         "def _recipe_id_set() -> List[str]:",
@@ -40469,7 +40469,7 @@ describe("ImplementSessionManager", () => {
     execFileSync("python3", [scriptPath], { cwd: workspace });
   });
 
-  it("repairs broader-target LoRA marker aliases before locked recipe coverage validation", async () => {
+  it("repairs broader-target adapter marker aliases before locked recipe coverage validation", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-broader-target-marker-repair-"));
     tempDirs.push(workspace);
     const scriptPath = path.join(workspace, "run_instruction_study.py");
@@ -40481,7 +40481,7 @@ describe("ImplementSessionManager", () => {
         "import argparse",
         "",
         "COMPARISON_MODE = 'baseline_first_locked'",
-        "BROADER_TARGET_LORA_RECIPE_ID = 'lora_r16_qkvo_mlp'",
+        "BROADER_TARGET_LORA_RECIPE_ID = 'adapter_r16_qkvo_mlp'",
         "BROADER_LORA_TARGET_MODULES = ('q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj')",
         "",
         "@dataclass(frozen=True)",
@@ -40491,9 +40491,9 @@ describe("ImplementSessionManager", () => {
         "",
         "CANDIDATE_RECIPES = (",
         "    CandidateRecipe('unmodified_base', 'baseline'),",
-        "    CandidateRecipe('lora_r16_qv_locked', 'lora'),",
-        "    CandidateRecipe('lora_r8_qv', 'lora'),",
-        "    CandidateRecipe(BROADER_TARGET_LORA_RECIPE_ID, 'lora'),",
+        "    CandidateRecipe('adapter_r16_qv_locked', 'adapter'),",
+        "    CandidateRecipe('adapter_r8_qv', 'adapter'),",
+        "    CandidateRecipe(BROADER_TARGET_LORA_RECIPE_ID, 'adapter'),",
         ")",
         "",
         "def _recipe_identifier(recipe: Any) -> str:",
@@ -40525,9 +40525,9 @@ describe("ImplementSessionManager", () => {
         "    present = ' '.join(_recipe_identifier(recipe).lower() for recipe in locked)",
         "    if requested is None:",
         "        required_markers = {",
-        "            'lora_r16': ('r16', 'standard LoRA r16 baseline'),",
-        "            'lora_r8': ('r8', 'low-rank LoRA r8 comparator'),",
-        "            'broader': ('broad', 'broader-target LoRA comparator'),",
+        "            'adapter_r16': ('r16', 'standard adapter r16 baseline'),",
+        "            'adapter_r8': ('r8', 'low-rank adapter r8 comparator'),",
+        "            'broader': ('broad', 'broader-target adapter comparator'),",
         "        }",
         "        missing = [label for marker, label in required_markers.values() if marker not in present]",
         "        if missing:",
@@ -40536,15 +40536,15 @@ describe("ImplementSessionManager", () => {
         "",
         "if __name__ == '__main__':",
         "    ordered = get_locked_recipe_order(argparse.Namespace(recipes=None))",
-        "    assert [recipe.recipe_id for recipe in ordered] == ['unmodified_base', 'lora_r16_qv_locked', 'lora_r8_qv', 'lora_r16_qkvo_mlp']",
+        "    assert [recipe.recipe_id for recipe in ordered] == ['unmodified_base', 'adapter_r16_qv_locked', 'adapter_r8_qv', 'adapter_r16_qkvo_mlp']",
         ""
       ].join("\n"),
       "utf8"
     );
 
-    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/broader-target LoRA comparator/);
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(/broader-target adapter comparator/);
 
-    const repair = await repairPythonBroaderTargetLoraMarkerSurface(scriptPath);
+    const repair = await repairPythonBroaderTargetAdapterMarkerSurface(scriptPath);
     const repairedSource = readFileSync(scriptPath, "utf8");
 
     expect(repair.repaired).toBe(true);
@@ -40592,7 +40592,7 @@ describe("ImplementSessionManager", () => {
       "",
       "def build_recipes():",
       "    recipes = [Recipe(name='baseline_no_tuning', kind='baseline')]",
-      "    recipes.append(Recipe(name='lora_r16', kind='lora'))",
+      "    recipes.append(Recipe(name='adapter_r16', kind='adapter'))",
       "    return recipes",
       "",
       "def summarize(results):",

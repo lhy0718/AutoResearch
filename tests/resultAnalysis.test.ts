@@ -7,13 +7,13 @@ describe("resultAnalysis", () => {
   it("projects node-owned metrics.results rows into baseline/comparator condition comparisons", () => {
     const report = buildAnalysisReport({
       run: {
-        objectiveMetric: "Improve mean zero-shot accuracy over the LoRA baseline."
+        objectiveMetric: "Improve mean zero-shot accuracy over the adapter baseline."
       },
       metrics: {
         accuracy_delta_vs_baseline: 0,
         baseline_mean_accuracy: 0.546875,
         best_mean_accuracy: 0.546875,
-        best_recipe: "lora_qv_r8",
+        best_recipe: "adapter_qv_r8",
         results: [
           {
             recipe: "baseline",
@@ -26,8 +26,8 @@ describe("resultAnalysis", () => {
             wall_clock_seconds: 7.5
           },
           {
-            recipe: "lora_qv_r8",
-            peft_type: "lora",
+            recipe: "adapter_qv_r8",
+            peft_type: "adapter",
             status: "completed",
             mean_accuracy: 0.546875,
             benchmark_task_a_accuracy: 0.53125,
@@ -40,7 +40,7 @@ describe("resultAnalysis", () => {
       },
       objectiveProfile: {
         source: "llm",
-        raw: "Improve mean zero-shot accuracy over the LoRA baseline.",
+        raw: "Improve mean zero-shot accuracy over the adapter baseline.",
         primaryMetric: "accuracy_delta_vs_baseline",
         preferredMetricKeys: ["accuracy_delta_vs_baseline", "mean_accuracy"],
         comparator: ">=",
@@ -51,7 +51,7 @@ describe("resultAnalysis", () => {
         assumptions: []
       },
       objectiveEvaluation: {
-        rawObjectiveMetric: "Improve mean zero-shot accuracy over the LoRA baseline.",
+        rawObjectiveMetric: "Improve mean zero-shot accuracy over the adapter baseline.",
         profileSource: "llm",
         primaryMetric: "accuracy_delta_vs_baseline",
         preferredMetricKeys: ["accuracy_delta_vs_baseline", "mean_accuracy"],
@@ -66,7 +66,7 @@ describe("resultAnalysis", () => {
 
     expect(report.condition_comparisons).toHaveLength(1);
     expect(report.condition_comparisons[0]).toMatchObject({
-      id: "lora_qv_r8_vs_baseline",
+      id: "adapter_qv_r8_vs_baseline",
       source: "metrics.results"
     });
     expect(report.condition_comparisons[0]?.metrics).toEqual(
@@ -90,10 +90,10 @@ describe("resultAnalysis", () => {
   it("projects node-owned metrics.result_rows rows into locked-baseline comparisons", () => {
     const report = buildAnalysisReport({
       run: {
-        objectiveMetric: "Improve mean zero-shot accuracy over the locked LoRA baseline."
+        objectiveMetric: "Improve mean zero-shot accuracy over the locked adapter baseline."
       },
       metrics: {
-        best_tuned_condition_id: "lora_r16_attention_mlp",
+        best_tuned_condition_id: "adapter_r16_attention_mlp",
         result_rows: [
           {
             condition_id: "reference_base_model",
@@ -104,15 +104,15 @@ describe("resultAnalysis", () => {
             benchmark_task_a_accuracy: 0.246094
           },
           {
-            condition_id: "locked_lora_baseline_r8",
+            condition_id: "locked_adapter_baseline_r8",
             recipe_type: "locked_baseline",
-            is_locked_lora_baseline: true,
+            is_locked_adapter_baseline: true,
             mean_zero_shot_accuracy_benchmark_tasks: 0.304353,
             benchmark_task_b_accuracy: 0.332559,
             benchmark_task_a_accuracy: 0.276147
           },
           {
-            condition_id: "lora_r16_attention_mlp",
+            condition_id: "adapter_r16_attention_mlp",
             recipe_type: "candidate",
             mean_zero_shot_accuracy_benchmark_tasks: 0.313533,
             benchmark_task_b_accuracy: 0.342223,
@@ -122,7 +122,7 @@ describe("resultAnalysis", () => {
       },
       objectiveProfile: {
         source: "llm",
-        raw: "Improve mean zero-shot accuracy over the locked LoRA baseline.",
+        raw: "Improve mean zero-shot accuracy over the locked adapter baseline.",
         primaryMetric: "mean_zero_shot_accuracy_benchmark_tasks",
         preferredMetricKeys: ["mean_zero_shot_accuracy_benchmark_tasks"],
         comparator: ">=",
@@ -133,7 +133,7 @@ describe("resultAnalysis", () => {
         assumptions: []
       },
       objectiveEvaluation: {
-        rawObjectiveMetric: "Improve mean zero-shot accuracy over the locked LoRA baseline.",
+        rawObjectiveMetric: "Improve mean zero-shot accuracy over the locked adapter baseline.",
         profileSource: "llm",
         primaryMetric: "mean_zero_shot_accuracy_benchmark_tasks",
         preferredMetricKeys: ["mean_zero_shot_accuracy_benchmark_tasks"],
@@ -147,7 +147,7 @@ describe("resultAnalysis", () => {
     });
 
     expect(report.condition_comparisons[0]).toMatchObject({
-      id: "lora_r16_attention_mlp_vs_locked_lora_baseline_r8",
+      id: "adapter_r16_attention_mlp_vs_locked_adapter_baseline_r8",
       source: "metrics.result_rows"
     });
     expect(report.condition_comparisons[0]?.metrics).toEqual(
@@ -165,7 +165,7 @@ describe("resultAnalysis", () => {
   it("projects node-owned metrics.recipes rows into baseline/comparator condition comparisons", () => {
     const report = buildAnalysisReport({
       run: {
-        objectiveMetric: "Improve mean zero-shot accuracy over the LoRA baseline."
+        objectiveMetric: "Improve mean zero-shot accuracy over the adapter baseline."
       },
       metrics: {
         best_recipe: "baseline",
@@ -182,8 +182,8 @@ describe("resultAnalysis", () => {
             },
             wall_time_sec: 1.4
           },
-          lora_r4: {
-            recipe: "lora_r4",
+          adapter_r4: {
+            recipe: "adapter_r4",
             evaluation: {
               mean_zero_shot_accuracy: 0.53125,
               per_benchmark_accuracy: {
@@ -193,8 +193,8 @@ describe("resultAnalysis", () => {
             },
             wall_time_sec: 8.6
           },
-          lora_r8: {
-            recipe: "lora_r8",
+          adapter_r8: {
+            recipe: "adapter_r8",
             evaluation: {
               mean_zero_shot_accuracy: 0.5,
               per_benchmark_accuracy: {
@@ -208,7 +208,7 @@ describe("resultAnalysis", () => {
       },
       objectiveProfile: {
         source: "llm",
-        raw: "Improve mean zero-shot accuracy over the LoRA baseline.",
+        raw: "Improve mean zero-shot accuracy over the adapter baseline.",
         primaryMetric: "accuracy_delta_vs_baseline",
         preferredMetricKeys: ["accuracy_delta_vs_baseline", "mean_zero_shot_accuracy_benchmark_tasks", "accuracy"],
         comparator: ">=",
@@ -219,7 +219,7 @@ describe("resultAnalysis", () => {
         assumptions: []
       },
       objectiveEvaluation: {
-        rawObjectiveMetric: "Improve mean zero-shot accuracy over the LoRA baseline.",
+        rawObjectiveMetric: "Improve mean zero-shot accuracy over the adapter baseline.",
         profileSource: "llm",
         primaryMetric: "accuracy_delta_vs_baseline",
         preferredMetricKeys: ["accuracy_delta_vs_baseline", "mean_zero_shot_accuracy_benchmark_tasks", "accuracy"],
@@ -233,7 +233,7 @@ describe("resultAnalysis", () => {
     });
 
     expect(report.condition_comparisons[0]).toMatchObject({
-      id: "lora_r4_vs_baseline",
+      id: "adapter_r4_vs_baseline",
       source: "metrics.recipes"
     });
     expect(report.condition_comparisons[0]?.metrics).toEqual(
@@ -281,7 +281,7 @@ describe("resultAnalysis", () => {
             training_wall_time_sec: 0
           },
           {
-            name: "lora_r8",
+            name: "adapter_r8",
             benchmark_task_a_accuracy: 0.2734375,
             benchmark_task_b_accuracy: 0.5234375,
             mean_zero_shot_accuracy: 0.3984375,
@@ -300,8 +300,8 @@ describe("resultAnalysis", () => {
             training: { trainable_params: 0, wall_time_sec: 0 }
           },
           {
-            name: "lora_r8",
-            condition_type: "peft_lora_instruction_tuned",
+            name: "adapter_r8",
+            condition_type: "peft_adapter_instruction_tuned",
             evaluation: {
               benchmark_task_a: { accuracy: 0.2734375 },
               benchmark_task_b: { accuracy: 0.5234375 }
@@ -337,7 +337,7 @@ describe("resultAnalysis", () => {
     });
 
     expect(report.condition_comparisons[0]).toMatchObject({
-      id: "lora_r8_vs_base_unmodified",
+      id: "adapter_r8_vs_base_unmodified",
       source: "metrics.conditions",
       hypothesis_supported: false
     });
@@ -380,8 +380,8 @@ describe("resultAnalysis", () => {
           {
             condition_marker: "baseline_condition",
             status: "completed",
-            lora_rank: 8,
-            lora_dropout: 0,
+            adapter_rank: 8,
+            adapter_dropout: 0,
             completed_seed_count: 5,
             average_accuracy_mean: 0.4416666666666667,
             average_accuracy_ci95: 0.030006249349093926,
@@ -395,8 +395,8 @@ describe("resultAnalysis", () => {
           {
             condition_marker: "candidate_condition_d",
             status: "completed",
-            lora_rank: 16,
-            lora_dropout: 0,
+            adapter_rank: 16,
+            adapter_dropout: 0,
             completed_seed_count: 5,
             average_accuracy_mean: 0.4666666666666667,
             average_accuracy_ci95: 0.0586068587188299,
@@ -410,8 +410,8 @@ describe("resultAnalysis", () => {
           {
             condition_marker: "candidate_condition_f5",
             status: "completed",
-            lora_rank: 32,
-            lora_dropout: 0.05,
+            adapter_rank: 32,
+            adapter_dropout: 0.05,
             completed_seed_count: 5,
             average_accuracy_mean: 0.5083333333333333,
             average_accuracy_ci95: 0.04000833246545857,

@@ -332,7 +332,7 @@ describe("run_experiments execution profile behavior", () => {
       selected_hypothesis_ids: ["hypothesis-1"],
       objective_metric_name: run.objectiveMetric,
       baseline_first_required: true,
-      baseline_candidate_ids: ["standard_lora_baseline"],
+      baseline_candidate_ids: ["standard_adapter_baseline"],
       comparison_mode: "baseline_first_locked",
       budget_profile: {
         mode: "single_run_locked",
@@ -381,13 +381,13 @@ describe("run_experiments execution profile behavior", () => {
                     evaluation: { mean_zero_shot_accuracy: 0.4 }
                   },
                   {
-                    name: "lora_r8",
-                    condition_type: "peft_lora_instruction_tuned",
+                    name: "adapter_r8",
+                    condition_type: "peft_adapter_instruction_tuned",
                     evaluation: { mean_zero_shot_accuracy: 0.412 }
                   },
                   {
-                    name: "lora_r16",
-                    condition_type: "peft_lora_instruction_tuned",
+                    name: "adapter_r16",
+                    condition_type: "peft_adapter_instruction_tuned",
                     evaluation: { mean_zero_shot_accuracy: 0.411 }
                   }
                 ]
@@ -1213,8 +1213,8 @@ describe("run_experiments execution profile behavior", () => {
         "        for condition in condition_rows:",
         "            if not isinstance(condition, Mapping):",
         "                continue",
-        "            rank = _safe_int(condition.get(\"rank\", condition.get(\"lora_rank\", condition.get(\"r\"))), default=None)",
-        "            dropout = _safe_float(condition.get(\"dropout\", condition.get(\"lora_dropout\")), default=None)",
+        "            rank = _safe_int(condition.get(\"rank\", condition.get(\"adapter_rank\", condition.get(\"r\"))), default=None)",
+        "            dropout = _safe_float(condition.get(\"dropout\", condition.get(\"adapter_dropout\")), default=None)",
         "            marker = condition.get(\"condition_marker\") or condition.get(\"marker\")",
         "            if marker is None and rank is not None and dropout is not None:",
         "                marker = 'candidate'",
@@ -2352,9 +2352,9 @@ describe("run_experiments execution profile behavior", () => {
         "@dataclass(frozen=True)",
         "class ConditionSpec:",
         "    marker: str",
-        "    lora_rank: int",
-        "    lora_alpha: int",
-        "    lora_dropout: float",
+        "    adapter_rank: int",
+        "    adapter_alpha: int",
+        "    adapter_dropout: float",
         "",
         "def _make_config_instance(type_name, **kwargs):",
         "    cls = globals().get(type_name)",
@@ -2378,8 +2378,8 @@ describe("run_experiments execution profile behavior", () => {
         "    marker='baseline',",
         "    condition_id='baseline',",
         "    rank=8,",
-        "    lora_alpha=16,",
-        "    lora_dropout=0.0,",
+        "    adapter_alpha=16,",
+        "    adapter_dropout=0.0,",
         ")",
         ""
       ].join("\n"),
@@ -2511,7 +2511,7 @@ describe("run_experiments execution profile behavior", () => {
                       "OSError: Can't load the configuration of 'EleutherAI/pythia-410m'. If you were trying to load it from Hugging Face, make sure the model is available or cached locally."
                   },
                   {
-                    condition_id: "vanilla_lora",
+                    condition_id: "vanilla_adapter",
                     status: "failed",
                     evidence: {
                       error_message:
@@ -2604,7 +2604,7 @@ describe("run_experiments execution profile behavior", () => {
                       mean_zero_shot_accuracy: 0.4
                     }
                   },
-                  lora_r4: {
+                  adapter_r4: {
                     status: "failed",
                     error: "TrainingArguments.__init__() got an unexpected keyword argument 'overwrite_output_dir'"
                   }
@@ -2642,7 +2642,7 @@ describe("run_experiments execution profile behavior", () => {
 
     expect(result.status).toBe("failure");
     expect(result.error).toContain("Experiment metrics payload reports failed recipe(s)");
-    expect(result.error).toContain("lora_r4");
+    expect(result.error).toContain("adapter_r4");
 
     const verifierReport = JSON.parse(
       await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")

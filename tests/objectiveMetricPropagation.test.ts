@@ -81,7 +81,7 @@ function makeRun(runId: string): RunRecord {
   };
 }
 
-function makeExplorationNode(patch: Partial<ResearchTreeNode> = {}): ResearchTreeNode {
+function makeExpadaptertionNode(patch: Partial<ResearchTreeNode> = {}): ResearchTreeNode {
   const now = new Date().toISOString();
   return {
     node_id: patch.node_id ?? "branch-1",
@@ -477,7 +477,7 @@ describe("objective metric propagation", () => {
       })
     };
 
-    const promotedNode = makeExplorationNode({
+    const promotedNode = makeExpadaptertionNode({
       node_id: "promoted-branch",
       status: "promoted",
       promotion_decision: {
@@ -503,7 +503,7 @@ describe("objective metric propagation", () => {
         reproduction_runs: 2
       }
     });
-    const failedNode = makeExplorationNode({
+    const failedNode = makeExpadaptertionNode({
       node_id: "failed-branch",
       status: "failed",
       evidence_manifest: {
@@ -2178,7 +2178,7 @@ describe("objective metric propagation", () => {
           accuracy_delta_vs_baseline: 0,
           baseline_mean_accuracy: 0.546875,
           best_mean_accuracy: 0.546875,
-          best_recipe: "lora_qv_r8",
+          best_recipe: "adapter_qv_r8",
           results: [
             {
               recipe: "baseline",
@@ -2190,8 +2190,8 @@ describe("objective metric propagation", () => {
               accuracy_delta_vs_baseline: 0
             },
             {
-              recipe: "lora_qv_r8",
-              peft_type: "lora",
+              recipe: "adapter_qv_r8",
+              peft_type: "adapter",
               status: "completed",
               mean_accuracy: 0.546875,
               benchmark_task_a_accuracy: 0.53125,
@@ -2212,9 +2212,9 @@ describe("objective metric propagation", () => {
           version: 1,
           run_id: runId,
           created_at: new Date().toISOString(),
-          hypothesis: "LoRA should improve zero-shot accuracy",
+          hypothesis: "adapter should improve zero-shot accuracy",
           causal_mechanism: "A tuned adapter should improve task accuracy",
-          single_change: "LoRA target module scope",
+          single_change: "adapter target module scope",
           confounded: false,
           expected_metric_effect: "Higher mean accuracy than baseline",
           abort_condition: "Abort if accuracy regresses",
@@ -2292,7 +2292,7 @@ describe("objective metric propagation", () => {
           best_recipe: "unmodified_baseline",
           primary_metric: "mean_zero_shot_accuracy_benchmark_tasks",
           baseline_comparisons_bootstrap: {
-            broader_target_lora_rank16_alpha32_dropout005_q_k_v_o_mlp: {
+            broader_target_adapter_rank16_alpha32_dropout005_q_k_v_o_mlp: {
               mean_delta: -0.015625,
               bootstrap_ci95_low: -0.057291666666666664,
               bootstrap_ci95_high: 0.026041666666666668
@@ -2307,7 +2307,7 @@ describe("objective metric propagation", () => {
                 benchmark_task_b: { accuracy: 0.5, correct: 48, total: 96 }
               }
             },
-            standard_lora_rank16_alpha32_dropout005_q_v_baseline: {
+            standard_adapter_rank16_alpha32_dropout005_q_v_baseline: {
               status: "completed",
               training: { trained: true, trainable_parameters: 2252800 },
               evaluation: {
@@ -2315,7 +2315,7 @@ describe("objective metric propagation", () => {
                 benchmark_task_b: { accuracy: 0.5, correct: 48, total: 96 }
               }
             },
-            broader_target_lora_rank16_alpha32_dropout005_q_k_v_o_mlp: {
+            broader_target_adapter_rank16_alpha32_dropout005_q_k_v_o_mlp: {
               status: "completed",
               training: { trained: true, trainable_parameters: 12615680 },
               evaluation: {
@@ -2337,9 +2337,9 @@ describe("objective metric propagation", () => {
           version: 1,
           run_id: runId,
           created_at: new Date().toISOString(),
-          hypothesis: "A broader target LoRA recipe should improve zero-shot accuracy",
+          hypothesis: "A broader target adapter recipe should improve zero-shot accuracy",
           causal_mechanism: "Targeting additional modules should improve adaptation",
-          single_change: "LoRA target module scope",
+          single_change: "adapter target module scope",
           confounded: false,
           expected_metric_effect: "Higher mean accuracy than baseline",
           abort_condition: "Abort if accuracy regresses",
@@ -2425,7 +2425,7 @@ describe("objective metric propagation", () => {
       JSON.stringify(
         {
           mean_zero_shot_accuracy_benchmark_tasks: 0.313533,
-          best_tuned_condition_id: "lora_r16_attention_mlp",
+          best_tuned_condition_id: "adapter_r16_attention_mlp",
           result_rows: [
             {
               condition_id: "reference_base_model",
@@ -2434,13 +2434,13 @@ describe("objective metric propagation", () => {
               mean_zero_shot_accuracy_benchmark_tasks: 0.27919
             },
             {
-              condition_id: "locked_lora_baseline_r8",
+              condition_id: "locked_adapter_baseline_r8",
               recipe_type: "locked_baseline",
-              is_locked_lora_baseline: true,
+              is_locked_adapter_baseline: true,
               mean_zero_shot_accuracy_benchmark_tasks: 0.304353
             },
             {
-              condition_id: "lora_r16_attention_mlp",
+              condition_id: "adapter_r16_attention_mlp",
               recipe_type: "candidate",
               mean_zero_shot_accuracy_benchmark_tasks: 0.313533
             }
@@ -2458,14 +2458,14 @@ describe("objective metric propagation", () => {
           version: 1,
           run_id: runId,
           created_at: new Date().toISOString(),
-          hypothesis: "LoRA should improve zero-shot accuracy",
+          hypothesis: "adapter should improve zero-shot accuracy",
           causal_mechanism: "A tuned adapter should improve task accuracy",
-          single_change: "LoRA target module scope",
+          single_change: "adapter target module scope",
           confounded: false,
           expected_metric_effect: "Higher mean accuracy than baseline",
           abort_condition: "Abort if accuracy regresses",
           keep_or_discard_rule: "Keep if improved",
-          baselines: ["locked_lora_baseline_r8"],
+          baselines: ["locked_adapter_baseline_r8"],
           metrics: ["mean_zero_shot_accuracy_benchmark_tasks"],
           results_table_schema: [
             {
@@ -2548,8 +2548,8 @@ describe("objective metric propagation", () => {
                 }
               }
             },
-            lora_r4: {
-              recipe: "lora_r4",
+            adapter_r4: {
+              recipe: "adapter_r4",
               evaluation: {
                 mean_zero_shot_accuracy: 0.53125,
                 per_benchmark_accuracy: {
@@ -2558,8 +2558,8 @@ describe("objective metric propagation", () => {
                 }
               }
             },
-            lora_r8: {
-              recipe: "lora_r8",
+            adapter_r8: {
+              recipe: "adapter_r8",
               evaluation: {
                 mean_zero_shot_accuracy: 0.5,
                 per_benchmark_accuracy: {
@@ -2582,9 +2582,9 @@ describe("objective metric propagation", () => {
           version: 1,
           run_id: runId,
           created_at: new Date().toISOString(),
-          hypothesis: "LoRA should improve zero-shot accuracy",
+          hypothesis: "adapter should improve zero-shot accuracy",
           causal_mechanism: "A tuned adapter should improve task accuracy",
-          single_change: "LoRA rank",
+          single_change: "adapter rank",
           confounded: false,
           expected_metric_effect: "Higher mean accuracy than baseline",
           abort_condition: "Abort if accuracy regresses",
@@ -2681,7 +2681,7 @@ describe("objective metric propagation", () => {
               }
             },
             {
-              name: "lora_r8",
+              name: "adapter_r8",
               status: "completed",
               is_baseline: false,
               eval_metrics: {
@@ -2694,7 +2694,7 @@ describe("objective metric propagation", () => {
               train_metrics: { train_loss: 1.9787727832794189 }
             },
             {
-              name: "lora_r16",
+              name: "adapter_r16",
               status: "completed",
               is_baseline: false,
               eval_metrics: {
@@ -2841,7 +2841,7 @@ describe("objective metric propagation", () => {
           created_at: new Date().toISOString(),
           hypothesis: "Dropout should improve average accuracy over the locked baseline",
           causal_mechanism: "Rank/dropout affects adapter generalization",
-          single_change: "rank/dropout condition",
+          single_change: "condition-parameter condition",
           confounded: false,
           expected_metric_effect: "Higher average accuracy than baseline",
           abort_condition: "Abort on missing baseline/comparator rows",
@@ -2990,7 +2990,7 @@ describe("objective metric propagation", () => {
           created_at: new Date().toISOString(),
           hypothesis: "Dropout should improve average accuracy over the locked baseline",
           causal_mechanism: "Rank/dropout affects adapter generalization",
-          single_change: "rank/dropout condition",
+          single_change: "condition-parameter condition",
           confounded: false,
           expected_metric_effect: "Higher average accuracy than baseline",
           abort_condition: "Abort on missing baseline/comparator rows",
@@ -3139,7 +3139,7 @@ describe("objective metric propagation", () => {
           created_at: new Date().toISOString(),
           hypothesis: "Dropout should improve average accuracy over the locked baseline",
           causal_mechanism: "Rank/dropout affects adapter generalization",
-          single_change: "rank/dropout condition",
+          single_change: "condition-parameter condition",
           confounded: false,
           expected_metric_effect: "Higher average accuracy than baseline",
           abort_condition: "Abort on missing baseline/comparator rows",
@@ -3459,9 +3459,9 @@ describe("objective metric propagation", () => {
           version: 1,
           run_id: runId,
           created_at: new Date().toISOString(),
-          hypothesis: "A tuned LoRA condition should improve over the unmodified baseline",
-          causal_mechanism: "LoRA training changes downstream accuracy",
-          single_change: "rank/dropout condition",
+          hypothesis: "A tuned adapter condition should improve over the unmodified baseline",
+          causal_mechanism: "adapter training changes downstream accuracy",
+          single_change: "condition-parameter condition",
           confounded: false,
           expected_metric_effect: "Higher average accuracy than baseline",
           abort_condition: "Abort on missing condition evidence",
@@ -3574,8 +3574,8 @@ describe("objective metric propagation", () => {
             best_value: 0
           },
           conditions: {
-            dora: {
-              name: "dora",
+            decomposed_adapter: {
+              name: "decomposed_adapter",
               status: "completed",
               accuracy_delta_vs_baseline: -0.03125,
               evaluation: {
@@ -3591,8 +3591,8 @@ describe("objective metric propagation", () => {
                 }
               }
             },
-            lora_baseline: {
-              name: "lora_baseline",
+            adapter_baseline: {
+              name: "adapter_baseline",
               status: "completed",
               accuracy_delta_vs_baseline: -0.015625,
               evaluation: {
@@ -3608,8 +3608,8 @@ describe("objective metric propagation", () => {
                 }
               }
             },
-            rslora: {
-              name: "rslora",
+            rank_stabilized_adapter: {
+              name: "rank_stabilized_adapter",
               status: "completed",
               accuracy_delta_vs_baseline: -0.0078125,
               evaluation: {
@@ -3706,7 +3706,7 @@ describe("objective metric propagation", () => {
     };
     expect(analysisRaw.condition_comparisons[0]).toMatchObject({
       source: "metrics.conditions",
-      label: "rslora vs lora baseline"
+      label: "rank stabilized adapter vs adapter baseline"
     });
     expect(analysisRaw.results_table).toEqual(
       expect.arrayContaining([
@@ -3773,7 +3773,7 @@ describe("objective metric propagation", () => {
               training_wall_time_sec: 0
             },
             {
-              name: "lora_r8",
+              name: "adapter_r8",
               benchmark_task_a_accuracy: 0.2734375,
               benchmark_task_b_accuracy: 0.5234375,
               mean_zero_shot_accuracy: 0.3984375,
@@ -3781,7 +3781,7 @@ describe("objective metric propagation", () => {
               training_wall_time_sec: 431.3
             },
             {
-              name: "lora_r16",
+              name: "adapter_r16",
               benchmark_task_a_accuracy: 0.265625,
               benchmark_task_b_accuracy: 0.53125,
               mean_zero_shot_accuracy: 0.3984375,
@@ -3800,8 +3800,8 @@ describe("objective metric propagation", () => {
               training: { trainable_params: 0, wall_time_sec: 0 }
             },
             {
-              name: "lora_r8",
-              condition_type: "peft_lora_instruction_tuned",
+              name: "adapter_r8",
+              condition_type: "peft_adapter_instruction_tuned",
               evaluation: {
                 benchmark_task_a: { accuracy: 0.2734375 },
                 benchmark_task_b: { accuracy: 0.5234375 }
@@ -3809,8 +3809,8 @@ describe("objective metric propagation", () => {
               training: { trainable_params: 6307840, wall_time_sec: 431.3 }
             },
             {
-              name: "lora_r16",
-              condition_type: "peft_lora_instruction_tuned",
+              name: "adapter_r16",
+              condition_type: "peft_adapter_instruction_tuned",
               evaluation: {
                 benchmark_task_a: { accuracy: 0.265625 },
                 benchmark_task_b: { accuracy: 0.53125 }
@@ -3831,9 +3831,9 @@ describe("objective metric propagation", () => {
           version: 1,
           run_id: runId,
           created_at: new Date().toISOString(),
-          hypothesis: "LoRA tuning should improve zero-shot accuracy",
+          hypothesis: "adapter tuning should improve zero-shot accuracy",
           causal_mechanism: "Adapter training should improve downstream benchmark accuracy",
-          single_change: "LoRA rank",
+          single_change: "adapter rank",
           confounded: false,
           expected_metric_effect: "Higher mean zero-shot accuracy than the unmodified baseline",
           abort_condition: "Abort if accuracy regresses",
@@ -3849,7 +3849,7 @@ describe("objective metric propagation", () => {
               direction: "higher_better"
             },
             {
-              metric: "accuracy_delta_vs_locked_tuned_baseline=primary_mean_zero_shot_accuracy-condition - primary_mean_zero_shot_accuracy-standard_lora_rank16_alpha32_dropout005_q_v_baseline",
+              metric: "accuracy_delta_vs_locked_tuned_baseline=primary_mean_zero_shot_accuracy-condition - primary_mean_zero_shot_accuracy-standard_adapter_rank16_alpha32_dropout005_q_v_baseline",
               baseline: null,
               comparator: null,
               delta: null,
@@ -3944,8 +3944,8 @@ describe("objective metric propagation", () => {
               mean_zero_shot_accuracy: 0.375
             },
             {
-              condition_name: "vanilla_lora_max_seq_length_1024_epochs_1_effective_batch_size_8",
-              condition_marker: "vanilla_lora|max_seq_length_1024_epochs_1_effective_batch_siz",
+              condition_name: "vanilla_adapter_max_seq_length_1024_epochs_1_effective_batch_size_8",
+              condition_marker: "vanilla_adapter|max_seq_length_1024_epochs_1_effective_batch_siz",
               status: "completed",
               benchmark_task_a_accuracy: 0.3125,
               benchmark_task_b_accuracy: 0.4375,
@@ -3953,8 +3953,8 @@ describe("objective metric propagation", () => {
               accuracy_delta_vs_baseline: 0
             },
             {
-              condition_name: "rslora_max_seq_length_1024_epochs_1_effective_batch_size_8",
-              condition_marker: "rslora|max_seq_length_1024_epochs_1_effective_batch_siz",
+              condition_name: "rank_stabilized_adapter_max_seq_length_1024_epochs_1_effective_batch_size_8",
+              condition_marker: "rank_stabilized_adapter|max_seq_length_1024_epochs_1_effective_batch_siz",
               status: "completed",
               benchmark_task_a_accuracy: 0.296875,
               benchmark_task_b_accuracy: 0.453125,
@@ -3964,7 +3964,7 @@ describe("objective metric propagation", () => {
           ],
           summary: {
             best_tuned_accuracy_delta_vs_baseline: 0,
-            best_tuned_condition: "vanilla_lora_max_seq_length_1024_epochs_1_effective_batch_size_8",
+            best_tuned_condition: "vanilla_adapter_max_seq_length_1024_epochs_1_effective_batch_size_8",
             completed_condition_count: 3,
             failed_condition_count: 0
           }
@@ -3981,7 +3981,7 @@ describe("objective metric propagation", () => {
           version: 1,
           run_id: runId,
           created_at: new Date().toISOString(),
-          hypothesis: "LoRA tuning should improve zero-shot accuracy",
+          hypothesis: "adapter tuning should improve zero-shot accuracy",
           causal_mechanism: "Adapter training should improve downstream benchmark accuracy",
           single_change: "PEFT method",
           confounded: false,
@@ -4109,9 +4109,9 @@ describe("objective metric propagation", () => {
           version: 1,
           run_id: runId,
           created_at: new Date().toISOString(),
-          hypothesis: "Higher LoRA rank should improve average zero-shot accuracy under fixed compute.",
+          hypothesis: "Higher adapter rank should improve average zero-shot accuracy under fixed compute.",
           causal_mechanism: "More adapter capacity can fit the small instruction-tuning signal.",
-          single_change: "LoRA rank",
+          single_change: "adapter rank",
           confounded: false,
           expected_metric_effect: "Higher average accuracy than locked rank=8 baseline",
           abort_condition: "Abort if required conditions do not complete.",
@@ -4255,7 +4255,7 @@ describe("objective metric propagation", () => {
           version: 1,
           run_id: runId,
           created_at: new Date().toISOString(),
-          hypothesis: "A LoRA condition should improve average accuracy over the locked baseline.",
+          hypothesis: "A adapter condition should improve average accuracy over the locked baseline.",
           causal_mechanism: "Adapter configuration affects instruction-tuning transfer.",
           single_change: "condition-parameter grid",
           confounded: false,

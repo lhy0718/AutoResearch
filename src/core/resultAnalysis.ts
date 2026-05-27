@@ -1956,6 +1956,14 @@ function buildConditionMetricPair(args: {
   };
 }
 
+function hasLockedBaselineMarker(row: Record<string, unknown>): boolean {
+  if (row.is_locked_baseline === true) {
+    return true;
+  }
+  const lockedBaselineMarker = new RegExp("^is_locked_[a-z0-9]+_baseline$", "iu");
+  return Object.entries(row).some(([key, value]) => value === true && lockedBaselineMarker.test(key));
+}
+
 function buildResultsArrayConditionComparison(args: {
   metrics: Record<string, unknown>;
   objectiveEvaluation: ObjectiveMetricEvaluation;
@@ -1967,7 +1975,7 @@ function buildResultsArrayConditionComparison(args: {
   }
 
   const baselineRow =
-    resultRows.find((row) => row.is_locked_lora_baseline === true || asString(row.recipe_type)?.toLowerCase() === "locked_baseline") ||
+    resultRows.find((row) => hasLockedBaselineMarker(row) || asString(row.recipe_type)?.toLowerCase() === "locked_baseline") ||
     resultRows.find((row) => {
       const recipe = asString(row.recipe)?.toLowerCase();
       const peftType = asString(row.peft_type)?.toLowerCase();

@@ -101,7 +101,7 @@ describe("designExperimentsPanel", () => {
     ).toContain("statistical_reviewer");
   });
 
-  it("blocks report-gating audits even when they consume rank/dropout training outputs", () => {
+  it("blocks report-gating audits even when they consume condition-parameter training outputs", () => {
     const audit = candidate({
       id: "audit",
       title: "A/B audit of result-gating on identical run outputs",

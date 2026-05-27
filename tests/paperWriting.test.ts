@@ -155,7 +155,7 @@ describe("paperWriting related-work support", () => {
       plan_context: {
         selected_design: {
           title: "5-seed high-rank dropout stability against locked baseline",
-          summary: "Compare rank/dropout conditions against the locked baseline."
+          summary: "Compare condition-parameter conditions against the locked baseline."
         }
       },
       metric_table: [

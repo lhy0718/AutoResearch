@@ -104,7 +104,12 @@ describe("public code sanitization", () => {
     const bannedPatterns = [
       new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${chars([114, 117, 110, 95, 112, 101, 102, 116, 95])}[A-Za-z0-9_]*`, "u"),
       new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${chars([101, 120, 101, 99, 117, 116, 101, 95, 112, 101, 102, 116, 95])}[A-Za-z0-9_]*`, "u"),
-      new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${chars([111, 114, 99, 104, 101, 115, 116, 114, 97, 116, 101, 95, 112, 101, 102, 116, 95])}[A-Za-z0-9_]*`, "u")
+      new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${chars([111, 114, 99, 104, 101, 115, 116, 114, 97, 116, 101, 95, 112, 101, 102, 116, 95])}[A-Za-z0-9_]*`, "u"),
+      new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${chars([108, 111, 114, 97, 95])}[A-Za-z0-9_]*`, "u"),
+      new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${chars([114, 101, 112, 97, 105, 114, 80, 121, 116, 104, 111, 110, 76, 111, 114, 97])}[A-Za-z0-9_]*`, "u"),
+      new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${chars([95, 97, 117, 116, 111, 108, 97, 98, 111, 115, 95, 108, 111, 114, 97, 95])}[A-Za-z0-9_]*`, "u"),
+      new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${chars([108, 111, 99, 107, 101, 100, 95, 108, 111, 114, 97])}[A-Za-z0-9_]*`, "u"),
+      new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${chars([108, 111, 114, 97, 95, 114, 97, 110, 107])}(?:$|[^A-Za-z0-9_])`, "u")
     ];
 
     const offenders = CODE_DIRS.flatMap(walkCodeFiles).flatMap((relativePath) => {

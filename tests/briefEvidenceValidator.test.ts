@@ -158,7 +158,7 @@ describe("briefEvidenceValidator", () => {
             category: "scope_limit",
             severity: "low",
             status: "risk",
-            summary: "Scope limitation: optional DoRA variant was documented but not required.",
+            summary: "Scope limitation: optional decomposed adapter variant was documented but not required.",
             evidence: ["plan_context.selected_design.risks"],
             recommended_action: "Document the limitation explicitly."
           }
@@ -183,9 +183,9 @@ describe("briefEvidenceValidator", () => {
       report: makeReport({
         plan_context: {
           selected_design: {
-            baselines: ["locked_lora"],
+            baselines: ["locked_adapter"],
             implementation_notes: [
-              "Planned tuned conditions: locked Standard LoRA; LoRA all-linear; LoRA q_k_v_o; RSLoRA q_v."
+              "Planned tuned conditions: locked Standard adapter; adapter all-linear; adapter q_k_v_o; rank-stabilized adapter q_v."
             ],
             evaluation_steps: [],
             metrics: [],
@@ -196,8 +196,8 @@ describe("briefEvidenceValidator", () => {
         metrics: {
           conditions: [
             { name: "base_unmodified" },
-            { name: "lora_r8" },
-            { name: "lora_r16" }
+            { name: "adapter_r8" },
+            { name: "adapter_r16" }
           ]
         }
       })

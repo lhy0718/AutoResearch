@@ -2184,8 +2184,8 @@ function summarizeConditionForPaperContext(condition: Record<string, unknown>): 
   return {
     ...pickRecordFields(condition, [
       "condition_marker",
-      "lora_rank",
-      "lora_dropout",
+      "adapter_rank",
+      "adapter_dropout",
       "completed_seed_count",
       "failed_seed_count",
       "average_accuracy_mean",
@@ -2221,8 +2221,8 @@ function summarizeSeedResultForPaperContext(seedResult: Record<string, unknown>)
         "model_name",
         "model_dtype",
         "device_name",
-        "lora_rank",
-        "lora_dropout",
+        "adapter_rank",
+        "adapter_dropout",
         "selected_target_modules",
         "num_train_samples",
         "train_dataset_token_count",
@@ -3019,7 +3019,7 @@ function softenFinalLmBenchmarkPilotTitle(title: string): string {
     || /\b(?:result[- ]?gating|benchmark-ba|workflow|audit|paper[- ]?readiness|pre[- ]?registered result)\b/iu.test(cleaned)
     || (
     /\btrade[- ]?offs?\b/iu.test(cleaned)
-    && /\b(?:LoRA|rank|dropout|parameter-efficient|instruction tuning)\b/iu.test(cleaned)
+    && /\b(?:adapter|rank|dropout|parameter-efficient|instruction tuning)\b/iu.test(cleaned)
     )
   ) {
     return "A Fixed-Budget Pilot Study of a Local Experimental Configuration";
@@ -3043,7 +3043,7 @@ function sanitizeFinalPaperParagraph(heading: string, paragraph: string, index: 
     if (/\b-\s*Primary metric:/iu.test(paragraph) || /\bfailed-run visibility\b/iu.test(paragraph)) {
       return "The contribution is a cautious local preflight over a configured condition set. It keeps the baseline or comparator, completed condition coverage, uncertainty, and resource measurements visible so that the best observed condition can be treated as a follow-up candidate rather than as a broad rule.";
     }
-    if (/^This paper studies how LoRA condition parameters interact\b/iu.test(paragraph)) {
+    if (/^This paper studies how adapter condition parameters interact\b/iu.test(paragraph)) {
       return "";
     }
   }
@@ -3162,17 +3162,17 @@ function repairFinalClaimCeilingAndInternalLanguage(heading: string, paragraph: 
     .replace(/\brepeated-seed accounting\b/giu, "condition-completion accounting")
     .replace(/\brepeated-seed coverage\b/giu, "cross-seed coverage")
     .replace(
-      /\bIn that narrow sense,\s*the observed comparison supports the same motivation for explicit rank sweeps that appears in prior low-budget LoRA reports,\s*although the present evidence remains limited to one compact record\./giu,
+      /\bIn that narrow sense,\s*the observed comparison supports the same motivation for explicit rank sweeps that appears in prior low-budget adapter reports,\s*although the present evidence remains limited to one compact record\./giu,
       "In that narrow sense, the observed comparison supports explicit rank sweeps in the next experiment, although the present evidence remains limited to one compact record."
     )
     .replace(
       /\bThe compact record also omits several implementation details that would normally be standard in an empirical paper,\s*including optimizer choice,\s*learning-rate schedule,\s*batch size,\s*and an unambiguous statement of the executed base model\.\s*These omissions materially narrow reproducibility and interpretability\./giu,
-      "The compact record still omits several implementation details that would normally be standard in an empirical paper, including optimizer family, scheduler details beyond the scalar learning rate, LoRA target modules, adapter scaling, and interval-construction details. These omissions materially narrow reproducibility and interpretability."
+      "The compact record still omits several implementation details that would normally be standard in an empirical paper, including optimizer family, scheduler details beyond the scalar learning rate, adapter target modules, adapter scaling, and interval-construction details. These omissions materially narrow reproducibility and interpretability."
     );
 
   if (/^results$/iu.test(heading)) {
     repaired = repaired.replace(
-      /\bprior low-budget LoRA reports\b/giu,
+      /\bprior low-budget adapter reports\b/giu,
       "the preregistered rank-sweep motivation"
     );
   }
@@ -3250,7 +3250,7 @@ function sanitizeFinalRelatedWorkParagraph(heading: string, paragraph: string, i
     return paragraph;
   }
   return index % 2 === 0
-    ? "Nearby PEFT, LoRA, and instruction-tuning studies provide context for memory efficiency, benchmark sensitivity, and adapter design, but they do not replace the locked baseline comparison in this study."
+    ? "Nearby PEFT, adapter, and instruction-tuning studies provide context for memory efficiency, benchmark sensitivity, and adapter design, but they do not replace the locked baseline comparison in this study."
     : "For this manuscript, prior work is used to motivate the condition-parameter question and local-budget evaluation design; numerical claims remain grounded in the executed run artifacts.";
 }
 
@@ -5526,8 +5526,8 @@ async function maybeRenderPaperFigureAssets(input: {
       bars: figure.bars.map((row) => ({
         label: row.label,
         value: row.value,
-        ...(typeof row.lora_rank === "number" ? { lora_rank: row.lora_rank } : {}),
-        ...(typeof row.lora_dropout === "number" ? { lora_dropout: row.lora_dropout } : {}),
+        ...(typeof row.adapter_rank === "number" ? { adapter_rank: row.adapter_rank } : {}),
+        ...(typeof row.adapter_dropout === "number" ? { adapter_dropout: row.adapter_dropout } : {}),
         ...(typeof row.accuracy_delta_vs_baseline === "number"
           ? { accuracy_delta_vs_baseline: row.accuracy_delta_vs_baseline }
           : {}),
@@ -5665,8 +5665,8 @@ def build_condition_grid_rows(bars):
     rows = []
     for row in bars:
         label = str(row.get("label", "")).strip()
-        rank = row.get("lora_rank")
-        dropout = row.get("lora_dropout")
+        rank = row.get("adapter_rank")
+        dropout = row.get("adapter_dropout")
         if rank is None:
             match = re.search(r"\brank\s*([0-9]+)", label, flags=re.IGNORECASE)
             rank = float(match.group(1)) if match else None
@@ -5742,7 +5742,7 @@ def render_with_matplotlib(figure):
         y_max = min(1.0, max(y_values) + 0.08)
         ax.set_ylim(y_min, y_max if y_max > y_min else y_min + 0.1)
         ax.set_xticks(ranks, labels=[f"{rank:g}" for rank in ranks])
-        ax.set_xlabel("LoRA rank", fontsize=8)
+        ax.set_xlabel("adapter rank", fontsize=8)
         ax.set_ylabel("Average\naccuracy", fontsize=8, rotation=0, labelpad=30, va="center")
         ax.set_title("Accuracy across condition grid", fontsize=9, pad=6)
         ax.grid(axis="y", color="#d9d9d9", linewidth=0.6)
@@ -5879,7 +5879,7 @@ def render_figure(figure):
         content = []
         content.append("1 1 1 rg 0 0 306 190 re f\n")
         content.append(text_cmd(10, 176, "Accuracy across condition grid", 8.5))
-        content.append(text_cmd(130, 8, "LoRA rank", 6, (0.12, 0.12, 0.12)))
+        content.append(text_cmd(130, 8, "adapter rank", 6, (0.12, 0.12, 0.12)))
         content.append(text_cmd(margin_l, 158, "Mean accuracy", 5.8, (0.12, 0.12, 0.12)))
         content.append(line_cmd(margin_l, margin_b, margin_l + plot_w, margin_b))
         content.append(line_cmd(margin_l, margin_b, margin_l, margin_b + plot_h))

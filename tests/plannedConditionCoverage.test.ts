@@ -14,8 +14,8 @@ describe("planned condition coverage", () => {
             training: { skipped: true }
           },
           {
-            recipe: "lora",
-            adapter: { peft_type: "lora", trainable_parameters: 1179648 },
+            recipe: "adapter",
+            adapter: { peft_type: "adapter", trainable_parameters: 1179648 },
             training: { skipped: false }
           },
           {
@@ -38,19 +38,19 @@ describe("planned condition coverage", () => {
           type: "locked_untuned_baseline",
           evaluation: { primary_mean_accuracy: 0.525 }
         },
-        lora_r16: {
-          type: "peft_lora_instruction_tuned",
+        adapter_r16: {
+          type: "peft_adapter_instruction_tuned",
           train: {
             trainable_params: 2252800,
-            recipe: { name: "lora_r16" }
+            recipe: { name: "adapter_r16" }
           },
           evaluation: { primary_mean_accuracy: 0.4875 }
         },
-        lora_r8: {
-          type: "peft_lora_instruction_tuned",
+        adapter_r8: {
+          type: "peft_adapter_instruction_tuned",
           train: {
             trainable_params: 1126400,
-            recipe: { name: "lora_r8" }
+            recipe: { name: "adapter_r8" }
           },
           evaluation: { primary_mean_accuracy: 0.5125 }
         }
@@ -70,22 +70,22 @@ describe("planned condition coverage", () => {
           training: { skipped: true, trainable_params: 0 }
         },
         {
-          marker: "locked_lora_baseline",
+          marker: "locked_adapter_baseline",
           status: "completed",
           training: { train_steps: 40, trainable_params: 1179648 }
         },
         {
-          marker: "dora",
+          marker: "decomposed_adapter",
           status: "completed",
           training: { train_steps: 40, trainable_params: 1179648 }
         },
         {
-          marker: "lora_plus_neftune_style_embedding_noise_while_pr",
+          marker: "adapter_plus_neftune_style_embedding_noise_while_pr",
           status: "failed",
           training: { train_steps: 0 }
         },
         {
-          marker: "rslora",
+          marker: "rank_stabilized_adapter",
           status: "completed",
           training: { train_steps: 40, trainable_params: 1179648 }
         }
