@@ -841,6 +841,25 @@ export class ImplementSessionManager {
             runCommand: previousRunCommand
           });
         }
+        if (deterministicBundleRepairFeedback && previousScriptPath) {
+          const preflightRunnerRepair = await applyRecoverableBundleDeterministicRepairs({
+            scriptPath: previousScriptPath,
+            runnerFeedback: promptTaskSpec.context.runner_feedback,
+            runnerFeedbackDiagnosticText
+          });
+          if (preflightRunnerRepair.repaired) {
+            attemptChangedFiles.add(previousScriptPath);
+            attemptPublicArtifacts.add(previousScriptPath);
+            for (const message of preflightRunnerRepair.messages) {
+              emitImplementObservation("verify", message, {
+                attempt,
+                threadId: activeThreadId,
+                publicDir: isolation.publicDir,
+                scriptPath: previousScriptPath
+              });
+            }
+          }
+        }
       }
       const recoveredBeforeTurn = await recoverStructuredResultFromPublicBundle({
         publicDir: isolation.publicDir,
@@ -13808,22 +13827,15 @@ async function recoverStructuredResultFromPublicBundle(params: {
       const alreadyRepaired = hasRecoverableBundleDeterministicRepairMarker(
         await fs.readFile(scriptPath, "utf8").catch(() => "")
       );
-      const repairs = [
-        await repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurface(scriptPath),
-        await repairPythonEntrypointLockedConditionSeedSweepCandidateSurface(scriptPath),
-        await repairPythonBaselineFirstConditionRuntimeInputSurface(scriptPath),
-        await repairPythonDataclassTrainingExampleCoercionSurface(scriptPath),
-        await repairPythonConditionSuccessStatusAliasSurface(scriptPath),
-        await repairPythonMetricsPayloadProjectionSurface(scriptPath),
-        await repairPythonFinalOrchestrationHelperSurface(scriptPath),
-        await repairPythonKeywordOnlyDefaultCallSurface(scriptPath, params.runnerFeedback, params.runnerFeedbackDiagnosticText),
-        await repairPythonUnexpectedKeywordParameterSurface(scriptPath, params.runnerFeedback, params.runnerFeedbackDiagnosticText),
-        await repairPythonMainFindCallableStudyResolverSurface(scriptPath)
-      ];
+      const repairResult = await applyRecoverableBundleDeterministicRepairs({
+        scriptPath,
+        runnerFeedback: params.runnerFeedback,
+        runnerFeedbackDiagnosticText: params.runnerFeedbackDiagnosticText
+      });
       const repairedSource = await fs.readFile(scriptPath, "utf8").catch(() => "");
       if (
         !alreadyRepaired &&
-        !repairs.some((repair) => repair.repaired) &&
+        !repairResult.repaired &&
         !hasRecoverableBundleDeterministicRepairMarker(repairedSource)
       ) {
         continue;
@@ -13989,6 +14001,41 @@ async function recoverStructuredResultFromPublicBundle(params: {
   }
 
   return undefined;
+}
+
+async function applyRecoverableBundleDeterministicRepairs(params: {
+  scriptPath?: string;
+  runnerFeedback?: RunVerifierReport;
+  runnerFeedbackDiagnosticText?: string;
+}): Promise<{ repaired: boolean; messages: string[] }> {
+  const repairs = [
+    await repairPythonBaselineFirstLockedSweepStudyRunnerAliasSurface(params.scriptPath),
+    await repairPythonEntrypointLockedConditionSeedSweepCandidateSurface(params.scriptPath),
+    await repairPythonBaselineFirstConditionRuntimeInputSurface(params.scriptPath),
+    await repairPythonDataclassTrainingExampleCoercionSurface(params.scriptPath),
+    await repairPythonConditionSuccessStatusAliasSurface(params.scriptPath),
+    await repairPythonMetricsPayloadProjectionSurface(params.scriptPath),
+    await repairPythonFinalOrchestrationHelperSurface(params.scriptPath),
+    await repairPythonKeywordOnlyDefaultCallSurface(
+      params.scriptPath,
+      params.runnerFeedback,
+      params.runnerFeedbackDiagnosticText
+    ),
+    await repairPythonUnexpectedKeywordParameterSurface(
+      params.scriptPath,
+      params.runnerFeedback,
+      params.runnerFeedbackDiagnosticText
+    ),
+    await repairPythonDanglingKeywordOnlyDefaultSyntaxSurface(params.scriptPath, params.runnerFeedback),
+    await repairPythonMainFindCallableStudyResolverSurface(params.scriptPath)
+  ];
+  const messages = repairs
+    .filter((repair) => repair.repaired && repair.message)
+    .map((repair) => repair.message as string);
+  return {
+    repaired: repairs.some((repair) => repair.repaired),
+    messages
+  };
 }
 
 async function hasRecoverableExecutionEvidence(publicDir: string, metricsPath: string): Promise<boolean> {
@@ -14711,11 +14758,11 @@ export function shouldRequireFreshRecoveredBundlePlanAlignment(params: {
   if (params.planChanged) {
     return true;
   }
-  if (params.hasImplementationContractFeedback) {
-    return true;
-  }
   if (params.commandRepairFeedback) {
     return false;
+  }
+  if (params.hasImplementationContractFeedback) {
+    return true;
   }
   return params.hasRunnerFeedback || params.hasPaperCritiqueFeedback;
 }

@@ -2648,6 +2648,16 @@ describe("ImplementSessionManager", () => {
         commandRepairFeedback: false
       })
     ).toBe(true);
+
+    expect(
+      shouldRequireFreshRecoveredBundlePlanAlignment({
+        planChanged: false,
+        hasImplementationContractFeedback: true,
+        hasRunnerFeedback: true,
+        hasPaperCritiqueFeedback: false,
+        commandRepairFeedback: true
+      })
+    ).toBe(false);
   });
 
   it("does not reject command-repair recovery only because plan artifacts are newer", () => {
@@ -8636,6 +8646,126 @@ describe("ImplementSessionManager", () => {
       status: "completed",
       runner: "run_baseline_first_condition_sweep",
       study_name: "locked-study"
+    });
+  });
+
+  it("repairs unexpected keyword runner feedback despite stale implementation feedback before Codex", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-unexpected-keyword-preflight-repair-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Unexpected Keyword Preflight Repair",
+      topic: "repair reusable runner argument compatibility",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    run.graph.nodeStates.run_experiments.status = "failed";
+    mkdirSync(path.dirname(run.memoryRefs.episodePath), { recursive: true });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - repair_keyword_compatibility\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const scriptPath = path.join(publicDir, "run_condition_sweep_experiment.py");
+    const readmePath = path.join(publicDir, "README.md");
+    const metricsPath = path.join(runDir, "metrics.json");
+    mkdirSync(publicDir, { recursive: true });
+    writeFileSync(metricsPath, "{\"status\":\"failed\"}\n", "utf8");
+    writeFileSync(
+      scriptPath,
+      [
+        "import json",
+        "from pathlib import Path",
+        "",
+        "def _normalize_path(value, *, default=None):",
+        "    return Path(value or default or '.')",
+        "",
+        "def main() -> int:",
+        "    resolved = _normalize_path('executed.json', base_dir=Path('.'))",
+        "    resolved.write_text(json.dumps({'status': 'completed', 'runner': 'keyword-compatible'}), encoding='utf-8')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      readmePath,
+      [
+        "# Existing Bundle",
+        "",
+        "```bash",
+        "python " + toWorkspaceRelative(workspace, scriptPath),
+        "```"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put("implement_experiments.thread_id", "thread-stale-keyword-repair");
+    await memory.put("implement_experiments.script", scriptPath);
+    await memory.put("implement_experiments.run_command", "python " + JSON.stringify(scriptPath));
+    await memory.put("implement_experiments.verify_report", {
+      status: "fail",
+      failure_type: "runtime",
+      next_action: "retry_patch",
+      summary: "Local verification failed before the previous runner handoff.",
+      stderr_excerpt: "Traceback from an older local verification surface.",
+      command: "python " + JSON.stringify(scriptPath)
+    });
+    run.nodeThreads.implement_experiments = "thread-stale-keyword-repair";
+    await runStore.updateRun(run);
+    await memory.put("implement_experiments.runner_feedback", {
+      source: "run_experiments",
+      status: "fail",
+      trigger: "auto_handoff",
+      stage: "runtime",
+      summary: "TypeError: _normalize_path() got an unexpected keyword argument 'base_dir'",
+      command: "python " + JSON.stringify(scriptPath) + " --metrics-path " + JSON.stringify(metricsPath),
+      metrics_path: metricsPath,
+      stderr_excerpt: "TypeError: _normalize_path() got an unexpected keyword argument 'base_dir'",
+      suggested_next_action: "Repair the runner keyword compatibility before regenerating the bundle.",
+      recorded_at: "2026-05-21T02:00:00.000Z"
+    });
+
+    let callCount = 0;
+    const codex = {
+      runTurnStream: async () => {
+        callCount += 1;
+        throw new Error("Codex should not be used for deterministic unexpected-keyword repair");
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+    execFileSync("python3", [scriptPath], { cwd: publicDir });
+
+    expect(callCount).toBe(0);
+    expect(result.scriptPath).toBe(scriptPath);
+    expect(result.rawResponse).toContain("Recovered implement result from a materialized public experiment bundle");
+    expect(await memory.get("implement_experiments.runner_feedback")).toBeNull();
+    expect(repairedSource).toContain("_autolabos_unexpected_keyword_parameter_marker");
+    expect(JSON.parse(readFileSync(path.join(publicDir, "executed.json"), "utf8"))).toMatchObject({
+      status: "completed",
+      runner: "keyword-compatible"
     });
   });
 
