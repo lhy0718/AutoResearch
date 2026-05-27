@@ -821,7 +821,7 @@ export class ImplementSessionManager {
         promptTaskSpec.context.runner_feedback,
         runnerFeedbackDiagnosticText
       );
-      if (commandRepairFeedback) {
+      if (commandRepairFeedback || deterministicBundleRepairFeedback) {
         const previousScriptPath = await runContext.get<string>("implement_experiments.script");
         const previousRunCommand = await runContext.get<string>("implement_experiments.run_command");
         const preflightWrapperRepair = await repairPublishedRunCommandWrapperBinding({
@@ -14785,7 +14785,7 @@ export async function repairPublishedRunCommandWrapperBinding(
     metricsPath?: string;
   }
 ): Promise<{ repaired: boolean; wrapperPath?: string; message: string }> {
-  if (!attempt.publicDir || !attempt.scriptPath || !attempt.runCommand) {
+  if (!attempt.publicDir || !attempt.scriptPath) {
     return {
       repaired: false,
       message: "No public run_command.sh repair was needed."

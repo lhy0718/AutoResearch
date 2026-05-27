@@ -2446,6 +2446,38 @@ describe("ImplementSessionManager", () => {
     expect(repairedWrapper).toContain(JSON.stringify(metricsPath));
   });
 
+  it("rewrites a stale published run_command.sh even when no previous run command is stored", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-public-wrapper-repair-no-command-"));
+    tempDirs.push(workspace);
+    const publicDir = path.join(workspace, "outputs", "study", "experiment");
+    mkdirSync(publicDir, { recursive: true });
+    const scriptPath = path.join(publicDir, "run_condition_sweep_experiment.py");
+    const wrapperPath = path.join(publicDir, "run_command.sh");
+    writeFileSync(scriptPath, "print('runner')\n", "utf8");
+    writeFileSync(
+      wrapperPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
+        'RUNNER="${SCRIPT_DIR}/run_condition_grid_study.py"',
+        'exec "${PYTHON_BIN:-python3}" "$RUNNER" --metrics-path "$1"'
+      ].join("\n"),
+      "utf8"
+    );
+
+    const repair = await repairPublishedRunCommandWrapperBinding({
+      publicDir,
+      scriptPath,
+      runCommand: ""
+    });
+
+    expect(repair.repaired).toBe(true);
+    const repairedWrapper = readFileSync(wrapperPath, "utf8");
+    expect(repairedWrapper).toContain('RUNNER="${SCRIPT_DIR}/run_condition_sweep_experiment.py"');
+    expect(repairedWrapper).not.toContain("run_condition_grid_study.py");
+  });
+
   it("resolves the Python runner behind a published run_command.sh for semantic verification", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-wrapper-verification-target-"));
     tempDirs.push(workspace);
