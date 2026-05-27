@@ -8845,6 +8845,33 @@ describe("ImplementSessionManager", () => {
     const snapshotMtime = new Date(Date.now() + 5000);
     utimesSync(snapshotScriptPath, snapshotMtime, snapshotMtime);
     utimesSync(path.join(snapshotDir, "README.md"), snapshotMtime, snapshotMtime);
+    writeFileSync(
+      path.join(snapshotDir, "run_auxiliary_experiment.py"),
+      [
+        "# AUTOLABOS CANONICAL SKELETON",
+        "# BEGIN AUTOLABOS SECTION chunk_1 :: interrupted sibling",
+        "import json",
+        "# END AUTOLABOS SECTION chunk_1",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    utimesSync(path.join(snapshotDir, "run_auxiliary_experiment.py"), snapshotMtime, snapshotMtime);
+
+    const cleanSnapshotDir = path.join(
+      runDir,
+      "implement_experiments",
+      "attempt_snapshots",
+      "attempt_0",
+      "captured",
+      "1"
+    );
+    mkdirSync(cleanSnapshotDir, { recursive: true });
+    writeFileSync(path.join(cleanSnapshotDir, "run_condition_sweep_experiment.py"), readFileSync(snapshotScriptPath, "utf8"), "utf8");
+    writeFileSync(path.join(cleanSnapshotDir, "README.md"), readFileSync(path.join(snapshotDir, "README.md"), "utf8"), "utf8");
+    const cleanSnapshotMtime = new Date(Date.now() + 3000);
+    utimesSync(path.join(cleanSnapshotDir, "run_condition_sweep_experiment.py"), cleanSnapshotMtime, cleanSnapshotMtime);
+    utimesSync(path.join(cleanSnapshotDir, "README.md"), cleanSnapshotMtime, cleanSnapshotMtime);
 
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);
     await memory.put("implement_experiments.thread_id", "thread-stale-metrics-snapshot");

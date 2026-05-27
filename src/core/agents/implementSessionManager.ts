@@ -13796,7 +13796,7 @@ async function recoverStructuredResultFromPublicBundle(params: {
     if (!hasSubstantiveMaterializedContent(scriptContent, scriptPath)) {
       continue;
     }
-    if (await detectPythonUnfilledAutolabosSections(scriptPath)) {
+    if (await recoveredBundleHasUnfilledAutolabosSections(candidate.dir)) {
       continue;
     }
     if (candidate.snapshot) {
@@ -14010,6 +14010,19 @@ async function recoverStructuredResultFromPublicBundle(params: {
   }
 
   return undefined;
+}
+
+async function recoveredBundleHasUnfilledAutolabosSections(bundleDir: string): Promise<boolean> {
+  const entries = await fs.readdir(bundleDir, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    if (!entry.isFile() || path.extname(entry.name).toLowerCase() !== ".py") {
+      continue;
+    }
+    if (await detectPythonUnfilledAutolabosSections(path.join(bundleDir, entry.name))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function buildRecoverableRunnerFeedbackText(
