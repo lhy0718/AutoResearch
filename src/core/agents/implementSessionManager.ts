@@ -13796,6 +13796,9 @@ async function recoverStructuredResultFromPublicBundle(params: {
     if (!hasSubstantiveMaterializedContent(scriptContent, scriptPath)) {
       continue;
     }
+    if (await detectPythonUnfilledAutolabosSections(scriptPath)) {
+      continue;
+    }
     if (candidate.snapshot) {
       const candidateReadmePath = path.join(candidate.dir, "README.md");
       const candidateFrozenConfigPath = path.join(candidate.dir, "frozen_config.json");
@@ -13833,10 +13836,16 @@ async function recoverStructuredResultFromPublicBundle(params: {
         runnerFeedbackDiagnosticText: params.runnerFeedbackDiagnosticText
       });
       const repairedSource = await fs.readFile(scriptPath, "utf8").catch(() => "");
+      const staleMetricsPayloadFeedback = isStaleMetricsPayloadRepairFeedbackForScript({
+        source: repairedSource,
+        runnerFeedback: params.runnerFeedback,
+        runnerFeedbackDiagnosticText: params.runnerFeedbackDiagnosticText
+      });
       if (
         !alreadyRepaired &&
         !repairResult.repaired &&
-        !hasRecoverableBundleDeterministicRepairMarker(repairedSource)
+        !hasRecoverableBundleDeterministicRepairMarker(repairedSource) &&
+        !staleMetricsPayloadFeedback
       ) {
         continue;
       }
@@ -14001,6 +14010,39 @@ async function recoverStructuredResultFromPublicBundle(params: {
   }
 
   return undefined;
+}
+
+function buildRecoverableRunnerFeedbackText(
+  report: RunVerifierReport | undefined,
+  diagnosticText = ""
+): string {
+  return [
+    report?.summary,
+    report?.stderr_excerpt,
+    report?.stdout_excerpt,
+    report?.suggested_next_action,
+    diagnosticText
+  ].filter((value): value is string => Boolean(value)).join("\n");
+}
+
+function isStaleMetricsPayloadRepairFeedbackForScript(params: {
+  source: string;
+  runnerFeedback?: RunVerifierReport;
+  runnerFeedbackDiagnosticText?: string;
+}): boolean {
+  const feedbackText = buildRecoverableRunnerFeedbackText(
+    params.runnerFeedback,
+    params.runnerFeedbackDiagnosticText
+  );
+  if (!/Experiment metrics payload reports (?:failed status|success=false)/u.test(feedbackText)) {
+    return false;
+  }
+  const unexpectedKeyword = extractRecoverableUnexpectedKeywordFeedback(feedbackText);
+  if (!unexpectedKeyword) {
+    return false;
+  }
+  const definitionPattern = new RegExp("(^|\\n)def\\s+" + escapeRegex(unexpectedKeyword.functionName) + "\\s*\\(", "u");
+  return !definitionPattern.test(params.source);
 }
 
 async function applyRecoverableBundleDeterministicRepairs(params: {
@@ -14449,13 +14491,7 @@ export async function repairPythonKeywordOnlyDefaultCallSurface(
     return { repaired: false };
   }
 
-  const feedback = [
-    report?.summary,
-    report?.stderr_excerpt,
-    report?.stdout_excerpt,
-    report?.suggested_next_action,
-    diagnosticText
-  ].filter((value): value is string => Boolean(value)).join("\n");
+  const feedback = buildRecoverableRunnerFeedbackText(report, diagnosticText);
   const parsed = extractRecoverableKeywordOnlyDefaultFeedback(feedback);
   if (!parsed) {
     return { repaired: false };
@@ -14565,13 +14601,7 @@ export async function repairPythonUnexpectedKeywordParameterSurface(
   if (!scriptPath || path.extname(scriptPath) !== ".py") {
     return { repaired: false };
   }
-  const feedback = [
-    report?.summary,
-    report?.stderr_excerpt,
-    report?.stdout_excerpt,
-    report?.suggested_next_action,
-    diagnosticText
-  ].filter((value): value is string => Boolean(value)).join("\n");
+  const feedback = buildRecoverableRunnerFeedbackText(report, diagnosticText);
   const parsed = extractRecoverableUnexpectedKeywordFeedback(feedback);
   if (!parsed) {
     return { repaired: false };

@@ -8769,6 +8769,133 @@ describe("ImplementSessionManager", () => {
     });
   });
 
+  it("restores a non-skeleton snapshot when failed metrics feedback is stale for the current script", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-stale-metrics-snapshot-recovery-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Stale Metrics Snapshot Recovery",
+      topic: "restore executable runner after interrupted materialization",
+      constraints: ["recent"],
+      objectiveMetric: "accuracy"
+    });
+    run.currentNode = "implement_experiments";
+    run.graph.currentNode = "implement_experiments";
+    run.graph.nodeStates.run_experiments.status = "failed";
+    mkdirSync(path.dirname(run.memoryRefs.episodePath), { recursive: true });
+
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - recover_snapshot_after_stale_metrics\n", "utf8");
+
+    const publicDir = buildPublicExperimentDir(workspace, run);
+    const scriptPath = path.join(publicDir, "run_condition_sweep_experiment.py");
+    const readmePath = path.join(publicDir, "README.md");
+    const metricsPath = path.join(runDir, "metrics.json");
+    mkdirSync(publicDir, { recursive: true });
+    writeFileSync(metricsPath, "{\"status\":\"failed\",\"summary\":\"_normalize_path() got an unexpected keyword argument 'base_dir'\"}\n", "utf8");
+    writeFileSync(
+      scriptPath,
+      [
+        "# AUTOLABOS CANONICAL SKELETON",
+        "# BEGIN AUTOLABOS SECTION chunk_1 :: interrupted",
+        "import json",
+        "# END AUTOLABOS SECTION chunk_1",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(readmePath, "# Interrupted Bundle\n", "utf8");
+
+    const snapshotDir = path.join(
+      runDir,
+      "implement_experiments",
+      "attempt_snapshots",
+      "attempt_1",
+      "captured",
+      "1"
+    );
+    mkdirSync(snapshotDir, { recursive: true });
+    const snapshotScriptPath = path.join(snapshotDir, "run_condition_sweep_experiment.py");
+    writeFileSync(
+      snapshotScriptPath,
+      [
+        "import json",
+        "from pathlib import Path",
+        "",
+        "def main() -> int:",
+        "    Path('executed.json').write_text(json.dumps({'status': 'completed', 'runner': 'restored-snapshot'}), encoding='utf-8')",
+        "    return 0",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    writeFileSync(
+      path.join(snapshotDir, "README.md"),
+      ["# Snapshot Bundle", "", "```bash", "python " + toWorkspaceRelative(workspace, scriptPath), "```"].join("\n"),
+      "utf8"
+    );
+    const snapshotMtime = new Date(Date.now() + 5000);
+    utimesSync(snapshotScriptPath, snapshotMtime, snapshotMtime);
+    utimesSync(path.join(snapshotDir, "README.md"), snapshotMtime, snapshotMtime);
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put("implement_experiments.thread_id", "thread-stale-metrics-snapshot");
+    await memory.put("implement_experiments.script", scriptPath);
+    await memory.put("implement_experiments.run_command", "python " + JSON.stringify(scriptPath));
+    run.nodeThreads.implement_experiments = "thread-stale-metrics-snapshot";
+    await runStore.updateRun(run);
+    await memory.put("implement_experiments.runner_feedback", {
+      source: "run_experiments",
+      status: "fail",
+      trigger: "auto_handoff",
+      stage: "metrics",
+      summary: "Experiment metrics payload reports failed status: _normalize_path() got an unexpected keyword argument 'base_dir'",
+      command: "python " + JSON.stringify(scriptPath),
+      metrics_path: metricsPath,
+      stderr_excerpt: "Experiment metrics payload reports failed status: _normalize_path() got an unexpected keyword argument 'base_dir'",
+      suggested_next_action: "Repair the experiment implementation so metrics.json records completed execution.",
+      recorded_at: "2026-05-21T02:00:00.000Z"
+    });
+
+    let callCount = 0;
+    const codex = {
+      runTurnStream: async () => {
+        callCount += 1;
+        throw new Error("Codex should not be used when a non-skeleton snapshot matches stale metrics feedback");
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const restoredSource = readFileSync(scriptPath, "utf8");
+    execFileSync("python3", [scriptPath], { cwd: publicDir });
+
+    expect(callCount).toBe(0);
+    expect(result.scriptPath).toBe(scriptPath);
+    expect(result.rawResponse).toContain("Recovered implement result from a materialized public experiment bundle");
+    expect(restoredSource).not.toContain("AUTOLABOS CANONICAL SKELETON");
+    expect(JSON.parse(readFileSync(path.join(publicDir, "executed.json"), "utf8"))).toMatchObject({
+      status: "completed",
+      runner: "restored-snapshot"
+    });
+  });
+
   it("restores a recoverable attempt snapshot when the current public runner was overwritten", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-snapshot-entrypoint-repair-"));
     tempDirs.push(workspace);
