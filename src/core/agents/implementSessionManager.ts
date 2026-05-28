@@ -31229,16 +31229,20 @@ export async function repairPythonLockedStudyRunsEntrypointAliasSurface(
     return { repaired: false };
   }
 
+  const hasLegacyResolver = source.includes("def _execute_locked_study(") && source.includes("No study execution function was found in the script");
+  const hasFailureCaptureResolver = source.includes("def run_study_with_failure_capture(") && source.includes("Unable to resolve required callable from candidates");
   if (
     !source.includes("def execute_locked_study_runs(") ||
-    !source.includes("def _execute_locked_study(") ||
-    !source.includes("No study execution function was found in the script") ||
+    (!hasLegacyResolver && !hasFailureCaptureResolver) ||
     source.includes("_autolabos_locked_study_runs_entrypoint_alias_marker")
   ) {
     return { repaired: false };
   }
 
-  const insertionMatch = source.match(/\ndef\s+_execute_locked_study\s*\(/u);
+  const insertionMatch =
+    source.match(/\ndef\s+_execute_locked_study\s*\(/u) ||
+    source.match(/\ndef\s+run_study_with_failure_capture\s*\(/u) ||
+    source.match(/\ndef\s+main\s*\(/u);
   if (!insertionMatch || insertionMatch.index === undefined) {
     return { repaired: false };
   }
